@@ -75,6 +75,10 @@ export function createSession(itemHrid, itemName, startLevel, targetLevel, prote
 
         // Enhancement predictions (optional - calculated at session start)
         predictions: null, // { expectedAttempts, expectedProtections, ... }
+
+        // Counter values when the session was last extended, so validation factors compare the
+        // current leg against the prediction made for it. { totalAttempts, protectionCount }
+        extensionBaseline: null,
     };
 }
 
@@ -373,6 +377,12 @@ export function canExtendSession(session, itemHrid, currentLevel) {
 
 /**
  * Extend a completed session to a new target level
+ *
+ * The predictions are recomputed for the new leg (+10 → +12, say), but the attempt and
+ * protection counters keep running from the whole session. Comparing one against the other
+ * makes the run look wildly over budget, so snapshot the counters here and let the display
+ * diff against them.
+ *
  * @param {Object} session - Session object
  * @param {number} newTargetLevel - New target level
  */
@@ -381,6 +391,27 @@ export function extendSession(session, newTargetLevel) {
     session.targetLevel = newTargetLevel;
     session.endTime = null;
     session.lastUpdateTime = Date.now();
+    session.extensionBaseline = {
+        totalAttempts: session.totalAttempts || 0,
+        protectionCount: session.protectionCount || 0,
+    };
+}
+
+/**
+ * Get attempts and protections accrued since the session was last extended.
+ * A session that was never extended reports its full totals.
+ * @param {Object} session - Session object
+ * @returns {{attempts: number, protections: number}} Counters for the current leg
+ */
+export function getCurrentLegCounters(session) {
+    const baseline = session?.extensionBaseline;
+    const attempts = (session?.totalAttempts || 0) - (baseline?.totalAttempts || 0);
+    const protections = (session?.protectionCount || 0) - (baseline?.protectionCount || 0);
+
+    return {
+        attempts: Math.max(0, attempts),
+        protections: Math.max(0, protections),
+    };
 }
 
 /**

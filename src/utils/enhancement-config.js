@@ -15,10 +15,37 @@ import {
 } from './enhancement-gear-detector.js';
 import { getEnhancementMultiplier } from './enhancement-multipliers.js';
 import { resolveActionContext } from './action-context.js';
+import { BLESSED_TEA_BASE_CHANCE } from './enhancement-calculator.js';
+
+/**
+ * Read Blessed Tea's double-jump chance out of the game's consumable data.
+ * The number is a balance lever the game can move, so read it the same way the wisdom tea
+ * bonus is read rather than freezing last patch's value into the source.
+ * @param {Object} itemDetailMap - Item details map from init client data
+ * @returns {number} Double-jump chance as a decimal (e.g. 0.01 for 1%)
+ */
+export function getBlessedTeaBonus(itemDetailMap) {
+    const buffs = itemDetailMap?.['/items/blessed_tea']?.consumableDetail?.buffs;
+    if (Array.isArray(buffs)) {
+        const blessed = buffs.find((buff) => typeof buff?.typeHrid === 'string' && buff.typeHrid.includes('blessed'));
+        if (blessed?.flatBoost > 0) {
+            return blessed.flatBoost;
+        }
+    }
+    return BLESSED_TEA_BASE_CHANCE;
+}
 
 /**
  * Get enhancing parameters (auto-detected or manual)
- * @returns {Object} Enhancement parameters for simulator
+ *
+ * Every surface that quotes what *this* character's enhancing will cost goes through here, so
+ * the default has to be the character's own stats. The manual fields ship preloaded with a
+ * professional enhancer's kit — level 140, a +13 celestial enhancer, ultra tea — and any field
+ * still holding those shipped numbers is a field nobody chose, so it is answered from detection
+ * instead. Only a field the player actually edited overrides what they really have.
+ *
+ * @returns {Object} Enhancement parameters for simulator, tagged with `paramsSource`
+ *   ('auto' | 'manual') and `manualOverrides` (labels of edited fields)
  */
 export function getEnhancingParams() {
     const autoDetect = config.getSettingValue('enhanceSim_autoDetect', false);
@@ -28,6 +55,69 @@ export function getEnhancingParams() {
     } else {
         return getManualParams();
     }
+}
+
+// Detection walks the loadout and the item map, and getEnhancingParams runs once per item
+// during a networth or inventory sweep. The character cannot re-gear between two items of the
+// same sweep, so the answer is held briefly instead of being rebuilt hundreds of times.
+const DETECTION_CACHE_MS = 1000;
+let _detectionCache = null;
+let _detectionCacheAt = 0;
+
+/**
+ * Detected gear settings, memoised for a moment.
+ * @returns {Object} Map of settingId → detected value
+ */
+function getDetectedSettingsCached() {
+    const now = Date.now();
+    if (_detectionCache && now - _detectionCacheAt < DETECTION_CACHE_MS) {
+        return _detectionCache;
+    }
+
+    _detectionCache = getDetectedGearSettings();
+    _detectionCacheAt = now;
+    return _detectionCache;
+}
+
+/**
+ * Drop the memoised detection, so the next read re-inspects the character.
+ * Exists for tests and for any caller that knows the loadout just changed.
+ */
+export function resetDetectedSettingsCache() {
+    _detectionCache = null;
+    _detectionCacheAt = 0;
+}
+
+/**
+ * Compare two setting values, including the compound `{ enabled, tier, level }` gear objects.
+ * @param {*} a - First value
+ * @param {*} b - Second value
+ * @returns {boolean} True when the two describe the same setting
+ */
+function settingsEqual(a, b) {
+    if (a === b) return true;
+    if (a === null || b === null || typeof a !== 'object' || typeof b !== 'object') return false;
+
+    const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+    for (const key of keys) {
+        if (a[key] !== b[key]) return false;
+    }
+    return true;
+}
+
+/**
+ * Describe where a set of enhancing parameters came from, for display next to a prediction.
+ * @param {Object} params - Result of getEnhancingParams()
+ * @returns {string|null} Short label when manual overrides are in play, otherwise null
+ */
+export function describeParamsSource(params) {
+    const overrides = params?.manualOverrides;
+    if (!Array.isArray(overrides) || overrides.length === 0) {
+        return null;
+    }
+
+    const shown = overrides.slice(0, 3).join(', ');
+    return overrides.length > 3 ? `manual params: ${shown} +${overrides.length - 3} more` : `manual params: ${shown}`;
 }
 
 /**
@@ -170,6 +260,7 @@ export function getAutoDetectedParams() {
         rareFindBonus: gear.rareFindBonus + houseRareFindBonus + achievementRareFindBonus, // Rare find (equipment + house rooms + achievements)
         experienceBonus: totalExperienceBonus, // Experience (equipment + house + tea + community wisdom)
         guzzlingBonus: guzzlingBonus, // Drink concentration multiplier for blessed tea
+        blessedTeaBonus: getBlessedTeaBonus(itemDetailMap), // Double-jump chance from item data
         teas: teas,
 
         // Display info (for UI) - show best item per slot
@@ -197,6 +288,8 @@ export function getAutoDetectedParams() {
         equipmentSpeedBonus: gear.speedBonus, // For display
         houseSpeedBonus: houseSpeedBonus, // For display
         slotBreakdown: gear.slotBreakdown || [], // Per-item breakdown for display
+        paramsSource: 'auto', // Everything above came from this character
+        manualOverrides: [], // Nothing was overridden
     };
 }
 
@@ -334,23 +427,60 @@ export function getDetectedGearSettings() {
  * @returns {Object} Manual parameters
  */
 function getManualParams() {
-    const getValue = (key, defaultValue) => {
-        return config.getSettingValue(key, defaultValue);
-    };
-
     const itemDetailMap = dataManager.getInitClientData()?.itemDetailMap || {};
 
+    // What this character actually has. Used to fill in every manual field the player never
+    // touched, so an untouched panel quotes their own run rather than a stranger's.
+    let detectedSettings = {};
+    try {
+        // With no character loaded there is nothing to detect, and "detected" would read as
+        // "owns nothing" — worse than the shipped defaults. Fall back to those instead.
+        if (dataManager.getSkills()?.length) {
+            detectedSettings = getDetectedSettingsCached();
+        }
+    } catch (error) {
+        console.error('[EnhancementConfig] Gear detection failed, using saved settings:', error);
+    }
+
+    const manualOverrides = [];
+
+    /**
+     * Read a manual setting.
+     * @param {string} key - Setting id
+     * @param {*} shippedDefault - The value this field ships with
+     * @param {string} [label] - Human name, listed when the field overrides detection
+     * @returns {*} The value to simulate with
+     */
+    const readSetting = (key, shippedDefault, label) => {
+        const stored = config.getSettingValue(key, shippedDefault);
+        const detectedValue = detectedSettings[key];
+
+        if (detectedValue === undefined) {
+            return stored;
+        }
+        // Untouched shipped default: nobody chose this, so answer from the character
+        if (settingsEqual(stored, shippedDefault)) {
+            return detectedValue;
+        }
+        if (label && !settingsEqual(stored, detectedValue)) {
+            manualOverrides.push(label);
+        }
+        return stored;
+    };
+
+    const getValue = readSetting;
+
     // --- ENHANCING ---
-    const houseLevel = getValue('enhanceSim_houseLevel', 8);
-    const baseEnhancingLevel = getValue('enhanceSim_enhancingLevel', 140);
+    const houseLevel = getValue('enhanceSim_houseLevel', 8, 'Observatory level');
+    const baseEnhancingLevel = getValue('enhanceSim_enhancingLevel', 140, 'Enhancing level');
 
     // --- TEA ---
-    const teaSelection = getValue('enhanceSim_tea', 'ultra');
+    const teaSelection = getValue('enhanceSim_tea', 'ultra', 'Tea');
     const teas = {
         enhancing: teaSelection === 'basic',
         superEnhancing: teaSelection === 'super',
         ultraEnhancing: teaSelection === 'ultra',
-        blessed: getValue('enhanceSim_blessedTea', true),
+        blessed: getValue('enhanceSim_blessedTea', true, 'Blessed tea'),
     };
     const teaLevelBonus =
         teaSelection === 'ultra' ? 8 : teaSelection === 'super' ? 6 : teaSelection === 'basic' ? 3 : 0;
@@ -400,8 +530,8 @@ function getManualParams() {
     };
 
     // Helper to read compound gear setting
-    const getGear = (key, defaults) => {
-        const val = getValue(key, defaults);
+    const getGear = (key, defaults, label) => {
+        const val = readSetting(key, defaults, label);
         // Handle both object (new format) and missing/null
         if (val && typeof val === 'object') return val;
         return defaults;
@@ -416,7 +546,7 @@ function getManualParams() {
     const slotBreakdown = [];
 
     // Enhancer
-    const enhancer = getGear('enhanceSim_gear_enhancer', { enabled: true, tier: 'celestial', level: 13 });
+    const enhancer = getGear('enhanceSim_gear_enhancer', { enabled: true, tier: 'celestial', level: 13 }, 'Enhancer');
     if (enhancer.enabled) {
         const hrid = ENHANCER_TIERS[enhancer.tier] || ENHANCER_TIERS.celestial;
         const bonus = getGearSlotBonus(hrid, enhancer.level, itemDetailMap);
@@ -436,7 +566,7 @@ function getManualParams() {
     }
 
     // Gloves
-    const gloves = getGear('enhanceSim_gear_gloves', { enabled: true, level: 10 });
+    const gloves = getGear('enhanceSim_gear_gloves', { enabled: true, level: 10 }, 'Gloves');
     if (gloves.enabled) {
         const bonus = getGearSlotBonus(FIXED_GEAR.gloves, gloves.level, itemDetailMap);
         equipmentSpeedBonus += bonus.speed;
@@ -453,7 +583,7 @@ function getManualParams() {
     }
 
     // Top
-    const top = getGear('enhanceSim_gear_top', { enabled: true, level: 10 });
+    const top = getGear('enhanceSim_gear_top', { enabled: true, level: 10 }, 'Top');
     if (top.enabled) {
         const bonus = getGearSlotBonus(FIXED_GEAR.top, top.level, itemDetailMap);
         equipmentSpeedBonus += bonus.speed;
@@ -471,7 +601,7 @@ function getManualParams() {
     }
 
     // Bottoms
-    const bottoms = getGear('enhanceSim_gear_bottoms', { enabled: true, level: 10 });
+    const bottoms = getGear('enhanceSim_gear_bottoms', { enabled: true, level: 10 }, 'Bottoms');
     if (bottoms.enabled) {
         const bonus = getGearSlotBonus(FIXED_GEAR.bottoms, bottoms.level, itemDetailMap);
         equipmentSpeedBonus += bonus.speed;
@@ -488,10 +618,11 @@ function getManualParams() {
     }
 
     // Neck
-    const neck = getGear('enhanceSim_gear_neck', { enabled: true, tier: 'philo', level: 10 });
+    const neck = getGear('enhanceSim_gear_neck', { enabled: true, tier: 'philo', level: 10 }, 'Necklace');
     if (neck.enabled) {
         const hrid = NECK_TIERS[neck.tier] || NECK_TIERS.philo;
         const bonus = getGearSlotBonus(hrid, neck.level, itemDetailMap);
+        equipmentSuccessBonus += bonus.success;
         equipmentSpeedBonus += bonus.speed;
         equipmentRareFind += bonus.rareFind;
         equipmentExperience += bonus.experience;
@@ -499,7 +630,7 @@ function getManualParams() {
         slotBreakdown.push({
             name: details?.name || 'Necklace',
             enhancementLevel: neck.level,
-            success: 0,
+            success: bonus.success,
             speed: bonus.speed,
             rareFind: bonus.rareFind,
             experience: bonus.experience,
@@ -507,10 +638,11 @@ function getManualParams() {
     }
 
     // Ring
-    const ring = getGear('enhanceSim_gear_ring', { enabled: true, tier: 'philo', level: 10 });
+    const ring = getGear('enhanceSim_gear_ring', { enabled: true, tier: 'philo', level: 10 }, 'Ring');
     if (ring.enabled) {
         const hrid = RING_TIERS[ring.tier] || RING_TIERS.philo;
         const bonus = getGearSlotBonus(hrid, ring.level, itemDetailMap);
+        equipmentSuccessBonus += bonus.success;
         equipmentSpeedBonus += bonus.speed;
         equipmentRareFind += bonus.rareFind;
         equipmentExperience += bonus.experience;
@@ -518,7 +650,7 @@ function getManualParams() {
         slotBreakdown.push({
             name: details?.name || 'Ring',
             enhancementLevel: ring.level,
-            success: 0,
+            success: bonus.success,
             speed: bonus.speed,
             rareFind: bonus.rareFind,
             experience: bonus.experience,
@@ -526,10 +658,11 @@ function getManualParams() {
     }
 
     // Earring
-    const earring = getGear('enhanceSim_gear_earring', { enabled: true, tier: 'philo', level: 10 });
+    const earring = getGear('enhanceSim_gear_earring', { enabled: true, tier: 'philo', level: 10 }, 'Earrings');
     if (earring.enabled) {
         const hrid = EARRING_TIERS[earring.tier] || EARRING_TIERS.philo;
         const bonus = getGearSlotBonus(hrid, earring.level, itemDetailMap);
+        equipmentSuccessBonus += bonus.success;
         equipmentSpeedBonus += bonus.speed;
         equipmentRareFind += bonus.rareFind;
         equipmentExperience += bonus.experience;
@@ -537,7 +670,7 @@ function getManualParams() {
         slotBreakdown.push({
             name: details?.name || 'Earrings',
             enhancementLevel: earring.level,
-            success: 0,
+            success: bonus.success,
             speed: bonus.speed,
             rareFind: bonus.rareFind,
             experience: bonus.experience,
@@ -545,49 +678,54 @@ function getManualParams() {
     }
 
     // Cape
-    const cape = getGear('enhanceSim_gear_cape', { enabled: true, tier: 'normal', level: 5 });
+    const cape = getGear('enhanceSim_gear_cape', { enabled: true, tier: 'normal', level: 5 }, 'Cape');
     if (cape.enabled) {
         const hrid = CAPE_TIERS[cape.tier] || CAPE_TIERS.normal;
         const bonus = getGearSlotBonus(hrid, cape.level, itemDetailMap);
+        equipmentSuccessBonus += bonus.success;
         equipmentSpeedBonus += bonus.speed;
+        equipmentRareFind += bonus.rareFind;
         equipmentExperience += bonus.experience;
         const details = itemDetailMap[hrid];
         slotBreakdown.push({
             name: details?.name || 'Cape',
             enhancementLevel: cape.level,
-            success: 0,
+            success: bonus.success,
             speed: bonus.speed,
-            rareFind: 0,
+            rareFind: bonus.rareFind,
             experience: bonus.experience,
         });
     }
 
     // Guzzling Pouch (provides drink concentration)
-    const guzzling = getGear('enhanceSim_gear_guzzling', { enabled: true, level: 10 });
+    const guzzling = getGear('enhanceSim_gear_guzzling', { enabled: true, level: 10 }, 'Guzzling Pouch');
     if (guzzling.enabled) {
         const bonus = getGearSlotBonus(FIXED_GEAR.guzzling, guzzling.level, itemDetailMap);
         drinkConcentration = bonus.drinkConc;
     }
 
     // Charm (provides experience/wisdom bonus)
-    const charm = getGear('enhanceSim_gear_charm', { enabled: true, tier: 'grandmaster', level: 0 });
+    const charm = getGear('enhanceSim_gear_charm', { enabled: true, tier: 'grandmaster', level: 0 }, 'Charm');
     if (charm.enabled) {
         const hrid = CHARM_TIERS[charm.tier] || CHARM_TIERS.grandmaster;
         const bonus = getGearSlotBonus(hrid, charm.level, itemDetailMap);
+        equipmentSuccessBonus += bonus.success;
+        equipmentSpeedBonus += bonus.speed;
+        equipmentRareFind += bonus.rareFind;
         equipmentExperience += bonus.experience;
         const details = itemDetailMap[hrid];
         slotBreakdown.push({
             name: details?.name || 'Charm',
             enhancementLevel: charm.level,
-            success: 0,
-            speed: 0,
-            rareFind: 0,
+            success: bonus.success,
+            speed: bonus.speed,
+            rareFind: bonus.rareFind,
             experience: bonus.experience,
         });
     }
 
     // --- COMMUNITY BUFF ---
-    const communityBuff = getGear('enhanceSim_communityBuff', { enabled: true, level: 1 });
+    const communityBuff = getGear('enhanceSim_communityBuff', { enabled: true, level: 1 }, 'Community buff');
     let communityBuffLevel;
     if (communityBuff.enabled) {
         // Checked = auto-detect from game
@@ -598,8 +736,12 @@ function getManualParams() {
     const communitySpeedBonus = communityBuffLevel > 0 ? 20 + (communityBuffLevel - 1) * 0.5 : 0;
 
     // --- ACHIEVEMENT ---
-    const achievementEnabled = getValue('enhanceSim_achievement', false);
-    const achievementSuccessBonus = achievementEnabled ? 0.2 : 0;
+    // The toggle only says whether to count the achievement buff; how big it is comes from the
+    // character's own data, the same source auto-detect reads, so the two modes cannot drift.
+    const achievementEnabled = getValue('enhanceSim_achievement', false, 'Achievement');
+    const achievementSuccessBonus = achievementEnabled
+        ? dataManager.getAchievementBuffRatioBoost('/action_types/enhancing', '/buff_types/enhancing_success') * 100
+        : 0;
 
     // --- HOUSE BONUSES ---
     const houseSpeedBonus = houseLevel * 1.0;
@@ -660,6 +802,7 @@ function getManualParams() {
         rareFindBonus: equipmentRareFind,
         experienceBonus: totalExperienceBonus,
         guzzlingBonus: guzzlingBonus,
+        blessedTeaBonus: getBlessedTeaBonus(itemDetailMap), // Double-jump chance from item data
         teas: teas,
 
         // Display info for manual mode
@@ -677,6 +820,10 @@ function getManualParams() {
         houseSuccessBonus: houseSuccessBonus,
         achievementSuccessBonus: achievementSuccessBonus,
         slotBreakdown: slotBreakdown,
+        // Fields left at their shipped values were answered from detection, so a run with no
+        // edited fields is an auto-detected run no matter what the toggle says
+        paramsSource: manualOverrides.length > 0 ? 'manual' : 'auto',
+        manualOverrides,
     };
 }
 

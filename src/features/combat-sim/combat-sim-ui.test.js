@@ -171,6 +171,10 @@ const {
     upgradeRowPurchase,
     upgradeRowActionsHtml,
     wireUpgradeRowActions,
+    upgradeCostCell,
+    costSourceTagHtml,
+    upgradeNoiseFor,
+    upgradeRowNotesHtml,
 } = await import('./combat-sim-ui.js');
 
 /** A result row shaped like the upgrade advisor's output. */
@@ -484,6 +488,52 @@ describe('the panel', () => {
         expect(seek.build().rows[0]).toMatchObject({ zone: 'Smelly Planet', tier: 2, itemsPerHour: 1.5 });
         delete ui._wireCsvButton;
     });
+
+    describe('rows that could not be priced', () => {
+        test('get their own box instead of sinking below the regressions', () => {
+            const rows = [
+                row('Priced ring', { slot: '/equipment_types/ring', cost: 100, profitGain: 50 }),
+                { ...row('Community EXP buff Lv4 → Lv5', { cost: null, type: 'community_buff' }), cost: null },
+            ];
+            ui._renderUpgradeResults({ baseline: BASELINE, results: rows, food: null });
+
+            const container = ui.panel.querySelector('#mwi-csim-upgrade-results');
+            expect(container.textContent).toContain('Measured, but not priced');
+            // The main table holds the priced row only
+            const mainRows = [...container.querySelectorAll('[data-upgrade-row]')].map((r) => r.textContent);
+            expect(mainRows.join(' ')).toContain('Priced ring');
+            expect(mainRows.join(' ')).not.toContain('Community EXP');
+
+            const unpriced = [...container.querySelectorAll('[data-unpriced-row]')].map((r) => r.textContent);
+            expect(unpriced.join(' ')).toContain('Community EXP');
+        });
+
+        test('and the box does not appear at all when everything has a price', () => {
+            ui._renderUpgradeResults({
+                baseline: BASELINE,
+                results: [row('Priced ring', { slot: '/equipment_types/ring' })],
+                food: null,
+            });
+
+            const container = ui.panel.querySelector('#mwi-csim-upgrade-results');
+            expect(container.textContent).not.toContain('Measured, but not priced');
+        });
+
+        test('an unpriced row still expands to the metric detail it did measure', () => {
+            const rows = [{ ...row('Community EXP buff', { type: 'community_buff' }), cost: null }];
+            ui._renderUpgradeResults({ baseline: BASELINE, results: rows, food: null });
+
+            const container = ui.panel.querySelector('#mwi-csim-upgrade-results');
+            const rowEl = container.querySelector('[data-unpriced-row]');
+            const detail = container.querySelector('[data-unpriced-detail]');
+            expect(detail.style.display).toBe('none');
+
+            rowEl.click();
+
+            expect(detail.style.display).toBe('table-row');
+            expect(detail.textContent).toContain('Baseline:');
+        });
+    });
 });
 
 describe('gearFingerprint', () => {
@@ -640,5 +690,125 @@ describe('upgrade row handoff', () => {
 
         expect(container.querySelector('[data-buy-action="save"]')).toBeNull();
         expect(container.querySelector('[data-buy-action="watch"]')).toBeTruthy();
+    });
+});
+
+describe('what the Cost cell is allowed to say', () => {
+    test('a price is a price', () => {
+        expect(upgradeCostCell({ cost: 1_000_000 }).text).toBe('1.0M');
+        expect(upgradeCostCell({ cost: 1_000_000 }).color).toBe(null);
+    });
+
+    test('no price is a question mark, never a zero', () => {
+        expect(upgradeCostCell({ cost: null }).text).toBe('?');
+    });
+
+    test('a swap that hands gold back reads as a credit, not as free', () => {
+        const cell = upgradeCostCell({ cost: -40_000_000 });
+
+        expect(cell.text).toBe('+40.0M');
+        expect(cell.title).toContain('Pays for itself');
+    });
+
+    test('and costing nothing is its own state, distinct from both', () => {
+        expect(upgradeCostCell({ cost: 0 }).text).toBe('free');
+    });
+
+    test('the basis tag names which kind of number it is', () => {
+        expect(costSourceTagHtml('sim')).toContain('sim');
+        expect(costSourceTagHtml('market')).toContain('mkt');
+        expect(costSourceTagHtml(undefined)).toBe('');
+    });
+});
+
+describe('the qualifiers a row carries', () => {
+    const noisy = (over = {}) => ({
+        candidate: { description: 'Thing', type: 'tier' },
+        noise: { dps: 3, profit: 3 },
+        significantBy: { dps: false, profit: false },
+        ...over,
+    });
+
+    test('a delta inside the error is flagged rather than presented as a finding', () => {
+        expect(upgradeRowNotesHtml(noisy())).toContain('within noise');
+    });
+
+    test('but a real gain on either axis is left alone', () => {
+        expect(upgradeRowNotesHtml(noisy({ significantBy: { dps: true, profit: false } }))).not.toContain(
+            'within noise'
+        );
+    });
+
+    test('an ability swap says on the row that its price assumes a fresh book', () => {
+        const html = upgradeRowNotesHtml({
+            candidate: { description: 'Fireball → Ice Spear', type: 'ability_swap' },
+            costDetail: { books: { books: 12.4, bookName: 'Ice Spear' } },
+            significantBy: { dps: true, profit: true },
+        });
+
+        expect(html).toContain('fresh book');
+        expect(html).toContain('13 Ice Spears');
+    });
+
+    test('and a trinket says its gain is the on-task one', () => {
+        const html = upgradeRowNotesHtml({
+            candidate: { description: 'Task Badge → Task Crystal', type: 'tier', caveat: 'on task only' },
+            significantBy: { dps: true, profit: true },
+        });
+
+        expect(html).toContain('on task');
+    });
+
+    test('a row with nothing to qualify says nothing', () => {
+        expect(upgradeRowNotesHtml({ candidate: { description: 'Thing', type: 'tier' } })).toBe('');
+    });
+});
+
+describe('which metric the budget planner has to believe', () => {
+    /** A row whose DPS gain is real and whose profit gain is inside the noise */
+    const mixed = (description, over = {}) => ({
+        ...row(description, over),
+        significantBy: { dps: true, profit: false, xp: true },
+        significant: true,
+    });
+
+    test('shopping for profit skips a row whose profit gain is noise', () => {
+        const plan = planUpgradeBudget([mixed('Ring', { profitGain: 50 })], 1000, {
+            baseline: BASELINE,
+            metricKey: 'profit',
+        });
+
+        expect(plan.picks).toHaveLength(0);
+        expect(plan.skipped[0].reason).toContain('noise');
+    });
+
+    test('while shopping for DPS buys the same row, because that axis cleared', () => {
+        const plan = planUpgradeBudget([mixed('Ring', { dps: 110 })], 1000, {
+            baseline: BASELINE,
+            metricKey: 'dps',
+        });
+
+        expect(plan.picks.map((p) => p.candidate.description)).toEqual(['Ring']);
+    });
+
+    test('a row from before significance existed is still planned around', () => {
+        const plan = planUpgradeBudget([row('Ring', { profitGain: 50 })], 1000, {
+            baseline: BASELINE,
+            metricKey: 'profit',
+        });
+
+        expect(plan.picks).toHaveLength(1);
+    });
+});
+
+describe('the noise a row reports for one metric', () => {
+    test('reads the bar and the verdict off the row', () => {
+        const read = upgradeNoiseFor({ noise: { dps: 2.5 }, significantBy: { dps: false } }, 'dps');
+
+        expect(read).toEqual({ noisePct: 2.5, significant: false });
+    });
+
+    test('and a row that never measured it is believed rather than discarded', () => {
+        expect(upgradeNoiseFor({}, 'dps')).toEqual({ noisePct: null, significant: true });
     });
 });

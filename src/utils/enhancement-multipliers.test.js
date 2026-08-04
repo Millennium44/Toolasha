@@ -10,6 +10,10 @@ describe('ENHANCEMENT_MULTIPLIERS constant', () => {
     test('has 5× multiplier for accessories', () => {
         expect(ENHANCEMENT_MULTIPLIERS['/equipment_types/neck']).toBe(5);
         expect(ENHANCEMENT_MULTIPLIERS['/equipment_types/ring']).toBe(5);
+        expect(ENHANCEMENT_MULTIPLIERS['/equipment_types/earrings']).toBe(5);
+    });
+
+    test('keeps the singular earring spelling as an alias', () => {
         expect(ENHANCEMENT_MULTIPLIERS['/equipment_types/earring']).toBe(5);
     });
 
@@ -98,9 +102,9 @@ describe('getEnhancementMultiplier', () => {
             expect(getEnhancementMultiplier(itemDetails, 20)).toBe(6);
         });
 
-        test('calculates multiplier for earring at +5', () => {
+        test('calculates multiplier for earrings at +5', () => {
             const itemDetails = {
-                equipmentDetail: { type: '/equipment_types/earring' },
+                equipmentDetail: { type: '/equipment_types/earrings' },
             };
             // +5 = 0.12 bonus × 5 = 0.6 bonus → 1.6 multiplier
             expect(getEnhancementMultiplier(itemDetails, 5)).toBe(1 + 0.12 * 5);

@@ -61,7 +61,18 @@ vi.mock('./combat-sim-runner.js', () => ({
     getMaxWorkers: () => 4,
     plannedWorkerCount: vi.fn(() => 1),
 }));
-vi.mock('../combat/labyrinth-clear-rate.js', () => ({ default: {} }));
+const clearRate = vi.hoisted(() => ({
+    /** Which skills the XP metric actually asked about */
+    xpAskedFor: [],
+    impl: {},
+}));
+vi.mock('../combat/labyrinth-clear-rate.js', () => ({
+    default: {
+        getSkillingMetricsFromOverrides: (...args) => clearRate.impl.getSkillingMetricsFromOverrides?.(...args),
+        computeSkillingClearWithParams: (...args) => clearRate.impl.computeSkillingClearWithParams?.(...args),
+        computeEnhancingClearWithParams: (...args) => clearRate.impl.computeEnhancingClearWithParams?.(...args),
+    },
+}));
 vi.mock('../../utils/profit-helpers.js', () => ({ resolveItemPrice: vi.fn() }));
 vi.mock('../../utils/market-data.js', () => ({ getItemPrices: vi.fn() }));
 vi.mock('../../utils/enhancement-calculator.js', () => ({ calculateEnhancement: vi.fn() }));
@@ -97,6 +108,7 @@ const {
     runLabyrinthAllFightsAnalysis,
     runLabyrinthCombinationCheck,
     generateSkillingEquipmentCandidates,
+    runSkillingUpgradeAnalysis,
     generateLabyrinthBuffCandidatesFromEditor,
     generateGuildShrineCandidates,
     generateHouseCandidates,
@@ -2783,5 +2795,397 @@ describe('guild shrine candidates', () => {
         expect(conflictKey({ type: 'guild_shrine', buffHrid: '/guild_buffs/force_combat' })).toBe(
             'guild:/guild_buffs/force_combat'
         );
+    });
+});
+
+describe('how much of a combat delta is measurement', () => {
+    const run = (encounters, deaths) => ({ encounters, deaths: { player1: deaths } });
+
+    test('a bigger sample is a smaller error', () => {
+        const few = rateDeltaNoisePct(run(100, 2), run(100, 2), 'player1');
+        const many = rateDeltaNoisePct(run(10_000, 2), run(10_000, 2), 'player1');
+
+        expect(many.dps).toBeLessThan(few.dps);
+        expect(many.dps).toBeCloseTo(Math.sqrt(2 / 10_000) * 100, 6);
+    });
+
+    test('both runs contribute, added in quadrature', () => {
+        const noise = rateDeltaNoisePct(run(400, 1), run(100, 1), 'player1');
+
+        expect(noise.profit).toBeCloseTo(Math.sqrt(1 / 400 + 1 / 100) * 100, 6);
+    });
+
+    test('deaths are counted, not summed, so a handful of them is enormous', () => {
+        const noise = rateDeltaNoisePct(run(5_000, 2), run(5_000, 2), 'player1');
+
+        expect(noise.deaths).toBeGreaterThan(noise.dps * 10);
+    });
+
+    test('a run with no deaths at all does not divide by zero', () => {
+        const noise = rateDeltaNoisePct(run(5_000, 0), run(5_000, 0), 'player1');
+
+        expect(Number.isFinite(noise.deaths)).toBe(true);
+    });
+
+    test('a gain inside the error is not a gain', () => {
+        const noise = { dps: 2, profit: 2 };
+        const verdict = significantDeltas({ dps: 1.5, profit: 9 }, noise);
+
+        expect(verdict.dps).toBe(false);
+        expect(verdict.profit).toBe(true);
+    });
+
+    test('an unmeasurable error leaves the delta believed rather than discarded', () => {
+        expect(significantDeltas({ dps: 0.1 }, {}).dps).toBe(true);
+    });
+});
+
+describe('an upgrade that pays for itself', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
+    test('costs less than nothing rather than being floored at free', () => {
+        getItemPrices.mockReturnValue({ ask: 10_000_000, bid: 9_000_000 });
+        resolveItemPrice.mockImplementation((hrid, { side }) =>
+            side === 'sell' ? { price: 50_000_000 } : { price: 10_000_000 }
+        );
+
+        const cost = calculateUpgradeCost(
+            {
+                type: 'tier',
+                slot: MAIN_HAND,
+                currentHrid: '/items/regal_sword_refined',
+                currentLevel: 10,
+                upgradeHrid: '/items/fine_sword',
+                upgradeLevel: 10,
+            },
+            buildGameData()
+        );
+
+        expect(cost).toBe(-40_000_000);
+    });
+
+    test('an enhancement whose target level sells for more than the current one, too', () => {
+        getItemPrices.mockImplementation((hrid, level) =>
+            level === 10 ? { ask: 1_000_000, bid: 900_000 } : { ask: 5_000_000, bid: 4_000_000 }
+        );
+
+        const cost = calculateUpgradeCost(
+            {
+                type: 'enhancement',
+                slot: MAIN_HAND,
+                currentHrid: '/items/fine_sword',
+                currentLevel: 7,
+                upgradeLevel: 10,
+            },
+            buildGameData()
+        );
+
+        expect(cost).toBe(1_000_000 - 4_000_000);
+    });
+
+    test('the budget planner spends it rather than discarding it as malformed', () => {
+        const refunding = {
+            candidate: { type: 'tier', slot: '/equipment_types/head', upgradeHrid: '/items/a' },
+            cost: -50,
+            attemptsDelta: -1,
+            significant: true,
+        };
+        const plan = planWithinBudget([refunding], 10);
+
+        expect(plan.picks).toHaveLength(1);
+        expect(plan.totalCost).toBe(-50);
+    });
+
+    test('and the bigger refund is taken first, not the one with the thinnest gain', () => {
+        const entry = (hrid, slot, cost, attemptsDelta) => ({
+            candidate: { type: 'tier', slot, upgradeHrid: hrid },
+            cost,
+            attemptsDelta,
+            significant: true,
+        });
+        const plan = planWithinBudget(
+            [
+                entry('/items/small', '/equipment_types/head', -10, -0.01),
+                entry('/items/big', '/equipment_types/feet', -900, -5),
+            ],
+            0
+        );
+
+        expect(plan.picks[0].candidate.upgradeHrid).toBe('/items/big');
+    });
+});
+
+describe('drink candidates', () => {
+    const COFFEE_FAMILY = '/buff_uniques/power_coffee';
+
+    function drinkGameData() {
+        const coffee = (hrid, name, itemLevel, family = COFFEE_FAMILY) => [
+            hrid,
+            {
+                name,
+                itemLevel,
+                categoryHrid: '/item_categories/drink',
+                consumableDetail: {
+                    hitpointRestore: 0,
+                    manapointRestore: 0,
+                    cooldownDuration: 300,
+                    buffs: [{ uniqueHrid: family, typeHrid: '/buff_types/damage', flatBoost: 0.05 }],
+                    defaultCombatTriggers: [{ dependencyHrid: '/combat_trigger_dependencies/self' }],
+                },
+            },
+        ];
+        return {
+            itemDetailMap: Object.fromEntries([
+                coffee('/items/power_coffee', 'Power Coffee', 20),
+                coffee('/items/super_power_coffee', 'Super Power Coffee', 50),
+                coffee('/items/ultra_power_coffee', 'Ultra Power Coffee', 80),
+                coffee('/items/wisdom_coffee', 'Wisdom Coffee', 30, '/buff_uniques/wisdom_coffee'),
+                // Restores hitpoints, so it belongs to the food search, not here
+                [
+                    '/items/healing_tea',
+                    {
+                        name: 'Healing Tea',
+                        itemLevel: 10,
+                        categoryHrid: '/item_categories/drink',
+                        consumableDetail: {
+                            hitpointRestore: 100,
+                            cooldownDuration: 10,
+                            buffs: [{ uniqueHrid: '/buff_uniques/tea', typeHrid: '/buff_types/damage' }],
+                        },
+                    },
+                ],
+            ]),
+        };
+    }
+
+    beforeEach(() => {
+        resolveItemPrice.mockImplementation(() => ({ price: 1000 }));
+    });
+
+    test('walks one tier up in a family already being drunk', () => {
+        const player = { drinks: [{ hrid: '/items/power_coffee' }, null, null] };
+        const candidates = generateDrinkCandidates(player, drinkGameData());
+        const tierUp = candidates.find((c) => c.currentHrid === '/items/power_coffee');
+
+        expect(tierUp.upgradeHrid).toBe('/items/super_power_coffee');
+        expect(tierUp.description).toBe('Power Coffee → Super Power Coffee');
+        expect(tierUp.drinkIndex).toBe(0);
+    });
+
+    test('offers the best of a family you run none of, into the free slot', () => {
+        const player = { drinks: [{ hrid: '/items/power_coffee' }, null, null] };
+        const candidates = generateDrinkCandidates(player, drinkGameData());
+        const added = candidates.find((c) => c.currentHrid === null);
+
+        expect(added.upgradeHrid).toBe('/items/wisdom_coffee');
+        expect(added.drinkIndex).toBe(1);
+        expect(added.description).toBe('Add Wisdom Coffee');
+    });
+
+    test('a family at its top tier has nothing to offer', () => {
+        const player = { drinks: [{ hrid: '/items/ultra_power_coffee' }, null, null] };
+        const candidates = generateDrinkCandidates(player, drinkGameData());
+
+        expect(candidates.some((c) => c.buffFamily === COFFEE_FAMILY)).toBe(false);
+    });
+
+    test('nothing new is offered with every slot full', () => {
+        const player = {
+            drinks: [{ hrid: '/items/ultra_power_coffee' }, { hrid: '/items/wisdom_coffee' }, { hrid: '/items/x' }],
+        };
+
+        expect(generateDrinkCandidates(player, drinkGameData())).toEqual([]);
+    });
+
+    test('a drink that restores hitpoints is the food search, not this', () => {
+        const player = { drinks: [null, null, null] };
+        const candidates = generateDrinkCandidates(player, drinkGameData());
+
+        expect(candidates.some((c) => c.upgradeHrid === '/items/healing_tea')).toBe(false);
+    });
+
+    test('cost is zero, because the hourly spend is already in Profit/hr', () => {
+        expect(calculateUpgradeCost({ type: 'drink', upgradeHrid: '/items/x' }, drinkGameData())).toBe(0);
+    });
+
+    test('two coffees of one family conflict, whichever slots they sit in', () => {
+        expect(conflictKey({ type: 'drink', buffFamily: COFFEE_FAMILY, slot: 'drink_0' })).toBe(
+            conflictKey({ type: 'drink', buffFamily: COFFEE_FAMILY, slot: 'drink_2' })
+        );
+    });
+
+    test('a drink lands in its slot with the item’s own triggers', () => {
+        const dto = applyCandidateToDTO(
+            { drinks: [null, null, null] },
+            { type: 'drink', drinkIndex: 1, upgradeHrid: '/items/wisdom_coffee', triggers: [{ value: 3 }] }
+        );
+
+        expect(dto.drinks[1]).toEqual({ hrid: '/items/wisdom_coffee', triggers: [{ value: 3 }] });
+    });
+});
+
+describe('community buff candidates', () => {
+    test('one level up from wherever the buff is now', () => {
+        const candidates = generateCommunityBuffCandidates({ comExp: 4, comDrop: 0 });
+
+        expect(candidates.map((c) => [c.buffKey, c.currentLevel, c.upgradeLevel])).toEqual([
+            ['comExp', 4, 5],
+            ['comDrop', 0, 1],
+        ]);
+    });
+
+    test('nothing past the cap', () => {
+        expect(generateCommunityBuffCandidates({ comExp: 20, comDrop: 20 })).toEqual([]);
+    });
+
+    test('unknown rather than free, so it lands in the unpriced group', () => {
+        expect(calculateUpgradeCost({ type: 'community_buff', buffKey: 'comExp' }, buildGameData())).toBe(null);
+    });
+
+    test('nothing on the character changes — it is an argument to the sim', () => {
+        const player = { equipment: {}, drinks: [] };
+        const dto = applyCandidateToDTO(player, { type: 'community_buff', buffKey: 'comExp', upgradeLevel: 5 });
+
+        expect(dto).toEqual(player);
+    });
+});
+
+describe('trinkets are rankable now that taskDamage lands', () => {
+    const TRINKET = '/equipment_types/trinket';
+
+    function trinketGameData() {
+        const data = buildGameData();
+        data.itemDetailMap['/items/task_badge'] = {
+            name: 'Task Badge',
+            itemLevel: 50,
+            sortIndex: 1,
+            equipmentDetail: { type: TRINKET, combatStats: { taskDamage: 0.05 } },
+        };
+        data.itemDetailMap['/items/task_crystal'] = {
+            name: 'Task Crystal',
+            itemLevel: 70,
+            sortIndex: 2,
+            equipmentDetail: { type: TRINKET, combatStats: { taskDamage: 0.1 } },
+        };
+        // Trinkets carry no offensive stat, so they classify as utility gear and
+        // upgrade along the crafting chain rather than a role tier ladder
+        data.actionDetailMap['/actions/crafting/task_crystal'] = {
+            upgradeItemHrid: '/items/task_badge',
+            outputItems: [{ itemHrid: '/items/task_crystal' }],
+        };
+        return data;
+    }
+
+    test('a worn trinket produces a tier candidate instead of being skipped', () => {
+        const player = { equipment: { [TRINKET]: { hrid: '/items/task_badge', enhancementLevel: 0 } } };
+        const candidates = generateCandidates(player, trinketGameData(), 'equipment');
+
+        expect(candidates.some((c) => c.upgradeHrid === '/items/task_crystal')).toBe(true);
+    });
+
+    test('and every trinket row says the gain is the on-task one', () => {
+        const player = { equipment: { [TRINKET]: { hrid: '/items/task_badge', enhancementLevel: 0 } } };
+        const candidates = generateCandidates(player, trinketGameData(), 'equipment');
+
+        expect(candidates.every((c) => c.caveat?.includes('task'))).toBe(true);
+    });
+});
+
+describe('the grind time for combat levels', () => {
+    test('levels bought make the grind faster, so the estimate is not one division', async () => {
+        // Two identical analyses differing only in how much faster the boosted
+        // run earns XP; the faster one must not simply take the same time
+        const analysisFor = async (boostedXp) => {
+            buildGameDataPayload.mockReturnValue({
+                ...buildGameData(),
+                levelExperienceTable: Array.from({ length: 40 }, (_, level) => level * 1_000_000),
+            });
+            calculateSimRevenue.mockReturnValue({ netPerHour: 0 });
+            runSimulation.mockImplementation(async ({ playerDTOs }) => ({
+                simulatedTime: 3600 * 1e9,
+                encounters: 1000,
+                deaths: { player1: 0 },
+                totalDamageDealt: { player1: 1000 },
+                experienceGained: {
+                    player1: { attack: playerDTOs[0].attackLevel > 10 ? boostedXp : 100_000 },
+                },
+            }));
+
+            const { results } = await runUpgradeAnalysis({
+                playerDTOs: [{ hrid: 'player1', equipment: {}, abilities: [], attackLevel: 10, drinks: [] }],
+                playerIndex: 0,
+                zoneHrid: '/actions/combat/zone',
+                difficultyTier: 0,
+                hours: 1,
+                communityBuffs: {},
+                upgradeModes: ['combat_level'],
+                abilityTargetLevel: 20,
+                combatLevelTargets: { attackLevel: 30 },
+            });
+            return results.find((r) => r.candidate.type === 'combat_level');
+        };
+
+        const flat = await analysisFor(100_000);
+        const faster = await analysisFor(400_000);
+
+        expect(flat.levelXpSpeedup).toBeCloseTo(1, 6);
+        // The same XP gap, earned at a rate that climbs to 4× — strictly faster
+        // than the flat run, and strictly slower than if it were 4× throughout
+        expect(faster.levelTimeHours).toBeLessThan(flat.levelTimeHours);
+        expect(faster.levelTimeHours).toBeGreaterThan(flat.levelTimeHours / 4);
+    });
+});
+
+describe('the XP a skilling labyrinth room pays out', () => {
+    beforeEach(() => {
+        clearRate.xpAskedFor = [];
+        clearRate.impl = {
+            getSkillingMetricsFromOverrides: (skillId) => ({ skillId }),
+            computeSkillingClearWithParams: (metrics) => {
+                clearRate.xpAskedFor.push(metrics.skillId);
+                return { clearChance: 0.5, xpPerRoom: 1000 };
+            },
+            computeEnhancingClearWithParams: (metrics) => {
+                clearRate.xpAskedFor.push(metrics.skillId);
+                return { clearChance: 0.5, xpPerRoom: 4000 };
+            },
+        };
+        buildGameDataPayload.mockReturnValue(buildGameData());
+        resolveItemPrice.mockImplementation(() => ({ price: 0 }));
+    });
+
+    const analyse = () =>
+        runSkillingUpgradeAnalysis({
+            editorDTO: {
+                equipment: {},
+                houseRooms: {},
+                tokenUpgrades: { experience: 0 },
+                communityBuffLevels: {},
+                enhancingLevel: 100,
+                alchemyLevel: 100,
+            },
+            roomLevel: 100,
+            crateHrids: [],
+        });
+
+    test('an enhancing room counts, now that it reports an XP figure', async () => {
+        const { results } = await analyse();
+        const experience = results.find((r) => r.metricType === 'xpPerRoom');
+
+        // The skip used to leave enhancing out of the average entirely
+        expect(clearRate.xpAskedFor).toContain('enhancing');
+        expect(experience.xpPerRoom).toBeGreaterThan(0);
+    });
+
+    test('and it is averaged in on its own model, not the generic skilling one', async () => {
+        const { results } = await analyse();
+        const experience = results.find((r) => r.metricType === 'xpPerRoom');
+
+        // Nine ordinary rooms at 1000 plus the enhancing room at 4000, over ten
+        // rooms. Skipping enhancing gave 1000; averaging it in as an ordinary
+        // skilling room would give 1000 too — only its own model gives 1300
+        expect(experience.xpPerRoom).toBeCloseTo(1300, 6);
     });
 });

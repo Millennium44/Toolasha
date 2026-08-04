@@ -9,6 +9,7 @@ import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import storage from '../../core/storage.js';
 import webSocketHook from '../../core/websocket.js';
+import { getSettingDefinition } from '../../core/settings-schema.js';
 import { setReactInputValue } from '../../utils/react-input.js';
 import { findActionInput } from '../../utils/action-panel-helper.js';
 import { calculateTaskProfit, calculateTaskRewardValue } from './task-profit-calculator.js';
@@ -44,6 +45,71 @@ function getLoadoutSnapshot() {
 const REGEX_TASK_PROGRESS = /(\d+)\s*\/\s*(\d+)/;
 const RATING_MODE_TOKENS = 'tokens';
 const RATING_MODE_GOLD = 'gold';
+
+/**
+ * The rating mode to use when the setting has not been stored yet.
+ * Read from the settings schema so an unset setting behaves exactly as the
+ * settings UI says it will, rather than silently rating in tokens.
+ * @returns {string} Rating mode
+ */
+function getRatingMode() {
+    const schemaDefault = getSettingDefinition('taskEfficiencyRatingMode')?.default || RATING_MODE_GOLD;
+    const mode = config.getSettingValue('taskEfficiencyRatingMode', schemaDefault);
+    return mode === RATING_MODE_TOKENS || mode === RATING_MODE_GOLD ? mode : schemaDefault;
+}
+
+// A median over one or two cards is not a board, so rules built on it stay
+// quiet until enough cards carry a rating for "the board" to mean anything.
+const MIN_RATED_CARDS_FOR_MEDIAN = 3;
+
+/**
+ * Median of a list of numbers.
+ * @param {number[]} values - Values (need not be sorted)
+ * @returns {number|null} Median, or null for an empty list
+ */
+function medianOf(values) {
+    if (!values.length) return null;
+    const sorted = [...values].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+}
+
+/**
+ * Read back the efficiency ratings already rendered on the visible task cards.
+ *
+ * Reading the rendered values rather than recomputing keeps every rule that
+ * compares tasks against each other on exactly the numbers the player can see,
+ * and costs nothing — the ratings are already on the page.
+ *
+ * @param {Iterable<HTMLElement>} cards - Visible task cards
+ * @returns {{ratingMode: string, median: number|null, entries: Map<HTMLElement, {value: number, hours: number|null}>}}
+ */
+function readVisibleTaskRatings(cards) {
+    const ratingMode = getRatingMode();
+    const entries = new Map();
+    const values = [];
+
+    for (const card of cards) {
+        const ratingLine = card.querySelector?.('.mwi-task-profit-rating');
+        if (!ratingLine || ratingLine.dataset.ratingMode !== ratingMode) continue;
+
+        const value = Number.parseFloat(ratingLine.dataset.ratingValue ?? '');
+        if (!Number.isFinite(value)) continue;
+
+        const secondsHost = card.querySelector('[data-completion-seconds]');
+        const seconds = Number.parseFloat(secondsHost?.dataset.completionSeconds ?? '');
+        const hours = Number.isFinite(seconds) && seconds > 0 ? seconds / 3600 : null;
+
+        entries.set(card, { value, hours });
+        values.push(value);
+    }
+
+    return {
+        ratingMode,
+        median: values.length >= MIN_RATED_CARDS_FOR_MEDIAN ? medianOf(values) : null,
+        entries,
+    };
+}
 
 const HOUSE_ROOM_MAP = {
     '/action_types/cheesesmithing': '/house_rooms/forge',
@@ -122,7 +188,11 @@ function calculateTaskEfficiencyRating(profitData, ratingMode) {
     const hours = completionSeconds / 3600;
 
     if (ratingMode === RATING_MODE_GOLD) {
-        if (profitData.rewards?.error || profitData.totalProfit === null || profitData.totalProfit === undefined) {
+        // The rate is over the whole task, so it is the whole task's profit that
+        // divides the whole task's hours — the remaining-only figure the card
+        // headlines would make a half-done task look half as good.
+        const ratedProfit = profitData.fullTotalProfit ?? profitData.totalProfit;
+        if (profitData.rewards?.error || ratedProfit === null || ratedProfit === undefined) {
             return {
                 value: null,
                 unitLabel: 'gold/hr',
@@ -131,7 +201,7 @@ function calculateTaskEfficiencyRating(profitData, ratingMode) {
         }
 
         return {
-            value: profitData.totalProfit / hours,
+            value: ratedProfit / hours,
             unitLabel: 'gold/hr',
             error: null,
         };
@@ -1447,29 +1517,45 @@ class TaskProfitDisplay {
         const totalKills = taskData.quantity ?? 0;
         const totalTaskSeconds = killsPerHour > 0 ? Math.round((totalKills / killsPerHour) * 3600) : 0;
         if (config.getSetting('taskEfficiencyRating') && totalTaskSeconds > 0) {
-            const ratingMode = config.getSettingValue('taskEfficiencyRatingMode', RATING_MODE_TOKENS);
+            const ratingMode = getRatingMode();
             const totalHours = totalTaskSeconds / 3600;
             const totalDropValueFull = dropEntries.reduce((s, d) => s + d.totalValue * totalHours, 0);
             const totalConsumableCostFull = consumableEntries.reduce((s, c) => s + c.totalCost * totalHours, 0);
             const totalProfitFull = Math.round(totalDropValueFull - totalConsumableCostFull + rewardValue.total);
-            let ratingValue, unitLabel;
+            let ratingValue = null;
+            let unitLabel;
+            // A gold rating built on rewards the market could not price is a
+            // confident wrong number, so say so instead — same warning the
+            // skilling cards show.
+            let ratingError = ratingMode === RATING_MODE_GOLD ? rewardValue.error || null : null;
 
             if (ratingMode === RATING_MODE_GOLD) {
-                ratingValue = totalProfitFull / totalHours;
                 unitLabel = 'gold/hr';
+                if (!ratingError && !Number.isFinite(totalProfitFull)) {
+                    ratingError = 'Missing price data';
+                }
+                if (!ratingError) {
+                    ratingValue = totalProfitFull / totalHours;
+                }
             } else {
-                const tokensReceived = rewardValue.breakdown?.tokensReceived ?? 0;
-                ratingValue = tokensReceived / totalHours;
                 unitLabel = 'tokens/hr';
+                ratingValue = (rewardValue.breakdown?.tokensReceived ?? 0) / totalHours;
             }
 
             const ratingLine = document.createElement('div');
             ratingLine.className = 'mwi-task-profit-rating';
             ratingLine.style.cssText = 'margin-top: 2px; font-size: 0.7rem;';
-            ratingLine.dataset.ratingValue = `${ratingValue}`;
-            ratingLine.dataset.ratingMode = ratingMode;
-            ratingLine.style.color = config.COLOR_ACCENT;
-            ratingLine.textContent = `⚡ ${formatKMB(ratingValue)} ${unitLabel}`;
+
+            if (ratingValue === null) {
+                ratingLine.style.color = config.COLOR_WARNING;
+                ratingLine.title = ratingError || '';
+                ratingLine.textContent = `⚡ -- ⚠ ${unitLabel}`;
+            } else {
+                ratingLine.dataset.ratingValue = `${ratingValue}`;
+                ratingLine.dataset.ratingMode = ratingMode;
+                ratingLine.style.color = config.COLOR_ACCENT;
+                ratingLine.textContent = `⚡ ${formatKMB(ratingValue)} ${unitLabel}`;
+            }
             container.appendChild(ratingLine);
 
             this.updateEfficiencyGradientColors();
@@ -1704,7 +1790,7 @@ class TaskProfitDisplay {
         }
 
         if (config.getSetting('taskEfficiencyRating')) {
-            const ratingMode = config.getSettingValue('taskEfficiencyRatingMode', RATING_MODE_TOKENS);
+            const ratingMode = getRatingMode();
             const ratingData = calculateTaskEfficiencyRating(profitData, ratingMode);
             const ratingLine = document.createElement('div');
             ratingLine.className = 'mwi-task-profit-rating';
@@ -1733,7 +1819,7 @@ class TaskProfitDisplay {
      * Update efficiency rating colors based on relative performance
      */
     updateEfficiencyGradientColors() {
-        const ratingMode = config.getSettingValue('taskEfficiencyRatingMode', RATING_MODE_TOKENS);
+        const ratingMode = getRatingMode();
         const ratingLines = Array.from(document.querySelectorAll('.mwi-task-profit-rating')).filter((line) => {
             return line.dataset.ratingMode === ratingMode && line.dataset.ratingValue;
         });
@@ -2121,6 +2207,21 @@ class TaskProfitDisplay {
         lines.push(
             `<div style="font-weight: bold; color: ${totalProfitColor};">Total Profit: ${formatTotalValue(profitData.totalProfit)}</div>`
         );
+
+        // Secondary figure: what the task is worth over spending the same hours
+        // on the best alternative the player has priced. Clearly labelled and
+        // kept below the gross total, which stays the headline.
+        if (profitData.marginalProfit !== null && profitData.marginalProfit !== undefined) {
+            const marginalColor = profitData.marginalProfit >= 0 ? '#4ade80' : config.COLOR_LOSS;
+            const altPerHour = formatKMB(Math.round(profitData.bestAlternativePerHour || 0));
+            lines.push(
+                `<div style="color: ${marginalColor};" title="Total profit minus what the best alternative action you have priced (${altPerHour}/hr) would have earned over the same time">` +
+                    `Marginal (vs best alternative): ${formatTotalValue(profitData.marginalProfit)}</div>`
+            );
+            lines.push(
+                `<div style="color: #888; margin-left: 10px;">Opportunity cost: -${formatKMB(Math.round(profitData.opportunityCost || 0))} @ ${altPerHour}/hr</div>`
+            );
+        }
 
         return lines.join('');
     }
@@ -2561,5 +2662,11 @@ class TaskProfitDisplay {
 const taskProfitDisplay = new TaskProfitDisplay();
 taskProfitDisplay.setupSettingListener();
 
-export { calculateTaskCompletionSeconds, calculateTaskEfficiencyRating, getRelativeEfficiencyGradientColor };
+export {
+    calculateTaskCompletionSeconds,
+    calculateTaskEfficiencyRating,
+    getRelativeEfficiencyGradientColor,
+    getRatingMode,
+    readVisibleTaskRatings,
+};
 export default taskProfitDisplay;

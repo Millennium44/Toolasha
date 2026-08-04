@@ -10,7 +10,12 @@
 import marketAPI from '../../api/marketplace.js';
 import dataManager from '../../core/data-manager.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
-import { parseEquipmentSpeedBonuses, parseEquipmentEfficiencyBonuses } from '../../utils/equipment-parser.js';
+import {
+    parseEquipmentSpeedBonuses,
+    parseEquipmentEfficiencyBonuses,
+    parseRareFindBonus,
+    parseEssenceFindBonus,
+} from '../../utils/equipment-parser.js';
 import { parseTeaEfficiency, getDrinkConcentration, parseTeaSkillLevelBonus } from '../../utils/tea-parser.js';
 import { calculateEfficiencyBreakdown } from '../../utils/efficiency.js';
 import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
@@ -338,20 +343,8 @@ class AlchemyProfit {
             const equipment = dataManager.getEquipment();
             const actionTypeHrid = '/action_types/alchemy';
 
-            // Parse equipment rare find bonuses
-            let equipmentRareFind = 0;
-            for (const slot of equipment) {
-                if (!slot || !slot.itemHrid) continue;
-
-                const itemDetail = gameData.itemDetailMap[slot.itemHrid];
-                if (!itemDetail?.noncombatStats?.rareFind) continue;
-
-                const enhancementLevel = slot.enhancementLevel || 0;
-                const enhancementBonus = this.getEnhancementBonus(enhancementLevel);
-                const slotMultiplier = this.getSlotMultiplier(itemDetail.equipmentType);
-
-                equipmentRareFind += itemDetail.noncombatStats.rareFind * (1 + enhancementBonus * slotMultiplier);
-            }
+            // Parse equipment rare find bonuses (alchemyRareFind + skillingRareFind, enhancement-scaled)
+            const equipmentRareFind = parseRareFindBonus(equipment, actionTypeHrid, gameData.itemDetailMap);
 
             // Get achievement rare find bonus (Veteran tier: +2%)
             const achievementRareFind =
@@ -383,20 +376,8 @@ class AlchemyProfit {
 
             const equipment = dataManager.getEquipment();
 
-            // Parse equipment essence find bonuses
-            let equipmentEssenceFind = 0;
-            for (const slot of equipment) {
-                if (!slot || !slot.itemHrid) continue;
-
-                const itemDetail = gameData.itemDetailMap[slot.itemHrid];
-                if (!itemDetail?.noncombatStats?.essenceFind) continue;
-
-                const enhancementLevel = slot.enhancementLevel || 0;
-                const enhancementBonus = this.getEnhancementBonus(enhancementLevel);
-                const slotMultiplier = this.getSlotMultiplier(itemDetail.equipmentType);
-
-                equipmentEssenceFind += itemDetail.noncombatStats.essenceFind * (1 + enhancementBonus * slotMultiplier);
-            }
+            // Parse equipment essence find bonuses (skillingEssenceFind, enhancement-scaled)
+            const equipmentEssenceFind = parseEssenceFindBonus(equipment, gameData.itemDetailMap);
 
             return {
                 total: equipmentEssenceFind / 100, // Convert to decimal

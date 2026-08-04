@@ -100,6 +100,62 @@ export function buildConsumablePools(gameData) {
 }
 
 /**
+ * Build the buff-drink pools, one per buff family, each ordered weakest first.
+ *
+ * The food search above is a *cost floor* problem: keep the character alive,
+ * pay as little as possible. Drinks are the opposite question — nothing about
+ * them keeps you alive, they buy damage or drops or experience, and the answer
+ * is a simulation rather than a survival threshold. So they do not belong in
+ * the descent search; they belong in the candidate list, where an upgrade is
+ * simulated and ranked against everything else you could change. This builds
+ * the raw material for that, and the advisor decides what is combat-relevant.
+ *
+ * Families are keyed by the buff's `uniqueHrid`, which is exactly the game's
+ * own rule for which drinks conflict: two coffees sharing a unique cannot both
+ * be up, so "Attack Coffee → Super Attack Coffee" is a tier walk within one
+ * family and never an extra slot.
+ *
+ * @param {Object} gameData - Game data payload (itemDetailMap)
+ * @returns {Map<string, Array<Object>>} buff uniqueHrid → entries, ascending by item level
+ */
+export function buildBuffDrinkPools(gameData) {
+    const pools = new Map();
+
+    for (const [hrid, item] of Object.entries(gameData?.itemDetailMap || {})) {
+        const detail = item?.consumableDetail;
+        if (!detail) continue;
+        const category = item.categoryHrid || '';
+        if (!category.includes('drink') && !hrid.includes('coffee')) continue;
+        // A drink with a restore is food wearing a drink's category; the food
+        // search owns those, and they carry no buff to rank anyway
+        if (Number(detail.hitpointRestore) > 0 || Number(detail.manapointRestore) > 0) continue;
+
+        const buffs = (detail.buffs || []).filter(Boolean);
+        if (buffs.length === 0) continue;
+        const family = buffs[0].uniqueHrid;
+        if (!family) continue;
+
+        const { price } = resolveItemPrice(hrid, { side: 'buy' });
+
+        if (!pools.has(family)) pools.set(family, []);
+        pools.get(family).push({
+            hrid,
+            name: item.name || hrid.split('/').pop().replace(/_/g, ' '),
+            family,
+            itemLevel: item.itemLevel || 0,
+            buffTypes: buffs.map((buff) => buff.typeHrid).filter(Boolean),
+            price: price > 0 ? price : null,
+            triggers: detail.defaultCombatTriggers || null,
+        });
+    }
+
+    for (const pool of pools.values()) {
+        pool.sort((a, b) => a.itemLevel - b.itemLevel || a.hrid.localeCompare(b.hrid));
+    }
+    return pools;
+}
+
+/**
  * Cheapest entry (per restore point) that restores at least as much as a
  * reference, on every stat the reference restores. More restore never hurts
  * survival, so a higher tier that costs less per point is still viable — this is

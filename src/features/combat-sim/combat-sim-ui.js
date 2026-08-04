@@ -34,6 +34,7 @@ import {
     houseRoomAffectsCombat,
     assignRankScores,
     planWithinBudget,
+    COST_SOURCES,
     RANK_PLACES,
     SCORE_METRICS,
     DEFAULT_SCORE_KEYS,
@@ -128,7 +129,16 @@ export function planUpgradeBudget(rows, budget, { baseline = {}, metricKey = 'pr
     const metric = UPGRADE_PLAN_METRICS.find((m) => m.key === metricKey) || UPGRADE_PLAN_METRICS[0];
     const planRows = (rows || [])
         .filter((row) => row?.candidate && row.candidate.type !== 'combat_level')
-        .map((row) => ({ ...row, attemptsDelta: -metric.gain(row, baseline) }));
+        .map((row) => ({
+            ...row,
+            attemptsDelta: -metric.gain(row, baseline),
+            // The planner drops anything whose gain is inside the simulation's
+            // own error, and "inside the error" is a question about one metric
+            // at a time — a swap can move DPS well clear of the noise while its
+            // profit delta is pure sampling. The axis being shopped for is the
+            // one that has to clear it
+            significant: row.significantBy?.[metric.key] ?? row.significant ?? true,
+        }));
     const plan = planWithinBudget(planRows, Number.isFinite(budget) ? budget : 0);
     return { ...plan, gainTotal: plan.attemptsSaved, metric };
 }
@@ -166,6 +176,131 @@ export function upgradeRowKey(result) {
     const c = result?.candidate || {};
     const parts = [c.type || 'equipment', c.slot ?? '', c.upgradeHrid ?? '', c.upgradeLevel ?? '', c.description ?? ''];
     return parts.join('|').replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
+}
+
+/**
+ * The Cost cell: a number, or the fact that there is no number.
+ *
+ * Three states, and they used to be two. Unknown stays `?`. A positive cost is
+ * a cost. A cost at or below zero is the case the old `Math.max(0, …)` floor
+ * erased: a swap whose resale covers what it replaces hands gold back, and
+ * flattening that to "free" both lost the size of the refund and made the row
+ * divide into an unbounded value on every ladder. It reads as a credit now,
+ * with its own sign.
+ *
+ * @param {Object} result - An upgrade result row
+ * @returns {{text: string, color: string|null, title: string}}
+ */
+export function upgradeCostCell(result) {
+    const cost = result?.cost;
+    if (cost == null) {
+        return { text: '?', color: '#888', title: 'No price could be found for part of this upgrade.' };
+    }
+    if (cost < 0) {
+        return {
+            text: `+${formatKMB(-cost)}`,
+            color: '#4caf50',
+            title:
+                'Pays for itself: what the gear it replaces sells for is more than this costs, so the swap ' +
+                'hands you gold back.',
+        };
+    }
+    if (cost === 0) {
+        return { text: 'free', color: '#4caf50', title: 'Costs nothing up front.' };
+    }
+    return { text: formatKMB(cost), color: null, title: '' };
+}
+
+/**
+ * The small tag saying what kind of number a cost is.
+ *
+ * A market delta, an expected enhancement path and a production cost all land
+ * in one column and are not equally solid. Three characters of tag is the
+ * cheapest honest way to say which one a reader is looking at.
+ *
+ * @param {string|null} source - A key of `COST_SOURCES`
+ * @returns {string} HTML, empty when the basis is unknown
+ */
+export function costSourceTagHtml(source) {
+    const entry = COST_SOURCES[source];
+    if (!entry) return '';
+    return `<span title="${entry.title}" style="color:#666; font-size:9px; margin-left:3px;">${entry.label}</span>`;
+}
+
+/**
+ * What a row's headline delta could be measurement error.
+ *
+ * Every percentage in the table is read off a finite sample, and until now
+ * nothing in the combat tables said so — a 0.2% gain measured over eighty
+ * encounters looked exactly like a 15% one. This is the ± that goes beside a
+ * delta, and the tag that appears when the delta has not cleared it.
+ *
+ * @param {Object} result - An upgrade result row
+ * @param {string} [metricKey='dps'] - Which metric to speak about
+ * @returns {{noisePct: number|null, significant: boolean}}
+ */
+export function upgradeNoiseFor(result, metricKey = 'dps') {
+    const noisePct = result?.noise?.[metricKey];
+    return {
+        noisePct: Number.isFinite(noisePct) ? noisePct : null,
+        significant: result?.significantBy?.[metricKey] ?? true,
+    };
+}
+
+/** Shared styling for the small qualifier chips that sit beside a row's name */
+const ROW_NOTE_STYLE = 'font-size:9px; margin-left:4px; padding:0 3px; border-radius:2px; vertical-align:middle;';
+
+/**
+ * The qualifiers a row cannot be read correctly without.
+ *
+ * Three of them, all previously invisible or buried in a tab tooltip:
+ *
+ * - **within noise** — the row's DPS and profit deltas are both smaller than
+ *   the simulation's own sampling error, so the numbers beside it are a sample,
+ *   not a finding.
+ * - **fresh book** — an ability *swap* is priced as a book learned and levelled
+ *   from zero. That assumption is the single largest term in the cost, and it
+ *   lived only in the Ability Swaps checkbox tooltip, where a row quoting 900M
+ *   gave no hint that the 900M assumes you own none of it.
+ * - **on task** — a trinket's gain is simulated with taskDamage applied to
+ *   every hit, which is right for a task fight and generous for anything else.
+ *
+ * @param {Object} result - An upgrade result row
+ * @returns {string} HTML, empty when the row needs no qualifier
+ */
+export function upgradeRowNotesHtml(result) {
+    const notes = [];
+    const candidate = result?.candidate || {};
+
+    const dps = upgradeNoiseFor(result, 'dps');
+    const profit = upgradeNoiseFor(result, 'profit');
+    if (!dps.significant && !profit.significant && dps.noisePct != null) {
+        notes.push(
+            `<span title="Both the DPS and profit deltas are inside this run's sampling error (±${dps.noisePct.toFixed(2)}% ` +
+                `on DPS at one standard error). Sim for longer before trusting the sign." ` +
+                `style="${ROW_NOTE_STYLE} background:#2a2a1a; color:#c9a227;">within noise</span>`
+        );
+    }
+
+    if (candidate.type === 'ability_swap') {
+        const books = result?.costDetail?.books;
+        const count = Number.isFinite(books?.books) ? Math.ceil(books.books) : null;
+        const detail = count
+            ? `Cost assumes ${count} ${books.bookName}${count === 1 ? '' : 's'} — learning the ability and levelling ` +
+              `it from nothing. Own some already and the real cost is lower.`
+            : 'Cost assumes learning the ability and levelling a book from nothing, not topping up one you own.';
+        notes.push(
+            `<span title="${detail}" style="${ROW_NOTE_STYLE} background:#1a2030; color:#8ab4f8;">fresh book</span>`
+        );
+    }
+
+    if (candidate.caveat) {
+        notes.push(
+            `<span title="${candidate.caveat}" style="${ROW_NOTE_STYLE} background:#1a2030; color:#8ab4f8;">on task</span>`
+        );
+    }
+
+    return notes.join('');
 }
 
 /** Where a finished all-zones run is kept, for anything that ranks zones later */
@@ -338,9 +473,12 @@ export function upgradeRowPurchase(result) {
     if (!candidate) return null;
 
     const type = candidate.type || 'equipment';
-    if (type === 'combat_level' || type === 'house') return null;
+    if (type === 'combat_level' || type === 'house' || type === 'community_buff') return null;
 
     const isBook = ABILITY_CANDIDATE_TYPES.has(type);
+    // A coffee is a consumable, so it can be watched but never saved for — the
+    // savings list is slot-by-slot gear and a drink fills no slot
+    const isConsumable = type === 'drink';
     // The book for an ability shares its slug: /abilities/fireball → /items/fireball
     const itemHrid = isBook
         ? String(candidate.upgradeHrid || '').replace('/abilities/', '/items/')
@@ -354,7 +492,7 @@ export function upgradeRowPurchase(result) {
         itemHrid,
         enhancementLevel,
         name: enhancementLevel > 0 ? `${baseName} +${enhancementLevel}` : baseName,
-        savable: !isBook,
+        savable: !isBook && !isConsumable,
     };
 }
 
@@ -555,6 +693,26 @@ const UPGRADE_MODES = [
             'Cost is the gold value of the guild credits only — guild tokens are shown in the row detail and ' +
             'are not priced, because nothing converts into them. A level past what your guild has built is ' +
             'still listed, and says so.',
+    },
+    {
+        key: 'drink',
+        label: 'Drinks',
+        defaultOn: false,
+        title:
+            'A tier up in each buff drink you already run, and the best drink of each family you have a free ' +
+            'slot for.\n\n' +
+            'Cost shows as free because a coffee is not bought once — its hourly spend is already subtracted ' +
+            'from Profit/hr by the sim, so charging it again as an outlay would count it twice. Read these ' +
+            'rows on their deltas rather than on a value ranking.',
+    },
+    {
+        key: 'community_buff',
+        label: 'Community',
+        defaultOn: false,
+        title:
+            'One more level on the community EXP and combat-drop buffs.\n\n' +
+            'Nobody buys these, so they carry no price and land in the "measured, but not priced" box — but ' +
+            'the sim can still tell you exactly what a level is worth to you.',
     },
     {
         key: 'food',
@@ -4641,38 +4799,96 @@ class CombatSimUI {
         // For deaths, lower is better (inverted color)
         const deathDeltaColor = (val) => (val < -0.01 ? '#4caf50' : val > 0.01 ? '#f44336' : '#888');
 
+        // The error bar on each percentage, and a note when the delta has not
+        // cleared it. Without this a 0.2% "gain" off ninety encounters reads
+        // exactly like a 15% one off nine thousand
+        const errorBar = (key) => {
+            const { noisePct, significant } = upgradeNoiseFor(r, key);
+            if (noisePct == null) return '';
+            const bar = `<span style="color:#666;"> ±${noisePct.toFixed(2)}%</span>`;
+            return significant
+                ? bar
+                : `${bar}<span style="color:#c9a227;" title="Smaller than this run's sampling error — sim for longer before trusting it."> within noise</span>`;
+        };
+
         return `<div style="display:grid; grid-template-columns:1fr 1fr 1fr 1fr 1fr; gap:8px; font-size:11px;">
                 <div>
                     <div style="color:#888;">DPS</div>
                     <div style="color:#e0e0e0;">${formatKMB(r.metrics.dps)}</div>
-                    <div style="color:${deltaColor(dpsValueDelta)};">${fmtDelta(dpsValueDelta)} (${r.deltas.dps >= 0 ? '+' : ''}${r.deltas.dps.toFixed(2)}%)</div>
+                    <div style="color:${deltaColor(dpsValueDelta)};">${fmtDelta(dpsValueDelta)} (${r.deltas.dps >= 0 ? '+' : ''}${r.deltas.dps.toFixed(2)}%)${errorBar('dps')}</div>
                 </div>
                 <div>
                     <div style="color:#888;">EXP/hr</div>
                     <div style="color:#e0e0e0;">${formatKMB(r.metrics.xpPerHour)}</div>
-                    <div style="color:${deltaColor(xpValueDelta)};">${fmtDelta(xpValueDelta)} (${r.deltas.xp >= 0 ? '+' : ''}${r.deltas.xp.toFixed(2)}%)</div>
+                    <div style="color:${deltaColor(xpValueDelta)};">${fmtDelta(xpValueDelta)} (${r.deltas.xp >= 0 ? '+' : ''}${r.deltas.xp.toFixed(2)}%)${errorBar('xp')}</div>
                 </div>
                 <div>
                     <div style="color:#888;">Profit/hr</div>
                     <div style="color:#e0e0e0;">${formatKMB(r.metrics.profitPerHour)}</div>
-                    <div style="color:${deltaColor(profitValueDelta)};">${fmtDelta(profitValueDelta)} (${r.deltas.profit >= 0 ? '+' : ''}${r.deltas.profit.toFixed(2)}%)</div>
+                    <div style="color:${deltaColor(profitValueDelta)};">${fmtDelta(profitValueDelta)} (${r.deltas.profit >= 0 ? '+' : ''}${r.deltas.profit.toFixed(2)}%)${errorBar('profit')}</div>
                 </div>
                 <div>
                     <div style="color:#888;">EPH</div>
                     <div style="color:#e0e0e0;">${r.metrics.encountersPerHour.toFixed(1)}</div>
-                    <div style="color:${deltaColor(ephDelta)};">${fmtDeltaSmall(ephDelta)} (${r.deltas.encounters >= 0 ? '+' : ''}${r.deltas.encounters.toFixed(2)}%)</div>
+                    <div style="color:${deltaColor(ephDelta)};">${fmtDeltaSmall(ephDelta)} (${r.deltas.encounters >= 0 ? '+' : ''}${r.deltas.encounters.toFixed(2)}%)${errorBar('encounters')}</div>
                 </div>
                 <div>
                     <div style="color:#888;">DPH</div>
                     <div style="color:#e0e0e0;">${r.metrics.deathsPerHour.toFixed(1)}</div>
-                    <div style="color:${deathDeltaColor(dphDelta)};">${fmtDeltaSmall(dphDelta)} (${r.deltas.deaths >= 0 ? '+' : ''}${r.deltas.deaths.toFixed(2)}%)</div>
+                    <div style="color:${deathDeltaColor(dphDelta)};">${fmtDeltaSmall(dphDelta)} (${r.deltas.deaths >= 0 ? '+' : ''}${r.deltas.deaths.toFixed(2)}%)${errorBar('deaths')}</div>
                 </div>
             </div>
             <div style="margin-top:6px; color:#666; font-size:10px;">
                 Baseline: DPS ${formatKMB(baseline.dps)} | EXP ${formatKMB(baseline.xpPerHour)} | Profit ${formatKMB(baseline.profitPerHour)} | EPH ${baseline.encountersPerHour.toFixed(1)} | DPH ${baseline.deathsPerHour.toFixed(1)}
             </div>
+            ${this._renderUpgradeCostBasis(r)}
             ${this._renderGuildShrineCost(r)}
             ${this._renderUpgradeScoreBreakdown(r)}`;
+    }
+
+    /**
+     * What kind of number the Cost column is holding, spelled out.
+     *
+     * The column shows one figure and the tag beside it is three characters.
+     * This is where the three characters get their sentence: which basis, what
+     * the purchase and the resale each came to, the fresh-book assumption on an
+     * ability swap, and any caveat the candidate itself carries.
+     *
+     * @param {Object} r - Result row
+     * @returns {string} HTML, empty when there is nothing to qualify
+     * @private
+     */
+    _renderUpgradeCostBasis(r) {
+        const parts = [];
+        const source = COST_SOURCES[r.costSource];
+        const detail = r.costDetail;
+
+        if (source) parts.push(`<span style="color:#aaa;">Cost basis: ${source.label} — ${source.title}</span>`);
+
+        if (detail && (detail.gross != null || detail.credit)) {
+            const gross = detail.gross == null ? 'no price' : formatKMB(detail.gross);
+            parts.push(
+                `<span style="color:#888;">Buys ${gross}, resale credit ${formatKMB(detail.credit || 0)}.</span>`
+            );
+        }
+
+        if (detail?.freshBook && detail.books) {
+            const count = Number.isFinite(detail.books.books) ? Math.ceil(detail.books.books) : null;
+            parts.push(
+                `<span style="color:#8ab4f8;">Priced as a fresh ${detail.books.bookName}: ` +
+                    `${count == null ? 'the whole level path' : `${formatWithSeparator(count)} books`} from nothing, ` +
+                    `since a swapped-in ability starts at zero. Own some already and this row overstates the cost.</span>`
+            );
+        }
+
+        if (detail?.unpriced?.length) {
+            parts.push(`<span style="color:#ff9800;">No price found for ${detail.unpriced.join(', ')}.</span>`);
+        }
+
+        if (r.candidate?.caveat) parts.push(`<span style="color:#ff9800;">${r.candidate.caveat}</span>`);
+
+        if (!parts.length) return '';
+        return `<div style="margin-top:4px; font-size:10px; line-height:1.4; display:flex; flex-direction:column; gap:1px;">${parts.join('')}</div>`;
     }
 
     /**
@@ -4884,7 +5100,18 @@ class CombatSimUI {
         const hidden = this._upgradeHiddenColumns || new Set(DEFAULT_HIDDEN_COLUMNS);
         const scored = new Set(this._upgradeScoreKeys || DEFAULT_SCORE_KEYS);
 
-        const goldPer = (val) => (Number.isFinite(val) ? formatKMB(val) : '—');
+        // At or below zero cost the figure stops being a rate and becomes the
+        // net gold itself (see computeGoldPerImprovement), so it is drawn as
+        // what it is rather than as a nonsense "−40M per 0.01%"
+        const goldPer = (val) => {
+            if (!Number.isFinite(val)) return '—';
+            if (val < 0) {
+                return `<span style="color:#4caf50;" title="Pays for itself — hands back ${formatKMB(-val)}.">
+                    +${formatKMB(-val)}</span>`;
+            }
+            if (val === 0) return '<span style="color:#4caf50;" title="Costs nothing up front.">free</span>';
+            return formatKMB(val);
+        };
         const delta = (val, digits = 1) => {
             if (!Number.isFinite(val) || Math.abs(val) < 1e-9) return '—';
             return `${val > 0 ? '+' : ''}${Math.abs(val) >= 1000 ? formatKMB(val) : val.toFixed(digits)}`;
@@ -4909,15 +5136,25 @@ class CombatSimUI {
                 // Sorted and exported by the description alone: the handoff
                 // buttons are chrome on the cell, not part of what the row says
                 value: (r) => r.candidate.description.toLowerCase(),
-                render: (r) => `${r.candidate.description}${upgradeRowActionsHtml(r)}`,
+                render: (r) => `${r.candidate.description}${upgradeRowNotesHtml(r)}${upgradeRowActionsHtml(r)}`,
             },
             {
                 key: 'cost',
                 label: 'Cost',
                 fixed: true,
                 numeric: true,
+                title:
+                    'What the upgrade nets out at: purchases minus what the gear it replaces sells for. ' +
+                    'A green credit means the resale is larger, so the swap hands gold back. The small tag ' +
+                    'says which kind of number it is — a market quote, a simulated enhance path, or a craft cost.',
                 value: (r) => (r.cost == null ? Infinity : r.cost),
-                render: (r) => (r.cost == null ? '?' : formatKMB(r.cost)),
+                render: (r) => {
+                    const cell = upgradeCostCell(r);
+                    const body = cell.color
+                        ? `<span style="color:${cell.color};" title="${cell.title}">${cell.text}</span>`
+                        : cell.text;
+                    return `${body}${costSourceTagHtml(r.costSource)}`;
+                },
             },
             {
                 key: 'payback',
@@ -5200,6 +5437,104 @@ class CombatSimUI {
     }
 
     /**
+     * Everything that was simulated but could not be priced, in its own box.
+     *
+     * Three kinds of row land here and they are all real answers: a piece with
+     * no listing anywhere and no craftable path, a guild shrine level whose
+     * credits could not be valued, and a community buff level, which nobody
+     * buys at all. What they share is that the Cost column has nothing to put
+     * in it — so they carry no gold-per figure, cannot be scored, and cannot be
+     * planned against a budget.
+     *
+     * They used to sit in the main table at cost Infinity, which sorted them
+     * underneath the regressions. A reader scanning from the top saw the ranked
+     * upgrades, then the things that made the character worse, and then these —
+     * indistinguishable from more of the same. Their deltas are measured just
+     * as carefully as any other row's; only the price is missing, and that is
+     * what this box says.
+     *
+     * @param {Array<Object>} rows - Results whose cost is null
+     * @param {Object} baseline - Baseline metrics
+     * @returns {string} HTML
+     * @private
+     */
+    _renderUnpricedUpgradeTable(rows, baseline) {
+        if (!this._unpricedSort) this._unpricedSort = { key: 'dps', asc: true };
+        const { key: sortKey, asc: sortAsc } = this._unpricedSort;
+
+        const sortValue = (r) => {
+            switch (sortKey) {
+                case 'upgrade':
+                    return r.candidate.description.toLowerCase();
+                case 'why':
+                    return (r.costDetail?.unpriced || []).join(',');
+                case 'xp':
+                    return -(r.deltas?.xp ?? 0);
+                case 'profit':
+                    return -(r.deltas?.profit ?? 0);
+                default:
+                    return -(r.deltas?.dps ?? 0);
+            }
+        };
+        const sorted = sortRowsBy(rows, sortValue, sortAsc);
+
+        const thStyle =
+            'padding:4px 6px; text-align:left; border-bottom:1px solid #333; color:#888; font-weight:600; ' +
+            'cursor:pointer; user-select:none; white-space:nowrap;';
+        const tdStyle = 'padding:4px 6px; border-bottom:1px solid #1a1a2e; white-space:nowrap;';
+        const arrow = (k) => (sortKey === k ? (sortAsc ? ' ▴' : ' ▾') : '');
+
+        // Greyed rather than coloured when the delta is inside the run's own
+        // error, so an unpriced row cannot imply a finding it did not make
+        const cell = (r, key) => {
+            const value = r.deltas?.[key];
+            if (!Number.isFinite(value) || Math.abs(value) < 1e-9) return '<span style="color:#888;">—</span>';
+            const { significant } = upgradeNoiseFor(r, key);
+            const color = !significant ? '#888' : value > 0 ? '#8bc34a' : '#f44336';
+            return `<span style="color:${color};">${value > 0 ? '+' : ''}${value.toFixed(2)}%</span>`;
+        };
+
+        let html = `<div style="margin-top:14px; padding:8px 10px; background:#0d0d1a; border:1px solid #2a2a4a; border-radius:6px;">
+            <div style="color:${ACCENT}; font-size:12px; font-weight:600; margin-bottom:2px;">Measured, but not priced</div>
+            <div style="color:#666; font-size:10px; margin-bottom:6px;">
+                Simulated the same way as everything above; only the gold is missing, so these cannot be ranked by
+                value, scored, or bought by the budget planner. The deltas are real.
+            </div>
+            <table style="width:100%; border-collapse:collapse; font-size:11px;">
+            <thead><tr>
+                <th style="${thStyle}" data-unpriced-sort-key="upgrade">Upgrade${arrow('upgrade')}</th>
+                <th style="${thStyle}" data-unpriced-sort-key="why">Why no price${arrow('why')}</th>
+                <th style="${thStyle}" data-unpriced-sort-key="dps">ΔDPS${arrow('dps')}</th>
+                <th style="${thStyle}" data-unpriced-sort-key="xp">ΔEXP${arrow('xp')}</th>
+                <th style="${thStyle}" data-unpriced-sort-key="profit">ΔProfit${arrow('profit')}</th>
+            </tr></thead><tbody>`;
+
+        sorted.forEach((r, i) => {
+            const rowKey = upgradeRowKey(r);
+            const missing = r.costDetail?.unpriced?.length
+                ? `no listing for ${r.costDetail.unpriced.join(', ')}`
+                : r.candidate?.type === 'community_buff'
+                  ? 'not a purchase — nobody buys a community buff level'
+                  : 'no price could be resolved';
+
+            html += `<tr style="cursor:pointer; color:#e0e0e0;" data-unpriced-row="${i}" data-row-key="${rowKey}">
+                <td style="padding:4px 6px; border-bottom:1px solid #1a1a2e;">${r.candidate.description}${upgradeRowNotesHtml(r)}</td>
+                <td style="${tdStyle} color:#888;">${missing}</td>
+                <td style="${tdStyle}">${cell(r, 'dps')}</td>
+                <td style="${tdStyle}">${cell(r, 'xp')}</td>
+                <td style="${tdStyle}">${cell(r, 'profit')}</td>
+            </tr>
+            <tr data-unpriced-detail="${i}" data-row-key="${rowKey}" style="display:none;">
+                <td colspan="5" style="padding:6px 12px; background:#0a0a14; border-bottom:1px solid #222;">
+                    ${this._renderUpgradeDetailCells(r, baseline)}
+                </td>
+            </tr>`;
+        });
+
+        return html + '</tbody></table></div>';
+    }
+
+    /**
      * The shopping list a budget buys, above the table it came from.
      *
      * The table answers "what is the best single thing"; nobody buys one thing.
@@ -5306,10 +5641,12 @@ class CombatSimUI {
      */
     _openUpgradeDetails(container) {
         const open = new Set();
-        container.querySelectorAll('[data-upgrade-detail], [data-level-detail]').forEach((detail) => {
-            const key = detail.getAttribute('data-row-key');
-            if (key && detail.style.display !== 'none') open.add(key);
-        });
+        container
+            .querySelectorAll('[data-upgrade-detail], [data-level-detail], [data-unpriced-detail]')
+            .forEach((detail) => {
+                const key = detail.getAttribute('data-row-key');
+                if (key && detail.style.display !== 'none') open.add(key);
+            });
         return open;
     }
 
@@ -5348,12 +5685,21 @@ class CombatSimUI {
         // selection applies to results that were computed before it was loaded
         this._rescoreUpgrades();
         const levelRows = results.results.filter((r) => r.candidate?.type === 'combat_level');
-        const goldRows = results.results.filter((r) => r.candidate?.type !== 'combat_level');
+        const purchasable = results.results.filter((r) => r.candidate?.type !== 'combat_level');
+        // A row with no price is not a bad row, and it used to be shown as one:
+        // sorted into the same table with cost Infinity, it sank to the bottom
+        // beside the genuine regressions with nothing to say it was there for a
+        // different reason. Its measured deltas are perfectly good — it is only
+        // the gold that is missing — so it gets its own group where the deltas
+        // can be read without a value ranking they cannot take part in.
+        const goldRows = purchasable.filter((r) => r.cost != null);
+        const unpricedRows = purchasable.filter((r) => r.cost == null);
 
         let html = foodHtml;
         if (goldRows.length) html += this._renderUpgradeBudget(goldRows, results.baseline);
         if (goldRows.length) html += this._renderUpgradeGoldTable(goldRows, results.baseline);
         if (levelRows.length) html += this._renderUpgradeLevelTable(levelRows, results.baseline);
+        if (unpricedRows.length) html += this._renderUnpricedUpgradeTable(unpricedRows, results.baseline);
         container.innerHTML = html;
 
         // Reopen what was open. Walked rather than selected by attribute, because
@@ -5361,9 +5707,11 @@ class CombatSimUI {
         // early. A candidate that has since dropped out of the results simply has
         // no row to reopen, which is the right outcome.
         if (openDetails.size) {
-            container.querySelectorAll('[data-upgrade-detail], [data-level-detail]').forEach((detail) => {
-                if (openDetails.has(detail.getAttribute('data-row-key'))) detail.style.display = 'table-row';
-            });
+            container
+                .querySelectorAll('[data-upgrade-detail], [data-level-detail], [data-unpriced-detail]')
+                .forEach((detail) => {
+                    if (openDetails.has(detail.getAttribute('data-row-key'))) detail.style.display = 'table-row';
+                });
         }
 
         // Row click expands the metric detail; the two tables keep separate
@@ -5380,6 +5728,7 @@ class CombatSimUI {
         };
         wireRows('data-upgrade-row', 'data-upgrade-detail');
         wireRows('data-level-row', 'data-level-detail');
+        wireRows('data-unpriced-row', 'data-unpriced-detail');
 
         // Header click sorts that table (second click flips direction)
         const wireSort = (attr, stateKey) => {
@@ -5399,6 +5748,7 @@ class CombatSimUI {
         };
         wireSort('data-sort-key', '_upgradeSort');
         wireSort('data-level-sort-key', '_upgradeLevelSort');
+        wireSort('data-unpriced-sort-key', '_unpricedSort');
         this._wireUpgradeColumnMenu(container);
         this._wireUpgradeBudget(container);
         wireUpgradeRowActions(container);
@@ -5410,6 +5760,7 @@ class CombatSimUI {
                 { key: 'upgrade', label: 'Upgrade' },
                 { key: 'type', label: 'Type' },
                 { key: 'cost', label: 'Cost' },
+                { key: 'costSource', label: 'Cost basis' },
                 { key: 'score', label: 'Score' },
                 { key: 'dps', label: 'DPS' },
                 { key: 'xpPerHour', label: 'XP/hr' },
@@ -5431,6 +5782,9 @@ class CombatSimUI {
                 { key: 'repayHours', label: 'Hours to repay' },
                 { key: 'roiAnnualPct', label: 'ROI 1yr %' },
                 { key: 'levelTimeHours', label: 'Hours to level' },
+                { key: 'dpsNoisePct', label: 'DPS error ±%' },
+                { key: 'profitNoisePct', label: 'Profit error ±%' },
+                { key: 'measured', label: 'Clears the noise' },
             ],
             // Infinity is not a number a spreadsheet can hold; blank says the
             // same thing ("never repays") without pretending to be a measurement
@@ -5440,6 +5794,7 @@ class CombatSimUI {
                     upgrade: r.candidate?.description || '',
                     type: r.candidate?.type || 'equipment',
                     cost: finite(r.cost),
+                    costSource: r.costSource || '',
                     score: r.score ?? null,
                     dps: finite(r.metrics?.dps),
                     xpPerHour: finite(r.metrics?.xpPerHour),
@@ -5461,6 +5816,9 @@ class CombatSimUI {
                     repayHours: finite(r.economics?.repayHours),
                     roiAnnualPct: finite(r.economics?.roiAnnualPct),
                     levelTimeHours: finite(r.levelTimeHours),
+                    dpsNoisePct: finite(r.noise?.dps),
+                    profitNoisePct: finite(r.noise?.profit),
+                    measured: r.significant === undefined ? '' : r.significant ? 'yes' : 'no',
                 };
             }),
         }));

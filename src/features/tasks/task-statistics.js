@@ -8,8 +8,14 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import marketAPI from '../../api/marketplace.js';
-import { calculateTaskProfit, calculateTaskTokenValue, calculateTaskRewardValue } from './task-profit-calculator.js';
+import {
+    calculateTaskProfit,
+    calculateTaskTokenValue,
+    calculateTaskRewardValue,
+    getCowbellValue,
+} from './task-profit-calculator.js';
 import { calculateTaskCompletionSeconds } from './task-profit-display.js';
+import taskRerollTracker from './task-reroll-tracker.js';
 import { timeReadable, formatKMB, formatDateTime } from '../../utils/formatters.js';
 import { TOOLASHA } from '../../utils/selectors.js';
 
@@ -296,9 +302,13 @@ class TaskStatistics {
             });
         }
 
-        // Token valuation
+        // Token valuation — Purple's Gift accrues per task, so the whole board's
+        // task count is what prorates it, not the token total
         const tokenValue = calculateTaskTokenValue();
-        const rewardValue = calculateTaskRewardValue(totalCoins, totalTokens);
+        const rewardValue = calculateTaskRewardValue(totalCoins, totalTokens, activeTasks.length);
+
+        // What the board on screen has already cost in rerolls
+        const rerollSpend = this.calculateRerollSpend(activeTasks);
 
         // Sum action profits
         let totalActionProfit = 0;
@@ -315,15 +325,53 @@ class TaskStatistics {
             }
         }
 
+        const combinedTotal = rewardValue.total + (hasActionProfit ? totalActionProfit : 0);
+
         return {
             totalCoins,
             totalTokens,
             tokenValue,
             rewardValue,
+            rerollSpend,
             totalActionProfit: hasActionProfit ? totalActionProfit : null,
             totalCompletionSeconds: totalCompletionSeconds > 0 ? totalCompletionSeconds : null,
-            combinedTotal: rewardValue.total + (hasActionProfit ? totalActionProfit : 0),
+            combinedTotal,
+            netTotal: combinedTotal - rerollSpend.totalValue,
             taskDetails,
+        };
+    }
+
+    /**
+     * Sum what the tasks currently on the board have already cost in rerolls.
+     *
+     * Reroll spend is tracked per task by the reroll tracker; joining it here is
+     * what turns "these tasks are worth X" into "these tasks are worth X, and
+     * you have already paid Y to be looking at them".
+     *
+     * @param {Array<Object>} activeTasks - Active quests
+     * @returns {{gold: number, cowbells: number, cowbellValue: number, totalValue: number}}
+     */
+    calculateRerollSpend(activeTasks) {
+        let gold = 0;
+        let cowbells = 0;
+
+        for (const quest of activeTasks) {
+            const tracked = taskRerollTracker.taskRerollData?.get(quest.id);
+            const coinCount = tracked?.coinRerollCount ?? quest.coinRerollCount ?? 0;
+            const cowbellCount = tracked?.cowbellRerollCount ?? quest.cowbellRerollCount ?? 0;
+            gold += taskRerollTracker.calculateGoldSpent(coinCount);
+            cowbells += taskRerollTracker.calculateCowbellSpent(cowbellCount);
+        }
+
+        // Cowbells have no listing of their own — price them through the Bag of
+        // 10 Cowbells, the same basis the net worth calculator uses
+        const cowbellValue = getCowbellValue();
+
+        return {
+            gold,
+            cowbells,
+            cowbellValue,
+            totalValue: gold + cowbells * cowbellValue,
         };
     }
 
@@ -604,6 +652,31 @@ class TaskStatistics {
         section.appendChild(
             this.createRow('Combined Total', formatKMB(Math.round(rewards.combinedTotal)), config.COLOR_ACCENT)
         );
+
+        // Reroll spend already sunk into this board, and the total net of it
+        const spend = rewards.rerollSpend;
+        if (spend && spend.totalValue > 0) {
+            const spendParts = [];
+            if (spend.gold > 0) spendParts.push(`${formatKMB(Math.round(spend.gold))}💰`);
+            if (spend.cowbells > 0) spendParts.push(`${spend.cowbells}🔔`);
+            section.appendChild(
+                this.createRow(
+                    'Reroll Spend',
+                    `-${formatKMB(Math.round(spend.totalValue))} (${spendParts.join(' + ')})`,
+                    config.COLOR_LOSS
+                )
+            );
+            section.appendChild(
+                this.createRow(
+                    'Cowbell Value',
+                    `${formatKMB(Math.round(spend.cowbellValue))} each`,
+                    config.COLOR_TEXT_SECONDARY
+                )
+            );
+
+            const netColor = rewards.netTotal >= 0 ? config.COLOR_PROFIT : config.COLOR_LOSS;
+            section.appendChild(this.createRow('Net of Rerolls', formatKMB(Math.round(rewards.netTotal)), netColor));
+        }
 
         return section;
     }

@@ -12,6 +12,7 @@ vi.mock('../../utils/profit-helpers.js', () => ({ resolveItemPrice: vi.fn() }));
 const {
     restoreSignature,
     buildConsumablePools,
+    buildBuffDrinkPools,
     buildSearchSlots,
     cheapestAtLeast,
     estimateFoodSimCount,
@@ -525,5 +526,80 @@ describe('estimateFoodSimCount', () => {
 
     test('counts only the fixed probes with no searchable slots', () => {
         expect(estimateFoodSimCount(foodGameData(), [])).toBe(2);
+    });
+});
+
+describe('buff drink pools', () => {
+    function drinkGameData() {
+        const coffee = (hrid, name, itemLevel, family) => [
+            hrid,
+            {
+                name,
+                itemLevel,
+                categoryHrid: '/item_categories/drink',
+                consumableDetail: {
+                    cooldownDuration: 300,
+                    buffs: [{ uniqueHrid: family, typeHrid: '/buff_types/damage' }],
+                    defaultCombatTriggers: [{ value: 1 }],
+                },
+            },
+        ];
+        return {
+            itemDetailMap: Object.fromEntries([
+                coffee('/items/super_power_coffee', 'Super Power Coffee', 50, '/buff_uniques/power_coffee'),
+                coffee('/items/power_coffee', 'Power Coffee', 20, '/buff_uniques/power_coffee'),
+                coffee('/items/wisdom_coffee', 'Wisdom Coffee', 30, '/buff_uniques/wisdom_coffee'),
+                // A restore drink: the food search owns it
+                [
+                    '/items/tea',
+                    {
+                        name: 'Tea',
+                        categoryHrid: '/item_categories/drink',
+                        consumableDetail: {
+                            manapointRestore: 50,
+                            cooldownDuration: 5,
+                            buffs: [{ uniqueHrid: '/buff_uniques/tea' }],
+                        },
+                    },
+                ],
+                // A buff drink with no buff at all is nothing to rank
+                [
+                    '/items/plain_water',
+                    { name: 'Water', categoryHrid: '/item_categories/drink', consumableDetail: { buffs: [] } },
+                ],
+            ]),
+        };
+    }
+
+    beforeEach(() => {
+        resolveItemPrice.mockImplementation(() => ({ price: 250 }));
+    });
+
+    test('groups by the buff family the game uses for conflicts', () => {
+        const pools = buildBuffDrinkPools(drinkGameData());
+
+        expect([...pools.keys()].sort()).toEqual(['/buff_uniques/power_coffee', '/buff_uniques/wisdom_coffee']);
+    });
+
+    test('and orders each family weakest first, whatever order the data arrived in', () => {
+        const pools = buildBuffDrinkPools(drinkGameData());
+
+        expect(pools.get('/buff_uniques/power_coffee').map((e) => e.hrid)).toEqual([
+            '/items/power_coffee',
+            '/items/super_power_coffee',
+        ]);
+    });
+
+    test('an unpriced drink is still a candidate — the price is not what ranks it', () => {
+        resolveItemPrice.mockImplementation(() => ({ price: 0 }));
+        const pools = buildBuffDrinkPools(drinkGameData());
+
+        expect(pools.get('/buff_uniques/wisdom_coffee')[0].price).toBe(null);
+    });
+
+    test('the drink carries its own default triggers, so the sim drinks it as the game would', () => {
+        const pools = buildBuffDrinkPools(drinkGameData());
+
+        expect(pools.get('/buff_uniques/wisdom_coffee')[0].triggers).toEqual([{ value: 1 }]);
     });
 });

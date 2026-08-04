@@ -5,7 +5,6 @@
 
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
-import marketAPI from '../../api/marketplace.js';
 import {
     createSession,
     recordSuccess,
@@ -21,6 +20,7 @@ import {
 } from './enhancement-session.js';
 import { saveSessions, loadSessions, saveCurrentSessionId, loadCurrentSessionId } from './enhancement-storage.js';
 import { calculateEnhancementPredictions } from './enhancement-xp.js';
+import { getEnhancementMaterialPrice } from './tooltip-enhancement.js';
 
 /**
  * EnhancementTracker class manages enhancement tracking sessions
@@ -239,9 +239,9 @@ class EnhancementTracker {
         const session = this.getCurrentSession();
         if (!session) return;
 
-        // Get market price
-        const priceData = marketAPI.getPrice(itemHrid, 0);
-        const unitCost = priceData ? priceData.ask || priceData.bid || 0 : 0;
+        // Same pricing rules the tooltip and XPH calculator use, so a tracked run and its
+        // prediction cost the same materials the same way
+        const unitCost = getEnhancementMaterialPrice(itemHrid, 'ask');
 
         addMaterialCost(session, itemHrid, count, unitCost);
         await saveSessions(this.sessions);

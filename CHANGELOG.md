@@ -6,6 +6,15 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Advisors sharpened, your own rates guaranteed, and 1,200 new tests
+
+- **Upgrade advisor fixes**: real noise estimates on combat rows (the budget planner's significance guard finally works), profitable swaps rank as "pays for itself" instead of dividing by zero, every row shows its cost basis, unpriced items get their own box, drinks/teas and community buffs and trinkets are now rankable, and combat-level time accounts for the levels raising your rate.
+- **Task system fixes**: auto-reroll badges on a real rule (board-median rating vs amortized reroll cost), bulk reroll can't destroy above-median tasks and matches protection's cap semantics exactly, retired tasks feed a payoff history instead of being deleted, statistics show net-of-reroll spend, partial tasks advertise remaining value, token EV reads the actual task shop.
+- **Enhancing: your rates, not pro rates.** The shipped manual defaults (level 140, +13 Celestial enhancer, ultra tea, full +10 gear) no longer stand in for you — every field seeds from your detected stats unless you edited it, unearned achievement bonuses are gone, and a "manual params" tag shows wherever overrides apply. Plus: resumed sessions count attempts correctly, earrings get their 5× multiplier, the Chance Cape's success bonus counts in manual mode, mirror breakdowns follow the real optimal path, one shared price rule across tooltip/XPH/tracker, prediction and measurement share one time base, and the worker copies share the one Markov implementation (fixing a level-19 crash and negative failure probabilities).
+- **Craft-to-sell**: a Toolasha adapter serves your true per-character craft costs to the flip finder's new craft rows.
+- **Alchemy fixes**: equipment rare/essence find counted (was silently always zero), tea speed bonus applied (six TODO stubs unified).
+- **~1,200 new tests** across previously untested modules — gathering/production/alchemy profit math with hand-computed fixtures, networth valuation, listing-age interpolation, dungeon statistics, chat parsing, worker pool, websocket dedup, and more. Suite now 4,044 tests.
+
 ### Sync, account view, honest philo math, and lab fixes
 
 - **Cross-device sync** (Settings → Sync): push/pull your data to a private GitHub Gist with a personal access token (settings-only or everything, optional auto-sync, newest-wins with a confirm, chunked uploads, soft failures). The token is stored locally and never uploaded — the payload redacts it.

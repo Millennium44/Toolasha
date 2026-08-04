@@ -20,6 +20,7 @@ import costSummary from '../features/actions/cost-summary.js';
 import actionPanelLayout from '../features/actions/action-panel-layout.js';
 import craftingPlan from '../features/crafting-plan/index.js';
 import * as craftingPlanCalculator from '../features/crafting-plan/crafting-plan-calculator.js';
+import * as craftArbitrage from '../features/crafting-plan/craft-arbitrage-adapter.js';
 import teaRecommendation from '../features/actions/tea-recommendation.js';
 import inventoryCountDisplay from '../features/actions/inventory-count-display.js';
 import pinnedActionsPage from '../features/actions/pinned-actions-page.js';
@@ -59,6 +60,9 @@ toolashaRoot.Actions = {
     // Reached by Equipment Watch, which lives in the market bundle: importing
     // it there would copy the whole recursive costing model into a second bundle
     craftingPlanCalculator,
+    // The same costing model, narrowed to one read-only question — what would
+    // one of these cost *me* to make — for callers outside this bundle
+    craftArbitrage,
     alchemyProfitDisplay,
     alchemyBestItems,
     alchemyItemPins,
