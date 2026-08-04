@@ -81,12 +81,15 @@ class NetworthHistory {
         // Take item-level detail snapshot for 24h breakdown
         this.takeDetailSnapshot(data);
 
-        // Persist to storage
+        // Persist — queued, not awaited. The debounced set's promise resolves
+        // only when its 3-second timer fires, so awaiting two in series was six
+        // seconds of waiting for timers that exist to postpone the write. This
+        // runs hourly and at startup; nothing downstream needs the write landed.
         const storageKey = `networth_${this.characterId}`;
-        await storage.set(storageKey, this.history, STORE_NAME);
+        storage.set(storageKey, this.history, STORE_NAME);
 
         const detailKey = `networthDetail_${this.characterId}`;
-        await storage.set(detailKey, this.detailHistory, STORE_NAME);
+        storage.set(detailKey, this.detailHistory, STORE_NAME);
     }
 
     /**

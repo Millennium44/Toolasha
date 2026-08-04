@@ -1223,17 +1223,19 @@ describe('how many simulations run at once', () => {
         expect(seen.peak).toBeGreaterThan(1);
     });
 
-    test('and each of them is pinned to a single worker', async () => {
+    test('and every sim in the analysis — baseline included — is chunked the same', async () => {
+        // The shared seed pairs two runs only while they draw the same streams,
+        // and the chunking decides the streams. A baseline split four ways
+        // against candidates run unsplit is an independent sample, and every
+        // combat-inert candidate wears the same phantom delta against it — a
+        // skilling house room "improving" DPS
         plannedWorkerCount.mockReturnValue(4);
         trackPeak();
 
         await runUpgradeAnalysis(combatSetup(200), null, {});
 
-        const batchCalls = runSimulation.mock.calls.slice(1);
-        expect(batchCalls.length).toBeGreaterThan(0);
-        expect(batchCalls.every((call) => call[2]?.workers === 1)).toBe(true);
-        // The baseline is a lone run, so it keeps the fan-out that suits one
-        expect(runSimulation.mock.calls[0][2]?.workers).toBeUndefined();
+        expect(runSimulation.mock.calls.length).toBeGreaterThan(1);
+        expect(runSimulation.mock.calls.every((call) => call[2]?.workers === 1)).toBe(true);
     });
 
     test('one simulation failing stops the queue handing out more', async () => {

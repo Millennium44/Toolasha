@@ -1754,9 +1754,17 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
 
     // Run baseline sim
     onProgress?.({ current: 0, total, description: 'Running baseline...' });
+    // One worker, like every candidate below. The shared seed only cancels
+    // sampling noise while both runs draw the same stream in the same order,
+    // and the chunking decides the streams: a baseline split four ways is four
+    // streams, a candidate unsplit is one, and the two are independent samples
+    // however carefully the seed is shared. That mismatch put an identical
+    // phantom delta on every combat-inert candidate — a skilling house room
+    // "improving" DPS by 0.06%.
     const baselineResult = await runSimulation(
         { gameData, playerDTOs, zoneHrid, difficultyTier, hours, communityBuffs, seed: simSeed },
-        null
+        null,
+        { workers: 1 }
     );
     current++;
 
