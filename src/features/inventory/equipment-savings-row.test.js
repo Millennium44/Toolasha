@@ -34,6 +34,12 @@ vi.mock('../../core/data-manager.js', () => ({
         // The picker builds its list from the whole item map, which is the same
         // fixture the per-item lookups read
         getInitClientData: () => ({ itemDetailMap: game.details, actionDetailMap: game.actions, ...game.shops }),
+        // Gear targets are one character's, so the module keys on the character
+        // and listens for the switch
+        getCurrentCharacterId: () => 'char1',
+        getCurrentCharacterGameMode: () => 'standard',
+        on: () => {},
+        off: () => {},
     },
 }));
 vi.mock('../../core/config.js', () => ({
@@ -45,8 +51,18 @@ vi.mock('../../core/config.js', () => ({
     },
 }));
 vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: () => () => {} } }));
-vi.mock('../../core/storage.js', () => ({ default: { db: {}, getJSON: async () => null, setJSON: async () => {} } }));
-vi.mock('../../utils/deferred-load.js', () => ({ loadWhenReady: async () => {} }));
+vi.mock('../../core/storage.js', () => ({
+    default: {
+        db: {},
+        ready: Promise.resolve(true),
+        getJSON: async () => null,
+        setJSON: async () => {},
+        get: async (_k, _s, fallback = null) => fallback,
+        set: async () => true,
+        delete: async () => true,
+        getAllKeys: async () => [],
+    },
+}));
 vi.mock('../../utils/panel-geometry.js', () => ({
     restoreGeometry: () => {},
     saveGeometry: () => {},

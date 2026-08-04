@@ -15,8 +15,9 @@
  * await per draw is not a thing to put behind a colour.
  */
 
+import dataManager from '../core/data-manager.js';
 import storage from '../core/storage.js';
-import { loadWhenReady } from './deferred-load.js';
+import { readScoped, writeScoped } from './character-key.js';
 
 const STORAGE_KEY = 'consumablesSettings';
 
@@ -50,7 +51,7 @@ export function targetIndex() {
  */
 export function cycleTarget() {
     index = (index + 1) % TARGETS.length;
-    storage.setJSON(STORAGE_KEY, { targetSeconds: currentTarget().seconds }, 'settings').catch((error) => {
+    writeScoped(STORAGE_KEY, { targetSeconds: currentTarget().seconds }, 'settings').catch((error) => {
         console.error('[ConsumableTarget] Saving the target failed:', error);
     });
     return currentTarget();
@@ -64,10 +65,21 @@ export function cycleTarget() {
  * @returns {Promise<void>}
  */
 export async function loadTarget(onLoaded) {
-    await loadWhenReady(STORAGE_KEY, 'settings', (saved) => {
+    try {
+        // Waits for the database: it is opened after the libraries are
+        // evaluated, so a read at module scope always returns the default
+        await storage.ready;
+        const saved = await readScoped(STORAGE_KEY, 'settings', null, { migrate: 'adopt' });
         const found = TARGETS.findIndex((target) => target.seconds === saved?.targetSeconds);
         // A value stored by an older list must not win over the code's
-        if (found >= 0) index = found;
-    });
+        index = found >= 0 ? found : DEFAULT_INDEX;
+    } catch (error) {
+        console.error('[ConsumableTarget] Reading the target failed:', error);
+    }
     onLoaded?.(currentTarget());
 }
+
+// How much stock is enough is a question about one character's habits, so the
+// key is theirs — and nothing here re-runs on a switch unless it asks to be told
+dataManager.on('character_initialized', () => loadTarget());
+dataManager.on('character_switched', () => loadTarget());

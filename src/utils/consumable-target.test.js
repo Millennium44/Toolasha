@@ -9,7 +9,17 @@
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
-const store = vi.hoisted(() => ({ data: {} }));
+const store = vi.hoisted(() => ({ data: {}, networth: {} }));
+const character = vi.hoisted(() => ({ id: 'market123', mode: 'standard' }));
+
+vi.mock('../core/data-manager.js', () => ({
+    default: {
+        getCurrentCharacterId: () => character.id,
+        getCurrentCharacterGameMode: () => character.mode,
+        on: () => {},
+        off: () => {},
+    },
+}));
 
 vi.mock('../core/storage.js', () => ({
     default: {
@@ -18,10 +28,25 @@ vi.mock('../core/storage.js', () => ({
         setJSON: async (key, value) => {
             store.data[key] = value;
         },
+        get: async (key, name = 'settings', fallback = null) =>
+            (name === 'networthHistory' ? store.networth[key] : store.data[key]) ?? fallback,
+        set: async (key, value) => {
+            store.data[key] = value;
+            return true;
+        },
+        delete: async (key) => {
+            delete store.data[key];
+            return true;
+        },
+        getAllKeys: async (name = 'settings') => Object.keys(name === 'networthHistory' ? store.networth : store.data),
     },
 }));
 
 const { TARGETS, currentTarget, cycleTarget, loadTarget } = await import('./consumable-target.js');
+const { _resetAdoptionCache } = await import('./character-key.js');
+
+/** Where this character's answer lives */
+const KEY = 'consumablesSettings_market123';
 
 /**
  * Put the in-memory selection back to the default between tests.
@@ -31,7 +56,11 @@ const { TARGETS, currentTarget, cycleTarget, loadTarget } = await import('./cons
  * the previous test had chosen sitting in memory.
  */
 const reset = async () => {
-    store.data = { consumablesSettings: { targetSeconds: 86400 } };
+    character.id = 'market123';
+    character.mode = 'standard';
+    _resetAdoptionCache();
+    store.networth = {};
+    store.data = { [KEY]: { targetSeconds: 86400 } };
     await loadTarget();
     store.data = {};
 };
@@ -52,13 +81,13 @@ describe('picking a target', () => {
         cycleTarget();
         await new Promise((resolve) => setTimeout(resolve, 0));
 
-        expect(store.data.consumablesSettings).toEqual({ targetSeconds: 3 * 86400 });
+        expect(store.data[KEY]).toEqual({ targetSeconds: 3 * 86400 });
     });
 });
 
 describe('reading it back', () => {
     test('a stored target is what the panel opens on', async () => {
-        store.data.consumablesSettings = { targetSeconds: 7 * 86400 };
+        store.data[KEY] = { targetSeconds: 7 * 86400 };
         await loadTarget();
 
         expect(currentTarget().label).toBe('1 week');
@@ -72,18 +101,56 @@ describe('reading it back', () => {
 
     test('a target the list no longer offers does not blank it', async () => {
         // The list is code; a value stored by an older one must not win
-        store.data.consumablesSettings = { targetSeconds: 999 };
+        store.data[KEY] = { targetSeconds: 999 };
         await loadTarget();
 
         expect(currentTarget().label).toBe('1 day');
     });
 
     test('whatever drew against the default is told to draw again', async () => {
-        store.data.consumablesSettings = { targetSeconds: 8 * 3600 };
+        store.data[KEY] = { targetSeconds: 8 * 3600 };
         const redraw = vi.fn();
 
         await loadTarget(redraw);
 
         expect(redraw).toHaveBeenCalledWith(expect.objectContaining({ label: '8 hours' }));
+    });
+});
+
+describe('one answer per character', () => {
+    test('a target saved before the split is claimed by the market character', async () => {
+        store.data = { consumablesSettings: { targetSeconds: 7 * 86400 } };
+        await loadTarget();
+
+        expect(currentTarget().label).toBe('1 week');
+        expect(store.data[KEY]).toEqual({ targetSeconds: 7 * 86400 });
+        expect(store.data.consumablesSettings).toBeUndefined();
+    });
+
+    test('an iron cow starts from the default and leaves the old value alone', async () => {
+        character.id = 'iron456';
+        character.mode = 'ironcow';
+        store.data = { consumablesSettings: { targetSeconds: 7 * 86400 } };
+        await loadTarget();
+
+        expect(currentTarget().label).toBe('1 day');
+        expect(store.data.consumablesSettings).toEqual({ targetSeconds: 7 * 86400 });
+        expect(store.data['consumablesSettings_iron456']).toBeUndefined();
+    });
+
+    test('each character keeps its own', async () => {
+        store.data = { consumablesSettings_market123: { targetSeconds: 7 * 86400 } };
+        await loadTarget();
+        expect(currentTarget().label).toBe('1 week');
+
+        character.id = 'iron456';
+        character.mode = 'ironcow';
+        await loadTarget();
+        expect(currentTarget().label).toBe('1 day');
+
+        cycleTarget();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(store.data['consumablesSettings_iron456']).toEqual({ targetSeconds: 3 * 86400 });
+        expect(store.data.consumablesSettings_market123).toEqual({ targetSeconds: 7 * 86400 });
     });
 });

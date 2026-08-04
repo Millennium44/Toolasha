@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Market and inventory state stops leaking between characters
+
+- **Ten market/inventory stores scoped per character**: watchlist, equipment savings targets, house untracking, alchemy pins, inventory sort, philo calculator settings, consumable planning horizon, market history filters, and the mooket follow list (display prefs stay shared). Your iron cow starts clean; the market cow inherits the existing data.
+- **The personal listing log and the shared listing-age anchors were living under one key** — split apart: your own listings are yours per character, while the anonymous id→time anchors every character uses to date other people's listings stay global, so age estimates keep working on characters that never listed anything.
+
 ### Combat and labyrinth records stop leaking between characters
 
 - **Eleven combat-side stores scoped per character**: enhancement tracker sessions, consumable trackers and the last combat run, combat session history, labyrinth fight outcomes / sim cache / room logs, sim-accuracy observations, in-progress dungeon runs, dungeon panel UI state, task reroll data, and the treasure tally. Keep-worthy history migrates to the main character; gear-derived data (fight outcomes, sim caches, live trackers) starts clean instead of inheriting another character's numbers.

@@ -11,7 +11,47 @@
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
-const game = vi.hoisted(() => ({ data: {}, inventory: [], prices: {} }));
+const game = vi.hoisted(() => ({
+    data: {},
+    inventory: [],
+    prices: {},
+    characterId: 'market123',
+    gameMode: 'standard',
+    dmHandlers: {},
+}));
+
+/** A small in-memory store, so a scoped key and a legacy one are distinguishable */
+const storageMock = vi.hoisted(() => {
+    const stores = new Map();
+    const storeFor = (name) => {
+        if (!stores.has(name)) stores.set(name, new Map());
+        return stores.get(name);
+    };
+    const read = (key, store, fallback) => {
+        const map = storeFor(store);
+        return map.has(key) && map.get(key) != null ? map.get(key) : fallback;
+    };
+    return {
+        storeFor,
+        reset: () => stores.clear(),
+        ready: Promise.resolve(true),
+        get: async (key, store = 'settings', fallback = null) => read(key, store, fallback),
+        getJSON: async (key, store = 'settings', fallback = null) => read(key, store, fallback),
+        set: async (key, value, store = 'settings') => {
+            storeFor(store).set(key, structuredClone(value));
+            return true;
+        },
+        setJSON: async (key, value, store = 'settings') => {
+            storeFor(store).set(key, structuredClone(value));
+            return true;
+        },
+        delete: async (key, store = 'settings') => {
+            storeFor(store).delete(key);
+            return true;
+        },
+        getAllKeys: async (store = 'settings') => Array.from(storeFor(store).keys()),
+    };
+});
 const settings = vi.hoisted(() => ({}));
 const listeners = vi.hoisted(() => ({}));
 const observed = vi.hoisted(() => []);
@@ -22,12 +62,18 @@ vi.mock('../../core/data-manager.js', () => ({
         getInitClientData: () => game.data,
         getInventory: () => game.inventory,
         getItemDetails: (hrid) => game.data.itemDetailMap?.[hrid],
+        // The list is one character's, so the module keys on the character and
+        // asks to be told when it changes
+        getCurrentCharacterId: () => game.characterId,
+        getCurrentCharacterGameMode: () => game.gameMode,
+        on: (event, handler) => {
+            game.dmHandlers[event] = handler;
+        },
+        off: () => {},
     },
 }));
 
-vi.mock('../../core/storage.js', () => ({
-    default: { getJSON: async () => null, setJSON: async () => {} },
-}));
+vi.mock('../../core/storage.js', () => ({ default: storageMock }));
 
 vi.mock('../../utils/panel-geometry.js', () => ({
     restoreGeometry: () => {},
@@ -88,6 +134,7 @@ const {
     clearWatchlist,
     default: watchlist,
 } = await import('./watchlist.js');
+const { _resetAdoptionCache } = await import('../../utils/character-key.js');
 
 const itemDetailMap = {
     '/items/coin': { name: 'Coin' },
@@ -98,6 +145,10 @@ const itemDetailMap = {
 };
 
 beforeEach(() => {
+    storageMock.reset();
+    _resetAdoptionCache();
+    game.characterId = 'market123';
+    game.gameMode = 'standard';
     // The master toggle, on by default in the schema; initialize() is a no-op
     // without it, which is its own test below
     settings.watchlist = true;
@@ -498,5 +549,70 @@ describe('the dot on tracked items', () => {
         for (const cb of listeners.watchlist_inventoryDots || []) cb(false);
 
         expect(dots(element)).toHaveLength(0);
+    });
+});
+
+describe('one list per character', () => {
+    /** Re-read the list as whoever is logged in now, the way a switch does */
+    const switchCharacter = async (id, mode = 'standard') => {
+        game.characterId = id;
+        game.gameMode = mode;
+        await game.dmHandlers.character_switched();
+    };
+
+    test('a list saved before the split is claimed by the market character', async () => {
+        storageMock.storeFor('settings').set('watchlist', { entries: [{ hrid: '/items/cheese', name: 'Cheese' }] });
+
+        await switchCharacter('market123');
+
+        expect(isWatched('/items/cheese')).toBe(true);
+        expect(storageMock.storeFor('settings').get('watchlist_market123').entries).toHaveLength(1);
+        // Moved rather than copied, so it cannot be claimed twice
+        expect(storageMock.storeFor('settings').has('watchlist')).toBe(false);
+    });
+
+    test('an iron cow starts empty and leaves the old list for its owner', async () => {
+        storageMock.storeFor('settings').set('watchlist', { entries: [{ hrid: '/items/cheese', name: 'Cheese' }] });
+
+        await switchCharacter('iron456', 'ironcow');
+
+        expect(watchlistEntries()).toEqual([]);
+        expect(storageMock.storeFor('settings').get('watchlist').entries).toHaveLength(1);
+        expect(storageMock.storeFor('settings').has('watchlist_iron456')).toBe(false);
+    });
+
+    test('switching characters swaps the list rather than merging it', async () => {
+        storageMock.storeFor('settings').set('watchlist_market123', {
+            entries: [{ hrid: '/items/cheese', name: 'Cheese' }],
+        });
+        storageMock.storeFor('settings').set('watchlist_iron456', {
+            entries: [{ hrid: '/items/rare_hat', name: 'Rare Hat' }],
+        });
+
+        await switchCharacter('market123');
+        expect(watchlistEntries().map((entry) => entry.hrid)).toEqual(['/items/cheese']);
+
+        await switchCharacter('iron456', 'ironcow');
+        expect(watchlistEntries().map((entry) => entry.hrid)).toEqual(['/items/rare_hat']);
+    });
+
+    test('a character with nothing saved gets an empty list, not the last one', async () => {
+        storageMock.storeFor('settings').set('watchlist_market123', {
+            entries: [{ hrid: '/items/cheese', name: 'Cheese' }],
+        });
+
+        await switchCharacter('market123');
+        await switchCharacter('iron456', 'ironcow');
+
+        expect(watchlistEntries()).toEqual([]);
+    });
+
+    test('adding an item writes to the current character key only', async () => {
+        await switchCharacter('iron456', 'ironcow');
+        watchItem('/items/cheese', 'Cheese');
+        await Promise.resolve();
+
+        expect(storageMock.storeFor('settings').get('watchlist_iron456').entries).toHaveLength(1);
+        expect(storageMock.storeFor('settings').has('watchlist_market123')).toBe(false);
     });
 });

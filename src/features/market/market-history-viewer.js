@@ -16,6 +16,7 @@ import { formatWithSeparator, formatKMB, formatDateTime } from '../../utils/form
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { navigateToMarketplace, visibleTabsContainer } from '../../utils/marketplace-tabs.js';
+import { readScoped, writeScoped } from '../../utils/character-key.js';
 import listingMarkers, { markerStateFor } from './listing-markers.js';
 
 /** Rows here are finished trades, not working orders. Markers are told so. */
@@ -38,6 +39,8 @@ class MarketHistoryViewer {
         this.typeFilter = 'all'; // 'all', 'buy', 'sell'
         this.statusFilter = 'all'; // 'all', 'active', 'filled', 'filled_active', 'canceled', 'expired', 'unknown'
         this.useKMBFormat = false; // K/M/B formatting toggle
+        // Base of a per-character key; estimatedListingAge owns the scoping and
+        // the split of the old shared array, so reads go through it
         this.storageKey = 'marketListingTimestamps';
         this.timerRegistry = createTimerRegistry();
 
@@ -110,7 +113,10 @@ class MarketHistoryViewer {
      */
     async loadFilters() {
         try {
-            const savedFilters = await storage.getJSON('marketHistoryFilters', 'settings', null);
+            // Discarded rather than adopted on migration: a filter naming items
+            // and dates is a view of one character's log, and pointing it at
+            // another's shows an empty table with no visible reason
+            const savedFilters = await readScoped('marketHistoryFilters', 'settings', null, { migrate: 'discard' });
             if (savedFilters) {
                 // Convert date strings back to Date objects
                 this.filters.dateFrom = savedFilters.dateFrom ? new Date(savedFilters.dateFrom) : null;
@@ -137,7 +143,7 @@ class MarketHistoryViewer {
                 selectedEnhLevels: this.filters.selectedEnhLevels,
                 selectedTypes: this.filters.selectedTypes,
             };
-            await storage.setJSON('marketHistoryFilters', filtersToSave, 'settings', true);
+            await writeScoped('marketHistoryFilters', filtersToSave, 'settings', true);
         } catch (error) {
             console.error('[MarketHistoryViewer] Failed to save filters:', error);
         }
@@ -257,8 +263,9 @@ class MarketHistoryViewer {
      */
     async loadListings() {
         try {
-            const stored = await storage.getJSON(this.storageKey, 'marketListings', []);
-            // Filter out listings without itemHrid (e.g., seed listings from estimated-listing-age)
+            const stored = await estimatedListingAge.personalListings();
+            // Belt and braces: anchors are split off before this point, but a
+            // row with no item is not a row this table can draw
             this.listings = stored.filter((listing) => listing && listing.itemHrid);
 
             // Migrate old listings without status field
@@ -1705,7 +1712,7 @@ class MarketHistoryViewer {
             document.body.appendChild(progressMsg);
 
             // Load existing listings
-            const existingListings = await storage.getJSON(this.storageKey, 'marketListings', []);
+            const existingListings = await estimatedListingAge.personalListings();
             const existingIds = new Set(existingListings.map((l) => l.id));
 
             let imported = 0;
@@ -1809,7 +1816,7 @@ class MarketHistoryViewer {
             }
 
             // Save to storage
-            await storage.setJSON(this.storageKey, existingListings, 'marketListings', true);
+            await writeScoped(this.storageKey, existingListings, 'marketListings', true);
 
             // Remove progress message
             document.body.removeChild(progressMsg);
@@ -1938,7 +1945,7 @@ class MarketHistoryViewer {
             document.body.appendChild(progressMsg);
 
             // Convert imported format to Toolasha format
-            const existingListings = await storage.getJSON(this.storageKey, 'marketListings', []);
+            const existingListings = await estimatedListingAge.personalListings();
             const existingIds = new Set(existingListings.map((l) => l.id));
 
             let imported = 0;
@@ -1969,7 +1976,7 @@ class MarketHistoryViewer {
             }
 
             // Save to storage
-            await storage.setJSON(this.storageKey, existingListings, 'marketListings', true);
+            await writeScoped(this.storageKey, existingListings, 'marketListings', true);
 
             // Remove progress message
             document.body.removeChild(progressMsg);
@@ -2022,7 +2029,7 @@ class MarketHistoryViewer {
 
         try {
             // Clear from storage
-            await storage.setJSON(this.storageKey, [], 'marketListings', true);
+            await writeScoped(this.storageKey, [], 'marketListings', true);
 
             // Clear local data
             this.listings = [];

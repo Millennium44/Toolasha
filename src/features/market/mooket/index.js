@@ -44,11 +44,46 @@ import {
     watchedChange,
     normaliseWatchlist,
 } from './market-watchlist.js';
+import { readScoped, writeScoped } from '../../../utils/character-key.js';
 
 const PANEL_ID = 'mwi-market-history-panel';
 const TAB_ID = 'mwi-market-history-tab';
+/** Where the panel is and how it draws — one panel, so one global answer */
 const PREFS_KEY = 'mooketPanelPrefs';
+/**
+ * What this character is watching.
+ *
+ * Split out of the prefs object, because it is the one field in it that is not
+ * about the panel: an iron cow watching its own handful of items had the market
+ * character's list of forty pushed onto it every time either of them saved.
+ */
+const WATCHLIST_BASE = 'mooketWatchlist';
 const POLL_MS = 500;
+
+/**
+ * Lift a pre-split watchlist out of the shared prefs object into its own key.
+ *
+ * Seeding the bare key and letting `readScoped` take it from there hands the
+ * adoption rules — the main character claims it, an iron cow starts clean —
+ * to one implementation instead of a second copy of them here.
+ * @param {Object|null} savedPrefs - The prefs object as read from storage
+ * @returns {Promise<void>}
+ */
+export async function splitLegacyWatchlist(savedPrefs) {
+    if (!savedPrefs || savedPrefs.watchlist === undefined) return;
+
+    try {
+        const alreadySplit = await storage.get(WATCHLIST_BASE, 'settings', null);
+        if (alreadySplit === null) {
+            await storage.setJSON(WATCHLIST_BASE, normaliseWatchlist(savedPrefs.watchlist), 'settings', true);
+        }
+        const remaining = { ...savedPrefs };
+        delete remaining.watchlist;
+        await storage.setJSON(PREFS_KEY, remaining, 'settings', true);
+    } catch (error) {
+        console.error('[MarketHistory] Splitting the panel watchlist out failed:', error);
+    }
+}
 
 /** Series colours, in the order the datasets are built */
 const SERIES = [
@@ -82,15 +117,7 @@ class MarketHistoryPanel {
         if (!config.getSetting('market_pooledHistory')) return;
         this.isInitialized = true;
 
-        try {
-            const saved = await storage.getJSON(PREFS_KEY, 'settings', null);
-            if (saved) {
-                this.prefs = { ...this.prefs, ...saved };
-                this.watchlist = normaliseWatchlist(saved.watchlist);
-            }
-        } catch (error) {
-            console.error('[MarketHistory] Loading panel preferences failed:', error);
-        }
+        await this.loadPrefs();
 
         await marketPriceStore.initialize();
         marketHistoryAPI.connect();
@@ -139,9 +166,37 @@ class MarketHistoryPanel {
         this.isInitialized = false;
     }
 
+    /**
+     * Read the panel's own settings and this character's watched items.
+     *
+     * Separate from `initialize` because it is the whole of what a character
+     * switch has to redo, and because it is the only part of start-up that can
+     * be tested without a canvas.
+     * @returns {Promise<void>}
+     */
+    async loadPrefs() {
+        try {
+            const saved = await storage.getJSON(PREFS_KEY, 'settings', null);
+            if (saved) {
+                this.prefs = { ...this.prefs, ...saved };
+                delete this.prefs.watchlist;
+            }
+            await splitLegacyWatchlist(saved);
+            // Assigned whether or not anything was found: initialize runs again
+            // after a character switch, and the previous character's list must
+            // not survive it
+            this.watchlist = normaliseWatchlist(await readScoped(WATCHLIST_BASE, 'settings', null));
+        } catch (error) {
+            console.error('[MarketHistory] Loading panel preferences failed:', error);
+        }
+    }
+
     async savePrefs() {
         try {
-            await storage.setJSON(PREFS_KEY, { ...this.prefs, watchlist: this.watchlist }, 'settings');
+            const prefs = { ...this.prefs };
+            delete prefs.watchlist;
+            await storage.setJSON(PREFS_KEY, prefs, 'settings');
+            await writeScoped(WATCHLIST_BASE, this.watchlist, 'settings');
         } catch (error) {
             console.error('[MarketHistory] Saving panel preferences failed:', error);
         }

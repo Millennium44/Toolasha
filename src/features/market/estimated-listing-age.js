@@ -13,15 +13,53 @@ import config from '../../core/config.js';
 import storage from '../../core/storage.js';
 import marketAPI from '../../api/marketplace.js';
 import { formatRelativeTime, formatDateTime } from '../../utils/formatters.js';
+import { readScoped, writeScoped } from '../../utils/character-key.js';
+
+/** Store both halves of the old shared key live in */
+const LISTINGS_STORE = 'marketListings';
+
+/**
+ * The log of *your* listings — full records, one set per character.
+ *
+ * Scoped, because it is what the Market History table shows and what the order
+ * book highlights green: another character's listing ids matched against the
+ * book would claim its rows as yours.
+ */
+const LISTINGS_BASE = 'marketListingTimestamps';
+
+/**
+ * Bare `{id, timestamp}` points used only to date *other* people's listings.
+ *
+ * Global, because a listing id means the same thing to every character — this
+ * is calibration data, not anybody's history, and splitting it per character
+ * would halve the accuracy of both.
+ */
+const ANCHORS_KEY = 'marketListingAnchors';
+
+/**
+ * Anchor points from the RWI script author's data, for a fresh install that has
+ * no listings of its own to interpolate between.
+ */
+const SEED_ANCHORS = [
+    { id: 106442952, timestamp: 1763409373481 },
+    { id: 106791533, timestamp: 1763541486867 },
+    { id: 107530218, timestamp: 1763842767083 },
+    { id: 107640371, timestamp: 1763890560819 },
+    { id: 107678558, timestamp: 1763904036320 },
+];
 
 class EstimatedListingAge {
     constructor() {
         this.knownListings = []; // Array of {id, timestamp, createdTimestamp, enhancementLevel, ...} sorted by id
+        this.anchors = []; // Shared {id, timestamp} calibration points, sorted by id
+        this.anchorsLoaded = false;
+        this.estimationPoints = []; // knownListings ∪ anchors, sorted by id
         this.orderBooksCache = {}; // Cache of order book data from WebSocket
         this.currentItemHrid = null; // Track current item from WebSocket
         this.unregisterWebSocket = null;
         this.unregisterObserver = null;
-        this.storageKey = 'marketListingTimestamps';
+        this.storageKey = LISTINGS_BASE;
+        this.anchorsKey = ANCHORS_KEY;
         this.orderBooksCacheKey = 'marketOrderBooksCache';
         this.isInitialized = false;
     }
@@ -90,38 +128,92 @@ class EstimatedListingAge {
     }
 
     /**
-     * Load historical listing data from IndexedDB
+     * Load the shared anchor pool, harvesting it out of the legacy shared key.
+     *
+     * Runs before anything can read the per-character key, because adopting that
+     * key deletes the legacy copy — and the legacy copy is where every anchor
+     * written before the split still lives. Both characters need those points,
+     * so they are lifted out first and only then is the rest adopted.
+     * @returns {Promise<void>}
+     */
+    async loadAnchors() {
+        try {
+            const stored = (await storage.getJSON(this.anchorsKey, LISTINGS_STORE, [])) || [];
+            const legacy = await storage.getJSON(LISTINGS_BASE, LISTINGS_STORE, null);
+
+            const byId = new Map();
+            const add = (entry) => {
+                if (!entry || typeof entry.id !== 'number' || typeof entry.timestamp !== 'number') return;
+                if (!byId.has(entry.id)) byId.set(entry.id, { id: entry.id, timestamp: entry.timestamp });
+            };
+
+            stored.forEach(add);
+            // The half of the legacy array that was never anybody's listing
+            if (Array.isArray(legacy)) legacy.filter((entry) => entry && !entry.itemHrid).forEach(add);
+            SEED_ANCHORS.forEach(add);
+
+            this.anchors = [...byId.values()].sort((a, b) => a.id - b.id);
+            if (this.anchors.length !== stored.length) {
+                await storage.setJSON(this.anchorsKey, this.anchors, LISTINGS_STORE, true);
+            }
+        } catch (error) {
+            console.error('[EstimatedListingAge] Failed to load listing anchors:', error);
+            this.anchors = [...SEED_ANCHORS];
+        } finally {
+            this.anchorsLoaded = true;
+        }
+    }
+
+    /**
+     * Load this character's listing log from IndexedDB
      */
     async loadHistoricalData() {
         try {
-            const stored = await storage.getJSON(this.storageKey, 'marketListings', []);
-
-            // Load all historical data (no time-based filtering)
-            this.knownListings = stored.sort((a, b) => a.id - b.id);
-
-            // Add hardcoded seed listings for baseline estimation accuracy
-            // These are anchor points from RWI script author's data
-            const seedListings = [
-                { id: 106442952, timestamp: 1763409373481 },
-                { id: 106791533, timestamp: 1763541486867 },
-                { id: 107530218, timestamp: 1763842767083 },
-                { id: 107640371, timestamp: 1763890560819 },
-                { id: 107678558, timestamp: 1763904036320 },
-            ];
-
-            // Add seeds only if they don't already exist in stored data
-            for (const seed of seedListings) {
-                if (!this.knownListings.find((l) => l.id === seed.id)) {
-                    this.knownListings.push(seed);
-                }
+            if (!this.anchorsLoaded) {
+                await this.loadAnchors();
             }
 
-            // Re-sort after adding seeds
-            this.knownListings.sort((a, b) => a.id - b.id);
+            const stored = (await readScoped(LISTINGS_BASE, LISTINGS_STORE, [], { migrate: 'adopt' })) || [];
+
+            // Load all historical data (no time-based filtering). Entries without
+            // an itemHrid are anchors, which now live in their own global key.
+            const personal = stored.filter((entry) => entry && entry.itemHrid);
+            this.knownListings = personal.sort((a, b) => a.id - b.id);
+
+            // An array adopted from before the split still carries its anchor
+            // half; drop it now rather than re-filtering it on every read
+            if (personal.length !== stored.length) {
+                await this.saveHistoricalData();
+            }
         } catch (error) {
             console.error('[EstimatedListingAge] Failed to load historical data:', error);
             this.knownListings = [];
         }
+
+        this.rebuildEstimationPoints();
+    }
+
+    /**
+     * Rebuild the set of points ages are estimated from: this character's own
+     * listings, which are exact, over the shared anchors, which are not.
+     */
+    rebuildEstimationPoints() {
+        const byId = new Map();
+        for (const anchor of this.anchors) byId.set(anchor.id, anchor);
+        for (const listing of this.knownListings) byId.set(listing.id, listing);
+        this.estimationPoints = [...byId.values()].sort((a, b) => a.id - b.id);
+    }
+
+    /**
+     * This character's stored listing log, migrated and split.
+     *
+     * The one reader-side entry point, so nothing else has to know the key, the
+     * store, or that a legacy shared array ever existed.
+     * @returns {Promise<Array>} Copies of the stored listings, sorted by id
+     */
+    async personalListings() {
+        await this.loadHistoricalData();
+        return this.knownListings.map((listing) => ({ ...listing }));
     }
 
     /**
@@ -146,7 +238,7 @@ class EstimatedListingAge {
      */
     async saveHistoricalData() {
         try {
-            await storage.setJSON(this.storageKey, this.knownListings, 'marketListings', true);
+            await writeScoped(LISTINGS_BASE, this.knownListings, LISTINGS_STORE, true);
         } catch (error) {
             console.error('[EstimatedListingAge] Failed to save historical data:', error);
         }
@@ -161,6 +253,7 @@ class EstimatedListingAge {
     async deleteListing(listingId) {
         await this.loadHistoricalData();
         this.knownListings = this.knownListings.filter((l) => l.id !== listingId);
+        this.rebuildEstimationPoints();
         await this.saveHistoricalData();
     }
 
@@ -454,6 +547,7 @@ class EstimatedListingAge {
 
         // Re-sort by ID
         this.knownListings.sort((a, b) => a.id - b.id);
+        this.rebuildEstimationPoints();
 
         // Save to storage (debounced)
         this.saveHistoricalData();
@@ -919,18 +1013,20 @@ class EstimatedListingAge {
      * @returns {number} Estimated timestamp in milliseconds
      */
     estimateTimestamp(listingId) {
-        if (this.knownListings.length === 0) {
+        const points = this.estimationPoints;
+
+        if (points.length === 0) {
             // No data, assume recent (1 hour ago)
             return Date.now() - 60 * 60 * 1000;
         }
 
-        if (this.knownListings.length === 1) {
+        if (points.length === 1) {
             // Only one data point, use it
-            return this.knownListings[0].timestamp;
+            return points[0].timestamp;
         }
 
-        const minId = this.knownListings[0].id;
-        const maxId = this.knownListings[this.knownListings.length - 1].id;
+        const minId = points[0].id;
+        const maxId = points[points.length - 1].id;
 
         let estimate;
         // Check if ID is within known range
@@ -957,26 +1053,28 @@ class EstimatedListingAge {
      * @returns {number} Estimated timestamp
      */
     linearInterpolation(listingId) {
+        const points = this.estimationPoints;
+
         // Check for exact match
-        const exact = this.knownListings.find((entry) => entry.id === listingId);
+        const exact = points.find((entry) => entry.id === listingId);
         if (exact) {
             return exact.timestamp;
         }
 
         // Find surrounding points
         let leftIndex = 0;
-        let rightIndex = this.knownListings.length - 1;
+        let rightIndex = points.length - 1;
 
-        for (let i = 0; i < this.knownListings.length - 1; i++) {
-            if (listingId >= this.knownListings[i].id && listingId <= this.knownListings[i + 1].id) {
+        for (let i = 0; i < points.length - 1; i++) {
+            if (listingId >= points[i].id && listingId <= points[i + 1].id) {
                 leftIndex = i;
                 rightIndex = i + 1;
                 break;
             }
         }
 
-        const left = this.knownListings[leftIndex];
-        const right = this.knownListings[rightIndex];
+        const left = points[leftIndex];
+        const right = points[rightIndex];
 
         // Linear interpolation formula
         const idRange = right.id - left.id;
@@ -992,21 +1090,23 @@ class EstimatedListingAge {
      * @returns {number} Estimated timestamp
      */
     linearRegression(listingId) {
+        const points = this.estimationPoints;
+
         // Calculate linear regression slope
         let sumX = 0,
             sumY = 0;
-        for (const entry of this.knownListings) {
+        for (const entry of points) {
             sumX += entry.id;
             sumY += entry.timestamp;
         }
 
-        const n = this.knownListings.length;
+        const n = points.length;
         const meanX = sumX / n;
         const meanY = sumY / n;
 
         let numerator = 0;
         let denominator = 0;
-        for (const entry of this.knownListings) {
+        for (const entry of points) {
             numerator += (entry.id - meanX) * (entry.timestamp - meanY);
             denominator += (entry.id - meanX) * (entry.id - meanX);
         }
@@ -1014,10 +1114,10 @@ class EstimatedListingAge {
         const slope = numerator / denominator;
 
         // Get boundary points
-        const minId = this.knownListings[0].id;
-        const maxId = this.knownListings[this.knownListings.length - 1].id;
-        const minTimestamp = this.knownListings[0].timestamp;
-        const maxTimestamp = this.knownListings[this.knownListings.length - 1].timestamp;
+        const minId = points[0].id;
+        const maxId = points[points.length - 1].id;
+        const minTimestamp = points[0].timestamp;
+        const maxTimestamp = points[points.length - 1].timestamp;
 
         // Extrapolate from closest boundary (RWI approach)
         // This prevents drift from large intercept values

@@ -9,6 +9,12 @@ vi.mock('../../core/data-manager.js', () => ({
     default: {
         getInitClientData: () => ({ houseRoomDetailMap: roomDetails }),
         getCombinedData: () => ({}),
+        // The untracked list is keyed per character, and the module asks to be
+        // told when that changes
+        getCurrentCharacterId: () => 'char1',
+        getCurrentCharacterGameMode: () => 'standard',
+        on: () => {},
+        off: () => {},
     },
 }));
 
@@ -21,7 +27,15 @@ vi.mock('../../utils/formatters.js', () => ({ formatLargeNumber: (n) => String(n
 vi.mock('../../utils/market-data.js', () => ({ getItemPrice: () => 1 }));
 vi.mock('../../utils/marketplace-tabs.js', () => ({ navigateToMarketplace: () => {} }));
 vi.mock('../../core/storage.js', () => ({
-    default: { getJSON: async (_k, _s, fallback) => fallback, setJSON: async () => true },
+    default: {
+        ready: Promise.resolve(true),
+        getJSON: async (_k, _s, fallback) => fallback,
+        setJSON: async () => true,
+        get: async (_k, _s, fallback = null) => fallback,
+        set: async () => true,
+        delete: async () => true,
+        getAllKeys: async () => [],
+    },
 }));
 
 const { nextLevelCost, affordableUpgrades, setRoomTracked, isRoomTracked, roomSkill, materialsCost } =
