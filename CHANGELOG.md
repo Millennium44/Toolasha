@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Guild Shrines series in the networth chart
+
+- **The networth history chart gains a Guild Shrines line** with its own legend chip, tooltip row, and summary stats. Snapshots recorded before the field existed draw a gap, never a fake zero. (The snapshot recorder picks the field up in the storage-migration change alongside this one.)
+
 ### Guild trials get pace, ETA, and payout math
 
 - **Trial cards on the In Progress tab now carry live info**: measured party DPS (combat) or pool fill rate (skilling) read from the cards themselves, ETA to clear the current tier against the trial clock, how many tiers the hour is on pace for, and the next tier's projected size (+1% per participant applied exactly; the tier growth curve is fitted from observed tiers, never invented — it says so until a second tier gives it a curve).

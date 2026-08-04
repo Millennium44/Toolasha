@@ -25,6 +25,7 @@ const CATEGORIES = [
     { key: 'listings', label: 'Listings', color: '#8b5cf6' },
     { key: 'house', label: 'House', color: '#f97316' },
     { key: 'abilities', label: 'Abilities', color: '#06b6d4' },
+    { key: 'guildShrines', label: 'Guild Shrines', color: '#ec4899' },
 ];
 
 /** The chart modal's element id, and the control that opens and closes it */
@@ -49,6 +50,7 @@ class NetworthHistoryChart {
             listings: false,
             house: false,
             abilities: false,
+            guildShrines: false,
         };
         this.currentRange = '7d';
         this.currentCustomFrom = null;
@@ -796,6 +798,10 @@ class NetworthHistoryChart {
                 if (!p._raw) return { x: p.x, y: NaN };
                 let val = p._raw[cat.key];
                 if (cat.key === 'inventory') val = (val || 0) - (p._raw.gold || 0);
+                // Older snapshots predate this category (e.g. Guild Shrines was added
+                // later) and simply never wrote the field — NaN renders as a gap
+                // rather than a fabricated zero dip.
+                if (val == null) val = NaN;
                 return { x: p.x, y: val };
             });
             datasets.push({
@@ -1508,6 +1514,13 @@ class NetworthHistoryChart {
         categories.push({ label: 'Listings', value: raw.listings || 0, prev: prevRaw?.listings });
         categories.push({ label: 'House', value: raw.house || 0, prev: prevRaw?.house });
         categories.push({ label: 'Abilities', value: raw.abilities || 0, prev: prevRaw?.abilities });
+        // Older snapshots predate this field — 0 rather than undefined, consistent
+        // with the other categories above, but not backfilled onto prevRaw.
+        categories.push({
+            label: 'Guild Shrines',
+            value: raw.guildShrines || 0,
+            prev: prevRaw?.guildShrines,
+        });
         if (raw.nonExcluded != null && raw.nonExcluded !== raw.total) {
             const excluded = raw.total - raw.nonExcluded;
             const prevExcluded = prevRaw?.nonExcluded != null ? prevRaw.total - prevRaw.nonExcluded : null;
