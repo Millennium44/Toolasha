@@ -1,13 +1,13 @@
 /**
  * @vitest-environment happy-dom
  *
- * The two luck tiles, drawn.
+ * The luck tile, drawn.
  *
- * They are four lines of layout each and the arithmetic behind them is tested
- * elsewhere, so what this catches is the thing layout gets wrong: showing the
- * same figure twice under two names. The percentile and takings-against-
- * expectation are different measurements of one session, and a tile that
- * quietly renders one where the other belongs looks entirely correct.
+ * It was two tiles — Drop Luck and Over Expected % — and is one, which is what
+ * makes these tests worth keeping rather than deleting: the merge is exactly the
+ * change that could put one measurement in both columns. The percentile and
+ * takings-against-expectation are different measurements of one session, and a
+ * tile that quietly renders one where the other belongs looks entirely correct.
  */
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
@@ -46,6 +46,10 @@ function draw(key) {
 
 beforeEach(() => {
     game.options = {};
+    // Not in a dungeon unless a test says so; the reading is a live method and
+    // the dungeon tests replace it
+    combatDropLuck.chests = null;
+    delete combatDropLuck.dungeonChestLuck;
     combatDropLuck.lastResult = {
         percentile: 0.347,
         income: 44_870_000,
@@ -60,48 +64,62 @@ beforeEach(() => {
     };
 });
 
-describe('the Drop Luck tile', () => {
-    test('it reads as a name and a figure, as Lucky draws it', () => {
+describe('the merged luck tile', () => {
+    test('it carries both figures on one line: the percentile and the takings', () => {
         const text = draw('luck');
 
         expect(text).toContain('Millennium44');
+        // The percentile, and beside it how far off expectation the run landed
         expect(text).toContain('34.7%');
+        expect(text).toContain('-6.3%');
     });
 
-    test('it shows the percentile, not the takings', () => {
-        // The two tiles sit side by side and would look equally plausible
-        // showing either number. This is the session's percentile.
-        expect(draw('luck')).not.toContain('6.3');
+    test('there is no Over Expected tile left to register', () => {
+        // The whole point of the merge: one key, so a saved layout keeps its
+        // tile and nobody ends up with the same run measured twice
+        expect(game.rows.overExpected).toBeUndefined();
+        expect(game.rows.luck).toBeDefined();
     });
 
-    test('one row, because a percentile cannot be split between a party', () => {
-        game.party.players.push({ name: 'Second', isCurrentPlayer: false, percent: 12 });
-
-        expect(draw('luck')).not.toContain('Second');
+    test('solo it stays one line, without a total that is the line again', () => {
+        expect(draw('luck')).not.toContain('TOTAL');
     });
 
     test('with nothing measured it draws nothing rather than a zero', () => {
         combatDropLuck.lastResult = null;
         expect(draw('luck')).toBe('');
     });
-});
 
-describe('the Over Expected tile', () => {
-    test('a row per player and then the total, solo included', () => {
-        const text = draw('overExpected');
+    test('solo, a player with no figure of their own falls back to the session', () => {
+        // Solo the two are the same measurement — the model was built from this
+        // player's bonuses — so the run's own takings answer for them
+        game.party.players[0].percent = null;
+        const text = draw('luck');
 
-        expect(text).toContain('Millennium44');
-        expect(text).toContain('TOTAL');
+        expect(text).toContain('34.7%');
         expect(text).toContain('-6.3%');
     });
 
-    test('it shows the takings, not the percentile', () => {
-        expect(draw('overExpected')).not.toContain('34.7');
-    });
+    test('a run owed nothing still shows where it sat', () => {
+        // The percentile stands on its own: only the half that needs an
+        // expectation to divide by goes missing
+        combatDropLuck.lastResult.expected = 0;
+        game.party.players[0].percent = null;
+        const text = draw('luck');
 
-    test('a party gets a row each, and a total that is not their average', () => {
-        // An average weights somebody who looted one item the same as somebody
-        // who looted a hundred, so the total comes from the party's own figures
+        expect(text).toContain('34.7%');
+        expect(text).toContain('—');
+    });
+});
+
+describe('a party', () => {
+    beforeEach(() => {
+        // Two players, the same battles, different drop gear — so different
+        // distributions and genuinely different percentiles
+        combatDropLuck.lastResult.players = [
+            { name: 'Millennium44', isCurrentPlayer: true, percentile: 0.12 },
+            { name: 'Second', isCurrentPlayer: false, percentile: 0.88 },
+        ];
         game.party = {
             battles: 900,
             players: [
@@ -110,21 +128,103 @@ describe('the Over Expected tile', () => {
             ],
             total: { percent: -5 },
         };
-        const text = draw('overExpected');
+    });
 
+    test('a row each, with each player against their own gear on both halves', () => {
+        const text = draw('luck');
+
+        expect(text).toContain('Millennium44');
+        expect(text).toContain('12.0%');
+        expect(text).toContain('-20.0%');
         expect(text).toContain('Second');
+        expect(text).toContain('88.0%');
+        expect(text).toContain('+40.0%');
+    });
+
+    test('the total is the party against the party, not an average of the rows', () => {
+        // An average weights somebody who looted one item the same as somebody
+        // who looted a hundred, so the total comes from the party's own figures
+        const text = draw('luck');
+
+        expect(text).toContain('TOTAL');
         expect(text).toContain('-5.0%');
         expect(text).not.toContain('10.0%');
     });
 
-    test('a player owed nothing reads as unmeasured rather than as par', () => {
-        game.party.players[0].percent = null;
-        expect(draw('overExpected')).toContain('—');
+    test('the session percentile belongs to the total, not to everybody', () => {
+        // One number under two names says nothing that the single row did not:
+        // how unusual the run was is a property of the run
+        const text = draw('luck');
+
+        expect(text.match(/34\.7%/g)).toHaveLength(1);
+    });
+
+    test('only you narrows it to your row, and drops the total with it', () => {
+        game.options.luckOnlyPlayer = true;
+        const text = draw('luck');
+
+        expect(text).toContain('Millennium44');
+        expect(text).not.toContain('Second');
+        expect(text).not.toContain('TOTAL');
+    });
+
+    test('a player who cannot be placed reads as unmeasured', () => {
+        combatDropLuck.lastResult.players[1].percentile = null;
+        expect(draw('luck')).toContain('—');
+    });
+});
+
+describe('a dungeon', () => {
+    /** The chest reading a dungeon shows in place of a percentile it cannot compute */
+    function chests() {
+        combatDropLuck.dungeonChestLuck = () => ({
+            partySize: 2,
+            counted: 'tracker',
+            restored: 0,
+            entryKey: null,
+            players: [
+                {
+                    name: 'Millennium44',
+                    isCurrentPlayer: true,
+                    byPayout: { 1: 8, 2: 2 },
+                    mean: 1.2,
+                    levelGap: null,
+                    observed: 1.2,
+                    chests: 12,
+                    luck: {
+                        chests: 12,
+                        completions: 10,
+                        expected: 10,
+                        extras: 2,
+                        expectedExtras: 2,
+                        chance: 0.2,
+                        percentile: 0.7,
+                    },
+                },
+            ],
+        });
+    }
+
+    test('both halves are the chests: where they sat, and how far off what was owed', () => {
+        chests();
+        const text = draw('luck');
+
+        expect(text).toContain('Millennium44');
+        expect(text).toContain('70.0%');
+        // Twelve chests against ten owed
+        expect(text).toContain('+20.0%');
+    });
+
+    test('the options narrow it the same way they narrow a zone', () => {
+        chests();
+        game.options.luckOnlyNumbers = true;
+
+        expect(draw('luck')).not.toContain('Millennium44');
     });
 });
 
 describe('the only-numbers options', () => {
-    test('Luck drops the name and keeps the figure', () => {
+    test('the names go and both figures stay', () => {
         // On a tile shrunk to sit beside five others, the name is the part you
         // already know
         game.options.luckOnlyNumbers = true;
@@ -132,23 +232,24 @@ describe('the only-numbers options', () => {
 
         expect(text).not.toContain('Millennium44');
         expect(text).toContain('34.7%');
+        expect(text).toContain('-6.3%');
     });
 
-    test('Over Expected drops the names and the TOTAL label, not the total', () => {
+    test("the merged tile obeys the Expected half's switches too", () => {
+        // They were set against a tile that no longer exists; honouring them
+        // here is what keeps that setting from silently doing nothing
         game.options.expectedOnlyNumbers = true;
-        const text = draw('overExpected');
-
-        expect(text).not.toContain('Millennium44');
-        expect(text).not.toContain('TOTAL');
-        // Two rows still: the player and the party
-        expect(text.match(/-6\.3%/g)).toHaveLength(2);
+        expect(draw('luck')).not.toContain('Millennium44');
     });
 
-    test('Over Expected narrowed to one player drops the total as well', () => {
-        // A total of one row is that row again, printed twice
+    test('only you, set on the Expected half, narrows the merged tile', () => {
+        combatDropLuck.lastResult.players = [
+            { name: 'Millennium44', isCurrentPlayer: true, percentile: 0.12 },
+            { name: 'Second', isCurrentPlayer: false, percentile: 0.88 },
+        ];
         game.party.players.push({ name: 'Second', isCurrentPlayer: false, percent: 40 });
         game.options.expectedOnlyPlayer = true;
-        const text = draw('overExpected');
+        const text = draw('luck');
 
         expect(text).toContain('Millennium44');
         expect(text).not.toContain('Second');
@@ -156,76 +257,17 @@ describe('the only-numbers options', () => {
     });
 
     test('both together leave the figures alone', () => {
-        game.options.expectedOnlyPlayer = true;
-        game.options.expectedOnlyNumbers = true;
-        const text = draw('overExpected');
-
-        expect(text).toBe('-6.3%');
-    });
-
-    test('with the options off nothing changes', () => {
-        const text = draw('overExpected');
-
-        expect(text).toContain('Millennium44');
-        expect(text).toContain('TOTAL');
-    });
-});
-
-describe('luck per player', () => {
-    beforeEach(() => {
-        // Two players, the same battles, different drop gear — so different
-        // distributions and genuinely different percentiles
-        combatDropLuck.lastResult.players = [
-            { name: 'Millennium44', isCurrentPlayer: true, percentile: 0.12 },
-            { name: 'Second', isCurrentPlayer: false, percentile: 0.88 },
-        ];
-        game.party.players.push({ name: 'Second', isCurrentPlayer: false, percent: 40 });
-    });
-
-    test('a party gets a row each', () => {
-        const text = draw('luck');
-
-        expect(text).toContain('Millennium44');
-        expect(text).toContain('12.0%');
-        expect(text).toContain('Second');
-        expect(text).toContain('88.0%');
-    });
-
-    test("the party figure is not repeated as everybody's", () => {
-        // The whole reason to break it out: one number under two names says
-        // nothing that the single row did not
-        expect(draw('luck')).not.toContain('34.7%');
-    });
-
-    test('only you narrows it to your row', () => {
         game.options.luckOnlyPlayer = true;
-        const text = draw('luck');
-
-        expect(text).toContain('Millennium44');
-        expect(text).not.toContain('Second');
-    });
-
-    test('only numbers drops the names from every row', () => {
         game.options.luckOnlyNumbers = true;
         const text = draw('luck');
 
-        expect(text).not.toContain('Millennium44');
-        expect(text).toContain('12.0%');
-        expect(text).toContain('88.0%');
+        expect(text).toBe('34.7%-6.3%');
     });
 
-    test('a player who cannot be placed reads as unmeasured', () => {
-        combatDropLuck.lastResult.players[1].percentile = null;
-        expect(draw('luck')).toContain('—');
-    });
-
-    test('solo stays one row and uses the session figure', () => {
-        // Solo, the session percentile already is this player's: the model was
-        // built from their bonuses, so a second one is the same number computed
-        // a second way
-        combatDropLuck.lastResult.players = [];
+    test('with the options off nothing changes', () => {
         const text = draw('luck');
 
+        expect(text).toContain('Millennium44');
         expect(text).toContain('34.7%');
     });
 });

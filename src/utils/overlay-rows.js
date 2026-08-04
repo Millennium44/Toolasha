@@ -166,8 +166,8 @@ const TILE_CLASSES = {
     goalNextStep: TILE_CLASS.VALUE,
 
     // Nothing to say until you have done something
+    // Drop Luck and Over Expected % are one tile now, under luck's key
     luck: TILE_CLASS.MEASUREMENT,
-    overExpected: TILE_CLASS.MEASUREMENT,
     dps: TILE_CLASS.MEASUREMENT,
     combatRevenue: TILE_CLASS.MEASUREMENT,
     totalProfit: TILE_CLASS.MEASUREMENT,

@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The session starts when combat does
+
+- **The Combat Level session no longer waits for its panel**: tracking now arms on the first battle and joins every later battle to the same run, so opening the panel an hour into a grind shows the run's duration and exp — not `5s` and `measuring…`. Leaving combat marks the next battle as a new session; figures stay readable after a run, and Reset still re-baselines from now. The Start value says whose clock it is.
+- **Drop Luck and Over Expected % are one tile** ("Drop Luck & Expected", under Drop Luck's key): each row shows the percentile and the ±% over expected side by side — per player in a party with a TOTAL row, chest percentile plus chests-against-owed in dungeons, and `—` for a half not yet measured. Both tiles' display options still apply. A layout that only had Over Expected on needs one click in overlay ⚙ to re-enable the merged tile.
+
 ### Housekeeping
 
 - **The dungeon chest→key maps live in one place now** (`src/utils/dungeon-keys.js`): combat-stats and the combat-sim adapter each kept their own copy — with the two names swapped between them — and four more modules imported the constant through the stats calculator. Everyone now reads the same table under one pair of names. Pure extraction, no behavior change.
