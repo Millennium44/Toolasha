@@ -30,6 +30,24 @@ export function getMaxWorkers() {
 }
 
 /**
+ * How many workers one `runSimulation` will split itself across.
+ *
+ * A long run is chopped into chunks of hours and simulated in parallel; a short
+ * one is a single worker, because splitting an hour four ways costs more in
+ * startup than it saves. Callers that want to run several *simulations* at once
+ * need this to know how much of the machine each one is already using — four
+ * candidates at four workers apiece on a four-worker budget is sixteen workers
+ * fighting over four cores, which is slower than doing them in turn.
+ *
+ * @param {number} hours - Simulated hours for one run
+ * @returns {number} Workers that run will use
+ */
+export function plannedWorkerCount(hours) {
+    const maxWorkers = getMaxWorkers();
+    return hours >= MIN_HOURS_PER_WORKER * 2 ? Math.min(maxWorkers, Math.floor(hours / MIN_HOURS_PER_WORKER)) : 1;
+}
+
+/**
  * Get or create the worker Blob URL (created once, reused).
  * @returns {string}
  */
@@ -331,20 +349,22 @@ function mergeSimResults(results) {
  * @param {Function} [onProgress] - Called with (percent: 0-100)
  * @returns {Promise<Object>} Merged SimResult
  */
-export async function runSimulation(params, onProgress) {
+export async function runSimulation(params, onProgress, { preempt = true } = {}) {
     const { gameData, playerDTOs, zoneHrid, difficultyTier, hours, communityBuffs, seed } = params;
 
     const guildCombatBuffs = playerDTOs[0]?.guildCombatBuffs;
     const extraBuffs = buildExtraBuffs(communityBuffs, guildCombatBuffs);
     const ONE_HOUR_NS = 3600 * 1e9;
 
-    // Cancel any previous run
-    cancelSimulation();
+    // A new run started from the UI replaces whatever was running — that is what
+    // makes clicking Simulate twice do the obvious thing. An analysis running
+    // its own batch must opt out: preempting here would have each of its
+    // simulations kill the one before it, which is not a race so much as a
+    // guarantee of failure.
+    if (preempt) cancelSimulation();
 
     // Determine worker count
-    const maxWorkers = getMaxWorkers();
-    const workerCount =
-        hours >= MIN_HOURS_PER_WORKER * 2 ? Math.min(maxWorkers, Math.floor(hours / MIN_HOURS_PER_WORKER)) : 1;
+    const workerCount = plannedWorkerCount(hours);
 
     // Split hours across workers
     const baseHours = Math.floor(hours / workerCount);

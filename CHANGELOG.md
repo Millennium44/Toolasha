@@ -6,6 +6,19 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Concurrency, with the sharp edges filed off
+
+Reviewing the concurrent fight sims turned up two things worth fixing and one that decides how far this can be taken.
+
+- **A failed simulation no longer leaves the queue running.** If one worker died, the other lanes kept pulling fights and starting simulations for an analysis whose result had already been thrown away. The first failure now stops the queue.
+- **The fan-out is capped at six**, whatever the thread setting says. Each simulation is a Worker holding its own structured clone of the entire game data, so the fleet costs memory in proportion to its width — and it is competing with the tab running the game. An analysis that takes every core makes the thing you are playing stutter.
+
+The single-monster **Upgrade** analysis in the Lab Simulator now runs its candidates concurrently as well; every candidate there is one worker against a shared baseline, so it had the same idle machine behind it.
+
+The **combat simulator's** upgrade analysis is a different case, and gets a different rule. A long run already splits itself across the whole worker budget, so four candidates at four workers apiece would be sixteen workers competing for four cores — slower than a queue. It now runs `workers ÷ workers-per-simulation` candidates at once: several when the Hours setting is low enough that each run is a single worker, and strictly one at a time when each already saturates the budget.
+
+That path also needed `runSimulation` to stop preempting. It cancels whatever is running when it starts — right for a Simulate button, fatal for a batch, where each candidate would kill the one before it. Batches now opt out; the button keeps its behaviour.
+
 ### The budget plans for a whole run, not for one fight
 
 A labyrinth run is ten fights in ten loadouts, and a purchase only helps the rooms it reaches — so "one upgrade per slot" was answering a question about a single fight. The plan now buys **two chestpieces where they serve different rooms**: one for the melee loadouts, one for the casters, which is two purchases doing two jobs.
