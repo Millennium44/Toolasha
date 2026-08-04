@@ -12,9 +12,8 @@ vi.mock('./combat-sim-adapter.js', () => ({
 vi.mock('./combat-sim-runner.js', () => ({
     runSimulation: vi.fn(),
     runLabyrinthSimulation: vi.fn(),
-    // Fights run several at a time; one at a time in tests keeps the order of
-    // the mock's calls readable
     getMaxWorkers: () => 4,
+    plannedWorkerCount: vi.fn(() => 1),
 }));
 vi.mock('../combat/labyrinth-clear-rate.js', () => ({ default: {} }));
 vi.mock('../../utils/profit-helpers.js', () => ({ resolveItemPrice: vi.fn() }));
@@ -44,6 +43,7 @@ vi.mock('./skilling-sim-helpers.js', () => ({ buildOverridesForSkill: vi.fn() })
 
 const {
     generateCandidates,
+    runUpgradeAnalysis,
     applyCandidateToDTO,
     calculateUpgradeCost,
     findMatchingCharmForSkill,
@@ -74,7 +74,8 @@ const { calculateEnhancement } = await import('../../utils/enhancement-calculato
 const { getCheapestProtectionPrice } = await import('../enhancement/tooltip-enhancement.js');
 const { getEnhancingParams } = await import('../../utils/enhancement-config.js');
 const { explainAbilityLevelUpCost } = await import('../../utils/ability-cost-calculator.js');
-const { buildGameDataPayload } = await import('./combat-sim-adapter.js');
+const { runSimulation, plannedWorkerCount } = await import('./combat-sim-runner.js');
+const { buildGameDataPayload, calculateSimRevenue } = await import('./combat-sim-adapter.js');
 const { runLabyrinthSimulation } = await import('./combat-sim-runner.js');
 
 const MAIN_HAND = '/equipment_types/main_hand';
@@ -1157,6 +1158,101 @@ describe('what a set of upgrades is worth together', () => {
         const setup = comboSetup();
 
         await expect(runLabyrinthCombinationCheck({ ...setup, picks: [] }, null, {})).rejects.toThrow();
+    });
+});
+
+describe('how many simulations run at once', () => {
+    function combatSetup(hours) {
+        const gameData = buildGameData();
+        buildGameDataPayload.mockReturnValue(gameData);
+        calculateSimRevenue.mockReturnValue({ totalRevenue: 0, itemRevenues: [] });
+        resolveItemPrice.mockImplementation(() => ({ price: 1_000_000 }));
+        getItemPrices.mockReturnValue({ ask: 2_000_000, bid: 1_500_000 });
+        return {
+            playerDTOs: [
+                {
+                    equipment: { [MAIN_HAND]: { hrid: '/items/fine_sword', enhancementLevel: 0 } },
+                    abilities: [],
+                    hrid: '/players/me',
+                },
+            ],
+            playerIndex: 0,
+            zoneHrid: '/actions/combat/fly',
+            difficultyTier: 0,
+            hours,
+            communityBuffs: {},
+            upgradeMode: 'equipment',
+        };
+    }
+
+    function trackPeak() {
+        let running = 0;
+        const seen = { peak: 0 };
+        // Call history accumulates across tests, and this one reads it
+        runSimulation.mockClear();
+        runSimulation.mockImplementation(async () => {
+            running++;
+            seen.peak = Math.max(seen.peak, running);
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            running--;
+            return { simulatedTime: 3.6e12, deaths: 0, playerRanOutOfFood: false };
+        });
+        return seen;
+    }
+
+    test('several, when each simulation is only one worker', async () => {
+        // A short run does not split itself, so the rest of the machine was idle
+        plannedWorkerCount.mockReturnValue(1);
+        const seen = trackPeak();
+
+        await runUpgradeAnalysis(combatSetup(4), null, {});
+
+        expect(seen.peak).toBeGreaterThan(1);
+    });
+
+    test('one at a time, when each already takes the whole worker budget', async () => {
+        // Four candidates at four workers apiece on a four-worker budget is
+        // sixteen workers fighting over four cores, which is slower than a queue
+        plannedWorkerCount.mockReturnValue(4);
+        const seen = trackPeak();
+
+        await runUpgradeAnalysis(combatSetup(200), null, {});
+
+        expect(seen.peak).toBe(1);
+    });
+
+    test('one simulation failing stops the queue handing out more', async () => {
+        // Otherwise the other lanes keep starting runs for an analysis whose
+        // result has already been thrown away
+        plannedWorkerCount.mockReturnValue(1);
+        let started = 0;
+        runSimulation.mockClear();
+        runSimulation.mockImplementation(async () => {
+            started++;
+            if (started === 2) throw new Error('worker died');
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            return { simulatedTime: 3.6e12, deaths: 0, playerRanOutOfFood: false };
+        });
+
+        await expect(runUpgradeAnalysis(combatSetup(4), null, {})).rejects.toThrow('worker died');
+
+        // The baseline, the one that failed, and at most the lanes already in
+        // flight — not the whole candidate list
+        expect(started).toBeLessThanOrEqual(2 + 6);
+    });
+
+    test('and a batch never preempts itself', async () => {
+        // runSimulation cancels whatever is running when it starts, which is
+        // right for a button and fatal for a batch: each candidate would kill
+        // the one before it
+        plannedWorkerCount.mockReturnValue(1);
+        trackPeak();
+
+        await runUpgradeAnalysis(combatSetup(4), null, {});
+
+        const batchCalls = runSimulation.mock.calls.slice(1);
+        expect(batchCalls.length).toBeGreaterThan(0);
+        expect(batchCalls.every((call) => call[2]?.preempt === false)).toBe(true);
     });
 });
 

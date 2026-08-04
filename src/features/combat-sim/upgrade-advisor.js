@@ -8,7 +8,7 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import { buildGameDataPayload, calculateSimRevenue } from './combat-sim-adapter.js';
-import { runSimulation, runLabyrinthSimulation, getMaxWorkers } from './combat-sim-runner.js';
+import { runSimulation, runLabyrinthSimulation, getMaxWorkers, plannedWorkerCount } from './combat-sim-runner.js';
 import { estimateFoodSimCount, runFoodOptimization } from './food-optimizer.js';
 import { generateLabArmorCandidates } from './lab-armor-candidates.js';
 import { bestGearForSkill } from './skilling-gear-candidates.js';
@@ -1767,12 +1767,19 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
     // Calculate baseline metrics
     const baselineMetrics = computeMetrics(baselineResult, gameData, playerHrid, hours);
 
-    // Run sim for each candidate
-    const results = [];
-    for (const candidate of candidatesWithCost) {
-        if (abortSignal?.()) break;
+    // Run sim for each candidate.
+    //
+    // Concurrency here is what is left over after each simulation has taken its
+    // own share: a long run already splits itself across the whole worker budget,
+    // and starting four of those at once would be sixteen workers competing for
+    // four cores. A short run is one worker, and those are the runs with the
+    // machine sitting idle.
+    const perSim = plannedWorkerCount(hours);
+    const lanes = Math.max(1, Math.min(Math.floor(analysisConcurrency() / perSim), candidatesWithCost.length));
+    const progress = { current };
 
-        onProgress?.({ current, total, description: `Simulating: ${candidate.description}` });
+    const evaluateCandidate = async (candidate) => {
+        if (abortSignal?.()) return null;
 
         // Clone playerDTOs and apply candidate upgrade
         const modifiedDTOs = JSON.parse(JSON.stringify(playerDTOs));
@@ -1822,10 +1829,12 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
 
         const simResult = await runSimulation(
             { gameData, playerDTOs: modifiedDTOs, zoneHrid, difficultyTier, hours, communityBuffs, seed: simSeed },
-            null
+            null,
+            // Preempting would have each candidate cancel the one before it
+            { preempt: false }
         );
 
-        if (abortSignal?.()) break;
+        if (abortSignal?.()) return null;
 
         const metrics = computeMetrics(simResult, gameData, playerHrid, hours);
         const deltas = computeDeltas(baselineMetrics, metrics);
@@ -1837,16 +1846,17 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
         if (candidate.type === 'combat_level') {
             // Leveling posture: XP rates with the matching charm for this skill
             // equipped (current levels), since that's what you'd wear to grind it
-            onProgress?.({ current, total, description: `XP rate: ${candidate.description}` });
+            onProgress?.({ current: progress.current, total, description: `XP rate: ${candidate.description}` });
             const xpDTOs = JSON.parse(JSON.stringify(playerDTOs));
             const currentCharm = xpDTOs[playerIndex].equipment[CHARM_SLOT] || null;
             const matchingCharm = findMatchingCharmForSkill(currentCharm, candidate.skillKey, gameData, charmTier);
             xpDTOs[playerIndex].equipment[CHARM_SLOT] = matchingCharm;
             const xpSimResult = await runSimulation(
                 { gameData, playerDTOs: xpDTOs, zoneHrid, difficultyTier, hours, communityBuffs, seed: simSeed },
-                null
+                null,
+                { preempt: false }
             );
-            current++;
+            progress.current++;
             row.levelTimeHours = estimateCombatLevelTime(candidate, xpSimResult, gameData, playerHrid);
             row.levelingCharmName = matchingCharm
                 ? gameData.itemDetailMap[matchingCharm.hrid]?.name || 'matching charm'
@@ -1884,15 +1894,15 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
                     ),
                 });
             }
-            if (abortSignal?.()) {
-                results.push(row);
-                break;
-            }
         }
-        results.push(row);
-        current++;
-        onProgress?.({ current, total, description: candidate.description });
-    }
+        progress.current++;
+        onProgress?.({ current: progress.current, total, description: candidate.description });
+        return row;
+    };
+
+    onProgress?.({ current: progress.current, total, description: `Simulating ${candidatesWithCost.length} upgrades` });
+    const results = (await mapConcurrent(candidatesWithCost, evaluateCandidate, lanes)).filter(Boolean);
+    current = progress.current;
 
     // Score only what can actually be bought — combat levels have no gold cost,
     // so ranking them alongside gear would seed the ladders with non-purchases
@@ -2538,18 +2548,16 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
     onProgress?.({ current, total, description: `Baseline: ${(baselineWinRate * 100).toFixed(1)}%` });
 
     const results = [];
+    const progress = { current };
 
-    // ── Equipment / ability sims ──
-    for (const candidate of candidatesWithCost) {
-        if (abortSignal?.()) break;
-
-        onProgress?.({ current, total, description: `Simulating: ${candidate.description}` });
-
-        const modifiedDTO = applyCandidateToDTO(playerDTOs[playerIndex], candidate);
-
+    // Every candidate is one worker against the same baseline with the same
+    // seed and the same trial count, so they are independent runs that were
+    // being done one at a time
+    const runCandidate = async (candidate, playerDTO, buffs, describe) => {
+        if (abortSignal?.()) return null;
         const simResult = await runLabyrinthSimulation({
             gameData,
-            playerDTOs: [modifiedDTO],
+            playerDTOs: [playerDTO],
             zoneHrid,
             monsterHrid,
             roomLevel,
@@ -2557,15 +2565,31 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
             hours: pairedHours,
             precision: pairedRule,
             communityBuffs,
-            labyrinthCombatBuffs,
+            labyrinthCombatBuffs: buffs,
             seed: simSeed,
         });
-
-        if (abortSignal?.()) break;
-
+        if (abortSignal?.()) return null;
+        progress.current++;
+        onProgress?.({ current: progress.current, total, description: describe });
         const attempts = simResult.labyAttemptCount || 1;
-        const encounters = simResult.encounters || 0;
-        const winRate = encounters / attempts;
+        return (simResult.encounters || 0) / attempts;
+    };
+
+    // ── Equipment / ability sims ──
+    onProgress?.({ current: progress.current, total, description: `Simulating ${candidatesWithCost.length} upgrades` });
+    const equipmentRates = await mapConcurrent(candidatesWithCost, (candidate) =>
+        runCandidate(
+            candidate,
+            applyCandidateToDTO(playerDTOs[playerIndex], candidate),
+            labyrinthCombatBuffs,
+            candidate.description
+        )
+    );
+
+    for (let i = 0; i < candidatesWithCost.length; i++) {
+        const candidate = candidatesWithCost[i];
+        const winRate = equipmentRates[i];
+        if (winRate === null || winRate === undefined) continue;
         const winRateDelta = winRate - baselineWinRate;
 
         results.push({
@@ -2579,36 +2603,22 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
                 winRateDelta > 0 && candidate.cost != null ? candidate.cost / (winRateDelta * 100) : Infinity,
             metricType: 'winRate',
         });
-        current++;
-        onProgress?.({ current, total, description: candidate.description });
     }
 
     // ── Combat buff sims ──
-    for (const buffCandidate of combatBuffCandidates) {
-        if (abortSignal?.()) break;
+    const buffRates = await mapConcurrent(combatBuffCandidates, (buffCandidate) =>
+        runCandidate(
+            buffCandidate,
+            playerDTOs[playerIndex],
+            buildModifiedCombatBuffs(labyrinthCombatBuffs, buffCandidate),
+            buffCandidate.description
+        )
+    );
 
-        onProgress?.({ current, total, description: `Simulating: ${buffCandidate.description}` });
-
-        const modifiedBuffs = buildModifiedCombatBuffs(labyrinthCombatBuffs, buffCandidate);
-        const simResult = await runLabyrinthSimulation({
-            gameData,
-            playerDTOs: [playerDTOs[playerIndex]],
-            zoneHrid,
-            monsterHrid,
-            roomLevel,
-            crates,
-            hours: pairedHours,
-            precision: pairedRule,
-            communityBuffs,
-            labyrinthCombatBuffs: modifiedBuffs,
-            seed: simSeed,
-        });
-
-        if (abortSignal?.()) break;
-
-        const attempts = simResult.labyAttemptCount || 1;
-        const encounters = simResult.encounters || 0;
-        const winRate = encounters / attempts;
+    for (let i = 0; i < combatBuffCandidates.length; i++) {
+        const buffCandidate = combatBuffCandidates[i];
+        const winRate = buffRates[i];
+        if (winRate === null || winRate === undefined) continue;
         const winRateDelta = winRate - baselineWinRate;
 
         results.push({
@@ -2619,8 +2629,6 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
             winRateDelta,
             metricType: 'winRate',
         });
-        current++;
-        onProgress?.({ current, total, description: buffCandidate.description });
     }
 
     // Sort: token results first, then gold; within each group by best delta descending
@@ -2913,22 +2921,55 @@ export function planWithinBudget(results, budget, { baselineFights = [], include
  * @param {number} [limit] - How many at once
  * @returns {Promise<Array>} Results, in input order
  */
-async function mapConcurrent(items, run, limit = getMaxWorkers()) {
+async function mapConcurrent(items, run, limit = analysisConcurrency()) {
     const results = new Array(items.length);
     const width = Math.max(1, Math.min(limit, items.length));
     let next = 0;
+    let failure = null;
 
-    const worker = async () => {
-        while (true) {
+    const lane = async () => {
+        while (failure === null) {
             const index = next++;
             if (index >= items.length) return;
-            results[index] = await run(items[index], index);
+            try {
+                results[index] = await run(items[index], index);
+            } catch (error) {
+                // Stop handing out work. Without this the other lanes keep
+                // starting simulations for a run whose result has already been
+                // thrown away — a failed analysis would go on spawning workers
+                // for every fight it had left.
+                failure = error;
+            }
         }
     };
 
-    await Promise.all(Array.from({ length: width }, worker));
+    await Promise.all(Array.from({ length: width }, lane));
+    if (failure) throw failure;
     return results;
 }
+
+/**
+ * How many simulations an analysis may have in flight at once.
+ *
+ * Capped, not simply "as many as there are cores". Each simulation is a Worker
+ * that receives its own structured clone of the whole game data — every item,
+ * ability, monster and action in the game — so the fleet costs memory in
+ * proportion to its width. And the tab it is competing with is the game itself:
+ * an analysis that takes every core makes the thing you are playing stutter,
+ * which is a poor trade for a run finishing sooner.
+ *
+ * The tile badges and the skip-level searches also run labyrinth sims in the
+ * background without asking anyone, so this is a budget for one analysis rather
+ * than for the page.
+ *
+ * @returns {number} Simulations at once
+ */
+function analysisConcurrency() {
+    return Math.max(1, Math.min(getMaxWorkers(), ANALYSIS_MAX_CONCURRENCY));
+}
+
+/** Ceiling on simultaneous sims per analysis, whatever the thread setting says */
+const ANALYSIS_MAX_CONCURRENCY = 6;
 
 /** Expected labyrinth attempts to clear one fight (retry until win) */
 function expectedFightAttempts(winRate) {
