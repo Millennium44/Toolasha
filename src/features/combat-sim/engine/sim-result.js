@@ -36,6 +36,9 @@ class SimResult {
 
         this.wipeEvents = [];
         this.totalDamageDealt = {}; // sourceHrid → total damage dealt
+        // Mechanics the engine met and skipped, filled in by CombatSimulator at
+        // the end of the run. Non-empty means the numbers below understate.
+        this.warnings = [];
     }
 
     addWipeEvent(logs, simulationTime, wave) {

@@ -308,6 +308,15 @@ function mergeSimResults(results) {
             }
         }
 
+        // Warnings — the union, not the sum: every chunk of the same fight meets
+        // the same unknown mechanic, and the reader wants it named once
+        if (r.warnings?.length) {
+            if (!merged.warnings) merged.warnings = [];
+            for (const warning of r.warnings) {
+                if (!merged.warnings.includes(warning)) merged.warnings.push(warning);
+            }
+        }
+
         // Wipe events — collect up to 20 across all chunks
         if (r.wipeEvents && r.wipeEvents.length > 0) {
             if (!merged.wipeEvents) merged.wipeEvents = [];

@@ -20,13 +20,18 @@ class Equipment {
 
     getCombatStat(combatStat) {
         const gameData = getGameData();
-        const multiplier = gameData.enhancementLevelTotalBonusMultiplierTable[this.enhancementLevel];
-        if (this.gameItem.equipmentDetail.combatStats[combatStat]) {
-            const enhancementBonus = this.gameItem.equipmentDetail.combatEnhancementBonuses[combatStat] || 0;
-            const stat = this.gameItem.equipmentDetail.combatStats[combatStat] + multiplier * enhancementBonus;
-            return stat;
+        const multiplier = gameData.enhancementLevelTotalBonusMultiplierTable?.[this.enhancementLevel] || 0;
+        const base = this.gameItem.equipmentDetail.combatStats?.[combatStat] || 0;
+        const enhancementBonus = this.gameItem.equipmentDetail.combatEnhancementBonuses?.[combatStat] || 0;
+
+        // Gating on the base stat alone dropped the enhancement bonus of every
+        // item whose base for that stat is exactly 0 — a real shape in the game
+        // data, where enhancing is what turns the stat on in the first place
+        if (!base && !enhancementBonus) {
+            return 0;
         }
-        return 0;
+
+        return base + multiplier * enhancementBonus;
     }
 
     getCombatStyle() {

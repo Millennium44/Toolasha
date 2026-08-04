@@ -51,6 +51,7 @@ const {
     runLabyrinthAllFightsAnalysis,
     runLabyrinthCombinationCheck,
     generateSkillingEquipmentCandidates,
+    generateLabyrinthBuffCandidatesFromEditor,
     generateHouseCandidates,
     houseRoomAffectsCombat,
     describeHouseScan,
@@ -1509,6 +1510,72 @@ describe('what a budget buys', () => {
         );
 
         expect(plan.attemptsSaved).toBeCloseTo(2, 5);
+    });
+});
+
+describe('labyrinth token candidates for the skilling tab', () => {
+    const byName = (candidates, name) => candidates.find((c) => c.description.startsWith(name));
+
+    test('the Experience token is offered, not filtered out', () => {
+        // It buys no clear rate, so both of the old filters — category
+        // 'skilling' here, combat-only there — dropped it and it appeared in
+        // neither tab at any level
+        const candidates = generateLabyrinthBuffCandidatesFromEditor({
+            speed: 0,
+            efficiency: 0,
+            success: 0,
+            doubleProgress: 0,
+            experience: 0,
+        });
+
+        const experience = byName(candidates, 'Experience');
+        expect(experience).toBeDefined();
+        expect(experience.category).toBe('experience');
+        expect(experience.editorKey).toBe('experience');
+        expect(experience.step).toBe(0.01);
+    });
+
+    test('and costs 80 tokens a level, not the 40 every other token costs', () => {
+        const candidates = generateLabyrinthBuffCandidatesFromEditor({ experience: 0, speed: 0 });
+
+        expect(byName(candidates, 'Experience').tokenCost).toBe(80);
+        expect(byName(candidates, 'Skilling Speed').tokenCost).toBe(40);
+    });
+
+    test('with the cost rising by one level each time', () => {
+        const atThree = generateLabyrinthBuffCandidatesFromEditor({ experience: 3 });
+        const experience = byName(atThree, 'Experience');
+
+        expect(experience.currentLevel).toBe(3);
+        expect(experience.tokenCost).toBe(320);
+        expect(experience.description).toBe('Experience Lv3→4');
+    });
+
+    test('a maxed Experience token stops being offered', () => {
+        const candidates = generateLabyrinthBuffCandidatesFromEditor({ experience: 12, speed: 0 });
+
+        expect(byName(candidates, 'Experience')).toBeUndefined();
+        expect(byName(candidates, 'Skilling Speed')).toBeDefined();
+    });
+
+    test('the skilling tokens still come through unchanged', () => {
+        const candidates = generateLabyrinthBuffCandidatesFromEditor({
+            speed: 1,
+            efficiency: 0,
+            success: 0,
+            doubleProgress: 0,
+            experience: 0,
+        });
+
+        expect(candidates.map((c) => c.category).sort()).toEqual([
+            'experience',
+            'skilling',
+            'skilling',
+            'skilling',
+            'skilling',
+        ]);
+        expect(byName(candidates, 'Skilling Speed').tokenCost).toBe(80);
+        expect(byName(candidates, 'Success Rate').metric).toBe('successBonus');
     });
 });
 

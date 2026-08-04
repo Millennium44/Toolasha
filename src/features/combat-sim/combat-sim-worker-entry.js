@@ -6,6 +6,7 @@
  * postMessage and returns results.
  */
 
+import { buildPlayerExtraBuffs } from './engine/extra-buffs.js';
 import { setGameData } from './engine/game-data.js';
 import CombatSimulator from './engine/combat-simulator.js';
 import Labyrinth from './engine/labyrinth.js';
@@ -63,11 +64,10 @@ onmessage = function (event) {
             const player = Player.createFromDTO(cloned);
             // Labyrinth: crate buffs go to zoneBuffs; otherwise use zone buffs
             player.zoneBuffs = labyrinth ? labyrinth.buffs : zone.buffs;
-            // Guild buffs come from each player's own DTO — the shared
-            // extraBuffs used to carry player 1's, handing their guild's
+            // Guild and achievement buffs come from each player's own DTO — the
+            // shared extraBuffs used to carry player 1's, handing their guild's
             // bonuses to every teammate in a party sim
-            const guildBuffs = Array.isArray(cloned.guildCombatBuffs) ? cloned.guildCombatBuffs : [];
-            player.extraBuffs = [...extraBuffs, ...guildBuffs];
+            player.extraBuffs = buildPlayerExtraBuffs(extraBuffs, cloned);
             return player;
         });
 
