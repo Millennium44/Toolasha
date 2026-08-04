@@ -33,7 +33,8 @@ import { setGameData } from '../combat-sim/engine/game-data.js';
 import loadoutSnapshot from './loadout-snapshot.js';
 import { hasCoarsePointer } from '../../utils/mobile.js';
 import { formatRelativeTime } from '../../utils/formatters.js';
-import labyrinthRoomLogs from './labyrinth-room-logs.js';
+import { combatLevel as computeCombatLevel, COMBAT_SKILLS } from '../../utils/combat-level.js';
+import labyrinthRoomLogs, { ROOM_TRAVEL_SECONDS } from './labyrinth-room-logs.js';
 import { getAnnotationContainer, pruneEmptyAnnotationContainers } from './labyrinth-annotations.js';
 import {
     estimateLiveClearChance,
@@ -54,6 +55,17 @@ const LIVE_PROGRESS_CLASS = 'mwi-labyrinth-live-progress';
 const LIVE_PROGRESS_STALE_MS = 5000;
 const PREVIEW_ID = 'mwi-labyrinth-preview';
 const UPGRADE_MAX_LEVEL = 12;
+/** Fallback for the recommend panel's Target Win %, matching settings-schema */
+const DEFAULT_RECOMMEND_TARGET_PCT = 70;
+/**
+ * How far either side of the character's own level the skip-threshold searches
+ * look. Room level is `effectiveLevel + skip - 1`, so this is the whole range
+ * of rooms a character could be sent to. Shared with the Lab Sim "Find Max"
+ * search so the two answer the same question over the same window — Find Max
+ * used to search a fixed 20–300, which stopped short for a high-level character
+ * and wasted probes below the floor for a low-level one.
+ */
+export const SKIP_THRESHOLD_RANGE = 300;
 const TILE_BADGE_CLASS = 'mwi-labyrinth-tile-badge';
 const ATTEMPT_BADGE_CLASS = 'mwi-labyrinth-attempt-badge';
 const LIVE_COMBAT_CLASS = 'mwi-labyrinth-live-combat';
@@ -122,9 +134,6 @@ const PATH_SHROUD_WEIGHT = 1e6;
 function clampSuccessChance(v) {
     return Math.min(1, Math.max(0.05, v));
 }
-
-/** Walking to a room. Retries happen where you stand, so this is paid once. */
-const ROOM_TRAVEL_SECONDS = 1;
 
 /**
  * A room's experience per hour, once the walk to it is paid for.
@@ -1592,11 +1601,19 @@ class LabyrinthClearRate {
         const efficiency = (totals[`${skillId}Efficiency`] || 0) + (totals.skillingEfficiency || 0);
         const success = totals[`${skillId}Success`] || 0;
         const gathering = totals.gatheringQuantity || 0;
+        // Wisdom and the skill's own charm stat are additive on experience —
+        // the same rule the rest of the script applies outside the labyrinth
+        // (see utils/experience-parser.js). Without this the loadout's
+        // equipment buffs replaced the live map with a list that had no
+        // experience term in it at all, so a Philosopher's necklace worn only
+        // in a labyrinth loadout never reached xpPerRoom.
+        const experience = (totals.skillingExperience || 0) + (totals[`${skillId}Experience`] || 0);
 
         if (actionSpeed) buffs.push({ typeHrid: '/buff_types/action_speed', flatBoost: actionSpeed, ratioBoost: 0 });
         if (efficiency) buffs.push({ typeHrid: '/buff_types/efficiency', flatBoost: efficiency, ratioBoost: 0 });
         if (success) buffs.push({ typeHrid: `/buff_types/${skillId}_success`, flatBoost: 0, ratioBoost: success });
         if (gathering) buffs.push({ typeHrid: '/buff_types/gathering', flatBoost: gathering, ratioBoost: 0 });
+        if (experience) buffs.push({ typeHrid: '/buff_types/wisdom', flatBoost: experience, ratioBoost: 0 });
 
         return buffs;
     }
@@ -2110,40 +2127,79 @@ class LabyrinthClearRate {
     }
 
     /**
-     * Get the player's effective combat level (used as base for skip threshold calculations).
-     * The game computes room level as: playerEffectiveCombatLevel + skipThreshold - 1.
+     * The character's combat skill levels, keyed the way `utils/combat-level.js`
+     * wants them. Null when there are no skills to read yet.
+     * @private
+     * @returns {Object|null} skill name → level
      */
-    getPlayerEffectiveCombatLevel() {
-        const combatLevel = dataManager.characterData?.combatUnit?.combatDetails?.combatLevel;
-        if (!combatLevel) return 100;
+    _combatSkillLevels() {
+        const skills = dataManager.getSkills?.();
+        if (!Array.isArray(skills) || skills.length === 0) return null;
 
-        const baseCombatLevel = Math.floor(combatLevel);
-        const crateLevelBonus = this._getCrateCombatLevelBonus();
-        return baseCombatLevel + crateLevelBonus;
+        const levels = {};
+        let found = 0;
+        for (const name of COMBAT_SKILLS) {
+            const skill = skills.find((entry) => entry.skillHrid === `/skills/${name}`);
+            if (!skill) continue;
+            levels[name] = Number(skill.level) || 0;
+            found++;
+        }
+        return found > 0 ? levels : null;
     }
 
     /**
-     * Sum combat level bonuses from equipped labyrinth crates.
-     * Looks for /buff_types/combat_level, /buff_types/action_level, and individual
-     * skill level types (averaged).
+     * Get the player's effective combat level (used as base for skip threshold
+     * calculations). The game computes room level as:
+     * playerEffectiveCombatLevel + skipThreshold - 1.
+     *
+     * The server's own figure is preferred when it is there. When it is not —
+     * before the first character update lands — the level is computed from the
+     * combat skills with the game's formula rather than guessed: a hardcoded
+     * 100 silently moved every recommendation by however far the character was
+     * from it, and a level-40 character was told to skip sixty levels too high.
+     *
+     * @returns {number|null} Effective combat level, or null when there is no
+     *   character data to derive one from — callers must not invent one
      */
-    _getCrateCombatLevelBonus() {
+    getPlayerEffectiveCombatLevel() {
+        const serverLevel = dataManager.characterData?.combatUnit?.combatDetails?.combatLevel;
+        const levels = this._combatSkillLevels();
+
+        let baseCombatLevel = null;
+        if (Number.isFinite(serverLevel) && serverLevel > 0) {
+            baseCombatLevel = Math.floor(serverLevel);
+        } else if (levels) {
+            baseCombatLevel = computeCombatLevel(levels).level;
+        }
+        if (!(baseCombatLevel > 0)) return null;
+
+        return baseCombatLevel + this._getCrateCombatLevelBonus(levels);
+    }
+
+    /**
+     * Combat level bonus from the equipped labyrinth crates.
+     *
+     * `/buff_types/combat_level` and `/buff_types/action_level` move the level
+     * directly. Per-skill level buffs do not: combat level is a weighted
+     * average, so ten levels of Melee and ten of Stamina are worth different
+     * amounts, and which is worth more depends on the rest of the build. They
+     * used to be averaged, which is the one thing the formula never does.
+     * Instead the skills are bumped and the formula re-run — the same
+     * measure-don't-tabulate trick `combatValueOf` uses — so an offensive
+     * skill that carries the doubled term is credited at 0.6 per level and a
+     * skill that carries nothing at 0.1.
+     *
+     * @private
+     * @param {Object|null} levels - Combat skill levels, from _combatSkillLevels()
+     * @returns {number} Levels of combat gained, 0 when nothing applies
+     */
+    _getCrateCombatLevelBonus(levels) {
         const crateBuffs = this.getCombatCrateBuffs();
         if (crateBuffs.length === 0) return 0;
 
-        const skillLevelTypes = new Set([
-            '/buff_types/stamina_level',
-            '/buff_types/intelligence_level',
-            '/buff_types/attack_level',
-            '/buff_types/defense_level',
-            '/buff_types/melee_level',
-            '/buff_types/ranged_level',
-            '/buff_types/magic_level',
-        ]);
-
         let directLevelBonus = 0;
-        let skillLevelSum = 0;
-        let skillLevelCount = 0;
+        const skillBumps = {};
+        let bumped = false;
 
         for (const buff of crateBuffs) {
             if (!buff?.typeHrid) continue;
@@ -2152,14 +2208,26 @@ class LabyrinthClearRate {
 
             if (buff.typeHrid === '/buff_types/combat_level' || buff.typeHrid === '/buff_types/action_level') {
                 directLevelBonus += amount;
-            } else if (skillLevelTypes.has(buff.typeHrid)) {
-                skillLevelSum += amount;
-                skillLevelCount += 1;
+                continue;
             }
+            const match = /^\/buff_types\/(\w+)_level$/.exec(buff.typeHrid);
+            const skill = match?.[1];
+            if (!skill || !COMBAT_SKILLS.includes(skill)) continue;
+            skillBumps[skill] = (skillBumps[skill] || 0) + amount;
+            bumped = true;
         }
 
-        const averagedSkillLevelBonus = skillLevelCount > 0 ? skillLevelSum / skillLevelCount : 0;
-        return Math.max(0, directLevelBonus + averagedSkillLevelBonus);
+        // Without the character's levels there is no way to know which skill
+        // carries the doubled term, so the per-skill buffs are left out rather
+        // than folded in at a made-up weight
+        if (!bumped || !levels) return Math.max(0, directLevelBonus);
+
+        const boosted = { ...levels };
+        for (const [skill, amount] of Object.entries(skillBumps)) {
+            boosted[skill] = (boosted[skill] || 0) + amount;
+        }
+        const gain = computeCombatLevel(boosted).exact - computeCombatLevel(levels).exact;
+        return Math.max(0, directLevelBonus + gain);
     }
 
     /**
@@ -2199,6 +2267,7 @@ class LabyrinthClearRate {
         if (skipThreshold <= 0) return 0;
 
         const effectiveCombatLevel = this.getPlayerEffectiveCombatLevel();
+        if (!(effectiveCombatLevel > 0)) return 0;
         return Math.floor(effectiveCombatLevel + skipThreshold - 1);
     }
 
@@ -2339,6 +2408,25 @@ class LabyrinthClearRate {
         };
     }
 
+    /**
+     * Experience per hour a combat room at this level would pay, from a win
+     * rate and an average fight length.
+     *
+     * The same arithmetic computeCombatClear does, exposed so a caller holding
+     * a sim result of its own (Lab Sim's Find Max) can quote a throughput
+     * without re-deriving the award or forgetting the walk to the room.
+     *
+     * @param {number} roomLevel - The room's level
+     * @param {number} avgFightSeconds - Mean length of one attempt, win or lose
+     * @param {number} clearChance - 0-1
+     * @returns {number} Experience per hour, 0 when the room never clears
+     */
+    estimateCombatXpPerHour(roomLevel, avgFightSeconds, clearChance) {
+        if (!(roomLevel > 0) || !(clearChance > 0) || !(avgFightSeconds > 0)) return 0;
+        const xpPerRoom = roomLevel * 50 * (1 + this.getCombatExperienceBonus());
+        return roomXpPerHour(xpPerRoom, avgFightSeconds / clearChance, clearChance);
+    }
+
     getCachedCombatResult(monsterHrid, roomLevel) {
         return this.combatCache.get(this.buildCombatCacheKey(monsterHrid, roomLevel)) || null;
     }
@@ -2452,10 +2540,16 @@ class LabyrinthClearRate {
     }
 
     /**
-     * Empty the persisted mirror. Called wherever the in-memory combatCache is
-     * cleared for a gear change — never from the other clear sites (disable,
-     * a fresh recommend run, a precision change), which don't mean the cached
-     * gear stopped being true and so don't need to be mirrored here.
+     * Empty the persisted mirror. Called only for a gear change, which is the
+     * one event that makes a stored sim untrue.
+     *
+     * The other sites that touch the in-memory Map deliberately leave this
+     * alone — and, since this rewrite, mostly leave the Map alone too. Clearing
+     * the Map without clearing the meta is not a no-op for storage:
+     * `_persistCombatCacheEntry` rebuilds the stored list from the entries
+     * still in the Map, so an emptied Map quietly wrote an empty file on the
+     * next sim. A search run and a precision change both used to do that, and
+     * neither had any reason to.
      */
     _clearPersistedCombatCache() {
         this._combatCacheMeta.clear();
@@ -2623,8 +2717,8 @@ class LabyrinthClearRate {
     findRecommendedThreshold(skillHrid, targetRate) {
         const effectiveLevel = this.getEffectiveLevel(skillHrid);
         const isEnhancing = skillHrid === '/skills/enhancing';
-        let low = -300;
-        let high = 300;
+        let low = -SKIP_THRESHOLD_RANGE;
+        let high = SKIP_THRESHOLD_RANGE;
         let bestThreshold = null;
 
         while (low <= high) {
@@ -2652,8 +2746,11 @@ class LabyrinthClearRate {
      */
     async findRecommendedThresholdCombat(monsterHrid, targetRate) {
         const effectiveCombatLevel = this.getPlayerEffectiveCombatLevel();
-        let low = -300;
-        let high = 300;
+        // No character data means no anchor for the search; a recommendation
+        // built on an invented combat level is worse than none
+        if (!(effectiveCombatLevel > 0)) return null;
+        let low = -SKIP_THRESHOLD_RANGE;
+        let high = SKIP_THRESHOLD_RANGE;
         let bestThreshold = null;
 
         while (low <= high) {
@@ -2775,21 +2872,43 @@ class LabyrinthClearRate {
     }
 
     /**
+     * The recommend panel's Target Win %, read from the input, clamped, and
+     * written back to the setting.
+     *
+     * Persisted the same way the path panel's own threshold is: the two knobs
+     * sit in the same UI and used to behave differently, the path one surviving
+     * a reload and this one silently reverting to the default. The input is the
+     * authority while it exists; the setting is what a fresh panel reads.
+     * @returns {number} 1..100
+     */
+    getRecommendTargetPct() {
+        const input = document.getElementById('mwi-recommend-target-rate');
+        const stored = config.getSettingValue('labyrinthRecommendTargetRate', DEFAULT_RECOMMEND_TARGET_PCT);
+        const pct = Math.min(100, Math.max(1, Math.floor(Number(input?.value) || stored)));
+        if (input) input.value = String(pct);
+        config.setSettingValue('labyrinthRecommendTargetRate', pct);
+        return pct;
+    }
+
+    /**
      * Run recommendations for all visible rooms
      */
     async runRecommendations() {
         if (this.recommendRunning) return;
         this.recommendRunning = true;
         this.recommendations.clear();
-        this.combatCache.clear();
+        // The combat cache is deliberately kept. A search run does not make a
+        // cached sim wrong — only a gear change does, and
+        // _invalidateIfInputsChanged already clears both layers for that.
+        // Clearing it here threw away the sims just read back off disk and,
+        // because _persistCombatCacheEntry rebuilds the stored list from what
+        // is still in the Map, the next completed sim wrote that empty Map back
+        // out — so one Recommend press also evicted the whole persisted cache.
         // Anchor the invalidation baselines to the state this run computes from
         this._settingsFingerprint = this._recommendSettingsFingerprint();
         this._snapshotFingerprint = this._snapshotContentFingerprint();
 
-        const rateInput = document.getElementById('mwi-recommend-target-rate');
-        const targetPct = rateInput ? parseInt(rateInput.value, 10) : null;
-        this._recommendTargetPct =
-            targetPct > 0 && targetPct <= 100 ? targetPct : config.getSetting('labyrinthRecommendTargetRate') || 70;
+        this._recommendTargetPct = this.getRecommendTargetPct();
         const targetRate = this._recommendTargetPct / 100;
 
         const cells = document.querySelectorAll('[class*="LabyrinthPanel_skipThreshold"]');
@@ -2881,11 +3000,17 @@ class LabyrinthClearRate {
      * Inject recommend controls (button + target input) into the automation panel
      */
     injectRecommendControls() {
-        const defaultRate = config.getSettingValue('labyrinthRecommendTargetRate', 70);
+        const defaultRate = config.getSettingValue('labyrinthRecommendTargetRate', DEFAULT_RECOMMEND_TARGET_PCT);
 
         if (document.querySelector(`.${RECOMMEND_CONTROLS_CLASS}`)) {
             const rateInput = document.getElementById('mwi-recommend-target-rate');
-            if (rateInput && !rateInput.dataset.userEdited) rateInput.value = defaultRate;
+            // The setting is the source of truth, so re-injection just resyncs
+            // to it. A `userEdited` flag used to be set on the first keystroke
+            // and never cleared, which pinned the input to that session's value
+            // and made every later change to the setting invisible here. Edits
+            // now write straight through to the setting, so the only thing left
+            // to protect is a field being typed into right now.
+            if (rateInput && document.activeElement !== rateInput) rateInput.value = defaultRate;
             return;
         }
 
@@ -2913,9 +3038,12 @@ class LabyrinthClearRate {
         rateInput.step = '1';
         rateInput.value = defaultRate;
         rateInput.style.cssText = inputStyle;
-        rateInput.addEventListener('input', () => {
-            rateInput.dataset.userEdited = '1';
-        });
+        rateInput.title =
+            'Recommendations pick the highest skip threshold whose rooms still clear at least this often. ' +
+            'Saved as you change it, so it survives a reload.';
+        // Persist on commit rather than on every keystroke: typing "7" on the
+        // way to "70" should not store 7
+        rateInput.addEventListener('change', () => this.getRecommendTargetPct());
 
         const button = document.createElement('button');
         button.textContent = 'Recommend';
@@ -3536,7 +3664,11 @@ class LabyrinthClearRate {
             const n = Math.min(10, Math.max(0.1, Number(precisionInput.value) || DEFAULT_SIM_PRECISION_PCT));
             precisionInput.value = String(n);
             config.setSettingValue('labyrinthSimPrecision', n);
-            this.combatCache.clear();
+            // Nothing to clear: the precision is part of buildCombatCacheKey, so
+            // sims run at the old setting live in different slots and are never
+            // read back under the new one. Clearing the Map here also emptied
+            // the persisted mirror the next time anything was written, which
+            // cost a session of sims for a knob that was already accounted for.
         });
         container.appendChild(precisionInput);
 
@@ -4604,9 +4736,10 @@ class LabyrinthClearRate {
         title.textContent = titleText;
         el.appendChild(title);
 
-        const addRow = (label, value) => {
+        const addRow = (label, value, title) => {
             const row = document.createElement('div');
             row.style.cssText = 'display:flex; justify-content:space-between; gap:10px; white-space:nowrap;';
+            if (title) row.title = title;
             const labelEl = document.createElement('span');
             labelEl.style.opacity = '0.75';
             labelEl.textContent = label;
@@ -4674,7 +4807,7 @@ class LabyrinthClearRate {
             addRow('Next Double Upgrade', pct(result.nextDoubleUpgradeClearChance));
         }
 
-        this.appendExpectedRows(addRow, result.type);
+        this.appendExpectedRows(addRow, result);
         // On touch the instruction would be wrong — the tappable button
         // appended after this stands in for right-click there
         if (!hasCoarsePointer() && result.skillHrid && document.querySelector('.toolasha-lab-sim-btn')) {
@@ -4789,7 +4922,7 @@ class LabyrinthClearRate {
             }
         }
 
-        this.appendExpectedRows(addRow, 'combat');
+        this.appendExpectedRows(addRow, result);
         if (result.loadoutName) {
             addRow('Loadout', `"${result.loadoutName}"`);
         }
@@ -4857,17 +4990,44 @@ class LabyrinthClearRate {
     }
 
     /**
-     * Append the expected token/box reward rows for the current floor
+     * Append the expected token/box reward rows for the current floor.
+     *
+     * A labyrinth room pays nothing at all unless it is cleared, so the drop
+     * rate is not what you expect to receive from entering it — the expectation
+     * is `rate × clearChance`. The unweighted figure said a room you clear one
+     * time in five was worth as much as one you always clear, which is the
+     * whole point of the badge next to it.
+     *
+     * The rates themselves are the observed per-floor figures (5% a floor for a
+     * token, 1% for a box, capped at floor 10), not something the client data
+     * states; the row spells that out rather than presenting them as exact.
+     *
      * @param {Function} addRow - Row builder from renderPreviewContent
-     * @param {string} [type] - Result type; picks the box label (combat vs skilling)
+     * @param {Object|string} [result] - Clear result (a bare type string is
+     *   accepted for callers that have nothing else); `clearChance` weights the
+     *   figures and `type` picks the box label
      */
-    appendExpectedRows(addRow, type) {
+    appendExpectedRows(addRow, result) {
         const floor = Math.max(0, Math.floor(Number(this.currentFloor) || 0));
-        if (floor >= 1) {
-            const boxLabel = type === 'combat' ? 'Combat Box Expected' : 'Skilling Box Expected';
-            addRow('Token Expected', `${Math.min(floor * 0.05, 0.5).toFixed(2)}`);
-            addRow(boxLabel, `${Math.min(floor * 0.01, 0.1).toFixed(2)}`);
-        }
+        if (floor < 1) return;
+
+        const type = typeof result === 'string' ? result : result?.type;
+        const clearChance = typeof result === 'object' && result ? Number(result.clearChance) : NaN;
+        const weight = Number.isFinite(clearChance) && clearChance >= 0 ? Math.min(1, clearChance) : 1;
+
+        const tokenRate = Math.min(floor * 0.05, 0.5);
+        const boxRate = Math.min(floor * 0.01, 0.1);
+        const boxLabel = type === 'combat' ? 'Combat Box Expected' : 'Skilling Box Expected';
+        const note =
+            weight < 1
+                ? `\nWeighted by this room's ${(weight * 100).toFixed(0)}% clear chance — an uncleared room pays nothing.`
+                : '';
+        const approximation =
+            'Drop rates are approximate: 5% per floor for a token and 1% for a box, ' +
+            'capped from floor 10 on. Observed figures, not stated by the game.';
+
+        addRow('Token Expected', (tokenRate * weight).toFixed(2), `${approximation}${note}`);
+        addRow(boxLabel, (boxRate * weight).toFixed(2), `${approximation}${note}`);
     }
 
     getBadgeColor(clearChance) {
@@ -4988,10 +5148,21 @@ class LabyrinthClearRate {
 
     /**
      * Compute enhancing clear from pre-built metrics and base level.
+     *
+     * Reports `xpPerRoom`/`xpPerHour` on the same footing as the skilling and
+     * combat twins. A labyrinth room pays on completion rather than per action,
+     * so the award is a property of the room — `roomLevel × 50`, raised by
+     * whatever experience bonus applies — and enhancing rooms are no exception.
+     * They were the one room type reporting nothing, which is why callers
+     * averaging XP per room (`upgrade-advisor.js`'s
+     * computeAverageSkillingXpPerRoomFromEditor) skip enhancing outright rather
+     * than averaging in a spurious zero. That exclusion can now be dropped:
+     * enhancing rooms carry a real figure, so including them is correct.
+     *
      * @param {Object} metrics - From getSkillingMetrics() or getSkillingMetricsFromOverrides()
      * @param {number} baseLevel - Character enhancing level
      * @param {number} roomLevel - Labyrinth room level
-     * @returns {Object} Clear result with stats
+     * @returns {Object} Clear result with stats, including xpPerRoom and xpPerHour
      */
     computeEnhancingClearWithParams(metrics, baseLevel, roomLevel) {
         const effectiveLevel = baseLevel + metrics.skillLevelBonus;
@@ -5015,6 +5186,8 @@ class LabyrinthClearRate {
         result.actionSeconds = actionSeconds;
         result.targetLevel = targetLevel;
         result.roomLevel = roomLevel;
+        result.xpPerRoom = roomLevel * 50 * (1 + (metrics.experienceBonus || 0));
+        result.xpPerHour = roomXpPerHour(result.xpPerRoom, result.expectedSeconds, result.clearChance);
         return result;
     }
 

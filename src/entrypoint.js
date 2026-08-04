@@ -1022,6 +1022,13 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'taskBulkReroll',
+            name: 'Task Bulk Reroll',
+            category: 'Tasks',
+            module: UI.taskBulkReroll,
+            async: false,
+        },
+        {
             key: 'taskRerollProtection',
             name: 'Task Reroll Protection',
             category: 'Tasks',
@@ -1192,6 +1199,16 @@ function registerFeatures() {
             category: 'General',
             module: UI.queueMonitor,
             async: false,
+        },
+        {
+            key: 'accountView',
+            name: 'Account View',
+            category: 'General',
+            module: UI.accountView,
+            async: true,
+            // No entry in settings-schema yet, so `getSetting`'s own default is
+            // what decides — an unknown key returns whatever is passed here
+            customCheck: () => config.getSetting('accountView', true),
         },
     ];
 

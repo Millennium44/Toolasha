@@ -16,8 +16,17 @@ const shrines = vi.hoisted(() => ({ detailMap: {}, owned: {} }));
 /** Backing store for the mocked storage module: `${storeName}:${key}` -> value */
 const db = vi.hoisted(() => ({ map: new Map() }));
 
+/** Backing store for the mocked config's settings */
+const settings = vi.hoisted(() => ({ map: new Map() }));
+
 vi.mock('../../core/config.js', () => ({
-    default: { getSetting: vi.fn(() => true), Z_NOTIFICATION: 10500, Z_FLOATING_PANEL: 10100 },
+    default: {
+        getSetting: vi.fn(() => true),
+        getSettingValue: (key, fallback) => (settings.map.has(key) ? settings.map.get(key) : fallback),
+        setSettingValue: (key, value) => settings.map.set(key, value),
+        Z_NOTIFICATION: 10500,
+        Z_FLOATING_PANEL: 10100,
+    },
 }));
 vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: vi.fn(), register: vi.fn() } }));
 vi.mock('../../core/data-manager.js', () => ({
@@ -25,6 +34,7 @@ vi.mock('../../core/data-manager.js', () => ({
         on: vi.fn(),
         off: vi.fn(),
         getSkills: vi.fn(() => []),
+        getInitClientData: vi.fn(() => null),
         getCharacterGuildBuffLevel: (hrid) => shrines.owned[hrid] || 0,
         characterData: null,
     },
@@ -690,5 +700,278 @@ describe('guild buffs in skilling metrics', () => {
             guildShrineLevels: { '/guild_buffs/force_combat': 9 },
         });
         expect(metrics.efficiencyBonus).toBeCloseTo(0.04, 10);
+    });
+});
+
+describe('equipment experience reaches a labyrinth room', () => {
+    beforeEach(() => {
+        for (const key of Object.keys(gear.snapshots)) delete gear.snapshots[key];
+        gear.snapshots[3] = {
+            equipment: [
+                { itemHrid: '/items/philosophers_necklace', itemLocationHrid: '/item_locations/neck' },
+                { itemHrid: '/items/celestial_shears', itemLocationHrid: '/item_locations/milking_tool' },
+            ],
+        };
+        dataManagerMock.getInitClientData.mockReturnValue({
+            itemDetailMap: {
+                '/items/philosophers_necklace': {
+                    equipmentDetail: { noncombatStats: { skillingExperience: 0.1 } },
+                },
+                '/items/celestial_shears': {
+                    equipmentDetail: { noncombatStats: { milkingExperience: 0.05, milkingSpeed: 0.2 } },
+                },
+            },
+            enhancementLevelTotalBonusMultiplierTable: {},
+        });
+    });
+
+    afterEach(() => {
+        dataManagerMock.getInitClientData.mockReturnValue(null);
+        for (const key of Object.keys(gear.snapshots)) delete gear.snapshots[key];
+    });
+
+    test('wisdom and the skill charm come out as one wisdom buff', () => {
+        const buffs = labyrinthClearRate.getLoadoutEquipmentBuffs(3, 'milking');
+        const wisdom = buffs.find((b) => b.typeHrid === '/buff_types/wisdom');
+        // 0.1 universal + 0.05 skill-specific, additive as everywhere else
+        expect(wisdom.flatBoost).toBeCloseTo(0.15, 10);
+    });
+
+    test('applyBuff routes it to experienceBonus, so xpPerRoom sees it', () => {
+        const metrics = { experienceBonus: 0 };
+        for (const buff of labyrinthClearRate.getLoadoutEquipmentBuffs(3, 'milking')) {
+            labyrinthClearRate.applyBuff(
+                metrics,
+                buff.typeHrid,
+                (buff.flatBoost || 0) + (buff.ratioBoost || 0),
+                '/buff_types/milking_level',
+                '/buff_types/milking_success',
+                'milking'
+            );
+        }
+        expect(metrics.experienceBonus).toBeCloseTo(0.15, 10);
+    });
+
+    test('gear with no experience stat emits no wisdom buff at all', () => {
+        gear.snapshots[3] = {
+            equipment: [{ itemHrid: '/items/celestial_shears', itemLocationHrid: '/item_locations/milking_tool' }],
+        };
+        dataManagerMock.getInitClientData.mockReturnValue({
+            itemDetailMap: {
+                '/items/celestial_shears': { equipmentDetail: { noncombatStats: { milkingSpeed: 0.2 } } },
+            },
+            enhancementLevelTotalBonusMultiplierTable: {},
+        });
+        const buffs = labyrinthClearRate.getLoadoutEquipmentBuffs(3, 'milking');
+        expect(buffs.some((b) => b.typeHrid === '/buff_types/wisdom')).toBe(false);
+    });
+});
+
+describe('enhancing rooms report what they pay', () => {
+    const metrics = {
+        skillLevelBonus: 0,
+        efficiencyBonus: 0,
+        actionSpeedBonus: 0,
+        successBonus: 0,
+        doubleProgressBonus: 0,
+        experienceBonus: 0,
+    };
+
+    test('xpPerRoom follows the same level × 50 award every other room type uses', () => {
+        const result = labyrinthClearRate.computeEnhancingClearWithParams({ ...metrics }, 200, 100);
+        expect(result.xpPerRoom).toBeCloseTo(100 * 50, 6);
+    });
+
+    test('wisdom raises it', () => {
+        const result = labyrinthClearRate.computeEnhancingClearWithParams(
+            { ...metrics, experienceBonus: 0.2 },
+            200,
+            100
+        );
+        expect(result.xpPerRoom).toBeCloseTo(100 * 50 * 1.2, 6);
+    });
+
+    test('a room that clears reports an hourly rate too, so it can be ranked', () => {
+        const result = labyrinthClearRate.computeEnhancingClearWithParams({ ...metrics }, 200, 100);
+        expect(result.clearChance).toBeGreaterThan(0);
+        expect(result.xpPerHour).toBeGreaterThan(0);
+    });
+});
+
+describe('expected token and box rows', () => {
+    /** Collect the rows appendExpectedRows produces */
+    function rows(result) {
+        const collected = [];
+        labyrinthClearRate.appendExpectedRows((label, value, title) => collected.push({ label, value, title }), result);
+        return collected;
+    }
+
+    afterEach(() => {
+        labyrinthClearRate.currentFloor = 0;
+    });
+
+    test('a room you always clear is worth the full drop rate', () => {
+        labyrinthClearRate.currentFloor = 4;
+        const [token, box] = rows({ type: 'combat', clearChance: 1 });
+        expect(token.value).toBe('0.20');
+        expect(box.value).toBe('0.04');
+        expect(box.label).toBe('Combat Box Expected');
+    });
+
+    test('a room you clear a quarter of the time is worth a quarter of it', () => {
+        labyrinthClearRate.currentFloor = 4;
+        const [token, box] = rows({ type: 'skilling', clearChance: 0.25 });
+        expect(token.value).toBe('0.05');
+        expect(box.value).toBe('0.01');
+        expect(box.label).toBe('Skilling Box Expected');
+    });
+
+    test('the rates are labelled as approximations, and the weighting is explained', () => {
+        labyrinthClearRate.currentFloor = 4;
+        const [token] = rows({ type: 'combat', clearChance: 0.5 });
+        expect(token.title).toContain('approximate');
+        expect(token.title).toContain('50% clear chance');
+    });
+
+    test('a caller with no clear chance gets the unweighted rate rather than nothing', () => {
+        labyrinthClearRate.currentFloor = 4;
+        const [token] = rows('combat');
+        expect(token.value).toBe('0.20');
+    });
+
+    test('floor 0 has no rewards to expect', () => {
+        labyrinthClearRate.currentFloor = 0;
+        expect(rows({ type: 'combat', clearChance: 1 })).toHaveLength(0);
+    });
+});
+
+describe('effective combat level', () => {
+    const skillList = (over = {}) => {
+        const levels = { stamina: 100, intelligence: 100, attack: 100, defense: 100, melee: 100, ...over };
+        return Object.entries(levels).map(([name, level]) => ({ skillHrid: `/skills/${name}`, level }));
+    };
+
+    beforeEach(() => {
+        dataManagerMock.getSkills.mockReturnValue(skillList());
+        dataManagerMock.characterData = null;
+        dataManagerMock.getInitClientData.mockReturnValue(null);
+    });
+
+    afterEach(() => {
+        dataManagerMock.getSkills.mockReturnValue([]);
+        dataManagerMock.getInitClientData.mockReturnValue(null);
+        dataManagerMock.characterData = null;
+    });
+
+    test('falls back to the game’s own formula rather than a hardcoded 100', () => {
+        // 0.1 × (100 × 5) + 0.5 × 100 = 100 for this build; make it not-100 so
+        // a surviving constant would be visible
+        dataManagerMock.getSkills.mockReturnValue(skillList({ melee: 60, attack: 60, defense: 60 }));
+        // 0.1 × (100 + 100 + 60 + 60 + 60) + 0.5 × 60 = 38 + 30 = 68
+        expect(labyrinthClearRate.getPlayerEffectiveCombatLevel()).toBe(68);
+    });
+
+    test('the server’s figure wins when it is there', () => {
+        dataManagerMock.characterData = { combatUnit: { combatDetails: { combatLevel: 137.4 } } };
+        expect(labyrinthClearRate.getPlayerEffectiveCombatLevel()).toBe(137);
+    });
+
+    test('no character data at all gives null, not an invented level', () => {
+        dataManagerMock.getSkills.mockReturnValue([]);
+        expect(labyrinthClearRate.getPlayerEffectiveCombatLevel()).toBeNull();
+    });
+
+    test('a crate’s per-skill levels are weighted by the formula, not averaged', () => {
+        dataManagerMock.characterData = {
+            characterLabyrinth: { coffeeCrateItemHrid: '/items/crate' },
+            combatUnit: { combatDetails: { combatLevel: 100 } },
+        };
+        dataManagerMock.getInitClientData.mockReturnValue({
+            labyrinthCrateDetailMap: {
+                '/items/crate': [
+                    { typeHrid: '/buff_types/melee_level', flatBoost: 10, ratioBoost: 0 },
+                    { typeHrid: '/buff_types/stamina_level', flatBoost: 10, ratioBoost: 0 },
+                ],
+            },
+        });
+        // Melee carries the doubled term (0.6 each) and stamina only the flat
+        // one (0.1 each): 6 + 1 = 7. Averaging the two +10s gave 10.
+        expect(labyrinthClearRate.getPlayerEffectiveCombatLevel()).toBeCloseTo(107, 6);
+    });
+
+    test('a direct combat_level buff still moves it one-for-one', () => {
+        dataManagerMock.characterData = {
+            characterLabyrinth: { coffeeCrateItemHrid: '/items/crate' },
+            combatUnit: { combatDetails: { combatLevel: 100 } },
+        };
+        dataManagerMock.getInitClientData.mockReturnValue({
+            labyrinthCrateDetailMap: {
+                '/items/crate': [{ typeHrid: '/buff_types/combat_level', flatBoost: 5, ratioBoost: 0 }],
+            },
+        });
+        expect(labyrinthClearRate.getPlayerEffectiveCombatLevel()).toBeCloseTo(105, 6);
+    });
+});
+
+describe('the recommend panel’s target win %', () => {
+    beforeEach(() => {
+        settings.map.clear();
+        document.body.innerHTML = '';
+    });
+
+    afterEach(() => {
+        document.body.innerHTML = '';
+        settings.map.clear();
+    });
+
+    test('reading it writes it back, so it survives a reload like the path panel’s does', () => {
+        document.body.innerHTML = '<input id="mwi-recommend-target-rate" value="88">';
+        expect(labyrinthClearRate.getRecommendTargetPct()).toBe(88);
+        expect(settings.map.get('labyrinthRecommendTargetRate')).toBe(88);
+    });
+
+    test('an out-of-range entry is clamped in the field as well as in the answer', () => {
+        document.body.innerHTML = '<input id="mwi-recommend-target-rate" value="480">';
+        expect(labyrinthClearRate.getRecommendTargetPct()).toBe(100);
+        expect(document.getElementById('mwi-recommend-target-rate').value).toBe('100');
+    });
+
+    test('an empty field falls back to the stored setting, not to a constant', () => {
+        settings.map.set('labyrinthRecommendTargetRate', 55);
+        document.body.innerHTML = '<input id="mwi-recommend-target-rate" value="">';
+        expect(labyrinthClearRate.getRecommendTargetPct()).toBe(55);
+    });
+
+    test('with nothing stored at all it uses the schema default', () => {
+        document.body.innerHTML = '';
+        expect(labyrinthClearRate.getRecommendTargetPct()).toBe(70);
+    });
+});
+
+describe('a recommend run keeps the combat cache', () => {
+    beforeEach(() => {
+        db.map.clear();
+        settings.map.clear();
+        document.body.innerHTML = '';
+        labyrinthClearRate.combatCache.clear();
+        labyrinthClearRate._combatCacheMeta.clear();
+        labyrinthClearRate.recommendRunning = false;
+    });
+
+    afterEach(() => {
+        labyrinthClearRate.combatCache.clear();
+        labyrinthClearRate._combatCacheMeta.clear();
+        document.body.innerHTML = '';
+    });
+
+    test('sims read back off disk survive pressing Recommend', async () => {
+        const key = 'imp:200:1:1pp:';
+        labyrinthClearRate.combatCache.set(key, { clearChance: 0.8, expectedSeconds: 10, type: 'combat' });
+
+        // No room cells in the document, so the run finds nothing to do — the
+        // question is only what it destroys on the way in
+        await labyrinthClearRate.runRecommendations();
+
+        expect(labyrinthClearRate.combatCache.has(key)).toBe(true);
     });
 });

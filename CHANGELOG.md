@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Sync, account view, honest philo math, and lab fixes
+
+- **Cross-device sync** (Settings → Sync): push/pull your data to a private GitHub Gist with a personal access token (settings-only or everything, optional auto-sync, newest-wins with a confirm, chunked uploads, soft failures). The token is stored locally and never uploaded — the payload redacts it.
+- **Account view**: combined networth across characters with per-character shares, last-seen, and queue state, from data each character already recorded.
+- **Philo gamba calculator corrected**: market tax on sold drops, the under-level success penalty, real action time with your speed/efficiency gear, catalyst tea cost charged, bulk symmetry, enhanced-listing fallbacks flagged, a pricing-mode dropdown (defaults conservative) with an instant | patient profit column, and bonus essence/rare drops.
+- **Labyrinth fixes**: expected tokens/boxes weighted by clear chance, equipment wisdom finally reaching lab XP, enhancing rooms carrying XP figures, Find Max unified with the recommendation search (real bounds, the 70% setting, no negative skips — the skip objective stays your set percent), effective combat level from the game's formula instead of a guess, recommend runs no longer wiping the sim cache, consistent knob persistence, and one denominator for measured vs forecast XP/hr.
+- Housekeeping: bundle duplication fixed and the CI size limit raised honestly; the bulk task reroll feature is now properly wired (off by default — it spends real rerolls).
+
 ### Guild shrines, forecast calibration, roster intelligence, and storage that survives months
 
 - **Guild shrines everywhere they matter.** The combat and lab sim advisors can now rank "+1 shrine level" purchases (credits priced to gold, token counts shown but never priced — stated on each row), the sim editor gets an editable Guild Shrines section, skilling shrines join the skilling advisor (clear-rate and XP metrics), and the build score shows the gold value invested in shrines as its own line. All driven by the game's own guildBuffDetailMap at runtime — no hardcoded tables.

@@ -46,6 +46,7 @@ import taskIcons from '../features/tasks/task-icons.js';
 import taskInventoryHighlighter from '../features/tasks/task-inventory-highlighter.js';
 import taskStatistics from '../features/tasks/task-statistics.js';
 import taskClaimCollector from '../features/tasks/task-claim-collector.js';
+import taskBulkReroll from '../features/tasks/task-bulk-reroll.js';
 import taskRerollProtection from '../features/tasks/task-reroll-protection.js';
 import taskAutoReroll from '../features/tasks/task-auto-reroll.js';
 
@@ -102,6 +103,9 @@ import notificationService from '../features/notifications/notification-service.
 // Queue Monitor
 import queueMonitor from '../features/queue-monitor/queue-monitor.js';
 
+// Account
+import accountView from '../features/account/index.js';
+
 // Dev tools
 import pformancePanel from '../features/dev/pformance-panel.js';
 import * as healthStatus from '../features/dev/health-status.js';
@@ -153,6 +157,7 @@ toolashaRoot.UI = {
     taskInventoryHighlighter,
     taskStatistics,
     taskClaimCollector,
+    taskBulkReroll,
     taskRerollProtection,
     taskAutoReroll,
     remainingXP,
@@ -182,6 +187,7 @@ toolashaRoot.UI = {
     emptyQueueNotification,
     notificationService,
     queueMonitor,
+    accountView,
     pformancePanel,
     healthStatus,
     consumablesPanel,

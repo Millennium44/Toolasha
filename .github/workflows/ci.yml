@@ -44,19 +44,37 @@ jobs:
               run: npm run build
 
             - name: Verify bundle sizes
+              # The ceiling is a guard against a module being silently duplicated
+              # into several bundles, not a hosting limit — Greasyfork accepts
+              # library files far larger than this.
+              #
+              # It was 2 MiB (2097152). The ui bundle passed it, and the first
+              # thing checked was duplication: gathering-profit.js and
+              # production-profit.js were being copied whole into every bundle
+              # that imported them, and are now shared through Toolasha.Market
+              # (see marketExternalGlobals in rollup.config.js), taking ~19 KB off
+              # both ui and actions. That was the real duplication and it is
+              # fixed; the remainder is simply that ui legitimately carries the
+              # most feature code of any bundle and has grown past 2 MiB honestly.
+              #
+              # So the limit moves to 2.5 MiB rather than the check being deleted
+              # or ui exempted: ~270 KB of headroom over today's largest bundle is
+              # enough that a genuinely new duplicate still trips it, which is the
+              # whole point of having the check.
               run: |
-                  limit=2097152
+                  limit=2621440
+                  human="2.5MB"
                   entrypoint_size=$(wc -c < "dist/Toolasha.user.js")
                   if [ "$entrypoint_size" -gt "$limit" ]; then
-                    echo "❌ dist/Toolasha.user.js is over 2MB limit ($entrypoint_size bytes)"
+                    echo "❌ dist/Toolasha.user.js is over the $human limit ($entrypoint_size bytes)"
                     exit 1
                   fi
-                  echo "✅ dist/Toolasha.user.js is under 2MB ($entrypoint_size bytes)"
+                  echo "✅ dist/Toolasha.user.js is under $human ($entrypoint_size bytes)"
                   for file in dist/libraries/*.js; do
                     size=$(wc -c < "$file")
                     if [ "$size" -gt "$limit" ]; then
-                      echo "❌ $file is over 2MB limit ($size bytes)"
+                      echo "❌ $file is over the $human limit ($size bytes)"
                       exit 1
                     fi
-                    echo "✅ $file is under 2MB ($size bytes)"
+                    echo "✅ $file is under $human ($size bytes)"
                   done

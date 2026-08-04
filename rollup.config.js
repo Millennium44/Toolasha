@@ -168,6 +168,16 @@ const marketExternalGlobals = new Map([
         normalize(join(__dirname, 'src/features/market/alchemy-profit-calculator.js')),
         'Toolasha.Market.alchemyProfitCalculator',
     ],
+    // Not market features, but they live here because of load order. Both are
+    // pure calculators reached by seven modules across the actions, combat and
+    // ui bundles, and the market bundle already pulls them in through
+    // market-sort and tooltip-prices — so market is the earliest @require that
+    // has them, and the only bundle that can own them without a forward
+    // reference. Left inline they were copied whole into every bundle that
+    // imports them, which is ~29 KB of source each time and the largest single
+    // contributor to the ui bundle sitting over its 2 MB ceiling.
+    [normalize(join(__dirname, 'src/features/actions/gathering-profit.js')), 'Toolasha.Market.gatheringProfit'],
+    [normalize(join(__dirname, 'src/features/actions/production-profit.js')), 'Toolasha.Market.productionProfit'],
 ]);
 
 const buildGlobals = (globalsMap) => Object.fromEntries(globalsMap.entries());
