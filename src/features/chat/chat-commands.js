@@ -14,6 +14,7 @@ import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { moveScopedData } from '../../utils/scoped-data-repair.js';
+import { resetAdoptionDecision, requestAdoptionConsent } from '../../utils/adoption-consent.js';
 
 /**
  * Everything the client currently believes about guild shrines.
@@ -119,6 +120,10 @@ export function exposeShrineDebug() {
         };
         target.Toolasha.debug.moveScopedData = (fromId, toId, options) =>
             moveScopedData(String(fromId), String(toId), options);
+        target.Toolasha.debug.chooseDataOwner = async () => {
+            await resetAdoptionDecision();
+            return requestAdoptionConsent({});
+        };
         return true;
     } catch (error) {
         console.error('[Chat Commands] Failed to expose the shrine debug helper:', error);
