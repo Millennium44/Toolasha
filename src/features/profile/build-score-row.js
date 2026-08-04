@@ -34,6 +34,7 @@ import webSocketHook from '../../core/websocket.js';
 import dataManager from '../../core/data-manager.js';
 import { registerRow } from '../../utils/overlay-rows.js';
 import { calculateCombatScore } from './score-calculator.js';
+import { buildScorePanel, setScoreSource } from './build-score-panel.js';
 
 /** Equipment changes arrive in bursts — a loadout swap is one event per slot */
 const DEBOUNCE_MS = 3000;
@@ -169,6 +170,14 @@ class BuildScore {
 
 const buildScore = new BuildScore();
 
+// The panel behind the tile reads the same figure the tile does, and asking for
+// it is what starts the watcher — so opening the panel on a character whose
+// score has never been computed computes it, rather than showing an empty shell.
+setScoreSource(() => {
+    buildScore.ensureWatching();
+    return buildScore.score;
+});
+
 registerRow({
     key: 'buildScore',
     empty: 'No build score yet',
@@ -207,8 +216,10 @@ registerRow({
             `House ${score.house.toFixed(1)}\n` +
             `Skiller ${score.skillerTotal.toFixed(1)}\n` +
             shrineLine +
-            'The same score as your profile card: the build’s cost in millions of coins.';
+            'The same score as your profile card: the build’s cost in millions of coins.\n' +
+            'Double-click for what the score is made of.';
     },
+    onOpen: () => buildScorePanel.toggle(),
 });
 
 export default buildScore;

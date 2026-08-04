@@ -12,6 +12,7 @@ import { numberFormatter } from '../../utils/formatters.js';
 import { constructExportObject } from '../combat/combat-sim-export.js';
 import { constructMilkonomyExport } from '../combat/milkonomy-export.js';
 import { handleViewCardClick, handleViewCardFromSnapshot } from './character-card-button.js';
+import { buildScorePanel } from './build-score-panel.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import loadoutSnapshot from '../combat/loadout-snapshot.js';
@@ -212,6 +213,23 @@ class CombatScore {
     }
 
     /**
+     * Whether the profile on screen is the character you are playing.
+     *
+     * The id lives in a different place depending on which of the three shapes
+     * the payload arrived in, which is why this is worth having once.
+     *
+     * @param {Object} profileData - Profile data from WebSocket
+     * @returns {boolean} True when this is your own profile
+     */
+    isOwnProfile(profileData) {
+        const profileCharId =
+            profileData?.profile?.sharableCharacter?.id ||
+            profileData?.profile?.characterSkills?.[0]?.characterID ||
+            profileData?.profile?.character?.id;
+        return Boolean(profileCharId) && profileCharId === dataManager.getCurrentCharacterId();
+    }
+
+    /**
      * Show combat score panel next to profile
      * @param {Object} profileData - Profile data
      * @param {Object} scoreData - Calculated score data
@@ -281,6 +299,20 @@ class CombatScore {
         const guildShrineHTML = this.buildGuildShrineHTML(scoreData, 'combat');
         const skillerGuildShrineHTML = this.buildGuildShrineHTML(scoreData, 'skiller');
 
+        // A way through to the standalone breakdown, on your own profile only.
+        // That panel scores the character you are playing — it cannot show
+        // anybody else's build — so offering it from another player's card would
+        // open a panel about the wrong person.
+        const breakdownLinkHTML = this.isOwnProfile(profileData)
+            ? `<span id="mwi-score-breakdown-link" style="
+                    cursor: pointer;
+                    font-size: 0.75rem;
+                    color: ${config.COLOR_TEXT_SECONDARY};
+                    text-decoration: underline;
+                    margin-right: 6px;
+                " title="Open the Build Score panel: every house, ability, item and shrine the score is made of.">breakdown</span>`
+            : '';
+
         // Build View Card button HTML (only if characterCard setting is enabled)
         const viewCardButtonHTML = config.getSetting('characterCard')
             ? `<div id="mwi-view-card-wrapper" style="position: relative; display: flex; gap: 4px;">
@@ -326,7 +358,8 @@ class CombatScore {
         // Create panel HTML
         panel.innerHTML = `
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                <div style="font-weight: bold; color: ${config.COLOR_ACCENT}; font-size: 0.9rem;">${escapeHtml(playerName)}</div>
+                <div style="font-weight: bold; color: ${config.COLOR_ACCENT}; font-size: 0.9rem; flex: 1;">${escapeHtml(playerName)}</div>
+                ${breakdownLinkHTML}
                 <span id="mwi-score-close-btn" style="
                     cursor: pointer;
                     font-size: 18px;
@@ -495,6 +528,18 @@ class CombatScore {
             });
             closeBtn.addEventListener('mouseout', () => {
                 closeBtn.style.color = '#aaa';
+            });
+        }
+
+        // Breakdown link — present on your own profile only, see showScorePanel
+        const breakdownLink = panel.querySelector('#mwi-score-breakdown-link');
+        if (breakdownLink) {
+            breakdownLink.addEventListener('click', () => buildScorePanel.toggle());
+            breakdownLink.addEventListener('mouseover', () => {
+                breakdownLink.style.color = config.COLOR_TEXT_PRIMARY;
+            });
+            breakdownLink.addEventListener('mouseout', () => {
+                breakdownLink.style.color = config.COLOR_TEXT_SECONDARY;
             });
         }
 
