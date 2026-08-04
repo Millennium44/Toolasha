@@ -27,6 +27,7 @@ import { cheapestNextLevel } from '../../utils/ability-books.js';
 import { formatLargeNumber, formatWithSeparator } from '../../utils/formatters.js';
 import { row, blank, ROW_COLORS, glyph } from '../../utils/overlay-format.js';
 import networthFeature from './index.js';
+import networthHistoryChart from './networth-history-chart.js';
 
 /**
  * A field of the last published net worth, or null.
@@ -38,6 +39,27 @@ function fromNetworth(pick) {
     if (!data) return null;
     const value = pick(data);
     return Number.isFinite(value) ? value : null;
+}
+
+/**
+ * Open the net worth history chart, or close it if it is already up.
+ *
+ * Each of these tiles is one field of the same calculation, and the chart plots
+ * that field over time — gold, inventory, listings are three of its series. So
+ * the chart is the detail behind the tile, which is what `onOpen` is for.
+ *
+ * Wrapped rather than handed over directly because opening it loads saved
+ * preferences first, and the overlay calls `onOpen` inside a synchronous
+ * try/catch — a rejection would escape it as an unhandled promise.
+ *
+ * @returns {Promise<void>}
+ */
+async function openHistoryChart() {
+    try {
+        await networthHistoryChart.toggleModal();
+    } catch (error) {
+        console.error('[NetworthRows] Opening the history chart failed:', error);
+    }
 }
 
 registerRow({
@@ -54,7 +76,9 @@ registerRow({
             glyph('coin'),
             { text: formatLargeNumber(Math.round(coins)), color: ROW_COLORS.gold, bold: true, push: true },
         ]);
+        container.title = 'Coins on hand.\nDouble-click for the net worth history chart.';
     },
+    onOpen: openHistoryChart,
 });
 
 registerRow({
@@ -70,7 +94,9 @@ registerRow({
             glyph('market'),
             { text: formatLargeNumber(Math.round(listings)), color: ROW_COLORS.accent, bold: true, push: true },
         ]);
+        container.title = 'What your open market listings are worth.\nDouble-click for the net worth history chart.';
     },
+    onOpen: openHistoryChart,
 });
 
 registerRow({
@@ -86,7 +112,9 @@ registerRow({
             glyph('inventory'),
             { text: formatLargeNumber(Math.round(inventory)), bold: true, push: true },
         ]);
+        container.title = 'What everything in your inventory is worth.\nDouble-click for the net worth history chart.';
     },
+    onOpen: openHistoryChart,
 });
 
 /**

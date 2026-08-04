@@ -246,6 +246,24 @@ class NetworthFeature {
 
 const networthFeature = new NetworthFeature();
 
+/**
+ * Open the net worth history chart, or close it if it is already up.
+ *
+ * The tile is one number; the chart is where that number came from and where it
+ * has been. Wrapped rather than handed over directly because opening it loads
+ * saved preferences first, and the overlay calls `onOpen` inside a synchronous
+ * try/catch — a rejection would escape it as an unhandled promise.
+ *
+ * @returns {Promise<void>}
+ */
+async function openHistoryChart() {
+    try {
+        await networthHistoryChart.toggleModal();
+    } catch (error) {
+        console.error('[Networth] Opening the history chart failed:', error);
+    }
+}
+
 // Registered at module scope so the overlay has the row regardless of start-up
 // order. Reads the value the feature last calculated rather than calculating:
 // a full networth pass prices every item you own and runs a worker pool, which
@@ -264,7 +282,9 @@ registerRow({
             { text: 'Net Worth', color: ROW_COLORS.dim },
             { text: formatLargeNumber(Math.round(total)), color: ROW_COLORS.good, bold: true, push: true },
         ]);
+        container.title = 'Everything you own, priced.\nDouble-click for the net worth history chart.';
     },
+    onOpen: openHistoryChart,
 });
 
 export default networthFeature;
