@@ -61,6 +61,7 @@
  */
 
 import config from '../../core/config.js';
+import dataManager from '../../core/data-manager.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable, makeResizable } from '../../utils/floating-panel.js';
@@ -83,6 +84,14 @@ import {
     layoutNames,
     normalizeName,
     MAX_NAME_LENGTH as MAX_LAYOUT_NAME,
+    ACTIVITY,
+    PRESET_LAYOUTS,
+    offeredLayouts,
+    presetFile,
+    isPreset,
+    freshSwitchState,
+    decideAutoSwitch,
+    pauseForManualChoice,
 } from './overlay-layouts.js';
 import { hasCoarsePointer } from '../../utils/mobile.js';
 import {
@@ -217,7 +226,70 @@ function defaultSettings() {
          * keeps exactly the rows they had. See `resolveRows`.
          */
         curatedDefaults: true,
+        /**
+         * Whether the layout follows what the character is doing.
+         *
+         * Off. A panel that rearranges itself without being asked is alarming
+         * the first time it happens, and this one is only worth having once you
+         * have layouts worth switching between — which is a decision, and
+         * decisions belong to the player.
+         */
+        autoSwitchLayout: false,
+        /**
+         * Which activity each named layout is for: `{ [layoutName]: activity }`.
+         *
+         * Beside `emptyTiles` in the panel's own per-character settings rather
+         * than in the global layout library, and that is the deliberate part: a
+         * layout is a template shared across characters, but *what a character
+         * uses it for* is not. The iron cow and the main can both have "Market"
+         * and only one of them should switch to it.
+         */
+        layoutActivity: {},
     };
+}
+
+/**
+ * What the character is doing, as far as a layout is concerned.
+ *
+ * Read from the action queue rather than from any feature, so it does not
+ * depend on the combat or labyrinth features being switched on — a layout that
+ * only follows your activity while some unrelated tracker is enabled is a
+ * layout that appears broken.
+ *
+ * The order is the order of specificity. A labyrinth run *is* combat by action
+ * type, so it has to be asked about first or it would never be seen. The
+ * marketplace comes first of all: whatever your character is grinding, if you
+ * have the market open then trading is what you are doing and the tiles you
+ * want are the market ones.
+ *
+ * Returns null rather than guessing when the game has not loaded or nothing is
+ * running, and null never switches anything.
+ *
+ * @returns {string|null} One of {@link ACTIVITY}, or null
+ */
+function currentActivity() {
+    try {
+        if (typeof document !== 'undefined' && document.querySelector('[class*="MarketplacePanel_marketItems"]')) {
+            return ACTIVITY.MARKET;
+        }
+
+        // The same test the labyrinth features use: a run is the thing that has
+        // a floor and a path, and only a run has them. Written out here rather
+        // than imported, because those modules live in the combat bundle and an
+        // import would put a copy of them in this one.
+        const labyrinth = dataManager.characterData?.characterLabyrinth;
+        const laid = (value) =>
+            (Array.isArray(value) && value.length > 0) || (typeof value === 'string' && value.length > 2);
+        if (laid(labyrinth?.roomData) || laid(labyrinth?.pathData)) return ACTIVITY.LABYRINTH;
+
+        const running = (dataManager.getCurrentActions?.() || []).find((action) => action && !action.isDone);
+        if (!running?.actionHrid) return null;
+
+        return String(running.actionHrid).startsWith('/actions/combat/') ? ACTIVITY.COMBAT : ACTIVITY.SKILLING;
+    } catch (error) {
+        console.error('[OverlayPanel] Reading the current activity failed:', error);
+        return null;
+    }
 }
 
 class OverlayPanel {
@@ -243,6 +315,8 @@ class OverlayPanel {
         this.undoState = null;
         /** Saved layout names as last read; null until storage has been asked */
         this.savedLayouts = null;
+        /** What auto-switching has seen and done — see `decideAutoSwitch` */
+        this.switchState = freshSwitchState();
     }
 
     async initialize() {
@@ -880,6 +954,10 @@ class OverlayPanel {
         bar.appendChild(label);
 
         const names = this.savedLayouts || [];
+        // Presets included, so a fresh install has something in the dropdown —
+        // and there is always something, which is why this control is never
+        // disabled any more
+        const offered = offeredLayouts(Object.fromEntries(names.map((name) => [name, true])));
 
         const select = document.createElement('select');
         // Named so it stays findable now that the popover holds more than one
@@ -898,15 +976,15 @@ class OverlayPanel {
         // layout is in force that may not be
         const placeholder = document.createElement('option');
         placeholder.value = '';
-        placeholder.textContent = names.length ? 'Switch to…' : 'None saved';
+        placeholder.textContent = 'Switch to…';
         select.appendChild(placeholder);
-        for (const name of names) {
+        for (const entry of offered) {
             const option = document.createElement('option');
-            option.value = name;
-            option.textContent = name;
+            option.value = entry.name;
+            option.textContent = entry.label;
+            if (entry.preset) option.dataset.preset = 'true';
             select.appendChild(option);
         }
-        select.disabled = !names.length;
         select.addEventListener('change', async () => {
             const name = select.value;
             select.value = '';
@@ -921,11 +999,136 @@ class OverlayPanel {
 
         const deleteBtn = this._textButton('Delete', 'Forget a saved layout', () => this._promptDeleteLayout(select));
         deleteBtn.style.color = '#ff9d9d';
+        // Only your own can be forgotten; the presets are not yours to lose
         deleteBtn.disabled = !names.length;
         if (!names.length) deleteBtn.style.opacity = '0.5';
         bar.appendChild(deleteBtn);
 
+        bar.appendChild(this._autoSwitchControls(offered));
+
         return bar;
+    }
+
+    /**
+     * The auto-switch toggle, and what each layout is for.
+     *
+     * The two belong together and directly under the layout list, because
+     * neither means anything without the other: a mapping with the switch off
+     * does nothing, and the switch with no mappings falls back to presets a
+     * player may not have looked at. Drawn as a second line of the same bar so
+     * that reads as one control rather than as two settings that happen to be
+     * adjacent.
+     *
+     * @param {Array<{name: string, preset: boolean, label: string}>} offered - What the dropdown offers
+     * @returns {HTMLElement}
+     */
+    _autoSwitchControls(offered) {
+        const wrap = document.createElement('div');
+        Object.assign(wrap.style, {
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            flexWrap: 'wrap',
+            flexBasis: '100%',
+            marginTop: '4px',
+        });
+
+        const toggle = this._optionBox('Switch layout with activity', 'autoSwitchLayout', {
+            title:
+                'Bring up the layout that suits what you are doing — fighting, skilling, a labyrinth run, or the ' +
+                'marketplace. It waits ten seconds before following a change, never switches while the layout is ' +
+                'unlocked, and stands down until the activity changes once you have picked a layout by hand.',
+            // Turning it on is what reveals the mapping selectors below it
+            after: () => {
+                if (!this.isPickerOpen) return;
+                this._renderPicker();
+                this._placePicker();
+            },
+        });
+        toggle.dataset.overlayAutoSwitch = 'true';
+        wrap.appendChild(toggle);
+
+        if (!this.settings.autoSwitchLayout) return wrap;
+
+        const hint = document.createElement('span');
+        hint.textContent = 'Use for:';
+        hint.style.color = COLORS.textDim;
+        wrap.appendChild(hint);
+
+        for (const entry of offered) wrap.appendChild(this._activityPicker(entry));
+
+        return wrap;
+    }
+
+    /**
+     * One layout's "what is this for" selector.
+     *
+     * A preset defaults to the activity it was built for and can be pointed
+     * somewhere else, which is the only way to say "use my Combat layout for
+     * the labyrinth as well" without duplicating it.
+     *
+     * @param {{name: string, preset: boolean, label: string}} entry - A layout on offer
+     * @returns {HTMLElement}
+     */
+    _activityPicker(entry) {
+        const wrap = document.createElement('label');
+        Object.assign(wrap.style, { display: 'inline-flex', alignItems: 'center', gap: '3px' });
+
+        const name = document.createElement('span');
+        name.textContent = entry.label;
+        name.style.color = COLORS.textDim;
+        wrap.appendChild(name);
+
+        const select = document.createElement('select');
+        select.dataset.overlayActivityFor = entry.name;
+        Object.assign(select.style, {
+            background: 'rgba(255, 255, 255, 0.06)',
+            border: `1px solid ${COLORS.border}`,
+            borderRadius: '3px',
+            color: COLORS.text,
+            fontSize: '11px',
+            padding: '1px 3px',
+        });
+        for (const [value, text] of [
+            [ACTIVITY.NONE, 'none'],
+            [ACTIVITY.COMBAT, 'combat'],
+            [ACTIVITY.SKILLING, 'skilling'],
+            [ACTIVITY.LABYRINTH, 'lab'],
+            [ACTIVITY.MARKET, 'market'],
+        ]) {
+            const option = document.createElement('option');
+            option.value = value;
+            option.textContent = text;
+            select.appendChild(option);
+        }
+
+        select.value = this._activityFor(entry.name);
+        select.addEventListener('change', () => {
+            this.settings.layoutActivity = { ...(this.settings.layoutActivity || {}), [entry.name]: select.value };
+            this._save();
+            // What is on screen was not chosen for the new mapping, so the next
+            // tick is allowed to act on it
+            this.switchState = { ...this.switchState, applied: null };
+        });
+        wrap.appendChild(select);
+
+        return wrap;
+    }
+
+    /**
+     * What a layout is currently for.
+     *
+     * A preset with nothing said about it answers with the activity it was
+     * built for, so the selectors read as already configured rather than as a
+     * row of "none" that the player has to fill in before anything happens.
+     *
+     * @param {string} name - Layout name
+     * @returns {string} One of `ACTIVITY`
+     */
+    _activityFor(name) {
+        const stored = (this.settings.layoutActivity || {})[name];
+        if (stored) return stored;
+        return isPreset(name) ? PRESET_LAYOUTS[name].activity : ACTIVITY.NONE;
     }
 
     /**
@@ -1038,21 +1241,34 @@ class OverlayPanel {
     }
 
     /**
-     * Switch to a saved layout.
+     * Switch to a saved layout, or to one of the presets.
+     *
+     * A saved layout wins over a preset of the same name, which is what makes
+     * "Save as… Combat" a copy of the preset you can then change: the preset is
+     * still there and still named that, and it is simply no longer what the
+     * name resolves to.
      *
      * @param {string} name - Which one
+     * @param {Object} [options] - `byHand: false` when auto-switching is applying it
      * @returns {Promise<boolean>} Whether it was applied
      */
-    async applyNamedLayout(name) {
+    async applyNamedLayout(name, { byHand = true } = {}) {
         try {
             const map = await loadLayouts();
-            const saved = map[normalizeName(name)]?.file;
+            const key = normalizeName(name);
+            const saved = map[key]?.file || presetFile(key);
             if (!saved) return false;
 
             const read = fromOPanelConfig(saved);
             if (!read) return false;
 
-            await this._applyLayout(read, `switch to ${normalizeName(name)}`);
+            // Recorded before the layout is applied rather than after: applying
+            // one takes an await, and a tick landing in the middle of it would
+            // find auto-switching still unpaused and switch out from under the
+            // choice being made
+            if (byHand) this.switchState = pauseForManualChoice(this.switchState, currentActivity());
+
+            await this._applyLayout(read, `switch to ${key}`);
             return true;
         } catch (error) {
             console.error('[OverlayPanel] Switching to the saved layout failed:', error);
@@ -1113,10 +1329,12 @@ class OverlayPanel {
      *
      * @param {string} label - What it says
      * @param {string} key - The setting it sets
-     * @param {Object} [options] - `{on, title}` — `on` reads the current value
+     * @param {Object} [options] - `{on, title, after}` — `on` reads the current
+     *   value, `after` runs once the setting has been written, for a box that
+     *   changes what the popover itself contains
      * @returns {HTMLElement}
      */
-    _optionBox(label, key, { on, title } = {}) {
+    _optionBox(label, key, { on, title, after } = {}) {
         const wrap = document.createElement('label');
         Object.assign(wrap.style, { display: 'inline-flex', alignItems: 'center', gap: '5px', cursor: 'pointer' });
         if (title) wrap.title = title;
@@ -1129,6 +1347,7 @@ class OverlayPanel {
             this.settings[key] = box.checked;
             this._save();
             this._renderBody();
+            after?.();
         });
 
         wrap.append(box, document.createTextNode(label));
@@ -2177,8 +2396,63 @@ class OverlayPanel {
             this._ensureDocked();
             this._renderBody();
             this._fitDock();
+            this._followActivity();
         }, REFRESH_MS);
         this.timerRegistry.registerInterval(this.refreshId);
+    }
+
+    /**
+     * Bring up the layout that suits what is going on, if that is wanted.
+     *
+     * On the panel's own tick rather than on a listener, because there is no
+     * event for "the marketplace is open" and the action queue changes without
+     * one worth subscribing to. A second's granularity is far finer than the
+     * ten seconds a change has to hold for anyway, and the whole of the
+     * decision — including doing nothing, which is nearly always the answer —
+     * is arithmetic in `decideAutoSwitch`.
+     *
+     * @returns {Promise<void>}
+     */
+    async _followActivity() {
+        // The names as last read. Storage is asynchronous and this is not; a
+        // tick before the first read simply falls through to the presets, which
+        // is the right answer for a player who has saved nothing.
+        const saved = this.savedLayouts || [];
+
+        const { state, apply } = decideAutoSwitch({
+            state: this.switchState,
+            activity: currentActivity(),
+            now: Date.now(),
+            enabled: Boolean(this.settings.autoSwitchLayout),
+            locked: this.settings.locked !== false,
+            mappings: this._activityMappings(saved),
+            saved,
+        });
+        this.switchState = state;
+        if (!apply) return;
+
+        await this.applyNamedLayout(apply, { byHand: false });
+    }
+
+    /**
+     * Every layout's activity, presets included.
+     *
+     * Built rather than read straight out of the settings so a preset nobody
+     * has touched still answers for its own activity — `_activityFor` holds
+     * that rule, and this is the same rule applied to the whole list.
+     *
+     * @param {string[]} saved - Saved layout names
+     * @returns {Object} `{ [layoutName]: activity }`
+     */
+    _activityMappings(saved) {
+        const mappings = {};
+        for (const name of [...saved, ...Object.keys(PRESET_LAYOUTS)]) {
+            // A saved layout shadowing a preset is listed once, with whatever
+            // the player said about it — the same precedence the dropdown uses
+            if (mappings[name]) continue;
+            mappings[name] = this._activityFor(name);
+        }
+        return mappings;
     }
 
     _removePanel() {

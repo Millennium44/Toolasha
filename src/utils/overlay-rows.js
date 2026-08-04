@@ -160,6 +160,10 @@ const TILE_CLASSES = {
     combatStatus: TILE_CLASS.VALUE,
     battleTimer: TILE_CLASS.VALUE,
     consumables: TILE_CLASS.VALUE,
+    // The queue is state the game holds; the plan is state this script holds,
+    // and both are true the moment they are read
+    queueTimeLeft: TILE_CLASS.VALUE,
+    goalNextStep: TILE_CLASS.VALUE,
 
     // Nothing to say until you have done something
     luck: TILE_CLASS.MEASUREMENT,
@@ -177,6 +181,12 @@ const TILE_CLASSES = {
     replayCheck: TILE_CLASS.MEASUREMENT,
     predictionCalibration: TILE_CLASS.MEASUREMENT,
     combatText: TILE_CLASS.MEASUREMENT,
+    // Each waits on something being under way — an enhancement started, a task
+    // board dealt, a trial tab looked at — and none of the three is a figure a
+    // fresh character would ever see filled in
+    enhancementSession: TILE_CLASS.MEASUREMENT,
+    taskTokens: TILE_CLASS.MEASUREMENT,
+    guildTrialsPace: TILE_CLASS.MEASUREMENT,
 
     // Empty until you put something in them
     watchlist: TILE_CLASS.WATCH,
