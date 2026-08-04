@@ -47,6 +47,9 @@ beforeEach(() => {
     settings.autoStart = false;
     settings.seconds = 60;
     recorder.stopRecording();
+    // The target outlives a recording on purpose — it is a preference, not a
+    // property of one sitting — so a test that set one would leak into the next
+    recorder.setRecordTarget(null);
 });
 
 afterEach(() => recorder.stopRecording());
@@ -168,6 +171,183 @@ describe('recording for longer than the buffer holds', () => {
         expect(banked[0].truncated).toBe(true);
         expect(recorder.isRecording()).toBe(true);
         detach();
+    });
+});
+
+describe('recording a set amount', () => {
+    /** A fight: one `new_battle` and `ticks` updates after it */
+    const fight = (ticks = 1) => {
+        send('new_battle', { players: { 0: {} }, monsters: { 0: { name: 'Fly' } } });
+        for (let i = 0; i < ticks; i += 1) send('battle_updated', { pMap: {}, mMap: {} });
+    };
+
+    test('with no target it records until it is stopped, as it always has', () => {
+        recorder.startRecording();
+        for (let i = 0; i < 20; i += 1) fight(2);
+
+        expect(recorder.isRecording()).toBe(true);
+        expect(recorder.recordingStatus().target).toBe(null);
+        expect(recorder.recordingStatus().targetMet).toBe(false);
+    });
+
+    test('a fight target stops it on the fight that reaches the number', () => {
+        recorder.setRecordTarget({ value: 3, unit: 'fights' });
+        recorder.startRecording();
+
+        // Four battles close three fights — the first one closes nothing,
+        // since whatever was being fought when the recording began has no
+        // beginning here
+        for (let i = 0; i < 4; i += 1) fight(2);
+
+        expect(recorder.isRecording()).toBe(false);
+        expect(recorder.recordingStatus().fights).toBe(3);
+        expect(recorder.recordingStatus().targetMet).toBe(true);
+    });
+
+    test('and stops on a boundary, so the last fight is whole rather than cut', () => {
+        recorder.setRecordTarget({ value: 2, unit: 'fights' });
+        const banked = [];
+        const detach = recorder.onRecordingComplete((file) => banked.push(file));
+
+        recorder.startRecording();
+        for (let i = 0; i < 3; i += 1) fight(5);
+
+        // The handed-over file ends on the battle that closed the last fight,
+        // which is what lets the replay measure that fight's length at all
+        expect(banked).toHaveLength(1);
+        expect(banked[0].ticks[banked[0].ticks.length - 1].type).toBe('new_battle');
+        expect(banked[0].truncated).toBe(false);
+        detach();
+    });
+
+    test('one fight past the target does not start, so nothing is recorded that was not asked for', () => {
+        recorder.setRecordTarget({ value: 2, unit: 'fights' });
+        recorder.startRecording();
+        for (let i = 0; i < 3; i += 1) fight(5);
+
+        const ticksAtStop = recorder.recordingStatus().ticks;
+        fight(5);
+
+        expect(recorder.recordingStatus().ticks).toBe(ticksAtStop);
+    });
+
+    test('a minutes target overshoots by the fight it was in rather than cutting it', () => {
+        // Cutting on the stroke of the clock loses that fight from both ends —
+        // the replay drops a battle it never saw close — so the last minute of
+        // recording would have bought nothing
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+        recorder.setRecordTarget({ value: 10, unit: 'minutes' });
+        recorder.startRecording();
+
+        fight(2);
+        vi.advanceTimersByTime(11 * 60_000);
+
+        // Eleven minutes in and still going, because no fight has ended yet
+        expect(recorder.isRecording()).toBe(true);
+        send('battle_updated', { pMap: {}, mMap: {} });
+        expect(recorder.isRecording()).toBe(true);
+
+        // The battle that ends the overrunning fight is what stops it
+        send('new_battle', { players: { 0: {} }, monsters: {} });
+
+        expect(recorder.isRecording()).toBe(false);
+        expect(recorder.recordingStatus().fights).toBe(1);
+        expect(recorder.recordingStatus().targetMet).toBe(true);
+        vi.useRealTimers();
+    });
+
+    test('a minutes target that has not expired keeps recording through fight boundaries', () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+        recorder.setRecordTarget({ value: 30, unit: 'minutes' });
+        recorder.startRecording();
+
+        for (let i = 0; i < 6; i += 1) {
+            vi.advanceTimersByTime(60_000);
+            fight(2);
+        }
+
+        expect(recorder.isRecording()).toBe(true);
+        vi.useRealTimers();
+    });
+
+    test('the finished recording is handed over exactly as a stopped one is', () => {
+        recorder.setRecordTarget({ value: 1, unit: 'fights' });
+        const banked = [];
+        const stops = [];
+        const detachComplete = recorder.onRecordingComplete((file) => banked.push(file));
+        const detachStop = recorder.onRecordingStopped(() => stops.push(1));
+
+        recorder.startRecording();
+        fight(2);
+        fight(2);
+
+        expect(banked).toHaveLength(1);
+        expect(stops).toHaveLength(1);
+        detachComplete();
+        detachStop();
+    });
+
+    test('starting again clears the last run’s Done, since this one has not finished', () => {
+        recorder.setRecordTarget({ value: 1, unit: 'fights' });
+        recorder.startRecording();
+        fight(2);
+        fight(2);
+        expect(recorder.recordingStatus().targetMet).toBe(true);
+
+        recorder.startRecording();
+
+        expect(recorder.recordingStatus().targetMet).toBe(false);
+    });
+
+    test('stopping by hand before the target is not a target reached', () => {
+        recorder.setRecordTarget({ value: 50, unit: 'fights' });
+        recorder.startRecording();
+        fight(2);
+        fight(2);
+        recorder.stopRecording();
+
+        expect(recorder.recordingStatus().targetMet).toBe(false);
+    });
+
+    test('the target survives a recording, since it is a preference and not a sitting', () => {
+        recorder.setRecordTarget({ value: 5, unit: 'fights' });
+        recorder.startRecording();
+        recorder.stopRecording();
+
+        expect(recorder.recordTarget()).toEqual({ value: 5, unit: 'fights' });
+    });
+
+    test('and a caller can override it for one recording', () => {
+        recorder.setRecordTarget({ value: 5, unit: 'fights' });
+        recorder.startRecording({ target: { value: 9, unit: 'minutes' } });
+
+        expect(recorder.recordTarget()).toEqual({ value: 9, unit: 'minutes' });
+    });
+
+    test('nonsense is unlimited rather than an error', () => {
+        // An empty box is how the control says "no target", and a recording
+        // that refused to start over a malformed one would be worse than one
+        // that simply runs until stopped
+        for (const bad of [null, undefined, {}, { value: 0, unit: 'fights' }, { value: -3, unit: 'fights' }]) {
+            expect(recorder.setRecordTarget(bad)).toBe(null);
+        }
+        expect(recorder.setRecordTarget({ value: 10, unit: 'hours' })).toBe(null);
+        expect(recorder.setRecordTarget({ value: '25', unit: 'minutes' })).toEqual({ value: 25, unit: 'minutes' });
+    });
+
+    test('raising the target mid-recording lets it carry on', () => {
+        recorder.setRecordTarget({ value: 2, unit: 'fights' });
+        recorder.startRecording();
+        fight(2);
+        fight(2);
+
+        recorder.setRecordTarget({ value: 4, unit: 'fights' });
+        fight(2);
+
+        expect(recorder.isRecording()).toBe(true);
+        expect(recorder.recordingStatus().fights).toBe(2);
     });
 });
 

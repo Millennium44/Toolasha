@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The recorder answers back
+
+- **Record for a target**: set N fights or M minutes on the Sim Accuracy panel; recording stops at the fight boundary after the target (never mid-fight), the label counts progress, the last target persists per character.
+- **XP is now recorded and checked**: per-fight XP gains come exactly from the battle totals (no new plumbing), compared with proper noise bands and a per-skill split; **drops are recorded and shown but deliberately not verdict-ed** — the sim carries no drop table to band against, and Drop Luck already answers that question properly.
+- **More to argue with**: a one-click sample-size suggestion ("≈85 more fights for ±5%"), DPS decomposed into swings × hit rate × damage-per-hit with individual bands, beyond-noise deviation hints ordered by what is actually known, and a small history of past checks to spot drift.
+
 ### The black box was ours
 
 - **The black band at the foot of action panels is gone**: the sticky Queue/Start strip painted itself near-black, and against the game's dashed catalyst slot on alchemy tabs it read as a "black Consumed Item box". The strip stays sticky but now renders in the game's own colors — no invented paint in either direction; the catalyst slot was confirmed fully native and untouched.
