@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Per-character storage helper
+
+- **New `characterKey` helper** (`src/utils/character-key.js`): one shared way to scope stored state per character, with one-time migration of legacy global values — adopted by the main character (never an iron cow; identified by longest networth history) or discarded where inheriting another character's data would be wrong. Groundwork for de-leaking all cross-character state.
+
 ### Official formulas, ladder costs, and the sim graded against reality
 
 - **Lab math now follows the official formulas you supplied**: exact challenge/treasure/floor-exit reward tables (tokens, Purdora's boxes, refinement chests — no more approximations), grid size, and confirmation our success/work/XP math already matched. The unrevealed-rooms path default becomes pessimistic (needing a shroud), live fight replay defaults off, and a run-once migration delivers both defaults to existing users; the precision setting's help finally describes what it governs.
