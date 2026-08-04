@@ -48,6 +48,23 @@ class SettingsStorage {
     }
 
     /**
+     * The setting IDs the *previous* build saved, before any merging.
+     *
+     * The saved map is written whole, so its keys are a fingerprint of the
+     * schema of whatever script wrote it — including the upstream fork, which
+     * uses the same storage keys. Diffing the current schema against this is
+     * how a first run tells "arrived from another build of Toolasha, with
+     * settings worth respecting" from "genuinely fresh install".
+     *
+     * @returns {Promise<Array<string>|null>} Stored IDs, or null when nothing
+     *   has ever been saved
+     */
+    async storedSettingIds() {
+        const saved = await storage.getJSON(this.getCharacterStorageKey(), this.storageArea, null);
+        return saved ? Object.keys(saved) : null;
+    }
+
+    /**
      * Load all settings from storage
      * Merges saved values with defaults from settings-schema
      * @returns {Promise<Object>} Settings map

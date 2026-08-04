@@ -72,10 +72,19 @@ class WhatsNew {
             const schemaIds = getAllSettingIds();
             const stored = await storage.getJSON(this._stateKey(), 'settings', null);
 
-            // First run: seed the baseline silently. Everything is "new" on a
-            // fresh install, and neither a wall of 200 settings nor a policy
-            // pass that turns the whole script off is an announcement.
+            // First run of the what's-new system. Two very different people
+            // land here: a genuinely fresh install, and somebody arriving from
+            // another build of Toolasha — usually the upstream fork, which
+            // saves its settings under the same keys. The saved map's keys are
+            // a fingerprint of the schema that wrote it, so the settings this
+            // fork added are computable even though the other script never ran
+            // a line of our code.
             if (!stored) {
+                const storedIds = await config.storedSettingIds();
+                const inherited = storedIds ? newSettingIds(schemaIds, storedIds) : [];
+                if (inherited.length > 0) {
+                    await this._offerFirstRunChoice(inherited, current);
+                }
                 await this._saveState(current, schemaIds);
                 return;
             }
@@ -103,6 +112,132 @@ class WhatsNew {
         } catch (error) {
             console.error('[WhatsNew] Reconciling the update state failed:', error);
         }
+    }
+
+    /**
+     * The one-time choice for someone arriving with another build's settings.
+     *
+     * Awaited before features initialise, deliberately: "keep everything as it
+     * was" is only true if the new features never run — a feature switched off
+     * after startup has already announced itself. The page underneath is the
+     * game, which works fine while this waits; closing the dialog counts as
+     * keeping things as they were, because the person who dismisses a dialog
+     * unread is exactly the person who did not ask for new behaviour.
+     *
+     * @param {Array<string>} inherited - Setting IDs this fork adds over the
+     *   build whose settings were found
+     * @param {{fork: string, version: string}} current - This build
+     * @private
+     */
+    async _offerFirstRunChoice(inherited, current) {
+        const conservative = conservativeOverrides(inherited, getSettingDefinition);
+        const keepAsIs = await this._askChoice({
+            title: `Welcome to ${current.fork}`,
+            body:
+                `This build has ${inherited.length} setting${inherited.length === 1 ? '' : 's'} that did not exist ` +
+                `in the version your settings came from. ${conservative.length} of them switch new behaviour on by default.`,
+            enableLabel: 'Turn the new things on',
+            keepLabel: 'Keep everything as it was',
+        });
+
+        let turnedOff = new Set();
+        if (keepAsIs) {
+            config.setSetting('whatsNew_newDefaultsOff', true);
+            for (const id of conservative) config.setSetting(id, false);
+            turnedOff = new Set(conservative);
+        }
+
+        // The full popup still follows after startup, live switches and all —
+        // the choice was wholesale, and the list is where it gets refined
+        this._pending = {
+            headline: `Switched to ${current.fork} ${current.version}`,
+            forkChanged: true,
+            newIds: inherited,
+            turnedOff,
+        };
+    }
+
+    /**
+     * A modal with two buttons, as a promise.
+     * @returns {Promise<boolean>} True to keep things as they were
+     * @private
+     */
+    _askChoice({ title, body, enableLabel, keepLabel }) {
+        return new Promise((resolve) => {
+            const overlay = document.createElement('div');
+            Object.assign(overlay.style, {
+                position: 'fixed',
+                inset: '0',
+                zIndex: config.Z_FLOATING_PANEL,
+                background: 'rgba(0,0,0,0.55)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+            });
+
+            const box = document.createElement('div');
+            Object.assign(box.style, {
+                width: 'min(440px, 92vw)',
+                background: COLORS.background,
+                border: `2px solid ${COLORS.border}`,
+                borderRadius: '10px',
+                color: COLORS.text,
+                fontFamily: "'Segoe UI', sans-serif",
+                fontSize: '13px',
+                padding: '16px',
+                boxShadow: '0 8px 24px rgba(0,0,0,0.6)',
+            });
+            box.innerHTML =
+                `<div style="font-weight:700; font-size:15px; color:${COLORS.accent}; margin-bottom:8px;">${title}</div>` +
+                `<div style="color:#bbb; margin-bottom:14px;">${body}</div>`;
+
+            const done = (keepAsIs) => {
+                overlay.remove();
+                resolve(keepAsIs);
+            };
+
+            const buttons = document.createElement('div');
+            Object.assign(buttons.style, { display: 'flex', gap: '8px', justifyContent: 'flex-end' });
+            const keep = document.createElement('button');
+            keep.textContent = keepLabel;
+            Object.assign(keep.style, {
+                background: 'rgba(255,255,255,0.06)',
+                border: '1px solid #444',
+                borderRadius: '4px',
+                color: COLORS.text,
+                padding: '6px 14px',
+                cursor: 'pointer',
+            });
+            keep.addEventListener('click', () => done(true));
+            const enable = document.createElement('button');
+            enable.textContent = enableLabel;
+            Object.assign(enable.style, {
+                background: 'rgba(96, 165, 250, 0.2)',
+                border: `1px solid ${COLORS.border}`,
+                borderRadius: '4px',
+                color: COLORS.accent,
+                padding: '6px 14px',
+                cursor: 'pointer',
+                fontWeight: '700',
+            });
+            enable.addEventListener('click', () => done(false));
+            buttons.appendChild(keep);
+            buttons.appendChild(enable);
+            box.appendChild(buttons);
+
+            const note = document.createElement('div');
+            note.textContent = 'Either way, the full list follows with a switch for each — nothing here is final.';
+            Object.assign(note.style, { fontSize: '11px', color: COLORS.dim, marginTop: '10px' });
+            box.appendChild(note);
+
+            // Clicking away is the person who did not ask for new behaviour
+            overlay.addEventListener('mousedown', (event) => {
+                if (event.target === overlay) done(true);
+            });
+
+            overlay.appendChild(box);
+            document.body.appendChild(overlay);
+        });
     }
 
     /** @private */

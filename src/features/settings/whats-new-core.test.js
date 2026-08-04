@@ -66,6 +66,17 @@ describe('which settings are new', () => {
         expect(newSettingIds(['a'], ['a', 'gone'])).toEqual([]);
     });
 
+    test('a saved settings map from another build works as the baseline', () => {
+        // The settings store persists the whole merged map, so its keys are a
+        // fingerprint of whichever script wrote it — including upstream, which
+        // shares the storage keys. That is how the first-run choice knows what
+        // this fork adds without upstream ever running a line of our code.
+        const upstreamSaved = ['chatCommands', 'networth', 'marketFilter'];
+        const forkSchema = ['chatCommands', 'networth', 'marketFilter', 'labSim', 'treasureTracker'];
+
+        expect(newSettingIds(forkSchema, upstreamSaved)).toEqual(['labSim', 'treasureTracker']);
+    });
+
     test('and the diff owes nothing to version numbers', () => {
         // Two forks at "2.88.0" with different schemas still produce the right
         // list, because the schema is the source of truth rather than the badge
