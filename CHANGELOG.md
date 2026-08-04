@@ -8,6 +8,8 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### The task board stops fighting the game
 
+- **The zone-index badge stops churning**: it removed and re-inserted its own span on every observer tick — a permanent 100ms mutation loop on React-owned task cards that also destabilized the profit rows' task keys. It now touches the DOM only when the index actually changed.
+
 - **The free MooPass reroll works again**: the reroll-cap protection was reading the pass count in the button label as a coin cost and cancelling the click. Cap checks now only ever fire on "Pay …" buttons, and per-task protection still covers free rerolls (they destroy the task the same).
 - **Confirm Discard actually discards, and buttons stop flashing**: while a card is showing a confirm step (reroll chooser or discard), every Toolasha injector now leaves it completely alone — previously the sorters/badges/profit rows rebuilt the card mid-flow, wiping the game's pending confirm state. The outline flicker was two features alternately stripping and redrawing the same style; resolved.
 
