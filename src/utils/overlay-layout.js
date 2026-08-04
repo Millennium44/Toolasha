@@ -35,6 +35,16 @@ export const MAX_ZOOM = 200;
 export const MIN_TILE = { width: 40, height: 20 };
 
 /**
+ * How tall a tile is while it is standing down to a dim name.
+ *
+ * Height only. A compact tile keeps the width it was given, because tiles are
+ * arranged in columns and a placeholder that also narrows breaks the column it
+ * is sitting in — the layout you arranged comes back different every time a
+ * feature goes quiet, which is worse than the space it saves.
+ */
+export const COMPACT_TILE = { height: 20 };
+
+/**
  * Round to the nearest grid step.
  * @param {number} value - Pixels
  * @param {number} [grid] - Step, or 1 to leave the value alone
@@ -113,16 +123,21 @@ export function clampTile(position, size, bounds) {
  * @param {Array<Object>} rows - Resolved, visible rows
  * @param {Object} layout - `{ positions, sizes, zoom }` keyed by row key
  * @param {number} width - Canvas width, for placing anything new
+ * @param {Function} [sizeFor] - `(row, size) => size`, a last word on how big a
+ *   tile is drawn this time round. For a tile standing down to a dim name: the
+ *   size it was *given* is still the size it has, so shrinking it in the saved
+ *   layout would lose the arrangement the moment a feature went quiet.
  * @returns {Array<Object>} Each row with `x`, `y`, `width`, `height`, `zoom`
  */
-export function resolveLayout(rows, layout, width) {
+export function resolveLayout(rows, layout, width, sizeFor = null) {
     const positions = layout?.positions || {};
     const sizes = layout?.sizes || {};
     const zooms = layout?.zoom || {};
 
     const tiles = [];
     for (const row of rows) {
-        const size = sizes[row.key] || row.defaultSize || DEFAULT_TILE;
+        const given = sizes[row.key] || row.defaultSize || DEFAULT_TILE;
+        const size = sizeFor ? sizeFor(row, given) : given;
         const saved = positions[row.key];
         const spot = saved ? clampTile(saved, size, { width }) : findFreeSpot(tiles, size, width);
 

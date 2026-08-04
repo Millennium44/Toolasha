@@ -1,6 +1,17 @@
 import { describe, test, expect } from 'vitest';
 
-import { registerRow, registeredRows, resolveRows, moveRow } from './overlay-rows.js';
+import {
+    registerRow,
+    registeredRows,
+    resolveRows,
+    moveRow,
+    tileClassFor,
+    emptyPolicyFor,
+    compactLabel,
+    CURATED_ROWS,
+    TILE_CLASS,
+    EMPTY_POLICY,
+} from './overlay-rows.js';
 
 const row = (key, defaultVisible = true) => ({ key, name: key, render: () => {}, defaultVisible });
 
@@ -61,6 +72,104 @@ describe('resolveRows', () => {
 
     test('survives no settings at all', () => {
         expect(resolveRows(available, null).map((r) => r.key)).toEqual(['a', 'b', 'c']);
+    });
+});
+
+describe('resolveRows with curated defaults', () => {
+    const available = [row('netWorth'), row('dps'), row('luck'), row('coins')];
+    const curated = { order: [], visible: {}, curatedDefaults: true };
+
+    test('a character who has never arranged anything gets the curated set only', () => {
+        const on = resolveRows(available, curated)
+            .filter((r) => r.visible)
+            .map((r) => r.key);
+        expect(on.sort()).toEqual(['coins', 'netWorth']);
+    });
+
+    test('and gets them in the curated order, whatever order they registered in', () => {
+        const shuffled = [row('coins'), row('dps'), row('netWorth')];
+        const order = resolveRows(shuffled, curated).map((r) => r.key);
+        expect(order.indexOf('netWorth')).toBeLessThan(order.indexOf('coins'));
+        expect(order.indexOf('coins')).toBeLessThan(order.indexOf('dps'));
+    });
+
+    test('an explicit choice still beats the curated set, both ways round', () => {
+        const settings = { ...curated, visible: { dps: true, netWorth: false } };
+        const resolved = resolveRows(available, settings);
+        expect(resolved.find((r) => r.key === 'dps').visible).toBe(true);
+        expect(resolved.find((r) => r.key === 'netWorth').visible).toBe(false);
+    });
+
+    test('without the flag every row falls back to its own default, as it always did', () => {
+        // Which is what an existing player's saved settings look like
+        const resolved = resolveRows(available, { order: [], visible: {} });
+        expect(resolved.every((r) => r.visible)).toBe(true);
+    });
+
+    test('a saved order is left alone rather than resorted into curated order', () => {
+        const settings = { ...curated, order: ['luck', 'coins', 'dps', 'netWorth'] };
+        expect(resolveRows(available, settings).map((r) => r.key)).toEqual(['luck', 'coins', 'dps', 'netWorth']);
+    });
+
+    test('the curated set stays small enough to be read at a glance', () => {
+        // The whole point of it. A default set that grows back past nine tiles
+        // is the wall of placeholders again, one row at a time.
+        expect(CURATED_ROWS.length).toBeGreaterThanOrEqual(6);
+        expect(CURATED_ROWS.length).toBeLessThanOrEqual(9);
+        expect(new Set(CURATED_ROWS).size).toBe(CURATED_ROWS.length);
+    });
+});
+
+describe('what a tile does when it has drawn nothing', () => {
+    test('a measurement waits out of sight; a value shrinks to its name', () => {
+        expect(tileClassFor({ key: 'dps' })).toBe(TILE_CLASS.MEASUREMENT);
+        expect(emptyPolicyFor({ key: 'dps' })).toBe(EMPTY_POLICY.HIDE);
+        expect(tileClassFor({ key: 'coins' })).toBe(TILE_CLASS.VALUE);
+        expect(emptyPolicyFor({ key: 'coins' })).toBe(EMPTY_POLICY.COMPACT);
+    });
+
+    test('a watch tile only says so when there is somewhere to click', () => {
+        expect(emptyPolicyFor({ key: 'watchlist', onOpen: () => {} })).toBe(EMPTY_POLICY.COMPACT);
+        expect(emptyPolicyFor({ key: 'equipmentWatch' })).toBe(EMPTY_POLICY.HIDE);
+    });
+
+    test('a compact tile says its own name, never its placeholder', () => {
+        // Two tiles are allowed to be idle in the same words; their names are
+        // the one thing that is theirs
+        const watchlist = { key: 'watchlist', name: 'Watchlist', empty: 'Nothing watched', onOpen: () => {} };
+        const equipment = { key: 'equipmentWatch', name: 'Equipment Watch', empty: 'Nothing watched' };
+        expect(compactLabel(watchlist)).not.toBe(compactLabel(equipment));
+        expect(compactLabel(equipment)).toBe('Equipment Watch');
+    });
+
+    test('a nameless row falls back to its key rather than to nothing', () => {
+        expect(compactLabel({ key: 'mystery' })).toBe('mystery');
+    });
+
+    test('a row may declare its own class and its own answer', () => {
+        expect(tileClassFor({ key: 'dps', tileClass: TILE_CLASS.WATCH })).toBe(TILE_CLASS.WATCH);
+        expect(tileClassFor({ key: 'dps', tileClass: 'nonsense' })).toBe(TILE_CLASS.MEASUREMENT);
+        expect(emptyPolicyFor({ key: 'coins', whenEmpty: EMPTY_POLICY.HIDE })).toBe(EMPTY_POLICY.HIDE);
+    });
+
+    test('the panel setting is the last word', () => {
+        for (const setting of [EMPTY_POLICY.HIDE, EMPTY_POLICY.COMPACT, EMPTY_POLICY.FULL]) {
+            expect(emptyPolicyFor({ key: 'dps' }, setting)).toBe(setting);
+        }
+        expect(emptyPolicyFor({ key: 'dps' }, 'nonsense')).toBe(EMPTY_POLICY.HIDE);
+    });
+
+    test('registerRow carries a row’s own class and answer through', () => {
+        registerRow({
+            key: 'declared',
+            name: 'Declared',
+            render: () => {},
+            tileClass: TILE_CLASS.WATCH,
+            whenEmpty: EMPTY_POLICY.FULL,
+        });
+        const found = registeredRows().find((r) => r.key === 'declared');
+        expect(emptyPolicyFor(found)).toBe(EMPTY_POLICY.FULL);
+        expect(tileClassFor(found)).toBe(TILE_CLASS.WATCH);
     });
 });
 

@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The overlay earns its screen space
+
+- **Empty tiles stop shouting**: a tile with nothing to say renders as a dim 20px name strip (value/watch tiles) or hides until its first data (measurement tiles like DPS and drop luck), instead of a full-size "Nothing tracked yet" wall. A gear-menu dropdown (By tile / Compact / Hide / Full) overrides globally, and unlocking the layout always shows everything so you can still place tiles.
+- **Fresh characters get a curated 8-tile default** (net worth, coins, build score, status, session/EPH, XP/hr, profit, time to level) instead of everything at once; existing saved layouts are untouched and keep the old behavior.
+
 ### Overlay tiles open their panels
 
 - **The Net Worth, Coins, Market Listings, and Inventory Value tiles now open the networth history chart** on double-click (single tap on touch), with the hint in the tooltip — matching the 26 tiles that already opened their feature's panel.

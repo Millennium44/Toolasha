@@ -12,6 +12,7 @@ import {
     GRID,
     DEFAULT_TILE,
     DEFAULT_ZOOM,
+    COMPACT_TILE,
 } from './overlay-layout.js';
 
 describe('snap', () => {
@@ -132,6 +133,30 @@ describe('resolveLayout', () => {
 
     test('survives no saved layout at all', () => {
         expect(resolveLayout(rows, null, 400)).toHaveLength(2);
+    });
+
+    test('a last word on sizes can shrink a tile without touching what was saved', () => {
+        // How an empty tile stands down to a strip: the size it was given is
+        // still the size it has, so the arrangement survives the tile filling
+        // itself in again
+        const layout = { positions: {}, sizes: { a: { width: 200, height: 60 }, b: { width: 200, height: 60 } } };
+        const shrink = (row, size) => (row.key === 'a' ? { width: size.width, height: COMPACT_TILE.height } : size);
+
+        const [first, second] = resolveLayout(rows, layout, 400, shrink);
+        expect(first.height).toBe(COMPACT_TILE.height);
+        expect(first.width).toBe(200);
+        expect(second.height).toBe(60);
+        expect(layout.sizes.a.height).toBe(60);
+    });
+
+    test('the tile below a shrunken one moves up to meet it', () => {
+        // Otherwise the panel is a grid with a hole where a quiet feature is
+        const narrow = 200;
+        const layout = { positions: {}, sizes: {} };
+        const shrink = (row, size) => (row.key === 'a' ? { ...size, height: COMPACT_TILE.height } : size);
+
+        const [, second] = resolveLayout(rows, layout, narrow, shrink);
+        expect(second.y).toBe(COMPACT_TILE.height);
     });
 });
 

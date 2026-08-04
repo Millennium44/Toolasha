@@ -50,11 +50,15 @@ const rows = [];
  *   needs before anyone has resized it. A row knows how much it draws; the panel
  *   does not, and guessing one size for all of them leaves half of them clipped.
  * @param {number} [row.defaultZoom] - Starting text size, as a percentage
- * @param {string} [row.empty] - What the tile says when the row draws nothing.
- *   A tile that goes blank looks broken rather than idle — you cannot tell a
- *   feature with nothing to report from one that has fallen over, and on an
- *   overlay of a dozen tiles the blank ones are the ones you end up staring at.
+ * @param {string} [row.empty] - What the tile says when the row draws nothing,
+ *   and only where that is worth a whole tile — see {@link emptyPolicyFor}, which
+ *   decides whether an empty tile says this, says its own name, or stands down.
  *   Defaults to naming the row.
+ * @param {string} [row.tileClass] - One of {@link TILE_CLASS}. What kind of thing
+ *   the tile shows, which is what decides how it behaves before it has anything
+ *   to show. Optional: rows that do not say are classed by the table below.
+ * @param {string} [row.whenEmpty] - `hide`, `compact` or `full`, when this
+ *   particular row wants something other than what its class would give it.
  */
 export function registerRow({
     key,
@@ -65,13 +69,26 @@ export function registerRow({
     defaultSize = null,
     defaultZoom = null,
     empty = '',
+    tileClass = '',
+    whenEmpty = '',
 }) {
     if (!key || typeof render !== 'function') {
         console.error('[OverlayPanel] A row needs a key and a render function:', key);
         return;
     }
 
-    const definition = { key, name: name || key, render, defaultVisible, onOpen, defaultSize, defaultZoom, empty };
+    const definition = {
+        key,
+        name: name || key,
+        render,
+        defaultVisible,
+        onOpen,
+        defaultSize,
+        defaultZoom,
+        empty,
+        tileClass,
+        whenEmpty,
+    };
     const existing = rows.findIndex((row) => row.key === key);
     if (existing >= 0) rows[existing] = definition;
     else rows.push(definition);
@@ -87,6 +104,170 @@ export function registeredRows() {
 }
 
 /**
+ * What kind of thing a tile shows.
+ *
+ * The distinction only matters in one place, and it is the place the overlay was
+ * worst at: what a tile does before it has anything to show. A net worth that
+ * has not been counted yet will be counted in a moment, and saying so is worth a
+ * dim line. A dungeon run that has not happened may never happen, and a tile
+ * reserving space for it is a tile in the way — every one of those placeholders
+ * is a promise the overlay is making about a number it does not have.
+ */
+export const TILE_CLASS = {
+    /** Reads state the game already has, so it fills itself in shortly */
+    VALUE: 'value',
+    /** Needs something to happen first — a fight, a run, a chest opened */
+    MEASUREMENT: 'measurement',
+    /** Shows what you asked it to watch, and is empty until you ask */
+    WATCH: 'watch',
+};
+
+/** What a tile does when it has drawn nothing */
+export const EMPTY_POLICY = {
+    /** Whatever the tile's class says; the setting's default */
+    AUTO: 'auto',
+    /** Not drawn at all until there is something to draw */
+    HIDE: 'hide',
+    /** A dim strip carrying the tile's own name */
+    COMPACT: 'compact',
+    /** The row's full placeholder line, at the tile's full size */
+    FULL: 'full',
+};
+
+/**
+ * Every registered row's class.
+ *
+ * Here rather than in the `registerRow` calls because those live across a dozen
+ * feature files owned by as many features, and the classification is one
+ * judgement about the overlay as a whole — it wants to be readable in one place,
+ * beside the curated default set it has to agree with. A row may still say for
+ * itself with `tileClass`, and anything unlisted is treated as a value, which is
+ * the forgiving answer: an unrecognised tile shows a dim name rather than
+ * vanishing.
+ */
+const TILE_CLASSES = {
+    // Figures the game already knows, or knows as soon as it has loaded
+    netWorth: TILE_CLASS.VALUE,
+    coins: TILE_CLASS.VALUE,
+    inventoryValue: TILE_CLASS.VALUE,
+    marketListings: TILE_CLASS.VALUE,
+    skillBooks: TILE_CLASS.VALUE,
+    buildScore: TILE_CLASS.VALUE,
+    combatLevel: TILE_CLASS.VALUE,
+    houses: TILE_CLASS.VALUE,
+    accountView: TILE_CLASS.VALUE,
+    guildRoster: TILE_CLASS.VALUE,
+    combatStatus: TILE_CLASS.VALUE,
+    battleTimer: TILE_CLASS.VALUE,
+    consumables: TILE_CLASS.VALUE,
+
+    // Nothing to say until you have done something
+    luck: TILE_CLASS.MEASUREMENT,
+    overExpected: TILE_CLASS.MEASUREMENT,
+    dps: TILE_CLASS.MEASUREMENT,
+    combatRevenue: TILE_CLASS.MEASUREMENT,
+    totalProfit: TILE_CLASS.MEASUREMENT,
+    experiencePerHour: TILE_CLASS.MEASUREMENT,
+    deathsPerHour: TILE_CLASS.MEASUREMENT,
+    combatSession: TILE_CLASS.MEASUREMENT,
+    manaPerFight: TILE_CLASS.MEASUREMENT,
+    timeToLevel: TILE_CLASS.MEASUREMENT,
+    treasure: TILE_CLASS.MEASUREMENT,
+    charmValue: TILE_CLASS.MEASUREMENT,
+    replayCheck: TILE_CLASS.MEASUREMENT,
+    predictionCalibration: TILE_CLASS.MEASUREMENT,
+    combatText: TILE_CLASS.MEASUREMENT,
+
+    // Empty until you put something in them
+    watchlist: TILE_CLASS.WATCH,
+    equipmentWatch: TILE_CLASS.WATCH,
+};
+
+/**
+ * The tiles a character who has never arranged the overlay starts with.
+ *
+ * Small on purpose. Every row defaulting to on gave a first open that was a wall
+ * of placeholders with three real figures buried in it, and a panel where
+ * nothing is worth reading is a panel nobody opens twice. These are the ones
+ * that are alive for any character within a minute of playing: what you are
+ * worth, what you are carrying, what you are doing, and what it is earning. The
+ * rest are one click away in ⚙, where a list of switched-off rows reads as a
+ * menu rather than as clutter.
+ *
+ * Order is the order they are placed in, left to right and wrapping — so the
+ * two figures that are true the moment the game loads come first.
+ */
+export const CURATED_ROWS = [
+    'netWorth',
+    'coins',
+    'buildScore',
+    'combatStatus',
+    'battleTimer',
+    'experiencePerHour',
+    'totalProfit',
+    'timeToLevel',
+];
+
+/**
+ * Which class a row belongs to.
+ * @param {Object} row - A row definition
+ * @returns {string} One of {@link TILE_CLASS}
+ */
+export function tileClassFor(row) {
+    const declared = row?.tileClass;
+    if (declared && Object.values(TILE_CLASS).includes(declared)) return declared;
+    return TILE_CLASSES[row?.key] || TILE_CLASS.VALUE;
+}
+
+/**
+ * What a tile that drew nothing should do about it.
+ *
+ * The setting wins where it has an opinion, so somebody who wants the old wall
+ * of placeholders back — or wants every empty tile gone — says so once and is
+ * obeyed everywhere. Left on `auto`, the class decides, and a watch tile decides
+ * on top of that: "nothing watched" is only worth a line when there is something
+ * you can do about it, which means the tile has to be able to open the panel you
+ * would add to. A watch tile with no `onOpen` is a dead end, and stands down.
+ *
+ * @param {Object} row - A row definition
+ * @param {string} [setting] - The panel's `emptyTiles` setting
+ * @returns {string} `hide`, `compact` or `full`
+ */
+export function emptyPolicyFor(row, setting = EMPTY_POLICY.AUTO) {
+    const forced = [EMPTY_POLICY.HIDE, EMPTY_POLICY.COMPACT, EMPTY_POLICY.FULL];
+    if (forced.includes(setting)) return setting;
+    if (forced.includes(row?.whenEmpty)) return row.whenEmpty;
+
+    switch (tileClassFor(row)) {
+        case TILE_CLASS.MEASUREMENT:
+            return EMPTY_POLICY.HIDE;
+        case TILE_CLASS.WATCH:
+            return typeof row?.onOpen === 'function' ? EMPTY_POLICY.COMPACT : EMPTY_POLICY.HIDE;
+        default:
+            return EMPTY_POLICY.COMPACT;
+    }
+}
+
+/**
+ * What a compact tile says.
+ *
+ * Its own name, never its placeholder line. Two rows are allowed to have nothing
+ * to report in the same words — "Nothing watched" belongs to both the watchlist
+ * and the equipment watch, "No run measured yet" to both luck tiles — and two
+ * identical strips sitting beside each other are worse than one, because now you
+ * cannot even tell which feature is idle. A name is the one thing a tile has
+ * that is its own.
+ *
+ * @param {Object} row - A row definition
+ * @returns {string} The line to draw
+ */
+export function compactLabel(row) {
+    const name = row?.name || row?.key || '';
+    if (tileClassFor(row) === TILE_CLASS.WATCH && typeof row?.onOpen === 'function') return `${name} — click to add`;
+    return name;
+}
+
+/**
  * Put saved settings and the rows that actually exist together.
  *
  * Kept pure so the awkward cases are testable: a row saved in the order but since
@@ -94,13 +275,21 @@ export function registeredRows() {
  * heard of. The first must not leave a hole and the second must not be lost at
  * the bottom of a list nobody knows to look at.
  *
+ * `curatedDefaults` is what tells a character who has never touched the overlay
+ * from one who arranged it before the curated set existed. It is set once, when
+ * the panel finds nothing saved, and persists — so an existing layout keeps
+ * answering "is this row on?" the way it always did, with each row's own
+ * `defaultVisible`, and only a fresh one gets {@link CURATED_ROWS}. A row the
+ * settings have an explicit opinion about beats both.
+ *
  * @param {Array<Object>} available - Registered rows
- * @param {Object} saved - `{ visible: {key: bool}, order: string[] }`
+ * @param {Object} saved - `{ visible: {key: bool}, order: string[], curatedDefaults: bool }`
  * @returns {Array<Object>} Rows to draw, in order, each with `visible`
  */
 export function resolveRows(available, saved) {
     const order = saved?.order || [];
     const visible = saved?.visible || {};
+    const curated = saved?.curatedDefaults === true;
 
     const known = new Map(available.map((row) => [row.key, row]));
     const ordered = [];
@@ -115,9 +304,20 @@ export function resolveRows(available, saved) {
     // Anything the saved order has not heard of is new, and goes at the end
     ordered.push(...known.values());
 
+    // Nobody has arranged anything yet, so the curated set is the arrangement:
+    // its tiles first and in its order, which is what the initial packing lays
+    // out. Sorting is stable, so everything else keeps registration order.
+    if (curated && !order.length) {
+        const rank = (key) => {
+            const index = CURATED_ROWS.indexOf(key);
+            return index < 0 ? CURATED_ROWS.length : index;
+        };
+        ordered.sort((a, b) => rank(a.key) - rank(b.key));
+    }
+
     return ordered.map((row) => ({
         ...row,
-        visible: visible[row.key] ?? row.defaultVisible,
+        visible: visible[row.key] ?? (curated ? CURATED_ROWS.includes(row.key) : row.defaultVisible),
     }));
 }
 

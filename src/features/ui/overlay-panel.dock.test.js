@@ -38,7 +38,8 @@ vi.mock('../../utils/floating-panel.js', () => ({
     makeDraggable: () => () => {},
     makeResizable: () => () => {},
 }));
-vi.mock('../../utils/overlay-rows.js', () => ({
+vi.mock('../../utils/overlay-rows.js', async (importActual) => ({
+    ...(await importActual()),
     registeredRows: () => [{ key: 'luck', name: 'Drop Luck', render: (el) => (el.textContent = '27.3%') }],
     resolveRows: (available) => available.map((row) => ({ ...row, visible: true })),
     moveRow: (order) => order,
