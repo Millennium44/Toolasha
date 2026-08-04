@@ -84,6 +84,14 @@ function isCombatSimulatorPage() {
  * own wrapper, the persistent skill nav bars). It runs once, on the same delay as
  * the health pass, and reports through the same `UI.healthStatus.reportFailures`
  * channel with reason "selector missing — game update?".
+ *
+ * `UI.schemaCanary` is the third of these, and the one that looks at neither the
+ * page nor the features but at the game's own data: the top-level maps this
+ * script indexes by literal key, the item and buff-type hrids it matches by
+ * literal string, and the dungeon wave counts it falls back to. Those fail even
+ * more quietly than a selector does — a renamed map is `{}`, a renamed hrid is
+ * `null` — so it runs beside the selector canary and reports through the same
+ * channel with reason "data shape changed — game update?".
  * ------------------------------------------------------------------------- */
 
 /**
@@ -867,6 +875,13 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'welcomeBackValue',
+            name: 'Welcome Back Value',
+            category: 'UI',
+            module: UI.welcomeBackValue,
+            async: false,
+        },
+        {
             key: 'panelSizeMemory',
             name: 'Panel Size Memory',
             category: 'UI',
@@ -1364,10 +1379,16 @@ if (isCombatSimulatorPage()) {
                     // reported unhealthy, because a game update can rename every
                     // class at once without a single per-feature check noticing —
                     // each one's anchor is just "not open," which reads as null.
-                    const canaryFailures = checkAnchorCanaries();
+                    //
+                    // The schema canary is the same argument one layer down: the
+                    // script hardcodes the game's own data keys and hrids, and a
+                    // renamed one produces empty maps and null lookups rather
+                    // than an error. Both are reported together — two toasts
+                    // about the same game update is one toast too many.
+                    const canaryFailures = [...checkAnchorCanaries(), ...UI.schemaCanary.runSchemaCanary()];
                     if (canaryFailures.length > 0) {
                         console.warn(
-                            '[Toolasha] Selector canary found missing anchors — the game may have updated:',
+                            '[Toolasha] Canary found missing anchors or game data — the game may have updated:',
                             canaryFailures.map((f) => f.name)
                         );
                         UI.healthStatus.reportFailures(canaryFailures);
@@ -1468,5 +1489,7 @@ if (isCombatSimulatorPage()) {
         // The selector canary, callable directly for a spot-check without
         // waiting for the delayed health pass to run it on its own.
         canary: checkAnchorCanaries,
+        // The same, for the shape of the game data rather than the page
+        schema: () => UI.schemaCanary.runSchemaCanary(),
     };
 }

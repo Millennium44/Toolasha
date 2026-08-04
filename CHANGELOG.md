@@ -6,6 +6,17 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Official formulas, ladder costs, and the sim graded against reality
+
+- **Lab math now follows the official formulas you supplied**: exact challenge/treasure/floor-exit reward tables (tokens, Purdora's boxes, refinement chests — no more approximations), grid size, and confirmation our success/work/XP math already matched. The unrevealed-rooms path default becomes pessimistic (needing a shroud), live fight replay defaults off, and a run-once migration delivers both defaults to existing users; the precision setting's help finally describes what it governs.
+- **Ladder cost on the enhancement watch**: every watched enhancement now also shows what it costs to enhance your second-best copy (or a fresh base) instead of risking the equipped piece.
+- **Ability swaps cost from your actual book level** when owned ("from Lv12" chip), fresh-book pricing only for unowned.
+- **Sim panels remember being open** across reloads.
+- **Alchemy verified against the official rules**: most math confirmed correct; fixed the under-level penalty missing from coinify/decompose and the coinify fee inconsistency; all fee formulas share one helper.
+- **Sim accuracy panel**: replay your recorded fights against the simulator's prediction, deviations flagged only beyond statistical noise.
+- **Welcome Back gains a value row** (net gold, coins/hr, XP/hr at your pricing mode); account/sync failures surface as actionable toasts; gist errors classify by status code; and a data-shape canary catches game updates that restructure client data.
+- Enhancement cost variance (validated against Monte Carlo) now feeds the flip finder's new enhance-to-sell rows.
+
 ### Upstream ports (verdict-gated) and honest task damage
 
 - **Task damage only counts on task fights.** Sims launched from a task card carry an is-task-fight flag; everything else — zone sims, lab rankings, the upgrade advisor — excludes taskDamage, so task badges and trinkets no longer rank on damage they only deal against your task monster (their on-task value shows as row detail). Both sim panels gain an explicit "Task Fight" toggle.

@@ -42,7 +42,7 @@ import {
     visibleTabsContainer,
     navigateToMarketplace,
 } from '../../utils/marketplace-tabs.js';
-import { restoreGeometry, saveGeometry } from '../../utils/panel-geometry.js';
+import { restoreGeometry, saveGeometry, saveOpenState, reopenIfLeftOpen } from '../../utils/panel-geometry.js';
 import { formatWithSeparator, formatKMB, parseKMB } from '../../utils/formatters.js';
 import { createEtaTracker } from '../../utils/progress-eta.js';
 import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
@@ -55,9 +55,12 @@ const PANEL_ID = 'mwi-lab-sim-panel';
 /**
  * Where this panel was left, in the shared panel-geometry store.
  *
- * Deliberately geometry only: the open flag `panel-geometry.js` also carries is
- * not written here, because a simulator that reopens itself on every page load
- * is in the way rather than helpful — you open it when you have a question.
+ * Geometry *and* the open flag. This deliberately went the other way once — the
+ * argument being that a simulator is opened when you have a question, so
+ * reopening it on every load would be in the way. In practice the question
+ * outlives the page: a refresh mid-analysis, or the game reloading itself,
+ * closed a panel that was being read and lost where you were in it. A panel you
+ * left open is a panel you were using, and closing it says so.
  */
 const GEOMETRY_KEY = 'labSimPanel';
 
@@ -767,9 +770,7 @@ class LabSimUI {
         this._restorePanelGeometry();
 
         // Event listeners
-        this.panel.querySelector('#mwi-labsim-close').addEventListener('click', () => {
-            this.panel.style.display = 'none';
-        });
+        this.panel.querySelector('#mwi-labsim-close').addEventListener('click', () => this.hide());
         this.panel.addEventListener('mousedown', () => bringPanelToFront(this.panel));
 
         // Tab switching
@@ -876,6 +877,10 @@ class LabSimUI {
         });
 
         this._populateMonsters();
+        // Here rather than at module scope, where the other panels ask: this one
+        // is built by its feature module and only if the setting is on, so
+        // asking any earlier would be asking about a panel that does not exist
+        this.restore();
     }
 
     /** @private */
@@ -3134,30 +3139,59 @@ class LabSimUI {
         this._setStatus(`${results.length} skilling upgrade candidates analyzed.`);
     }
 
+    /**
+     * Open the panel.
+     *
+     * @param {Object} [options] - `remember: false` when reopening at start-up,
+     *   so restoring a panel is not itself recorded as opening one
+     */
+    show({ remember = true } = {}) {
+        if (!this.panel) return;
+        if (remember) saveOpenState(GEOMETRY_KEY, true);
+
+        this.panel.style.display = 'flex';
+        bringPanelToFront(this.panel);
+        this._populateMonsters();
+        this._paintCritAura();
+
+        if (!this._editor.isInitialized()) {
+            this._editor.initEditor();
+            // The first monster in the list is selected but was never chosen,
+            // so the handler that applies its labyrinth loadout never ran — the
+            // default monster opened on whatever gear happened to be on, which
+            // is the one case where the panel silently disagreed with every
+            // other monster in the list.
+            //
+            // Only on the first initialization: reapplying on every open would
+            // throw away gear changed by hand since.
+            this._whenEditorReady().then(() => {
+                const selected = this.panel?.querySelector('#mwi-labsim-monster')?.value;
+                if (selected) this._onMonsterChange(selected);
+            });
+        }
+    }
+
+    /** @param {Object} [options] - `remember: false` to close without forgetting it was open */
+    hide({ remember = true } = {}) {
+        if (!this.panel) return;
+        if (remember) saveOpenState(GEOMETRY_KEY, false);
+        this.panel.style.display = 'none';
+    }
+
     toggle() {
         if (!this.panel) return;
-        const visible = this.panel.style.display !== 'none';
-        this.panel.style.display = visible ? 'none' : 'flex';
-        if (!visible) {
-            bringPanelToFront(this.panel);
-            this._populateMonsters();
-            this._paintCritAura();
-            if (!this._editor.isInitialized()) {
-                this._editor.initEditor();
-                // The first monster in the list is selected but was never
-                // chosen, so the handler that applies its labyrinth loadout
-                // never ran — the default monster opened on whatever gear
-                // happened to be on, which is the one case where the panel
-                // silently disagreed with every other monster in the list.
-                //
-                // Only on the first initialization: reapplying on every open
-                // would throw away gear changed by hand since.
-                this._whenEditorReady().then(() => {
-                    const selected = this.panel?.querySelector('#mwi-labsim-monster')?.value;
-                    if (selected) this._onMonsterChange(selected);
-                });
-            }
-        }
+        if (this.panel.style.display !== 'none') this.hide();
+        else this.show();
+    }
+
+    /**
+     * Reopen if the page was left with this panel up.
+     *
+     * The waiting is `panel-geometry.js`'s: the answer lives in IndexedDB, which
+     * is not open yet when the panel is built.
+     */
+    restore() {
+        reopenIfLeftOpen(GEOMETRY_KEY, () => this.show({ remember: false }));
     }
 
     /**
@@ -3208,7 +3242,7 @@ class LabSimUI {
     async openPreconfigured(detail = {}) {
         if (!this.panel) return;
         if (this.panel.style.display === 'none') {
-            this.toggle();
+            this.show();
         } else {
             bringPanelToFront(this.panel);
         }

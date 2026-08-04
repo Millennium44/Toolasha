@@ -136,6 +136,75 @@ function clampSuccessChance(v) {
 }
 
 /**
+ * The side length of a floor's square room grid: GridSize = MIN(3 + Floor, 8).
+ *
+ * Only a fallback — the live grid's own width is authoritative and is used
+ * whenever `roomData` has rows. This is for the moment before the first floor
+ * payload lands, so nothing has to guess.
+ *
+ * @param {number} floor - Labyrinth floor number
+ * @returns {number} Rooms per side, 0 below floor 1
+ */
+export function labyrinthGridSize(floor) {
+    const f = Math.max(0, Math.floor(Number(floor) || 0));
+    if (f < 1) return 0;
+    return Math.min(3 + f, 8);
+}
+
+/**
+ * What a labyrinth room pays out, per the game's own drop tables.
+ *
+ * Three kinds of room pay, and they pay on entirely different schedules:
+ *
+ * - A **challenge** room (combat, skilling or enhancing) rolls one token at
+ *   MIN(Floor×5%, 50%) and one Purdora's Box at MIN(Floor×1%, 10%). The box
+ *   follows the room: a combat room drops the Combat box, everything else the
+ *   Skilling box.
+ * - A **treasure** room always pays MIN(Floor, 10) tokens, and rolls one box
+ *   of *each* type at MIN(Floor×5%, 50%).
+ * - The **floor exit** always pays 5×Floor tokens; from floor 4 it always
+ *   pays both box types, averaging (Floor−3)/2 each; from floor 6 it always
+ *   pays a Refinement Chest, averaging (Floor−4)/2.
+ *
+ * Returned as expected quantities so a caller can add them up or weight them
+ * without caring which of the above was a chance and which was a count.
+ *
+ * @param {number} floor - Labyrinth floor number
+ * @param {string} kind - 'combat' | 'skilling' | 'enhancing' | 'treasure' | 'exit'
+ * @returns {{tokens: number, skillingBoxes: number, combatBoxes: number, refinementChests: number}}
+ */
+export function labyrinthRoomRewards(floor, kind) {
+    const f = Math.max(0, Math.floor(Number(floor) || 0));
+    const rewards = { tokens: 0, skillingBoxes: 0, combatBoxes: 0, refinementChests: 0 };
+    if (f < 1) return rewards;
+
+    if (kind === 'treasure') {
+        rewards.tokens = Math.min(f, 10);
+        const boxChance = Math.min(f * 0.05, 0.5);
+        rewards.skillingBoxes = boxChance;
+        rewards.combatBoxes = boxChance;
+        return rewards;
+    }
+
+    if (kind === 'exit') {
+        rewards.tokens = 5 * f;
+        if (f >= 4) {
+            const boxes = (f - 3) / 2;
+            rewards.skillingBoxes = boxes;
+            rewards.combatBoxes = boxes;
+        }
+        if (f >= 6) rewards.refinementChests = (f - 4) / 2;
+        return rewards;
+    }
+
+    rewards.tokens = Math.min(f * 0.05, 0.5);
+    const boxChance = Math.min(f * 0.01, 0.1);
+    if (kind === 'combat') rewards.combatBoxes = boxChance;
+    else rewards.skillingBoxes = boxChance;
+    return rewards;
+}
+
+/**
  * A room's experience per hour, once the walk to it is paid for.
  *
  * Charged once per room rather than once per attempt: back-to-back retries
@@ -3721,7 +3790,7 @@ class LabyrinthClearRate {
             opt.textContent = label;
             unknownSelect.appendChild(opt);
         }
-        unknownSelect.value = config.getSettingValue('labyrinthPathUnknownMode', 'clearable');
+        unknownSelect.value = config.getSettingValue('labyrinthPathUnknownMode', 'shroud');
         unknownSelect.addEventListener('change', () => {
             config.setSettingValue('labyrinthPathUnknownMode', unknownSelect.value);
         });
@@ -3857,7 +3926,9 @@ class LabyrinthClearRate {
 
         const rows = this.roomData;
         const flatRooms = rows.flat();
-        const cols = Array.isArray(rows[0]) ? rows[0].length : 0;
+        // The live grid's own width is authoritative; the official
+        // MIN(3 + Floor, 8) covers roomData arriving already flattened
+        const cols = Array.isArray(rows[0]) ? rows[0].length : labyrinthGridSize(this.currentFloor);
         const cells = this.findRoomGridCells(flatRooms.length);
         if (!cols || cells.length !== flatRooms.length) {
             if (!auto) this.setTileStatus('Grid not found');
@@ -3983,7 +4054,9 @@ class LabyrinthClearRate {
 
         const rows = this.roomData;
         const flat = rows.flat();
-        const cols = Array.isArray(rows[0]) ? rows[0].length : 0;
+        // The live grid's own width is authoritative; the official
+        // MIN(3 + Floor, 8) covers roomData arriving already flattened
+        const cols = Array.isArray(rows[0]) ? rows[0].length : labyrinthGridSize(this.currentFloor);
         const cells = this.findRoomGridCells(flat.length);
         if (!cols || cells.length !== flat.length) {
             this.setTileStatus('Grid not found');
@@ -4000,7 +4073,7 @@ class LabyrinthClearRate {
         const threshold = thresholdPct / 100;
 
         const unknownSelect = document.querySelector(`.${TILE_CONTROLS_CLASS}-path-unknown`);
-        const unknownMode = unknownSelect?.value || config.getSettingValue('labyrinthPathUnknownMode', 'clearable');
+        const unknownMode = unknownSelect?.value || config.getSettingValue('labyrinthPathUnknownMode', 'shroud');
 
         this.clearPathOverlays();
         this.pathCalcRunning = true;
@@ -4164,7 +4237,9 @@ class LabyrinthClearRate {
 
         const rows = this.roomData;
         const flat = rows.flat();
-        const cols = Array.isArray(rows[0]) ? rows[0].length : 0;
+        // The live grid's own width is authoritative; the official
+        // MIN(3 + Floor, 8) covers roomData arriving already flattened
+        const cols = Array.isArray(rows[0]) ? rows[0].length : labyrinthGridSize(this.currentFloor);
         const cells = this.findRoomGridCells(flat.length);
         if (!cols || cells.length !== flat.length) {
             this.setTileStatus('Grid not found');
@@ -4992,42 +5067,53 @@ class LabyrinthClearRate {
     /**
      * Append the expected token/box reward rows for the current floor.
      *
-     * A labyrinth room pays nothing at all unless it is cleared, so the drop
-     * rate is not what you expect to receive from entering it — the expectation
-     * is `rate × clearChance`. The unweighted figure said a room you clear one
-     * time in five was worth as much as one you always clear, which is the
-     * whole point of the badge next to it.
-     *
-     * The rates themselves are the observed per-floor figures (5% a floor for a
-     * token, 1% for a box, capped at floor 10), not something the client data
-     * states; the row spells that out rather than presenting them as exact.
+     * The rates are the game's own drop tables — see `labyrinthRoomRewards`
+     * for the three schedules. A challenge room pays nothing at all unless it
+     * is cleared, so the drop rate is not what you expect to receive from
+     * entering it: the expectation is `rate × clearChance`. The unweighted
+     * figure said a room you clear one time in five was worth as much as one
+     * you always clear, which is the whole point of the badge next to it.
+     * Treasure rooms and the floor exit ask for no clear, so they are shown
+     * whole.
      *
      * @param {Function} addRow - Row builder from renderPreviewContent
      * @param {Object|string} [result] - Clear result (a bare type string is
      *   accepted for callers that have nothing else); `clearChance` weights the
-     *   figures and `type` picks the box label
+     *   figures and `type` picks the reward schedule
      */
     appendExpectedRows(addRow, result) {
         const floor = Math.max(0, Math.floor(Number(this.currentFloor) || 0));
         if (floor < 1) return;
 
         const type = typeof result === 'string' ? result : result?.type;
-        const clearChance = typeof result === 'object' && result ? Number(result.clearChance) : NaN;
-        const weight = Number.isFinite(clearChance) && clearChance >= 0 ? Math.min(1, clearChance) : 1;
+        const rewards = labyrinthRoomRewards(floor, type);
+        const needsClear = type !== 'treasure' && type !== 'exit';
 
-        const tokenRate = Math.min(floor * 0.05, 0.5);
-        const boxRate = Math.min(floor * 0.01, 0.1);
-        const boxLabel = type === 'combat' ? 'Combat Box Expected' : 'Skilling Box Expected';
+        const clearChance = typeof result === 'object' && result ? Number(result.clearChance) : NaN;
+        const rawWeight = Number.isFinite(clearChance) && clearChance >= 0 ? Math.min(1, clearChance) : 1;
+        const weight = needsClear ? rawWeight : 1;
+
         const note =
             weight < 1
                 ? `\nWeighted by this room's ${(weight * 100).toFixed(0)}% clear chance — an uncleared room pays nothing.`
                 : '';
-        const approximation =
-            'Drop rates are approximate: 5% per floor for a token and 1% for a box, ' +
-            'capped from floor 10 on. Observed figures, not stated by the game.';
+        const source =
+            type === 'treasure'
+                ? 'Treasure room: MIN(Floor, 10) tokens always, plus MIN(Floor × 5%, 50%) for one box of each type.'
+                : type === 'exit'
+                  ? 'Floor exit: 5 × Floor tokens always; from floor 4 both box types, from floor 6 a Refinement Chest.'
+                  : "Challenge room: MIN(Floor × 5%, 50%) for a token, MIN(Floor × 1%, 10%) for a Purdora's Box.";
 
-        addRow('Token Expected', (tokenRate * weight).toFixed(2), `${approximation}${note}`);
-        addRow(boxLabel, (boxRate * weight).toFixed(2), `${approximation}${note}`);
+        addRow('Token Expected', (rewards.tokens * weight).toFixed(2), `${source}${note}`);
+        if (rewards.skillingBoxes > 0) {
+            addRow('Skilling Box Expected', (rewards.skillingBoxes * weight).toFixed(2), `${source}${note}`);
+        }
+        if (rewards.combatBoxes > 0) {
+            addRow('Combat Box Expected', (rewards.combatBoxes * weight).toFixed(2), `${source}${note}`);
+        }
+        if (rewards.refinementChests > 0) {
+            addRow('Refinement Chest Expected', (rewards.refinementChests * weight).toFixed(2), `${source}${note}`);
+        }
     }
 
     getBadgeColor(clearChance) {

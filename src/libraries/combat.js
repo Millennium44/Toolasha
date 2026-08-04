@@ -23,6 +23,8 @@ import combatDPS from '../features/combat/combat-dps.js';
 import portraitDps from '../features/combat/portrait-dps.js';
 // Side-effect import: registers the Build Score overlay row
 import '../features/profile/build-score-row.js';
+// Side-effect import: registers the Sim Accuracy overlay row and its panel
+import '../features/combat/combat-replay-check.js';
 import labyrinthTracker from '../features/combat/labyrinth-tracker.js';
 import labyrinthBestLevel from '../features/combat/labyrinth-best-level.js';
 import labyrinthShopPrices from '../features/combat/labyrinth-shop-prices.js';

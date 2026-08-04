@@ -357,18 +357,58 @@ class SyncManager {
             // here and gets a generic message with the detail in the console.
             // Neither path can carry the token: it only ever appears in a header.
             if (error instanceof GistError) {
-                console.warn(`[Sync] ${label} failed (${error.kind})`);
-                showToast(error.message, { kind: error.kind === 'rate-limit' ? 'warn' : 'error' });
+                console.warn(`[Sync] ${label} failed (${error.kind})`, error.githubMessage || '');
                 if (error.kind === 'not-found') await this.forgetGist();
+                showToast(describeFailure(label, error), {
+                    kind: error.kind === 'rate-limit' ? 'warn' : 'error',
+                    // A failure the player has to act on must not fade before
+                    // they have read what to do about it
+                    duration: ACTIONABLE_KINDS.has(error.kind) ? 0 : undefined,
+                });
             } else {
                 console.error(`[Sync] ${label} failed:`, error);
-                showToast(`Sync ${label} failed. See the console for details.`, { kind: 'error' });
+                showToast(
+                    `Sync ${label} failed: ${error?.message || 'unexpected error'}. Try again; if it keeps ` +
+                        'happening, reload the page — the console has the detail.',
+                    { kind: 'error' }
+                );
             }
             return { ok: false, reason: error instanceof GistError ? error.kind : 'error' };
         } finally {
             this.busy = false;
         }
     }
+}
+
+/**
+ * What to do about each kind of failure.
+ *
+ * `GistError.message` already says what went wrong, and for the two failures
+ * that resolve themselves — a rate limit, a dead network — it also says when to
+ * come back, so those get nothing added. The rest need a next step, because a
+ * toast that says only "GitHub rejected the token" leaves the reader with no
+ * idea that the token is a text box two clicks away.
+ */
+const REMEDIES = {
+    auth: 'Check the token in Settings → Cross-Device Sync — it needs the "gist" scope.',
+    'not-found': 'This device has forgotten that gist; press Push to make a new one.',
+    'too-large': 'Set Sync scope to "Settings only" in Settings → Cross-Device Sync.',
+    parse: 'Push from a device whose data is good to replace what is in the gist.',
+    http: 'Try again shortly; githubstatus.com says whether GitHub itself is unwell.',
+};
+
+/** Failures the player has to do something about, so their toast stays up */
+const ACTIONABLE_KINDS = new Set(Object.keys(REMEDIES));
+
+/**
+ * One line saying which half of sync failed, why, and what to do about it.
+ * @param {string} label - 'push' or 'pull'
+ * @param {GistError} error - The classified failure
+ * @returns {string} Toast text
+ */
+function describeFailure(label, error) {
+    const remedy = REMEDIES[error.kind];
+    return `Sync ${label} failed: ${error.message}${remedy ? ` ${remedy}` : ''}`;
 }
 
 /**

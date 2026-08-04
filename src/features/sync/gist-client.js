@@ -165,41 +165,183 @@ export async function httpRequest({ method, url, headers = {}, body }) {
 }
 
 /**
+ * The structured half of a GitHub error response.
+ *
+ * Every error the API returns is JSON of the same shape — a `message`, usually a
+ * `documentation_url` pointing at the rule that was broken, and for validation
+ * failures an `errors` array of `{resource, field, code, message}`. Those three
+ * fields are what classification is built on, because they are the API's own
+ * contract; the prose inside `message` is not, and it has been reworded before.
+ *
+ * A body that is not JSON at all (an HTML error page from a proxy in front of
+ * GitHub, say) yields empty fields rather than throwing, so classification falls
+ * back to the status code alone.
+ *
+ * @param {string} text - Raw response body
+ * @returns {{message: string, documentationUrl: string, errors: Array<Object>}} Structured fields
+ */
+function githubDetail(text) {
+    const empty = { message: '', documentationUrl: '', errors: [] };
+    if (typeof text !== 'string' || !text.trim()) return empty;
+
+    let body;
+    try {
+        body = JSON.parse(text);
+    } catch {
+        return empty;
+    }
+    if (!body || typeof body !== 'object') return empty;
+
+    return {
+        message: typeof body.message === 'string' ? body.message : '',
+        documentationUrl: typeof body.documentation_url === 'string' ? body.documentation_url : '',
+        errors: Array.isArray(body.errors) ? body.errors : [],
+    };
+}
+
+/**
+ * Is this refusal a rate limit, and when does it lift?
+ *
+ * Both of GitHub's limits arrive as a 403 or a 429, and telling them apart from
+ * a scope problem is the one classification that cannot be done on the status
+ * code alone:
+ *
+ *   primary   — the hourly quota is spent: `x-ratelimit-remaining: 0`
+ *   secondary — a burst was refused with quota still on the clock, and the only
+ *               structural marks are a `retry-after` header and a
+ *               documentation_url naming the secondary limits
+ *
+ * Order matters. The headers are checked first because they are the API's
+ * contract, the documentation URL second because its path is stable, and the
+ * prose in `message` last and only when nothing structural decided — matching
+ * on English text is how a reworded message turns a rate limit into a mystery.
+ *
+ * @param {number} status - HTTP status
+ * @param {Record<string, string>} headers - Response headers, lower-cased
+ * @param {{message: string, documentationUrl: string}} detail - Structured fields
+ * @returns {{resetAt: Date|null, secondary: boolean}|null} Null when this is not a rate limit
+ */
+function rateLimitInfo(status, headers, detail) {
+    if (status !== 403 && status !== 429) return null;
+
+    const quotaSpent = headers['x-ratelimit-remaining'] === '0';
+
+    const retryAfter = Number(headers['retry-after']);
+    const hasRetryAfter = Number.isFinite(retryAfter) && retryAfter > 0;
+
+    // Covers both `/rest/overview/rate-limits-for-the-rest-api` and the
+    // secondary-rate-limits page, and nothing else GitHub documents
+    const documented = /rate-limit/i.test(detail.documentationUrl);
+
+    // Last resort, and only when every structural signal was silent
+    const prose =
+        !quotaSpent &&
+        !hasRetryAfter &&
+        !documented &&
+        /rate limit|abuse detection|too many requests/i.test(detail.message);
+
+    // A 429 is unambiguous whatever the headers say; a 403 needs a reason
+    if (status !== 429 && !quotaSpent && !hasRetryAfter && !documented && !prose) return null;
+
+    const resetSeconds = Number(headers['x-ratelimit-reset']);
+    let resetAt = null;
+    if (Number.isFinite(resetSeconds) && resetSeconds > 0) resetAt = new Date(resetSeconds * 1000);
+    else if (hasRetryAfter) resetAt = new Date(Date.now() + retryAfter * 1000);
+
+    return { resetAt, secondary: !quotaSpent && (hasRetryAfter || /secondary/i.test(detail.documentationUrl)) };
+}
+
+/** Validation-failure signals that mean the payload was too big for one gist */
+const SIZE_CODES = new Set(['too_large', 'too_long']);
+
+/**
+ * Does a 422's structured detail say the payload was oversized?
+ * @param {{message: string, errors: Array<Object>}} detail - Structured fields
+ * @returns {boolean|null} True/false when the detail decides, null when it is silent
+ */
+function looksOversized(detail) {
+    for (const error of detail.errors) {
+        if (SIZE_CODES.has(error?.code)) return true;
+        if (typeof error?.message === 'string' && /too large|too long|maximum size|exceed/i.test(error.message)) {
+            return true;
+        }
+    }
+    if (detail.errors.length > 0) return false;
+    if (/too large|maximum size|exceed/i.test(detail.message)) return true;
+    return null;
+}
+
+/**
  * Turn a non-2xx response into the error the UI should show.
+ *
+ * Classification is by status code and the structured fields GitHub documents,
+ * in that order; the prose in `message` is consulted only where nothing else can
+ * decide (see `rateLimitInfo`). GitHub's own message is carried along in
+ * `githubMessage` so a report can quote it without the classification depending
+ * on it.
+ *
  * @param {{status: number, text: string, headers: Record<string, string>}} response - What came back
  * @returns {GistError} Classified failure
  */
 function classify(response) {
-    const { status, headers } = response;
+    const { status, headers = {} } = response;
+    const detail = githubDetail(response.text);
+    // Never the token: GitHub does not echo request headers, and nothing from
+    // the request is put in here
+    const context = { githubMessage: detail.message, documentationUrl: detail.documentationUrl };
+
+    const rate = rateLimitInfo(status, headers, detail);
+    if (rate) {
+        const when = rate.resetAt ? ` Try again after ${rate.resetAt.toLocaleTimeString()}.` : ' Try again shortly.';
+        const which = rate.secondary
+            ? 'GitHub is throttling this token for making too many requests too quickly.'
+            : 'GitHub is rate-limiting this token — its hourly quota is spent.';
+        return new GistError('rate-limit', `${which}${when}`, { ...context, resetAt: rate.resetAt });
+    }
 
     if (status === 401) {
         return new GistError(
             'auth',
-            'GitHub rejected the token. Check it is correct, unexpired, and has the "gist" scope.'
+            'GitHub rejected the token. Check it is correct, unexpired, and has the "gist" scope.',
+            context
         );
     }
-
-    // GitHub answers a spent quota with 403 or 429 and a remaining count of 0.
-    // A 403 with quota left is a scope problem, which reads as auth to the user.
-    const remaining = headers['x-ratelimit-remaining'];
-    const isRateLimited = status === 429 || (status === 403 && remaining === '0');
-    if (isRateLimited) {
-        const resetSeconds = Number(headers['x-ratelimit-reset']);
-        const resetAt = Number.isFinite(resetSeconds) && resetSeconds > 0 ? new Date(resetSeconds * 1000) : null;
-        const when = resetAt ? ` Try again after ${resetAt.toLocaleTimeString()}.` : '';
-        return new GistError('rate-limit', `GitHub is rate-limiting this token.${when}`, { resetAt });
-    }
     if (status === 403) {
-        return new GistError('auth', 'GitHub refused the request. The token is probably missing the "gist" scope.');
+        // Quota was not the reason, so the token is allowed to exist and not to
+        // do this — which for the gist API is always a missing scope
+        return new GistError(
+            'auth',
+            'GitHub refused the request. The token is probably missing the "gist" scope.',
+            context
+        );
     }
     if (status === 404) {
-        return new GistError('not-found', 'That gist no longer exists.');
+        return new GistError('not-found', 'That gist no longer exists.', context);
     }
     if (status === 422) {
-        return new GistError('too-large', 'GitHub refused the payload. It is most likely too large for one gist.');
+        const oversized = looksOversized(detail);
+        if (oversized === false) {
+            // A validation failure that is not about size — saying "too large"
+            // would send the reader to shrink a payload that is not the problem
+            const first = detail.errors[0] || {};
+            const field = first.field ? ` (${first.resource || 'gist'}.${first.field})` : '';
+            return new GistError(
+                'http',
+                `GitHub rejected the gist${field}: ${detail.message || 'validation failed'}.`,
+                context
+            );
+        }
+        return new GistError(
+            'too-large',
+            'GitHub refused the payload. It is most likely too large for one gist.',
+            context
+        );
+    }
+    if (status >= 500) {
+        return new GistError('http', `GitHub is having trouble (HTTP ${status}). Try again in a few minutes.`, context);
     }
 
-    return new GistError('http', `GitHub returned an unexpected response (HTTP ${status}).`);
+    return new GistError('http', `GitHub returned an unexpected response (HTTP ${status}).`, context);
 }
 
 /**

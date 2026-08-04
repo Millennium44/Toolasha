@@ -16,7 +16,7 @@ import { formatRelativeTime, networthFormatter } from '../../utils/formatters.js
 import { row, blank, ROW_COLORS, shortDuration } from '../../utils/overlay-format.js';
 import { createPanel, panelCard, panelLine, panelNote } from '../../utils/simple-panel.js';
 import { registerRow } from '../../utils/overlay-rows.js';
-import { cachedAccount, refreshAccount, windowChange } from './account-data.js';
+import { accountReadFailure, cachedAccount, refreshAccount, windowChange } from './account-data.js';
 
 const ACCENT = '#c9a0ff';
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -196,7 +196,17 @@ export const accountPanel = createPanel({
     draw: (body) => {
         const data = account();
         if (!data) {
-            body.appendChild(panelNote('Reading the account…'));
+            // A panel that says "Reading…" forever is how a broken database
+            // looks from here, and it is indistinguishable from a slow one
+            const failure = accountReadFailure();
+            body.appendChild(
+                panelNote(
+                    failure
+                        ? `Could not read the account from storage: ${failure}. Reload the page; ` +
+                              'Toolasha.debug.storage() in the console says more.'
+                        : 'Reading the account…'
+                )
+            );
             return;
         }
 
@@ -208,6 +218,11 @@ export const accountPanel = createPanel({
         drawNetworth(body, data);
         drawCharacters(body, data);
         body.appendChild(panelNote(`Read ${formatRelativeTime(Date.now() - data.at)} ago from stored history.`));
+        // Stale figures with no sign that the refresh behind them is failing is
+        // the one thing worse than no figures
+        if (accountReadFailure()) {
+            body.appendChild(panelNote(`The last refresh failed (${accountReadFailure()}) — these figures are older.`));
+        }
     },
 });
 

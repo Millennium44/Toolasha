@@ -111,6 +111,220 @@ export function buildEnhancementMarkov(math, options) {
 }
 
 /**
+ * Variance of the number of attempts an enhancement run takes.
+ *
+ * The expected count on its own says nothing about the spread, and for this chain the spread is
+ * most of the story: a run that averages 40 attempts is not a run that takes 40 attempts, it is
+ * one that takes 12 if it goes well and 150 if it does not. Quoting only the mean turns a
+ * gamble into a price list.
+ *
+ * From the fundamental matrix M already computed, with t = M·1 the expected attempts from each
+ * state, the standard absorbing-chain result is
+ *
+ *   var = (2M − I)·t − t∘t
+ *
+ * taken at the starting state's row. Nothing extra is inverted — this is a second read of the
+ * matrix the expected count already came from, so the two can never disagree.
+ *
+ * Takes the matrix rather than the chain parameters so it stays a pure function of M, which is
+ * what lets a caller that already has one avoid rebuilding it.
+ *
+ * @param {Object} M - Fundamental matrix (I − Q)^-1, math.js matrix or anything with .get([i,j])
+ * @param {number} targetLevel - Absorbing state, so the transient block is 0..targetLevel−1
+ * @param {number} [startLevel=0] - State the run starts from
+ * @returns {number} Variance in attempts, never negative
+ */
+export function absorptionVariance(M, targetLevel, startLevel = 0) {
+    const expectedFrom = [];
+    for (let i = 0; i < targetLevel; i++) {
+        let rowSum = 0;
+        for (let j = 0; j < targetLevel; j++) {
+            rowSum += M.get([i, j]);
+        }
+        expectedFrom.push(rowSum);
+    }
+
+    let secondMoment = 0;
+    for (let j = 0; j < targetLevel; j++) {
+        // (2M − I) is the identity subtracted from twice M, which only touches the diagonal
+        const coefficient = 2 * M.get([startLevel, j]) - (j === startLevel ? 1 : 0);
+        secondMoment += coefficient * expectedFrom[j];
+    }
+
+    const mean = expectedFrom[startLevel] ?? 0;
+    // Floating-point error on a near-deterministic run can push this a hair below zero, and a
+    // negative variance would propagate as NaN through every standard deviation taken from it
+    return Math.max(0, secondMoment - mean * mean);
+}
+
+/**
+ * The standard normal quantile, to about seven decimal places.
+ *
+ * Acklam's rational approximation. Needed because the cost percentiles below are read off a
+ * fitted distribution, and there is no inverse normal in the language.
+ *
+ * @param {number} p - Probability in (0, 1)
+ * @returns {number} z such that Φ(z) = p
+ */
+function normalQuantile(p) {
+    if (!(p > 0) || !(p < 1)) return p <= 0 ? -Infinity : Infinity;
+
+    const a = [
+        -39.6968302866538, 220.946098424521, -275.928510446969, 138.357751867269, -30.6647980661472, 2.50662827745924,
+    ];
+    const b = [-54.4760987982241, 161.585836858041, -155.698979859887, 66.8013118877197, -13.2806815528857];
+    const c = [
+        -0.00778489400243029, -0.322396458041136, -2.40075827716184, -2.54973253934373, 4.37466414146497,
+        2.93816398269878,
+    ];
+    const d = [0.00778469570904146, 0.32246712907004, 2.445134137143, 3.75440866190742];
+
+    const low = 0.02425;
+    const high = 1 - low;
+
+    if (p < low) {
+        const q = Math.sqrt(-2 * Math.log(p));
+        return (
+            (((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) /
+            ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1)
+        );
+    }
+    if (p > high) {
+        const q = Math.sqrt(-2 * Math.log(1 - p));
+        return -(
+            (((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) /
+            ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1)
+        );
+    }
+
+    const q = p - 0.5;
+    const r = q * q;
+    return (
+        ((((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) * q) /
+        (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1)
+    );
+}
+
+/**
+ * The standard normal CDF, via the Abramowitz & Stegun error-function approximation.
+ * @param {number} z - Standard score
+ * @returns {number} Φ(z)
+ */
+function normalCdf(z) {
+    const t = 1 / (1 + 0.2316419 * Math.abs(z));
+    const density = Math.exp((-z * z) / 2) / Math.sqrt(2 * Math.PI);
+    const poly = t * (0.31938153 + t * (-0.356563782 + t * (1.781477937 + t * (-1.821255978 + t * 1.330274429))));
+    const upper = density * poly;
+    return z >= 0 ? 1 - upper : upper;
+}
+
+/**
+ * Turn an attempt count and its variance into what a run costs.
+ *
+ * Everything an enhancement consumes is either paid once — the base item — or paid per attempt:
+ * materials, and the protection items whose expected count is itself proportional to attempts.
+ * So the cost is an affine function of the attempt count, and its distribution is the attempt
+ * distribution scaled and shifted. That is the whole reason the variance is worth computing:
+ * once it exists, the cost spread follows without simulating anything.
+ *
+ * @param {Object} attempts - { attempts, attemptsVariance, minAttempts } from calculateEnhancement
+ * @param {Object} prices - Cost model
+ * @param {number} [prices.costPerAttempt=0] - Coins each attempt burns (materials, protection)
+ * @param {number} [prices.fixedCost=0] - Coins paid once, whatever happens (the base item)
+ * @returns {Object} { expected, variance, stdDev, minimum } in coins
+ */
+export function costStats(attempts, prices = {}) {
+    const perAttempt = Number(prices.costPerAttempt) || 0;
+    const fixed = Number(prices.fixedCost) || 0;
+    const mean = Number(attempts?.attempts) || 0;
+    const variance = Math.max(0, Number(attempts?.attemptsVariance) || 0);
+    const minimum = Math.max(0, Number(attempts?.minAttempts) || 0);
+
+    return {
+        expected: fixed + perAttempt * mean,
+        variance: variance * perAttempt * perAttempt,
+        stdDev: Math.sqrt(variance) * Math.abs(perAttempt),
+        minimum: fixed + perAttempt * minimum,
+    };
+}
+
+/**
+ * Percentiles of a run's cost.
+ *
+ * Fitted as a *shifted* gamma rather than a normal, because the attempt count is neither
+ * symmetric nor unbounded below. A normal fit on a run whose standard deviation approaches its
+ * mean — which is the ordinary case here — puts its tenth percentile below zero, which is not a
+ * cheap run, it is an impossible one. The shift is the fewest attempts the run could physically
+ * take, and the gamma matched on the remaining mean and the variance carries the long right tail
+ * that makes enhancing feel the way it does.
+ *
+ * Quantiles come from the Wilson–Hilferty cube-root transform, which is closed form and good to
+ * a few parts in a thousand over the range worth quoting. Below the shift is impossible, so
+ * every answer is clamped there.
+ *
+ * @param {Object} cost - Result of costStats
+ * @param {number[]} [probabilities=[0.1, 0.5, 0.9]] - Probabilities to report
+ * @returns {Object} { p10, p50, p90, values } — values pairs each probability with its cost,
+ *   and the named fields are present only when their probability was asked for
+ */
+export function costPercentiles(cost, probabilities = [0.1, 0.5, 0.9]) {
+    const expected = Number(cost?.expected) || 0;
+    const variance = Math.max(0, Number(cost?.variance) || 0);
+    const minimum = Math.min(Number(cost?.minimum) || 0, expected);
+    const spread = expected - minimum;
+
+    const quantile = (p) => {
+        if (!(p > 0) || !(p < 1)) return expected;
+        // A run with no spread costs what it costs; fitting a distribution to it would only
+        // introduce error
+        if (variance <= 0 || spread <= 0) return expected;
+
+        const shape = (spread * spread) / variance;
+        const scale = variance / spread;
+        const z = normalQuantile(p);
+        const factor = 1 - 1 / (9 * shape) + z / (3 * Math.sqrt(shape));
+        return Math.max(minimum, minimum + shape * scale * Math.max(0, factor) ** 3);
+    };
+
+    const values = probabilities.map((p) => ({ p, cost: quantile(p) }));
+    const named = {};
+    for (const entry of values) {
+        const label = `p${Math.round(entry.p * 100)}`;
+        named[label] = entry.cost;
+    }
+    return { ...named, values };
+}
+
+/**
+ * The chance a run costs more than some threshold — the sale proceeds, usually.
+ *
+ * The same fitted distribution read the other way round. It is the figure that decides whether
+ * an enhance-to-sell is a trade or a bet: a median profit means nothing if two runs in five lose
+ * money.
+ *
+ * @param {Object} cost - Result of costStats
+ * @param {number} threshold - Coins to compare against
+ * @returns {number} Probability in [0, 1]
+ */
+export function costExceedanceProbability(cost, threshold) {
+    const expected = Number(cost?.expected) || 0;
+    const variance = Math.max(0, Number(cost?.variance) || 0);
+    const minimum = Math.min(Number(cost?.minimum) || 0, expected);
+    const spread = expected - minimum;
+    const limit = Number(threshold) || 0;
+
+    if (variance <= 0 || spread <= 0) return expected > limit ? 1 : 0;
+    if (limit <= minimum) return 1;
+
+    const shape = (spread * spread) / variance;
+    const scale = variance / spread;
+    // Wilson–Hilferty inverted: the cube root of a gamma is very nearly normal
+    const standardised = (limit - minimum) / (scale * shape);
+    const z = 3 * Math.sqrt(shape) * (Math.cbrt(standardised) - 1 + 1 / (9 * shape));
+    return Math.min(1, Math.max(0, 1 - normalCdf(z)));
+}
+
+/**
  * Calculate total success rate bonus multiplier
  * @param {Object} params - Enhancement parameters
  * @param {number} params.enhancingLevel - Effective enhancing level (base + tea bonus)
@@ -241,6 +455,10 @@ export function calculateEnhancement(params) {
         attempts += M.get([startLevel, i]);
     }
 
+    // How far a run can stray from that expectation. Read off the same M, so the two figures
+    // are one measurement rather than two that have to be kept in step.
+    const attemptsVariance = absorptionVariance(M, targetLevel, startLevel);
+
     // Expected protection item uses
     let protects = 0;
     if (protectFrom > 0 && protectFrom < targetLevel) {
@@ -273,9 +491,19 @@ export function calculateEnhancement(params) {
             : Math.max(MIN_ACTION_TIME_SECONDS, baseActionTime / speedMultiplier);
     const totalTime = perActionTime * attempts;
 
+    // The fewest attempts the run could physically take: one per level, or one per two levels
+    // when Blessed Tea can double-jump. Nothing below this is possible, which is what stops a
+    // fitted cost distribution quoting a tenth percentile nobody could ever hit.
+    const levelsToClimb = Math.max(0, targetLevel - startLevel);
+    const minAttempts = blessedTea ? Math.ceil(levelsToClimb / 2) : levelsToClimb;
+
     return {
         attempts: attempts, // Keep exact decimal value for calculations
         attemptsRounded: Math.round(attempts), // Rounded for display
+        // The spread around that expectation — see absorptionVariance
+        attemptsVariance,
+        attemptsStdDev: Math.sqrt(attemptsVariance),
+        minAttempts,
         protectionCount: protects, // Keep decimal precision
         perActionTime: perActionTime,
         totalTime: totalTime,

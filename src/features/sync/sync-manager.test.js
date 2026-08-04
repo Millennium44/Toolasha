@@ -267,6 +267,67 @@ describe('pull', () => {
     });
 });
 
+/**
+ * What the player is told when sync fails.
+ *
+ * A failure that only reaches the console is a failure nobody knows about, and
+ * one that reaches a toast saying "sync failed" is one nobody can act on. So
+ * every toast has to name which half failed, why, and — where the answer is not
+ * simply "wait" — what to do next.
+ */
+describe('failure messages', () => {
+    test('names the operation, the reason and the next step', async () => {
+        gist.writeError = new FakeGistError('auth', 'GitHub rejected the token.');
+        await syncManager.push();
+
+        const toast = toasts.at(-1);
+        expect(toast.message).toContain('Sync push failed');
+        expect(toast.message).toContain('GitHub rejected the token.');
+        expect(toast.message).toContain('Settings → Cross-Device Sync');
+        // Something to do about it must not fade before it is read
+        expect(toast.duration).toBe(0);
+    });
+
+    test('says pull when it was the pull', async () => {
+        stored.map.toolasha_sync_gistId = 'abc';
+        gist.readError = new FakeGistError('parse', 'The sync gist manifest is corrupt.');
+        await syncManager.pull();
+        expect(toasts.at(-1).message).toContain('Sync pull failed');
+    });
+
+    test('a payload too big says which setting shrinks it', async () => {
+        gist.writeError = new FakeGistError('too-large', 'GitHub refused the payload.');
+        await syncManager.push();
+        expect(toasts.at(-1).message).toContain('Settings only');
+    });
+
+    test('adds nothing to a failure that already says when to come back', async () => {
+        gist.writeError = new FakeGistError('rate-limit', 'GitHub is rate-limiting this token. Try again after 3pm.');
+        await syncManager.push();
+
+        const toast = toasts.at(-1);
+        expect(toast.message).toBe('Sync push failed: GitHub is rate-limiting this token. Try again after 3pm.');
+        // A limit that lifts on its own may fade on its own
+        expect(toast.duration).toBeUndefined();
+    });
+
+    test('a bug in this script is still shown, with its message and a next step', async () => {
+        gist.writeError = new TypeError('files is not iterable');
+        const result = await syncManager.push();
+
+        expect(result.reason).toBe('error');
+        expect(toasts.at(-1).message).toContain('files is not iterable');
+        expect(toasts.at(-1).kind).toBe('error');
+    });
+
+    test('an automatic push still speaks up — silence only covers "nothing to do"', async () => {
+        stored.map.toolasha_sync_lastHash = 'h:something-else';
+        gist.writeError = new FakeGistError('auth', 'GitHub rejected the token.');
+        await syncManager.push({ silent: true });
+        expect(toasts.at(-1).message).toContain('Sync push failed');
+    });
+});
+
 describe('isNewer', () => {
     test('anything beats never having synced', () => {
         expect(isNewer('2026-01-01T00:00:00Z', null)).toBe(true);

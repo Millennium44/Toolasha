@@ -15,6 +15,36 @@ function isBooleanType(type) {
     return type === 'checkbox' || type === 'checkboxWithButton';
 }
 
+/**
+ * Schema defaults that changed after release, and the value they changed from.
+ *
+ * A changed schema default only reaches a fresh install. The saved map is
+ * written whole — every setting the schema had at save time is in it, chosen or
+ * not — so an existing user holds the *old* default as an explicit stored
+ * value, and the merge below faithfully restores it forever. That is right for
+ * a setting the user actually picked and wrong for one they never touched, and
+ * storage cannot tell the two apart.
+ *
+ * So each entry is rewritten exactly once, guarded by a persisted flag: an old
+ * default is nudged to the new one on the first load that sees it, and after
+ * that the user's value is theirs. Someone who deliberately re-picks the old
+ * value keeps it, because the flag has already been set.
+ *
+ * `from` is the value being replaced — anything else stays put, since a user
+ * who chose a third option was never sitting on the old default.
+ */
+const DEFAULT_REWRITES = [
+    // Replaying the live fight runs the real combat engine hundreds of times
+    // mid-fight; it should be opt-in rather than something every player pays for
+    { id: 'labyrinthLiveCombatSim', field: 'isTrue', from: true, to: false },
+    // Routing unrevealed rooms as clearable sends players through rooms that
+    // turn out to need a shroud they did not bring
+    { id: 'labyrinthPathUnknownMode', field: 'value', from: 'clearable', to: 'shroud' },
+];
+
+/** Bump the suffix when a new batch is added to DEFAULT_REWRITES */
+const DEFAULT_REWRITE_FLAG_KEY = 'settings_default_rewrites_v1';
+
 class SettingsStorage {
     constructor() {
         this.storageKey = 'script_settingsMap'; // Legacy global key (used as template)
@@ -87,6 +117,8 @@ class SettingsStorage {
             await this.addToKnownCharacters(this.currentCharacterId, this.currentCharacterName);
         }
 
+        saved = await this.applyDefaultRewrites(saved, characterKey);
+
         const settings = {};
 
         // Build default settings from config
@@ -152,6 +184,47 @@ class SettingsStorage {
         }
 
         return settings;
+    }
+
+    /**
+     * Rewrite stored values still sitting on a superseded schema default, once.
+     *
+     * See DEFAULT_REWRITES for why this is needed at all. The flag is stored
+     * per character, beside that character's settings, so each save file is
+     * nudged exactly once — and is set even when there is nothing to rewrite
+     * (a fresh install, which already has the new defaults), so a later change
+     * of mind is never second-guessed.
+     *
+     * @param {Object|null} saved - The stored settings map, or null when none
+     * @param {string} characterKey - Storage key the map was loaded from
+     * @returns {Promise<Object|null>} The map to merge, rewrites applied
+     */
+    async applyDefaultRewrites(saved, characterKey) {
+        const flagKey = `${DEFAULT_REWRITE_FLAG_KEY}_${characterKey}`;
+        try {
+            if (await storage.get(flagKey, this.storageArea, false)) return saved;
+
+            let next = saved;
+            for (const { id, field, from, to } of DEFAULT_REWRITES) {
+                const entry = saved?.[id];
+                if (!entry || entry[field] !== from) continue;
+                // Copy rather than mutate the loaded map, so a caller holding
+                // the same object does not see it change underneath them
+                next = next === saved ? { ...saved } : next;
+                next[id] = { ...entry, [field]: to };
+            }
+
+            if (next !== saved) {
+                await storage.setJSON(characterKey, next, this.storageArea, true);
+            }
+            await storage.set(flagKey, true, this.storageArea, true);
+            return next;
+        } catch (error) {
+            // A failed rewrite must not cost the user their settings; the flag
+            // stays unset, so the next load tries again
+            console.error('[SettingsStorage] Default rewrite failed:', error);
+            return saved;
+        }
     }
 
     /**

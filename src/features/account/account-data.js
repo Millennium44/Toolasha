@@ -22,6 +22,7 @@
 
 import storage from '../../core/storage.js';
 import dataManager from '../../core/data-manager.js';
+import { showToast } from '../../utils/toast.js';
 
 /** Where each recorder puts its per-character keys */
 export const NETWORTH_STORE = 'networthHistory';
@@ -245,6 +246,54 @@ export function summarizeCharacters({ ids, seriesById, snapshotsById, namesById,
 let cached = null;
 let inFlight = null;
 
+/** Why the last read failed, so the panel can say so instead of "Reading…" forever */
+let lastFailure = null;
+
+/** One toast per session, not one per refresh — see `noteFailure` */
+let warned = false;
+
+/**
+ * Say once that storage would not answer.
+ *
+ * Everything in this module was console-only, which for a panel that reads on a
+ * timer is the worst of both: the console fills with the same line every minute
+ * and the panel sits on "Reading the account…" saying nothing. So the panel is
+ * told (via `accountReadFailure`) and the player is told once — a second toast
+ * about the same broken database is noise, and the refresh that produced it runs
+ * every sixty seconds.
+ *
+ * @param {string} what - Which operation failed, for the console line
+ * @param {Error} error - What went wrong
+ */
+function noteFailure(what, error) {
+    lastFailure = error?.message || String(error);
+    console.error(`[AccountData] ${what}:`, error);
+    if (warned) return;
+    warned = true;
+    showToast(
+        'Toolasha could not read your characters from storage — the Account panel will be empty or out of date. ' +
+            'Reload the page; if it keeps happening, run Toolasha.debug.storage() in the console.',
+        { kind: 'error' }
+    );
+}
+
+/**
+ * Why the last read failed, for the panel to show in place of a spinner.
+ * @returns {string|null} The failure, or null when the last read was fine
+ */
+export function accountReadFailure() {
+    return lastFailure;
+}
+
+/**
+ * Forget that anything failed. For tests — a session does not get a second
+ * chance at "once per session".
+ */
+export function resetAccountReadFailure() {
+    lastFailure = null;
+    warned = false;
+}
+
 /**
  * Note the name of whoever is logged in, so the other characters can be named
  * later.
@@ -266,7 +315,9 @@ export async function rememberCurrentCharacter() {
         if (names[id] === name) return;
         await storage.set(NAMES_KEY, { ...names, [id]: name }, SETTINGS_STORE);
     } catch (error) {
-        console.error('[AccountData] Could not record the character name:', error);
+        // Same database, same one-per-session notice: a name that cannot be
+        // written is the first sign of the read that is about to fail too
+        noteFailure('Could not record the character name', error);
     }
 }
 
@@ -350,9 +401,10 @@ export async function refreshAccount(ttlMs = CACHE_TTL_MS) {
     inFlight = (async () => {
         try {
             cached = await readAccount();
+            lastFailure = null;
             return cached;
         } catch (error) {
-            console.error('[AccountData] Could not read the account:', error);
+            noteFailure('Could not read the account', error);
             return cached;
         } finally {
             inFlight = null;

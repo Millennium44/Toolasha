@@ -2077,6 +2077,28 @@ export function resolveCandidateModes(upgradeModes, upgradeMode) {
 const ABILITY_CANDIDATE_TYPES = new Set(['ability_level', 'ability_swap']);
 
 /**
+ * The book you already have of an ability, if you have one.
+ *
+ * `characterAbilities` is every book the character has read, equipped or not,
+ * with the level and the experience on it — which is the same list the sim
+ * itself runs abilities at, so a swap costed from it is costed from the levels
+ * the sim is about to simulate. The equipped list (`combatUnit.combatAbilities`)
+ * would not do: the whole point of a swap candidate is an ability that is *not*
+ * equipped, and the one you have sat in the book bag is exactly the case.
+ *
+ * @param {string} abilityHrid - The ability being swapped in
+ * @returns {{level: number, experience: number}|null} Null when it is unlearned
+ */
+function ownedAbility(abilityHrid) {
+    const owned = (dataManager.characterData?.characterAbilities || []).find(
+        (entry) => entry?.abilityHrid === abilityHrid
+    );
+    if (!owned) return null;
+
+    return { level: Math.floor(Number(owned.level) || 0), experience: Number(owned.experience) || 0 };
+}
+
+/**
  * Itemised cost for an ability candidate: the books, and nothing coming back.
  *
  * Two things the equipment breakdown gets wrong about an ability. It prices the
@@ -2085,25 +2107,45 @@ const ABILITY_CANDIDATE_TYPES = new Set(['ability_level', 'ability_swap']);
  * and it credits the resale of the level you are leaving, which cannot happen:
  * an ability is not an item and cannot be sold back.
  *
+ * A swap is priced from wherever the book you would swap in actually is. Pricing
+ * every swap from zero was right for an ability you have never read and badly
+ * wrong for one sitting at Lv40 in the book bag — it quoted the whole path
+ * again, which put swaps you could make this afternoon below upgrades costing
+ * ten times as much. Fresh-book pricing is now what it says it is: the cost of
+ * an ability you do not own.
+ *
  * @param {Object} candidate - Candidate of type `ability_level` or `ability_swap`
  * @param {Object} gameData - Game data payload
  * @returns {Object} Same shape as `explainUpgradeCost`, plus `books`
  */
 function explainAbilityCandidateCost(candidate, gameData) {
-    // A swap is learned from scratch; a level-up starts from where it is now
     const swap = candidate.type === 'ability_swap';
     const hrid = swap ? candidate.upgradeHrid : candidate.currentHrid || candidate.upgradeHrid;
-    const fromLevel = swap ? 0 : candidate.currentLevel || 0;
-    const currentXp = swap ? 0 : (gameData?.levelExperienceTable || [])[fromLevel] || 0;
-    const books = explainAbilityLevelUpCost(hrid, fromLevel, currentXp, candidate.upgradeLevel || 0);
+    const owned = swap ? ownedAbility(hrid) : null;
+
+    // A level-up starts from where the equipped ability is; a swap starts from
+    // where the book you own is, and from nothing when you own none
+    const fromLevel = swap ? owned?.level || 0 : candidate.currentLevel || 0;
+    const levelFloorXp = (gameData?.levelExperienceTable || [])[fromLevel] || 0;
+    // The experience on an owned book is a position within the level, not the
+    // floor of it — the books already read count towards the next one
+    const currentXp = swap ? owned?.experience || levelFloorXp : levelFloorXp;
+
+    const priced = explainAbilityLevelUpCost(hrid, fromLevel, currentXp, candidate.upgradeLevel || 0);
+    // A book already past the target buys nothing rather than a negative number
+    // of books, which is what the level arithmetic hands back for it
+    const books = priced.total !== null && priced.total < 0 ? { ...priced, books: 0, total: 0 } : priced;
 
     return {
         books,
-        // A swap prices a book learned and levelled from nothing. That is the
-        // single biggest thing about an ability-swap row and it used to live
-        // only in a tab tooltip, where a row claiming a 900M cost gave no hint
-        // that the 900M assumes you own none of it
-        freshBook: swap,
+        // A swap of an ability you do not own prices a book learned and levelled
+        // from nothing. That is the single biggest thing about such a row and it
+        // used to live only in a tab tooltip, where a row claiming a 900M cost
+        // gave no hint that the 900M assumes you own none of it
+        freshBook: swap && !owned,
+        // What an owned swap was costed from, so the row can say so rather than
+        // leaving a suspiciously cheap swap unexplained
+        ownedFromLevel: swap && owned ? fromLevel : null,
         buys: [],
         // Never anything here: levels spent on an ability stay spent
         credits: [],

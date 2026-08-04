@@ -20,14 +20,32 @@ vi.mock('../../core/data-manager.js', () => ({
 
 vi.mock('../../core/storage.js', () => ({
     default: {
-        get: async (key, storeName, fallback = null) => db.stores[storeName]?.[key] ?? fallback,
+        get: async (key, storeName, fallback = null) => {
+            if (db.broken) throw new Error(db.broken);
+            return db.stores[storeName]?.[key] ?? fallback;
+        },
         set: async (key, value, storeName) => {
+            if (db.broken) throw new Error(db.broken);
             db.stores[storeName] = db.stores[storeName] || {};
             db.stores[storeName][key] = value;
             return true;
         },
-        getAllKeys: async (storeName) => Object.keys(db.stores[storeName] || {}),
-        getAll: async (storeName) => ({ ...(db.stores[storeName] || {}) }),
+        getAllKeys: async (storeName) => {
+            if (db.broken) throw new Error(db.broken);
+            return Object.keys(db.stores[storeName] || {});
+        },
+        getAll: async (storeName) => {
+            if (db.broken) throw new Error(db.broken);
+            return { ...(db.stores[storeName] || {}) };
+        },
+    },
+}));
+
+const toasts = vi.hoisted(() => []);
+vi.mock('../../utils/toast.js', () => ({
+    showToast: (message, options) => {
+        toasts.push({ message, ...options });
+        return null;
     },
 }));
 
@@ -38,6 +56,10 @@ const {
     queueState,
     summarizeCharacters,
     readAccount,
+    refreshAccount,
+    clearAccountCache,
+    accountReadFailure,
+    resetAccountReadFailure,
     rememberCurrentCharacter,
     STALE_SNAPSHOT_MS,
 } = await import('./account-data.js');
@@ -47,8 +69,12 @@ const DAY = 24 * HOUR;
 
 beforeEach(() => {
     db.stores = {};
+    db.broken = null;
     game.id = 'char-1';
     game.name = 'Main';
+    toasts.length = 0;
+    clearAccountCache();
+    resetAccountReadFailure();
 });
 
 describe('finding the characters', () => {
@@ -229,5 +255,67 @@ describe('reading it all back out of storage', () => {
         await rememberCurrentCharacter();
 
         expect(db.stores.settings.accountCharacterNames).toEqual({ 'char-1': 'Main', 'char-2': 'Alt' });
+    });
+});
+
+/**
+ * What happens when the database will not answer.
+ *
+ * This used to be a `console.error` and nothing else, which for a panel that
+ * refreshes on a timer means the same line every minute in a place nobody is
+ * looking, and a panel that says "Reading the account…" forever. The two things
+ * worth asserting are that it is said at all, and that it is said once.
+ */
+describe('a storage read that fails', () => {
+    test('is reported to the player, and the reason is kept for the panel', async () => {
+        db.broken = 'IndexedDB is closed';
+
+        expect(await refreshAccount(0)).toBeNull();
+
+        expect(accountReadFailure()).toBe('IndexedDB is closed');
+        expect(toasts).toHaveLength(1);
+        expect(toasts[0].kind).toBe('error');
+        expect(toasts[0].message).toContain('Account panel');
+    });
+
+    test('is said once a session, not once a refresh', async () => {
+        db.broken = 'IndexedDB is closed';
+
+        await refreshAccount(0);
+        await refreshAccount(0);
+        await refreshAccount(0);
+
+        expect(toasts).toHaveLength(1);
+    });
+
+    test('a failed name write counts as the same trouble, not a second toast', async () => {
+        db.broken = 'IndexedDB is closed';
+
+        await rememberCurrentCharacter();
+        await refreshAccount(0);
+
+        expect(toasts).toHaveLength(1);
+        expect(accountReadFailure()).toBe('IndexedDB is closed');
+    });
+
+    test('a read that works again clears the reason, so the panel stops apologising', async () => {
+        db.broken = 'IndexedDB is closed';
+        await refreshAccount(0);
+        expect(accountReadFailure()).toBeTruthy();
+
+        db.broken = null;
+        db.stores.networthHistory = { networth_a: [{ t: 1, total: 5 }] };
+        await refreshAccount(0);
+
+        expect(accountReadFailure()).toBeNull();
+    });
+
+    test('keeps the last good read rather than blanking the panel', async () => {
+        db.stores.networthHistory = { networth_a: [{ t: 1, total: 5 }] };
+        const good = await refreshAccount(0);
+        expect(good.characters.length).toBeGreaterThan(0);
+
+        db.broken = 'IndexedDB is closed';
+        expect(await refreshAccount(0)).toBe(good);
     });
 });

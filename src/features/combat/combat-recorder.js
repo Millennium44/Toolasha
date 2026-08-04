@@ -79,6 +79,25 @@ let sawNewBattle = false;
 let panelSnapshots = 0;
 let stopTimer = null;
 
+/** Called with the finished file whenever a recording ends with something in it */
+const completionListeners = new Set();
+
+/**
+ * Be told when a recording finishes.
+ *
+ * A recording is only worth anything to something that reads it, and the moment
+ * it stops is the only moment anything knows it is complete — polling
+ * `isRecording` would mean every reader owning a timer for an event that happens
+ * a handful of times a session.
+ *
+ * @param {Function} listener - Called with the file, as `recordingFile()` returns it
+ * @returns {Function} Call it to stop listening
+ */
+export function onRecordingComplete(listener) {
+    completionListeners.add(listener);
+    return () => completionListeners.delete(listener);
+}
+
 /** @returns {boolean} Whether a recording is in progress */
 export function isRecording() {
     return recording;
@@ -165,7 +184,22 @@ export function stopRecording() {
     if (onBattleUpdated) hook().off('battle_updated', onBattleUpdated);
     onNewBattle = null;
     onBattleUpdated = null;
+
+    // Only a recording that was running and caught something has finished; a
+    // second `stopRecording` on an idle module has not ended anything, and
+    // announcing it would have every listener read the same run twice
+    const finished = recording && ticks.length > 0;
     recording = false;
+    if (!finished) return;
+
+    const file = recordingFile();
+    for (const listener of completionListeners) {
+        try {
+            listener(file);
+        } catch (error) {
+            console.error('[CombatRecorder] A completion listener failed:', error);
+        }
+    }
 }
 
 /**
@@ -224,4 +258,5 @@ export default {
     stopRecording,
     downloadRecording,
     recordingFile,
+    onRecordingComplete,
 };

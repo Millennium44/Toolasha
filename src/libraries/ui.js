@@ -21,6 +21,7 @@ import commandPalette from '../features/ui/command-palette.js';
 // Side-effect import: registers the Houses overlay row at module scope
 import { describeHouses } from '../features/house/house-affordability.js';
 import combatPanelScale from '../features/ui/combat-panel-scale.js';
+import welcomeBackValue from '../features/ui/welcome-back-value.js';
 import combatText from '../features/ui/combat-text.js';
 import { dpsPanel, deathsPanel, profitPanel, combatProfitView } from '../features/ui/combat-panels.js';
 import { partyLootPanel } from '../features/ui/party-loot-panel.js';
@@ -109,6 +110,10 @@ import accountView from '../features/account/index.js';
 // Dev tools
 import pformancePanel from '../features/dev/pformance-panel.js';
 import * as healthStatus from '../features/dev/health-status.js';
+// The websocket-shape canary. It lives in core/ because that is what it asserts
+// about, and is handed out here beside healthStatus because that is where its
+// findings go.
+import * as schemaCanary from '../core/schema-canary.js';
 import { consumablesPanel } from '../features/ui/consumables-panel.js';
 import { combatLevelPanel } from '../features/ui/combat-level-panel.js';
 
@@ -141,6 +146,7 @@ toolashaRoot.UI = {
     overlayTabButton,
     commandPalette,
     combatPanelScale,
+    welcomeBackValue,
     altClickNavigation,
     collectionNavigation,
     collectionFilters,
@@ -190,6 +196,7 @@ toolashaRoot.UI = {
     accountView,
     pformancePanel,
     healthStatus,
+    schemaCanary,
     consumablesPanel,
     combatLevelPanel,
     combatText,

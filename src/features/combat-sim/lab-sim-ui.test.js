@@ -11,7 +11,7 @@
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
-const geometry = vi.hoisted(() => ({ saved: null, restoreCalls: [], saveCalls: [] }));
+const geometry = vi.hoisted(() => ({ saved: null, wasOpen: false, restoreCalls: [], saveCalls: [], openCalls: [] }));
 
 vi.mock('../../core/config.js', () => ({
     default: {
@@ -65,6 +65,13 @@ vi.mock('../../utils/panel-geometry.js', () => ({
     saveGeometry: async (panelKey, values) => {
         geometry.saveCalls.push({ panelKey, values });
     },
+    saveOpenState: async (panelKey, open) => {
+        geometry.openCalls.push({ panelKey, open });
+    },
+    wasOpen: async (panelKey) => (geometry.wasOpen ? panelKey === 'labSimPanel' : false),
+    reopenIfLeftOpen: async (panelKey, reopen) => {
+        if (geometry.wasOpen) reopen();
+    },
 }));
 
 vi.mock('./combat-sim-adapter.js', () => ({
@@ -116,8 +123,10 @@ function pointer(type, x, y) {
 describe('the Lab Sim panel remembers where it was left', () => {
     beforeEach(() => {
         geometry.saved = null;
+        geometry.wasOpen = false;
         geometry.restoreCalls = [];
         geometry.saveCalls = [];
+        geometry.openCalls = [];
     });
 
     afterEach(() => {
@@ -184,12 +193,36 @@ describe('the Lab Sim panel remembers where it was left', () => {
         expect(geometry.saveCalls).toHaveLength(0);
     });
 
-    test('the panel is not reopened on load — a simulator opens when asked', async () => {
+    test('a panel left closed stays closed on the next load', async () => {
         ui.buildPanel();
         await Promise.resolve();
 
-        // Deliberate: `panel-geometry.js` can remember an open panel, and this
-        // one does not ask it to
         expect(ui.panel.style.display).toBe('none');
+    });
+
+    test('but a panel left open comes back up', async () => {
+        // A refresh mid-analysis used to lose the panel entirely, which is what
+        // reversed the original "a simulator opens when asked" choice
+        geometry.wasOpen = true;
+
+        ui.buildPanel();
+        await Promise.resolve();
+
+        expect(ui.panel.style.display).toBe('flex');
+        // Restoring a panel is not itself an opening worth recording
+        expect(geometry.openCalls).toEqual([]);
+    });
+
+    test('opening and closing it by hand is what gets remembered', async () => {
+        ui.buildPanel();
+        await Promise.resolve();
+
+        ui.toggle();
+        ui.toggle();
+
+        expect(geometry.openCalls).toEqual([
+            { panelKey: 'labSimPanel', open: true },
+            { panelKey: 'labSimPanel', open: false },
+        ]);
     });
 });
