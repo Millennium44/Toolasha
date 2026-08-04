@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The Sell Queue is back
+
+Removed one commit ago on the belief it was dead; restored unchanged — module, feature registration, and the `sellQueue` setting. It keeps its Shift+RightClick entry point and gets no touch adaptation.
+
 ### The mobile sweep, part three: gestures that had no touch equivalent
 
 The Phase 2 items from the mobile audit — the ones where a mouse gesture had to be redesigned rather than translated:
