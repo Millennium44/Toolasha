@@ -2954,15 +2954,17 @@ class LabSimUI {
 
         // A shrine level is bought with guild credits and guild tokens. Credits
         // have a gold value (the cheapest items that convert into them); tokens
-        // have none, since nothing converts into them — so the Cost column and
-        // every ranking on it cover the credits only, and say so here
+        // are priced through the guild shop's token→credit exchange when a rate
+        // is known — the note names which ranking applied
         if (detail.guild) {
             const guild = detail.guild;
+            const tokenText =
+                guild.tokenNote || `${formatWithSeparator(guild.tokens)} guild token${guild.tokens === 1 ? '' : 's'}`;
             parts.push(
                 line(
-                    `Costs ${formatWithSeparator(guild.tokens)} guild token${guild.tokens === 1 ? '' : 's'} + ` +
-                        `credits worth ${detail.net == null ? 'no price' : money(detail.net)}. ` +
-                        'Ranked on the gold half only — tokens cannot be bought.'
+                    `Costs ${tokenText} + ` +
+                        `credits worth ${guild.creditGold == null ? 'no price' : money(guild.creditGold)}. ` +
+                        (guild.rankedNote || '')
                 )
             );
             for (const credit of guild.credits) {

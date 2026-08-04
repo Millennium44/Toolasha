@@ -21,6 +21,7 @@ const game = vi.hoisted(() => ({
     settings: { guildTrialsInfo: true },
     settingValues: {},
     clientData: {},
+    prices: {},
     buildingLevels: {},
     store: {},
     observers: {},
@@ -69,6 +70,11 @@ vi.mock('../../core/storage.js', () => ({
         },
     },
 }));
+// Token payouts are valued through the credit exchange, which prices items —
+// mocked here so the real marketplace client is never pulled into this file
+vi.mock('../../utils/market-data.js', () => ({
+    getItemPrice: (itemHrid, { mode } = {}) => game.prices[itemHrid]?.[mode] ?? 0,
+}));
 vi.mock('./guild-xp-tracker.js', () => ({
     guildXPTracker: {
         getOwnGuildName: () => game.guildName,
@@ -78,7 +84,8 @@ vi.mock('./guild-xp-tracker.js', () => ({
     },
 }));
 
-const { analyseTrial, participantCounts, renderTrialBlock, guildTrials } = await import('./guild-trials.js');
+const { analyseTrial, participantCounts, renderTrialBlock, tokenPayoutLine, guildTrials } =
+    await import('./guild-trials.js');
 const trialsFeature = (await import('./guild-trials.js')).default;
 
 const now = Date.parse('2026-08-04T12:00:00Z');
@@ -299,6 +306,43 @@ describe('renderTrialBlock', () => {
     });
 });
 
+describe('tokenPayoutLine', () => {
+    beforeEach(() => {
+        game.clientData = {};
+        game.prices = {};
+        game.settingValues = {};
+    });
+
+    test('an unpriceable token payout is left as the bare count it always was', () => {
+        const row = tokenPayoutLine(500, 'Half the base points.');
+
+        expect(row.value).toBe('500');
+        expect(row.title).toBe('Half the base points.');
+    });
+
+    test('a priceable one carries the gold value and says it is derived', () => {
+        game.clientData = {
+            itemDetailMap: {
+                '/items/guild_token': {
+                    guildCreditConversions: [{ creditItemHrid: '/items/guild_credit_1', itemCount: 1, creditCount: 2 }],
+                },
+                '/items/bronze_bar': {
+                    guildCreditConversions: [
+                        { creditItemHrid: '/items/guild_credit_1', itemCount: 10, creditCount: 1 },
+                    ],
+                },
+            },
+        };
+        game.prices = { '/items/bronze_bar': { ask: 100 } };
+
+        const row = tokenPayoutLine(500, 'Half the base points.');
+
+        expect(row.value).toContain('≈1.0M');
+        expect(row.value).toContain('via credit exchange');
+        expect(row.title).toContain('Half the base points.');
+    });
+});
+
 describe('the panel, end to end', () => {
     /**
      * The In Progress tab, as markup.
@@ -338,6 +382,7 @@ describe('the panel, end to end', () => {
         game.settings = { guildTrialsInfo: true };
         game.settingValues = {};
         game.clientData = {};
+        game.prices = {};
         game.buildingLevels = {};
         game.store = {};
         game.members = [];
@@ -380,6 +425,38 @@ describe('the panel, end to end', () => {
         expect(text()).toContain('Guild Points banked1.0K');
         expect(text()).toContain('Tokens, every eligible member500');
         expect(text()).toContain('Tokens, if you took part750');
+    });
+
+    test('a token payout carries an approximate gold value when the exchange can be priced', () => {
+        // 1 token → 2 credits, and a credit costs 10 bronze bars at 100 each,
+        // so a token is worth 2,000 gold and 500 of them are worth 1M
+        game.clientData = {
+            itemDetailMap: {
+                '/items/guild_token': {
+                    name: 'Guild Token',
+                    guildCreditConversions: [{ creditItemHrid: '/items/guild_credit_1', itemCount: 1, creditCount: 2 }],
+                },
+                '/items/bronze_bar': {
+                    name: 'Bronze Bar',
+                    guildCreditConversions: [
+                        { creditItemHrid: '/items/guild_credit_1', itemCount: 10, creditCount: 1 },
+                    ],
+                },
+            },
+        };
+        game.prices = { '/items/bronze_bar': { ask: 100 } };
+
+        fire(buildTab([{ name: 'Trial Chameleon', level: 140, bar: '618,000 / 618,000' }]));
+
+        expect(text()).toContain('Tokens, every eligible member500 (≈1.0M');
+        expect(text()).toContain('via credit exchange');
+    });
+
+    test('with nothing to price the token payout against, the bare count is all that shows', () => {
+        fire(buildTab([{ name: 'Trial Chameleon', level: 140, bar: '618,000 / 618,000' }]));
+
+        expect(text()).toContain('Tokens, every eligible member500');
+        expect(text()).not.toContain('via credit exchange');
     });
 
     test('an unknown building bonus is captioned, not silently treated as zero', () => {

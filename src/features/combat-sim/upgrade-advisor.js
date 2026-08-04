@@ -28,6 +28,7 @@ import { getCheapestProtectionPrice, getProductionCost } from '../enhancement/to
 import { explainAbilityLevelUpCost } from '../../utils/ability-cost-calculator.js';
 import { buildOverridesForSkill } from './skilling-sim-helpers.js';
 import { priceGuildCreditCosts } from '../../utils/guild-credit-pricing.js';
+import { describeGuildTokenGold, explainGuildTokenValue } from '../guild/guild-token-value.js';
 
 /** Enhancement breakpoints by slot type */
 const BREAKPOINTS_DEFAULT = [7, 10, 12, 13, 14, 15, 16, 17, 18, 19, 20];
@@ -1792,12 +1793,21 @@ function applyGuildShrineToDTO(dto, candidate) {
 }
 
 /**
- * Itemised cost of a shrine level: credits at their gold value, tokens counted.
+ * Itemised cost of a shrine level: credits and tokens, both at their gold value.
  *
- * Guild tokens have no market and nothing converts into them, so they are left
- * out of the gold figure entirely and reported as a count. That makes the Cost
- * column — and every ranking built on it — an understatement of what the level
- * costs, which is why the token count travels with it into the row detail.
+ * Both halves are now priced. Credits are the cheapest tradeable items that
+ * convert into them; tokens are those credits again, one exchange further back —
+ * the guild shop trades tokens for credits, so a token is worth what the credits
+ * it buys are worth (`guild-token-value.js`). The row is therefore ranked on the
+ * **sum**, which is what the level actually costs, rather than on the credit half
+ * with the tokens quietly treated as free.
+ *
+ * The two halves stay separately reported. `creditGold` is the credit-only total
+ * the display has always shown, `tokenGold` is what the tokens were valued at,
+ * and `tokenNote` says the valuation is a derived one — a chain of two
+ * conversions, not a price anybody quoted. When no exchange rate and no credit
+ * price can be found, `tokenGold` is null and the total falls back to the credit
+ * half alone, exactly as before.
  *
  * @param {Object} candidate - Candidate of type 'guild_shrine'
  * @returns {Object} Same shape as `explainUpgradeCost`, plus `guild`
@@ -1805,10 +1815,27 @@ function applyGuildShrineToDTO(dto, candidate) {
 function explainGuildShrineCost(candidate) {
     const { lines, total, unpriced } = priceGuildCreditCosts(candidate.creditCosts);
 
+    const tokens = candidate.guildTokenCost || 0;
+    const tokenValue = explainGuildTokenValue('ask');
+    const tokenGold = describeGuildTokenGold(tokens, 'ask', { valuation: tokenValue });
+    // An unpriced credit already made the total unknown; adding a token value to
+    // null would turn "we do not know" into a confident understatement
+    const net = total === null ? null : total + (tokenGold?.gold || 0);
+
     return {
         guild: {
-            tokens: candidate.guildTokenCost || 0,
+            tokens,
             credits: lines,
+            creditGold: total,
+            tokenGold: tokenGold?.gold ?? null,
+            goldPerToken: tokenValue.gold,
+            tokenSource: tokenValue.source,
+            tokenAssumed: tokenValue.assumed,
+            tokenNote: tokenGold ? formatTokenNote(tokens, tokenGold) : null,
+            rankedNote:
+                tokenGold === null
+                    ? 'Ranked on the credit half only — no guild shop exchange rate is known for tokens.'
+                    : 'Ranked on credits plus tokens, the tokens priced through the guild shop exchange.',
             shrineLevel: candidate.shrineLevel,
             shrineLevelKnown: candidate.shrineLevelKnown,
             needsShrineLevel: candidate.needsShrineLevel,
@@ -1816,13 +1843,23 @@ function explainGuildShrineCost(candidate) {
         },
         buys: [],
         credits: [],
-        gross: total,
+        gross: net,
         credit: 0,
-        net: total,
+        net,
         unpriced,
         creditApplied: false,
         source: 'guild',
     };
+}
+
+/**
+ * How a row says what its tokens were valued at.
+ * @param {number} tokens - Token count
+ * @param {{text: string}} tokenGold - From `describeGuildTokenGold`
+ * @returns {string} Caption, e.g. "40 tokens ≈4.0K g via credit exchange"
+ */
+function formatTokenNote(tokens, tokenGold) {
+    return `${tokens.toLocaleString()} token${tokens === 1 ? '' : 's'} ${tokenGold.text}`;
 }
 
 /**
@@ -1949,8 +1986,9 @@ export function calculateUpgradeCost(candidate, gameData) {
         return calculateHouseUpgradeCost(candidate, gameData);
     }
 
-    // Gold for the credits only — the guild tokens are shown beside it, never
-    // folded into it, because nothing converts gold into tokens
+    // Credits *and* tokens: the credits at the cheapest items that convert into
+    // them, the tokens at the credits the guild shop exchange trades them for.
+    // A token with no known exchange rate still counts for nothing
     if (candidate.type === 'guild_shrine') {
         return explainGuildShrineCost(candidate).net;
     }

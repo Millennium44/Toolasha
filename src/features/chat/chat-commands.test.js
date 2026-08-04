@@ -7,14 +7,33 @@
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
-const game = vi.hoisted(() => ({ setting: true, itemDetailMap: {} }));
+const game = vi.hoisted(() => ({
+    setting: true,
+    itemDetailMap: {},
+    guildBuffDetailMap: {},
+    characterGuildBuffMap: {},
+    guildBuildingLevelMap: {},
+    shrineCapturedAt: null,
+    shrineHydrated: false,
+}));
 
 vi.mock('../../core/config.js', () => ({
     default: { getSetting: () => game.setting },
 }));
 vi.mock('../../core/data-manager.js', () => ({
     default: {
-        getInitClientData: () => ({ itemDetailMap: game.itemDetailMap }),
+        getInitClientData: () => ({
+            itemDetailMap: game.itemDetailMap,
+            guildBuffDetailMap: game.guildBuffDetailMap,
+        }),
+        get characterGuildBuffMap() {
+            return game.characterGuildBuffMap;
+        },
+        get guildBuildingLevelMap() {
+            return game.guildBuildingLevelMap;
+        },
+        getGuildShrineCapturedAt: () => game.shrineCapturedAt,
+        isGuildShrineHydrated: () => game.shrineHydrated,
         on: () => {},
     },
 }));
@@ -25,7 +44,9 @@ vi.mock('../../utils/timer-registry.js', () => ({
     createTimerRegistry: () => ({ registerTimeout: () => {}, clearAll: () => {} }),
 }));
 
-const chatCommandsFeature = (await import('./chat-commands.js')).default;
+const chatCommandsModule = await import('./chat-commands.js');
+const chatCommandsFeature = chatCommandsModule.default;
+const { collectShrineDebug, exposeShrineDebug, formatShrineReport } = chatCommandsModule;
 
 async function makeInstance() {
     document.body.innerHTML = '';
@@ -190,6 +211,131 @@ describe('executeCommand', () => {
 
         expect(multiSpy).toHaveBeenCalled();
         expect(cmd.gameCore.handleOpenItemDictionary).not.toHaveBeenCalled();
+    });
+});
+
+describe('/shrines', () => {
+    let cmd;
+
+    /**
+     * A chat history the feature will consider visible: one inside a TabPanel
+     * that is not the hidden one.
+     * @returns {Element} The history element
+     */
+    function buildChatHistory() {
+        document.body.innerHTML =
+            '<div class="TabPanel_x"><div class="inner"><div class="ChatHistory_chatHistory__x"></div></div></div>';
+        return document.querySelector('[class*="ChatHistory_chatHistory"]');
+    }
+
+    /**
+     * The text of everything the feature has echoed locally.
+     * @returns {string} Message text
+     */
+    function echoed() {
+        return Array.from(document.querySelectorAll('.mwi-chat-command-message'))
+            .map((el) => el.textContent)
+            .join('\n');
+    }
+
+    beforeEach(async () => {
+        game.setting = true;
+        game.itemDetailMap = {};
+        game.guildBuffDetailMap = {
+            '/guild_buffs/force_combat': { shrineHrid: '/guild_shrines/force', isCombat: true },
+        };
+        game.characterGuildBuffMap = {};
+        game.guildBuildingLevelMap = {};
+        game.shrineCapturedAt = null;
+        game.shrineHydrated = false;
+        cmd = await makeInstance();
+    });
+
+    test('the whole line is the command, with or without a trailing space', () => {
+        expect(cmd.parseCommand('/shrines')).toEqual({ type: 'shrines' });
+        expect(cmd.parseCommand('  /SHRINES  ')).toEqual({ type: 'shrines' });
+        expect(cmd.parseCommand('/shrinesfoo')).toBeNull();
+    });
+
+    test('with levels in hand, the report lists both maps and when they were read', () => {
+        game.characterGuildBuffMap = { '/guild_buffs/force_combat': { level: 7 } };
+        game.guildBuildingLevelMap = { '/guild_shrines/force': 9 };
+        game.shrineCapturedAt = Date.parse('2026-08-04T12:00:00Z');
+        const history = buildChatHistory();
+
+        cmd.executeCommand({ type: 'shrines' });
+
+        const text = echoed();
+        expect(history.querySelectorAll('.mwi-chat-command-message')).toHaveLength(1);
+        expect(text).toContain('/guild_buffs/force_combat');
+        expect(text).toContain('Lv7');
+        expect(text).toContain('[combat]');
+        expect(text).toContain('/guild_shrines/force — Lv9');
+        expect(text).toContain('read live this session');
+        expect(text).toContain(new Date(game.shrineCapturedAt).toLocaleString());
+    });
+
+    test('with nothing captured, it says so instead of drawing two empty lists', () => {
+        buildChatHistory();
+
+        cmd.executeCommand({ type: 'shrines' });
+
+        expect(echoed()).toContain('no data yet — open the guild page');
+    });
+
+    test('levels that came out of storage are labelled as an earlier session’s reading', () => {
+        game.characterGuildBuffMap = { '/guild_buffs/force_combat': { level: 3 } };
+        game.shrineCapturedAt = Date.parse('2026-07-01T09:00:00Z');
+        game.shrineHydrated = true;
+        buildChatHistory();
+
+        cmd.executeCommand({ type: 'shrines' });
+
+        const text = echoed();
+        expect(text).toContain('hydrated from storage');
+        expect(text).toContain('Lv3');
+        // A hydrated record with no building levels still reports the map it has
+        expect(text).toContain('Shrine/building levels (guildBuildingLevelMap): none');
+    });
+
+    test('the report is local only: Enter is cancelled and the input cleared', () => {
+        buildChatHistory();
+        const input = document.createElement('input');
+        document.body.appendChild(input);
+        input.value = '/shrines';
+        const event = {
+            key: 'Enter',
+            target: input,
+            preventDefault: vi.fn(),
+            stopPropagation: vi.fn(),
+        };
+
+        cmd.handleKeydown(event);
+
+        expect(event.preventDefault).toHaveBeenCalled();
+        expect(event.stopPropagation).toHaveBeenCalled();
+        expect(input.value).toBe('');
+        expect(echoed()).toContain('Toolasha /shrines');
+    });
+
+    test('the same report is available on the page global for the console', () => {
+        game.characterGuildBuffMap = { '/guild_buffs/force_combat': { level: 2 } };
+        window.Toolasha = { debug: { storage: () => 'kept' } };
+
+        expect(exposeShrineDebug()).toBe(true);
+        // Whatever was already on the debug namespace survives
+        expect(window.Toolasha.debug.storage()).toBe('kept');
+        expect(window.Toolasha.debug.shrines()).toEqual(collectShrineDebug());
+        expect(formatShrineReport(window.Toolasha.debug.shrines())).toContain('Lv2');
+
+        delete window.Toolasha;
+    });
+
+    test('no page global means nothing is invented for it', () => {
+        delete window.Toolasha;
+
+        expect(exposeShrineDebug()).toBe(false);
+        expect(window.Toolasha).toBeUndefined();
     });
 });
 

@@ -32,6 +32,12 @@
  * the only inference here that is not measured, and it is exact for as long as
  * that rule holds.
  *
+ * **Token payouts are worth something, approximately.** Tokens have no market
+ * price, but the guild shop trades them for guild credits and credits are priced
+ * off the items that convert into them, so the payout rows carry a derived gold
+ * figure labelled "via credit exchange" (`guild-token-value.js`). Without an
+ * exchange rate the rows show the bare token count they always did.
+ *
  * **Payout bonuses may be unknown.** Guild Points scale with the Builders Hall
  * and token payouts with the Treasury; both levels arrive on guild traffic and
  * the bonus-per-level table has not been located in client data. When it cannot
@@ -59,6 +65,7 @@ import {
     ratePerMs,
     trialWeekStart,
 } from './guild-trials-math.js';
+import { describeGuildTokenGold } from './guild-token-value.js';
 import { classifyReadings, matchTrialHrid, parseClockMs, readTrialTiles } from './guild-trials-scrape.js';
 import {
     loadTrialRecord,
@@ -199,6 +206,28 @@ function line(label, value, color = '#e8ecf5', title = '') {
         `<span style="color:${DIM};">${label}</span>` +
         `<span style="color:${color}; font-weight:600;">${value}</span></div>`
     );
+}
+
+/**
+ * A token payout, with what those tokens are approximately worth beside it.
+ *
+ * Tokens are the whole point of a trial week and a payout of forty thousand of
+ * them means nothing without a scale. They have no market price, but the guild
+ * shop trades them for credits and credits do have a gold value, so a derived
+ * figure exists — and is labelled as derived, because it is a chain of two
+ * conversions rather than a price. With no exchange rate and no credit price to
+ * be had the caption is left exactly as it was: a bare token count.
+ *
+ * @param {number} tokens - Tokens paid
+ * @param {string} baseTitle - The tooltip the row already had
+ * @returns {{value: string, title: string}} Row value and tooltip
+ */
+export function tokenPayoutLine(tokens, baseTitle) {
+    const gold = describeGuildTokenGold(tokens, 'ask');
+    return {
+        value: gold ? `${num(tokens)} (${gold.text})` : num(tokens),
+        title: gold ? `${baseTitle} ${gold.title}` : baseTitle,
+    };
 }
 
 /**
@@ -437,22 +466,21 @@ class GuildTrials {
             'margin:8px 0 4px; padding:8px 12px; background:rgba(0,0,0,0.25);' +
             'border-radius:6px; font-size:12px; line-height:1.7;';
 
+        const eligible = tokenPayoutLine(
+            projected.eligibleTokens,
+            'Half the total base points, paid to every member who joined before the week started.'
+        );
+        const participant = tokenPayoutLine(
+            projected.participantTokens,
+            'The eligible payout plus a further 50% of it for participating.'
+        );
+
         const rows = [
             `<div style="color:${ACCENT}; font-weight:700; margin-bottom:2px;">Trial payout</div>`,
             line('Guild Points banked', num(banked.guildPoints), GOOD),
             line('Guild Points on pace', num(projected.guildPoints), ACCENT),
-            line(
-                'Tokens, every eligible member',
-                num(projected.eligibleTokens),
-                ACCENT,
-                'Half the total base points, paid to every member who joined before the week started.'
-            ),
-            line(
-                'Tokens, if you took part',
-                num(projected.participantTokens),
-                GOOD,
-                'The eligible payout plus a further 50% of it for participating.'
-            ),
+            line('Tokens, every eligible member', eligible.value, ACCENT, eligible.title),
+            line('Tokens, if you took part', participant.value, GOOD, participant.title),
         ];
 
         if (!banked.bonusesKnown) {

@@ -299,14 +299,32 @@ describe('payout bonuses', () => {
         expect(bonus).toEqual({ hrid: '/guild_buildings/builders_hall', level: 3, bonus: 0.2, source: 'client' });
     });
 
-    test('unknown when the level is there but nothing describes it', () => {
-        const bonus = readBuildingBonus({
-            pattern: BUILDING_PATTERNS.treasury,
-            levelMap: { '/guild_buildings/treasury': 6 },
+    test('a level with nothing describing it falls back to the confirmed 2% per level', () => {
+        // From the Build dialog: Level 10 → Level 11 moves Guild Points from
+        // +20% to +22%, so the bonus is the level times 2%
+        const hall = readBuildingBonus({
+            pattern: BUILDING_PATTERNS.buildersHall,
+            levelMap: { '/guild_buildings/builders_hall': 10 },
             detailMap: {},
         });
+        expect(hall).toMatchObject({ level: 10, bonus: 0.2, source: 'formula' });
 
-        expect(bonus).toMatchObject({ level: 6, bonus: null, source: 'unknown' });
+        const treasury = readBuildingBonus({
+            pattern: BUILDING_PATTERNS.treasury,
+            levelMap: { '/guild_buildings/treasury': 5 },
+            detailMap: {},
+        });
+        expect(treasury).toMatchObject({ level: 5, bonus: 0.1, source: 'formula' });
+    });
+
+    test('client data still wins over the formula when the game describes the building', () => {
+        const bonus = readBuildingBonus({
+            pattern: BUILDING_PATTERNS.treasury,
+            levelMap: { '/guild_buildings/treasury': 10 },
+            detailMap: { '/guild_buildings/treasury': { bonusPerLevel: 0.05 } },
+        });
+
+        expect(bonus).toMatchObject({ bonus: 0.5, source: 'client' });
     });
 
     test('unknown when nothing is known at all', () => {
