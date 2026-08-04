@@ -670,11 +670,20 @@ class ActionTimeDisplay {
             return; // Already created and still in the DOM
         }
         this.displayElement = null;
+        this.profitElement = null;
 
-        const orphan = document.getElementById('mwi-action-time-display');
-        if (orphan) {
-            orphan.remove();
-        }
+        // Remove any orphaned copies of our injected elements before creating fresh ones.
+        // The game can swap out the action-name subtree in a way that drops one of our two
+        // tracked siblings from `this` without removing it from the live DOM (e.g. only the
+        // time-display node gets torn down while the profit node survives elsewhere) — a
+        // plain `this.profitElement = document.createElement(...)` reassignment would then
+        // orphan the old node, leaving two "#mwi-action-profit-display" elements on the page
+        // showing stale-vs-fresh data (same rate, different "remaining", since the queue moved
+        // on between the two renders). Querying by data attribute — rather than
+        // getElementById, which only ever returns the first match — guarantees every stray
+        // duplicate is cleared, keying the idempotent injection so exactly one of each exists.
+        document.querySelectorAll('[data-mwi-action-bar-widget="time"]').forEach((el) => el.remove());
+        document.querySelectorAll('[data-mwi-action-bar-widget="profit"]').forEach((el) => el.remove());
 
         const actionNameContainer = document.querySelector('div[class*="Header_actionName"]');
         if (!actionNameContainer) {
@@ -687,6 +696,7 @@ class ActionTimeDisplay {
         // Create display element
         this.displayElement = document.createElement('div');
         this.displayElement.id = 'mwi-action-time-display';
+        this.displayElement.setAttribute('data-mwi-action-bar-widget', 'time');
         this.displayElement.style.cssText = `
             font-size: 0.9em;
             color: var(--text-color-secondary, ${config.COLOR_TEXT_SECONDARY});
@@ -702,6 +712,7 @@ class ActionTimeDisplay {
         // Create profit element (below time display)
         this.profitElement = document.createElement('div');
         this.profitElement.id = 'mwi-action-profit-display';
+        this.profitElement.setAttribute('data-mwi-action-bar-widget', 'profit');
         this.profitElement.style.cssText = `
             font-size: 0.9em;
             color: var(--text-color-secondary, ${config.COLOR_TEXT_SECONDARY});

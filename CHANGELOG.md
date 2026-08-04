@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Doubled profit line fixed
+
+- **The action bar could show two "Profit: …/hr · remaining …" lines** with different remaining values: a game re-render orphaned the old profit node while only the time node got cleaned up, leaving a stale copy behind. Injection is now idempotent — every stale widget is swept before a fresh one is placed. The remaining basis itself was always correct (material-and-gold-limited actions, not raw inventory).
+
 ### Market and inventory state stops leaking between characters
 
 - **Ten market/inventory stores scoped per character**: watchlist, equipment savings targets, house untracking, alchemy pins, inventory sort, philo calculator settings, consumable planning horizon, market history filters, and the mooket follow list (display prefs stay shared). Your iron cow starts clean; the market cow inherits the existing data.
