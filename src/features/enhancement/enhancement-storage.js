@@ -1,9 +1,18 @@
 /**
  * Enhancement Tracker Storage
  * Handles persistence of enhancement sessions using IndexedDB
+ *
+ * Sessions belong to the character that ran them: the iron cow's overnight
+ * enhancing run has nothing to do with the market cow's, and a shared key put
+ * both in the same list. Keys are therefore scoped per character and derived at
+ * every read and write — the user switches characters without reloading the
+ * page, so a key resolved once at module load would be the wrong one afterwards.
+ * The legacy global value is adopted by the main character exactly once.
  */
 
+import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
+import { characterKey, readScoped, writeScoped } from '../../utils/character-key.js';
 
 const STORAGE_KEY = 'enhancementTracker_sessions';
 const CURRENT_SESSION_KEY = 'enhancementTracker_currentSession';
@@ -33,7 +42,7 @@ let hasPendingCurrentSessionId = false;
  */
 export async function saveSessions(sessions) {
     pendingSessions = sessions;
-    storage.setJSON(STORAGE_KEY, sessions, STORAGE_STORE);
+    writeScoped(STORAGE_KEY, sessions, STORAGE_STORE);
 }
 
 /**
@@ -43,8 +52,7 @@ export async function saveSessions(sessions) {
 export async function loadSessions() {
     if (pendingSessions !== null) return pendingSessions;
     try {
-        const sessions = await storage.getJSON(STORAGE_KEY, STORAGE_STORE, {});
-        return sessions;
+        return await readScoped(STORAGE_KEY, STORAGE_STORE, {}, { migrate: 'adopt' });
     } catch (error) {
         console.error('[EnhancementStorage] Failed to load sessions:', error);
         return {};
@@ -59,7 +67,7 @@ export async function loadSessions() {
 export async function saveCurrentSessionId(sessionId) {
     pendingCurrentSessionId = sessionId;
     hasPendingCurrentSessionId = true;
-    storage.set(CURRENT_SESSION_KEY, sessionId, STORAGE_STORE);
+    writeScoped(CURRENT_SESSION_KEY, sessionId, STORAGE_STORE);
 }
 
 /**
@@ -69,7 +77,7 @@ export async function saveCurrentSessionId(sessionId) {
 export async function loadCurrentSessionId() {
     if (hasPendingCurrentSessionId) return pendingCurrentSessionId;
     try {
-        return await storage.get(CURRENT_SESSION_KEY, STORAGE_STORE, null);
+        return await readScoped(CURRENT_SESSION_KEY, STORAGE_STORE, null, { migrate: 'adopt' });
     } catch (error) {
         console.error('[EnhancementStorage] Failed to load current session ID:', error);
         return null;
@@ -153,8 +161,8 @@ export async function clearAllSessions() {
         hasPendingCurrentSessionId = true;
         // Immediate: a clear is a one-off the user asked for and waited on, and
         // awaiting the debounced path would mean waiting out its timer
-        await storage.setJSON(STORAGE_KEY, {}, STORAGE_STORE, true);
-        await storage.set(CURRENT_SESSION_KEY, null, STORAGE_STORE, true);
+        await storage.set(characterKey(STORAGE_KEY), {}, STORAGE_STORE, true);
+        await storage.set(characterKey(CURRENT_SESSION_KEY), null, STORAGE_STORE, true);
     } catch (error) {
         console.error('[EnhancementStorage] Failed to clear sessions:', error);
     }
@@ -169,3 +177,8 @@ export function resetPendingSessionCache() {
     pendingCurrentSessionId = undefined;
     hasPendingCurrentSessionId = false;
 }
+
+// The mirror holds one character's sessions. Switching characters without a
+// reload would otherwise serve the departing character's list to the arriving
+// one — and, worse, write it back under the arriving character's key.
+dataManager.on('character_switching', () => resetPendingSessionCache());

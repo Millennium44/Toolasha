@@ -4,7 +4,6 @@
  */
 
 import config from '../../core/config.js';
-import storage from '../../core/storage.js';
 import domObserver from '../../core/dom-observer.js';
 import dataManager from '../../core/data-manager.js';
 import webSocketHook from '../../core/websocket.js';
@@ -32,6 +31,7 @@ import Monster from '../combat-sim/engine/monster.js';
 import { setGameData } from '../combat-sim/engine/game-data.js';
 import loadoutSnapshot from './loadout-snapshot.js';
 import { hasCoarsePointer } from '../../utils/mobile.js';
+import { readScoped, writeScoped } from '../../utils/character-key.js';
 import { formatRelativeTime } from '../../utils/formatters.js';
 import { combatLevel as computeCombatLevel, COMBAT_SKILLS } from '../../utils/combat-level.js';
 import labyrinthRoomLogs, { ROOM_TRAVEL_SECONDS } from './labyrinth-room-logs.js';
@@ -85,7 +85,16 @@ const DEFAULT_SIM_PRECISION_PCT = 1;
 const MIN_SIM_TRIALS = 100;
 /** Backstop for a rate near a coin toss, which never converges cheaply */
 const MAX_SIM_TRIALS = 20000;
-/** Deciding a side needs far fewer fights than measuring a rate */
+/**
+ * Deciding a side needs far fewer fights than measuring a rate
+ *
+ * Both this and the sim cache below are scoped per character and *discarded*
+ * rather than adopted on migration: a win rate and a cached clear chance are
+ * measurements of one character's power against a room, and handing the iron
+ * cow the market cow's numbers would poison every verdict from there on. Keys
+ * are resolved at each read and write — the user switches characters without
+ * reloading the page.
+ */
 const OUTCOME_STORAGE_KEY = 'labyrinthFightOutcomes';
 /** Bumped when the stored shape changes; older documents are read as bare totals */
 const OUTCOME_STORAGE_VERSION = 2;
@@ -96,6 +105,8 @@ const COMBAT_CACHE_STORE = 'labyrinth';
 const COMBAT_CACHE_STORAGE_VERSION = 1;
 /** A cached sim result older than this is dropped on load rather than trusted */
 const COMBAT_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+/** Legacy global values are dropped, not inherited — see OUTCOME_STORAGE_KEY */
+const DISCARD_LEGACY = { migrate: 'discard' };
 /** Newest entries kept when the persisted set is written back out */
 const COMBAT_CACHE_MAX_ENTRIES = 200;
 const DECISION_MIN_TRIALS = 40;
@@ -1082,6 +1093,12 @@ class LabyrinthClearRate {
         this.combatCache.clear();
         this._combatCacheMeta.clear();
         this._combatCacheLoaded = false;
+        // The fight record is one character's; dropping it here is what makes
+        // the next load read it back under whichever character is then current
+        this._outcomes = {};
+        this._outcomesSeen = {};
+        this._baseline = null;
+        this._outcomesLoaded = false;
         this.simQueue = [];
         this.simRunning = false;
         this.recommendations.clear();
@@ -1114,7 +1131,7 @@ class LabyrinthClearRate {
         if (this._outcomesLoaded) return;
         this._outcomesLoaded = true;
         try {
-            const stored = (await storage.getJSON(OUTCOME_STORAGE_KEY, 'settings', {})) || {};
+            const stored = (await readScoped(OUTCOME_STORAGE_KEY, 'settings', {}, DISCARD_LEGACY)) || {};
             // Anything written before the stripped-room fix counted defeats and
             // nothing else — a cleared room stops naming its monster, so the
             // scan that looked for one never saw a single win. Those totals are
@@ -1138,7 +1155,7 @@ class LabyrinthClearRate {
     /** Write the record and the per-room state it is counted against */
     async saveOutcomes() {
         try {
-            await storage.setJSON(
+            await writeScoped(
                 OUTCOME_STORAGE_KEY,
                 {
                     version: OUTCOME_STORAGE_VERSION,
@@ -2527,7 +2544,7 @@ class LabyrinthClearRate {
         if (this._combatCacheLoaded) return;
         this._combatCacheLoaded = true;
         try {
-            const stored = await storage.getJSON(COMBAT_CACHE_STORAGE_KEY, COMBAT_CACHE_STORE, null);
+            const stored = await readScoped(COMBAT_CACHE_STORAGE_KEY, COMBAT_CACHE_STORE, null, DISCARD_LEGACY);
             if (!stored || stored.version !== COMBAT_CACHE_STORAGE_VERSION || !Array.isArray(stored.entries)) {
                 return;
             }
@@ -2601,11 +2618,7 @@ class LabyrinthClearRate {
             for (const entry of dropped) this._combatCacheMeta.delete(entry.key);
         }
 
-        storage.setJSON(
-            COMBAT_CACHE_STORAGE_KEY,
-            { version: COMBAT_CACHE_STORAGE_VERSION, entries },
-            COMBAT_CACHE_STORE
-        );
+        writeScoped(COMBAT_CACHE_STORAGE_KEY, { version: COMBAT_CACHE_STORAGE_VERSION, entries }, COMBAT_CACHE_STORE);
     }
 
     /**
@@ -2622,7 +2635,7 @@ class LabyrinthClearRate {
      */
     _clearPersistedCombatCache() {
         this._combatCacheMeta.clear();
-        storage.setJSON(
+        writeScoped(
             COMBAT_CACHE_STORAGE_KEY,
             { version: COMBAT_CACHE_STORAGE_VERSION, entries: [] },
             COMBAT_CACHE_STORE

@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Combat and labyrinth records stop leaking between characters
+
+- **Eleven combat-side stores scoped per character**: enhancement tracker sessions, consumable trackers and the last combat run, combat session history, labyrinth fight outcomes / sim cache / room logs, sim-accuracy observations, in-progress dungeon runs, dungeon panel UI state, task reroll data, and the treasure tally. Keep-worthy history migrates to the main character; gear-derived data (fight outcomes, sim caches, live trackers) starts clean instead of inheriting another character's numbers.
+- **Dungeon runs stay one shared list** (team dedupe across your characters is a feature) but every new run is stamped with who recorded it, and the panel gains a "This character / All characters" filter defaulting to yours — legacy unstamped runs match by roster name.
+
 ### Panels and task prefs stop leaking between characters
 
 - **Panel open-state is per character now** — the market cow's panels no longer auto-reopen on the iron cow. Positions and sizes stay shared (panels sit where you put them on every character); only who-had-what-open splits, with the old flags migrating to the main character.

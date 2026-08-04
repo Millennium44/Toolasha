@@ -3,8 +3,22 @@
  * Handles loading, saving, and managing UI state
  */
 
-import storage from '../../core/storage.js';
 import config from '../../core/config.js';
+import { readScoped, writeScoped } from '../../utils/character-key.js';
+
+/**
+ * Where the panel's own preferences live.
+ *
+ * Scoped per character — where the panel sits and what it is filtered to is a
+ * per-character preference — and resolved at each read and write, since the
+ * user switches characters without reloading. The pre-scoping global state is
+ * adopted by the main character once.
+ */
+const UI_STATE_KEY = 'dungeonTracker_uiState';
+
+/** Show only runs this character recorded (the default), or every character's */
+export const CHARACTER_FILTER_MINE = 'mine';
+export const CHARACTER_FILTER_ALL = 'all';
 
 class DungeonTrackerUIState {
     constructor() {
@@ -22,6 +36,13 @@ class DungeonTrackerUIState {
         this.filterDungeon = 'all'; // 'all' or specific dungeon name
         this.filterTeam = 'all'; // 'all' or specific team key
 
+        // Whose runs to show. The run store is deliberately shared across
+        // characters — a team run recorded by two of your own characters is one
+        // run, and deduping it is the point — so the panel filters rather than
+        // the store partitioning. Defaults to this character, which is what
+        // "how am I doing" means when it is asked.
+        this.filterCharacter = CHARACTER_FILTER_MINE;
+
         // Track expanded groups to preserve state across refreshes
         this.expandedGroups = new Set();
     }
@@ -30,7 +51,7 @@ class DungeonTrackerUIState {
      * Load saved state from storage
      */
     async load() {
-        const savedState = await storage.getJSON('dungeonTracker_uiState', 'settings', null);
+        const savedState = await readScoped(UI_STATE_KEY, 'settings', null, { migrate: 'adopt' });
         if (savedState) {
             this.isCollapsed = savedState.isCollapsed || false;
             this.isKeysExpanded = savedState.isKeysExpanded || false;
@@ -41,6 +62,12 @@ class DungeonTrackerUIState {
             this.groupBy = savedState.groupBy || 'team';
             this.filterDungeon = savedState.filterDungeon || 'all';
             this.filterTeam = savedState.filterTeam || 'all';
+            this.filterCharacter =
+                savedState.filterCharacter === CHARACTER_FILTER_ALL ? CHARACTER_FILTER_ALL : CHARACTER_FILTER_MINE;
+        } else {
+            // A character with no saved state is a character the panel has not
+            // been opened on; it should not inherit the last one's selections
+            this.filterCharacter = CHARACTER_FILTER_MINE;
         }
     }
 
@@ -48,8 +75,8 @@ class DungeonTrackerUIState {
      * Save current state to storage
      */
     async save() {
-        await storage.setJSON(
-            'dungeonTracker_uiState',
+        await writeScoped(
+            UI_STATE_KEY,
             {
                 isCollapsed: this.isCollapsed,
                 isKeysExpanded: this.isKeysExpanded,
@@ -58,6 +85,7 @@ class DungeonTrackerUIState {
                 groupBy: this.groupBy,
                 filterDungeon: this.filterDungeon,
                 filterTeam: this.filterTeam,
+                filterCharacter: this.filterCharacter,
             },
             'settings',
             true

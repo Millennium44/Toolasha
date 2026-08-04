@@ -22,13 +22,13 @@
  */
 
 import config from '../../core/config.js';
-import storage from '../../core/storage.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import webSocketHook from '../../core/websocket.js';
 import { classifyFight, fightTally, failureShape } from './labyrinth-fight-log.js';
 import { accuracyReport } from './labyrinth-outcome-log.js';
 import { formatKMB, timeReadable } from '../../utils/formatters.js';
+import { readScoped, writeScoped } from '../../utils/character-key.js';
 
 /**
  * Walking to a room, in seconds.
@@ -43,6 +43,13 @@ import { formatKMB, timeReadable } from '../../utils/formatters.js';
  */
 export const ROOM_TRAVEL_SECONDS = 1;
 
+/**
+ * Where the room log lives.
+ *
+ * Scoped per character — a run is one character's run — and resolved at every
+ * read and write, since the user switches characters without reloading. The
+ * pre-scoping global log is adopted by the main character once.
+ */
 const STORAGE_KEY = 'labyrinthRoomLogs';
 /** Used when the setting is unreadable; the setting itself is the real bound */
 const DEFAULT_SESSIONS = 120;
@@ -270,7 +277,7 @@ class LabyrinthRoomLogs {
         if (!config.getSetting('labyrinthRoomLogs')) return;
         this.isInitialized = true;
 
-        const stored = await storage.getJSON(STORAGE_KEY, 'settings', null);
+        const stored = await readScoped(STORAGE_KEY, 'settings', null, { migrate: 'adopt' });
         if (Array.isArray(stored?.sessions)) {
             this.sessions = stored.sessions.slice(0, this.logSize());
         }
@@ -330,6 +337,12 @@ class LabyrinthRoomLogs {
         this.panel = null;
         this.labContext = null;
         this.roomData = null;
+        // The log belongs to the character that walked those rooms. Dropped so
+        // that a re-initialize — which is how a character switch arrives here —
+        // reads the arriving character's log rather than persisting this one's
+        // under their key.
+        this.sessions = [];
+        this.activeSession = null;
         this.isInitialized = false;
     }
 
@@ -875,7 +888,7 @@ class LabyrinthRoomLogs {
             delete copy.lastSnapshot;
             return copy;
         });
-        storage.setJSON(STORAGE_KEY, { sessions }, 'settings').catch((error) => {
+        writeScoped(STORAGE_KEY, { sessions }, 'settings').catch((error) => {
             console.error('[LabyrinthRoomLogs] Failed to persist logs:', error);
         });
     }

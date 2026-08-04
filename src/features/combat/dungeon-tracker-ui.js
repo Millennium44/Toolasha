@@ -10,6 +10,7 @@ import dungeonTrackerUIState from './dungeon-tracker-ui-state.js';
 import DungeonTrackerUIChart from './dungeon-tracker-ui-chart.js';
 import DungeonTrackerUIHistory from './dungeon-tracker-ui-history.js';
 import DungeonTrackerUIInteractions from './dungeon-tracker-ui-interactions.js';
+import { filterRunsForCharacter, currentCharacter } from './dungeon-tracker-storage.js';
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
 import config from '../../core/config.js';
@@ -355,6 +356,21 @@ class DungeonTrackerUI {
                                     <option value="all">All Teams</option>
                                 </select>
                             </div>
+                            <div>
+                                <label style="margin-right: 6px;">Character:</label>
+                                <select id="mwi-dt-filter-character" style="
+                                    background: #333;
+                                    color: #fff;
+                                    border: 1px solid #555;
+                                    border-radius: 3px;
+                                    padding: 2px 4px;
+                                    font-size: 11px;
+                                    min-width: 100px;
+                                ">
+                                    <option value="mine">This character</option>
+                                    <option value="all">All characters</option>
+                                </select>
+                            </div>
                         </div>
                     </div>
 
@@ -516,7 +532,10 @@ class DungeonTrackerUI {
 
         // Get all runs and apply filters (EXACT SAME LOGIC as chart)
         const allRuns = await storage.getJSON('allRuns', 'unifiedRuns', []);
-        runHistory = allRuns;
+        // The run store is shared across characters on purpose (see
+        // dungeon-tracker-storage.js); this is where "how am I doing" narrows
+        // it back to the character asking
+        runHistory = filterRunsForCharacter(allRuns, this.state.filterCharacter, currentCharacter());
 
         // Apply dungeon filter
         if (this.state.filterDungeon !== 'all') {

@@ -8,6 +8,18 @@ import dungeonTrackerStorage from './dungeon-tracker-storage.js';
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
+import { characterKey, readScoped, writeScoped } from '../../utils/character-key.js';
+
+/**
+ * The run currently under way, parked so a refresh mid-dungeon does not lose it.
+ *
+ * Scoped per character and resolved at each read and write — the user switches
+ * characters without reloading, and restoring the market cow's half-finished
+ * Chimerical Den onto the iron cow would invent a run that never happened. The
+ * pre-scoping global value is discarded for the same reason.
+ */
+const IN_PROGRESS_KEY = 'dungeonTracker_inProgressRun';
+const DISCARD_LEGACY = { migrate: 'discard' };
 
 class DungeonTracker {
     constructor() {
@@ -115,7 +127,7 @@ class DungeonTracker {
             hibernationDetected: this.hibernationDetected,
         };
 
-        return storage.setJSON('dungeonTracker_inProgressRun', stateToSave, 'settings', true);
+        return writeScoped(IN_PROGRESS_KEY, stateToSave, 'settings', true);
     }
 
     /**
@@ -124,7 +136,7 @@ class DungeonTracker {
      * @returns {Promise<boolean>} True if restored successfully
      */
     async restoreInProgressRun(currentBattleId) {
-        const saved = await storage.getJSON('dungeonTracker_inProgressRun', 'settings', null);
+        const saved = await readScoped(IN_PROGRESS_KEY, 'settings', null, DISCARD_LEGACY);
 
         if (!saved) {
             return false; // No saved state
@@ -193,7 +205,7 @@ class DungeonTracker {
      * @returns {Promise<boolean>} Success status
      */
     async clearInProgressRun() {
-        return storage.delete('dungeonTracker_inProgressRun', 'settings');
+        return storage.delete(characterKey(IN_PROGRESS_KEY), 'settings');
     }
 
     /**
@@ -289,7 +301,7 @@ class DungeonTracker {
         }
 
         // Try to restore saved state from IndexedDB
-        const saved = await storage.getJSON('dungeonTracker_inProgressRun', 'settings', null);
+        const saved = await readScoped(IN_PROGRESS_KEY, 'settings', null, DISCARD_LEGACY);
 
         if (saved && saved.dungeonHrid === dungeonAction.actionHrid) {
             // Apply the same staleness guard as restoreInProgressRun: a record older than

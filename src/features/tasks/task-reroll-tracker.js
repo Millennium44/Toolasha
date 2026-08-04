@@ -8,14 +8,26 @@ import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
 import webSocketHook from '../../core/websocket.js';
 import dataManager from '../../core/data-manager.js';
-import storage from '../../core/storage.js';
 import { GAME, TOOLASHA } from '../../utils/selectors.js';
+import { readScoped, writeScoped } from '../../utils/character-key.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { addStyles } from '../../utils/dom.js';
 
-// Retired tasks live alongside the live map in the same store
+/**
+ * Retired tasks live alongside the live map in the same store.
+ *
+ * Both keys are scoped per character and resolved at each read and write, since
+ * the user switches characters without reloading. The pre-scoping global values
+ * are adopted by the main character: the live map is keyed by task id and the
+ * history is a flat list, so neither carries anything that could tell one
+ * character's rows from another's — a merged record cannot be partitioned after
+ * the fact, and giving the whole of it to the main character is the closest to
+ * true that is still available.
+ */
+const DATA_KEY = 'taskRerollData';
 const HISTORY_KEY = 'taskRerollHistory';
 const HISTORY_CAP = 500;
+const ADOPT_LEGACY = { migrate: 'adopt' };
 
 class TaskRerollTracker {
     constructor() {
@@ -53,7 +65,7 @@ class TaskRerollTracker {
      */
     async loadFromStorage() {
         try {
-            const savedData = await storage.getJSON('taskRerollData', this.storeName, {});
+            const savedData = (await readScoped(DATA_KEY, this.storeName, {}, ADOPT_LEGACY)) || {};
 
             // Convert saved object back to Map
             for (const [taskId, data] of Object.entries(savedData)) {
@@ -75,7 +87,7 @@ class TaskRerollTracker {
                 dataToSave[taskId] = data;
             }
 
-            await storage.setJSON('taskRerollData', dataToSave, this.storeName, true);
+            await writeScoped(DATA_KEY, dataToSave, this.storeName, true);
         } catch (error) {
             console.error('[Task Reroll Tracker] Failed to save to storage:', error);
         }
@@ -88,6 +100,10 @@ class TaskRerollTracker {
         this.unregisterHandlers.forEach((unregister) => unregister());
         this.unregisterHandlers = [];
         this.timerRegistry.clearAll();
+        // The map is one character's tasks. Cleared so the re-initialize that
+        // follows a character switch loads the arriving character's rows rather
+        // than writing the departing character's out under their key.
+        this.taskRerollData.clear();
         document.getElementById('mwi-task-action-min-height')?.remove();
         this.isInitialized = false;
     }
@@ -102,7 +118,7 @@ class TaskRerollTracker {
      */
     async loadHistory() {
         try {
-            const saved = await storage.getJSON(HISTORY_KEY, this.storeName, []);
+            const saved = await readScoped(HISTORY_KEY, this.storeName, [], ADOPT_LEGACY);
             return Array.isArray(saved) ? saved : [];
         } catch (error) {
             console.error('[Task Reroll Tracker] Failed to load reroll history:', error);
@@ -127,7 +143,7 @@ class TaskRerollTracker {
             const history = await this.loadHistory();
             history.push(...entries);
             const capped = history.length > HISTORY_CAP ? history.slice(history.length - HISTORY_CAP) : history;
-            await storage.setJSON(HISTORY_KEY, capped, this.storeName, true);
+            await writeScoped(HISTORY_KEY, capped, this.storeName, true);
         } catch (error) {
             console.error('[Task Reroll Tracker] Failed to append reroll history:', error);
         }

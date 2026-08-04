@@ -27,9 +27,16 @@
  * state, since the loot totals only ever grow.
  */
 
-import storage from '../../core/storage.js';
+import { readScoped, writeScoped } from '../../utils/character-key.js';
 
-/** Where the list lives */
+/**
+ * Where the list lives.
+ *
+ * Scoped per character, and resolved at every read and write rather than once:
+ * a run is one character's run, and the user switches characters without
+ * reloading the page. The pre-scoping global list is adopted by the main
+ * character the first time it is read.
+ */
 const STORE_KEY = 'combatSessionHistory';
 const STORE_NAME = 'combatStats';
 
@@ -81,7 +88,7 @@ export function withSession(history, snapshot) {
  */
 export async function loadSessions() {
     try {
-        const saved = await storage.getJSON(STORE_KEY, STORE_NAME, []);
+        const saved = await readScoped(STORE_KEY, STORE_NAME, [], { migrate: 'adopt' });
         return Array.isArray(saved) ? saved : [];
     } catch (error) {
         console.error('[CombatSessionHistory] Reading the session list failed:', error);
@@ -98,7 +105,7 @@ export async function loadSessions() {
 export async function archiveSession(snapshot) {
     try {
         const history = withSession(await loadSessions(), snapshot);
-        await storage.setJSON(STORE_KEY, history, STORE_NAME, true);
+        await writeScoped(STORE_KEY, history, STORE_NAME, true);
         return history;
     } catch (error) {
         console.error('[CombatSessionHistory] Archiving a session failed:', error);
@@ -109,7 +116,7 @@ export async function archiveSession(snapshot) {
 /** Forget every archived run. @returns {Promise<void>} */
 export async function clearSessions() {
     try {
-        await storage.setJSON(STORE_KEY, [], STORE_NAME, true);
+        await writeScoped(STORE_KEY, [], STORE_NAME, true);
     } catch (error) {
         console.error('[CombatSessionHistory] Clearing the session list failed:', error);
     }

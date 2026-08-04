@@ -59,7 +59,6 @@
  */
 
 import config from '../../core/config.js';
-import storage from '../../core/storage.js';
 import dataManager from '../../core/data-manager.js';
 import {
     buildGameDataPayload,
@@ -75,6 +74,7 @@ import { registerRow } from '../../utils/overlay-rows.js';
 import { createPanel, panelCard, panelLine, panelNote } from '../../utils/simple-panel.js';
 import { ROW_COLORS } from '../../utils/overlay-format.js';
 import { formatRelativeTime, formatKMB } from '../../utils/formatters.js';
+import { readScoped, writeScoped } from '../../utils/character-key.js';
 
 /** Below this many fights the spread of the sample says nothing about the mean */
 export const MIN_SAMPLE_FIGHTS = 3;
@@ -98,7 +98,18 @@ export const SIM_HOURS = 12;
 /** Observations kept, oldest dropped first */
 const MAX_OBSERVATIONS = 10;
 
+/**
+ * Where past observations live.
+ *
+ * Scoped per character, and resolved at each read and write since the user
+ * switches characters without reloading. The pre-scoping global value is
+ * *discarded* rather than adopted: an observation is a record of one
+ * character's damage against a zone, and comparing another character's sim to
+ * it would flag a difference that is only the difference between two
+ * characters.
+ */
 const STORAGE_KEY = 'combatReplayCheck_observations';
+const DISCARD_LEGACY = { migrate: 'discard' };
 
 const ACCENT = '#8fd0ff';
 
@@ -509,7 +520,7 @@ class ReplayCheck {
     async load() {
         if (this.loaded) return;
         try {
-            this.observations = (await storage.get(STORAGE_KEY, 'settings', [])) || [];
+            this.observations = (await readScoped(STORAGE_KEY, 'settings', [], DISCARD_LEGACY)) || [];
             this.loaded = true;
             // A recording made before anyone looked at this is still sitting in
             // the recorder, and is the one most likely to be wanted
@@ -545,7 +556,7 @@ class ReplayCheck {
             if (seen) return;
 
             this.observations = [...this.observations, observation].slice(-MAX_OBSERVATIONS);
-            await storage.set(STORAGE_KEY, this.observations, 'settings');
+            await writeScoped(STORAGE_KEY, this.observations, 'settings');
         } catch (error) {
             console.error('[ReplayCheck] Keeping the observation failed:', error);
         }
@@ -618,13 +629,19 @@ class ReplayCheck {
         this.observations = [];
         this.comparison = null;
         this.error = null;
-        await storage.set(STORAGE_KEY, [], 'settings');
+        await writeScoped(STORAGE_KEY, [], 'settings');
     }
 
     disable() {
         this.detach?.();
         this.detach = null;
         this.watching = false;
+        // Observations belong to the character that recorded them, so the next
+        // ensureWatching — which is how a character switch arrives here — has
+        // to read them again rather than carry these across
+        this.observations = [];
+        this.comparison = null;
+        this.loaded = false;
     }
 }
 
