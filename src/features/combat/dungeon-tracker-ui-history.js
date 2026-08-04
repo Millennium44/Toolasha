@@ -3,7 +3,7 @@
  * Handles grouping, filtering, and rendering of run history
  */
 
-import dungeonTrackerStorage from './dungeon-tracker-storage.js';
+import dungeonTrackerStorage, { filterRunsForCharacter, currentCharacter } from './dungeon-tracker-storage.js';
 import storage from '../../core/storage.js';
 import { formatDateTime } from '../../utils/formatters.js';
 
@@ -117,8 +117,15 @@ class DungeonTrackerUIHistory {
         if (!runList) return;
 
         try {
-            // Get all runs from unified storage
-            const allRuns = await dungeonTrackerStorage.getAllRuns();
+            // Get all runs from unified storage, narrowed to whoever the
+            // character filter says the panel is speaking for. Everything below
+            // — the dungeon and team dropdowns included — is built from that
+            // narrowed list, so the choices offered are choices that have runs.
+            const allRuns = filterRunsForCharacter(
+                await dungeonTrackerStorage.getAllRuns(),
+                this.state.filterCharacter,
+                currentCharacter()
+            );
 
             if (allRuns.length === 0) {
                 runList.innerHTML =

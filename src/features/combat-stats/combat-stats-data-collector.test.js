@@ -14,14 +14,29 @@ const store = vi.hoisted(() => ({ saved: null, tracking: null, actions: [] }));
 
 vi.mock('../../core/websocket.js', () => ({ default: { on: () => {}, off: () => {} } }));
 vi.mock('../../core/data-manager.js', () => ({
-    default: { getCurrentCharacterId: () => 'me', getCurrentActions: () => store.actions },
+    default: {
+        getCurrentCharacterId: () => 'me',
+        getCurrentCharacterGameMode: () => 'standard',
+        getCurrentActions: () => store.actions,
+        on: () => {},
+        off: () => {},
+    },
 }));
 vi.mock('../../core/config.js', () => ({ default: { getSetting: () => true, getSettingValue: () => 'ask' } }));
 vi.mock('../../api/marketplace.js', () => ({ default: { getPrice: () => ({ ask: 1, bid: 1 }) } }));
+// Keys are per character now, so the mock matches on the base rather than the
+// whole key — the suffix is character-key.js's business and has its own tests
+const read = async (key, _s, fallback = null) =>
+    (key.startsWith('latestCombatRun') ? store.saved : store.tracking) ?? fallback;
+
 vi.mock('../../core/storage.js', () => ({
     default: {
-        getJSON: async (key, _s, fallback) => (key === 'latestCombatRun' ? store.saved : store.tracking) ?? fallback,
+        get: read,
+        getJSON: read,
+        set: async () => true,
         setJSON: async () => true,
+        delete: async () => true,
+        getAllKeys: async () => [],
     },
 }));
 

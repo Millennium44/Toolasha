@@ -6,6 +6,23 @@
 import storage from '../../core/storage.js';
 import dataManager from '../../core/data-manager.js';
 
+/**
+ * Runs are stored once for the whole account, not once per character.
+ *
+ * A team run is the same run whichever of your characters was in the party, and
+ * the duplicate check that collapses those two sightings into one entry only
+ * works if they land in the same list. Partitioning the store per character
+ * would turn one run into two.
+ *
+ * What the store lacked was any record of *who* recorded each run, so a panel
+ * could not answer "how am I doing" without also counting the other character's
+ * runs. New runs are stamped with the recording character; the panel filters on
+ * that stamp. Runs written before the stamp existed fall back to looking for
+ * the character's name in the team, which is right for every run they were
+ * actually in and merely conservative for solo runs recorded under a name the
+ * roster does not carry.
+ */
+
 // Hardcoded max waves for each dungeon (fallback if maxCount is 0)
 const DUNGEON_MAX_WAVES = {
     '/actions/combat/chimerical_den': 50,
@@ -13,6 +30,56 @@ const DUNGEON_MAX_WAVES = {
     '/actions/combat/enchanted_fortress': 65,
     '/actions/combat/pirate_cove': 65,
 };
+
+/**
+ * Whether a stored run belongs to the given character.
+ *
+ * Pure so the fallback is testable: the stamp decides when it is there, and
+ * only a run without one is matched by name against the team.
+ *
+ * @param {Object} run - A stored run
+ * @param {string|null} characterId - The character asking
+ * @param {string|null} characterName - Their in-game name, for legacy runs
+ * @returns {boolean}
+ */
+export function runMatchesCharacter(run, characterId, characterName) {
+    if (!run) return false;
+
+    if (run.recordedBy) {
+        return characterId != null && String(run.recordedBy) === String(characterId);
+    }
+
+    // Legacy run: no stamp, so the roster is the only evidence there is
+    if (!characterName) return false;
+    if (Array.isArray(run.team) && run.team.includes(characterName)) return true;
+    if (typeof run.teamKey === 'string' && run.teamKey.split(',').includes(characterName)) return true;
+    return false;
+}
+
+/**
+ * Narrow a run list to one character, or leave it whole.
+ *
+ * @param {Array<Object>} runs - Stored runs
+ * @param {string} filterCharacter - 'mine' or 'all'
+ * @param {{id: string|null, name: string|null}} character - Who is asking
+ * @returns {Array<Object>} The runs to show
+ */
+export function filterRunsForCharacter(runs, filterCharacter, character) {
+    const list = Array.isArray(runs) ? runs : [];
+    if (filterCharacter !== 'mine') return list;
+    return list.filter((run) => runMatchesCharacter(run, character?.id ?? null, character?.name ?? null));
+}
+
+/**
+ * The character the panel is currently speaking for.
+ * @returns {{id: string|null, name: string|null}}
+ */
+export function currentCharacter() {
+    return {
+        id: dataManager.getCurrentCharacterId?.() ?? null,
+        name: dataManager.getCurrentCharacterName?.() ?? null,
+    };
+}
 
 class DungeonTrackerStorage {
     constructor() {
@@ -139,7 +206,12 @@ class DungeonTrackerStorage {
         if (!isDuplicate) {
             // Create unified format run
             const team = teamKey.split(',').sort();
+            // Who saw this run. Read here rather than at module load, since the
+            // user switches characters without reloading the page.
+            const recorder = currentCharacter();
             const unifiedRun = {
+                recordedBy: recorder.id,
+                recordedByName: recorder.name,
                 timestamp: run.timestamp,
                 dungeonName: run.dungeonName || 'Unknown',
                 dungeonHrid: null,
@@ -172,6 +244,16 @@ class DungeonTrackerStorage {
      */
     async getAllRuns() {
         return storage.getJSON('allRuns', this.unifiedStoreName, []);
+    }
+
+    /**
+     * Every run, or only the ones this character recorded.
+     *
+     * @param {string} [filterCharacter] - 'mine' (default) or 'all'
+     * @returns {Promise<Array>} Runs
+     */
+    async getRunsForCharacter(filterCharacter = 'mine') {
+        return filterRunsForCharacter(await this.getAllRuns(), filterCharacter, currentCharacter());
     }
 
     /**

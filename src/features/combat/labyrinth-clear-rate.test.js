@@ -33,6 +33,8 @@ vi.mock('../../core/data-manager.js', () => ({
     default: {
         on: vi.fn(),
         off: vi.fn(),
+        getCurrentCharacterId: vi.fn(() => 'me'),
+        getCurrentCharacterGameMode: vi.fn(() => 'standard'),
         getSkills: vi.fn(() => []),
         getInitClientData: vi.fn(() => null),
         getCharacterGuildBuffLevel: (hrid) => shrines.owned[hrid] || 0,
@@ -63,16 +65,23 @@ vi.mock('./loadout-snapshot.js', () => ({
 }));
 // The persisted-combat-cache suite drives this store directly; every other
 // suite in this file is pure math and never touches it
+const dbGet = async (key, storeName = 'settings', defaultValue = null) => {
+    const stored = db.map.get(`${storeName}:${key}`);
+    return stored === undefined || stored === null ? defaultValue : stored;
+};
+const dbSet = async (key, value, storeName = 'settings') => {
+    db.map.set(`${storeName}:${key}`, value);
+    return true;
+};
+
 vi.mock('../../core/storage.js', () => ({
     default: {
-        getJSON: async (key, storeName = 'settings', defaultValue = null) => {
-            const stored = db.map.get(`${storeName}:${key}`);
-            return stored === undefined ? defaultValue : stored;
-        },
-        setJSON: async (key, value, storeName = 'settings') => {
-            db.map.set(`${storeName}:${key}`, value);
-            return true;
-        },
+        get: dbGet,
+        getJSON: dbGet,
+        set: dbSet,
+        setJSON: dbSet,
+        delete: async (key, storeName = 'settings') => db.map.delete(`${storeName}:${key}`),
+        getAllKeys: async () => [],
     },
 }));
 
@@ -521,7 +530,7 @@ describe('persisted combat cache', () => {
     test('drops an entry older than the TTL', async () => {
         const key = 'imp:200:1:1pp:';
         const eightDaysAgo = Date.now() - 8 * 24 * 60 * 60 * 1000;
-        db.map.set('labyrinth:labyrinthCombatSimCache', {
+        db.map.set('labyrinth:labyrinthCombatSimCache_me', {
             version: 1,
             entries: [
                 {
@@ -541,7 +550,7 @@ describe('persisted combat cache', () => {
     test('keeps an entry inside the TTL', async () => {
         const key = 'imp:200:1:1pp:';
         const oneHourAgo = Date.now() - 60 * 60 * 1000;
-        db.map.set('labyrinth:labyrinthCombatSimCache', {
+        db.map.set('labyrinth:labyrinthCombatSimCache_me', {
             version: 1,
             entries: [
                 {
@@ -566,7 +575,7 @@ describe('persisted combat cache', () => {
         labyrinthClearRate._invalidateIfInputsChanged();
         labyrinthClearRate.combatCache.set(key, result);
         labyrinthClearRate._persistCombatCacheEntry(key, result);
-        expect(db.map.get('labyrinth:labyrinthCombatSimCache').entries).toHaveLength(1);
+        expect(db.map.get('labyrinth:labyrinthCombatSimCache_me').entries).toHaveLength(1);
 
         // Swap gear and re-check — this is the same path a real loadout
         // snapshot rebuild drives
@@ -575,7 +584,7 @@ describe('persisted combat cache', () => {
 
         expect(stale).toBe(true);
         expect(labyrinthClearRate.combatCache.size).toBe(0);
-        expect(db.map.get('labyrinth:labyrinthCombatSimCache').entries).toHaveLength(0);
+        expect(db.map.get('labyrinth:labyrinthCombatSimCache_me').entries).toHaveLength(0);
     });
 
     test('a precision-only clear leaves the persisted store alone', () => {
@@ -589,7 +598,7 @@ describe('persisted combat cache', () => {
         // Map is wiped, because a different mode simply uses a different key
         labyrinthClearRate.combatCache.clear();
 
-        expect(db.map.get('labyrinth:labyrinthCombatSimCache').entries).toHaveLength(1);
+        expect(db.map.get('labyrinth:labyrinthCombatSimCache_me').entries).toHaveLength(1);
     });
 
     test('caps the persisted set to the most recent entries', () => {
@@ -605,7 +614,7 @@ describe('persisted combat cache', () => {
             vi.advanceTimersByTime(1000);
         }
 
-        const stored = db.map.get('labyrinth:labyrinthCombatSimCache');
+        const stored = db.map.get('labyrinth:labyrinthCombatSimCache_me');
         expect(stored.entries).toHaveLength(200);
         expect(labyrinthClearRate._combatCacheMeta.size).toBe(200);
 
@@ -1197,5 +1206,69 @@ describe('a recommend run keeps the combat cache', () => {
         await labyrinthClearRate.runRecommendations();
 
         expect(labyrinthClearRate.combatCache.has(key)).toBe(true);
+    });
+});
+
+describe('per-character fight outcomes', () => {
+    beforeEach(() => {
+        db.map.clear();
+        labyrinthClearRate._outcomes = {};
+        labyrinthClearRate._outcomesSeen = {};
+        labyrinthClearRate._baseline = null;
+        labyrinthClearRate._outcomesLoaded = false;
+    });
+
+    test('outcomes are written under this character’s key', async () => {
+        labyrinthClearRate._outcomes = { '/monsters/imp:200': { wins: 3, fights: 4 } };
+        await labyrinthClearRate.saveOutcomes();
+
+        expect(db.map.has('settings:labyrinthFightOutcomes_me')).toBe(true);
+        expect(db.map.has('settings:labyrinthFightOutcomes')).toBe(false);
+    });
+
+    test('a load reads only this character’s record', async () => {
+        db.map.set('settings:labyrinthFightOutcomes_me', {
+            version: 2,
+            totals: { mine: { wins: 1, fights: 1 } },
+        });
+        db.map.set('settings:labyrinthFightOutcomes_other', {
+            version: 2,
+            totals: { theirs: { wins: 9, fights: 9 } },
+        });
+
+        await labyrinthClearRate.loadOutcomes();
+
+        expect(labyrinthClearRate._outcomes).toEqual({ mine: { wins: 1, fights: 1 } });
+    });
+
+    test('a legacy global record is discarded rather than inherited', async () => {
+        // A win rate is a measurement of one character's power against a room.
+        // Handing it to another character would poison every verdict from there
+        // on, so the pre-scoping value is dropped and counting starts again.
+        db.map.set('settings:labyrinthFightOutcomes', {
+            version: 2,
+            totals: { '/monsters/imp:200': { wins: 40, fights: 40 } },
+        });
+
+        await labyrinthClearRate.loadOutcomes();
+
+        expect(labyrinthClearRate._outcomes).toEqual({});
+        expect(db.map.has('settings:labyrinthFightOutcomes')).toBe(false);
+        expect(db.map.has('settings:labyrinthFightOutcomes_me')).toBe(false);
+    });
+
+    test('the legacy combat sim cache is discarded too', async () => {
+        db.map.set('labyrinth:labyrinthCombatSimCache', {
+            version: 1,
+            entries: [{ key: 'imp:200:1:1pp:', result: {}, computedAt: Date.now(), snapshotFingerprint: 'x' }],
+        });
+        labyrinthClearRate.combatCache.clear();
+        labyrinthClearRate._combatCacheMeta.clear();
+        labyrinthClearRate._combatCacheLoaded = false;
+
+        await labyrinthClearRate._loadCombatCache();
+
+        expect(labyrinthClearRate.combatCache.size).toBe(0);
+        expect(db.map.has('labyrinth:labyrinthCombatSimCache')).toBe(false);
     });
 });

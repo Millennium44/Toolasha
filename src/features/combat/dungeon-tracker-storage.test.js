@@ -1,6 +1,11 @@
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
-const game = vi.hoisted(() => ({ saved: {}, actionDetails: {} }));
+const game = vi.hoisted(() => ({
+    saved: {},
+    actionDetails: {},
+    characterId: 'market123',
+    characterName: 'MarketCow',
+}));
 
 vi.mock('../../core/storage.js', () => ({
     default: {
@@ -12,10 +17,18 @@ vi.mock('../../core/storage.js', () => ({
     },
 }));
 vi.mock('../../core/data-manager.js', () => ({
-    default: { getActionDetails: (hrid) => game.actionDetails[hrid] },
+    default: {
+        getActionDetails: (hrid) => game.actionDetails[hrid],
+        getCurrentCharacterId: () => game.characterId,
+        getCurrentCharacterName: () => game.characterName,
+    },
 }));
 
-const dungeonTrackerStorage = (await import('./dungeon-tracker-storage.js')).default;
+const {
+    default: dungeonTrackerStorage,
+    runMatchesCharacter,
+    filterRunsForCharacter,
+} = await import('./dungeon-tracker-storage.js');
 
 function seedRuns(runs) {
     game.saved.unifiedRuns = { allRuns: runs };
@@ -224,7 +237,10 @@ describe('getAllTeamStats', () => {
     });
 
     test('solo runs with no teamKey are excluded', async () => {
-        seedRuns([{ teamKey: null, duration: 100 }, { teamKey: 'A,B', duration: 200 }]);
+        seedRuns([
+            { teamKey: null, duration: 100 },
+            { teamKey: 'A,B', duration: 200 },
+        ]);
 
         const stats = await dungeonTrackerStorage.getAllTeamStats();
 
@@ -305,5 +321,111 @@ describe('scrubOutlierRuns', () => {
 
         expect(removed).toBe(1);
         expect(game.saved.unifiedRuns.allRuns).toHaveLength(10);
+    });
+});
+
+describe('who recorded a run', () => {
+    beforeEach(() => {
+        game.saved = {};
+        game.characterId = 'market123';
+        game.characterName = 'MarketCow';
+    });
+
+    test('a new run is stamped with the character that recorded it', async () => {
+        await dungeonTrackerStorage.saveTeamRun('MarketCow,Friend', {
+            timestamp: '2026-01-02T00:00:00Z',
+            duration: 700,
+            dungeonName: 'Chimerical Den',
+        });
+
+        expect(game.saved.unifiedRuns.allRuns[0]).toMatchObject({
+            recordedBy: 'market123',
+            recordedByName: 'MarketCow',
+        });
+    });
+
+    test('the stamp is read at save time, so a switch without a reload is followed', async () => {
+        await dungeonTrackerStorage.saveTeamRun('MarketCow', {
+            timestamp: '2026-01-02T00:00:00Z',
+            duration: 700,
+            dungeonName: 'Chimerical Den',
+        });
+
+        game.characterId = 'iron456';
+        game.characterName = 'IronCow';
+        await dungeonTrackerStorage.saveTeamRun('IronCow', {
+            timestamp: '2026-01-03T00:00:00Z',
+            duration: 800,
+            dungeonName: 'Chimerical Den',
+        });
+
+        expect(game.saved.unifiedRuns.allRuns.map((run) => run.recordedBy)).toEqual(['iron456', 'market123']);
+    });
+});
+
+describe('runMatchesCharacter', () => {
+    test('the stamp decides when it is there', () => {
+        const run = { recordedBy: 'market123', team: ['SomebodyElse'], teamKey: 'SomebodyElse' };
+        expect(runMatchesCharacter(run, 'market123', 'MarketCow')).toBe(true);
+        expect(runMatchesCharacter(run, 'iron456', 'IronCow')).toBe(false);
+    });
+
+    test('a stamped run belonging to nobody present does not match on name', () => {
+        // The whole point of the stamp is that it beats the roster: two of your
+        // characters in the same party recorded one run, and only one of them
+        // recorded it
+        const run = { recordedBy: 'market123', team: ['MarketCow', 'IronCow'] };
+        expect(runMatchesCharacter(run, 'iron456', 'IronCow')).toBe(false);
+    });
+
+    test('a legacy run falls back to the roster', () => {
+        expect(runMatchesCharacter({ team: ['MarketCow', 'Friend'] }, 'market123', 'MarketCow')).toBe(true);
+        expect(runMatchesCharacter({ teamKey: 'MarketCow,Friend' }, 'market123', 'MarketCow')).toBe(true);
+        expect(runMatchesCharacter({ team: ['Friend'] }, 'market123', 'MarketCow')).toBe(false);
+    });
+
+    test('a substring of a team-mate name is not a match', () => {
+        expect(runMatchesCharacter({ teamKey: 'MarketCowboy,Friend' }, 'market123', 'MarketCow')).toBe(false);
+    });
+
+    test('with no character to compare against, nothing matches', () => {
+        expect(runMatchesCharacter({ recordedBy: 'market123' }, null, null)).toBe(false);
+        expect(runMatchesCharacter({ team: ['MarketCow'] }, 'market123', null)).toBe(false);
+        expect(runMatchesCharacter(null, 'market123', 'MarketCow')).toBe(false);
+    });
+});
+
+describe('filterRunsForCharacter', () => {
+    beforeEach(() => {
+        game.saved = {};
+        game.characterId = 'market123';
+        game.characterName = 'MarketCow';
+    });
+
+    const runs = [
+        { id: 'mine', recordedBy: 'market123' },
+        { id: 'theirs', recordedBy: 'iron456' },
+        { id: 'legacy-mine', team: ['MarketCow', 'Friend'] },
+        { id: 'legacy-theirs', team: ['Friend'] },
+    ];
+
+    test("'mine' keeps this character's runs and the legacy runs they were in", () => {
+        const kept = filterRunsForCharacter(runs, 'mine', { id: 'market123', name: 'MarketCow' });
+        expect(kept.map((run) => run.id)).toEqual(['mine', 'legacy-mine']);
+    });
+
+    test("'all' keeps everything", () => {
+        expect(filterRunsForCharacter(runs, 'all', { id: 'market123', name: 'MarketCow' })).toHaveLength(4);
+    });
+
+    test('an empty or missing list is not an error', () => {
+        expect(filterRunsForCharacter(null, 'mine', { id: 'market123', name: 'MarketCow' })).toEqual([]);
+    });
+
+    test('the storage accessor applies the same rule', async () => {
+        game.saved = { unifiedRuns: { allRuns: runs } };
+        const kept = await dungeonTrackerStorage.getRunsForCharacter('mine');
+        expect(kept.map((run) => run.id)).toEqual(['mine', 'legacy-mine']);
+        expect(await dungeonTrackerStorage.getRunsForCharacter('all')).toHaveLength(4);
     });
 });

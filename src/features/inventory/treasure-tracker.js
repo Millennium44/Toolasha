@@ -21,7 +21,6 @@
  */
 
 import config from '../../core/config.js';
-import storage from '../../core/storage.js';
 import settingsStorage from '../../core/settings-storage.js';
 import webSocketHook from '../../core/websocket.js';
 import dataManager from '../../core/data-manager.js';
@@ -58,9 +57,19 @@ import {
     mergeTally,
 } from '../../utils/chest-import.js';
 import { calculateDungeonTokenValue, labyrinthRewardValue } from '../../utils/token-valuation.js';
+import { readScoped, writeScoped } from '../../utils/character-key.js';
 
+/**
+ * The ledger and the panel's preferences.
+ *
+ * Both are scoped per character — the chests one character opened are not the
+ * other's, and the value settings are a per-character judgement — and resolved
+ * at each read and write, since the user switches characters without reloading.
+ * The pre-scoping global values are adopted by the main character once.
+ */
 const STORAGE_KEY = 'treasureTally';
 const SETTINGS_KEY = 'treasureSettings';
+const ADOPT_LEGACY = { migrate: 'adopt' };
 const PANEL_ID = 'toolasha-treasure-panel';
 const POPUP_ID = 'toolasha-treasure-popup';
 /** Where each of the two is remembered; they are moved and sized independently */
@@ -257,8 +266,8 @@ class TreasureTracker {
         if (!config.getSetting('treasureTracker')) return;
         this.isInitialized = true;
 
-        this.tally = (await storage.getJSON(STORAGE_KEY, 'settings', {})) || {};
-        const saved = await storage.getJSON(SETTINGS_KEY, 'settings', null);
+        this.tally = (await readScoped(STORAGE_KEY, 'settings', {}, ADOPT_LEGACY)) || {};
+        const saved = await readScoped(SETTINGS_KEY, 'settings', null, ADOPT_LEGACY);
         if (saved) this.settings = { ...DEFAULT_SETTINGS, ...saved };
 
         // A panel reopened at start-up is created before this runs, so it drew
@@ -278,6 +287,11 @@ class TreasureTracker {
         }
         this._removePanel();
         this._removePopup();
+        // The ledger is one character's. Dropped so the re-initialize that
+        // follows a character switch reads the arriving character's, rather
+        // than saving this one's under their key on the next chest.
+        this.tally = {};
+        this.settings = { ...DEFAULT_SETTINGS };
         this.isInitialized = false;
     }
 
@@ -392,7 +406,7 @@ class TreasureTracker {
     }
 
     _save() {
-        storage.setJSON(STORAGE_KEY, this.tally, 'settings').catch((error) => {
+        writeScoped(STORAGE_KEY, this.tally, 'settings').catch((error) => {
             console.error('[TreasureTracker] Saving the chest tally failed:', error);
         });
     }
@@ -518,7 +532,7 @@ class TreasureTracker {
     }
 
     _saveSettings() {
-        storage.setJSON(SETTINGS_KEY, this.settings, 'settings').catch((error) => {
+        writeScoped(SETTINGS_KEY, this.settings, 'settings').catch((error) => {
             console.error('[TreasureTracker] Saving treasure settings failed:', error);
         });
     }

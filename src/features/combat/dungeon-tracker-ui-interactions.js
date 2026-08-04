@@ -201,6 +201,23 @@ class DungeonTrackerUIInteractions {
                 if (this.callbacks.onUpdateChart) this.callbacks.onUpdateChart();
             });
         }
+
+        // Filter character dropdown. Unlike the two above it has a value the
+        // moment the panel opens — "this character" — so the control is seeded
+        // from state rather than left on its first option.
+        const filterCharacterSelect = this.container.querySelector('#mwi-dt-filter-character');
+        if (filterCharacterSelect) {
+            filterCharacterSelect.value = this.state.filterCharacter;
+            filterCharacterSelect.addEventListener('change', (e) => {
+                this.state.filterCharacter = e.target.value;
+                this.state.save();
+                // The dungeon and team lists are built from the runs on show,
+                // and a different character has different teams
+                this.state.expandedGroups.clear();
+                if (this.callbacks.onUpdateHistory) this.callbacks.onUpdateHistory();
+                if (this.callbacks.onUpdateChart) this.callbacks.onUpdateChart();
+            });
+        }
     }
 
     /**
