@@ -28,20 +28,11 @@ import webSocketHook from '../../core/websocket.js';
 import { classifyFight, fightTally, failureShape } from './labyrinth-fight-log.js';
 import { accuracyReport } from './labyrinth-outcome-log.js';
 import { formatKMB, timeReadable } from '../../utils/formatters.js';
+import { ROOM_TRAVEL_SECONDS } from './labyrinth-formulas.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
 
-/**
- * Walking to a room, in seconds.
- *
- * A room costs the walk to it plus the time spent in it, and retries happen
- * where you already stand, so this is paid once per room however many attempts
- * it takes. Both the forecast (`labyrinth-clear-rate.js`'s roomXpPerHour) and
- * the measurement (`floorSummary` below) charge it, which is the only reason
- * the two experience-per-hour figures can be read side by side — they were one
- * second per room apart for a while, which is small per room and not small over
- * a floor of fast rooms.
- */
-export const ROOM_TRAVEL_SECONDS = 1;
+/** Re-exported from labyrinth-formulas.js, where it now lives */
+export { ROOM_TRAVEL_SECONDS };
 
 /**
  * Where the room log lives.

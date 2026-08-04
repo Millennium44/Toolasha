@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Labyrinth: split apart, supply-aware, and honest mid-fight
+
+- **The 5,300-line labyrinth module splits into six** (formulas, pathing, outcomes, sim cache, recommendation, live readout) with byte-identical behavior, guarded by seam tests.
+- **The shroud/beacon planner reads your bag**: beacons clamp to owned ("4 set / 3 owned"), the summary splits confirmed vs assumed shroud needs ("13 needed · 2 owned — 2 confirmed, 11 assumed for unrevealed rooms"), torches are checked against the route, a cheapest-tier restock hint prices the shortfall, and the toolbar shows live held counts.
+- **The live clear-chance no longer swings wildly before the lab tab is opened**: the sim replay could not identify the room on a mid-run reload (path never seeded, and a fight joined in progress never replayed due to a zero-clock gate), so a noisy health extrapolation was quoted as a point figure. The replay now works from the first tick via battle data, and an unearned extrapolation displays as a damped range ("Clear 50–75%?") instead of a jumping number — same math as the room tab, now reachable.
+
 ### Adoption accident: fixed, and repairable
 
 - **The wrong character can no longer inherit your data**: characters with "test" in their name never adopt legacy values, and neither does a character with no networth history while another character on the account has some — the hole that let a freshly logged-in alt claim everything by being first.

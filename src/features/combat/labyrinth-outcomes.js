@@ -1,0 +1,348 @@
+/**
+ * Labyrinth Fight Outcomes — predicted against actual
+ *
+ * A simulation can converge on a precise wrong answer, and no number of
+ * extra trials will say so — only the game can. The server counts the
+ * fights for us: a room beaten on the fifth try is one clear in five, and a
+ * room walked away from is nought in however many. Set beside the rate the
+ * sim predicted, that is a test the sim can fail.
+ *
+ * Mixed into LabyrinthClearRate, so every method here reads and writes the
+ * singleton's own state (`this._outcomes`, `this._baseline`) and leans on its
+ * forecasting methods for the prediction each observation is judged against.
+ */
+
+import dataManager from '../../core/data-manager.js';
+import { wilsonInterval } from '../combat-sim/engine/wilson.js';
+import {
+    readFloorRooms,
+    foldFloorOutcomes,
+    outcomeKey,
+    accuracyRows,
+    accuracySummary,
+    accuracyBySubject,
+    totalsSince,
+    foldRoomResult,
+} from './labyrinth-outcome-log.js';
+import { readScoped, writeScoped } from '../../utils/character-key.js';
+
+/**
+ * Deciding a side needs far fewer fights than measuring a rate
+ *
+ * Both this and the sim cache below are scoped per character and *discarded*
+ * rather than adopted on migration: a win rate and a cached clear chance are
+ * measurements of one character's power against a room, and handing the iron
+ * cow the market cow's numbers would poison every verdict from there on. Keys
+ * are resolved at each read and write — the user switches characters without
+ * reloading the page.
+ */
+const OUTCOME_STORAGE_KEY = 'labyrinthFightOutcomes';
+/** Bumped when the stored shape changes; older documents are read as bare totals */
+const OUTCOME_STORAGE_VERSION = 2;
+/** Legacy global values are dropped, not inherited — see OUTCOME_STORAGE_KEY */
+export const DISCARD_LEGACY = { migrate: 'discard' };
+
+/** Prototype methods mixed into LabyrinthClearRate */
+export const outcomeMethods = {
+    /**
+     * Bring the record in from storage.
+     *
+     * Separate from recording because reading it is not the same event as
+     * adding to it. Loading only on the way in meant the record existed but
+     * nothing that merely *reads* it — the console table, a tile's tooltip —
+     * could see it until a labyrinth message happened to arrive, so a session
+     * that had not entered the labyrinth yet reported nothing recorded.
+     */
+    async loadOutcomes() {
+        if (this._outcomesLoaded) return;
+        this._outcomesLoaded = true;
+        try {
+            const stored = (await readScoped(OUTCOME_STORAGE_KEY, 'settings', {}, DISCARD_LEGACY)) || {};
+            // Anything written before the stripped-room fix counted defeats and
+            // nothing else — a cleared room stops naming its monster, so the
+            // scan that looked for one never saw a single win. Those totals are
+            // not a small sample of the truth, they are every loss and no
+            // victory, so they are dropped rather than carried forward and
+            // quietly poisoning every verdict from here on.
+            if (stored.version === OUTCOME_STORAGE_VERSION) {
+                this._outcomes = stored.totals || {};
+                this._outcomesSeen = stored.seen || {};
+                this._baseline = stored.baseline || null;
+            } else {
+                this._outcomes = {};
+                this._outcomesSeen = {};
+                this._baseline = null;
+            }
+        } catch (error) {
+            console.error('[LabyrinthClearRate] Loading fight outcomes failed:', error);
+        }
+    },
+
+    /** Write the record and the per-room state it is counted against */
+    async saveOutcomes() {
+        try {
+            await writeScoped(
+                OUTCOME_STORAGE_KEY,
+                {
+                    version: OUTCOME_STORAGE_VERSION,
+                    totals: this._outcomes,
+                    seen: this._outcomesSeen,
+                    baseline: this._baseline,
+                },
+                'settings'
+            );
+        } catch (error) {
+            console.error('[LabyrinthClearRate] Saving fight outcomes failed:', error);
+        }
+    },
+
+    /**
+     * Which floor of which run the grid in hand belongs to.
+     *
+     * Attempts are counted as differences against the last sighting of each
+     * square, so the sighting has to know which floor it was of. Coordinates
+     * repeat on every floor.
+     * @param {Object} labyrinth - The labyrinth payload
+     * @returns {string}
+     */
+    outcomeScope(labyrinth) {
+        return `${labyrinth?.startedAt || ''}|${Math.floor(Number(labyrinth?.currentFloor) || 0)}`;
+    },
+
+    /**
+     * Everything the calculator claims about a room before you enter it.
+     *
+     * A fight's claim comes out of the sim cache and only exists once that tile
+     * has been calculated. A skilling or enhancing room's is closed-form maths
+     * and can be worked out on demand, which is why those rooms can be judged
+     * from the first one you walk into while a fight cannot.
+     *
+     * @param {string} subjectHrid - Monster or skill
+     * @param {number} roomLevel - Room level
+     * @param {string} [kind] - 'combat' or 'skilling'; inferred from the hrid otherwise
+     * @returns {Object|null} { clearChance, expectedSeconds, successChance, doubleChance, xpPerRoom, xpPerHour }
+     */
+    roomForecast(subjectHrid, roomLevel, kind) {
+        const hrid = String(subjectHrid || '');
+        const level = Math.max(0, Math.floor(Number(roomLevel) || 0));
+        if (!hrid || level <= 0) return null;
+
+        const skilling = kind === 'skilling' || hrid.startsWith('/skills/');
+        if (!skilling) return this.getCachedCombatResult(hrid, level);
+
+        try {
+            return hrid === '/skills/enhancing'
+                ? this.computeEnhancingClear(level)
+                : this.computeSkillingClear(hrid, level);
+        } catch (error) {
+            console.error('[LabyrinthClearRate] Forecasting a skilling room failed:', error);
+            return null;
+        }
+    },
+
+    /** The clear chance the calculator is currently claiming for a room, or null */
+    predictedClearChance(subjectHrid, roomLevel, kind) {
+        const forecast = this.roomForecast(subjectHrid, roomLevel, kind);
+        return forecast && Number.isFinite(forecast.clearChance) ? forecast.clearChance : null;
+    },
+
+    /**
+     * Fold one finished room — its duration, experience and action outcomes —
+     * into the record the accuracy view reads.
+     * @param {Object} result - See foldRoomResult
+     */
+    async recordRoomResult(result) {
+        if (!result?.subjectHrid) return;
+        await this.loadOutcomes();
+        this._outcomes = foldRoomResult(this._outcomes, result);
+        await this.saveOutcomes();
+    },
+
+    /**
+     * Fold the current floor into the running record of how fights went.
+     * @param {Object} labyrinth - The labyrinth payload, for its grid and floor
+     */
+    async recordOutcomes(labyrinth) {
+        const roomData = labyrinth?.roomData;
+        if (!roomData) return;
+        await this.loadOutcomes();
+
+        const folded = foldFloorOutcomes(this._outcomes, this._outcomesSeen, readFloorRooms(roomData), {
+            scope: this.outcomeScope(labyrinth),
+            predictedFor: (hrid, level, kind) => this.predictedClearChance(hrid, level, kind),
+        });
+        this._outcomes = folded.totals;
+        this._outcomesSeen = folded.seen;
+
+        if (!folded.changed && !folded.seenChanged) return;
+        await this.saveOutcomes();
+    },
+
+    /** What was actually observed for a monster at a level, if anything */
+    observedOutcome(monsterHrid, roomLevel) {
+        return this._outcomes[outcomeKey(monsterHrid, roomLevel)] || null;
+    },
+
+    /**
+     * Print the current floor exactly as the server describes it, so what a
+     * room looks like before and after it is cleared can be read rather than
+     * inferred.
+     *
+     * Console: `Toolasha.Debug.labRooms()`
+     * @returns {Array<Object>} One row per room cell
+     */
+    labRooms() {
+        const rows = [];
+        const grid = this.roomData;
+        for (let y = 0; Array.isArray(grid) && y < grid.length; y++) {
+            for (let x = 0; Array.isArray(grid[y]) && x < grid[y].length; x++) {
+                const room = grid[y][x];
+                if (!room) continue;
+                rows.push({
+                    coord: `${x},${y}`,
+                    monster:
+                        String(room.monsterHrid || '')
+                            .split('/')
+                            .pop() || '',
+                    skill:
+                        String(room.skillHrid || '')
+                            .split('/')
+                            .pop() || '',
+                    type:
+                        String(room.roomType || '')
+                            .split('/')
+                            .pop() || '',
+                    level: room.recommendedLevel ?? '',
+                    entries: room.entryCount ?? '',
+                    cleared: !!room.isCleared,
+                    keys: Object.keys(room).join(' '),
+                });
+            }
+        }
+        console.log(
+            `[Toolasha] Floor ${this.currentFloor ?? '?'}: ${rows.length} rooms. ` +
+                'Compare a cleared row against an uncleared one — "keys" shows what the server still sends for each.'
+        );
+        console.table(rows);
+        return rows;
+    },
+
+    /**
+     * The whole record, judged, for anything that wants to show it.
+     * @returns {Promise<{rows: Array<Object>, summary: Object}>}
+     */
+    async accuracySnapshot({ since = false } = {}) {
+        await this.loadOutcomes();
+        const orderOf = (hrid) => this.subjectSortIndex(hrid);
+        const totals = since && this._baseline ? totalsSince(this._outcomes, this._baseline.totals) : this._outcomes;
+        const rows = accuracyRows(totals, {
+            predictedFor: (hrid, level, kind) => this.predictedClearChance(hrid, level, kind),
+            interval: wilsonInterval,
+            orderOf,
+        });
+        return {
+            rows,
+            summary: accuracySummary(rows, wilsonInterval),
+            bySubject: accuracyBySubject(rows, wilsonInterval, orderOf),
+            baselineAt: this._baseline?.at || null,
+            since: !!(since && this._baseline),
+        };
+    },
+
+    /**
+     * Where the game itself puts a monster or a skill.
+     *
+     * Read from the client data rather than listed here, so a monster added by
+     * an update lands where the game puts it rather than at the bottom. A
+     * subject the data has never heard of returns null and sorts last, which is
+     * better than sorting to the top on an undefined.
+     *
+     * @param {string} subjectHrid - Monster or skill
+     * @returns {number|string|null}
+     */
+    subjectSortIndex(subjectHrid) {
+        const data = dataManager.getInitClientData();
+        const details = data?.combatMonsterDetailMap?.[subjectHrid] || data?.skillDetailMap?.[subjectHrid];
+        if (Number.isFinite(details?.sortIndex)) return details.sortIndex;
+        // No index, but a name still orders better than nothing
+        return details?.name || null;
+    },
+
+    /** Throw the fight record away and start counting again */
+    async resetOutcomes() {
+        this._outcomes = {};
+        this._outcomesSeen = {};
+        this._baseline = null;
+        this._outcomesLoaded = true;
+        await this.saveOutcomes();
+    },
+
+    /**
+     * Mark here, and keep everything before it.
+     *
+     * The question Reset was being used to answer — "has it been right *since* I
+     * changed something?" — does not actually need the history destroyed. A copy
+     * of the totals as they stand is enough to subtract later.
+     *
+     * @returns {Promise<Object>} The baseline that was set
+     */
+    async markOutcomeBaseline() {
+        await this.loadOutcomes();
+        this._baseline = { at: Date.now(), totals: structuredClone(this._outcomes) };
+        await this.saveOutcomes();
+        return this._baseline;
+    },
+
+    /** Forget the mark; the record itself is untouched either way */
+    async clearOutcomeBaseline() {
+        await this.loadOutcomes();
+        this._baseline = null;
+        await this.saveOutcomes();
+    },
+
+    /**
+     * Set every predicted rate beside the rate actually observed, and say which
+     * ones the record will not support.
+     *
+     * Console: `await Toolasha.Debug.labAccuracy()`
+     * @returns {Promise<Array<Object>>} One row per monster and level seen
+     */
+    async labAccuracy() {
+        const { rows, summary } = await this.accuracySnapshot();
+        const pct = (v, places = 1) => (Number.isFinite(v) ? `${(v * 100).toFixed(places)}%` : '');
+
+        console.log(
+            `[Toolasha] ${summary.attempts} labyrinth fights across ${summary.buckets} monster/level buckets.` +
+                (summary.expected === null
+                    ? ''
+                    : ` Over the ${summary.judged} of them the sim had a rate for, it predicted ` +
+                      `${summary.expected.toFixed(1)} clears and you got ${summary.judgedClears}.`) +
+                `\n"likelihood" is how often the sim's own rate would produce a record this lopsided — a small number ` +
+                'means the sim is being contradicted. Rows reading "not simmed" have no prediction on record and none ' +
+                'cached; calculate their tile once and the next fights will be judged.'
+        );
+        console.table(
+            rows.map((row) => ({
+                room: row.monster,
+                kind: row.kind,
+                level: row.level,
+                predicted: row.predicted === null ? 'not simmed' : pct(row.predicted),
+                observed: `${row.clears}/${row.attempts}`,
+                observedPct: pct(row.observed),
+                range: `${pct(row.low, 0)}-${pct(row.high, 0)}`,
+                verdict: row.verdict,
+                likelihood: row.likelihood === null ? '' : pct(row.likelihood, 2),
+                // Skilling rooms only: the server states the rate it is using,
+                // so the formula can be checked against the truth rather than
+                // only against a sample of outcomes
+                calcSuccess: row.rates?.success ? pct(row.rates.success.predicted) : '',
+                serverSuccess: row.rates?.success ? pct(row.rates.success.server) : '',
+                hitSuccess: row.rates?.success ? pct(row.rates.success.observed) : '',
+                formulaOff: row.rates?.success?.formulaOff ? 'YES' : '',
+                seconds: row.timing ? `${Math.round(row.timing.actual)}s vs ${Math.round(row.timing.predicted)}s` : '',
+                xpPerHour: row.measured?.xpPerHour ? Math.round(row.measured.xpPerHour).toLocaleString() : '',
+            }))
+        );
+        return rows;
+    },
+};

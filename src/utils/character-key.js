@@ -86,7 +86,10 @@ async function isAdoptionCandidate(charId) {
         // Same signal MCS reads: character.gameMode. 'standard' is the market
         // character; 'ironcow' and 'legacy_ironcow' never adopt.
         const gameMode = dataManager.getCurrentCharacterGameMode();
-        const name = dataManager.getCurrentCharacterName() || '';
+        const name =
+            typeof dataManager.getCurrentCharacterName === 'function'
+                ? dataManager.getCurrentCharacterName() || ''
+                : '';
         if (typeof gameMode === 'string' && gameMode.includes('ironcow')) {
             decision = false;
         } else if (/test/i.test(name)) {
