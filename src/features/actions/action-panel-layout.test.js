@@ -93,17 +93,24 @@ describe('the action panel layout', () => {
         expect(css).not.toContain('scrollbar-color:');
     });
 
-    test('the pinned strip is painted a dark literal, not a themed variable', () => {
-        // var(--color-space-800) is not the dark background the name suggests:
-        // the game's space scale is a set of visible tints, so asking for it
-        // painted the strip blue above and below the buttons — which is the
-        // box that kept coming back
+    test('the pinned strip is not painted at all', () => {
+        // Three rounds of "there is a box round the buttons" were all this
+        // script painting one. A themed variable came out blue — the game's
+        // space scale is a set of visible tints, not a dark background — and
+        // the dark literal that replaced it came out black: a filled band
+        // across the foot of every skilling action panel. The strip is
+        // positioned and nothing else; the colour behind the buttons is the
+        // game's.
         settings.values.actionPanelLayout = true;
         actionPanelLayout.initialize();
-        const css = styleEl().textContent;
+        // The comments explain why the paint is gone and would match on their own
+        const css = styleEl().textContent.replace(/\/\*[\s\S]*?\*\//g, '');
 
         expect(css).not.toContain('--color-space');
-        expect(css).toMatch(/background:\s*#[0-9a-f]{6}/i);
+        expect(css).not.toMatch(/background/i);
+        expect(css).not.toMatch(/border-top/i);
+        // The pin itself is the feature and stays
+        expect(css).toContain('position: sticky');
     });
 
     test('nothing at any depth may be wider than the panel', () => {

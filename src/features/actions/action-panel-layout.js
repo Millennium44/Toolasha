@@ -20,8 +20,8 @@
  *   stay where they are instead of drifting off the top.
  * - **The buttons stick to the bottom of the panel.** They are the panel's
  *   verbs — queue this, start this — and having to scroll to reach a verb is
- *   the failure everything else here is downstream of. A hairline and the
- *   panel's own background separate them from the content sliding underneath.
+ *   the failure everything else here is downstream of. Position only: the strip
+ *   is left the colour the game gives it.
  * - **The added sections are tightened.** Eight pixels above and below seven
  *   collapsible sections is over a hundred pixels of nothing, which is most of
  *   a section on its own.
@@ -80,6 +80,14 @@ const CSS = `
        the wrong thing anyway: the horizontal bar was never a styling problem
        but a width one, fixed where the oversized blocks are built. */
 
+    /* So is the buttons strip. Pinning it needed no colour of its own, and
+       three rounds of "there is a box round the buttons" were all this script
+       painting one: first a themed variable that came out blue, then a dark
+       literal that came out black — a filled band across the foot of every
+       skilling action panel, sat directly under the last row of content. The
+       strip is positioned here and nothing more; whatever the game puts behind
+       the buttons is what shows. */
+
     /* The containers between the modal and the panel scroll nothing of their
        own — the panel is the scroller — so any bar they show is the same
        artefact one level up */
@@ -128,23 +136,13 @@ const CSS = `
     /* Queue and Start, always reachable. Sticky rather than fixed so it belongs
        to the panel and moves with a dragged modal.
 
-       One neutral hairline and nothing else. A tinted line plus a shadow reads
-       as a frame around the buttons rather than as the edge of the content
-       sliding under them, and a frame says "this is a thing" when all it is
-       meant to say is "the list stops here". */
+       Position and nothing else — see above for why this strip paints no
+       background and draws no line of its own. */
     [class*="SkillActionDetail_skillActionDetail"] [class*="SkillActionDetail_buttonsContainer"] {
         position: sticky;
         bottom: 0;
         z-index: 2;
         margin-top: 4px;
-        padding: 8px 0 4px 0;
-        /* A literal, and deliberately not one of the game's themed background
-           variables. The one that reads like a dark background is not one —
-           that scale is a set of visible tints — so asking for it painted this
-           strip blue, and the blue showing above and below the buttons was the
-           box that kept coming back. It was never a border; it was this. */
-        background: #0e0e16;
-        border-top: 1px solid rgba(255, 255, 255, 0.10);
         /* The container measures a fraction of a pixel wider than the panel it
            sits in — 321.883 against 320 — which is enough overflow to summon a
            horizontal scrollbar across the bottom of the panel. Clipping the

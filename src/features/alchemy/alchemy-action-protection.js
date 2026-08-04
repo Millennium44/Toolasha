@@ -172,12 +172,24 @@ class AlchemyActionProtection {
         });
         btn.addEventListener('click', () => this.openConfigPopup());
 
-        // Pin icon
+        // Pin icon.
+        //
+        // The class must not be `mwi-alchemy-pin`. That name belongs to the pin
+        // buttons alchemy-item-pins puts on the tiles inside the item picker,
+        // and its stylesheet — which is global, in document.head — describes a
+        // 15px badge absolutely positioned at `top: 0; right: 0` of whatever is
+        // positioned above it, painted rgba(10, 14, 22, 0.75) and normally held
+        // at `opacity: 0`. Sharing the name handed this icon all of that: on a
+        // mouse it disappeared, and on a touchscreen — where that stylesheet
+        // flips the opacity back to 1 and the size to 32px — it became a black
+        // square floating over the catalyst slot beside it. alchemy-item-pins'
+        // disable() also removes every `.mwi-alchemy-pin` on the page, which
+        // took this icon with it.
         const pinIcon = document.createElement('div');
-        pinIcon.className = 'mwi-alchemy-pin';
+        pinIcon.className = 'mwi-alchemy-action-pin';
         pinIcon.innerHTML = '\u{1F4CC}';
         pinIcon.style.cssText =
-            'cursor:pointer; font-size:16px; transition:all 0.2s; text-align:center; filter: grayscale(100%) brightness(0.7); display:none;';
+            'position:static; cursor:pointer; font-size:16px; transition:all 0.2s; text-align:center; filter: grayscale(100%) brightness(0.7); display:none;';
         pinIcon.title = 'Pin this action';
 
         const updatePinIcon = () => {
