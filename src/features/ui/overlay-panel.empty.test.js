@@ -1,0 +1,396 @@
+/**
+ * @vitest-environment happy-dom
+ *
+ * What the overlay looks like before anything has happened.
+ *
+ * The panel's first open used to be a wall of placeholders: every registered row
+ * on by default, and every one of them saying "No run measured yet", "Nothing
+ * watched", "No loot tracked yet" — twice each, in some cases, since two tiles
+ * are allowed to be idle in the same words. The three figures that were actually
+ * live were somewhere in the middle of it.
+ *
+ * Two things fix that and both are tested here: a curated set of rows for a
+ * character who has never arranged the overlay, and a rule about what a tile
+ * does when it has drawn nothing. Neither may touch a player who already has a
+ * layout — the last test is the one that matters most.
+ */
+
+import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
+
+vi.mock('../../core/config.js', () => ({
+    default: { getSetting: () => true, Z_HUD: 50, Z_FLOATING_PANEL: 1100, Z_POPUP: 9000 },
+}));
+vi.mock('../../core/storage.js', () => ({ default: { getJSON: async () => null, setJSON: async () => {} } }));
+vi.mock('../../utils/timer-registry.js', () => ({
+    createTimerRegistry: () => ({ registerTimeout: () => {}, registerInterval: () => {}, clearAll: () => {} }),
+}));
+vi.mock('../../utils/panel-z-index.js', () => ({
+    registerFloatingPanel: () => {},
+    unregisterFloatingPanel: () => {},
+    bringPanelToFront: () => {},
+}));
+vi.mock('../../utils/panel-geometry.js', () => ({
+    restoreGeometry: async () => {},
+    saveGeometry: async () => {},
+    clearGeometry: async () => {},
+    allGeometry: async () => ({}),
+}));
+vi.mock('../../utils/floating-panel.js', () => ({ makeDraggable: () => () => {}, makeResizable: () => () => {} }));
+vi.mock('../../utils/opanel-config.js', () => ({ fromOPanelConfig: () => null, toOPanelConfig: () => ({}) }));
+vi.mock('../../utils/choice-dialog.js', () => ({ askChoice: async () => null }));
+
+/** What storage hands back for this character, and what the panel wrote to it */
+const saved = vi.hoisted(() => ({ read: null, written: null }));
+vi.mock('../../utils/character-key.js', () => ({
+    readScoped: async () => saved.read,
+    writeScoped: async (key, value) => {
+        saved.written = value;
+    },
+}));
+
+/**
+ * The rows the game has registered, decided per test.
+ *
+ * The registry itself is real — the class table and the curated set are the
+ * things under test — so only the list of rows is replaced.
+ */
+const game = vi.hoisted(() => ({ rows: [] }));
+vi.mock('../../utils/overlay-rows.js', async (importActual) => ({
+    ...(await importActual()),
+    registeredRows: () => game.rows,
+}));
+
+const overlayPanel = (await import('./overlay-panel.js')).default;
+const { CURATED_ROWS, TILE_CLASS, EMPTY_POLICY, emptyPolicyFor, compactLabel } =
+    await import('../../utils/overlay-rows.js');
+
+/**
+ * A row that draws whatever it is told to.
+ * @param {string} key - Row key, which is what the class table is keyed by
+ * @param {Object} [options] - `{name, text, empty, onOpen, tileClass}`
+ * @returns {Object} A row definition
+ */
+function row(key, { name = key, text = '', empty = '', onOpen = null, tileClass = '' } = {}) {
+    return {
+        key,
+        name,
+        empty,
+        onOpen,
+        tileClass,
+        defaultVisible: true,
+        defaultSize: { width: 160, height: 40 },
+        render: (el) => {
+            el.replaceChildren();
+            if (text) el.textContent = text;
+        },
+    };
+}
+
+/** Every tile the panel has drawn, by row key. @returns {Map<string, HTMLElement>} */
+function tiles() {
+    const found = new Map();
+    for (const element of overlayPanel.canvasEl.querySelectorAll('[data-overlay-row]')) {
+        found.set(element.dataset.overlayRow, element);
+    }
+    return found;
+}
+
+/** The keys of the tiles that are actually on screen. @returns {string[]} */
+function shown() {
+    return [...tiles()]
+        .filter(([, element]) => element.style.display !== 'none')
+        .map(([key]) => key)
+        .sort();
+}
+
+/** Everything the panel is currently saying. @returns {string} */
+function text() {
+    return overlayPanel.panel.textContent;
+}
+
+beforeEach(() => {
+    saved.read = null;
+    saved.written = null;
+    game.rows = [];
+    document.body.replaceChildren();
+    overlayPanel.isInitialized = false;
+});
+
+afterEach(() => {
+    overlayPanel.hide();
+    overlayPanel.isInitialized = false;
+});
+
+describe('a character who has never arranged the overlay', () => {
+    test('starts with the curated set and nothing else', async () => {
+        game.rows = [...CURATED_ROWS, 'luck', 'dps', 'watchlist', 'houses'].map((key) => row(key, { text: 'x' }));
+
+        await overlayPanel.initialize();
+        overlayPanel.show();
+
+        expect(shown()).toEqual([...CURATED_ROWS].sort());
+    });
+
+    test('the curated tiles are placed in the curated order, packed from the top left', async () => {
+        // Registration order is whatever the bundles happen to import in, and a
+        // fresh layout has no saved positions — so the order the curated set is
+        // written in is the only thing deciding what sits where
+        game.rows = [...CURATED_ROWS].reverse().map((key) => row(key, { text: 'x' }));
+
+        await overlayPanel.initialize();
+        overlayPanel.show();
+
+        const first = tiles().get(CURATED_ROWS[0]);
+        expect(first.style.left).toBe('0px');
+        expect(first.style.top).toBe('0px');
+    });
+
+    test('nothing is said about a row that failed to draw', async () => {
+        game.rows = CURATED_ROWS.map((key) => row(key, { text: 'x' }));
+
+        await overlayPanel.initialize();
+        overlayPanel.show();
+
+        expect(text()).not.toContain('unavailable');
+    });
+});
+
+describe('a character who arranged the overlay before the curated set existed', () => {
+    test('keeps every row their own layout had on', async () => {
+        // The saved settings have no opinion on rows they never ticked, and the
+        // rows themselves default to on — which is the arrangement that player
+        // is used to and has to keep
+        game.rows = [row('luck', { text: 'x' }), row('dps', { text: 'x' }), row('netWorth', { text: 'x' })];
+        saved.read = { visible: { dps: false }, order: ['luck', 'dps', 'netWorth'], positions: {}, sizes: {} };
+
+        await overlayPanel.initialize();
+        overlayPanel.show();
+
+        expect(shown()).toEqual(['luck', 'netWorth']);
+        expect(overlayPanel.settings.curatedDefaults).toBe(false);
+    });
+
+    test('their saved positions and sizes are left exactly as they were', async () => {
+        game.rows = [row('luck', { text: 'x' })];
+        saved.read = {
+            visible: { luck: true },
+            order: ['luck'],
+            positions: { luck: { x: 40, y: 90 } },
+            sizes: { luck: { width: 200, height: 60 } },
+        };
+
+        await overlayPanel.initialize();
+        overlayPanel.show();
+
+        expect(tiles().get('luck').style.left).toBe('40px');
+        expect(tiles().get('luck').style.top).toBe('90px');
+        expect(tiles().get('luck').style.height).toBe('60px');
+    });
+});
+
+describe('a tile with nothing to show', () => {
+    /**
+     * Open the panel on the given rows, with the given empty-tile setting.
+     * @param {Array<Object>} rows - Row definitions
+     * @param {string} [setting] - The `emptyTiles` setting
+     */
+    async function open(rows, setting = EMPTY_POLICY.AUTO) {
+        game.rows = rows;
+        saved.read = {
+            visible: Object.fromEntries(rows.map((entry) => [entry.key, true])),
+            order: rows.map((entry) => entry.key),
+            emptyTiles: setting,
+            locked: true,
+        };
+        await overlayPanel.initialize();
+        overlayPanel.show();
+    }
+
+    test('a measurement waiting on an activity stays away until there is one', async () => {
+        await open([row('dps', { name: 'DPS', empty: 'No damage tracked yet' }), row('coins', { text: '1,024' })]);
+
+        expect(shown()).toEqual(['coins']);
+        expect(text()).not.toContain('No damage tracked yet');
+    });
+
+    test('and appears, at full size, the moment it has something to say', async () => {
+        const dps = row('dps', { name: 'DPS', empty: 'No damage tracked yet' });
+        await open([dps, row('coins', { text: '1,024' })]);
+        expect(shown()).toEqual(['coins']);
+
+        // The fight starts
+        dps.render = (el) => (el.textContent = '412 dps');
+        overlayPanel.refresh();
+
+        expect(shown()).toEqual(['coins', 'dps']);
+        expect(tiles().get('dps').style.height).toBe('40px');
+        expect(text()).toContain('412 dps');
+    });
+
+    test('a figure that will fill itself in shrinks to a dim name', async () => {
+        await open([row('netWorth', { name: 'Net Worth', empty: 'No net worth yet' })]);
+
+        const tile = tiles().get('netWorth');
+        expect(tile.style.display).not.toBe('none');
+        expect(tile._content.textContent).toBe('Net Worth');
+        expect(tile.style.height).toBe('20px');
+        expect(text()).not.toContain('No net worth yet');
+    });
+
+    test('a watch tile offers the click that would fill it', async () => {
+        await open([row('watchlist', { name: 'Watchlist', empty: 'Nothing watched', onOpen: () => {} })]);
+
+        expect(tiles().get('watchlist')._content.textContent).toBe('Watchlist — click to add');
+    });
+
+    test('a watch tile with nowhere to click stands down instead', async () => {
+        // "Nothing watched" is only worth a line when there is something you can
+        // do about it from here
+        await open([
+            row('equipmentWatch', { name: 'Equipment Watch', empty: 'Nothing watched' }),
+            row('coins', { text: '1,024' }),
+        ]);
+
+        expect(shown()).toEqual(['coins']);
+    });
+
+    test('two tiles idle in the same words are still told apart', async () => {
+        // The screenshot that started this had two "Nothing watched" tiles and
+        // two "No run measured yet" ones. Whatever they say when compact, it
+        // cannot be the same thing twice.
+        await open(
+            [
+                row('watchlist', { name: 'Watchlist', empty: 'Nothing watched', onOpen: () => {} }),
+                row('equipmentWatch', { name: 'Equipment Watch', empty: 'Nothing watched', onOpen: () => {} }),
+                row('luck', { name: 'Drop Luck', empty: 'No run measured yet' }),
+                row('overExpected', { name: 'Over Expected %', empty: 'No run measured yet' }),
+            ],
+            EMPTY_POLICY.COMPACT
+        );
+
+        const lines = [...tiles().values()].map((tile) => tile._content.textContent);
+        expect(new Set(lines).size).toBe(lines.length);
+        expect(lines).toContain('Watchlist — click to add');
+        expect(lines).toContain('Drop Luck');
+    });
+
+    test('a row that fell over says so rather than quietly disappearing', async () => {
+        const broken = row('dps', { name: 'DPS' });
+        broken.render = () => {
+            throw new Error('boom');
+        };
+        await open([broken]);
+
+        expect(shown()).toEqual(['dps']);
+        expect(text()).toContain('unavailable');
+    });
+
+    test('an icon on its own counts as having drawn something', async () => {
+        const iconOnly = row('coins', { name: 'Coins' });
+        iconOnly.render = (el) => {
+            el.replaceChildren(document.createElementNS('http://www.w3.org/2000/svg', 'svg'));
+        };
+        await open([iconOnly]);
+
+        expect(tiles().get('coins')._content.textContent).toBe('');
+        expect(shown()).toEqual(['coins']);
+    });
+
+    test('the panel says why it is blank when every tile has stood down', async () => {
+        await open([row('dps', { empty: 'No damage tracked yet' })]);
+
+        expect(shown()).toEqual([]);
+        expect(text()).toContain('appear as data arrives');
+    });
+});
+
+describe('the empty-tiles setting', () => {
+    /**
+     * Open on one measurement row and one value row, under a chosen setting.
+     * @param {string} setting - `auto`, `hide`, `compact` or `full`
+     */
+    async function openWith(setting) {
+        game.rows = [
+            row('dps', { name: 'DPS', empty: 'No damage tracked yet' }),
+            row('netWorth', { name: 'Net Worth', empty: 'No net worth yet' }),
+        ];
+        saved.read = {
+            visible: { dps: true, netWorth: true },
+            order: ['dps', 'netWorth'],
+            emptyTiles: setting,
+            locked: true,
+        };
+        await overlayPanel.initialize();
+        overlayPanel.show();
+    }
+
+    test('hide takes every empty tile away, whatever its class', async () => {
+        await openWith(EMPTY_POLICY.HIDE);
+        expect(shown()).toEqual([]);
+    });
+
+    test('compact leaves every empty tile as a dim name', async () => {
+        await openWith(EMPTY_POLICY.COMPACT);
+
+        expect(shown()).toEqual(['dps', 'netWorth']);
+        expect(tiles().get('dps')._content.textContent).toBe('DPS');
+        expect(tiles().get('dps').style.height).toBe('20px');
+    });
+
+    test('full is the old behaviour: the row says its own line, at full size', async () => {
+        await openWith(EMPTY_POLICY.FULL);
+
+        expect(shown()).toEqual(['dps', 'netWorth']);
+        expect(tiles().get('dps')._content.textContent).toBe('No damage tracked yet');
+        expect(tiles().get('dps').style.height).toBe('40px');
+    });
+
+    test('is offered in the gear popover, and changing it redraws', async () => {
+        await openWith(EMPTY_POLICY.AUTO);
+        overlayPanel.pickerEl.style.display = '';
+        overlayPanel._renderPicker();
+
+        const select = overlayPanel.pickerEl.querySelector('[data-overlay-setting="emptyTiles"]');
+        expect(select).toBeTruthy();
+        expect(select.value).toBe(EMPTY_POLICY.AUTO);
+
+        select.value = EMPTY_POLICY.FULL;
+        select.dispatchEvent(new Event('change'));
+
+        expect(overlayPanel.settings.emptyTiles).toBe(EMPTY_POLICY.FULL);
+        expect(text()).toContain('No damage tracked yet');
+    });
+
+    test('arranging the layout shows everything, whatever the policy says', async () => {
+        // Unlocked, the tiles are being placed rather than read — and a tile
+        // that has hidden itself cannot be placed
+        await openWith(EMPTY_POLICY.AUTO);
+        expect(shown()).toEqual(['netWorth']);
+
+        overlayPanel.settings.locked = false;
+        overlayPanel.refresh();
+
+        expect(shown()).toEqual(['dps', 'netWorth']);
+        expect(text()).toContain('No damage tracked yet');
+    });
+});
+
+describe('the policy each row gets', () => {
+    test('classes a row by its key, and lets a row say for itself', () => {
+        expect(emptyPolicyFor({ key: 'netWorth' })).toBe(EMPTY_POLICY.COMPACT);
+        expect(emptyPolicyFor({ key: 'dps' })).toBe(EMPTY_POLICY.HIDE);
+        expect(emptyPolicyFor({ key: 'dps', whenEmpty: EMPTY_POLICY.FULL })).toBe(EMPTY_POLICY.FULL);
+        expect(emptyPolicyFor({ key: 'dps', tileClass: TILE_CLASS.VALUE })).toBe(EMPTY_POLICY.COMPACT);
+    });
+
+    test('a row nobody has classified shows a name rather than vanishing', () => {
+        // Which is what a row added by a later update gets, sight unseen
+        expect(emptyPolicyFor({ key: 'somethingNew', name: 'Something New' })).toBe(EMPTY_POLICY.COMPACT);
+        expect(compactLabel({ key: 'somethingNew', name: 'Something New' })).toBe('Something New');
+    });
+
+    test('the setting overrides every one of them', () => {
+        expect(emptyPolicyFor({ key: 'netWorth' }, EMPTY_POLICY.HIDE)).toBe(EMPTY_POLICY.HIDE);
+        expect(emptyPolicyFor({ key: 'dps', whenEmpty: EMPTY_POLICY.FULL }, EMPTY_POLICY.HIDE)).toBe(EMPTY_POLICY.HIDE);
+    });
+});

@@ -39,7 +39,10 @@ vi.mock('../../utils/floating-panel.js', () => ({
 }));
 const rowDef = vi.hoisted(() => ({ current: null }));
 
-vi.mock('../../utils/overlay-rows.js', () => ({
+// The registry is mocked down to one row, but the empty-tile policy it also
+// exports is real — mocking that would leave the thing under test to the mock
+vi.mock('../../utils/overlay-rows.js', async (importActual) => ({
+    ...(await importActual()),
     registeredRows: () => [rowDef.current],
     resolveRows: (available) => available.map((row) => ({ ...row, visible: true })),
     moveRow: (order) => order,

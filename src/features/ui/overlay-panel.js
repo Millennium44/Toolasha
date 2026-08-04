@@ -66,7 +66,14 @@ import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } fro
 import { makeDraggable, makeResizable } from '../../utils/floating-panel.js';
 import { restoreGeometry, saveGeometry, clearGeometry, allGeometry } from '../../utils/panel-geometry.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
-import { registeredRows, resolveRows, moveRow } from '../../utils/overlay-rows.js';
+import {
+    registeredRows,
+    resolveRows,
+    moveRow,
+    emptyPolicyFor,
+    compactLabel,
+    EMPTY_POLICY,
+} from '../../utils/overlay-rows.js';
 import { fromOPanelConfig, toOPanelConfig } from '../../utils/opanel-config.js';
 import { askChoice } from '../../utils/choice-dialog.js';
 import {
@@ -88,6 +95,7 @@ import {
     snap,
     GRID,
     MIN_TILE,
+    COMPACT_TILE,
 } from '../../utils/overlay-layout.js';
 
 /**
@@ -199,6 +207,16 @@ function defaultSettings() {
         // has never seen, and a guess that is too small cuts the bottom row
         // of tiles in half the moment it docks
         dockHeightPx: null,
+        /** What a tile does before it has anything to show — see `emptyPolicyFor` */
+        emptyTiles: EMPTY_POLICY.AUTO,
+        /**
+         * Whether this character's row defaults are the curated set.
+         *
+         * True here and preserved as false for anyone with a saved layout, so a
+         * player who arranged their overlay under the old every-row-on defaults
+         * keeps exactly the rows they had. See `resolveRows`.
+         */
+        curatedDefaults: true,
     };
 }
 
@@ -236,7 +254,14 @@ class OverlayPanel {
         // runs again after a character switch, and the character switched away
         // from must not leave its tiles behind
         const saved = await readScoped(STORAGE_KEY, 'settings', null, { migrate: 'adopt' });
-        this.settings = saved && typeof saved === 'object' ? { ...defaultSettings(), ...saved } : defaultSettings();
+        this.settings =
+            saved && typeof saved === 'object'
+                ? // Never spread in from the defaults: a saved layout that predates
+                  // the curated set has no opinion on the flag, and taking the
+                  // default's `true` would quietly switch off every row that
+                  // player had on and never explicitly ticked
+                  { ...defaultSettings(), ...saved, curatedDefaults: saved.curatedDefaults === true }
+                : defaultSettings();
 
         // Reopens itself where you left it — an overlay you have to summon after
         // every refresh is an overlay you stop using
@@ -857,6 +882,8 @@ class OverlayPanel {
         const names = this.savedLayouts || [];
 
         const select = document.createElement('select');
+        // Named so it stays findable now that the popover holds more than one
+        select.dataset.overlayLayoutSelect = 'true';
         Object.assign(select.style, {
             background: 'rgba(255, 255, 255, 0.06)',
             border: `1px solid ${COLORS.border}`,
@@ -1108,6 +1135,60 @@ class OverlayPanel {
         return wrap;
     }
 
+    /**
+     * What every tile does before it has anything to show.
+     *
+     * Left alone it is per tile, which is the answer that is right most of the
+     * time: a net worth about to be counted is worth a dim line, a dungeon run
+     * that may never happen is not. The other three are for the two opinions the
+     * per-tile answer cannot hold — "I want a tidy panel, hide all of it" and "I
+     * want to see everything I switched on, even idle".
+     *
+     * @returns {HTMLElement}
+     */
+    _emptyTilesControl() {
+        const wrap = document.createElement('label');
+        Object.assign(wrap.style, { display: 'inline-flex', alignItems: 'center', gap: '4px', cursor: 'pointer' });
+        wrap.title =
+            'What a tile does before it has anything to show. By tile: figures that fill themselves in shrink ' +
+            'to a dim name, and tiles waiting on a fight or a run stay away until there is something to report.';
+
+        const label = document.createElement('span');
+        label.textContent = 'Empty tiles';
+        label.style.color = COLORS.textDim;
+
+        const select = document.createElement('select');
+        select.dataset.overlaySetting = 'emptyTiles';
+        Object.assign(select.style, {
+            background: 'rgba(255, 255, 255, 0.06)',
+            border: `1px solid ${COLORS.border}`,
+            borderRadius: '3px',
+            color: COLORS.text,
+            fontSize: '11px',
+            padding: '2px 4px',
+        });
+        for (const [value, text] of [
+            [EMPTY_POLICY.AUTO, 'By tile'],
+            [EMPTY_POLICY.COMPACT, 'Compact'],
+            [EMPTY_POLICY.HIDE, 'Hide'],
+            [EMPTY_POLICY.FULL, 'Full'],
+        ]) {
+            const option = document.createElement('option');
+            option.value = value;
+            option.textContent = text;
+            select.appendChild(option);
+        }
+        select.value = this.settings.emptyTiles || EMPTY_POLICY.AUTO;
+        select.addEventListener('change', () => {
+            this.settings.emptyTiles = select.value;
+            this._save();
+            this._renderBody();
+        });
+
+        wrap.append(label, select);
+        return wrap;
+    }
+
     _layoutControls() {
         const controls = document.createElement('div');
         Object.assign(controls.style, { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' });
@@ -1140,6 +1221,8 @@ class OverlayPanel {
                 title: 'Show only your own row in Drop Luck, without the rest of the party.',
             })
         );
+
+        controls.appendChild(this._emptyTilesControl());
 
         const textSize = document.createElement('div');
         Object.assign(textSize.style, { display: 'inline-flex', alignItems: 'center', gap: '4px' });
@@ -1529,12 +1612,37 @@ class OverlayPanel {
         return Math.max(120, (this.scrollEl?.clientWidth || DEFAULT_PANEL.width) - 12);
     }
 
-    /** The visible rows, placed */
-    _layout() {
-        const visible = resolveRows(registeredRows(), this.settings).filter((row) => row.visible);
-        return resolveLayout(visible, this.settings, this._canvasWidth());
+    /**
+     * The visible rows, placed.
+     *
+     * @param {Object} [options] - How to place them
+     * @param {Function} [options.sizeFor] - A last word on tile sizes, for empty tiles
+     * @param {Set<string>} [options.skip] - Rows to leave out altogether. Left in
+     *   and merely undrawn, a hidden tile still claims the space it would have
+     *   taken, and the layout is a grid with holes in it.
+     * @returns {Array<Object>} Laid-out rows
+     */
+    _layout({ sizeFor = null, skip = null } = {}) {
+        const visible = resolveRows(registeredRows(), this.settings).filter(
+            (row) => row.visible && !skip?.has(row.key)
+        );
+        return resolveLayout(visible, this.settings, this._canvasWidth(), sizeFor);
     }
 
+    /**
+     * Draw every switched-on row, then decide what the empty ones do about it.
+     *
+     * Two passes, because emptiness is only knowable by asking the row to draw —
+     * there is no cheap "have you anything to say" a feature could answer — and
+     * what a tile does when empty changes how much room it takes. So: lay
+     * everything out at its full size and draw it, see what came back blank, and
+     * lay it out again without the tiles that stood down.
+     *
+     * The second pass only happens when something is actually empty, and both
+     * are arithmetic over a dozen rows. The alternative — deciding from last
+     * second's emptiness — costs a frame of lag on every tile that starts or
+     * stops reporting, which is exactly the moment you are looking at it.
+     */
     _renderBody() {
         if (!this.canvasEl) return;
         // A refresh rewrites every tile's position and size from the saved
@@ -1543,59 +1651,74 @@ class OverlayPanel {
         // anyway.
         if (this.interacting) return;
 
-        const laid = this._layout();
-        if (!laid.length) {
+        const full = this._layout();
+        if (!full.length) {
             this.tiles.clear();
             this.canvasEl.replaceChildren();
-            const empty = document.createElement('div');
-            empty.style.color = COLORS.textDim;
-            empty.textContent = registeredRows().length ? 'Every row is switched off — see ⚙.' : 'Nothing to show yet.';
-            this.canvasEl.appendChild(empty);
+            this.canvasEl.appendChild(
+                this._canvasNote(
+                    registeredRows().length ? 'Every row is switched off — see ⚙.' : 'Nothing to show yet.'
+                )
+            );
             return;
         }
 
-        const wanted = new Set(laid.map((row) => row.key));
+        const wanted = new Set(full.map((row) => row.key));
         for (const [key, tile] of this.tiles) {
             if (!wanted.has(key)) {
                 tile.remove();
                 this.tiles.delete(key);
             }
         }
-        // The placeholder from an earlier empty render
+        // The note from an earlier render with nothing in it
         for (const child of [...this.canvasEl.children]) {
             if (!child.dataset.overlayRow) child.remove();
         }
 
-        for (const row of laid) {
+        // Pass one: place and draw everything, at the size it would have if it
+        // had something to say
+        const empty = new Set();
+        for (const row of full) {
             const tile = this._tileFor(row);
-            Object.assign(tile.style, {
-                left: `${row.x}px`,
-                top: `${row.y}px`,
-                width: `${row.width}px`,
-                height: `${row.height}px`,
-                fontSize: `${row.zoom}%`,
-                cursor: this.isEditable ? 'move' : row.onOpen ? 'pointer' : 'default',
-                // While unlocked a finger drag must not become a scroll; locked
-                // again, the panel's own scrolling comes back
-                touchAction: this.isEditable ? 'none' : '',
-                // Editing shows the tile's own outline; otherwise a rule under
-                // each one, which is what gives a column of tiles the ruled look
-                // rather than a floating jumble
-                border: this.isEditable ? `1px dashed ${COLORS.tileEdit}` : '1px solid transparent',
-                borderBottom:
-                    this.isEditable || this.settings.separators === false ? undefined : `1px solid ${COLORS.separator}`,
-            });
-            tile._grip.style.display = this.isEditable ? '' : 'none';
-            if (!this.isEditable) tile._zoom.style.display = 'none';
+            this._styleTile(tile, row);
+            if (this._drawRow(tile, row)) empty.add(row.key);
+        }
 
-            try {
-                row.render(tile._content);
-                this._fillEmptyTile(tile._content, row);
-            } catch (error) {
-                console.error(`[OverlayPanel] Row "${row.key}" failed to render:`, error);
-                tile._content.textContent = `${row.name}: unavailable`;
-                tile._content.style.color = COLORS.textDim;
-            }
+        // Pass two: what the ones that drew nothing do about it
+        const hidden = new Set();
+        const compact = new Set();
+        for (const row of full) {
+            if (!empty.has(row.key)) continue;
+
+            const policy = this._emptyPolicy(row);
+            if (policy === EMPTY_POLICY.HIDE) hidden.add(row.key);
+            else if (policy === EMPTY_POLICY.COMPACT) {
+                compact.add(row.key);
+                this._drawCompact(this.tiles.get(row.key), row);
+            } else this._drawPlaceholder(this.tiles.get(row.key), row);
+        }
+
+        let laid = full;
+        if (hidden.size || compact.size) {
+            laid = this._layout({
+                skip: hidden,
+                sizeFor: (row, size) =>
+                    compact.has(row.key)
+                        ? { width: size.width, height: Math.min(size.height, COMPACT_TILE.height) }
+                        : size,
+            });
+            for (const row of laid) this._styleTile(this.tiles.get(row.key), row);
+        }
+        // Kept rather than destroyed: a hidden tile is one refresh away from
+        // having something to say again, and rebuilding it every second would
+        // churn the DOM and its listeners for a tile nobody can see
+        for (const key of hidden) {
+            const tile = this.tiles.get(key);
+            if (tile) tile.style.display = 'none';
+        }
+
+        if (!laid.length) {
+            this.canvasEl.appendChild(this._canvasNote('Nothing to report yet — tiles appear as data arrives.'));
         }
 
         const bounds = contentBounds(laid);
@@ -1604,24 +1727,128 @@ class OverlayPanel {
     }
 
     /**
-     * Say something in a tile that drew nothing.
-     *
-     * A blank tile looks broken rather than idle. You cannot tell a feature
-     * that has nothing to report from one that has fallen over, and on an
-     * overlay of a dozen tiles the empty ones are exactly the ones your eye
-     * keeps returning to — there is nothing there to finish reading.
-     *
-     * The row says what it would rather say; naming itself is the fallback,
-     * which at least identifies which tile is which while the layout is being
-     * arranged.
-     *
-     * @param {HTMLElement} content - The tile's content element
-     * @param {Object} row - The resolved row
+     * A dim line in the canvas itself, for when there are no tiles to draw.
+     * @param {string} text - What it says
+     * @returns {HTMLElement}
      */
-    _fillEmptyTile(content, row) {
+    _canvasNote(text) {
+        const note = document.createElement('div');
+        note.style.color = COLORS.textDim;
+        note.textContent = text;
+        return note;
+    }
+
+    /**
+     * Put a tile where the layout says, at the size and text scale it says.
+     * @param {HTMLElement} tile - The tile
+     * @param {Object} row - Its laid-out row
+     */
+    _styleTile(tile, row) {
+        if (!tile) return;
+        Object.assign(tile.style, {
+            display: '',
+            left: `${row.x}px`,
+            top: `${row.y}px`,
+            width: `${row.width}px`,
+            height: `${row.height}px`,
+            fontSize: `${row.zoom}%`,
+            cursor: this.isEditable ? 'move' : row.onOpen ? 'pointer' : 'default',
+            // While unlocked a finger drag must not become a scroll; locked
+            // again, the panel's own scrolling comes back
+            touchAction: this.isEditable ? 'none' : '',
+            // Editing shows the tile's own outline; otherwise a rule under
+            // each one, which is what gives a column of tiles the ruled look
+            // rather than a floating jumble
+            border: this.isEditable ? `1px dashed ${COLORS.tileEdit}` : '1px solid transparent',
+            borderBottom:
+                this.isEditable || this.settings.separators === false ? undefined : `1px solid ${COLORS.separator}`,
+        });
+        tile._grip.style.display = this.isEditable ? '' : 'none';
+        if (!this.isEditable) tile._zoom.style.display = 'none';
+    }
+
+    /**
+     * Ask a row to draw itself, and say whether it drew anything.
+     *
+     * @param {HTMLElement} tile - The tile
+     * @param {Object} row - The resolved row
+     * @returns {boolean} True when the tile came back blank
+     */
+    _drawRow(tile, row) {
+        try {
+            // Left dim by a previous failure, the tile stays dim for every
+            // successful render after it
+            tile._content.style.color = '';
+            row.render(tile._content);
+        } catch (error) {
+            console.error(`[OverlayPanel] Row "${row.key}" failed to render:`, error);
+            tile._content.textContent = `${row.name}: unavailable`;
+            tile._content.style.color = COLORS.textDim;
+            // A row that fell over is not a row with nothing to report, and
+            // hiding it would hide the failure with it
+            return false;
+        }
         // An icon is content even with no text beside it — a tile showing only
         // a coin has drawn what it meant to
-        if (content.textContent.trim() || content.querySelector('svg, img')) return;
+        return !tile._content.textContent.trim() && !tile._content.querySelector('svg, img');
+    }
+
+    /**
+     * What this tile does while it has nothing to show.
+     *
+     * Never anything but the full placeholder while the layout is unlocked: the
+     * point of unlocking is to arrange the tiles, and a tile that has hidden
+     * itself is one you cannot place, while a tile shrunk to a strip is one you
+     * cannot judge the size of. Arranging is the one moment you want to see
+     * everything you have switched on, at the size it will be.
+     *
+     * @param {Object} row - The resolved row
+     * @returns {string} One of {@link EMPTY_POLICY}
+     */
+    _emptyPolicy(row) {
+        if (this.isEditable) return EMPTY_POLICY.FULL;
+        return emptyPolicyFor(row, this.settings.emptyTiles);
+    }
+
+    /**
+     * Stand a tile down to a dim line carrying its own name.
+     *
+     * Its name rather than its placeholder, because the placeholders are not
+     * unique — two tiles saying "Nothing watched" beside each other tell you
+     * less than one, since now you cannot tell which feature is idle either.
+     *
+     * @param {HTMLElement} tile - The tile
+     * @param {Object} row - The resolved row
+     */
+    _drawCompact(tile, row) {
+        if (!tile) return;
+
+        const note = document.createElement('div');
+        note.textContent = compactLabel(row);
+        Object.assign(note.style, {
+            color: COLORS.textDim,
+            fontSize: '85%',
+            lineHeight: `${COMPACT_TILE.height - 4}px`,
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+        });
+        tile._content.replaceChildren(note);
+    }
+
+    /**
+     * Say, at full size, what the row would rather say when it has nothing.
+     *
+     * A blank tile looks broken rather than idle: you cannot tell a feature that
+     * has nothing to report from one that has fallen over. The row says what it
+     * would rather say; naming itself is the fallback, which at least identifies
+     * which tile is which while the layout is being arranged.
+     *
+     * @param {HTMLElement} tile - The tile
+     * @param {Object} row - The resolved row
+     */
+    _drawPlaceholder(tile, row) {
+        if (!tile) return;
 
         const note = document.createElement('div');
         note.textContent = row.empty || `No ${row.name.toLowerCase()} data`;
@@ -1632,7 +1859,7 @@ class OverlayPanel {
             textOverflow: 'ellipsis',
         });
 
-        content.replaceChildren(note);
+        tile._content.replaceChildren(note);
     }
 
     /**

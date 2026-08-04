@@ -231,7 +231,8 @@ describe('saving and switching named layouts', () => {
         overlayPanel.pickerEl.style.display = '';
         await overlayPanel._refreshLayoutNames();
 
-        const options = [...overlayPanel.pickerEl.querySelectorAll('option')].map((o) => o.textContent);
+        const select = overlayPanel.pickerEl.querySelector('[data-overlay-layout-select]');
+        const options = [...select.querySelectorAll('option')].map((o) => o.textContent);
         expect(options).toEqual(['Switch to…', 'Dungeon', 'Market']);
     });
 
@@ -239,7 +240,7 @@ describe('saving and switching named layouts', () => {
         overlayPanel.pickerEl.style.display = '';
         await overlayPanel._refreshLayoutNames();
 
-        const select = overlayPanel.pickerEl.querySelector('select');
+        const select = overlayPanel.pickerEl.querySelector('[data-overlay-layout-select]');
         expect(select.disabled).toBe(true);
         expect(select.options[0].textContent).toBe('None saved');
     });
