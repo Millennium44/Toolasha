@@ -88,12 +88,17 @@ vi.mock('../../utils/tea-parser.js', () => ({
 
 let calculateEnhancementPath;
 let buildEnhancementTooltipHTML;
+let buildEnhancementMilestonesHTML;
 let calculateMinimumSellPrice;
 
 beforeAll(async () => {
     globalThis.math = mathjs;
-    ({ calculateEnhancementPath, buildEnhancementTooltipHTML, calculateMinimumSellPrice } =
-        await import('./tooltip-enhancement.js'));
+    ({
+        calculateEnhancementPath,
+        buildEnhancementTooltipHTML,
+        buildEnhancementMilestonesHTML,
+        calculateMinimumSellPrice,
+    } = await import('./tooltip-enhancement.js'));
 });
 
 beforeEach(() => {
@@ -266,5 +271,55 @@ describe('buildEnhancementTooltipHTML — minimum sell price', () => {
         // hoisting were wrong this would read 0
         expect(minimum).toBeTruthy();
         expect(minimum).not.toBe('0');
+    });
+});
+
+describe('buildEnhancementTooltipHTML — stats source indicator', () => {
+    const withSource = (extra) => ({ ...enhancingConfig, ...extra });
+    const html = (params, level = 1) => buildEnhancementTooltipHTML(calculateEnhancementPath(ITEM, level, params));
+
+    test('the header says whose stats produced the numbers', () => {
+        expect(html(withSource({ paramsSource: 'auto', manualOverrides: [] }))).toContain('Yours');
+    });
+
+    test('pro rates are named on the header, not left to look like your own', () => {
+        const out = html(withSource({ paramsSource: 'pro' }));
+
+        expect(out).toContain('Pro');
+        expect(out).not.toContain('>Yours');
+        // The kit is spelled out underneath, so "Pro" is a claim the tooltip can back up
+        expect(out).toContain('Celestial enhancer');
+    });
+
+    test('hand-entered parameters are named, with the fields that were edited', () => {
+        const out = html(withSource({ paramsSource: 'manual', manualOverrides: ['Enhancing level', 'Tea'] }));
+
+        expect(out).toContain('Manual');
+        expect(out).toContain('manual params: Enhancing level, Tea');
+    });
+
+    test('the section carries the item and level a redraw needs', () => {
+        const out = html(enhancingConfig, 5);
+
+        expect(out).toContain('data-toolasha-enh-section="path"');
+        expect(out).toContain(`data-toolasha-enh-item="${ITEM}"`);
+        expect(out).toContain('data-toolasha-enh-level="5"');
+    });
+});
+
+describe('buildEnhancementMilestonesHTML — stats source indicator', () => {
+    test('the milestone table names its source too, and is redrawable', () => {
+        const out = buildEnhancementMilestonesHTML(ITEM, { ...enhancingConfig, paramsSource: 'auto' });
+
+        expect(out).toContain('Enhancement Milestones');
+        expect(out).toContain('Yours');
+        expect(out).toContain('data-toolasha-enh-section="milestones"');
+    });
+
+    test('pro rates are called pro on the milestone table', () => {
+        const out = buildEnhancementMilestonesHTML(ITEM, { ...enhancingConfig, paramsSource: 'pro' });
+
+        expect(out).toContain('Pro');
+        expect(out).toContain('Celestial enhancer');
     });
 });

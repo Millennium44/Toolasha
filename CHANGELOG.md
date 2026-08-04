@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Sim state scoped, and honest enhancement numbers in the tooltip
+
+- **The last cross-character leaks in the sims are closed**: the all-zones snapshot, upgrade-tab selections (both sims), lab skilling loadouts, and the new lab comparison runs are all per character now. Snapshots and loadout maps from another character are discarded rather than inherited — a sim result against someone else's gear is worse than none.
+- **The marketplace ENHANCEMENT PATH says whose stats it used**: a chip on the header reads Yours, Manual, or Pro — Pro filled amber so it can't be mistaken — and clicking it (or pressing P while a tooltip is open) flips between your detected stats and the pro kit (enhancing 140, +13 Celestial, ultra + blessed tea, +10 gear), rebuilding the visible numbers in place. Persisted as a normal setting; untradeable items always use your own stats.
+
 ### Doubled profit line fixed, stuck marketplace tabs cleared
 
 - **The action bar could show two "Profit: …/hr · remaining …" lines** with different remaining values: a game re-render orphaned the old profit node while only the time node got cleaned up, leaving a stale copy behind. Injection is now idempotent — every stale widget is swept before a fresh one is placed. The remaining basis itself was always correct (material-and-gold-limited actions, not raw inventory).

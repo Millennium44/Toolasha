@@ -57,6 +57,22 @@ export function getEnhancingParams() {
     }
 }
 
+/**
+ * The kit this script ships with: enhancing 140, a max Observatory, ultra and blessed tea, a
+ * +13 Celestial enhancer and +10 enhancing gear. It is what the manual fields are preloaded
+ * with, so the "pro rates" a surface quotes and the defaults the settings panel shows are one
+ * definition rather than two that can drift.
+ *
+ * Character-wide facts that are not part of anybody's kit — the server's community buff level,
+ * the item map's blessed tea chance — still come from live data, exactly as they do for the
+ * player's own numbers.
+ *
+ * @returns {Object} Enhancement parameters for a top-end enhancer, tagged `paramsSource: 'pro'`
+ */
+export function getProRatesParams() {
+    return getManualParams({ useShippedDefaults: true });
+}
+
 // Detection walks the loadout and the item map, and getEnhancingParams runs once per item
 // during a networth or inventory sweep. The character cannot re-gear between two items of the
 // same sweep, so the answer is held briefly instead of being rebuilt hundreds of times.
@@ -424,9 +440,13 @@ export function getDetectedGearSettings() {
 
 /**
  * Get manual enhancing parameters from gear-based config settings
+ * @param {Object} [options] - Options
+ * @param {boolean} [options.useShippedDefaults=false] - Answer every field with the value it
+ *   ships with, ignoring both what the player saved and what the character has. This is the
+ *   "pro rates" run: a fixed, top-end kit nobody's gear can change.
  * @returns {Object} Manual parameters
  */
-function getManualParams() {
+function getManualParams({ useShippedDefaults = false } = {}) {
     const itemDetailMap = dataManager.getInitClientData()?.itemDetailMap || {};
 
     // What this character actually has. Used to fill in every manual field the player never
@@ -435,7 +455,8 @@ function getManualParams() {
     try {
         // With no character loaded there is nothing to detect, and "detected" would read as
         // "owns nothing" — worse than the shipped defaults. Fall back to those instead.
-        if (dataManager.getSkills()?.length) {
+        // A pro-rates run answers from the shipped kit throughout, so it never asks.
+        if (!useShippedDefaults && dataManager.getSkills()?.length) {
             detectedSettings = getDetectedSettingsCached();
         }
     } catch (error) {
@@ -452,6 +473,11 @@ function getManualParams() {
      * @returns {*} The value to simulate with
      */
     const readSetting = (key, shippedDefault, label) => {
+        // Pro rates are the shipped kit itself, so nothing the player saved or wears applies
+        if (useShippedDefaults) {
+            return shippedDefault;
+        }
+
         const stored = config.getSettingValue(key, shippedDefault);
         const detectedValue = detectedSettings[key];
 
@@ -822,7 +848,7 @@ function getManualParams() {
         slotBreakdown: slotBreakdown,
         // Fields left at their shipped values were answered from detection, so a run with no
         // edited fields is an auto-detected run no matter what the toggle says
-        paramsSource: manualOverrides.length > 0 ? 'manual' : 'auto',
+        paramsSource: useShippedDefaults ? 'pro' : manualOverrides.length > 0 ? 'manual' : 'auto',
         manualOverrides,
     };
 }
