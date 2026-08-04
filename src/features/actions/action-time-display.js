@@ -269,6 +269,7 @@ class ActionTimeDisplay {
      * @param {HTMLElement} tooltipContent - The QueuedActions_queuedActionsTooltip container
      */
     injectQueueTimesTooltip(tooltipContent) {
+        if (!config.getSetting('actionQueue')) return;
         try {
             const currentActions = dataManager.getCurrentActions();
             if (!currentActions || currentActions.length === 0) return;
@@ -2043,6 +2044,10 @@ class ActionTimeDisplay {
      * @param {HTMLElement} queueMenu - Queue menu container element
      */
     injectQueueTimes(queueMenu) {
+        // The setting this section is named for; the value rows are created in
+        // here too, so off means the queue is left entirely untouched
+        if (!config.getSetting('actionQueue')) return;
+
         // Track if we need to reconnect observer at the end
         let shouldReconnectObserver = false;
 

@@ -23,6 +23,7 @@
  * Toolasha's own.
  */
 
+import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import webSocketHook from '../../core/websocket.js';
 import { formatWithSeparator } from '../../utils/formatters.js';
@@ -79,6 +80,11 @@ let onAbility = null;
 export default {
     name: 'Mana Tracker',
     initialize: () => {
+        // getSetting, not isFeatureEnabled: this key is not in the legacy
+        // features map, so the registry's own check always passed and the
+        // checkbox did nothing
+        if (!config.getSetting('manaTracker')) return;
+
         onNewBattle = () => recordFight(tally);
         onAbility = (data) => {
             // The message carries either the ability object or its hrid, and

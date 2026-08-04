@@ -269,12 +269,6 @@ export const settingsGroups = {
         title: 'Action Panel',
         icon: '📄',
         settings: {
-            actionPanel_totalTime: {
-                id: 'actionPanel_totalTime',
-                label: 'Action panel: Total time, times to reach target level, exp/hour',
-                type: 'checkbox',
-                default: true,
-            },
             actionPanel_totalTime_quickInputs: {
                 id: 'actionPanel_totalTime_quickInputs',
                 label: 'Action panel: Quick input buttons (hours, count presets, Max)',
@@ -784,13 +778,6 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
             },
-            enhanceSim_showConsumedItemsDetail: {
-                id: 'enhanceSim_showConsumedItemsDetail',
-                label: 'Enhancement tooltips: Show detailed breakdown for consumed items',
-                type: 'checkbox',
-                default: false,
-                help: "When enabled, shows base/materials/protection breakdown for each consumed item in Philosopher's Mirror calculations",
-            },
             enhanceSim_baseItemCraftingCost: {
                 id: 'enhanceSim_baseItemCraftingCost',
                 label: 'Enhancement path: Use crafting cost for base item if cheaper',
@@ -1194,13 +1181,6 @@ export const settingsGroups = {
                 max: 100,
                 help: 'Insta-sell when sell-order supply exceeds buy-order demand × this ratio. 1 = insta-sell whenever sell orders outnumber buy orders; 2 = only when supply is at least double demand; 0 turns this rule off (only the queue-age rule insta-sells). Default: 1.',
             },
-            labSim_critAura: {
-                id: 'labSim_critAura',
-                label: 'Lab Simulator: Analyse upgrades with the Critical Aura ability up',
-                type: 'checkbox',
-                default: false,
-                help: 'Puts the Critical Aura ability in the special slot, at the level you have learned it to, for the Upgrade analysis only. An upgrade is worth a different amount depending on what else is running, and a labyrinth fight is short enough to be decided by a crit — so the answer to "what should I buy next" can change with the aura up. Simulated at level 1 when you have not learned it, which is what buying the book would get you. Max Level is left simulating the abilities you actually have slotted. The Lab Simulator\'s Upgrade tab has the same switch',
-            },
             market_bulkSellVendorCheck: {
                 id: 'market_bulkSellVendorCheck',
                 label: 'Market: Bulk sell to vendor when market is no better',
@@ -1238,10 +1218,10 @@ export const settingsGroups = {
                 id: 'market_listingPricePrecision',
                 label: 'Market: Listing price decimal precision',
                 type: 'number',
-                default: 2,
+                default: 1,
                 min: 0,
                 max: 4,
-                help: 'Number of decimal places to show for listing prices',
+                help: 'Decimal places for the abbreviated Top Order and Total prices on My Listings (e.g. 1.2M vs 1.23M)',
             },
             market_showListingAge: {
                 id: 'market_showListingAge',
@@ -1403,17 +1383,17 @@ export const settingsGroups = {
         settings: {
             networth: {
                 id: 'networth',
-                label: 'Top right: Show gold count',
+                label: 'Net worth tracking (and gold count in the header)',
                 type: 'checkbox',
                 default: true,
-                help: 'Displays your current gold count next to Total Level in the page header',
+                help: 'Master switch for the net worth calculator. Displays your current gold count next to Total Level in the page header; the inventory breakdown, history chart, and overlay rows below all need this on to have data',
             },
             invWorth: {
                 id: 'invWorth',
                 label: 'Below inventory: Show net worth breakdown',
                 type: 'checkbox',
                 default: true,
-                help: 'Shows total net worth with a per-category breakdown (equipment, inventory, listings, houses, abilities) below the inventory panel',
+                help: 'Shows total net worth with a per-category breakdown (equipment, inventory, listings, houses, abilities) below the inventory panel. Requires net worth tracking to be enabled above',
             },
             invSort: {
                 id: 'invSort',
@@ -1643,6 +1623,13 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
             },
+            drinkTimer: {
+                id: 'drinkTimer',
+                label: 'Drink timer: Show remaining drink supply time in skill panels',
+                type: 'checkbox',
+                default: true,
+                help: 'Shows how long your drink stock lasts and whether it covers the queued actions. This switch existed internally but was never in the settings panel, so the feature could not be turned off.',
+            },
             drinkTimer_warningThreshold: {
                 id: 'drinkTimer_warningThreshold',
                 label: 'Drink timer: warning threshold (hours)',
@@ -1761,6 +1748,13 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'Shows expected clear time and success rate on labyrinth skilling room tiles',
+            },
+            labSim_critAura: {
+                id: 'labSim_critAura',
+                label: 'Lab Simulator: Analyse upgrades with the Critical Aura ability up',
+                type: 'checkbox',
+                default: false,
+                help: 'Puts the Critical Aura ability in the special slot, at the level you have learned it to, for the Upgrade analysis only. An upgrade is worth a different amount depending on what else is running, and a labyrinth fight is short enough to be decided by a crit — so the answer to "what should I buy next" can change with the aura up. Simulated at level 1 when you have not learned it, which is what buying the book would get you. Max Level is left simulating the abilities you actually have slotted. The Lab Simulator\'s Upgrade tab has the same switch',
             },
             labyrinthRecommendTargetRate: {
                 id: 'labyrinthRecommendTargetRate',
@@ -2162,6 +2156,13 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 help: 'Shows which dungeons contain the monster (requires Task Icons enabled)',
+            },
+            taskSorter: {
+                id: 'taskSorter',
+                label: 'Task sorter: Sort tasks by skill type',
+                type: 'checkbox',
+                default: true,
+                help: 'Adds the sort button and sorting machinery to the task panel. This switch existed internally but was never in the settings panel, so the feature could not be turned off.',
             },
             taskSorter_autoSort: {
                 id: 'taskSorter_autoSort',

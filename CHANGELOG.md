@@ -6,6 +6,20 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Every setting now does what it says — a full audit of all 346
+
+Four auditors swept every setting in the schema against the code that consumes it. Most were clean; fourteen were not, and all fourteen are fixed:
+
+- **Five checkboxes did nothing at all.** `Queued actions: Show total time and completion time`, `Mana Tracker`, `Watchlist`, `Dungeon tracker HUD`, and `Dungeon tracker chat annotations` rendered and saved but were never consulted — features behind them ran unconditionally (the enable check fell through to "on" for any key missing from an internal legacy map). Each now actually gates its feature. If you had one of these unchecked expecting it to do something, it now does.
+- **Two features could never be turned off.** The task sorter and the drink timer had internal switches that were never exposed in the settings panel; they now appear there (`Task sorter`, `Drink timer`), both on by default so nothing changes until you say so.
+- **Two settings promised things the code never did**, and are removed rather than left lying: `Action panel: Total time…` (superseded by the live `Show speed/time section` and `Show level progress section` switches) and `Enhancement tooltips: Show detailed breakdown for consumed items` (the detail view it described was never ported).
+- **`Market: Listing price decimal precision` existed but nothing read it.** It now controls the decimals on the Top Order and Total columns of My Listings; its default is set to match what the display always did, so nothing shifts on update.
+- **Two Lab Simulator inputs disagreed with their settings**: the Hours field opened at 10 and the Find Max ≥ threshold at 95 when the settings (and every other consumer) say 3 and 70. They now honor the settings.
+- **`Lab Simulator: Critical Aura` sat in the Marketplace section** of the settings panel; it now lives with the other labyrinth settings under Combat Features.
+- The net worth master switch's label and help now say what was always true but undocumented: the inventory breakdown, history chart, and overlay rows all depend on it.
+
+One decision deliberately not made: a fully built but never-registered bulk task reroll feature reads a `taskBulkReroll` setting that doesn't exist. Because it automates spending task rerolls, it stays unwired pending an explicit call on whether to activate or delete it.
+
 ### The Sell Queue is back
 
 Removed one commit ago on the belief it was dead; restored unchanged — module, feature registration, and the `sellQueue` setting. It keeps its Shift+RightClick entry point and gets no touch adaptation.
