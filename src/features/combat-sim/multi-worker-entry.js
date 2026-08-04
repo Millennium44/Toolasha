@@ -115,6 +115,10 @@ onmessage = async function (event) {
                             difficultyTier: task.difficultyTier,
                             simulationTimeLimit,
                             extraBuffs,
+                            // An all-zones sweep is a survey of generic fights,
+                            // never one task's monster — so taskDamage stays off
+                            // and task gear does not inflate the zone rankings
+                            isTaskFight: false,
                         });
                     });
                 } catch (error) {

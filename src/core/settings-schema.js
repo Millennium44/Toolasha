@@ -739,6 +739,20 @@ export const settingsGroups = {
                 default: true,
                 help: 'Shows the optimal enhancement path cost breakdown when hovering over enhanced (+1 to +20) items',
             },
+            itemTooltip_enhancingHourlyRate: {
+                id: 'itemTooltip_enhancingHourlyRate',
+                label: 'Target hourly rate for enhancing (e.g. 50m)',
+                type: 'text',
+                default: '',
+                help: 'Adds a minimum sell price to the enhancement tooltip that covers total cost plus this rate for time spent. Leave blank to disable.',
+            },
+            itemTooltip_enhancingHourlyRateTax: {
+                id: 'itemTooltip_enhancingHourlyRateTax',
+                label: 'Include marketplace tax in minimum sell price',
+                type: 'checkbox',
+                default: false,
+                help: 'Accounts for the 2% marketplace seller tax so listing at minimum sell still nets your target rate after tax',
+            },
             itemTooltip_pinTop: {
                 id: 'itemTooltip_pinTop',
                 label: 'Pin tooltips to top-center of screen',

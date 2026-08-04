@@ -30,6 +30,7 @@ onmessage = function (event) {
             labyrinth: labyrinthData,
             precision,
             seed,
+            isTaskFight,
         } = event.data;
 
         // Set game data for the engine singleton
@@ -82,7 +83,10 @@ onmessage = function (event) {
                     progress: Math.round(progressData.progress * 100),
                 });
             },
-            labyrinth
+            labyrinth,
+            // Absent (every caller that has not opted in) this is false, and
+            // taskDamage sits out the run
+            Boolean(isTaskFight)
         );
 
         // Run simulation

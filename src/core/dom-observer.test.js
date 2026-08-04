@@ -127,6 +127,47 @@ describe('debouncedCallback', () => {
         vi.useRealTimers();
     });
 
+    test('retains one record per handler however many events arrive between fires', () => {
+        // Sustained churn faster than the debounce delay means the timer never fires.
+        // Appending to a list there retains every intermediate node and MutationRecord;
+        // only the newest is ever used, so retention must not grow with event count.
+        vi.useFakeTimers();
+        const callback = vi.fn();
+        domObserver.register('Churn', callback, { debounce: true, debounceDelay: 50 });
+        const handler = domObserver.handlers.find((h) => h.name === 'Churn');
+
+        let last = null;
+        for (let i = 0; i < 10_000; i++) {
+            last = document.createElement('div');
+            domObserver.debouncedCallback(handler, last, { i });
+        }
+
+        expect(domObserver.debouncedLatest.size).toBe(1);
+        expect(domObserver.debouncedLatest.get('Churn')).toEqual({ node: last, mutation: { i: 9999 } });
+
+        vi.advanceTimersByTime(50);
+        expect(callback).toHaveBeenCalledTimes(1);
+        expect(callback).toHaveBeenCalledWith(last, { i: 9999 });
+        // Nothing is held once the callback has run
+        expect(domObserver.debouncedLatest.size).toBe(0);
+        vi.useRealTimers();
+    });
+
+    test('unregistering drops the pending record instead of stranding it', () => {
+        vi.useFakeTimers();
+        const callback = vi.fn();
+        const unregister = domObserver.register('Dropped', callback, { debounce: true, debounceDelay: 50 });
+        const handler = domObserver.handlers.find((h) => h.name === 'Dropped');
+        domObserver.debouncedCallback(handler, document.createElement('div'), {});
+
+        unregister();
+
+        expect(domObserver.debouncedLatest.has('Dropped')).toBe(false);
+        vi.advanceTimersByTime(100);
+        expect(callback).not.toHaveBeenCalled();
+        vi.useRealTimers();
+    });
+
     test('uses the default delay when none is specified', () => {
         vi.useFakeTimers();
         const callback = vi.fn();

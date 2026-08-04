@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Upstream ports (verdict-gated) and honest task damage
+
+- **Task damage only counts on task fights.** Sims launched from a task card carry an is-task-fight flag; everything else — zone sims, lab rankings, the upgrade advisor — excludes taskDamage, so task badges and trinkets no longer rank on damage they only deal against your task monster (their on-task value shows as row detail). Both sim panels gain an explicit "Task Fight" toggle.
+- **Six upstream fixes ported after verifying each applied to our diverged code**: the page-freezing sort loop in max produceable, storage writes requeued instead of lost on a failed save (adapted to our quota handling), six undefined color constants, real alchemy coin costs in material limits, an O(1) DOM observer buffer, and the enhancement tooltip's target-hourly-rate / minimum-sell-price feature. One item was superseded by our own storage rework (evidence recorded); the melee stab/slash/smash tier split ported separately so weapon candidates only compare within their style.
+- **Decompose fee standardized** on (10+level)×5 via one shared helper — two of our files disagreed and no recorded data could settle it, so the upstream-agreeing formula won, with the reasoning documented.
+
 ### Advisors sharpened, your own rates guaranteed, and 1,200 new tests
 
 - **Upgrade advisor fixes**: real noise estimates on combat rows (the budget planner's significance guard finally works), profitable swaps rank as "pays for itself" instead of dividing by zero, every row shows its cost basis, unpriced items get their own box, drinks/teas and community buffs and trinkets are now rankable, and combat-level time accounts for the levels raising your rate.

@@ -24,6 +24,12 @@ const prices = {
     [PROTECTION]: { ask: 900000, bid: 850000 },
 };
 
+/** Settings the mocked config answers with, reset per test */
+const settings = vi.hoisted(() => ({ checkboxes: {}, values: {} }));
+
+/** Market prices for enhanced levels, keyed `hrid::level`; empty unless a test sets one */
+const enhancedPrices = vi.hoisted(() => ({}));
+
 const gameData = {
     itemDetailMap: {
         [ITEM]: {
@@ -51,8 +57,11 @@ vi.mock('../../core/data-manager.js', () => ({
 vi.mock('../../core/config.js', () => ({
     default: {
         isFeatureEnabled: () => false,
-        getSetting: () => false,
-        getSettingValue: (_key, fallback) => fallback,
+        // getSetting answers checkboxes only; getSettingValue is the accessor for text
+        // settings. Keeping them distinct here is what makes a getSetting() read of a text
+        // setting visible as a test failure rather than a silent false.
+        getSetting: (key) => settings.checkboxes[key] ?? false,
+        getSettingValue: (key, fallback) => settings.values[key] ?? fallback,
         COLOR_MIRROR: '#fff',
         COLOR_BORDER: '#fff',
         COLOR_TOOLTIP_INFO: '#fff',
@@ -68,7 +77,8 @@ vi.mock('../../api/marketplace.js', () => ({
 
 vi.mock('../../utils/market-data.js', () => ({
     getItemPrice: (hrid) => prices[hrid]?.ask ?? 0,
-    getItemPrices: (hrid, level) => (level === 0 ? (prices[hrid] ?? null) : null),
+    getItemPrices: (hrid, level) =>
+        level === 0 ? (prices[hrid] ?? null) : (enhancedPrices[`${hrid}::${level}`] ?? null),
 }));
 
 vi.mock('../../utils/tea-parser.js', () => ({
@@ -77,10 +87,19 @@ vi.mock('../../utils/tea-parser.js', () => ({
 }));
 
 let calculateEnhancementPath;
+let buildEnhancementTooltipHTML;
+let calculateMinimumSellPrice;
 
 beforeAll(async () => {
     globalThis.math = mathjs;
-    ({ calculateEnhancementPath } = await import('./tooltip-enhancement.js'));
+    ({ calculateEnhancementPath, buildEnhancementTooltipHTML, calculateMinimumSellPrice } =
+        await import('./tooltip-enhancement.js'));
+});
+
+beforeEach(() => {
+    settings.checkboxes = {};
+    settings.values = {};
+    for (const key of Object.keys(enhancedPrices)) delete enhancedPrices[key];
 });
 
 const enhancingConfig = {
@@ -176,5 +195,76 @@ describe('calculateEnhancementPath', () => {
         // Mirror combinations are instant, so a mirrored path is never slower than the
         // traditional one it replaced
         expect(strategy.totalCost).toBeLessThanOrEqual(strategy.traditionalCost);
+    });
+});
+
+describe('calculateMinimumSellPrice', () => {
+    test('is the total cost plus the target rate for the time spent', () => {
+        // one hour at 10M/hr on top of a 5M cost
+        expect(calculateMinimumSellPrice(5_000_000, 3600, 10_000_000, false)).toBe(15_000_000);
+    });
+
+    test('charges the rate pro rata for part of an hour', () => {
+        expect(calculateMinimumSellPrice(5_000_000, 1800, 10_000_000, false)).toBe(10_000_000);
+    });
+
+    test('grosses up by the 2% seller tax so the rate survives the sale', () => {
+        expect(calculateMinimumSellPrice(5_000_000, 3600, 10_000_000, true)).toBeCloseTo(15_000_000 / 0.98, 5);
+    });
+
+    test('with no rate or no time it is just the cost', () => {
+        expect(calculateMinimumSellPrice(5_000_000, 3600, 0, false)).toBe(5_000_000);
+        expect(calculateMinimumSellPrice(5_000_000, 0, 10_000_000, false)).toBe(5_000_000);
+    });
+});
+
+describe('buildEnhancementTooltipHTML — minimum sell price', () => {
+    const html = (level = 1) => buildEnhancementTooltipHTML(calculateEnhancementPath(ITEM, level, enhancingConfig));
+
+    test('is absent until a rate is configured', () => {
+        expect(html()).not.toContain('Minimum sell');
+    });
+
+    test('appears once a rate is set, and reads the rate as a text setting', () => {
+        // The rate lives under .value — read through getSetting() it would be `false`,
+        // parse to 0, and the row would never render however much the user typed.
+        settings.values.itemTooltip_enhancingHourlyRate = '50m';
+
+        const out = html();
+
+        expect(out).toContain('Your rate: 50.0M/hr');
+        expect(out).toContain('Minimum sell');
+    });
+
+    test('a blank or zero rate keeps the row hidden', () => {
+        settings.values.itemTooltip_enhancingHourlyRate = '';
+        expect(html()).not.toContain('Minimum sell');
+
+        settings.values.itemTooltip_enhancingHourlyRate = '0';
+        expect(html()).not.toContain('Minimum sell');
+    });
+
+    test('the tax option raises the minimum it asks for', () => {
+        settings.values.itemTooltip_enhancingHourlyRate = '50m';
+        const withoutTax = html();
+        settings.checkboxes.itemTooltip_enhancingHourlyRateTax = true;
+        const withTax = html();
+
+        expect(withTax).not.toBe(withoutTax);
+        expect(withTax).toContain('Minimum sell');
+    });
+
+    test('the row is priced off a mirrored plan too, not left at zero', () => {
+        settings.values.itemTooltip_enhancingHourlyRate = '50m';
+        const data = calculateEnhancementPath(ITEM, 8, enhancingConfig);
+        expect(data.optimalStrategy.usedMirror).toBe(true);
+
+        const out = buildEnhancementTooltipHTML(data);
+        const minimum = out.match(/Minimum sell: <span[^>]*>([^<]+)<\/span>/)?.[1];
+
+        // A mirrored path leaves totalAsk populated by the consumed-item rows; if the
+        // hoisting were wrong this would read 0
+        expect(minimum).toBeTruthy();
+        expect(minimum).not.toBe('0');
     });
 });

@@ -36,7 +36,8 @@ class Storage {
         this.dbName = 'ToolashaDB';
         this.dbVersion = 17; // Bumped for leaderboardHistory store
         this.saveDebounceTimers = new Map(); // Per-key debounce timers
-        this.pendingWrites = new Map(); // Per-key pending write data: {value, storeName}
+        this.pendingWrites = new Map(); // Per-key pending write data: {value, storeName, resolvers, generation}
+        this._writeGeneration = new Map(); // Per-key monotonic generation counter, for write ownership
         this.SAVE_DEBOUNCE_DELAY = 3000; // 3 seconds
         this._reconnecting = false; // Guard against concurrent reconnection attempts
         this._dbNulledReason = null; // Track why db was last set to null
@@ -477,6 +478,12 @@ class Storage {
 
     /**
      * Internal: Debounced save
+     *
+     * The entry is removed from pendingWrites only after a confirmed success, and
+     * only if no newer write has claimed the slot in the meantime. A failed write —
+     * a dropped connection, an aborted transaction, a full disk — requeues the value
+     * without a timer, so the next flushAll() or the next write to the same key
+     * retries it instead of the value being lost.
      * @private
      */
     _debouncedSave(key, value, storeName) {
@@ -485,7 +492,9 @@ class Storage {
         const existing = this.pendingWrites.get(timerKey);
         const resolvers = existing?.resolvers || [];
 
-        this.pendingWrites.set(timerKey, { value, storeName, resolvers });
+        const generation = (this._writeGeneration.get(timerKey) || 0) + 1;
+        this._writeGeneration.set(timerKey, generation);
+        this.pendingWrites.set(timerKey, { value, storeName, resolvers, generation });
 
         if (this.saveDebounceTimers.has(timerKey)) {
             clearTimeout(this.saveDebounceTimers.get(timerKey));
@@ -495,17 +504,48 @@ class Storage {
             resolvers.push(resolve);
 
             const timer = setTimeout(async () => {
-                const pending = this.pendingWrites.get(timerKey);
-                this.pendingWrites.delete(timerKey);
                 this.saveDebounceTimers.delete(timerKey);
 
-                let success = false;
-                if (pending) {
-                    success = await this._saveToIndexedDB(key, pending.value, pending.storeName);
+                const pending = this.pendingWrites.get(timerKey);
+                if (!pending || pending.generation !== generation) {
+                    // A newer write owns this slot — its timer persists the value and
+                    // resolves every caller coalesced into it, including ours.
+                    return;
                 }
 
-                for (const r of pending?.resolvers || []) {
-                    r(success);
+                // Take ownership: remove from the queue before attempting the save so a
+                // concurrent newer write can claim the slot cleanly.
+                this.pendingWrites.delete(timerKey);
+
+                const success = await this._saveToIndexedDB(key, pending.value, pending.storeName);
+
+                if (!success) {
+                    if (!this.pendingWrites.has(timerKey)) {
+                        // Requeue without a timer so the value survives for the next
+                        // flushAll() or the next debounced write to this key. This is also
+                        // what makes a quota failure recoverable: once space is freed, the
+                        // retry writes the value that would otherwise have been dropped.
+                        //
+                        // The requeued entry carries no resolvers: two dozen callers await
+                        // storage.set(), and holding their promises open until some later
+                        // flush would hang them for the rest of the session. They are told
+                        // the write failed now; the value is retried regardless.
+                        this.pendingWrites.set(timerKey, {
+                            value: pending.value,
+                            storeName: pending.storeName,
+                            resolvers: [],
+                            generation: pending.generation,
+                        });
+                    }
+
+                    for (const r of pending.resolvers) {
+                        r(false);
+                    }
+                    return;
+                }
+
+                for (const r of pending.resolvers) {
+                    r(true);
                 }
             }, this.SAVE_DEBOUNCE_DELAY);
 
@@ -759,15 +799,27 @@ class Storage {
         }
         this.saveDebounceTimers.clear();
 
-        // Now execute all pending writes immediately and resolve their Promises
+        // Snapshot the pending writes rather than clearing the map upfront: an entry is
+        // only removed once its write is confirmed, so a failure here leaves the value
+        // queued for the next flush instead of discarding it.
         const writes = Array.from(this.pendingWrites.entries());
-        this.pendingWrites.clear();
 
         for (const [timerKey, pending] of writes) {
+            // Skip if a newer write has already replaced this entry.
+            if (this.pendingWrites.get(timerKey) !== pending) continue;
+
             const colonIndex = timerKey.indexOf(':');
             const key = timerKey.substring(colonIndex + 1);
 
             const success = await this._saveToIndexedDB(key, pending.value, pending.storeName);
+
+            if (success) {
+                // Only remove if no newer write claimed the slot while we were writing.
+                if (this.pendingWrites.get(timerKey) === pending) {
+                    this.pendingWrites.delete(timerKey);
+                }
+            }
+
             for (const r of pending.resolvers || []) {
                 r(success);
             }
@@ -792,6 +844,7 @@ class Storage {
             }
         }
         this.pendingWrites.clear();
+        this._writeGeneration.clear();
     }
 
     /**

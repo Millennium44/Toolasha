@@ -515,30 +515,42 @@ function getItemRole(combatStats) {
     }
 
     // Check for primary offensive stats (exclude defensiveDamage — it's a tank stat)
-    const melee = (combatStats.stabDamage || 0) + (combatStats.slashDamage || 0) + (combatStats.smashDamage || 0);
+    const stab = combatStats.stabDamage || 0;
+    const slash = combatStats.slashDamage || 0;
+    const smash = combatStats.smashDamage || 0;
     const ranged = combatStats.rangedDamage || 0;
     const magic = combatStats.magicDamage || 0;
+    const melee = stab + slash + smash;
 
-    // If item has offensive damage stats, classify by highest
+    // If item has offensive damage stats, classify by highest.
+    // Melee is subdivided by damage style so stab/slash/smash weapons form separate tier groups —
+    // one combined 'melee' group let sortIndex ordering offer a spear user a slash sword as the
+    // "next tier".
     if (melee > 0 || ranged > 0 || magic > 0) {
         if (ranged >= melee && ranged >= magic) return 'ranged';
         if (magic >= melee && magic >= ranged) return 'magic';
-        return 'melee';
+        if (stab >= slash && stab >= smash) return 'melee_stab';
+        if (slash >= stab && slash >= smash) return 'melee_slash';
+        return 'melee_smash';
     }
 
     // Items with only defensiveDamage and no offensive damage are tanks
     if (combatStats.defensiveDamage > 0) return 'defensive';
 
     // Check accuracy as secondary signal
-    const meleeAcc =
-        (combatStats.stabAccuracy || 0) + (combatStats.slashAccuracy || 0) + (combatStats.smashAccuracy || 0);
+    const stabAcc = combatStats.stabAccuracy || 0;
+    const slashAcc = combatStats.slashAccuracy || 0;
+    const smashAcc = combatStats.smashAccuracy || 0;
+    const meleeAcc = stabAcc + slashAcc + smashAcc;
     const rangedAcc = combatStats.rangedAccuracy || 0;
     const magicAcc = combatStats.magicAccuracy || 0;
 
     if (meleeAcc > 0 || rangedAcc > 0 || magicAcc > 0) {
         if (rangedAcc >= meleeAcc && rangedAcc >= magicAcc) return 'ranged';
         if (magicAcc >= meleeAcc && magicAcc >= rangedAcc) return 'magic';
-        return 'melee';
+        if (stabAcc >= slashAcc && stabAcc >= smashAcc) return 'melee_stab';
+        if (slashAcc >= stabAcc && slashAcc >= smashAcc) return 'melee_slash';
+        return 'melee_smash';
     }
 
     // Defensive/utility gear — armor, evasion, HP
@@ -810,6 +822,35 @@ function findBestOffHand(gameData, damageStyle, maxItemLevel) {
 }
 
 /**
+ * How much taskDamage the item(s) a candidate equips would carry.
+ *
+ * Read off the item rather than measured by simulation on purpose: the sims
+ * that rank candidates are generic zone fights, run with the engine's task
+ * bonus switched off, so a task badge measures there as exactly what it is off
+ * task — inert. This number exists only so the row can name the conditional
+ * gain it is *not* counting.
+ *
+ * @param {Object} candidate - An upgrade candidate
+ * @param {Object} gameData - Game data from buildGameDataPayload()
+ * @returns {number} Base taskDamage ratio across the equipped items, 0 if none
+ */
+function candidateTaskDamage(candidate, gameData) {
+    const items = [];
+    if (candidate?.upgradeHrid) items.push(candidate.upgradeHrid);
+    if (candidate?.addedSlots) {
+        for (const item of Object.values(candidate.addedSlots)) {
+            if (item?.hrid) items.push(item.hrid);
+        }
+    }
+
+    let total = 0;
+    for (const hrid of items) {
+        total += gameData?.itemDetailMap?.[hrid]?.equipmentDetail?.combatStats?.taskDamage || 0;
+    }
+    return total;
+}
+
+/**
  * Generate upgrade candidates for a player's equipment and/or abilities.
  * @param {Object} playerDTO - Player DTO with equipment
  * @param {Object} gameData - Game data from buildGameDataPayload()
@@ -845,13 +886,10 @@ export function generateCandidates(
             const currentLevel = equip.enhancementLevel || 0;
             const itemDetails = gameData.itemDetailMap[currentHrid];
 
-            // Trinkets used to be skipped here because the engine dropped
-            // taskDamage out of the attacker's damage roll, so every trinket
-            // measured as inert and a table full of zero-gain rows was worse
-            // than no rows. The engine applies it now (see
-            // engine/combat-utilities.js), which makes a trinket an ordinary
-            // rankable piece — with the caveat, carried on the row, that the
-            // stat only pays while the monster is your task.
+            // Trinkets are kept in the table even though these rankings run off
+            // task, where a pure task trinket measures as inert: a trinket can
+            // carry ordinary combat stats too, and those do rank. What the row
+            // must not do is bank the taskDamage — the caveat set below says so.
             if (skipBackSlot && slot === '/equipment_types/back') continue;
             if (!hasCombatStats(itemDetails)) continue;
 
@@ -1226,17 +1264,22 @@ export function generateCandidates(
         candidates.push(...generateCommunityBuffCandidates(communityBuffs));
     }
 
-    // The engine applies taskDamage to every hit, because the game does and
-    // because leaving it out understated anyone wearing a task trinket. What
-    // neither the engine nor the sim knows is whether the monster in front of
-    // you is your task — so a trinket's simulated gain is its on-task gain, and
-    // the row has to say so rather than let it read as an always-on number
+    // taskDamage pays only while the monster in front of you is your combat
+    // task, and an advisor ranking is a generic zone fight — so every sim below
+    // runs with isTaskFight off and the ranked delta on a task badge is its
+    // off-task delta, which for a pure task trinket is nothing. Ranking them
+    // with the bonus on is what floated Expert Task Badge to the top of the
+    // table on damage it would only deal while on task. The gain that does
+    // exist is real but conditional, so it goes on the row as a caveat rather
+    // than into the number the table sorts by.
     for (const candidate of candidates) {
-        if (candidate.slot === TRINKET_SLOT) {
-            candidate.caveat =
-                'Simulated as though every fight is a task fight — taskDamage applies to every hit here, ' +
-                'so this is the on-task gain. Off task, expect less.';
-        }
+        const taskDamage = candidateTaskDamage(candidate, gameData);
+        if (candidate.slot !== TRINKET_SLOT && !taskDamage) continue;
+        const amount = taskDamage ? `+${(taskDamage * 100).toFixed(1)}% task damage` : 'Task damage';
+        candidate.caveat =
+            `${amount} is not in the ranked delta: these sims are generic zone fights, where the stat pays ` +
+            'nothing. It applies only while the monster is your active combat task — sim from that task card ' +
+            '(or tick Task Fight in the combat sim panel) to see the on-task number.';
     }
 
     candidates.forEach(clampRefinedCandidateToMinLevel);
@@ -2280,8 +2323,12 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
     // however carefully the seed is shared. That mismatch put an identical
     // phantom delta on every combat-inert candidate — a skilling house room
     // "improving" DPS by 0.06%.
+    // isTaskFight stays off for the baseline and for every candidate below. A
+    // ranking is a generic zone fight, and switching the task bonus on would
+    // credit task gear with damage it only deals while that monster is your
+    // task — see the caveat attached in generateCandidates().
     const baselineResult = await runSimulation(
-        { gameData, playerDTOs, zoneHrid, difficultyTier, hours, communityBuffs, seed: simSeed },
+        { gameData, playerDTOs, zoneHrid, difficultyTier, hours, communityBuffs, seed: simSeed, isTaskFight: false },
         null,
         { workers: 1 }
     );
@@ -2376,6 +2423,7 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
                 hours,
                 communityBuffs: applyCommunityBuffCandidate(communityBuffs, candidate),
                 seed: simSeed,
+                isTaskFight: false,
             },
             null,
             // One worker each: the queue is what keeps the cores busy here.

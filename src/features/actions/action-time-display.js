@@ -20,6 +20,7 @@ import { calculateGatheringProfit } from './gathering-profit.js';
 import profitCalculator from '../market/profit-calculator.js';
 import alchemyProfitCalculator from '../market/alchemy-profit-calculator.js';
 import { calculateActionStats } from '../../utils/action-calculator.js';
+import { getAlchemyCoinCost, getAlchemyTypeFromActionHrid } from '../../utils/alchemy-fees.js';
 import { timeReadable, formatWithSeparator, formatDateTime } from '../../utils/formatters.js';
 import { calculateEfficiencyMultiplier } from '../../utils/efficiency.js';
 import { createCleanupRegistry } from '../../utils/cleanup-registry.js';
@@ -1844,9 +1845,16 @@ class ActionTimeDisplay {
                     limitType = `material:${alchItemHrid}`;
                 }
 
-                if (actionDetails.coinCost && actionDetails.coinCost > 0) {
+                // Alchemy coin fees are not in the game's action data — actionDetails.coinCost
+                // is 0 for every alchemy action, so gold could never be the limiting material.
+                // The formulas live in utils/alchemy-fees.js, shared with every other fee site.
+                const alchemyType = getAlchemyTypeFromActionHrid(actionDetails.hrid);
+                const alchemyCoinCost =
+                    alchemyType && alchemyType !== 'coinify' ? getAlchemyCoinCost(alchItemDetails, alchemyType) : 0;
+
+                if (alchemyCoinCost > 0) {
                     const availableGold = byHrid['/items/coin'] || 0;
-                    const maxFromGold = Math.floor(availableGold / actionDetails.coinCost);
+                    const maxFromGold = Math.floor(availableGold / alchemyCoinCost);
                     if (maxFromGold < minLimit) {
                         minLimit = maxFromGold;
                         limitType = 'gold';

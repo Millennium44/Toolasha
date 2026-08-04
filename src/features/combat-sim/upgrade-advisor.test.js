@@ -1966,6 +1966,67 @@ describe('tier progression sidegrade guard', () => {
     });
 });
 
+describe('melee damage styles form separate tier groups', () => {
+    function buildMeleeStyleGameData() {
+        return {
+            actionDetailMap: {},
+            itemDetailMap: {
+                '/items/fine_spear': {
+                    name: 'Fine Spear',
+                    itemLevel: 50,
+                    sortIndex: 1,
+                    equipmentDetail: { type: MAIN_HAND, combatStats: { stabDamage: 10 } },
+                },
+                // Higher tier, but slash — a spear user swinging it trains nothing it has
+                '/items/regal_sword': {
+                    name: 'Regal Sword',
+                    itemLevel: 60,
+                    sortIndex: 2,
+                    equipmentDetail: { type: MAIN_HAND, combatStats: { slashDamage: 15 } },
+                },
+                '/items/regal_mace': {
+                    name: 'Regal Mace',
+                    itemLevel: 60,
+                    sortIndex: 3,
+                    equipmentDetail: { type: MAIN_HAND, combatStats: { smashDamage: 15 } },
+                },
+                '/items/furious_spear': {
+                    name: 'Furious Spear',
+                    itemLevel: 70,
+                    sortIndex: 4,
+                    equipmentDetail: { type: MAIN_HAND, combatStats: { stabDamage: 20 } },
+                },
+            },
+        };
+    }
+
+    test('a stab user is offered the next stab weapon, not the cheaper slash/smash neighbours', () => {
+        const candidates = generateCandidates(
+            buildPlayer('/items/fine_spear', 5),
+            buildMeleeStyleGameData(),
+            'equipment'
+        );
+        const tiers = candidates.filter((c) => c.type === 'tier');
+
+        expect(tiers.some((c) => c.upgradeHrid === '/items/furious_spear')).toBe(true);
+        expect(tiers.some((c) => c.upgradeHrid === '/items/regal_sword')).toBe(false);
+        expect(tiers.some((c) => c.upgradeHrid === '/items/regal_mace')).toBe(false);
+    });
+
+    test('accuracy-only melee gear splits by style too', () => {
+        const gameData = buildMeleeStyleGameData();
+        gameData.itemDetailMap['/items/fine_spear'].equipmentDetail.combatStats = { stabAccuracy: 10 };
+        gameData.itemDetailMap['/items/furious_spear'].equipmentDetail.combatStats = { stabAccuracy: 20 };
+        gameData.itemDetailMap['/items/regal_sword'].equipmentDetail.combatStats = { slashAccuracy: 15 };
+
+        const candidates = generateCandidates(buildPlayer('/items/fine_spear', 5), gameData, 'equipment');
+        const tiers = candidates.filter((c) => c.type === 'tier');
+
+        expect(tiers.some((c) => c.upgradeHrid === '/items/furious_spear')).toBe(true);
+        expect(tiers.some((c) => c.upgradeHrid === '/items/regal_sword')).toBe(false);
+    });
+});
+
 describe('resolveCandidateModes', () => {
     test('uses the checked sets and drops the food pseudo-mode', () => {
         expect(resolveCandidateModes(['equipment', 'house', 'food'])).toEqual(['equipment', 'house']);
@@ -3052,7 +3113,7 @@ describe('community buff candidates', () => {
     });
 });
 
-describe('trinkets are rankable now that taskDamage lands', () => {
+describe('trinkets are listed, but their taskDamage stays out of the ranking', () => {
     const TRINKET = '/equipment_types/trinket';
 
     function trinketGameData() {
@@ -3085,11 +3146,21 @@ describe('trinkets are rankable now that taskDamage lands', () => {
         expect(candidates.some((c) => c.upgradeHrid === '/items/task_crystal')).toBe(true);
     });
 
-    test('and every trinket row says the gain is the on-task one', () => {
+    test('and every trinket row says the ranked delta excludes the task bonus', () => {
         const player = { equipment: { [TRINKET]: { hrid: '/items/task_badge', enhancementLevel: 0 } } };
         const candidates = generateCandidates(player, trinketGameData(), 'equipment');
 
-        expect(candidates.every((c) => c.caveat?.includes('task'))).toBe(true);
+        expect(candidates.every((c) => c.caveat?.includes('not in the ranked delta'))).toBe(true);
+    });
+
+    test('the caveat names what the stat would be worth on task', () => {
+        const player = { equipment: { [TRINKET]: { hrid: '/items/task_badge', enhancementLevel: 0 } } };
+        const candidates = generateCandidates(player, trinketGameData(), 'equipment');
+        const tierUp = candidates.find((c) => c.upgradeHrid === '/items/task_crystal');
+
+        // The number is the item's own taskDamage, not a simulated gain — the
+        // sims behind these rows run off task, where it contributes nothing
+        expect(tierUp.caveat).toContain('+10.0% task damage');
     });
 });
 

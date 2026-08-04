@@ -293,6 +293,11 @@ class LabSimUI {
             <input id="mwi-labsim-level" type="number" min="20" max="300" value="100" style="${inputStyle}">
             <label style="color:#888; font-size:12px;">Hours</label>
             <input id="mwi-labsim-hours" type="number" min="1" max="10000" value="${config.getSettingValue('labyrinthRecommendSimHours', 3)}" style="${inputStyle}">
+            <label style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;"
+                   title="Apply taskDamage from trinkets and task badges to this run. Off by default, and normally right off: a labyrinth monster is not your combat task, so the stat pays nothing here.">
+                <input type="checkbox" id="mwi-labsim-taskfight" style="margin:0; cursor:pointer;">
+                Task Fight
+            </label>
         `;
 
         const crateRow = document.createElement('div');
@@ -1202,6 +1207,7 @@ class LabSimUI {
                         },
                         communityBuffs,
                         labyrinthCombatBuffs,
+                        isTaskFight: Boolean(this.panel.querySelector('#mwi-labsim-taskfight')?.checked),
                     },
                     (percent) => {
                         const { text: remaining } = eta.update(percent / 100);

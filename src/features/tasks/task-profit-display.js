@@ -1335,6 +1335,13 @@ class TaskProfitDisplay {
                     difficultyTier: 0,
                     hours: SIM_HOURS,
                     communityBuffs: getCommunityBuffs(),
+                    // Solo mode filtered the spawn table down to this card's
+                    // task monster, so every fight in the run is the task
+                    // fight — the one place taskDamage genuinely applies. The
+                    // shared zone-mode sim above stays off: it covers the
+                    // whole spawn table and is reused by every card in the
+                    // zone, so most of its fights are not anyone's task.
+                    isTaskFight: true,
                 });
             }
 
@@ -2522,7 +2529,7 @@ class TaskProfitDisplay {
         // Determine if active (first in queue) or queued
         const isActive = matchActionHrid === activeActionHrid;
         const label = isActive ? '▶ Active' : '⏸ Queued';
-        const color = isActive ? config.COLOR_ACCENT : config.SCRIPT_COLOR_SECONDARY;
+        const color = isActive ? config.COLOR_ACCENT : config.COLOR_TEXT_SECONDARY;
 
         if (existingIndicator) {
             // Update existing indicator's inner badge
