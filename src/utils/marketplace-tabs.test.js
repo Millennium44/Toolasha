@@ -10,6 +10,8 @@ import {
     removeShrineMarketTabs,
     updateTabBadge,
     navigateToMarketplace,
+    createClearAllTabsControl,
+    ensureClearAllTabsControl,
 } from './marketplace-tabs.js';
 
 function buildReferenceTab() {
@@ -62,7 +64,11 @@ describe('createMaterialTab', () => {
 
     test('clears the selected state inherited from the reference tab', () => {
         const ref = buildReferenceTab();
-        const tab = createMaterialTab({ itemHrid: '/items/x', itemName: 'x', missing: 0, isTradeable: true }, ref, () => {});
+        const tab = createMaterialTab(
+            { itemHrid: '/items/x', itemName: 'x', missing: 0, isTradeable: true },
+            ref,
+            () => {}
+        );
         expect(tab.classList.contains('Mui-selected')).toBe(false);
         expect(tab.getAttribute('aria-selected')).toBe('false');
     });
@@ -98,6 +104,114 @@ describe('createMaterialTab', () => {
             () => {}
         );
         expect(tab.querySelector('[class*="TabsComponent_badge"]').innerHTML).toContain('Refined Iron Bar');
+    });
+
+    test('adds a dismiss control to the tab', () => {
+        const ref = buildReferenceTab();
+        const tab = createMaterialTab(
+            { itemHrid: '/items/x', itemName: 'x', missing: 1, isTradeable: true },
+            ref,
+            () => {}
+        );
+        expect(tab.querySelector('[data-mwi-tab-dismiss="true"]')).not.toBeNull();
+    });
+
+    test('dismiss control removes the tab from the DOM and does not trigger the click callback', () => {
+        const ref = buildReferenceTab();
+        const onClick = vi.fn();
+        const material = { itemHrid: '/items/x', itemName: 'x', missing: 1, isTradeable: true };
+        const tab = createMaterialTab(material, ref, onClick);
+        document.body.appendChild(tab);
+
+        tab.querySelector('[data-mwi-tab-dismiss="true"]').dispatchEvent(
+            new MouseEvent('click', { bubbles: true, cancelable: true })
+        );
+
+        expect(document.body.contains(tab)).toBe(false);
+        expect(onClick).not.toHaveBeenCalled();
+    });
+
+    test('dismiss control calls onDismiss with the material before removing the tab', () => {
+        const ref = buildReferenceTab();
+        const onDismiss = vi.fn();
+        const material = { itemHrid: '/items/x', itemName: 'x', missing: 1, isTradeable: true };
+        const tab = createMaterialTab(material, ref, () => {}, { onDismiss });
+        document.body.appendChild(tab);
+
+        tab.querySelector('[data-mwi-tab-dismiss="true"]').dispatchEvent(
+            new MouseEvent('click', { bubbles: true, cancelable: true })
+        );
+
+        expect(onDismiss).toHaveBeenCalledWith(material);
+        expect(document.body.contains(tab)).toBe(false);
+    });
+
+    test('dismiss control works even when the tab is not tradeable', () => {
+        const ref = buildReferenceTab();
+        const material = { itemHrid: '/items/x', itemName: 'x', missing: 1, isTradeable: false };
+        const tab = createMaterialTab(material, ref, () => {});
+        document.body.appendChild(tab);
+
+        tab.querySelector('[data-mwi-tab-dismiss="true"]').dispatchEvent(
+            new MouseEvent('click', { bubbles: true, cancelable: true })
+        );
+
+        expect(document.body.contains(tab)).toBe(false);
+    });
+});
+
+describe('createClearAllTabsControl / ensureClearAllTabsControl', () => {
+    beforeEach(() => {
+        document.body.innerHTML = '';
+    });
+
+    test('is tagged as a custom tab so removeMaterialTabs sweeps it up too', () => {
+        const ref = buildReferenceTab();
+        const control = createClearAllTabsControl(ref, () => {});
+        expect(control.getAttribute('data-mwi-custom-tab')).toBe('true');
+        expect(control.getAttribute('data-mwi-clear-all-tab')).toBe('true');
+    });
+
+    test('clicking it removes every custom material tab, including itself', () => {
+        const ref = buildReferenceTab();
+        const onClearAll = vi.fn();
+        const container = document.createElement('div');
+        document.body.appendChild(container);
+
+        const tab1 = createMaterialTab(
+            { itemHrid: '/items/a', itemName: 'a', missing: 1, isTradeable: true },
+            ref,
+            () => {}
+        );
+        const tab2 = createMaterialTab(
+            { itemHrid: '/items/b', itemName: 'b', missing: 1, isTradeable: true },
+            ref,
+            () => {}
+        );
+        const control = createClearAllTabsControl(ref, onClearAll);
+        container.append(tab1, tab2, control);
+
+        control.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+
+        expect(container.children.length).toBe(0);
+        expect(onClearAll).toHaveBeenCalledTimes(1);
+    });
+
+    test('ensureClearAllTabsControl appends exactly one control, even when called repeatedly', () => {
+        const ref = buildReferenceTab();
+        const container = document.createElement('div');
+        document.body.appendChild(container);
+
+        ensureClearAllTabsControl(container, ref, () => {});
+        ensureClearAllTabsControl(container, ref, () => {});
+        ensureClearAllTabsControl(container, ref, () => {});
+
+        expect(container.querySelectorAll('[data-mwi-clear-all-tab="true"]').length).toBe(1);
+    });
+
+    test('ensureClearAllTabsControl does nothing without a container', () => {
+        const ref = buildReferenceTab();
+        expect(() => ensureClearAllTabsControl(null, ref, () => {})).not.toThrow();
     });
 });
 
@@ -200,7 +314,9 @@ describe('navigateToMarketplace', () => {
         const handle = vi.fn();
         const root = document.createElement('div');
         root.id = 'root';
-        root._reactRootContainer = { current: { stateNode: { handleGoToMarketplace: handle }, child: null, sibling: null } };
+        root._reactRootContainer = {
+            current: { stateNode: { handleGoToMarketplace: handle }, child: null, sibling: null },
+        };
         document.body.appendChild(root);
 
         navigateToMarketplace('/items/plank', 5);

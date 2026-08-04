@@ -16,9 +16,13 @@ import { formatWithSeparator } from './formatters.js';
  * @param {boolean} material.isTradeable - Whether item can be traded
  * @param {HTMLElement} referenceTab - Tab element to clone structure from
  * @param {Function} onClickCallback - Callback when tab is clicked, receives (e, material)
+ * @param {Object} [options] - Optional extras
+ * @param {Function} [options.onDismiss] - Called with `material` when the tab's own
+ *   dismiss (×) button is used, right before the tab is removed from the DOM. Lets a
+ *   caller prune whatever list of its own it is keeping alongside the tab.
  * @returns {HTMLElement} Created tab element
  */
-export function createMaterialTab(material, referenceTab, onClickCallback) {
+export function createMaterialTab(material, referenceTab, onClickCallback, options = {}) {
     // Clone reference tab structure
     const tab = referenceTab.cloneNode(true);
 
@@ -93,7 +97,123 @@ export function createMaterialTab(material, referenceTab, onClickCallback) {
         }
     });
 
+    attachDismissButton(tab, material, options.onDismiss);
+
     return tab;
+}
+
+/**
+ * Pin a small × in the corner of a tab, visible on hover, that removes just that
+ * tab. It never got one, which is why the fix for "I don't want this pinned
+ * anymore" was always "wait for the whole strip to be replaced or the
+ * marketplace to close" — the only two things that called `removeMaterialTabs`.
+ *
+ * @param {HTMLElement} tab - Tab element (mutated in place)
+ * @param {Object} material - The material this tab represents, handed to `onDismiss`
+ * @param {Function} [onDismiss] - Called with `material` right before the tab is removed
+ */
+function attachDismissButton(tab, material, onDismiss) {
+    // Absolute-positioned inside the tab, so the tab needs to anchor it. MUI tabs
+    // are not positioned by default; only take over `position` when nothing else
+    // already claimed it.
+    if (!tab.style.position) {
+        tab.style.position = 'relative';
+    }
+
+    const dismissBtn = document.createElement('span');
+    dismissBtn.setAttribute('data-mwi-tab-dismiss', 'true');
+    dismissBtn.title = 'Remove this tab';
+    dismissBtn.textContent = '×';
+    dismissBtn.style.cssText = `
+        position: absolute;
+        top: 1px;
+        right: 1px;
+        width: 14px;
+        height: 14px;
+        line-height: 13px;
+        text-align: center;
+        font-size: 12px;
+        font-weight: 700;
+        border-radius: 50%;
+        color: #ddd;
+        background: rgba(0, 0, 0, 0.45);
+        cursor: pointer;
+        opacity: 0;
+        transition: opacity 0.12s ease;
+        z-index: 1;
+    `;
+
+    tab.addEventListener('mouseenter', () => {
+        dismissBtn.style.opacity = '1';
+    });
+    tab.addEventListener('mouseleave', () => {
+        dismissBtn.style.opacity = '0';
+    });
+
+    dismissBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (onDismiss) onDismiss(material);
+        tab.remove();
+    });
+
+    tab.appendChild(dismissBtn);
+}
+
+/**
+ * Build a small "clear all" control shaped like the other tabs, so it sits in the
+ * strip rather than floating above it. Clicking it removes every custom material
+ * tab currently pinned (the same set `removeMaterialTabs` clears) — including
+ * itself, since it is tagged `data-mwi-custom-tab` too.
+ *
+ * @param {HTMLElement} referenceTab - Tab element to clone structure from
+ * @param {Function} [onClearAll] - Called after the tabs are removed, so a caller
+ *   can prune whatever list of its own it was keeping alongside them
+ * @returns {HTMLElement} The control element, not yet attached anywhere
+ */
+export function createClearAllTabsControl(referenceTab, onClearAll) {
+    const control = referenceTab.cloneNode(true);
+
+    control.setAttribute('data-mwi-custom-tab', 'true');
+    control.setAttribute('data-mwi-clear-all-tab', 'true');
+    control.classList.remove('Mui-selected');
+    control.setAttribute('aria-selected', 'false');
+    control.setAttribute('tabindex', '-1');
+    control.title = 'Clear all pinned tabs';
+    control.style.opacity = '0.7';
+    control.style.flex = '0 0 auto';
+
+    const badgeSpan = control.querySelector('[class*="TabsComponent_badge"]');
+    if (badgeSpan) {
+        badgeSpan.innerHTML = `
+            <div style="text-align: center; font-weight: 700; font-size: 13px;">
+                &times; All
+            </div>
+        `;
+    }
+
+    control.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        removeMaterialTabs();
+        if (onClearAll) onClearAll();
+    });
+
+    return control;
+}
+
+/**
+ * Append a `createClearAllTabsControl` to `container`, unless one is already
+ * there. Kept idempotent so callers can invoke it every time they add tabs
+ * without needing to track whether they already have one.
+ *
+ * @param {HTMLElement} container - The visible tab bar
+ * @param {HTMLElement} referenceTab - Tab element to clone structure from
+ * @param {Function} [onClearAll] - Forwarded to `createClearAllTabsControl`
+ */
+export function ensureClearAllTabsControl(container, referenceTab, onClearAll) {
+    if (!container || container.querySelector('[data-mwi-clear-all-tab="true"]')) return;
+    container.appendChild(createClearAllTabsControl(referenceTab, onClearAll));
 }
 
 /**
