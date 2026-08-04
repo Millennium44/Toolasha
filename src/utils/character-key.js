@@ -86,7 +86,11 @@ async function isAdoptionCandidate(charId) {
         // Same signal MCS reads: character.gameMode. 'standard' is the market
         // character; 'ironcow' and 'legacy_ironcow' never adopt.
         const gameMode = dataManager.getCurrentCharacterGameMode();
+        const name = dataManager.getCurrentCharacterName() || '';
         if (typeof gameMode === 'string' && gameMode.includes('ironcow')) {
+            decision = false;
+        } else if (/test/i.test(name)) {
+            // A test character is never the main, whatever its history says.
             decision = false;
         } else {
             const keys = await storage.getAllKeys('networthHistory');
@@ -97,7 +101,13 @@ async function isAdoptionCandidate(charId) {
                 ...idsFromRecordKeys(keys, `${NETWORTH_RECORD_PREFIX}_`),
             ]);
 
-            if (ids.size > 1) {
+            if (ids.size > 0 && !ids.has(charId)) {
+                // Someone on this account has recorded history and this
+                // character has none — it is not the main. Skipping the
+                // comparison here is what once let a fresh alt adopt
+                // everything just by logging in first.
+                decision = false;
+            } else if (ids.size > 1) {
                 let bestId = null;
                 let bestLength = -1;
                 for (const id of ids) {

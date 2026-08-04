@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Adoption accident: fixed, and repairable
+
+- **The wrong character can no longer inherit your data**: characters with "test" in their name never adopt legacy values, and neither does a character with no networth history while another character on the account has some — the hole that let a freshly logged-in alt claim everything by being first.
+- **`Toolasha.debug.moveScopedData(fromId, toId)`** moves every adopt-class store (watchlist, savings targets, treasure tally, enhancement sessions, reroll data, panel state, …) from the character that wrongly claimed it to the right one, skipping anything the destination already owns; `{dryRun: true}` previews the moves.
+
 ### The dungeon tracker earns its tests
 
 - **252 new tests** for the dungeon tracker core (run lifecycle, restore guards, key-count parsing, per-character scoping), the chat-annotation parser (all six timestamp formats, run numbering, team attribution), collection filters (ranges, sorts, badges, favourites), and the milkonomy/profile export shaping. Four latent dungeon-tracker/export bugs were pinned by tests and documented for a future fix.

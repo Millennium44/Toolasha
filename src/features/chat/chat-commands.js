@@ -13,6 +13,7 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
+import { moveScopedData } from '../../utils/scoped-data-repair.js';
 
 /**
  * Everything the client currently believes about guild shrines.
@@ -116,6 +117,8 @@ export function exposeShrineDebug() {
             console.log(formatShrineReport(report));
             return report;
         };
+        target.Toolasha.debug.moveScopedData = (fromId, toId, options) =>
+            moveScopedData(String(fromId), String(toId), options);
         return true;
     } catch (error) {
         console.error('[Chat Commands] Failed to expose the shrine debug helper:', error);

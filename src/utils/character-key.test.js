@@ -3,8 +3,10 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 const mockDataManager = vi.hoisted(() => ({
     currentCharacterId: 'market123',
     currentGameMode: 'standard',
+    currentName: 'Millennium',
     getCurrentCharacterId: vi.fn(() => mockDataManager.currentCharacterId),
     getCurrentCharacterGameMode: vi.fn(() => mockDataManager.currentGameMode),
+    getCurrentCharacterName: vi.fn(() => mockDataManager.currentName),
 }));
 
 const mockStorage = vi.hoisted(() => {
@@ -60,6 +62,7 @@ describe('readScoped', () => {
         mockStorage.reset();
         mockDataManager.currentCharacterId = 'market123';
         mockDataManager.currentGameMode = 'standard';
+        mockDataManager.currentName = 'Millennium';
         _resetAdoptionCache();
     });
 
@@ -77,6 +80,29 @@ describe('readScoped', () => {
         mockStorage.storeFor('settings').set('watchlist', ['legacy']);
         expect(await readScoped('watchlist', 'settings', [])).toEqual(['legacy']);
         expect(mockStorage.storeFor('settings').get('watchlist_market123')).toEqual(['legacy']);
+        expect(mockStorage.storeFor('settings').has('watchlist')).toBe(false);
+    });
+
+    it('never adopts onto a character with a test name', async () => {
+        mockDataManager.currentCharacterId = 'test999';
+        mockDataManager.currentName = 'MillenniumTest';
+        mockStorage.storeFor('settings').set('watchlist', ['legacy']);
+        expect(await readScoped('watchlist', 'settings', [])).toEqual([]);
+        expect(mockStorage.storeFor('settings').get('watchlist')).toEqual(['legacy']);
+    });
+
+    it('never adopts onto a character with no networth history while another has some', async () => {
+        mockStorage.storeFor('networthHistory').set('networth_market123', [1, 2, 3]);
+        mockDataManager.currentCharacterId = 'freshAlt';
+        mockStorage.storeFor('settings').set('watchlist', ['legacy']);
+        expect(await readScoped('watchlist', 'settings', [])).toEqual([]);
+        expect(mockStorage.storeFor('settings').get('watchlist')).toEqual(['legacy']);
+    });
+
+    it('a solo character with the only networth series still adopts', async () => {
+        mockStorage.storeFor('networthHistory').set('networth_market123', [1, 2]);
+        mockStorage.storeFor('settings').set('watchlist', ['legacy']);
+        expect(await readScoped('watchlist', 'settings', [])).toEqual(['legacy']);
         expect(mockStorage.storeFor('settings').has('watchlist')).toBe(false);
     });
 
