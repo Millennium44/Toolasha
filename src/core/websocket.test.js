@@ -196,6 +196,85 @@ describe('saveCombatSimData side effects', () => {
     });
 });
 
+describe('saveCombatSimData GM-storage bridge stamping', () => {
+    // GM_setValue only exists in the Tampermonkey sandbox; stub it per-test so saveCombatSimData's
+    // `hasGM` branch runs and so we can inspect exactly what got written.
+    beforeEach(() => {
+        globalThis.GM_setValue = vi.fn();
+    });
+
+    afterEach(() => {
+        delete globalThis.GM_setValue;
+    });
+
+    function metaWrite(key) {
+        const call = globalThis.GM_setValue.mock.calls.find(([k]) => k === key);
+        expect(call).toBeDefined();
+        return JSON.parse(call[1]);
+    }
+
+    test('stamps toolasha_init_character_data with the writing character and a fresh writtenAt, payload untouched', async () => {
+        const before = Date.now();
+        const characterMessage = msg('init_character_data', { character: { id: 'char-42', name: 'Milky' } });
+
+        webSocketHook.processMessage(characterMessage);
+        await new Promise((r) => setTimeout(r, 0));
+
+        // Payload key keeps its original raw-message shape (external Shykai sim reads it directly).
+        expect(globalThis.GM_setValue).toHaveBeenCalledWith('toolasha_init_character_data', characterMessage);
+
+        const meta = metaWrite('toolasha_init_character_data_meta');
+        expect(meta).toEqual({
+            characterId: 'char-42',
+            characterName: 'Milky',
+            writtenAt: expect.any(Number),
+        });
+        expect(meta.writtenAt).toBeGreaterThanOrEqual(before);
+    });
+
+    test('stamps toolasha_init_client_data and toolasha_new_battle with the last character seen on this tab', async () => {
+        webSocketHook.processMessage(msg('init_character_data', { character: { id: 'char-7', name: 'Zog' } }));
+        await new Promise((r) => setTimeout(r, 0));
+        globalThis.GM_setValue.mockClear();
+
+        webSocketHook.processMessage(msg('init_client_data', { levelExperienceTable: [] }));
+        await new Promise((r) => setTimeout(r, 0));
+        expect(metaWrite('toolasha_init_client_data_meta')).toMatchObject({ characterId: 'char-7' });
+
+        globalThis.GM_setValue.mockClear();
+        webSocketHook.processMessage(msg('new_battle', { players: [] }));
+        await new Promise((r) => setTimeout(r, 0));
+        expect(metaWrite('toolasha_new_battle_meta')).toMatchObject({ characterId: 'char-7' });
+    });
+
+    test('stamps toolasha_profile_list with the viewing (writer) character, not the profile being viewed', async () => {
+        webSocketHook.processMessage(msg('init_character_data', { character: { id: 'char-viewer', name: 'Viewer' } }));
+        await new Promise((r) => setTimeout(r, 0));
+        globalThis.GM_setValue.mockClear();
+
+        webSocketHook.processMessage(
+            msg('profile_shared', { profile: { sharableCharacter: { id: 'char-other', name: 'Other' } } })
+        );
+        await new Promise((r) => setTimeout(r, 0));
+
+        expect(metaWrite('toolasha_profile_list_meta')).toMatchObject({ characterId: 'char-viewer' });
+    });
+
+    test('a character switch updates the stamp used for subsequent writes', async () => {
+        webSocketHook.processMessage(msg('init_character_data', { character: { id: 'char-a', name: 'A' } }));
+        await new Promise((r) => setTimeout(r, 0));
+        globalThis.GM_setValue.mockClear();
+
+        webSocketHook.processMessage(msg('init_character_data', { character: { id: 'char-b', name: 'B' } }));
+        await new Promise((r) => setTimeout(r, 0));
+
+        expect(metaWrite('toolasha_init_character_data_meta')).toMatchObject({
+            characterId: 'char-b',
+            characterName: 'B',
+        });
+    });
+});
+
 describe('socket lifecycle events', () => {
     test('onSocketEvent registers a handler invoked by emitSocketEvent', () => {
         const handler = vi.fn();

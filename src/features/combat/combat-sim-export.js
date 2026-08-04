@@ -9,8 +9,86 @@ import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
 
 /**
+ * Warn (not block) when a GM-bridged value is older than this. No user-facing setting — a
+ * constant is enough for a "may be stale" hint.
+ */
+const BRIDGE_STALE_MS = 60 * 60 * 1000; // 1 hour
+
+/**
+ * Reason the most recent ownership-checked GM-bridged read was refused, for callers that want
+ * to surface a specific message (e.g. the "Import from Toolasha" button's alert). Reset at the
+ * start of every checkBridgeStamp() call.
+ * @type {string|null}
+ */
+let lastBridgeIssue = null;
+
+/**
+ * Reason the most recent ownership-checked GM-bridged read was refused, or null if the last
+ * checked read was clean (matched owner, legacy/unstamped, or merely stale).
+ * @returns {string|null}
+ */
+export function getLastBridgeIssue() {
+    return lastBridgeIssue;
+}
+
+/**
+ * Validate a GM-bridged payload's ownership stamp before it is trusted.
+ *
+ * Reads the namespaced `${key}_meta` sibling key written by websocket.js's saveCombatSimData
+ * (kept separate from the payload so the external Shykai sim page, which reads the raw payload
+ * key directly, is unaffected by this check). A value with no stamp at all is a legacy write
+ * from before this feature existed — it is accepted, just noted as unverified. A value whose
+ * `writtenAt` is older than BRIDGE_STALE_MS only gets a console warning. A value stamped for a
+ * different character than the one active on this tab is refused when `enforceOwner` is true.
+ * @param {string} key - Base GM key, e.g. 'toolasha_init_character_data'
+ * @param {string} label - Human-friendly label for console/user messages, e.g. 'Character data'
+ * @param {{enforceOwner: boolean}} options - Whether an owner mismatch should refuse the read
+ * @returns {boolean} true if the payload is safe to use, false if it must be refused
+ */
+export function checkBridgeStamp(key, label, { enforceOwner }) {
+    lastBridgeIssue = null;
+
+    if (typeof GM_getValue === 'undefined') return true;
+
+    let meta = null;
+    try {
+        const raw = GM_getValue(`${key}_meta`, null);
+        if (raw) meta = JSON.parse(raw);
+    } catch {
+        meta = null;
+    }
+
+    if (!meta || !meta.characterId) {
+        console.warn(`[Combat Sim Export] ${label} has no ownership stamp (legacy, unverified) — using it as-is.`);
+        return true;
+    }
+
+    if (typeof meta.writtenAt === 'number' && Date.now() - meta.writtenAt > BRIDGE_STALE_MS) {
+        const ageMin = Math.round((Date.now() - meta.writtenAt) / 60000);
+        console.warn(
+            `[Combat Sim Export] ${label} was written ${ageMin} min ago by "${meta.characterName || meta.characterId}" — may be stale.`
+        );
+    }
+
+    if (!enforceOwner) return true;
+
+    const currentCharacterId = dataManager.getCurrentCharacterId();
+    if (currentCharacterId && meta.characterId !== currentCharacterId) {
+        lastBridgeIssue = `${label} is from character "${
+            meta.characterName || meta.characterId
+        }" in another tab — open the sim from that tab, or re-focus this one so it re-syncs.`;
+        console.warn(`[Combat Sim Export] Refusing ${label}: ${lastBridgeIssue}`);
+        return false;
+    }
+
+    return true;
+}
+
+/**
  * Get character data from dataManager (in-memory, always current).
  * Falls back to GM storage when running on the Shykai page (dataManager is empty cross-domain).
+ * The GM fallback is ownership-checked: a value written by a different character's tab is
+ * refused rather than silently exporting the wrong gear (see checkBridgeStamp above).
  * @returns {Object|null}
  */
 function getCharacterData() {
@@ -20,7 +98,9 @@ function getCharacterData() {
     if (typeof GM_getValue !== 'undefined') {
         try {
             const raw = GM_getValue('toolasha_init_character_data', null);
-            if (raw) return JSON.parse(raw);
+            if (raw && checkBridgeStamp('toolasha_init_character_data', 'Character data', { enforceOwner: true })) {
+                return JSON.parse(raw);
+            }
         } catch {
             /* ignore */
         }
@@ -31,7 +111,9 @@ function getCharacterData() {
 
 /**
  * Get battle data from dataManager (null if not in combat).
- * Falls back to GM storage when running on the Shykai page.
+ * Falls back to GM storage when running on the Shykai page. Battle data is character-specific
+ * (consumables/triggers), so an ownership mismatch is refused — callers already treat a null
+ * battle as "not in combat" and fall back to profile-derived data.
  * @returns {Object|null}
  */
 function getBattleData() {
@@ -39,7 +121,9 @@ function getBattleData() {
     if (typeof GM_getValue !== 'undefined') {
         try {
             const raw = GM_getValue('toolasha_new_battle', null);
-            if (raw) return JSON.parse(raw);
+            if (raw && checkBridgeStamp('toolasha_new_battle', 'Battle data', { enforceOwner: true })) {
+                return JSON.parse(raw);
+            }
         } catch {
             /* ignore */
         }
@@ -49,7 +133,9 @@ function getBattleData() {
 
 /**
  * Get init_client_data from dataManager (in-memory, always current).
- * Falls back to GM storage when running on the Shykai page.
+ * Falls back to GM storage when running on the Shykai page. Client data is static game
+ * reference data (item/action/ability definitions) shared by every character, so a writer
+ * mismatch here is not refused — only staleness is checked.
  * @returns {Object|null}
  */
 function getClientData() {
@@ -58,7 +144,10 @@ function getClientData() {
     if (typeof GM_getValue !== 'undefined') {
         try {
             const raw = GM_getValue('toolasha_init_client_data', null);
-            if (raw) return JSON.parse(raw);
+            if (raw) {
+                checkBridgeStamp('toolasha_init_client_data', 'Client data', { enforceOwner: false });
+                return JSON.parse(raw);
+            }
         } catch {
             /* ignore */
         }
@@ -68,6 +157,8 @@ function getClientData() {
 
 /**
  * Get profile list from IndexedDB (cross-session) with GM storage fallback (cross-domain for Shykai).
+ * The list legitimately mixes profiles captured by whichever character viewed them, so a writer
+ * mismatch is not refused — only staleness is checked.
  * @returns {Promise<Array>}
  */
 async function getProfileList() {
@@ -83,7 +174,10 @@ async function getProfileList() {
     if (typeof GM_getValue !== 'undefined') {
         try {
             const raw = GM_getValue('toolasha_profile_list', null);
-            if (raw) return JSON.parse(raw);
+            if (raw) {
+                checkBridgeStamp('toolasha_profile_list', 'Profile list', { enforceOwner: false });
+                return JSON.parse(raw);
+            }
         } catch {
             /* ignore */
         }
