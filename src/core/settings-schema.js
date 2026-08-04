@@ -1971,7 +1971,7 @@ export const settingsGroups = {
             combatSim_uncapThreads: {
                 id: 'combatSim_uncapThreads',
                 label: 'Combat Simulator: Ignore the thread caps',
-                type: 'boolean',
+                type: 'checkbox',
                 default: false,
                 help:
                     'Max threads is normally clamped to your core count, and an analysis runs at most 6 simulations ' +

@@ -6,6 +6,20 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The shared seed pairs the baseline again — no more phantom DPS from skilling rooms
+
+Yesterday's change gave every batched candidate one worker while the baseline kept splitting its hours across four. The shared seed only cancels sampling noise while both runs draw the same random streams, and the chunking decides the streams — so the baseline and every candidate became independent samples, and every combat-inert candidate wore the same deterministic phantom delta against the baseline. The visible symptom: Laboratory and Observatory each "improving" DPS by an identical +0.06%.
+
+The baseline now runs one worker like the candidates, so a candidate that changes nothing combat-visible is bit-identical to the baseline and its DPS delta is exactly zero. What remains on a skilling room is real: Wisdom moves EXP/hr, and Rare Find moves profit slightly — rare drops sell, and that part is computed analytically, not sampled.
+
+### Six of the twelve "background" seconds were a timer, not work
+
+The new trace showed it plainly: the guild tracker's `save history` took 6013ms while loading the same data took 10ms. `storage.set` is debounced, and its promise resolves only when the 3-second timer fires — so awaiting two saves in series was six seconds of waiting for timers whose entire purpose is to postpone the write. The guild tracker and networth history now queue their saves without awaiting them; the actual writes are milliseconds, and the existing flush-on-unload covers a tab closing before the timer lands. This was also part of the original 13 seconds of blocking startup.
+
+### The thread-cap override renders now
+
+The new "Ignore the thread caps" setting declared itself as a type the settings panel doesn't know (`boolean` rather than `checkbox`) and drew as "Unknown type" instead of a switch.
+
 ### Two features were holding the whole start up for thirteen seconds
 
 Features are initialised one after another and each one is awaited, so anything a feature does inside `initialize()` is time every feature behind it spends waiting. That is right for wiring up listeners. It is wrong for what these two were doing:

@@ -390,11 +390,16 @@ class GuildXPTracker {
             pushXP(this.memberXPHistory[charId], { t, xp: guildChar.guildExperience });
         }
 
-        // Persist
-        const endSave = performanceMonitor.startSpan('bg:guildXPTracker', 'save history');
-        await storage.set(`guildXP_${guildName}`, this.guildXPHistory, STORE_NAME);
+        // Persist — queued, not awaited. storage.set is debounced and its
+        // promise resolves only when the 3-second timer fires, so awaiting two
+        // of them in series is six seconds of waiting for timers whose entire
+        // purpose is to not write yet. The trace read it as a six-second save;
+        // the actual write is milliseconds, and flushAll on unload covers the
+        // tab closing before the timer lands.
+        const endSave = performanceMonitor.startSpan('bg:guildXPTracker', 'queue save');
+        storage.set(`guildXP_${guildName}`, this.guildXPHistory, STORE_NAME);
         if (this.ownGuildID) {
-            await storage.set(`memberXP_${this.ownGuildID}`, this.memberXPHistory, STORE_NAME);
+            storage.set(`memberXP_${this.ownGuildID}`, this.memberXPHistory, STORE_NAME);
         }
         endSave();
     }
