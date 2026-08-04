@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Idle members are clickable
+
+- **Names in the guild Overview's "Idle members" list fill `/profile Name` on click**, same as chat names.
+
 ### Mid-run restock honesty, and the tooltip that would not die
 
 - **The lab planner stops suggesting purchases that cannot help**: mid-run, the shortfall line reads "4 shrouds needed · 0 left this run — restock applies to your NEXT run", priced against inventory and the tier you actually use. Turns out tiers matter: a Basic shroud caps at room level 50 and fails 2%/level above it, so the old cheapest-tier hint could suggest an item that would outright fail on your floor. Beacons and torches differ by tier too (reveal radius, preserve chance) — preferences follow what you hold.
