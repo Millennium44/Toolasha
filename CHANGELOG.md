@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Combat sim results that lead with the answer
+
+- **Headline tiles at the top of the Results tab**: Profit/day, XP/day, Kills/hr (Dungeons/hr + success rate for dungeons), DPS, and Deaths/day — read from the same numbers the detail tables print, with baseline deltas, plus a sub-line of revenue/costs/top-skill XP so the headline is auditable without scrolling.
+- **Clear all baselines** in one click beside Export CSV; per-row delete unchanged.
+- **Guild shrine upgrades take a target level**: type the shrine level you're aiming for and the advisor prices every level between here and there (credits ranked, tokens shown as info), still warning when the guild's building can't support it yet.
+
 ### Clickable names everywhere chat shows one
 
 - **The /profile click trick now covers every name Toolasha renders**: mention-popup sender names, pop-out chat names (including announcements relayed into the pop-out window, which previously had no link at all), and names in the extended chat history buffer (previously looked clickable but did nothing after cloning). One delegated listener and one shared helper replace the per-span wiring.
