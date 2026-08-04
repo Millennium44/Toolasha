@@ -6,6 +6,19 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Fan out a single run, queue a batch — measured, not assumed
+
+The previous entry guessed that a long combat simulation, which already splits its hours across every worker, left no room to run candidates concurrently. That guess was wrong, and a benchmark with real workers and a game-data-sized payload says so plainly. On four workers, eight candidates:
+
+| Candidate length | One at a time, split 4 ways | One worker each, 4 at a time |
+| ---------------- | --------------------------- | ---------------------------- |
+| 100 h            | 3081 ms                     | **924 ms** (3.3× faster)     |
+| 200 h            | 3285 ms                     | **1304 ms** (2.5×)           |
+
+Both simulate the same total hours on the same cores, so it reads like a wash. It is not. Splitting makes every candidate pay the worker startup and the game-data clone **once per chunk** rather than once — 168 ms apiece here — and it cannot start the next candidate until its own slowest chunk lands. Raising the work per candidate narrows the gap without ever closing it: at five seconds of simulation per candidate, queueing was still 1.14× ahead.
+
+So a batch now gives each candidate **one worker** and keeps as many candidates in flight as the budget allows, at any Hours setting. A **lone** run still fans out, because there is no queue to keep the cores busy — one 600-hour simulation measured 1378 ms in a single worker against 648 ms split four ways.
+
 ### Concurrency, with the sharp edges filed off
 
 Reviewing the concurrent fight sims turned up two things worth fixing and one that decides how far this can be taken.

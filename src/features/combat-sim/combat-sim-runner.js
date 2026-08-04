@@ -349,7 +349,7 @@ function mergeSimResults(results) {
  * @param {Function} [onProgress] - Called with (percent: 0-100)
  * @returns {Promise<Object>} Merged SimResult
  */
-export async function runSimulation(params, onProgress, { preempt = true } = {}) {
+export async function runSimulation(params, onProgress, { preempt = true, workers = 0 } = {}) {
     const { gameData, playerDTOs, zoneHrid, difficultyTier, hours, communityBuffs, seed } = params;
 
     const guildCombatBuffs = playerDTOs[0]?.guildCombatBuffs;
@@ -363,8 +363,12 @@ export async function runSimulation(params, onProgress, { preempt = true } = {})
     // guarantee of failure.
     if (preempt) cancelSimulation();
 
-    // Determine worker count
-    const workerCount = plannedWorkerCount(hours);
+    // Determine worker count. A caller running a batch of simulations pins this
+    // to one: splitting each run across the whole budget makes every candidate
+    // pay the worker startup and the game-data clone four times over, and
+    // measured against a queue of one-worker runs it is 1.1× to 3.3× slower —
+    // worst when the runs are short, never better at any length.
+    const workerCount = workers > 0 ? Math.max(1, Math.floor(workers)) : plannedWorkerCount(hours);
 
     // Split hours across workers
     const baseHours = Math.floor(hours / workerCount);

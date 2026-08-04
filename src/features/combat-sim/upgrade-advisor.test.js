@@ -1210,15 +1210,30 @@ describe('how many simulations run at once', () => {
         expect(seen.peak).toBeGreaterThan(1);
     });
 
-    test('one at a time, when each already takes the whole worker budget', async () => {
-        // Four candidates at four workers apiece on a four-worker budget is
-        // sixteen workers fighting over four cores, which is slower than a queue
+    test('several at long hours too, one worker each rather than one split run', async () => {
+        // Splitting a candidate across the workers makes it pay the startup and
+        // the game-data clone once per chunk, and it cannot start the next
+        // candidate until its own slowest chunk lands. Measured on four workers
+        // that is 3.3× slower at 100 hours and never faster at any length.
         plannedWorkerCount.mockReturnValue(4);
         const seen = trackPeak();
 
         await runUpgradeAnalysis(combatSetup(200), null, {});
 
-        expect(seen.peak).toBe(1);
+        expect(seen.peak).toBeGreaterThan(1);
+    });
+
+    test('and each of them is pinned to a single worker', async () => {
+        plannedWorkerCount.mockReturnValue(4);
+        trackPeak();
+
+        await runUpgradeAnalysis(combatSetup(200), null, {});
+
+        const batchCalls = runSimulation.mock.calls.slice(1);
+        expect(batchCalls.length).toBeGreaterThan(0);
+        expect(batchCalls.every((call) => call[2]?.workers === 1)).toBe(true);
+        // The baseline is a lone run, so it keeps the fan-out that suits one
+        expect(runSimulation.mock.calls[0][2]?.workers).toBeUndefined();
     });
 
     test('one simulation failing stops the queue handing out more', async () => {
