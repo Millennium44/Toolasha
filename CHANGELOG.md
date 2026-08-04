@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Arriving from another build of Toolasha asks before anything new runs
+
+Someone switching to this fork for the first time — usually from upstream, whose settings live under the same storage keys — now gets a one-time choice before any feature initialises: **"Turn the new things on"** or **"Keep everything as it was"**. Keeping things as they were forces every fork-added on-by-default switch off and enables "New settings start turned off" for the future; either way, the full what's-new popup follows with a live switch per setting, so the wholesale choice can be refined item by item.
+
+What the fork _added_ is computed without upstream's cooperation: the settings store saves its whole map, so the keys of the saved settings are a fingerprint of whichever script wrote them, and the fork's additions are the schema entries missing from that map. A genuinely fresh install — no saved settings at all — sees no dialog. The choice is awaited before features initialise, because "keep everything as it was" is only true if the new features never run, not even once; closing the dialog without choosing counts as keeping things as they were.
+
 ### A what's-new popup, once per update — with the new settings live in it
 
 After an update, a popup shows what changed and lists every setting that did not exist in the build you had before, **with its real control** — flip a switch there and it is flipped, no trip to the settings panel. The changelog it shows is embedded from this file at build time, so it cannot drift from what actually shipped.
