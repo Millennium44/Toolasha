@@ -4,6 +4,7 @@
  */
 
 import dungeonTrackerStorage from './dungeon-tracker-storage.js';
+import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
 
 class DungeonTrackerUIChart {
     constructor(state, formatTimeFunc) {
@@ -212,7 +213,7 @@ class DungeonTrackerUIChart {
             border: 2px solid #555;
             border-radius: 8px;
             padding: 20px;
-            z-index: 100000;
+            z-index: ${PANEL_Z_CAP};
             display: flex;
             flex-direction: column;
         `;

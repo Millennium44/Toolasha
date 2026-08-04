@@ -39,7 +39,7 @@ class TaskRerollTracker {
 
         // Normalize task action area height so combat (1 compact row) and
         // non-combat (3 stat rows) cards stay the same overall height
-        addStyles('.RandomTask_action__3eC6o { min-height: 72px; }', 'mwi-task-action-min-height');
+        addStyles(`${GAME.TASK_ACTION} { min-height: 72px; }`, 'mwi-task-action-min-height');
 
         this.isInitialized = true;
     }

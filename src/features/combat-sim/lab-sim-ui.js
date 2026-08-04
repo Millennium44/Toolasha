@@ -27,6 +27,8 @@ import {
     runLabyrinthCombinationCheck,
 } from './upgrade-advisor.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
+import { makeDraggable } from '../../utils/floating-panel.js';
+import { restoreGeometry, saveGeometry } from '../../utils/panel-geometry.js';
 import { formatWithSeparator, formatKMB, parseKMB } from '../../utils/formatters.js';
 import { createEtaTracker } from '../../utils/progress-eta.js';
 import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
@@ -35,6 +37,20 @@ import labyrinthClearRate from '../combat/labyrinth-clear-rate.js';
 import loadoutSnapshot from '../combat/loadout-snapshot.js';
 
 const PANEL_ID = 'mwi-lab-sim-panel';
+
+/**
+ * Where this panel was left, in the shared panel-geometry store.
+ *
+ * Deliberately geometry only: the open flag `panel-geometry.js` also carries is
+ * not written here, because a simulator that reopens itself on every page load
+ * is in the way rather than helpful — you open it when you have a question.
+ */
+const GEOMETRY_KEY = 'labSimPanel';
+
+/** Floor sizes the resize grips will not take the panel below. */
+const MIN_PANEL_WIDTH = 400;
+const MIN_PANEL_HEIGHT = 300;
+
 /** Upgrade modes that walk every labyrinth fight rather than one room */
 const ALL_FIGHT_MODES = new Set(['combat_level_all', 'everything_all']);
 const ACCENT = '#4a9eff';
@@ -60,8 +76,7 @@ class LabSimUI {
         this._editor = null;
         this._skillingEditor = null;
         this.isRunning = false;
-        this.isDragging = false;
-        this.dragOffset = { x: 0, y: 0 };
+        this._detachDrag = null;
         this.elapsedTimer = null;
         this._activeTab = 'configure';
         this._maxLevel = null;
@@ -641,6 +656,8 @@ class LabSimUI {
 
         document.body.appendChild(this.panel);
         registerFloatingPanel(this.panel);
+        // Over the top-right default above, once storage answers
+        this._restorePanelGeometry();
 
         // Event listeners
         this.panel.querySelector('#mwi-labsim-close').addEventListener('click', () => {
@@ -2899,6 +2916,8 @@ class LabSimUI {
             clearInterval(this.elapsedTimer);
             this.elapsedTimer = null;
         }
+        this._detachDrag?.();
+        this._detachDrag = null;
         if (this.panel) {
             unregisterFloatingPanel(this.panel);
             this.panel.remove();
@@ -2911,40 +2930,68 @@ class LabSimUI {
         this._labyResults = null;
     }
 
-    /** @private */
+    /**
+     * Let the panel be dragged by its header, remembering where it is dropped.
+     *
+     * The shared helper rather than a local copy: it carries the click-vs-drag
+     * guard and the pointer/touch handling, and — the point of the change — a
+     * drop that actually goes somewhere is written to the geometry store, so the
+     * panel stops snapping back to the top-right corner on every reload.
+     *
+     * @param {HTMLElement} handle - The bar you grab
+     * @private
+     */
     _setupDrag(handle) {
-        // Pointer events so touch drags work; touch-action keeps the browser
-        // from turning the drag into a scroll
-        handle.style.touchAction = 'none';
-        handle.addEventListener('pointerdown', (e) => {
-            if (e.target.tagName === 'BUTTON') return;
-            this.isDragging = true;
-            handle.style.cursor = 'grabbing';
-            const rect = this.panel.getBoundingClientRect();
-            this.dragOffset = { x: e.clientX - rect.left, y: e.clientY - rect.top };
-
-            const onMove = (e2) => {
-                if (!this.isDragging) return;
-                this.panel.style.left = `${e2.clientX - this.dragOffset.x}px`;
-                this.panel.style.top = `${e2.clientY - this.dragOffset.y}px`;
-                this.panel.style.right = 'auto';
-            };
-
-            const onUp = () => {
-                this.isDragging = false;
-                handle.style.cursor = 'grab';
-                document.removeEventListener('pointermove', onMove);
-                document.removeEventListener('pointerup', onUp);
-                document.removeEventListener('pointercancel', onUp);
-            };
-
-            document.addEventListener('pointermove', onMove);
-            document.addEventListener('pointerup', onUp);
-            document.addEventListener('pointercancel', onUp);
+        this._detachDrag?.();
+        this._detachDrag = makeDraggable(this.panel, handle, (position) => {
+            saveGeometry(GEOMETRY_KEY, { left: parseFloat(position.left), top: parseFloat(position.top) });
         });
     }
 
-    /** @private */
+    /**
+     * Remember how big the panel is, and where its left edge ended up.
+     *
+     * The left grip moves the left edge as it resizes, so a saved size without
+     * the position it was reached at would put the panel back somewhere it never
+     * was.
+     *
+     * @private
+     */
+    _persistPanelGeometry() {
+        if (!this.panel) return;
+        const rect = this.panel.getBoundingClientRect();
+        saveGeometry(GEOMETRY_KEY, {
+            width: Math.round(rect.width),
+            height: Math.round(rect.height),
+            left: Math.round(rect.left),
+            top: Math.round(rect.top),
+        });
+    }
+
+    /**
+     * Put the panel back where and how it was left.
+     *
+     * Clamping lives in `panel-geometry.js`, so geometry saved in a larger window
+     * cannot open the panel off-screen or wider than it can be resized back from.
+     *
+     * @private
+     */
+    _restorePanelGeometry() {
+        restoreGeometry(this.panel, GEOMETRY_KEY, { width: MIN_PANEL_WIDTH, height: MIN_PANEL_HEIGHT });
+    }
+
+    /**
+     * The two bottom corner grips.
+     *
+     * Kept bespoke rather than moved to `makeResizable`, which only offers the
+     * bottom-right corner — the left grip, which holds the right edge still while
+     * the left one follows the cursor, is the whole reason a panel docked against
+     * the right of the screen can be widened at all.
+     *
+     * @param {HTMLElement} handle - The grip
+     * @param {'left'|'right'} [corner] - Which corner it sits in
+     * @private
+     */
     _setupResize(handle, corner = 'right') {
         handle.style.touchAction = 'none';
         handle.addEventListener('pointerdown', (e) => {
@@ -2964,8 +3011,8 @@ class LabSimUI {
 
             const onMove = (ev) => {
                 const dx = ev.clientX - startX;
-                const newWidth = Math.max(400, corner === 'left' ? startWidth - dx : startWidth + dx);
-                const newHeight = Math.max(300, startHeight + (ev.clientY - startY));
+                const newWidth = Math.max(MIN_PANEL_WIDTH, corner === 'left' ? startWidth - dx : startWidth + dx);
+                const newHeight = Math.max(MIN_PANEL_HEIGHT, startHeight + (ev.clientY - startY));
                 // Clamped at the minimum the left edge stops moving too, rather
                 // than sliding the panel along while it refuses to shrink
                 if (corner === 'left') this.panel.style.left = `${startLeft + (startWidth - newWidth)}px`;
@@ -2976,6 +3023,7 @@ class LabSimUI {
                 document.removeEventListener('pointermove', onMove);
                 document.removeEventListener('pointerup', onUp);
                 document.removeEventListener('pointercancel', onUp);
+                this._persistPanelGeometry();
             };
             document.addEventListener('pointermove', onMove);
             document.addEventListener('pointerup', onUp);

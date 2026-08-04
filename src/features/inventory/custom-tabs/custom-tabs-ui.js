@@ -23,6 +23,7 @@ function getLoadoutSnapshot() {
     return window.Toolasha?.Combat?.loadoutSnapshot || loadoutSnapshotLocal;
 }
 import { formatKMB } from '../../../utils/formatters.js';
+import { PANEL_Z_CAP } from '../../../utils/panel-z-index.js';
 import {
     loadConfig,
     saveConfig,
@@ -230,7 +231,7 @@ const PANEL_CSS = `
     position: fixed;
     inset: 0;
     background: rgba(0,0,0,0.6);
-    z-index: 9999;
+    z-index: ${PANEL_Z_CAP + 1};
     display: flex;
     align-items: center;
     justify-content: center;
@@ -3061,7 +3062,7 @@ export default class CustomTabsUI {
             top: calc(100% + 4px);
             left: 0;
             width: 100%;
-            z-index: 9999;
+            z-index: ${config.Z_POPUP};
             flex-direction: column;
             background: var(--color-surface, #1e1e2e);
             border: 1px solid rgba(255,255,255,0.15);

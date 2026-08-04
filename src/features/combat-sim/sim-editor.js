@@ -11,6 +11,7 @@ import {
     applyLoadoutSnapshotToDTO,
 } from './combat-sim-adapter.js';
 import loadoutSnapshot from '../combat/loadout-snapshot.js';
+import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
 
 const ACCENT = '#4a9eff';
 const ACCENT_BG = 'rgba(74, 158, 255, 0.12)';
@@ -611,7 +612,7 @@ export class SimEditor {
         const popup = document.createElement('div');
         popup.id = 'mwi-csim-consumable-picker';
         popup.style.cssText =
-            'position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:100000;' +
+            `position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:${PANEL_Z_CAP + 2};` +
             'background:rgba(10,10,20,0.97); border:2px solid rgba(74,158,255,0.5); border-radius:10px;' +
             'width:350px; max-height:400px; display:flex; flex-direction:column;' +
             "font-family:'Segoe UI',sans-serif; color:#e0e0e0; font-size:13px; box-shadow:0 8px 24px rgba(0,0,0,0.6);";
@@ -732,7 +733,7 @@ export class SimEditor {
 
         const backdrop = document.createElement('div');
         backdrop.id = 'mwi-csim-consumable-backdrop';
-        backdrop.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; z-index:99999;';
+        backdrop.style.cssText = `position:fixed; top:0; left:0; right:0; bottom:0; z-index:${PANEL_Z_CAP + 1};`;
         backdrop.addEventListener('click', closePicker);
 
         document.body.appendChild(backdrop);
@@ -782,7 +783,7 @@ export class SimEditor {
         const popup = document.createElement('div');
         popup.id = 'mwi-csim-equipment-picker';
         popup.style.cssText =
-            'position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:100000;' +
+            `position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:${PANEL_Z_CAP + 2};` +
             'background:rgba(10,10,20,0.97); border:2px solid rgba(74,158,255,0.5); border-radius:10px;' +
             'width:350px; max-height:400px; display:flex; flex-direction:column;' +
             "font-family:'Segoe UI',sans-serif; color:#e0e0e0; font-size:13px; box-shadow:0 8px 24px rgba(0,0,0,0.6);";
@@ -874,7 +875,7 @@ export class SimEditor {
 
         const backdrop = document.createElement('div');
         backdrop.id = 'mwi-csim-equipment-backdrop';
-        backdrop.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; z-index:99999;';
+        backdrop.style.cssText = `position:fixed; top:0; left:0; right:0; bottom:0; z-index:${PANEL_Z_CAP + 1};`;
         backdrop.addEventListener('click', closePicker);
 
         document.body.appendChild(backdrop);
@@ -927,7 +928,7 @@ export class SimEditor {
         const popup = document.createElement('div');
         popup.id = 'mwi-csim-ability-picker';
         popup.style.cssText =
-            'position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:100000;' +
+            `position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:${PANEL_Z_CAP + 2};` +
             'background:rgba(10,10,20,0.97); border:2px solid rgba(74,158,255,0.5); border-radius:10px;' +
             'width:350px; max-height:400px; display:flex; flex-direction:column;' +
             "font-family:'Segoe UI',sans-serif; color:#e0e0e0; font-size:13px; box-shadow:0 8px 24px rgba(0,0,0,0.6);";
@@ -1023,7 +1024,7 @@ export class SimEditor {
 
         const backdrop = document.createElement('div');
         backdrop.id = 'mwi-csim-ability-backdrop';
-        backdrop.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; z-index:99999;';
+        backdrop.style.cssText = `position:fixed; top:0; left:0; right:0; bottom:0; z-index:${PANEL_Z_CAP + 1};`;
         backdrop.addEventListener('click', closePicker);
 
         document.body.appendChild(backdrop);
@@ -1160,7 +1161,7 @@ export class SimEditor {
         const popup = document.createElement('div');
         popup.id = 'mwi-csim-trigger-editor';
         popup.style.cssText =
-            'position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:100000;' +
+            `position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:${PANEL_Z_CAP + 2};` +
             'background:rgba(10,10,20,0.97); border:2px solid rgba(74,158,255,0.5); border-radius:10px;' +
             'width:400px; max-height:440px; display:flex; flex-direction:column;' +
             "font-family:'Segoe UI',sans-serif; color:#e0e0e0; font-size:13px; box-shadow:0 8px 24px rgba(0,0,0,0.6);";
@@ -1311,7 +1312,7 @@ export class SimEditor {
 
         const backdrop = document.createElement('div');
         backdrop.id = 'mwi-csim-trigger-backdrop';
-        backdrop.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; z-index:99999;';
+        backdrop.style.cssText = `position:fixed; top:0; left:0; right:0; bottom:0; z-index:${PANEL_Z_CAP + 1};`;
         backdrop.addEventListener('click', closeEditor);
 
         document.body.appendChild(backdrop);

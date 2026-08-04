@@ -628,7 +628,7 @@ class TaskProfitDisplay {
 
         // Merge duplicate task Go buttons: sum goalCount - currentCount across all
         // in-progress tasks with the same actionHrid/monsterHrid and overwrite the input
-        const goBtn = taskNode.querySelector('button.Button_success__6d6kU');
+        const goBtn = taskNode.querySelector(GAME.TASK_GO_BUTTON);
         if (goBtn) {
             // Skip if already attached
             if (goBtn.dataset.mwiGoMerge) return;
@@ -2476,7 +2476,7 @@ class TaskProfitDisplay {
     _getQuestFromFiber(taskCard, rootFiber) {
         if (!rootFiber) return null;
 
-        const goBtn = taskCard.querySelector('button.Button_success__6d6kU');
+        const goBtn = taskCard.querySelector(GAME.TASK_GO_BUTTON);
         if (!goBtn) return null;
 
         function walk(fiber, target) {

@@ -11,6 +11,7 @@ import alchemyProfit from '../alchemy/alchemy-profit.js';
 import { findOptimalTeas, getTeaBuffDescription, getRelevantTeas } from '../../utils/tea-optimizer.js';
 import { formatKMB } from '../../utils/formatters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
+import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
 
 /**
  * Get the currently selected location tab name
@@ -274,7 +275,7 @@ class TeaRecommendation {
         popup.className = 'mwi-tea-recommendation-popup';
         popup.style.cssText = `
             position: absolute;
-            z-index: 10000;
+            z-index: ${PANEL_Z_CAP};
             background: #1a1a1a;
             border: 1px solid ${config.COLOR_BORDER};
             border-radius: 8px;
@@ -896,7 +897,7 @@ class TeaRecommendation {
         popup.className = 'mwi-tea-recommendation-popup';
         popup.style.cssText = `
             position: absolute;
-            z-index: 10000;
+            z-index: ${PANEL_Z_CAP};
             background: #1a1a1a;
             border: 1px solid ${config.COLOR_BORDER};
             border-radius: 8px;
@@ -1057,7 +1058,7 @@ class TeaRecommendation {
         popup.className = 'mwi-tea-recommendation-popup';
         popup.style.cssText = `
             position: absolute;
-            z-index: 10000;
+            z-index: ${PANEL_Z_CAP};
             background: #1a1a1a;
             border: 1px solid ${config.COLOR_WARNING};
             border-radius: 8px;

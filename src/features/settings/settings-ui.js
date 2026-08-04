@@ -13,6 +13,7 @@ import settingsCSS from './settings-styles.css?raw';
 import marketAPI from '../../api/marketplace.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
+import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
 import scrollSimulatorUI from '../combat/scroll-simulator-ui.js';
 import ironCowMode, { IRON_COW_SETTINGS } from './iron-cow-mode.js';
 import { getDetectedGearSettings, getEnhancingParams } from '../../utils/enhancement-config.js';
@@ -1544,7 +1545,7 @@ class SettingsUI {
 
         // Build a small modal with checkboxes for each character
         const overlay = document.createElement('div');
-        overlay.style.cssText = `position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:99999;display:flex;align-items:center;justify-content:center;`;
+        overlay.style.cssText = `position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:${PANEL_Z_CAP + 1};display:flex;align-items:center;justify-content:center;`;
 
         const dialog = document.createElement('div');
         dialog.style.cssText = `background:#1a1a2e;border:1px solid rgba(74,158,255,0.5);border-radius:10px;padding:20px;min-width:280px;font-family:'Segoe UI',sans-serif;color:#e0e0e0;`;
@@ -1808,7 +1809,7 @@ class SettingsUI {
             top: 0; left: 0;
             width: 100%; height: 100%;
             background: rgba(0,0,0,0.8);
-            z-index: 100000;
+            z-index: ${PANEL_Z_CAP + 1};
             display: flex;
             align-items: center;
             justify-content: center;
@@ -1979,7 +1980,7 @@ class SettingsUI {
             width: 100%;
             height: 100%;
             background: rgba(0, 0, 0, 0.8);
-            z-index: 100000;
+            z-index: ${PANEL_Z_CAP + 1};
             display: flex;
             align-items: center;
             justify-content: center;
@@ -2276,7 +2277,7 @@ class SettingsUI {
             width: 100%;
             height: 100%;
             background: rgba(0, 0, 0, 0.8);
-            z-index: 100000;
+            z-index: ${PANEL_Z_CAP + 1};
             display: flex;
             align-items: center;
             justify-content: center;

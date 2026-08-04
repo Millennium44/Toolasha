@@ -8,6 +8,8 @@ import dataManager from '../../core/data-manager.js';
 import marketAPI from '../../api/marketplace.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
+import { makeDraggable } from '../../utils/floating-panel.js';
+import { restoreGeometry, saveGeometry } from '../../utils/panel-geometry.js';
 import { formatWithSeparator, formatKMB, parseKMB } from '../../utils/formatters.js';
 import { createEtaTracker } from '../../utils/progress-eta.js';
 import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
@@ -47,7 +49,15 @@ const ACCENT_BTN_BORDER = 'rgba(74, 158, 255, 0.4)';
 /** Storage key for the remembered Upgrade-tab candidate sets */
 const UPGRADE_MODES_KEY = 'combatSimUpgradeModes';
 const UPGRADE_COLUMNS_KEY = 'combatSimUpgradeColumns';
-const PANEL_SIZE_KEY = 'combatSimPanelSize';
+
+/**
+ * Where this panel was left, in the shared panel-geometry store.
+ *
+ * Deliberately geometry only: the open flag `panel-geometry.js` also carries is
+ * not written here, because a simulator that reopens itself on every page load
+ * is in the way rather than helpful — you open it when you have a question.
+ */
+const GEOMETRY_KEY = 'combatSimPanel';
 
 /** Floor sizes the resize grips will not take the panel below. */
 const MIN_PANEL_WIDTH = 400;
@@ -134,6 +144,26 @@ export function planUpgradeBudget(rows, budget, { baseline = {}, metricKey = 'pr
  */
 export function columnMenuLabel(column) {
     return column?.sub ? `${column.label} ${column.sub}` : column?.label || '';
+}
+
+/**
+ * A name for a result row that survives the table being rebuilt.
+ *
+ * The rows carry their index in the *sorted* array, which is the one thing about
+ * them that changes every time a header is clicked. Keying an open detail row by
+ * that index reopened whatever had since landed in that position; keying it by
+ * the candidate it describes reopens the same upgrade.
+ *
+ * Escaped for an attribute, because these come from item names and a stray quote
+ * would end the attribute early and take the rest of the row with it.
+ *
+ * @param {Object} result - A row from the upgrade analysis
+ * @returns {string} A key stable across sorts, column changes and re-scores
+ */
+export function upgradeRowKey(result) {
+    const c = result?.candidate || {};
+    const parts = [c.type || 'equipment', c.slot ?? '', c.upgradeHrid ?? '', c.upgradeLevel ?? '', c.description ?? ''];
+    return parts.join('|').replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
 }
 
 /**
@@ -279,8 +309,7 @@ class CombatSimUI {
         this._editor = null;
         this.isRunning = false;
         this._upgradeRunning = false;
-        this.isDragging = false;
-        this.dragOffset = { x: 0, y: 0 };
+        this._detachDrag = null;
         this.elapsedTimer = null;
         this._activePlayerTab = 'player1';
         this._playerInfo = [];
@@ -831,7 +860,7 @@ class CombatSimUI {
         });
         this._restoreUpgradeModes();
         this._loadUpgradeColumnPrefs();
-        this._restorePanelSize();
+        this._restorePanelGeometry();
         this.panel.querySelector('#mwi-csim-ability-targets-toggle').addEventListener('click', () => {
             const grid = this.panel.querySelector('#mwi-csim-ability-targets');
             const opening = grid.style.display === 'none';
@@ -3350,38 +3379,19 @@ class CombatSimUI {
     }
 
     /**
-     * Set up drag handling on the header element.
-     * @param {HTMLElement} header
+     * Let the panel be dragged by its header, remembering where it is dropped.
+     *
+     * The shared helper rather than a local copy: it carries the click-vs-drag
+     * guard (a press on the header that never moved is not a move worth saving)
+     * and the pointer/touch handling the bespoke version here had drifted from.
+     *
+     * @param {HTMLElement} header - The bar you grab
      * @private
      */
     _setupDrag(header) {
-        // Pointer events so touch drags work; touch-action keeps the browser
-        // from turning the drag into a scroll
-        header.style.touchAction = 'none';
-        header.addEventListener('pointerdown', (e) => {
-            if (e.target.id === 'mwi-csim-close') return;
-            this.isDragging = true;
-            header.style.cursor = 'grabbing';
-            const rect = this.panel.getBoundingClientRect();
-            this.dragOffset = { x: e.clientX - rect.left, y: e.clientY - rect.top };
-            bringPanelToFront(this.panel);
-
-            const onMove = (ev) => {
-                if (!this.isDragging) return;
-                this.panel.style.left = `${ev.clientX - this.dragOffset.x}px`;
-                this.panel.style.top = `${ev.clientY - this.dragOffset.y}px`;
-                this.panel.style.right = 'auto';
-            };
-            const onUp = () => {
-                this.isDragging = false;
-                header.style.cursor = 'grab';
-                document.removeEventListener('pointermove', onMove);
-                document.removeEventListener('pointerup', onUp);
-                document.removeEventListener('pointercancel', onUp);
-            };
-            document.addEventListener('pointermove', onMove);
-            document.addEventListener('pointerup', onUp);
-            document.addEventListener('pointercancel', onUp);
+        this._detachDrag?.();
+        this._detachDrag = makeDraggable(this.panel, header, (position) => {
+            saveGeometry(GEOMETRY_KEY, { left: parseFloat(position.left), top: parseFloat(position.top) });
         });
     }
 
@@ -3428,7 +3438,7 @@ class CombatSimUI {
                 document.removeEventListener('pointerup', onUp);
                 document.removeEventListener('pointercancel', onUp);
                 document.body.style.userSelect = priorSelect;
-                this._persistPanelSize();
+                this._persistPanelGeometry();
             };
             document.addEventListener('pointermove', onMove);
             document.addEventListener('pointerup', onUp);
@@ -3437,37 +3447,36 @@ class CombatSimUI {
     }
 
     /**
-     * Remember the panel's size so it does not need resizing every session.
+     * Remember the panel's size, and its left edge with it.
+     *
+     * The west and south-west grips move the left edge as they resize, so saving
+     * the size alone would put the panel back at a width it never had at that
+     * position — it would appear to jump sideways on the next open.
+     *
      * @private
      */
-    async _persistPanelSize() {
-        try {
-            await storage.set(
-                PANEL_SIZE_KEY,
-                { width: this.panel.offsetWidth, height: this.panel.offsetHeight },
-                'settings'
-            );
-        } catch (error) {
-            console.error('[CombatSimUI] Failed to save panel size:', error);
-        }
+    _persistPanelGeometry() {
+        if (!this.panel) return;
+        const rect = this.panel.getBoundingClientRect();
+        saveGeometry(GEOMETRY_KEY, {
+            width: Math.round(rect.width),
+            height: Math.round(rect.height),
+            left: Math.round(rect.left),
+            top: Math.round(rect.top),
+        });
     }
 
     /**
-     * Restore a remembered panel size, clamped to the current viewport so a size
-     * saved on a larger monitor cannot open the panel off-screen.
+     * Put the panel back where and how it was left.
+     *
+     * Clamping lives in `panel-geometry.js`, so a size or position saved on a
+     * larger monitor cannot open the panel somewhere it can neither be reached
+     * nor resized back.
+     *
      * @private
      */
-    async _restorePanelSize() {
-        try {
-            const saved = await storage.get(PANEL_SIZE_KEY, 'settings', null);
-            if (!saved || !this.panel) return;
-            const width = Number(saved.width);
-            const height = Number(saved.height);
-            if (width > 0) this.panel.style.width = `${Math.min(width, window.innerWidth * 0.95)}px`;
-            if (height > 0) this.panel.style.height = `${Math.min(height, window.innerHeight * 0.95)}px`;
-        } catch (error) {
-            console.error('[CombatSimUI] Failed to restore panel size:', error);
-        }
+    _restorePanelGeometry() {
+        restoreGeometry(this.panel, GEOMETRY_KEY, { width: MIN_PANEL_WIDTH, height: MIN_PANEL_HEIGHT });
     }
 
     /**
@@ -3513,6 +3522,8 @@ class CombatSimUI {
             clearInterval(this.elapsedTimer);
             this.elapsedTimer = null;
         }
+        this._detachDrag?.();
+        this._detachDrag = null;
         if (this.panel) {
             unregisterFloatingPanel(this.panel);
             this.panel.remove();
@@ -4322,8 +4333,9 @@ class CombatSimUI {
 
         sorted.forEach((r, i) => {
             const rowColor = r.deltas.dps > 0 || r.deltas.profit > 0 ? '#e0e0e0' : '#888';
+            const rowKey = upgradeRowKey(r);
 
-            html += `<tr style="cursor:pointer; color:${rowColor};" data-upgrade-row="${i}">`;
+            html += `<tr style="cursor:pointer; color:${rowColor};" data-upgrade-row="${i}" data-row-key="${rowKey}">`;
             for (const c of columns) {
                 const value = c.value(r);
                 const isBest = c.highlight && Number.isFinite(value) && value === best.get(c.key) && rows.length > 1;
@@ -4332,7 +4344,7 @@ class CombatSimUI {
                 html += `<td style="${style}"${title}>${c.render(r, value)}</td>`;
             }
             html += `</tr>
-            <tr data-upgrade-detail="${i}" style="display:none;">
+            <tr data-upgrade-detail="${i}" data-row-key="${rowKey}" style="display:none;">
                 <td colspan="${columns.length}" style="padding:6px 12px; background:#0d0d1a; border-bottom:1px solid #222;">
                     ${this._renderUpgradeDetailCells(r, baseline)}
                 </td>
@@ -4706,7 +4718,7 @@ class CombatSimUI {
                 }
             }
 
-            html += `<tr style="cursor:pointer; color:${rowColor};" data-level-row="${i}">
+            html += `<tr style="cursor:pointer; color:${rowColor};" data-level-row="${i}" data-row-key="${upgradeRowKey(r)}">
                 <td style="${tdStyle}">${r.candidate.description}</td>
                 <td style="${tdStyle}" title="${timeTitle}">${fmtLevelTime(r.levelTimeHours)}</td>
                 ${mainTimeCell}
@@ -4714,7 +4726,7 @@ class CombatSimUI {
                 <td style="${tdStyle} ${deltaStyle(xpDelta, bestXpDelta)}">${fmtCell(xpDelta, r.deltas.xp)}</td>
                 <td style="${tdStyle} ${deltaStyle(profitDelta, bestProfitDelta)}">${fmtCell(profitDelta, r.deltas.profit)}</td>
             </tr>
-            <tr data-level-detail="${i}" style="display:none;">
+            <tr data-level-detail="${i}" data-row-key="${upgradeRowKey(r)}" style="display:none;">
                 <td colspan="${detailColspan}" style="padding:6px 12px; background:#0a0a14; border-bottom:1px solid #222;">
                     ${this._renderUpgradeDetailCells(r, baseline)}
                 </td>
@@ -4824,14 +4836,40 @@ class CombatSimUI {
     }
 
     /**
+     * Which detail rows are open, by candidate rather than by position.
+     * @param {HTMLElement} container - Upgrade results container
+     * @returns {Set<string>} Row keys whose detail row is showing
+     * @private
+     */
+    _openUpgradeDetails(container) {
+        const open = new Set();
+        container.querySelectorAll('[data-upgrade-detail], [data-level-detail]').forEach((detail) => {
+            const key = detail.getAttribute('data-row-key');
+            if (key && detail.style.display !== 'none') open.add(key);
+        });
+        return open;
+    }
+
+    /**
      * Render upgrade analysis results: the food card, the gold-cost table, and
      * combat levels in their own box.
+     *
+     * Every sort click, column toggle and re-score comes back through here and
+     * rebuilds the container's HTML wholesale, which by itself throws away two
+     * things the table was holding: the detail rows you had opened, and where you
+     * had scrolled to. Both are read off the old DOM first and put back after —
+     * the expansions by candidate key, since their row numbers are exactly what
+     * a sort changes.
+     *
      * @param {Object} results - { baseline, results: [{candidate, cost, metrics, deltas, goldPer}], food }
      * @private
      */
     _renderUpgradeResults(results) {
         const container = this.panel.querySelector('#mwi-csim-upgrade-results');
         if (!container) return;
+
+        const openDetails = this._openUpgradeDetails(container);
+        const priorScroll = container.scrollTop;
 
         const foodHtml = results.food ? this._renderFoodRecommendation(results.food) : '';
 
@@ -4854,6 +4892,16 @@ class CombatSimUI {
         if (goldRows.length) html += this._renderUpgradeGoldTable(goldRows, results.baseline);
         if (levelRows.length) html += this._renderUpgradeLevelTable(levelRows, results.baseline);
         container.innerHTML = html;
+
+        // Reopen what was open. Walked rather than selected by attribute, because
+        // these keys carry item names — a quote in one would end the selector
+        // early. A candidate that has since dropped out of the results simply has
+        // no row to reopen, which is the right outcome.
+        if (openDetails.size) {
+            container.querySelectorAll('[data-upgrade-detail], [data-level-detail]').forEach((detail) => {
+                if (openDetails.has(detail.getAttribute('data-row-key'))) detail.style.display = 'table-row';
+            });
+        }
 
         // Row click expands the metric detail; the two tables keep separate
         // namespaces so a row in one never toggles a row in the other
@@ -4952,6 +5000,11 @@ class CombatSimUI {
                 };
             }),
         }));
+
+        // Last, after the export bar has been inserted and the reopened details
+        // have taken their height back — restoring earlier would clamp against a
+        // shorter table and land you somewhere above where you were
+        container.scrollTop = priorScroll;
     }
 
     /**

@@ -13,6 +13,7 @@ import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import storage from '../../core/storage.js';
 import webSocketHook from '../../core/websocket.js';
+import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
 
 const STORAGE_KEY_PREFIX = 'taskProtectedHrids';
 
@@ -538,7 +539,7 @@ class TaskRerollProtection {
             top: 50%;
             left: 50%;
             transform: translate(-50%, -50%);
-            z-index: 99999;
+            z-index: ${PANEL_Z_CAP + 2};
             background: rgba(10, 10, 20, 0.97);
             border: 2px solid rgba(74, 158, 255, 0.5);
             border-radius: 10px;
@@ -762,7 +763,7 @@ class TaskRerollProtection {
 
         // Click outside to close
         const backdrop = document.createElement('div');
-        backdrop.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; z-index:99998;';
+        backdrop.style.cssText = `position:fixed; top:0; left:0; right:0; bottom:0; z-index:${PANEL_Z_CAP + 1};`;
         backdrop.addEventListener('click', () => {
             popup.remove();
             backdrop.remove();

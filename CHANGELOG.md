@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Panels remember where you put them, and stacking becomes predictable
+
+- **Both simulator panels persist their geometry.** The Lab Simulator forgot its position and size every reload (reposition it every session); the Combat Simulator remembered size but snapped back to the corner. Both now use the shared geometry store, and both drags run through the shared utility (touch support and the click-isn't-a-drag guard included). Deliberately not persisted: open state — a sim panel should not reopen itself on reload.
+- **Sorting the upgrade table no longer wipes your place.** Open detail rows and scroll position survive header sorts, column toggles, and score changes — the comparison you were building stays built.
+- **Every overlay joins the z-index tiers.** Twenty-odd hardcoded 10000–100002 values across settings dialogs, the sim editors, the networth chart stack, tea popups, task dialogs, and custom-tab menus now derive from the documented panel cap — so what covers what follows the rules, and nothing of ours paints over a game modal it shouldn't.
+
 ### The product-review batch, wave one
 
 - **Back Up Everything / Restore Backup** (settings panel): one versioned JSON covering every data store — dungeon runs, networth history, loot logs, trade history, all of it — not just settings. Restore confirms what it is about to overwrite, restores store-by-store, and asks for a reload. Months of tracked history stop being one cleared browser away from gone.

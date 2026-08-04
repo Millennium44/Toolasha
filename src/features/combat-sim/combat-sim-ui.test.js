@@ -48,6 +48,12 @@ vi.mock('../../utils/panel-z-index.js', () => ({
     bringPanelToFront: () => {},
 }));
 
+// Geometry lives in IndexedDB and is never what these tests are about
+vi.mock('../../utils/panel-geometry.js', () => ({
+    restoreGeometry: async () => {},
+    saveGeometry: async () => {},
+}));
+
 vi.mock('./combat-sim-adapter.js', () => ({
     buildGameDataPayload: () => ({ itemDetailMap: {} }),
     buildAllPlayerDTOs: async () => ({ players: [{ hrid: 'player1', equipment: {} }] }),
@@ -120,7 +126,13 @@ vi.mock('./upgrade-advisor.js', async (importOriginal) => {
     };
 });
 
-const { default: ui, planUpgradeBudget, columnMenuLabel, UPGRADE_PLAN_METRICS } = await import('./combat-sim-ui.js');
+const {
+    default: ui,
+    planUpgradeBudget,
+    columnMenuLabel,
+    upgradeRowKey,
+    UPGRADE_PLAN_METRICS,
+} = await import('./combat-sim-ui.js');
 
 /** A result row shaped like the upgrade advisor's output. */
 function row(description, { slot = '/equipment_types/body', cost = 100, profitGain = 0, dps = 100, type } = {}) {
@@ -328,6 +340,86 @@ describe('the panel', () => {
 
         const container = ui.panel.querySelector('#mwi-csim-upgrade-results');
         expect(container.querySelectorAll('[data-csv-export]')).toHaveLength(1);
+    });
+
+    test('an open detail row stays open when a header re-sorts the table', () => {
+        const rows = [
+            row('Cheap ring', { slot: '/equipment_types/ring', cost: 100, profitGain: 50 }),
+            row('Pricey neck', { slot: '/equipment_types/neck', cost: 1000, profitGain: 60 }),
+        ];
+        ui._renderUpgradeResults({ baseline: BASELINE, results: rows, food: null });
+
+        const container = ui.panel.querySelector('#mwi-csim-upgrade-results');
+        const named = (name) =>
+            [...container.querySelectorAll('[data-upgrade-row]')].find((tr) => tr.textContent.includes(name));
+        const detailFor = (name) => {
+            const key = named(name).getAttribute('data-row-key');
+            return [...container.querySelectorAll('[data-upgrade-detail]')].find(
+                (tr) => tr.getAttribute('data-row-key') === key
+            );
+        };
+
+        named('Cheap ring').click();
+        expect(detailFor('Cheap ring').style.display).toBe('table-row');
+        const indexBefore = named('Cheap ring').getAttribute('data-upgrade-row');
+
+        // Sort by name, then flip it, so the ring genuinely changes position —
+        // an index-keyed expansion would follow the position, not the candidate
+        const header = container.querySelector('[data-sort-key="upgrade"]');
+        header.click();
+        ui.panel.querySelector('#mwi-csim-upgrade-results').querySelector('[data-sort-key="upgrade"]').click();
+
+        expect(named('Cheap ring').getAttribute('data-upgrade-row')).not.toBe(indexBefore);
+        expect(detailFor('Cheap ring').style.display).toBe('table-row');
+        expect(detailFor('Pricey neck').style.display).toBe('none');
+    });
+
+    test('a candidate key survives a sort, and does not collide between candidates', () => {
+        const ring = row('Cheap ring', { slot: '/equipment_types/ring' });
+        const neck = row('Pricey neck', { slot: '/equipment_types/neck' });
+
+        expect(upgradeRowKey(ring)).toBe(upgradeRowKey({ ...ring, cost: 999 }));
+        expect(upgradeRowKey(ring)).not.toBe(upgradeRowKey(neck));
+    });
+
+    test('a re-render puts the scroll position back rather than jumping to the top', () => {
+        const rows = [
+            row('Cheap ring', { slot: '/equipment_types/ring', cost: 100, profitGain: 50 }),
+            row('Pricey neck', { slot: '/equipment_types/neck', cost: 1000, profitGain: 60 }),
+        ];
+        ui._renderUpgradeResults({ baseline: BASELINE, results: rows, food: null });
+
+        const container = ui.panel.querySelector('#mwi-csim-upgrade-results');
+
+        // happy-dom keeps scrollTop across an innerHTML swap; a browser does not,
+        // and without the browser's behaviour the assertion below would pass
+        // whether or not anything restored it. So zero it the way a browser does.
+        let scroll = 0;
+        Object.defineProperty(container, 'scrollTop', {
+            configurable: true,
+            get: () => scroll,
+            set: (value) => {
+                scroll = value;
+            },
+        });
+        let proto = Object.getPrototypeOf(container);
+        while (proto && !Object.getOwnPropertyDescriptor(proto, 'innerHTML')) proto = Object.getPrototypeOf(proto);
+        const inner = Object.getOwnPropertyDescriptor(proto, 'innerHTML');
+        Object.defineProperty(container, 'innerHTML', {
+            configurable: true,
+            get() {
+                return inner.get.call(this);
+            },
+            set(value) {
+                inner.set.call(this, value);
+                scroll = 0;
+            },
+        });
+
+        container.scrollTop = 240;
+        container.querySelector('[data-sort-key="upgrade"]').click();
+
+        expect(container.scrollTop).toBe(240);
     });
 
     test('the seek table exports the zone and tier as their own columns', () => {

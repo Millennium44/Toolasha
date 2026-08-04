@@ -13,6 +13,7 @@ import { formatKMB, formatWithSeparator, parseKMB } from '../../utils/formatters
 import { setReactInputValue } from '../../utils/react-input.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { getActionHridFromName } from '../../utils/game-lookups.js';
+import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
 
 const PRODUCTION_TYPES = [
     '/action_types/brewing',
@@ -126,7 +127,7 @@ function showBreakdownModal(budget, result) {
     overlay.style.cssText = `
         position: fixed; inset: 0;
         background: rgba(0,0,0,0.75);
-        z-index: 99999;
+        z-index: ${PANEL_Z_CAP + 1};
         display: flex; align-items: center; justify-content: center;
     `;
 
