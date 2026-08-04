@@ -57,6 +57,8 @@ import {
     removeMaterialTabs,
     visibleTabsContainer,
     navigateToMarketplace,
+    ensureClearAllTabsControl,
+    setupMarketplaceCleanupObserver,
 } from '../../utils/marketplace-tabs.js';
 import { restoreGeometry, saveGeometry, saveOpenState, reopenIfLeftOpen } from '../../utils/panel-geometry.js';
 import { formatWithSeparator, formatKMB, parseKMB } from '../../utils/formatters.js';
@@ -179,6 +181,28 @@ function planPurchases(picks) {
 }
 
 /**
+ * Tabs `openPlanInMarketplace` has pinned to the marketplace, so the cleanup
+ * observer below has something to watch. Cleared (not reassigned) whenever the
+ * tabs themselves are cleared, so the observer's reference to this array stays
+ * valid.
+ */
+const marketPlanTabs = [];
+
+/** Whether `setupMarketplaceCleanupObserver` has been started for `marketPlanTabs`. */
+let marketPlanCleanupStarted = false;
+
+/**
+ * Drop every tab this panel pinned, and the bookkeeping array alongside them —
+ * called both when the marketplace is closed out from under them and when the
+ * user clears them by hand, so neither path leaves the other thinking tabs are
+ * still live.
+ */
+function clearMarketPlanTabs() {
+    removeMaterialTabs();
+    marketPlanTabs.length = 0;
+}
+
+/**
  * Wait for the marketplace's own tab bar to exist.
  *
  * Polled rather than observed: `handleGoToMarketplace` renders asynchronously
@@ -221,18 +245,43 @@ async function openPlanInMarketplace(picks) {
     if (!reference) return 0;
 
     // Ours are the only custom tabs the market should be carrying
-    removeMaterialTabs();
+    clearMarketPlanTabs();
     container.style.flexWrap = 'wrap';
 
     for (const item of items) {
-        const tab = createMaterialTab(
+        const material = {
             // One of each is what a plan buys, so "missing 1" is literally the
             // count this list is asking you to acquire
-            { itemHrid: item.itemHrid, itemName: item.name, missing: 1, required: 1, isTradeable: true },
+            itemHrid: item.itemHrid,
+            itemName: item.name,
+            missing: 1,
+            required: 1,
+            isTradeable: true,
+        };
+        const tab = createMaterialTab(
+            material,
             reference,
-            () => navigateToMarketplace(item.itemHrid, item.enhancementLevel)
+            () => navigateToMarketplace(item.itemHrid, item.enhancementLevel),
+            {
+                onDismiss: () => {
+                    const idx = marketPlanTabs.indexOf(tab);
+                    if (idx !== -1) marketPlanTabs.splice(idx, 1);
+                },
+            }
         );
         container.appendChild(tab);
+        marketPlanTabs.push(tab);
+    }
+
+    ensureClearAllTabsControl(container, reference, () => {
+        marketPlanTabs.length = 0;
+    });
+
+    // Started once, lazily — it only acts once `marketPlanTabs` is non-empty, so
+    // there is nothing to watch before the first plan is ever opened.
+    if (!marketPlanCleanupStarted) {
+        marketPlanCleanupStarted = true;
+        setupMarketplaceCleanupObserver(clearMarketPlanTabs, marketPlanTabs);
     }
 
     return items.length;

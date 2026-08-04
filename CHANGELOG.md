@@ -6,9 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
-### Doubled profit line fixed
+### Doubled profit line fixed, stuck marketplace tabs cleared
 
 - **The action bar could show two "Profit: …/hr · remaining …" lines** with different remaining values: a game re-render orphaned the old profit node while only the time node got cleaned up, leaving a stale copy behind. Injection is now idempotent — every stale widget is swept before a fresh one is placed. The remaining basis itself was always correct (material-and-gold-limited actions, not raw inventory).
+- **Pinned missing-material marketplace tabs can finally be dismissed**: every pinned tab (lab-sim budget picks, house costs, crafting plans, shopping lists) gets a hover ✕, an "✕ All" control sits at the end of the strip, and the lab-sim budget tabs — the ones that got stuck — now also clear themselves when the marketplace closes, which every sibling feature already did.
 
 ### Market and inventory state stops leaking between characters
 
