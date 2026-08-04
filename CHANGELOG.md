@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The Combat Simulator panel catches up to the Lab Simulator
+
+- **Stop no longer throws away finished work.** Cancelling an upgrade analysis now renders every candidate that completed before you pressed Stop ("Analysis cancelled — showing N completed candidates"), matching what the Lab Simulator always did. The run you cancel is the one that took long enough to cancel — it is exactly the one whose partials you want.
+- **The progress bar and Stop button survive tab switches.** They lived inside the Results tab, so switching to Configure mid-run hid the only cancel control while the status line claimed "Select a zone and click Simulate." The progress area now sits outside the tabs, and the status line no longer overwrites itself while a sim or analysis is running.
+- **The ⚙ Columns menu is legible.** Five checkboxes all read "Gold/0.01%"; they now carry their metric (DPS / EXP / Profit / EPH / DPH) like the table header does.
+- **CSV export everywhere.** All Zones, Seek, the session comparison, and the Upgrade results each get the same Save-CSV control the Lab Simulator's tables have; exports carry raw numbers.
+- **A budget planner on the Upgrade tab.** Enter a gold budget (k/m/b shorthand works), pick the axis to optimize (profit/hr, DPS, or XP/hr), and get the best set of purchases within it — one per slot, superseded steps handled — using the same planning engine as the labyrinth budget planner.
+
 ### Sim accuracy: house rooms, guild buffs, and the Experience token
 
 Fixes from the combat-sim implementation review, all affecting numbers people act on:
