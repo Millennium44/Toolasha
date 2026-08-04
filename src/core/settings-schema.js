@@ -739,6 +739,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'Shows the optimal enhancement path cost breakdown when hovering over enhanced (+1 to +20) items',
             },
+            itemTooltip_enhancementProRates: {
+                id: 'itemTooltip_enhancementProRates',
+                label: 'Quote enhancement predictions at pro rates instead of your stats',
+                type: 'checkbox',
+                default: false,
+                help: 'Prices the enhancement path and milestones as a top-end enhancer (level 140, Observatory 8, ultra + blessed tea, +13 Celestial enhancer, +10 gear) instead of your own gear and level. Also toggled from the "Yours / Pro" chip on the tooltip section header, or by pressing P while the tooltip is open.',
+            },
             itemTooltip_enhancingHourlyRate: {
                 id: 'itemTooltip_enhancingHourlyRate',
                 label: 'Target hourly rate for enhancing (e.g. 50m)',

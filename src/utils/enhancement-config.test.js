@@ -45,8 +45,13 @@ vi.mock('./action-context.js', () => ({
     resolveActionContext: () => ({ equipment: character.equipment, drinks: character.drinks }),
 }));
 
-const { getEnhancingParams, getAutoDetectedParams, describeParamsSource, resetDetectedSettingsCache } =
-    await import('./enhancement-config.js');
+const {
+    getEnhancingParams,
+    getAutoDetectedParams,
+    getProRatesParams,
+    describeParamsSource,
+    resetDetectedSettingsCache,
+} = await import('./enhancement-config.js');
 
 beforeEach(() => {
     // Detection is memoised for a second in production; each test edits the character
@@ -187,5 +192,58 @@ describe('detected stats reaching a prediction surface', () => {
         // The shipped level 140 against a level 42 item would have been +4.9% of advantage
         // on top of a level 8 Observatory — an entirely different run
         expect(run.successMultiplier).toBeLessThan(1.05);
+    });
+});
+
+describe('getProRatesParams', () => {
+    beforeEach(() => {
+        character.settings = { enhanceSim_autoDetect: false, ...SHIPPED };
+    });
+
+    test('quotes the shipped professional kit, not this character', () => {
+        const pro = getProRatesParams();
+
+        // 140 plus the ultra tea's +8, which is the kit the settings panel ships with
+        expect(pro.enhancingLevel).toBe(148);
+        expect(pro.houseLevel).toBe(8);
+        expect(pro.teas.ultraEnhancing).toBe(true);
+        expect(pro.teas.blessed).toBe(true);
+    });
+
+    test('is unmoved by what the player saved or detection found', () => {
+        const before = getProRatesParams();
+
+        character.settings.enhanceSim_enhancingLevel = 60;
+        character.settings.enhanceSim_tea = 'none';
+        character.skills = [{ skillHrid: '/skills/enhancing', level: 7 }];
+        character.observatoryLevel = 0;
+        resetDetectedSettingsCache();
+
+        const after = getProRatesParams();
+
+        expect(after.enhancingLevel).toBe(before.enhancingLevel);
+        expect(after.houseLevel).toBe(before.houseLevel);
+        expect(after.teas).toEqual(before.teas);
+
+        // Put the character back for anything that runs after this
+        character.skills = [{ skillHrid: '/skills/enhancing', level: 42 }];
+        character.observatoryLevel = 3;
+        resetDetectedSettingsCache();
+    });
+
+    test('is tagged as pro, with nothing to report as a manual override', () => {
+        const pro = getProRatesParams();
+
+        expect(pro.paramsSource).toBe('pro');
+        expect(pro.manualOverrides).toEqual([]);
+        expect(describeParamsSource(pro)).toBeNull();
+    });
+
+    test('differs from what this character would actually spend', () => {
+        const yours = getEnhancingParams();
+        const pro = getProRatesParams();
+
+        expect(pro.enhancingLevel).toBeGreaterThan(yours.enhancingLevel);
+        expect(pro.paramsSource).not.toBe(yours.paramsSource);
     });
 });

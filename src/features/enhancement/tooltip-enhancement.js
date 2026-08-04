@@ -14,7 +14,15 @@ import config from '../../core/config.js';
 const toolashaConfig = config;
 import dataManager from '../../core/data-manager.js';
 import { calculateSuccessXP, calculateFailureXP } from './enhancement-xp.js';
-import { describeParamsSource } from '../../utils/enhancement-config.js';
+import {
+    buildSourceChipHTML,
+    describeEnhancementSource,
+    getTooltipEnhancementParams,
+    sectionAttributes,
+    toggleProRates,
+    SECTION_ATTR,
+    SOURCE_CHIP_CLASS,
+} from './enhancement-params-source.js';
 import { formatLargeNumber, numberFormatter, formatKMB, isAbbreviationEnabled } from '../../utils/formatters.js';
 import { getItemPrice, getItemPrices } from '../../utils/market-data.js';
 import { parseArtisanBonus, getDrinkConcentration } from '../../utils/tea-parser.js';
@@ -241,9 +249,10 @@ export function calculateEnhancementPath(itemHrid, currentEnhancementLevel, conf
         allStrategies: [optimalStrategy], // Only return optimal
         xpPerHour,
         totalExpectedXP,
-        // Carried through so the tooltip can say when these numbers describe hand-entered
-        // stats rather than the character's own
-        paramsNote: describeParamsSource(config),
+        // Carried through so the tooltip can say whose stats these numbers describe: the
+        // character's own, a hand-entered set, or the pro kit
+        enhancementParams: config,
+        paramsNote: describeEnhancementSource(config).detail,
     };
 }
 
@@ -768,7 +777,8 @@ export function buildEnhancementTooltipHTML(enhancementData) {
         return '';
     }
 
-    const { itemHrid, targetLevel, optimalStrategy, xpPerHour, totalExpectedXP, paramsNote } = enhancementData;
+    const { itemHrid, targetLevel, optimalStrategy, xpPerHour, totalExpectedXP, paramsNote, enhancementParams } =
+        enhancementData;
 
     // Validate required fields
     if (
@@ -781,8 +791,15 @@ export function buildEnhancementTooltipHTML(enhancementData) {
         return '';
     }
 
-    let html = '<div style="border-top: 1px solid rgba(255,255,255,0.2); margin-top: 8px; padding-top: 8px;">';
-    html += '<div style="font-weight: bold; margin-bottom: 4px;">ENHANCEMENT PATH (+0 → +' + targetLevel + ')</div>';
+    let html =
+        `<div ${sectionAttributes('path', itemHrid, targetLevel)} ` +
+        'style="border-top: 1px solid rgba(255,255,255,0.2); margin-top: 8px; padding-top: 8px;">';
+    html +=
+        '<div style="font-weight: bold; margin-bottom: 4px;">ENHANCEMENT PATH (+0 → +' +
+        targetLevel +
+        ')' +
+        buildSourceChipHTML(enhancementParams) +
+        '</div>';
     html += '<div style="font-size: 0.9em; margin-left: 8px;">';
 
     // Optimal strategy
@@ -1046,6 +1063,100 @@ export function buildEnhancementTooltipHTML(enhancementData) {
     return html;
 }
 
+/**
+ * Redraw every enhancement section currently on screen with whatever source is now active.
+ *
+ * The sections are plain HTML inside a game tooltip, so the cheapest correct refresh is to
+ * rebuild the same section from the same item and level and swap it in. Anything still open
+ * therefore switches the moment the toggle flips, rather than showing the old kit's numbers
+ * under the new kit's label until the next hover.
+ */
+export function rerenderOpenEnhancementSections() {
+    if (typeof document === 'undefined') return;
+
+    for (const section of document.querySelectorAll(`[${SECTION_ATTR}]`)) {
+        try {
+            const itemHrid = section.getAttribute('data-toolasha-enh-item');
+            if (!itemHrid) continue;
+
+            const kind = section.getAttribute(SECTION_ATTR);
+            const params = getTooltipEnhancementParams(itemHrid);
+
+            let html;
+            if (kind === 'milestones') {
+                html = buildEnhancementMilestonesHTML(itemHrid, params);
+            } else {
+                const level = parseInt(section.getAttribute('data-toolasha-enh-level'), 10);
+                const data = level > 0 ? calculateEnhancementPath(itemHrid, level, params) : null;
+                html = data ? buildEnhancementTooltipHTML(data) : '';
+            }
+
+            // An empty rebuild means the new params produced nothing to say; leaving the old
+            // section up would label it with a source that did not produce it, so it goes
+            section.outerHTML = html;
+        } catch (error) {
+            console.error('[Enhancement Tooltip] Failed to redraw section for new stats source:', error);
+        }
+    }
+}
+
+let _sourceToggleHandlers = null;
+
+/**
+ * Make the source chip live: clicking it, or pressing P while a section is on screen, switches
+ * the prediction between the player's own stats and pro rates and redraws what is open.
+ *
+ * The key is what makes the toggle usable on a hover tooltip, which vanishes the moment the
+ * pointer leaves the item it describes — there is no way to walk the cursor over to the chip.
+ * The chip stays clickable for the tooltips that do stay open (item click popups).
+ */
+export function installEnhancementSourceToggle() {
+    if (typeof document === 'undefined' || _sourceToggleHandlers) return;
+
+    const flip = () => {
+        toggleProRates();
+        rerenderOpenEnhancementSections();
+    };
+
+    const onClick = (event) => {
+        const chip = event.target?.closest?.(`.${SOURCE_CHIP_CLASS}`);
+        if (!chip) return;
+        event.preventDefault();
+        event.stopPropagation();
+        flip();
+    };
+
+    const onKeyDown = (event) => {
+        if (event.key?.toLowerCase() !== 'p' || event.ctrlKey || event.altKey || event.metaKey) return;
+
+        // Never steal a keystroke from chat, a price box or any other field being typed into
+        const target = event.target;
+        const tag = target?.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target?.isContentEditable) return;
+
+        // Only meaningful while a prediction is actually on screen to be re-sourced
+        if (!document.querySelector(`[${SECTION_ATTR}]`)) return;
+
+        event.preventDefault();
+        flip();
+    };
+
+    document.addEventListener('click', onClick, true);
+    document.addEventListener('keydown', onKeyDown, true);
+    _sourceToggleHandlers = { onClick, onKeyDown };
+}
+
+/**
+ * Remove the source toggle's listeners.
+ */
+export function uninstallEnhancementSourceToggle() {
+    if (typeof document === 'undefined' || !_sourceToggleHandlers) return;
+
+    document.removeEventListener('click', _sourceToggleHandlers.onClick, true);
+    document.removeEventListener('keydown', _sourceToggleHandlers.onKeyDown, true);
+    _sourceToggleHandlers = null;
+}
+
 const MILESTONE_LEVELS = [5, 7, 10, 12];
 
 /**
@@ -1094,8 +1205,13 @@ export function buildEnhancementMilestonesHTML(itemHrid, enhancementConfig) {
     const thStyle = (align = 'right') =>
         `style="padding: 1px 6px; text-align: ${align}; opacity: 0.6; font-weight: normal;"`;
 
-    let html = '<div style="border-top: 1px solid rgba(255,255,255,0.2); margin-top: 8px; padding-top: 8px;">';
-    html += '<div style="font-weight: bold; margin-bottom: 4px;">Enhancement Milestones</div>';
+    let html =
+        `<div ${sectionAttributes('milestones', itemHrid, 0)} ` +
+        'style="border-top: 1px solid rgba(255,255,255,0.2); margin-top: 8px; padding-top: 8px;">';
+    html +=
+        '<div style="font-weight: bold; margin-bottom: 4px;">Enhancement Milestones' +
+        buildSourceChipHTML(enhancementConfig) +
+        '</div>';
     html += '<table style="font-size: 0.9em; border-collapse: collapse; width: 100%;">';
     html += '<thead><tr>';
     html += `<th ${thStyle('left')}>Level</th>`;
@@ -1117,7 +1233,7 @@ export function buildEnhancementMilestonesHTML(itemHrid, enhancementConfig) {
 
     html += '</tbody></table>';
 
-    const paramsNote = describeParamsSource(enhancementConfig);
+    const paramsNote = describeEnhancementSource(enhancementConfig).detail;
     if (paramsNote) {
         html += `<div style="font-size: 0.8em; opacity: 0.6; margin-top: 2px;">${paramsNote}</div>`;
     }
