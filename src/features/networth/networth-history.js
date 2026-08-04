@@ -211,6 +211,25 @@ class NetworthHistory {
     }
 
     /**
+     * The recent slice of the history, for a trend rather than the whole record.
+     *
+     * A read rather than exposing `history` itself: a caller outside this
+     * module wants the last `hours` of points, not this class's storage shape,
+     * and reaching into `.history` directly would tie it to both. `history` is
+     * only ever the current character's — it is loaded fresh in `initialize`
+     * keyed by `characterId` and cleared in `disable` — so a character switch
+     * cannot leave a discontinuity in the middle of what this returns.
+     *
+     * @param {number} hours - How far back to look
+     * @returns {Array<Object>} Snapshots within the window, oldest first
+     */
+    recentSeries(hours) {
+        if (!(hours > 0)) return [];
+        const cutoff = Date.now() - hours * 60 * 60 * 1000;
+        return this.history.filter((point) => point.t >= cutoff);
+    }
+
+    /**
      * Delete a snapshot by timestamp and persist the change to storage.
      * @param {number} timestamp - The `t` value of the snapshot to remove
      */

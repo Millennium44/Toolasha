@@ -26,6 +26,19 @@ import {
     removeCustomPriceOverride,
     initCustomPriceOverrides,
 } from './custom-price-overrides.js';
+import {
+    SETTING_PRESETS,
+    applyPreset,
+    presetTargetIds,
+    saveBulkSnapshot,
+    loadBulkSnapshot,
+    clearBulkSnapshot,
+    writeCheckboxValues,
+} from './setting-presets.js';
+import { isSettingChanged, refreshRequiredIds } from './settings-inspection.js';
+import { exportEverything, importEverything } from '../../utils/full-backup.js';
+import { downloadFile } from '../../utils/csv-export.js';
+import { askChoice } from '../../utils/choice-dialog.js';
 
 const COLLAPSED_GROUPS_KEY = 'toolasha_collapsedGroups';
 
@@ -41,6 +54,9 @@ class SettingsUI {
         this.settingsPanelCallbacks = []; // Callbacks to run when settings panel appears
         this.timerRegistry = createTimerRegistry();
         this.collapsedGroups = new Set();
+        this.searchQuery = '';
+        this.changedOnly = false;
+        this.restoreButton = null;
     }
 
     /**
@@ -340,7 +356,8 @@ class SettingsUI {
         // Generate settings from config
         this.generateSettings(card);
 
-        // Add utility buttons
+        // Add preset bundles, then the utility buttons they sit alongside
+        this.addPresetButtons(card);
         this.addUtilityButtons(card);
 
         // Add refresh notice
@@ -528,6 +545,20 @@ class SettingsUI {
         }
 
         labelContainer.appendChild(label);
+
+        // A setting that only takes effect at startup says so on itself, rather
+        // than the panel warning that "some settings" might
+        if (settingDef.requiresRefresh) {
+            const tag = document.createElement('span');
+            tag.className = 'toolasha-refresh-tag';
+            tag.textContent = 'reload';
+            tag.title = 'This one only takes effect after you refresh the page';
+            tag.style.cssText =
+                'flex: 0 0 auto; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; ' +
+                'color: #ffa500; border: 1px solid rgba(255, 165, 0, 0.45); border-radius: 3px; ' +
+                'padding: 1px 5px; line-height: 1.4;';
+            labelContainer.appendChild(tag);
+        }
 
         // Create input
         const inputHTML = this.generateSettingInput(settingId, settingDef);
@@ -801,6 +832,12 @@ class SettingsUI {
      * @param {HTMLElement} container - Container element
      */
     addSearchBox(container) {
+        // A freshly built panel starts unfiltered: the controls below are new
+        // elements, and leaving the old state on the instance would show an
+        // inactive button over a filtered list
+        this.searchQuery = '';
+        this.changedOnly = false;
+
         const searchContainer = document.createElement('div');
         searchContainer.className = 'toolasha-search-container';
         searchContainer.style.cssText = `
@@ -840,73 +877,249 @@ class SettingsUI {
         `;
         clearButton.style.display = 'none'; // Hidden by default
 
-        // Filter function
-        const filterSettings = (query) => {
-            const lowerQuery = query.toLowerCase().trim();
-
-            // If query is empty, show everything
-            if (!lowerQuery) {
-                // Show all settings
-                document.querySelectorAll('.toolasha-setting').forEach((setting) => {
-                    setting.style.display = 'flex';
-                });
-                // Show all groups
-                document.querySelectorAll('.toolasha-settings-group').forEach((group) => {
-                    group.style.display = 'block';
-                });
-                clearButton.style.display = 'none';
-                return;
-            }
-
-            clearButton.style.display = 'block';
-
-            // Filter settings
-            document.querySelectorAll('.toolasha-settings-group').forEach((group) => {
-                let visibleCount = 0;
-
-                group.querySelectorAll('.toolasha-setting').forEach((setting) => {
-                    const label = setting.querySelector('.toolasha-setting-label')?.textContent || '';
-                    const help = setting.querySelector('.toolasha-setting-help')?.textContent || '';
-                    const searchText = (label + ' ' + help).toLowerCase();
-
-                    if (searchText.includes(lowerQuery)) {
-                        setting.style.display = 'flex';
-                        visibleCount++;
-                    } else {
-                        setting.style.display = 'none';
-                    }
-                });
-
-                // Hide group if no visible settings
-                if (visibleCount === 0) {
-                    group.style.display = 'none';
-                } else {
-                    group.style.display = 'block';
-                }
-            });
-        };
+        // "Changed only" toggle. Several hundred switches is too many to scan
+        // for the four you touched, and the schema already knows what it ships
+        // with — so the difference is something the panel can simply show.
+        const changedButton = document.createElement('button');
+        changedButton.textContent = 'Changed only';
+        changedButton.className = 'toolasha-changed-only-toggle';
+        changedButton.title = 'Show only settings whose value differs from the default';
+        changedButton.setAttribute('aria-pressed', 'false');
+        changedButton.style.cssText = `
+            padding: 8px 16px;
+            background: #444;
+            color: white;
+            border: 1px solid #555;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            white-space: nowrap;
+        `;
+        this.changedOnlyButton = changedButton;
 
         // Input event listener
         searchInput.addEventListener('input', (e) => {
-            filterSettings(e.target.value);
+            this.searchQuery = e.target.value;
+            clearButton.style.display = this.searchQuery.trim() ? 'block' : 'none';
+            this.applySettingsFilter();
         });
 
         // Clear button event listener
         clearButton.addEventListener('click', () => {
             searchInput.value = '';
-            filterSettings('');
+            this.searchQuery = '';
+            clearButton.style.display = 'none';
+            this.applySettingsFilter();
             searchInput.focus();
         });
 
+        changedButton.addEventListener('click', () => {
+            this.changedOnly = !this.changedOnly;
+            this.updateChangedOnlyButton();
+            this.applySettingsFilter();
+        });
+
         searchContainer.appendChild(searchInput);
+        searchContainer.appendChild(changedButton);
         searchContainer.appendChild(clearButton);
         container.appendChild(searchContainer);
+    }
+
+    /**
+     * Reflect the changed-only state on its button.
+     */
+    updateChangedOnlyButton() {
+        const button = this.changedOnlyButton;
+        if (!button) return;
+        button.setAttribute('aria-pressed', String(this.changedOnly));
+        button.style.background = this.changedOnly ? '#2f5d8a' : '#444';
+        button.style.borderColor = this.changedOnly ? '#6b9fff' : '#555';
+    }
+
+    /**
+     * Show the settings that pass the search text and the changed-only toggle,
+     * hiding groups that end up empty.
+     *
+     * One function for both filters rather than one each: two independent
+     * passes over the same elements would fight, the second undoing whatever
+     * the first hid.
+     */
+    applySettingsFilter() {
+        const query = (this.searchQuery || '').toLowerCase().trim();
+        const changedOnly = this.changedOnly;
+
+        if (!query && !changedOnly) {
+            document.querySelectorAll('.toolasha-setting').forEach((setting) => {
+                setting.style.display = 'flex';
+            });
+            document.querySelectorAll('.toolasha-settings-group').forEach((group) => {
+                group.style.display = 'block';
+            });
+            return;
+        }
+
+        document.querySelectorAll('.toolasha-settings-group').forEach((group) => {
+            let visibleCount = 0;
+
+            group.querySelectorAll('.toolasha-setting').forEach((setting) => {
+                let visible = true;
+
+                if (query) {
+                    const label = setting.querySelector('.toolasha-setting-label')?.textContent || '';
+                    const help = setting.querySelector('.toolasha-setting-help')?.textContent || '';
+                    visible = (label + ' ' + help).toLowerCase().includes(query);
+                }
+
+                if (visible && changedOnly) {
+                    const settingId = setting.dataset.settingId;
+                    visible = isSettingChanged(this.findSettingDef(settingId), this.config.settingsMap[settingId]);
+                }
+
+                setting.style.display = visible ? 'flex' : 'none';
+                if (visible) visibleCount++;
+            });
+
+            group.style.display = visibleCount === 0 ? 'none' : 'block';
+        });
+    }
+
+    /**
+     * Add the preset bundles — a whole configuration in one button.
+     * @param {HTMLElement} container - Container element
+     */
+    addPresetButtons(container) {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'toolasha-preset-buttons';
+        wrapper.style.cssText = 'margin-top: 16px;';
+
+        const heading = document.createElement('div');
+        heading.textContent = 'Presets';
+        heading.style.cssText = 'font-size: 12px; color: #888; margin-bottom: 6px;';
+        wrapper.appendChild(heading);
+
+        const note = document.createElement('div');
+        note.textContent =
+            'A preset turns feature switches on and off in one go. Numbers, dropdowns and colours are left alone, ' +
+            'and Restore undoes the last one.';
+        note.style.cssText = 'font-size: 11px; color: #666; margin-bottom: 8px; line-height: 1.4;';
+        wrapper.appendChild(note);
+
+        const row = document.createElement('div');
+        row.className = 'toolasha-utility-buttons';
+
+        for (const preset of SETTING_PRESETS) {
+            const button = document.createElement('button');
+            button.textContent = preset.label;
+            button.className = 'toolasha-utility-button';
+            button.title = preset.description;
+            button.dataset.presetId = preset.id;
+            button.addEventListener('click', () => this.handleApplyPreset(preset));
+            row.appendChild(button);
+        }
+
+        wrapper.appendChild(row);
+        container.appendChild(wrapper);
+    }
+
+    /**
+     * Apply a preset, after asking — it rewrites a few hundred switches.
+     * @param {Object} preset - Entry from SETTING_PRESETS
+     */
+    async handleApplyPreset(preset) {
+        const confirmed = confirm(
+            `Apply the "${preset.label}" preset?\n\n${preset.description}\n\n` +
+                'Every other feature switch is turned off. Numbers, dropdowns and colours are left alone, and ' +
+                'Restore puts your current switches back.'
+        );
+        if (!confirmed) return;
+
+        const applied = await applyPreset(preset.id);
+        if (!applied) {
+            alert('Applying the preset failed. See the console for details.');
+            return;
+        }
+
+        for (const [id, value] of Object.entries(applied)) {
+            if (this.currentSettings[id]) this.currentSettings[id].isTrue = value;
+        }
+
+        this._syncAllCheckboxInputs();
+        this.applyDisabledByState();
+        this.applySettingsFilter();
+        if (this.restoreButton) this.restoreButton.style.display = '';
     }
 
     /**
      * Add utility buttons (Reset, Export, Import, Fetch Prices)
      * @param {HTMLElement} container - Container element
      */
+    /**
+     * Export every IndexedDB store — settings and all tracked history — as one
+     * versioned JSON file.
+     * @param {HTMLElement} button - The button, for inline status feedback
+     */
+    async handleFullBackup(button) {
+        const original = button.textContent;
+        try {
+            button.textContent = 'Exporting…';
+            const payload = await exportEverything();
+            const stamp = new Date().toISOString().slice(0, 10);
+            downloadFile(`toolasha-backup-${stamp}.json`, JSON.stringify(payload), 'application/json;charset=utf-8;');
+            button.textContent = 'Saved ✓';
+        } catch (error) {
+            console.error('[SettingsUI] Full backup failed:', error);
+            button.textContent = 'Failed';
+        } finally {
+            setTimeout(() => {
+                button.textContent = original;
+            }, 2000);
+        }
+    }
+
+    /**
+     * Restore a full backup file after an explicit confirmation. Overwrites the
+     * stored keys the backup carries; a reload afterwards picks everything up.
+     */
+    async handleFullRestore() {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.json,application/json';
+        input.addEventListener('change', async () => {
+            const file = input.files?.[0];
+            if (!file) return;
+            try {
+                const payload = JSON.parse(await file.text());
+                const stores = Object.keys(payload?.stores || {});
+                if (!stores.length) {
+                    alert('That file does not look like a Toolasha backup.');
+                    return;
+                }
+                const when = payload.exportedAt ? new Date(payload.exportedAt).toLocaleString() : 'unknown date';
+                const confirmed = await askChoice({
+                    title: 'Restore backup',
+                    message:
+                        `Backup from ${when}, covering ${stores.length} data stores ` +
+                        `(${stores.slice(0, 5).join(', ')}${stores.length > 5 ? ', …' : ''}). ` +
+                        'Restoring overwrites the stored copies of everything it contains.',
+                    choices: [
+                        { value: 'restore', label: 'Restore', tone: 'danger' },
+                        { value: null, label: 'Cancel' },
+                    ],
+                });
+                if (confirmed !== 'restore') return;
+                const { restored } = await importEverything(payload);
+                const total = Object.values(restored).reduce((sum, n) => sum + n, 0);
+                alert(
+                    `Restored ${total} entries across ${Object.keys(restored).length} stores. Reload the page to pick everything up.`
+                );
+            } catch (error) {
+                console.error('[SettingsUI] Restoring backup failed:', error);
+                alert('Restoring the backup failed: ' + error.message);
+            }
+        });
+        input.click();
+    }
+
     addUtilityButtons(container) {
         const buttonsDiv = document.createElement('div');
         buttonsDiv.className = 'toolasha-utility-buttons';
@@ -935,6 +1148,18 @@ class SettingsUI {
         exportBtn.className = 'toolasha-utility-button';
         exportBtn.addEventListener('click', () => this.handleExport());
 
+        // Full backup: settings are one store of ~17 — the tracked histories
+        // (dungeon runs, networth, loot logs, …) were unexportable before this
+        const backupBtn = document.createElement('button');
+        backupBtn.textContent = '💾 Back Up Everything';
+        backupBtn.className = 'toolasha-utility-button';
+        backupBtn.addEventListener('click', () => this.handleFullBackup(backupBtn));
+
+        const restoreBackupBtn = document.createElement('button');
+        restoreBackupBtn.textContent = '📥 Restore Backup';
+        restoreBackupBtn.className = 'toolasha-utility-button';
+        restoreBackupBtn.addEventListener('click', () => this.handleFullRestore());
+
         // Import button
         const importBtn = document.createElement('button');
         importBtn.textContent = 'Import Settings';
@@ -953,15 +1178,15 @@ class SettingsUI {
         restoreBtn.className = 'toolasha-utility-button';
         restoreBtn.style.display = 'none';
         restoreBtn.addEventListener('click', () => this.handleRestore(restoreBtn));
+        this.restoreButton = restoreBtn;
 
-        // Show restore immediately if a snapshot already exists from a prior All Off
+        // Show restore immediately if a snapshot already exists from a prior bulk write
         (async () => {
             try {
-                const key = await this._getAllOffSnapshotKey();
-                const snap = await storage.getJSON(key, 'settings', null);
+                const snap = await loadBulkSnapshot();
                 if (snap) restoreBtn.style.display = '';
             } catch (error) {
-                console.error('[SettingsUI] Failed to check All Off snapshot:', error);
+                console.error('[SettingsUI] Failed to check bulk-write snapshot:', error);
             }
         })();
 
@@ -972,6 +1197,8 @@ class SettingsUI {
         buttonsDiv.appendChild(resetBtn);
         buttonsDiv.appendChild(exportBtn);
         buttonsDiv.appendChild(importBtn);
+        buttonsDiv.appendChild(backupBtn);
+        buttonsDiv.appendChild(restoreBackupBtn);
 
         const overlayBtn = document.createElement('button');
         overlayBtn.textContent = 'Overlay';
@@ -1001,7 +1228,17 @@ class SettingsUI {
     addRefreshNotice(container) {
         const notice = document.createElement('div');
         notice.className = 'toolasha-refresh-notice';
-        notice.textContent = 'Some settings require a page refresh to take effect';
+
+        // "Some settings require a refresh" was true of a handful and read as
+        // true of all of them, which taught people to reload after every click.
+        // The schema now marks the ones that mean it, so the notice can point
+        // at them and promise the rest are live.
+        const count = refreshRequiredIds().length;
+        notice.textContent = count
+            ? `Everything applies straight away except the ${count} settings tagged "reload" — those gate a feature ` +
+              'at startup and need a page refresh.'
+            : 'Every setting applies straight away — no refresh needed.';
+
         container.appendChild(notice);
     }
 
@@ -1501,85 +1738,56 @@ class SettingsUI {
     }
 
     /**
-     * Returns the per-character storage key for the All Off snapshot.
-     * @returns {Promise<string>}
-     */
-    async _getAllOffSnapshotKey() {
-        const cid = dataManager.getCurrentCharacterId?.();
-        return cid ? `toolasha_allOffSnapshot_${cid}` : 'toolasha_allOffSnapshot';
-    }
-
-    /**
      * Handle All Off — snapshots all checkbox values then sets them all to false.
-     * @param {HTMLElement} restoreBtn
+     * @param {HTMLElement} [restoreBtn]
      */
-    async handleAllOff(restoreBtn) {
-        const snapshot = {};
-        for (const group of Object.values(settingsGroups)) {
-            for (const [id, def] of Object.entries(group.settings)) {
-                const type = def.type || 'checkbox';
-                if (type !== 'checkbox' && type !== 'checkboxWithButton') continue;
-                if (id === 'ironCow_enabled') continue;
-                const entry = this.config.settingsMap[id];
-                if (!entry) continue;
-                snapshot[id] = entry.isTrue ?? false;
-            }
-        }
-        const key = await this._getAllOffSnapshotKey();
-        await storage.setJSON(key, snapshot, 'settings', true);
+    async handleAllOff(restoreBtn = this.restoreButton) {
+        const snapshot = await saveBulkSnapshot();
 
-        for (const id of Object.keys(snapshot)) {
-            this.config.setSetting(id, false);
-            if (this.currentSettings[id]) {
-                this.currentSettings[id].isTrue = false;
-            }
+        const off = {};
+        for (const id of Object.keys(snapshot)) off[id] = false;
+        writeCheckboxValues(off);
+        for (const id of Object.keys(off)) {
+            if (this.currentSettings[id]) this.currentSettings[id].isTrue = false;
         }
 
         this._syncAllCheckboxInputs();
         this.applyDisabledByState();
-        restoreBtn.style.display = '';
+        this.applySettingsFilter();
+        if (restoreBtn) restoreBtn.style.display = '';
     }
 
     /**
-     * Handle Restore — restores checkbox values from the All Off snapshot.
-     * @param {HTMLElement} restoreBtn
+     * Handle Restore — puts back the values from before the last bulk write,
+     * whether that was All Off or a preset.
+     * @param {HTMLElement} [restoreBtn]
      */
-    async handleRestore(restoreBtn) {
-        const key = await this._getAllOffSnapshotKey();
-        const snapshot = await storage.getJSON(key, 'settings', null);
+    async handleRestore(restoreBtn = this.restoreButton) {
+        const snapshot = await loadBulkSnapshot();
         if (!snapshot) return;
 
+        writeCheckboxValues(snapshot);
         for (const [id, value] of Object.entries(snapshot)) {
-            const entry = this.config.settingsMap[id];
-            if (!entry) continue;
-            this.config.setSetting(id, value);
-            if (this.currentSettings[id]) {
-                this.currentSettings[id].isTrue = value;
-            }
+            if (this.currentSettings[id]) this.currentSettings[id].isTrue = value;
         }
-        await storage.delete(key, 'settings');
+        await clearBulkSnapshot();
 
         this._syncAllCheckboxInputs();
         this.applyDisabledByState();
-        restoreBtn.style.display = 'none';
+        this.applySettingsFilter();
+        if (restoreBtn) restoreBtn.style.display = 'none';
     }
 
     /**
      * Syncs all checkbox DOM inputs to match their current config values.
-     * Used after bulk changes (All Off / Restore).
+     * Used after bulk changes (presets / All Off / Restore).
      */
     _syncAllCheckboxInputs() {
-        for (const group of Object.values(settingsGroups)) {
-            for (const [id, def] of Object.entries(group.settings)) {
-                const type = def.type || 'checkbox';
-                if (type !== 'checkbox' && type !== 'checkboxWithButton') continue;
-                const entry = this.config.settingsMap[id];
-                if (!entry) continue;
-                const input = document.querySelector(
-                    `.toolasha-setting[data-setting-id="${id}"] input[type="checkbox"]`
-                );
-                if (input) input.checked = entry.isTrue ?? false;
-            }
+        for (const id of presetTargetIds()) {
+            const entry = this.config.settingsMap[id];
+            if (!entry) continue;
+            const input = document.querySelector(`.toolasha-setting[data-setting-id="${id}"] input[type="checkbox"]`);
+            if (input) input.checked = entry.isTrue ?? false;
         }
     }
 

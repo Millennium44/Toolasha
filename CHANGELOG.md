@@ -6,6 +6,17 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The product-review batch, wave one
+
+- **Back Up Everything / Restore Backup** (settings panel): one versioned JSON covering every data store — dungeon runs, networth history, loot logs, trade history, all of it — not just settings. Restore confirms what it is about to overwrite, restores store-by-store, and asks for a reload. Months of tracked history stop being one cleared browser away from gone.
+- **Setting presets**: Essentials / Combat / Market & trading / Everything on, offered once on a fresh install and available afterwards as buttons. Presets only touch on/off switches (never your numbers or colors), and Restore undoes a preset the same way it undoes All Off. A "changed only" filter beside the settings search shows just the settings you have moved off their defaults.
+- **The refresh notice stops crying wolf.** Settings that genuinely need a reload (seven, each verified to have no live-apply path) carry an amber "reload" tag; the blanket "some settings require a refresh" notice now points at exactly those.
+- **Failures get a face.** A dozen features now carry real health checks (anchor drawn but injection missing = broken; panel not open = no evidence), and when startup leaves something down you get one toast — "N features failed to start" — that opens a status view with a copyable diagnostic report (version, fork, browser, failures, startup timeline). Previously the health pass checked nothing and failures lived in the console.
+- **The savings ETA works for skillers.** "When can I afford it" used to need a live combat session; it now falls back to your networth trend (a robust 48-hour slope that a one-off sell-off cannot drag), and the panel says which estimate it is using.
+- **Labyrinth sim results survive reloads.** The combat clear-rate cache persists (7-day expiry, capped, invalidated by the same gear-change rules as the in-memory cache) and previews note the age of a cached figure.
+- **Dungeon tracker housekeeping**: the delete-all-history button no longer wears the close glyph (now 🗑 with a proper confirmation dialog instead of a frozen browser box), a "🔍 Filtered" chip on the header shows when saved filters are narrowing the run list (click to clear), and the Ctrl+Shift+D shortcut that hijacked a browser binding is replaced by a reset button in the header.
+- **What's-new dialogs** use the shared choice dialog (Escape closes, focus lands correctly) instead of a hand-rolled copy.
+
 ### The Combat Simulator panel catches up to the Lab Simulator
 
 - **Stop no longer throws away finished work.** Cancelling an upgrade analysis now renders every candidate that completed before you pressed Stop ("Analysis cancelled — showing N completed candidates"), matching what the Lab Simulator always did. The run you cancel is the one that took long enough to cancel — it is exactly the one whose partials you want.

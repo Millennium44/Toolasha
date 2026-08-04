@@ -98,6 +98,7 @@ import queueMonitor from '../features/queue-monitor/queue-monitor.js';
 
 // Dev tools
 import pformancePanel from '../features/dev/pformance-panel.js';
+import * as healthStatus from '../features/dev/health-status.js';
 import { consumablesPanel } from '../features/ui/consumables-panel.js';
 import { combatLevelPanel } from '../features/ui/combat-level-panel.js';
 
@@ -172,6 +173,7 @@ toolashaRoot.UI = {
     emptyQueueNotification,
     queueMonitor,
     pformancePanel,
+    healthStatus,
     consumablesPanel,
     combatLevelPanel,
     combatText,

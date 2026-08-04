@@ -65,6 +65,26 @@ class DungeonTrackerUIState {
     }
 
     /**
+     * Whether either run-history filter is currently narrowing the run list.
+     * The filter controls live in a collapsed section, so a session that starts
+     * with a filter still set from last time would otherwise show "No runs match
+     * filters" with nothing on screen explaining why.
+     * @returns {boolean} True if the dungeon or team filter is not 'all'
+     */
+    hasActiveFilters() {
+        return this.filterDungeon !== 'all' || this.filterTeam !== 'all';
+    }
+
+    /**
+     * Clear both run-history filters back to 'all'. Caller is responsible for
+     * persisting (save()) and refreshing any dependent UI.
+     */
+    clearFilters() {
+        this.filterDungeon = 'all';
+        this.filterTeam = 'all';
+    }
+
+    /**
      * Update container position and styling
      * @param {HTMLElement} container - Container element
      */

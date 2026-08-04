@@ -144,6 +144,15 @@ class DungeonTrackerUI {
                         <span id="mwi-dt-wave-counter" style="font-size: 13px; color: #aaa;">
                             Wave 1/50
                         </span>
+                        <button id="mwi-dt-reset-position-btn" style="
+                            background: none;
+                            border: none;
+                            color: #aaa;
+                            cursor: pointer;
+                            font-size: 13px;
+                            padding: 0 4px;
+                            line-height: 1;
+                        " title="Reset panel position">⌖</button>
                         <button id="mwi-dt-collapse-btn" style="
                             background: none;
                             border: none;
@@ -173,6 +182,19 @@ class DungeonTrackerUI {
                     <span>Runs: <span id="mwi-dt-header-runs" style="color: #fff; font-weight: bold;">0</span></span>
                     <span>|</span>
                     <span>Keys: <span id="mwi-dt-header-keys" style="color: #fff; font-weight: bold;">0</span></span>
+                    <span id="mwi-dt-filter-indicator" style="
+                        display: none;
+                        align-items: center;
+                        gap: 3px;
+                        background: rgba(255, 193, 7, 0.18);
+                        color: #ffc107;
+                        border: 1px solid rgba(255, 193, 7, 0.5);
+                        border-radius: 10px;
+                        padding: 1px 8px;
+                        font-size: 10px;
+                        font-weight: bold;
+                        cursor: pointer;
+                    " title="Run history filters are active — click to clear">&#x1F50D; Filtered</span>
                 </div>
             </div>
 
@@ -277,7 +299,7 @@ class DungeonTrackerUI {
                                 padding: 2px 8px;
                                 border-radius: 3px;
                                 font-weight: bold;
-                            " title="Clear all runs">✕ Clear</button>
+                            " title="Delete all run history">🗑 Clear history</button>
                         </div>
                     </div>
 

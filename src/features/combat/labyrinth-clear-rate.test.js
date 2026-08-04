@@ -1,8 +1,17 @@
+/** @vitest-environment happy-dom */
+
 /**
  * Tests for Labyrinth Clear Rate live-estimate math
  */
 
-import { describe, test, expect, vi } from 'vitest';
+import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
+
+/** Gear the mocked loadoutSnapshot reports; mutated in place (see setGear) so
+ *  every holder of the mocked default export sees updates */
+const gear = vi.hoisted(() => ({ snapshots: {} }));
+
+/** Backing store for the mocked storage module: `${storeName}:${key}` -> value */
+const db = vi.hoisted(() => ({ map: new Map() }));
 
 vi.mock('../../core/config.js', () => ({
     default: { getSetting: vi.fn(() => true), Z_NOTIFICATION: 10500, Z_FLOATING_PANEL: 10100 },
@@ -18,7 +27,30 @@ vi.mock('../combat-sim/combat-sim-adapter.js', () => ({
     applyLoadoutSnapshotToDTO: vi.fn(),
 }));
 vi.mock('../combat-sim/combat-sim-runner.js', () => ({ runLabyrinthSimulation: vi.fn() }));
-vi.mock('./loadout-snapshot.js', () => ({ default: {} }));
+// snapshots/resolveEquipment back the persisted-combat-cache gear fingerprint below;
+// the rest of this file never touches loadout-snapshot, so {} was enough before it
+vi.mock('./loadout-snapshot.js', () => ({
+    default: {
+        snapshots: gear.snapshots,
+        onUpdate: () => {},
+        offUpdate: () => {},
+        resolveEquipment: (snapshot) => snapshot?.equipment || [],
+    },
+}));
+// The persisted-combat-cache suite drives this store directly; every other
+// suite in this file is pure math and never touches it
+vi.mock('../../core/storage.js', () => ({
+    default: {
+        getJSON: async (key, storeName = 'settings', defaultValue = null) => {
+            const stored = db.map.get(`${storeName}:${key}`);
+            return stored === undefined ? defaultValue : stored;
+        },
+        setJSON: async (key, value, storeName = 'settings') => {
+            db.map.set(`${storeName}:${key}`, value);
+            return true;
+        },
+    },
+}));
 
 const {
     default: labyrinthClearRate,
@@ -383,5 +415,210 @@ describe('computeBeaconPlan route redundancy', () => {
         const extra = computeBeaconPlan(revealed, cols, 4);
         expect(extra.feasible).toBe(true);
         expect(extra.revealedNew).toBeGreaterThanOrEqual(minimal.revealedNew);
+    });
+});
+
+/**
+ * combatCache is a plain Map that used to start empty on every reload. These
+ * exercise the mirror written to the 'labyrinth' store — round-tripping
+ * through it, dropping what TTL or a gear change make stale, and capping how
+ * much of it survives.
+ */
+describe('persisted combat cache', () => {
+    /** Replace the mocked loadoutSnapshot's gear in place, keeping the same object reference */
+    function setGear(equipmentSnapshots) {
+        for (const key of Object.keys(gear.snapshots)) delete gear.snapshots[key];
+        Object.assign(gear.snapshots, equipmentSnapshots);
+    }
+
+    const sword = { equipment: [{ itemHrid: '/items/sword', enhancementLevel: 5 }] };
+    const axe = { equipment: [{ itemHrid: '/items/axe', enhancementLevel: 0 }] };
+
+    const simResult = (over = {}) => ({
+        clearChance: 0.75,
+        expectedSeconds: 12,
+        type: 'combat',
+        winRate: 0.75,
+        trials: 500,
+        monsterHrid: '/monsters/imp',
+        roomLevel: 200,
+        ...over,
+    });
+
+    beforeEach(() => {
+        db.map.clear();
+        setGear({ 1: sword });
+        labyrinthClearRate.combatCache.clear();
+        labyrinthClearRate._combatCacheMeta.clear();
+        labyrinthClearRate._combatCacheLoaded = false;
+        labyrinthClearRate._snapshotFingerprint = null;
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    test('round-trips a fresh sim through storage and back into the Map', async () => {
+        const key = 'imp:200:1:1pp:';
+        const result = simResult();
+        labyrinthClearRate.combatCache.set(key, result);
+        labyrinthClearRate._persistCombatCacheEntry(key, result);
+
+        // Simulate a reload: the in-memory Map starts empty again
+        labyrinthClearRate.combatCache.clear();
+        labyrinthClearRate._combatCacheMeta.clear();
+        labyrinthClearRate._combatCacheLoaded = false;
+
+        await labyrinthClearRate._loadCombatCache();
+
+        const loaded = labyrinthClearRate.combatCache.get(key);
+        expect(loaded).toMatchObject({ clearChance: 0.75, winRate: 0.75, fromPersistedCache: true });
+        expect(Number.isFinite(loaded.computedAt)).toBe(true);
+    });
+
+    test('calling _loadCombatCache twice only reads storage once', async () => {
+        const key = 'imp:200:1:1pp:';
+        const result = simResult();
+        labyrinthClearRate.combatCache.set(key, result);
+        labyrinthClearRate._persistCombatCacheEntry(key, result);
+        labyrinthClearRate.combatCache.clear();
+        labyrinthClearRate._combatCacheLoaded = false;
+
+        await labyrinthClearRate._loadCombatCache();
+        expect(labyrinthClearRate.combatCache.has(key)).toBe(true);
+
+        labyrinthClearRate.combatCache.clear();
+        await labyrinthClearRate._loadCombatCache(); // guarded — should not re-read
+        expect(labyrinthClearRate.combatCache.has(key)).toBe(false);
+    });
+
+    test('drops an entry older than the TTL', async () => {
+        const key = 'imp:200:1:1pp:';
+        const eightDaysAgo = Date.now() - 8 * 24 * 60 * 60 * 1000;
+        db.map.set('labyrinth:labyrinthCombatSimCache', {
+            version: 1,
+            entries: [
+                {
+                    key,
+                    result: simResult(),
+                    computedAt: eightDaysAgo,
+                    snapshotFingerprint: labyrinthClearRate._snapshotContentFingerprint(),
+                },
+            ],
+        });
+
+        await labyrinthClearRate._loadCombatCache();
+
+        expect(labyrinthClearRate.combatCache.has(key)).toBe(false);
+    });
+
+    test('keeps an entry inside the TTL', async () => {
+        const key = 'imp:200:1:1pp:';
+        const oneHourAgo = Date.now() - 60 * 60 * 1000;
+        db.map.set('labyrinth:labyrinthCombatSimCache', {
+            version: 1,
+            entries: [
+                {
+                    key,
+                    result: simResult(),
+                    computedAt: oneHourAgo,
+                    snapshotFingerprint: labyrinthClearRate._snapshotContentFingerprint(),
+                },
+            ],
+        });
+
+        await labyrinthClearRate._loadCombatCache();
+
+        expect(labyrinthClearRate.combatCache.get(key)).toMatchObject({ fromPersistedCache: true });
+    });
+
+    test('a gear change clears the persisted store, not just the in-memory Map', () => {
+        const key = 'imp:200:1:1pp:';
+        const result = simResult();
+
+        // Seed the invalidation baseline under the sword, then persist a sim
+        labyrinthClearRate._invalidateIfInputsChanged();
+        labyrinthClearRate.combatCache.set(key, result);
+        labyrinthClearRate._persistCombatCacheEntry(key, result);
+        expect(db.map.get('labyrinth:labyrinthCombatSimCache').entries).toHaveLength(1);
+
+        // Swap gear and re-check — this is the same path a real loadout
+        // snapshot rebuild drives
+        setGear({ 1: axe });
+        const stale = labyrinthClearRate._invalidateIfInputsChanged();
+
+        expect(stale).toBe(true);
+        expect(labyrinthClearRate.combatCache.size).toBe(0);
+        expect(db.map.get('labyrinth:labyrinthCombatSimCache').entries).toHaveLength(0);
+    });
+
+    test('a precision-only clear leaves the persisted store alone', () => {
+        const key = 'imp:200:1:1pp:';
+        const result = simResult();
+        labyrinthClearRate._invalidateIfInputsChanged();
+        labyrinthClearRate.combatCache.set(key, result);
+        labyrinthClearRate._persistCombatCacheEntry(key, result);
+
+        // Mirrors what the precision-input handler does: only the in-memory
+        // Map is wiped, because a different mode simply uses a different key
+        labyrinthClearRate.combatCache.clear();
+
+        expect(db.map.get('labyrinth:labyrinthCombatSimCache').entries).toHaveLength(1);
+    });
+
+    test('caps the persisted set to the most recent entries', () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date(2026, 0, 1));
+
+        const total = 205;
+        for (let i = 0; i < total; i++) {
+            const key = `imp:${i}:1:1pp:`;
+            const result = simResult({ roomLevel: i });
+            labyrinthClearRate.combatCache.set(key, result);
+            labyrinthClearRate._persistCombatCacheEntry(key, result);
+            vi.advanceTimersByTime(1000);
+        }
+
+        const stored = db.map.get('labyrinth:labyrinthCombatSimCache');
+        expect(stored.entries).toHaveLength(200);
+        expect(labyrinthClearRate._combatCacheMeta.size).toBe(200);
+
+        // The newest 200 survive, not an arbitrary 200 — the earliest 5 keys
+        // (imp:0 through imp:4) are the ones the cap should have pushed out
+        const keys = new Set(stored.entries.map((e) => e.key));
+        expect(keys.has('imp:0:1:1pp:')).toBe(false);
+        expect(keys.has('imp:4:1:1pp:')).toBe(false);
+        expect(keys.has('imp:204:1:1pp:')).toBe(true);
+    });
+
+    describe('cache age display', () => {
+        beforeEach(() => {
+            document.body.innerHTML = '';
+        });
+
+        test('cacheAgeLabel reads back a relative age', () => {
+            vi.useFakeTimers();
+            vi.setSystemTime(new Date(2026, 0, 1, 12, 0, 0));
+            const computedAt = Date.now() - 2 * 60 * 60 * 1000;
+            expect(labyrinthClearRate.cacheAgeLabel(computedAt)).toBe('cached 2h 0m ago');
+        });
+
+        test('a fresh (non-persisted) result gets no age note', () => {
+            const el = document.createElement('div');
+            labyrinthClearRate._appendCacheAgeNote(el, simResult());
+            expect(el.textContent).toBe('');
+        });
+
+        test('a persisted result gets a subtle one-line age note', () => {
+            const el = document.createElement('div');
+            labyrinthClearRate._appendCacheAgeNote(el, {
+                ...simResult(),
+                fromPersistedCache: true,
+                computedAt: Date.now() - 60 * 60 * 1000,
+            });
+            expect(el.children).toHaveLength(1);
+            expect(el.textContent).toContain('cached');
+            expect(el.textContent).toContain('ago');
+        });
     });
 });

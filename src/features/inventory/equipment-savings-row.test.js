@@ -20,6 +20,10 @@ const game = vi.hoisted(() => ({
     actions: {},
     shops: {},
     artisan: 0,
+    // What `networthHistory.recentSeries` hands back — empty by default, so
+    // tests that are not about the fallback see the same "nothing measured"
+    // behaviour they did before it existed
+    networthSeries: () => [],
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
@@ -54,6 +58,9 @@ vi.mock('../../utils/marketplace-tabs.js', () => ({ navigateToMarketplace: () =>
 vi.mock('../../utils/game-lookups.js', () => ({ getItemHridFromName: () => null }));
 vi.mock('../../utils/overlay-rows.js', () => ({ registerRow: () => {} }));
 vi.mock('../../api/marketplace.js', () => ({ default: { getDataAge: () => 60_000, fetch: async () => {} } }));
+vi.mock('../networth/networth-history.js', () => ({
+    default: { recentSeries: (hours) => game.networthSeries(hours) },
+}));
 vi.mock('../../utils/market-data.js', () => ({
     getItemPrices: (hrid, level = 0) => game.prices[`${hrid}:${level}`] || null,
 }));
@@ -70,6 +77,8 @@ const {
     setNoSell,
     selectTarget,
     incomePerDay,
+    incomeEstimate,
+    trendPerDay,
     toggleCrafting,
     cycleTargetNoSell,
     resetEquipmentSavings,
@@ -111,6 +120,7 @@ beforeEach(() => {
     };
     game.shops = {};
     game.artisan = 0;
+    game.networthSeries = () => [];
     resetEquipmentSavings();
 });
 
@@ -496,6 +506,108 @@ describe('income per day', () => {
 
     test('no combat at all is nothing rather than a crash', () => {
         expect(incomePerDay()).toBeNull();
+    });
+});
+
+const HOUR = 3_600_000;
+const T0 = 1_700_000_000_000; // an arbitrary but fixed epoch, for readable offsets
+
+/** Points every 6h across a 48h window, growing by `perHour` coins each hour */
+function growthSeries(perHour, hours = 48, step = 6) {
+    const points = [];
+    for (let h = 0; h <= hours; h += step) points.push({ t: T0 + h * HOUR, total: 500_000_000 + h * perHour });
+    return points;
+}
+
+describe('the net worth trend', () => {
+    test('steady growth gives the per-day rate it was growing at', () => {
+        // 2,000,000/hour is 48,000,000/day
+        expect(trendPerDay(growthSeries(2_000_000))).toBeCloseTo(48_000_000, 0);
+    });
+
+    test('a span under the minimum is unmeasurable rather than a guess from two dots', () => {
+        // Four points, but only 3h apart — a real window, just too short
+        const points = [0, 1, 2, 3].map((h) => ({ t: T0 + h * HOUR, total: 500_000_000 + h * 2_000_000 }));
+        expect(trendPerDay(points)).toBeNull();
+    });
+
+    test('fewer than three points is unmeasurable however wide the span', () => {
+        expect(trendPerDay([growthSeries(2_000_000)[0], growthSeries(2_000_000).at(-1)])).toBeNull();
+    });
+
+    test('a flat net worth reads as roughly nothing, not null', () => {
+        expect(trendPerDay(growthSeries(0))).toBeCloseTo(0, 6);
+    });
+
+    test('a sell-off dip inside the window still comes out finite and close to the trend', () => {
+        const points = growthSeries(2_000_000);
+        // A one-off drop in the middle of otherwise steady growth
+        points[4] = { ...points[4], total: points[4].total - 500_000_000 };
+
+        const result = trendPerDay(points);
+        expect(Number.isFinite(result)).toBe(true);
+        // Sane: still a positive rate, and not wildly off the 48,000,000/day
+        // the series grows at everywhere but the one dip
+        expect(result).toBeGreaterThan(0);
+        expect(result).toBeLessThan(150_000_000);
+    });
+
+    test('no points at all is unmeasurable', () => {
+        expect(trendPerDay([])).toBeNull();
+    });
+});
+
+describe('income source selection', () => {
+    /** A collector reading of the shape the real one publishes */
+    const withCombat = (durationSeconds, dailyProfit) => {
+        window.Toolasha = {
+            Combat: {
+                combatStatsDataCollector: {
+                    getLatestData: () => ({ durationSeconds, players: [{ isCurrentPlayer: true, loot: {} }] }),
+                },
+                combatStatsCalculator: { calculatePlayerStats: () => ({ dailyProfit }) },
+            },
+        };
+    };
+
+    afterEach(() => {
+        delete window.Toolasha;
+    });
+
+    test('combat is read first when it has something to say', () => {
+        withCombat(3600, { ask: 90_000_000, bid: 65_000_000 });
+        // A trend that would give a very different number, to prove combat wins
+        game.networthSeries = () => growthSeries(2_000_000);
+
+        expect(incomeEstimate()).toEqual({ perDay: 65_000_000, source: 'combat' });
+    });
+
+    test('the net worth trend stands in once combat has nothing to say', () => {
+        game.networthSeries = () => growthSeries(2_000_000);
+
+        const result = incomeEstimate();
+        expect(result.source).toBe('networth');
+        expect(result.perDay).toBeCloseTo(48_000_000, 0);
+    });
+
+    test('nothing measured from either source is null, not a confident zero', () => {
+        expect(incomeEstimate()).toEqual({ perDay: null, source: null });
+    });
+
+    test('the panel names the trend as its source', () => {
+        game.networthSeries = () => growthSeries(2_000_000);
+        equipmentSavingsPanel.show();
+
+        expect(text()).toContain(`networth trend, 48h`);
+        expect(text()).not.toContain(FAILED);
+    });
+
+    test('the panel names combat as its source', () => {
+        withCombat(3600, { ask: 90_000_000, bid: 65_000_000 });
+        equipmentSavingsPanel.show();
+
+        expect(text()).toContain('combat session');
+        expect(text()).not.toContain(FAILED);
     });
 });
 

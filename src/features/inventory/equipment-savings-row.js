@@ -36,6 +36,7 @@ import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import storage from '../../core/storage.js';
 import marketAPI from '../../api/marketplace.js';
+import networthHistory from '../networth/networth-history.js';
 import { loadWhenReady } from '../../utils/deferred-load.js';
 import { getItemPrices } from '../../utils/market-data.js';
 import { getItemHridFromName } from '../../utils/game-lookups.js';
@@ -296,16 +297,82 @@ export function coinsHeld() {
     return coin?.count || 0;
 }
 
+/** Hours of net worth history considered when combat has nothing to say */
+const NETWORTH_TREND_HOURS = 48;
+
+/** The shortest window the net worth trend will be trusted over */
+const NETWORTH_MIN_SPAN_HOURS = 6;
+
+/** The fewest points the net worth trend needs to be a trend rather than two dots */
+const NETWORTH_MIN_POINTS = 3;
+
 /**
- * What the character makes in a day.
+ * A day's income, read off a net worth series rather than measured directly.
  *
- * Read off the combat stats where they exist, because that is the only place in
- * the script that knows. Nothing rather than a guess when combat has not run:
- * dividing by an invented income would produce a confident arrival date.
+ * Theil-Sen — the median of every pairwise slope — rather than a line through
+ * the two endpoints or a least-squares fit: both are dragged hard by a single
+ * sell-off landing near an end of the window, and a sell-off inside the
+ * window is exactly the case this has to survive. The median of every pair
+ * shrugs off a handful of outliers without needing to know which points they
+ * are, at the cost of being quadratic in the point count — fine for the
+ * couple of dozen hourly snapshots a 48h window actually holds.
+ *
+ * @param {Array<{t: number, total: number}>} points - Chronological, oldest first
+ * @returns {number|null} Coins per day, or null when the window is too thin to trust
+ */
+export function trendPerDay(points) {
+    if (!Array.isArray(points) || points.length < NETWORTH_MIN_POINTS) return null;
+
+    const spanHours = (points[points.length - 1].t - points[0].t) / 3_600_000;
+    if (!(spanHours >= NETWORTH_MIN_SPAN_HOURS)) return null;
+
+    const slopes = [];
+    for (let i = 0; i < points.length; i++) {
+        for (let j = i + 1; j < points.length; j++) {
+            const dt = points[j].t - points[i].t;
+            // Same-timestamp points — the compaction in networth-history.js can
+            // leave a run collapsed to its first and last — contribute nothing
+            // a slope can use
+            if (!(dt > 0)) continue;
+            slopes.push(((points[j].total - points[i].total) / dt) * 86_400_000);
+        }
+    }
+    if (!slopes.length) return null;
+
+    slopes.sort((a, b) => a - b);
+    const mid = Math.floor(slopes.length / 2);
+    return slopes.length % 2 ? slopes[mid] : (slopes[mid - 1] + slopes[mid]) / 2;
+}
+
+/**
+ * The net worth trend, for when combat has nothing to say.
+ *
+ * `total` rather than `gold` and `inventory` on their own: buying a piece of
+ * gear or a house room moves coins into an asset the same session it leaves
+ * the purse, and a coins-only read would count that as a pause in income it
+ * never was. `total` nets the transfer out and is left with what combat and
+ * skilling actually added, which is the same reason it is the figure the
+ * history chart leads with.
+ *
+ * @returns {number|null} Coins per day, or null when there is nothing to trust yet
+ */
+function networthIncomePerDay() {
+    const series = networthHistory.recentSeries?.(NETWORTH_TREND_HOURS) || [];
+    const perDay = trendPerDay(series);
+    // A shrinking net worth is not an income to divide a shortfall by — it is
+    // the same "nothing rather than a guess" the combat reading follows below
+    return perDay > 0 ? perDay : null;
+}
+
+/**
+ * What the character makes in a day, read off the combat stats.
+ *
+ * Nothing rather than a guess when combat has not run: dividing by an
+ * invented income would produce a confident arrival date.
  *
  * @returns {number|null}
  */
-export function incomePerDay() {
+function combatIncomePerDay() {
     const combat = window.Toolasha?.Combat;
     const data = combat?.combatStatsDataCollector?.getLatestData?.();
     const player = data?.players?.find((entry) => entry.isCurrentPlayer);
@@ -325,6 +392,39 @@ export function incomePerDay() {
     const stats = combat?.combatStatsCalculator?.calculatePlayerStats?.(player, seconds);
     const profit = state.noSell ? stats?.dailyProfit?.ask : stats?.dailyProfit?.bid;
     return profit > 0 ? profit : null;
+}
+
+/**
+ * What the character makes in a day, and where the figure came from.
+ *
+ * Combat first, because it is a direct measurement of the session actually
+ * being played. When nothing has fought recently — a skiller, or the first
+ * minute after a reload — the combat source has nothing to say, and the panel
+ * used to go dark rather than say anything at all. The net worth trend stands
+ * in for it: slower and noisier, since market swings and one-off purchases
+ * are in there too, but it is the only other place in the script that knows
+ * anything about income, and a rough answer beats none for telling whether a
+ * purchase is a week away or a year.
+ *
+ * @returns {{perDay: number|null, source: ('combat'|'networth'|null)}}
+ */
+export function incomeEstimate() {
+    const combat = combatIncomePerDay();
+    if (combat !== null) return { perDay: combat, source: 'combat' };
+
+    const trend = networthIncomePerDay();
+    if (trend !== null) return { perDay: trend, source: 'networth' };
+
+    return { perDay: null, source: null };
+}
+
+/**
+ * What the character makes in a day.
+ *
+ * @returns {number|null}
+ */
+export function incomePerDay() {
+    return incomeEstimate().perDay;
 }
 
 /**
@@ -1019,6 +1119,15 @@ function costPreview(itemHrid, enhancementLevel) {
 }
 
 /**
+ * How a source of `incomeEstimate` reads in the panel.
+ * @param {'combat'|'networth'|null} source - Where the figure came from
+ * @returns {string}
+ */
+function sourceLabel(source) {
+    return source === 'combat' ? 'combat session' : `networth trend, ${NETWORTH_TREND_HOURS}h`;
+}
+
+/**
  * A switch that reads as on or off rather than as a checkbox.
  *
  * EWatch's own shape: the state is the button, in the colour of what it means,
@@ -1673,17 +1782,23 @@ export const equipmentSavingsPanel = createPanel({
             'Coins tied up in market orders — sell orders at what they will pay after tax, buy orders at what ' +
             'was handed over, plus anything unclaimed.';
 
-        const perDay = incomePerDay();
+        const { perDay, source } = incomeEstimate();
         const income = document.createElement('span');
         income.style.color = perDay === null ? 'rgba(232, 236, 245, 0.5)' : ROW_COLORS.good;
         income.style.flex = '1';
         income.textContent =
-            perDay === null ? 'No income data' : `${state.noSell ? 'Mid' : 'Lazy'}: ${formatKMB(perDay)}/day`;
+            perDay === null
+                ? 'No income data'
+                : `${state.noSell ? 'Mid' : 'Lazy'}: ${formatKMB(perDay)}/day (${sourceLabel(source)})`;
         income.title =
             perDay === null
-                ? 'Combat has not run long enough to measure an income, so no arrival time can be given.'
-                : 'Daily profit from the combat session, which is what the countdowns divide by.\n' +
-                  'Lazy sells into the bids; Mid waits at the asks, which No Sell also assumes.';
+                ? 'Neither a combat session nor the net worth trend has enough history yet to measure an income.'
+                : source === 'combat'
+                  ? 'Daily profit from the combat session, which is what the countdowns divide by.\n' +
+                    'Lazy sells into the bids; Mid waits at the asks, which No Sell also assumes.'
+                  : 'No combat session to measure — read instead off the trend in net worth over the last ' +
+                    `${NETWORTH_TREND_HOURS}h.\nSlower and noisier than a combat measurement, but the only ` +
+                    'other figure the script has.';
 
         purse.append(coins, listed, income);
 
