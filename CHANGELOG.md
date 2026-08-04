@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The dungeon tracker earns its tests
+
+- **252 new tests** for the dungeon tracker core (run lifecycle, restore guards, key-count parsing, per-character scoping), the chat-annotation parser (all six timestamp formats, run numbering, team attribution), collection filters (ranges, sorts, badges, favourites), and the milkonomy/profile export shaping. Four latent dungeon-tracker/export bugs were pinned by tests and documented for a future fix.
+
 ### History stops rewriting itself on every event
 
 - **The append-heavy history stores split into per-period records**: networth snapshots (monthly), the loot log (hourly), and alchemy sessions (daily — previously rewritten in full on every ~2s action, unbounded). Saves now write only the chunk that changed; pruning deletes old record keys instead of rewriting the survivors. One-time migration splits existing data lazily and falls back to the old key untouched if the disk is full — nothing bricks or half-migrates.
