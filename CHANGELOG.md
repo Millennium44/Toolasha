@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Clickable names everywhere chat shows one
+
+- **The /profile click trick now covers every name Toolasha renders**: mention-popup sender names, pop-out chat names (including announcements relayed into the pop-out window, which previously had no link at all), and names in the extended chat history buffer (previously looked clickable but did nothing after cloning). One delegated listener and one shared helper replace the per-span wiring.
+
 ### Per-character storage helper
 
 - **New `characterKey` helper** (`src/utils/character-key.js`): one shared way to scope stored state per character, with one-time migration of legacy global values — adopted by the main character (never an iron cow; identified by longest networth history) or discarded where inheriting another character's data would be wrong. Groundwork for de-leaking all cross-character state.

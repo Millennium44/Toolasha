@@ -4,6 +4,7 @@
  */
 
 import config from '../../core/config.js';
+import { markAsProfileLink } from './chat-profile-link.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { formatDateTime } from '../../utils/formatters.js';
 
@@ -213,6 +214,8 @@ class MentionPopup {
                 margin-right: 6px;
             `;
             sender.textContent = mention.sName;
+            // Click-to-fill "/profile <name>", same behavior as announcement names in chat
+            markAsProfileLink(sender, mention.sName);
 
             const msg = document.createElement('span');
             msg.style.cssText = `color: #e7e7e7;`;
