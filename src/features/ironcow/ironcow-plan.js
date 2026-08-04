@@ -1,5 +1,5 @@
 /**
- * The Iron Cow money plan, as a checklist that ticks itself.
+ * The Iron Bell Farming money plan, as a checklist that ticks itself.
  *
  * ## The plan, verbatim
  *

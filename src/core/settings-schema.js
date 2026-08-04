@@ -2347,13 +2347,16 @@ export const settingsGroups = {
                     'come back struck through rather than disappearing',
             },
             ironCowFarm: {
+                // Display name is "Iron Bell Farming"; the setting id is kept as
+                // ironCowFarm since settings persist by id and renaming it would
+                // drop an existing user's saved preference.
                 id: 'ironCowFarm',
-                label: 'Iron Cow Farm: The cowbell-farming plan, and what it earns',
+                label: 'Iron Bell Farming: The cowbell-farming plan, and what it earns',
                 type: 'checkbox',
                 default: true,
                 requiresRefresh: true,
                 help:
-                    'A floating panel (Ctrl+K → Iron Cow Farm) holding the standard iron-cow route to farming gold ' +
+                    'A floating panel (Ctrl+K → Iron Bell Farming) holding the standard iron-cow route to farming gold ' +
                     'for cowbells — the skills to level, the jewelry to craft, then the endless Star Fruit → ' +
                     'decompose → coinify loop — with each stage ticking itself off against your own levels, gear ' +
                     'and house. Costs the loop from your actual rates through the gathering and alchemy ' +

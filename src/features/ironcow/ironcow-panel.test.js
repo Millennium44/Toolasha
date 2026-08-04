@@ -146,7 +146,7 @@ describe('drawing', () => {
         await ironCowFarmPanel.load();
         await ironCowFarmPanel.refresh();
 
-        expect(text()).toContain('Iron Cow Farm');
+        expect(text()).toContain('Iron Bell Farming');
         expect(text()).toContain('The plan');
         expect(text()).toContain('The loop');
         expect(text()).toContain('Cowbells');

@@ -1,5 +1,5 @@
 /**
- * Where the Iron Cow Farm panel's own state lives.
+ * Where the Iron Bell Farming panel's own state lives.
  *
  * Two things, both per character: the manual ticks for the one plan stage
  * nothing can measure, and the last costed loop so the panel has a figure to
@@ -12,6 +12,11 @@
  */
 
 import { readScoped, writeScoped } from '../../utils/character-key.js';
+
+// The panel's display name changed to "Iron Bell Farming", but these two keys
+// are kept exactly as they were (ironCowFarmOverrides / ironCowFarmSnapshot) —
+// renaming them would orphan the stage ticks and the last costed loop that
+// existing users already have stored under them.
 
 /** Unscoped key for the manual stage ticks; the real key carries the character id */
 export const OVERRIDES_KEY = 'ironCowFarmOverrides';
