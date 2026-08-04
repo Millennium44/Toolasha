@@ -10,6 +10,9 @@ import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
  *  every holder of the mocked default export sees updates */
 const gear = vi.hoisted(() => ({ snapshots: {} }));
 
+/** Guild shrine data the mocked adapter and data manager report */
+const shrines = vi.hoisted(() => ({ detailMap: {}, owned: {} }));
+
 /** Backing store for the mocked storage module: `${storeName}:${key}` -> value */
 const db = vi.hoisted(() => ({ map: new Map() }));
 
@@ -18,13 +21,24 @@ vi.mock('../../core/config.js', () => ({
 }));
 vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: vi.fn(), register: vi.fn() } }));
 vi.mock('../../core/data-manager.js', () => ({
-    default: { on: vi.fn(), off: vi.fn(), getSkills: vi.fn(() => []), characterData: null },
+    default: {
+        on: vi.fn(),
+        off: vi.fn(),
+        getSkills: vi.fn(() => []),
+        getCharacterGuildBuffLevel: (hrid) => shrines.owned[hrid] || 0,
+        characterData: null,
+    },
 }));
 vi.mock('../../core/websocket.js', () => ({ default: { on: vi.fn(), off: vi.fn() } }));
 vi.mock('../combat-sim/combat-sim-adapter.js', () => ({
     buildPlayerDTO: vi.fn(),
     buildGameDataPayload: vi.fn(),
     applyLoadoutSnapshotToDTO: vi.fn(),
+    getGuildBuffDetailMap: () => shrines.detailMap,
+    applyGuildBuffLevel: (buffs, detail, level) => [
+        ...buffs.filter((b) => b.typeHrid !== detail.buffs[0].typeHrid),
+        { typeHrid: detail.buffs[0].typeHrid, flatBoost: detail.buffs[0].flatBoost * level, ratioBoost: 0 },
+    ],
 }));
 vi.mock('../combat-sim/combat-sim-runner.js', () => ({ runLabyrinthSimulation: vi.fn() }));
 // snapshots/resolveEquipment back the persisted-combat-cache gear fingerprint below;
@@ -620,5 +634,61 @@ describe('persisted combat cache', () => {
             expect(el.textContent).toContain('cached');
             expect(el.textContent).toContain('ago');
         });
+    });
+});
+
+const { default: dataManagerMock } = await import('../../core/data-manager.js');
+
+describe('guild buffs in skilling metrics', () => {
+    const EFFICIENCY_SHRINE = {
+        hrid: '/guild_buffs/force_skilling',
+        isCombat: false,
+        buffs: [{ typeHrid: '/buff_types/efficiency', flatBoost: 0.02, flatBoostLevelBonus: 0.02 }],
+    };
+
+    beforeEach(() => {
+        shrines.detailMap = { '/guild_buffs/force_skilling': EFFICIENCY_SHRINE };
+        shrines.owned = { '/guild_buffs/force_skilling': 2 };
+        dataManagerMock.characterData = {
+            guildActionTypeBuffsMap: {
+                '/action_types/milking': [{ typeHrid: '/buff_types/efficiency', flatBoost: 0.04, ratioBoost: 0 }],
+            },
+        };
+    });
+
+    afterEach(() => {
+        dataManagerMock.characterData = null;
+    });
+
+    test('the character’s live guild buffs are used when no levels are being explored', () => {
+        const metrics = labyrinthClearRate.getSkillingMetricsFromOverrides('milking', '/action_types/milking', {});
+        expect(metrics.efficiencyBonus).toBeCloseTo(0.04, 10);
+    });
+
+    test('a level the character already owns changes nothing — the server’s own numbers stand', () => {
+        const metrics = labyrinthClearRate.getSkillingMetricsFromOverrides('milking', '/action_types/milking', {
+            guildShrineLevels: { '/guild_buffs/force_skilling': 2 },
+        });
+        expect(metrics.efficiencyBonus).toBeCloseTo(0.04, 10);
+    });
+
+    test('a different level rebuilds that shrine, replacing rather than stacking', () => {
+        const metrics = labyrinthClearRate.getSkillingMetricsFromOverrides('milking', '/action_types/milking', {
+            guildShrineLevels: { '/guild_buffs/force_skilling': 3 },
+        });
+        // 0.02 × 3, in place of the 0.04 the server sent for level 2
+        expect(metrics.efficiencyBonus).toBeCloseTo(0.06, 10);
+    });
+
+    test('a combat shrine is never applied to a skilling room', () => {
+        shrines.detailMap['/guild_buffs/force_combat'] = {
+            hrid: '/guild_buffs/force_combat',
+            isCombat: true,
+            buffs: [{ typeHrid: '/buff_types/efficiency', flatBoost: 5, flatBoostLevelBonus: 5 }],
+        };
+        const metrics = labyrinthClearRate.getSkillingMetricsFromOverrides('milking', '/action_types/milking', {
+            guildShrineLevels: { '/guild_buffs/force_combat': 9 },
+        });
+        expect(metrics.efficiencyBonus).toBeCloseTo(0.04, 10);
     });
 });

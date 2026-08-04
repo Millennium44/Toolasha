@@ -9,6 +9,9 @@ import {
     buildAllPlayerDTOs,
     parseShykaiImport,
     applyLoadoutSnapshotToDTO,
+    getGuildBuffDetailMap,
+    guildBuffMaxLevel,
+    applyGuildBuffLevel,
 } from './combat-sim-adapter.js';
 import loadoutSnapshot from '../combat/loadout-snapshot.js';
 import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
@@ -335,6 +338,7 @@ export class SimEditor {
         }
         html += this._renderSkillLevelsSection(dto);
         html += this._renderHouseRoomsSection(dto, gameData);
+        html += this._renderGuildShrinesSection(dto);
         if (this.skillingMode) {
             html += this._renderTokenUpgradesSection(dto);
             html += this._renderCommunityBuffsSection(dto);
@@ -1400,6 +1404,60 @@ export class SimEditor {
         return html;
     }
 
+    /**
+     * The guild shrine levels this player has bought, as editable numbers.
+     *
+     * Only the side of the game being simulated is listed: a combat sim cannot
+     * show a change in Force Skilling, and a skilling run cannot show one in
+     * Force Combat, so offering the other half would only invite edits that go
+     * nowhere. The shrine's own level is shown beside the input as a cap you can
+     * still type past — the guild can raise it, and the point of the editor is
+     * asking what would happen if it did.
+     * @param {Object} dto - Player DTO
+     * @returns {string} HTML, empty when the client has no guild buff data
+     * @private
+     */
+    _renderGuildShrinesSection(dto) {
+        const detailMap = getGuildBuffDetailMap();
+        const wantCombat = !this.skillingMode;
+        const entries = Object.entries(detailMap)
+            .filter(([, detail]) => Boolean(detail.isCombat) === wantCombat)
+            .sort((a, b) => (a[1].sortIndex ?? 0) - (b[1].sortIndex ?? 0));
+        if (entries.length === 0) return '';
+
+        const levels = dto.guildShrineLevels || {};
+        const activeCount = entries.filter(([hrid]) => (levels[hrid] || 0) > 0).length;
+
+        let html = `<div style="margin-bottom:10px;">`;
+        html += `<div style="color:${ACCENT}; font-weight:700; font-size:12px; margin-bottom:6px; cursor:pointer; user-select:none;" data-toggle="guild-section">`;
+        html += `<span data-arrow="guild-section" style="display:inline-block; width:14px; font-size:10px;">&#9654;</span> Guild Shrines`;
+        html += `<span style="color:#888; font-weight:400; font-size:11px; margin-left:6px;">${activeCount} active</span>`;
+        html += '</div>';
+        html += `<div id="mwi-csim-guild-section" style="display:none;">`;
+        html += `<div style="display:grid; grid-template-columns:1fr 1fr; gap:4px 12px;">`;
+
+        for (const [buffHrid, detail] of entries) {
+            const label = (detail.shrineHrid || buffHrid)
+                .split('/')
+                .pop()
+                .split('_')
+                .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+                .join(' ');
+            const maxLevel = guildBuffMaxLevel(detail) || 20;
+            const level = Math.max(0, Math.floor(Number(levels[buffHrid]) || 0));
+            html += `<div style="display:flex; align-items:center; gap:6px; font-size:12px;">`;
+            html += `<span style="color:#888; width:100px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${label}">${label}</span>`;
+            html += `<input type="number" min="0" max="${maxLevel}" value="${level}"
+                data-guild-buff="${buffHrid}"
+                style="width:40px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
+                border-radius:3px; padding:1px 3px; font-size:12px; text-align:center;">`;
+            html += '</div>';
+        }
+
+        html += '</div></div></div>';
+        return html;
+    }
+
     /** @private */
     _renderTokenUpgradesSection(dto) {
         const upgrades = [
@@ -1550,6 +1608,23 @@ export class SimEditor {
                 input.value = val;
                 if (!dto.tokenUpgrades) dto.tokenUpgrades = {};
                 dto.tokenUpgrades[key] = val;
+            });
+        });
+
+        editorArea.querySelectorAll('[data-guild-buff]').forEach((input) => {
+            input.addEventListener('change', () => {
+                const buffHrid = input.dataset.guildBuff;
+                const detail = getGuildBuffDetailMap()[buffHrid];
+                const maxLevel = guildBuffMaxLevel(detail) || 20;
+                const val = Math.max(0, Math.min(maxLevel, parseInt(input.value) || 0));
+                input.value = val;
+                if (!dto.guildShrineLevels) dto.guildShrineLevels = {};
+                dto.guildShrineLevels[buffHrid] = val;
+                // The combat engine reads the resolved buff array, not the level,
+                // so a combat shrine's entries are rebuilt at the level just typed
+                if (detail?.isCombat) {
+                    dto.guildCombatBuffs = applyGuildBuffLevel(dto.guildCombatBuffs, detail, val);
+                }
             });
         });
 
@@ -1822,6 +1897,15 @@ export class SimEditor {
             if (origVal !== editVal) {
                 changes.push(`Token ${label} ${origVal}\u2192${editVal}`);
             }
+        }
+
+        const guildLevels = { ...(original.guildShrineLevels || {}), ...(edited.guildShrineLevels || {}) };
+        for (const buffHrid of Object.keys(guildLevels)) {
+            const origVal = original.guildShrineLevels?.[buffHrid] || 0;
+            const editVal = edited.guildShrineLevels?.[buffHrid] || 0;
+            if (origVal === editVal) continue;
+            const label = buffHrid.split('/').pop().replace(/_/g, ' ');
+            changes.push(`Shrine ${label} ${origVal}→${editVal}`);
         }
 
         const cbLabels = {

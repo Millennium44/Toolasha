@@ -1152,6 +1152,20 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'guildRoster',
+            name: 'Guild Roster',
+            category: 'Guild',
+            module: UI.guildRosterView,
+            async: false,
+        },
+        {
+            key: 'insights_calibration',
+            name: 'Prediction Calibration',
+            category: 'Insights',
+            module: UI.predictionCalibration,
+            async: true,
+        },
+        {
             key: 'leaderboardXPTracker',
             name: 'Leaderboard XP Tracker',
             category: 'Leaderboard',

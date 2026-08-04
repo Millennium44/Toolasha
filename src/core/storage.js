@@ -4,6 +4,31 @@
  * Provides debounced writes to reduce I/O operations
  */
 
+/**
+ * Soft per-store key-count budgets.
+ *
+ * Not a limit the database enforces — nothing here refuses a write. It is the
+ * number above which a store has stopped being a rolling window and started
+ * being a leak, which is a thing worth saying in a diagnostic report before the
+ * quota says it for us. Only stores that grow with play are listed; anything
+ * absent is unbudgeted and simply reported without a verdict.
+ */
+const STORE_KEY_BUDGETS = {
+    settings: 500,
+    networthHistory: 200,
+    lootLogHistory: 40,
+    guildHistory: 80,
+    leaderboardHistory: 80,
+    xpHistory: 200,
+    alchemyHistory: 200,
+    dungeonRuns: 600,
+    unifiedRuns: 600,
+    teamRuns: 600,
+    combatStats: 200,
+    queueSnapshots: 80,
+    marketListings: 2000,
+};
+
 class Storage {
     constructor() {
         this.db = null;
@@ -15,6 +40,21 @@ class Storage {
         this.SAVE_DEBOUNCE_DELAY = 3000; // 3 seconds
         this._reconnecting = false; // Guard against concurrent reconnection attempts
         this._dbNulledReason = null; // Track why db was last set to null
+
+        /**
+         * Whether a write has failed for want of space.
+         *
+         * The failure mode this exists to end is silent: a recorder appends to
+         * an array, hands it to `set()`, the transaction aborts on quota, and
+         * the feature goes on believing it is recording. Recorders read this
+         * and stand down instead — see `isQuotaExceeded()`.
+         */
+        this.quotaExceeded = false;
+        this._quotaExceededAt = null;
+        this._quotaFailures = 0;
+        this._lastQuotaTarget = null; // {key, storeName} of the write that failed
+        this._quotaListeners = new Set();
+        this._lastEstimate = null; // Cached navigator.storage.estimate() result
 
         /**
          * Resolves once `initialize` has run, either way.
@@ -246,24 +286,193 @@ class Storage {
      */
     async _saveToIndexedDB(key, value, storeName) {
         return new Promise((resolve, _reject) => {
+            let settled = false;
+            /**
+             * Resolve once, whichever of request/transaction reports first.
+             * A quota failure fires both `request.onerror` and the transaction's
+             * abort, and a promise that resolves twice hides the second one.
+             * @param {boolean} success - Whether the write landed
+             * @param {*} error - The error to classify, if it did not
+             */
+            const settle = (success, error) => {
+                if (settled) return;
+                settled = true;
+                if (!success && this._isQuotaError(error)) {
+                    this._handleQuotaExceeded(key, storeName, error);
+                }
+                resolve(success);
+            };
+
             try {
                 const transaction = this.db.transaction([storeName], 'readwrite');
                 const store = transaction.objectStore(storeName);
                 const request = store.put(value, key);
 
                 request.onsuccess = () => {
-                    resolve(true);
+                    settle(true, null);
                 };
 
                 request.onerror = () => {
                     console.error(`[Storage] Failed to save key ${key}:`, request.error);
-                    resolve(false);
+                    settle(false, request.error);
+                };
+
+                // A quota failure aborts the whole transaction; without this the
+                // only signal is a request error the browser may not deliver
+                transaction.onabort = () => {
+                    console.error(`[Storage] Save transaction aborted for key ${key}:`, transaction.error);
+                    settle(false, transaction.error);
                 };
             } catch (error) {
                 console.error(`[Storage] Save transaction failed for key ${key}:`, error);
-                resolve(false);
+                settle(false, error);
             }
         });
+    }
+
+    /**
+     * Whether an error is the browser saying "no room".
+     *
+     * Chromium throws `QuotaExceededError`, Firefox has historically used
+     * `NS_ERROR_DOM_QUOTA_REACHED`, and legacy DOMException code 22 covers the
+     * rest — all three mean the same thing to everything upstream of here.
+     * @param {*} error - Error from a failed request or transaction
+     * @returns {boolean} True when the failure was a space failure
+     * @private
+     */
+    _isQuotaError(error) {
+        if (!error) return false;
+        const name = error.name || '';
+        if (name === 'QuotaExceededError' || name === 'NS_ERROR_DOM_QUOTA_REACHED') return true;
+        if (error.code === 22) return true;
+        return /quota|storage is full|not enough space/i.test(error.message || '');
+    }
+
+    /**
+     * Record that storage is full and tell anyone who asked to be told.
+     * @param {string} key - The key whose write failed
+     * @param {string} storeName - The store it was going to
+     * @param {*} error - The originating error
+     * @private
+     */
+    _handleQuotaExceeded(key, storeName, error) {
+        this._quotaFailures += 1;
+        this._lastQuotaTarget = { key, storeName };
+        const firstTime = !this.quotaExceeded;
+        this.quotaExceeded = true;
+        this._quotaExceededAt = Date.now();
+
+        console.error(`[Storage] Quota exceeded writing ${storeName}:${key} — recording will stand down:`, error);
+
+        // Refresh the numbers so whatever shows this can say how full "full" is
+        this.estimate();
+
+        if (!firstTime) return;
+        for (const listener of this._quotaListeners) {
+            try {
+                listener({ key, storeName, at: this._quotaExceededAt, estimate: this._lastEstimate });
+            } catch (listenerError) {
+                console.error('[Storage] Quota listener failed:', listenerError);
+            }
+        }
+    }
+
+    /**
+     * Whether writes are currently failing for want of space.
+     *
+     * Recorders of bulky history — loot log, networth snapshots, enhancement
+     * sessions — check this before building a payload and skip the work when it
+     * is true, so a full disk costs one failed write rather than one per event.
+     * @returns {boolean} True while storage is known to be full
+     */
+    isQuotaExceeded() {
+        return this.quotaExceeded;
+    }
+
+    /**
+     * Be told, once, the first time a write fails for space.
+     * @param {Function} listener - Called with {key, storeName, at, estimate}
+     * @returns {Function} Unsubscribe
+     */
+    onQuotaExceeded(listener) {
+        if (typeof listener !== 'function') return () => {};
+        this._quotaListeners.add(listener);
+        return () => this._quotaListeners.delete(listener);
+    }
+
+    /**
+     * Forget that storage was full, so recorders resume.
+     *
+     * Called automatically after a successful delete, since deleting is the one
+     * thing that makes the original failure untrue.
+     */
+    clearQuotaState() {
+        this.quotaExceeded = false;
+        this._lastQuotaTarget = null;
+    }
+
+    /**
+     * How much of the origin's storage is used, per the browser.
+     *
+     * `navigator.storage.estimate()` is an estimate in the literal sense —
+     * padded, and quota is what the browser is willing to give rather than what
+     * is free on disk. Good enough to tell "comfortable" from "about to fail",
+     * which is the only distinction anything here draws.
+     * @returns {Promise<{usage: number|null, quota: number|null, percent: number|null, at: number}|null>}
+     *   The estimate, or null where the API is unavailable
+     */
+    async estimate() {
+        try {
+            if (typeof navigator === 'undefined' || !navigator.storage?.estimate) return null;
+            const { usage, quota } = await navigator.storage.estimate();
+            this._lastEstimate = {
+                usage: usage ?? null,
+                quota: quota ?? null,
+                percent: usage != null && quota ? (usage / quota) * 100 : null,
+                at: Date.now(),
+            };
+            return this._lastEstimate;
+        } catch (error) {
+            console.error('[Storage] Storage estimate failed:', error);
+            return null;
+        }
+    }
+
+    /**
+     * The last estimate taken, without taking another.
+     * @returns {Object|null} Cached estimate, or null if none has been taken
+     */
+    lastEstimate() {
+        return this._lastEstimate;
+    }
+
+    /**
+     * Key counts per store, against their soft budgets.
+     *
+     * Counting keys is one `getAllKeys()` per store and never touches a value,
+     * which is why this is affordable at all — a byte-accurate size would mean
+     * reading and serializing the entire database.
+     * @param {Array<string>} [storeNames] - Restrict to these stores; defaults to all
+     * @returns {Promise<Array<{storeName: string, keys: number, budget: number|null, over: boolean}>>}
+     *   One row per store, over-budget rows first
+     */
+    async budgetReport(storeNames) {
+        const names = storeNames ?? (await this.listStores());
+        const rows = [];
+
+        for (const storeName of names) {
+            const keys = await this.getAllKeys(storeName);
+            const budget = STORE_KEY_BUDGETS[storeName] ?? null;
+            rows.push({
+                storeName,
+                keys: keys.length,
+                budget,
+                over: budget !== null && keys.length > budget,
+            });
+        }
+
+        rows.sort((a, b) => Number(b.over) - Number(a.over) || b.keys - a.keys);
+        return rows;
     }
 
     /**
@@ -364,6 +573,9 @@ class Storage {
                 const request = store.delete(key);
 
                 request.onsuccess = () => {
+                    // Deleting is the one operation that makes "storage is full"
+                    // untrue, so it is where standing-down recorders are let up
+                    this.clearQuotaState();
                     resolve(true);
                 };
 
@@ -512,6 +724,9 @@ class Storage {
                     };
                     request.onerror = () => {
                         console.error(`[Storage] Failed to bulk-write key ${key} to ${storeName}:`, request.error);
+                        if (this._isQuotaError(request.error)) {
+                            this._handleQuotaExceeded(key, storeName, request.error);
+                        }
                     };
                 }
 
@@ -520,6 +735,9 @@ class Storage {
                 };
                 transaction.onerror = () => {
                     console.error(`[Storage] Bulk write transaction failed for store ${storeName}:`, transaction.error);
+                    if (this._isQuotaError(transaction.error)) {
+                        this._handleQuotaExceeded(keys[0], storeName, transaction.error);
+                    }
                     resolve(written.length);
                 };
             } catch (error) {
@@ -636,10 +854,16 @@ class Storage {
             lastNullReason: this._dbNulledReason,
             pendingWrites: this.pendingWrites.size,
             activeTimers: this.saveDebounceTimers.size,
+            quotaExceeded: this.quotaExceeded,
+            quotaExceededAt: this._quotaExceededAt,
+            quotaFailures: this._quotaFailures,
+            lastQuotaTarget: this._lastQuotaTarget,
+            estimate: this._lastEstimate,
         };
     }
 }
 
 const storage = new Storage();
 
+export { STORE_KEY_BUDGETS };
 export default storage;

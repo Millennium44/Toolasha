@@ -8,7 +8,13 @@ import storage from '../../core/storage.js';
 import domObserver from '../../core/dom-observer.js';
 import dataManager from '../../core/data-manager.js';
 import webSocketHook from '../../core/websocket.js';
-import { buildPlayerDTO, buildGameDataPayload, applyLoadoutSnapshotToDTO } from '../combat-sim/combat-sim-adapter.js';
+import {
+    buildPlayerDTO,
+    buildGameDataPayload,
+    applyLoadoutSnapshotToDTO,
+    getGuildBuffDetailMap,
+    applyGuildBuffLevel,
+} from '../combat-sim/combat-sim-adapter.js';
 import { runLabyrinthSimulation } from '../combat-sim/combat-sim-runner.js';
 import { wilsonInterval, decidedAgainst } from '../combat-sim/engine/wilson.js';
 import {
@@ -1655,6 +1661,38 @@ class LabyrinthClearRate {
         metrics.experienceBonus += upgrades.experience * UPGRADE_STEP;
 
         return metrics;
+    }
+
+    /**
+     * The guild buffs to score a skilling room with.
+     *
+     * Normally the server's own array for that action type — it is authoritative
+     * and needs no help. A caller exploring shrine levels (the upgrade advisor,
+     * or an edited sim loadout) passes the levels it wants instead, and only the
+     * shrines whose level actually differs are rebuilt on top of that array. That
+     * keeps every untouched shrine at the server's exact numbers, so a delta
+     * measures the one level that changed rather than the gap between the game's
+     * arithmetic and ours.
+     *
+     * @param {string} actionTypeHrid - e.g. '/action_types/milking'
+     * @param {Object} [shrineLevels] - buffHrid → level being explored
+     * @returns {Array} Buff objects
+     */
+    resolveGuildBuffs(actionTypeHrid, shrineLevels) {
+        const live = dataManager.characterData?.guildActionTypeBuffsMap?.[actionTypeHrid] || [];
+        if (!shrineLevels) return live;
+
+        const detailMap = getGuildBuffDetailMap();
+        let buffs = live;
+        for (const [buffHrid, level] of Object.entries(shrineLevels)) {
+            const detail = detailMap[buffHrid];
+            // Combat shrines never appear in a skilling action type's array
+            if (!detail || detail.isCombat) continue;
+            const owned = dataManager.getCharacterGuildBuffLevel?.(buffHrid) || 0;
+            if (level === owned) continue;
+            buffs = applyGuildBuffLevel(buffs, detail, level);
+        }
+        return buffs;
     }
 
     /**
@@ -4848,6 +4886,7 @@ class LabyrinthClearRate {
      * @param {Array} [overrides.houseBuffs] - House room buff objects
      * @param {Array} [overrides.crateBuffs] - Crate buff objects
      * @param {Object} [overrides.tokenUpgrades] - {speed, efficiency, success, doubleProgress}
+     * @param {Object} [overrides.guildShrineLevels] - buffHrid → level, for shrine levels being explored
      * @returns {Object} {skillLevelBonus, efficiencyBonus, actionSpeedBonus, successBonus, doubleProgressBonus}
      */
     getSkillingMetricsFromOverrides(skillId, actionTypeHrid, overrides) {
@@ -4864,12 +4903,14 @@ class LabyrinthClearRate {
         const skillLevelType = `/buff_types/${skillId}_level`;
         const skillSuccessType = `/buff_types/${skillId}_success`;
 
+        const guildBuffs = this.resolveGuildBuffs(actionTypeHrid, overrides.guildShrineLevels);
+
         const buffSources = [
             overrides.equipmentBuffs,
             overrides.communityBuffs,
             overrides.houseBuffs,
             dataManager.characterData?.achievementActionTypeBuffsMap?.[actionTypeHrid],
-            dataManager.characterData?.guildActionTypeBuffsMap?.[actionTypeHrid],
+            guildBuffs,
         ];
 
         for (const buffs of buffSources) {

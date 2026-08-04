@@ -2,12 +2,58 @@
  * Tests for Upgrade Advisor candidate generation
  */
 
-import { describe, test, expect, vi } from 'vitest';
+import { describe, test, expect, vi, beforeEach } from 'vitest';
 
-vi.mock('../../core/data-manager.js', () => ({ default: {} }));
+const guild = vi.hoisted(() => ({
+    /** buffHrid → detail, as initClientData.guildBuffDetailMap sends it */
+    detailMap: {},
+    /** shrineHrid → the level the guild has built it to */
+    shrineLevels: {},
+    /** Calls the advisor made to rebuild a combat buff array */
+    applied: [],
+}));
+
+vi.mock('../../core/data-manager.js', () => ({
+    default: {
+        getGuildBuildingLevel: (hrid) => guild.shrineLevels[hrid] || 0,
+    },
+}));
 vi.mock('./combat-sim-adapter.js', () => ({
     buildGameDataPayload: vi.fn(),
     calculateSimRevenue: vi.fn(),
+    // The synthesis itself is the adapter's business and is tested there; what
+    // matters here is that the advisor asks for the right level and puts the
+    // answer where the engine reads it
+    getGuildBuffDetailMap: () => guild.detailMap,
+    guildBuffMaxLevel: (detail) =>
+        Math.max(
+            0,
+            ...Object.keys(detail?.levelCosts || {})
+                .map(Number)
+                .filter(Number.isFinite)
+        ),
+    applyGuildBuffLevel: (buffs, detail, level) => {
+        guild.applied.push({ hrid: detail.hrid, level });
+        return [{ typeHrid: detail.buffs[0].typeHrid, level }];
+    },
+}));
+vi.mock('../../utils/guild-credit-pricing.js', () => ({
+    buildGoldPerCredit: vi.fn(() => ({})),
+    priceGuildCreditCosts: vi.fn((costs) => {
+        const lines = (costs || []).map(({ itemHrid, count }) => ({
+            itemHrid,
+            name: itemHrid,
+            count,
+            goldEach: itemHrid === '/items/unpriced_credit' ? null : 100,
+            gold: itemHrid === '/items/unpriced_credit' ? null : 100 * count,
+        }));
+        const unpriced = lines.filter((line) => line.gold === null).map((line) => line.name);
+        return {
+            lines,
+            total: unpriced.length > 0 ? null : lines.reduce((sum, line) => sum + line.gold, 0),
+            unpriced,
+        };
+    }),
 }));
 vi.mock('./combat-sim-runner.js', () => ({
     runSimulation: vi.fn(),
@@ -52,6 +98,7 @@ const {
     runLabyrinthCombinationCheck,
     generateSkillingEquipmentCandidates,
     generateLabyrinthBuffCandidatesFromEditor,
+    generateGuildShrineCandidates,
     generateHouseCandidates,
     houseRoomAffectsCombat,
     describeHouseScan,
@@ -2589,5 +2636,148 @@ describe('applying one candidate to a player', () => {
         });
 
         expect(original.equipment['/equipment_types/head'].hrid).toBe('/items/hat');
+    });
+});
+
+describe('guild shrine candidates', () => {
+    const FORCE = {
+        hrid: '/guild_buffs/force_combat',
+        shrineHrid: '/guild_shrines/force',
+        isCombat: true,
+        buffs: [{ typeHrid: '/buff_types/damage', ratioBoost: 0.003, ratioBoostLevelBonus: 0.003 }],
+        levelCosts: {
+            4: { guildTokenCost: 40, creditCosts: [{ itemHrid: '/items/guild_credit_1', count: 30 }] },
+            5: { guildTokenCost: 50, creditCosts: [] },
+        },
+    };
+    const RARITY_SKILLING = {
+        hrid: '/guild_buffs/rarity_skilling',
+        shrineHrid: '/guild_shrines/rarity',
+        isCombat: false,
+        buffs: [{ typeHrid: '/buff_types/rare_find', flatBoost: 0.01, flatBoostLevelBonus: 0.01 }],
+        levelCosts: { 1: { guildTokenCost: 10, creditCosts: [] } },
+    };
+    const FORCE_SKILLING = {
+        hrid: '/guild_buffs/force_skilling',
+        shrineHrid: '/guild_shrines/force',
+        isCombat: false,
+        buffs: [{ typeHrid: '/buff_types/efficiency', flatBoost: 0.002, flatBoostLevelBonus: 0.002 }],
+        levelCosts: { 1: { guildTokenCost: 10, creditCosts: [] } },
+    };
+
+    beforeEach(() => {
+        guild.detailMap = {
+            '/guild_buffs/force_combat': FORCE,
+            '/guild_buffs/rarity_skilling': RARITY_SKILLING,
+            '/guild_buffs/force_skilling': FORCE_SKILLING,
+        };
+        guild.shrineLevels = {};
+        guild.applied = [];
+    });
+
+    test('one level up from where the character is', () => {
+        const dto = { guildShrineLevels: { '/guild_buffs/force_combat': 3 } };
+        const [candidate] = generateGuildShrineCandidates(dto);
+
+        expect(candidate).toMatchObject({
+            type: 'guild_shrine',
+            buffHrid: '/guild_buffs/force_combat',
+            currentLevel: 3,
+            upgradeLevel: 4,
+            guildTokenCost: 40,
+            description: 'Force Shrine Lv3 → Lv4',
+        });
+    });
+
+    test('nothing past the top of the cost table', () => {
+        const dto = { guildShrineLevels: { '/guild_buffs/force_combat': 5 } };
+        expect(generateGuildShrineCandidates(dto)).toEqual([]);
+    });
+
+    test('a player whose guild we know nothing about gets no candidates', () => {
+        // Not the same as a guildless character: an imported DTO simply carries
+        // no shrine levels, and guessing zero would invent a purchase for them
+        expect(generateGuildShrineCandidates({})).toEqual([]);
+    });
+
+    test('a level past what the guild has built is still offered, and says so', () => {
+        guild.shrineLevels['/guild_shrines/force'] = 3;
+        const dto = { guildShrineLevels: { '/guild_buffs/force_combat': 3 } };
+        const [candidate] = generateGuildShrineCandidates(dto);
+
+        expect(candidate.needsShrineLevel).toBe(4);
+        expect(candidate.shrineLevelKnown).toBe(true);
+    });
+
+    test('a shrine level that never reached the client is unknown, not a cap', () => {
+        const dto = { guildShrineLevels: { '/guild_buffs/force_combat': 3 } };
+        const [candidate] = generateGuildShrineCandidates(dto);
+
+        expect(candidate.needsShrineLevel).toBeNull();
+        expect(candidate.shrineLevelKnown).toBe(false);
+    });
+
+    test('skilling candidates cover only buffs the clear-rate metrics can measure', () => {
+        const dto = { guildShrineLevels: {} };
+        const hrids = generateGuildShrineCandidates(dto, { combat: false }).map((c) => c.buffHrid);
+
+        // Rare find changes a run and changes none of the numbers reported, so a
+        // row for it could only ever read 0.00%
+        expect(hrids).toEqual(['/guild_buffs/force_skilling']);
+    });
+
+    test('cost is the credit gold, with the tokens left out of it', () => {
+        const dto = { guildShrineLevels: { '/guild_buffs/force_combat': 3 } };
+        const [candidate] = generateGuildShrineCandidates(dto);
+
+        expect(calculateUpgradeCost(candidate, buildGameData())).toBe(3000);
+
+        const detail = explainUpgradeCost(candidate, buildGameData());
+        expect(detail.guild).toMatchObject({ tokens: 40, shrineName: 'Force' });
+        expect(detail.net).toBe(3000);
+    });
+
+    test('an unpriced credit leaves the cost unknown rather than free', () => {
+        const dto = { guildShrineLevels: { '/guild_buffs/force_combat': 3 } };
+        const [candidate] = generateGuildShrineCandidates(dto);
+        candidate.creditCosts = [{ itemHrid: '/items/unpriced_credit', count: 5 }];
+
+        expect(calculateUpgradeCost(candidate, buildGameData())).toBeNull();
+    });
+
+    test('applying one moves the level and rebuilds the combat buffs behind it', () => {
+        const dto = applyCandidateToDTO(
+            { equipment: {}, guildShrineLevels: { '/guild_buffs/force_combat': 3 }, guildCombatBuffs: [] },
+            {
+                type: 'guild_shrine',
+                buffHrid: '/guild_buffs/force_combat',
+                upgradeLevel: 4,
+            }
+        );
+
+        expect(dto.guildShrineLevels['/guild_buffs/force_combat']).toBe(4);
+        expect(guild.applied).toEqual([{ hrid: '/guild_buffs/force_combat', level: 4 }]);
+        expect(dto.guildCombatBuffs).toEqual([{ typeHrid: '/buff_types/damage', level: 4 }]);
+    });
+
+    test('a skilling shrine moves the level and leaves the combat buffs alone', () => {
+        const dto = applyCandidateToDTO(
+            { equipment: {}, guildShrineLevels: {}, guildCombatBuffs: [{ typeHrid: '/buff_types/damage' }] },
+            {
+                type: 'guild_shrine',
+                buffHrid: '/guild_buffs/force_skilling',
+                upgradeLevel: 1,
+            }
+        );
+
+        expect(dto.guildShrineLevels['/guild_buffs/force_skilling']).toBe(1);
+        expect(guild.applied).toEqual([]);
+        expect(dto.guildCombatBuffs).toEqual([{ typeHrid: '/buff_types/damage' }]);
+    });
+
+    test('the shrine level is one purchase, so the plan never buys two of it', () => {
+        expect(conflictKey({ type: 'guild_shrine', buffHrid: '/guild_buffs/force_combat' })).toBe(
+            'guild:/guild_buffs/force_combat'
+        );
     });
 });

@@ -85,6 +85,10 @@ export function ownProfileData() {
             characterHouseRoomMap: combined.characterHouseRoomMap || {},
             equippedAbilities,
             wearableItemMap,
+            // Not part of a shared profile — the game never tells you what
+            // another player has put into their guild's shrines — so this is the
+            // one place the guild-shrine component can be scored at all
+            characterGuildBuffMap: dataManager.characterGuildBuffMap || {},
             // Your own equipment is never hidden from you, whatever the profile
             // privacy setting says about showing it to other people
             hideWearableItems: false,
@@ -191,10 +195,18 @@ registerRow({
         value.style.whiteSpace = 'nowrap';
 
         container.append(label, value);
+        // Guild shrines are shown on their own line rather than inside the total:
+        // nobody else's card can carry the figure, so adding it would make this
+        // score mean something different from every score it gets compared with
+        const shrineLine =
+            score.guildShrine > 0
+                ? `Guild shrines ${score.guildShrine.toFixed(1)} (+${score.guildShrineTokens} tokens, unpriced)\n`
+                : '';
         container.title =
             `Equipment ${score.equipment.toFixed(1)} · Abilities ${score.ability.toFixed(1)} · ` +
             `House ${score.house.toFixed(1)}\n` +
             `Skiller ${score.skillerTotal.toFixed(1)}\n` +
+            shrineLine +
             'The same score as your profile card: the build’s cost in millions of coins.';
     },
 });

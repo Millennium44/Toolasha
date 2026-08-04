@@ -547,6 +547,16 @@ const UPGRADE_MODES = [
     },
     { key: 'house', label: 'House', defaultOn: false, title: 'One level on each combat-relevant house room' },
     {
+        key: 'guild_shrine',
+        label: 'Guild Shrine',
+        defaultOn: false,
+        title:
+            'One level on each combat guild shrine buff.\n\n' +
+            'Cost is the gold value of the guild credits only — guild tokens are shown in the row detail and ' +
+            'are not priced, because nothing converts into them. A level past what your guild has built is ' +
+            'still listed, and says so.',
+    },
+    {
         key: 'food',
         label: 'Food',
         defaultOn: false,
@@ -4661,7 +4671,51 @@ class CombatSimUI {
             <div style="margin-top:6px; color:#666; font-size:10px;">
                 Baseline: DPS ${formatKMB(baseline.dps)} | EXP ${formatKMB(baseline.xpPerHour)} | Profit ${formatKMB(baseline.profitPerHour)} | EPH ${baseline.encountersPerHour.toFixed(1)} | DPH ${baseline.deathsPerHour.toFixed(1)}
             </div>
+            ${this._renderGuildShrineCost(r)}
             ${this._renderUpgradeScoreBreakdown(r)}`;
+    }
+
+    /**
+     * What a guild shrine row actually costs, which the Cost column cannot say.
+     *
+     * The column holds gold, and a shrine level is bought with credits *and*
+     * guild tokens. Credits have a gold value — the cheapest items that convert
+     * into them — but nothing converts into tokens, so no honest gold figure
+     * exists for that half. It is reported as a count instead, and the row is
+     * ranked on the gold half alone, which this says out loud rather than
+     * letting the ranking imply the tokens were free.
+     *
+     * @param {Object} r - Result row
+     * @returns {string} HTML, empty for every other kind of row
+     * @private
+     */
+    _renderGuildShrineCost(r) {
+        const candidate = r.candidate;
+        if (candidate?.type !== 'guild_shrine') return '';
+
+        const tokens = candidate.guildTokenCost || 0;
+        const gold = r.cost == null ? 'no price' : formatKMB(r.cost);
+        const parts = [
+            `<div style="color:#aaa;">Costs ${formatWithSeparator(tokens)} guild token${tokens === 1 ? '' : 's'} + ` +
+                `credits worth ${gold}. Ranked on the gold half only — tokens cannot be bought.</div>`,
+        ];
+
+        if (candidate.needsShrineLevel) {
+            parts.push(
+                `<div style="color:#ff9800;">Your guild's ${String(candidate.shrineHrid || '')
+                    .split('/')
+                    .pop()} shrine is level
+                ${candidate.shrineLevel}; buying level ${candidate.needsShrineLevel} needs the shrine there first —
+                a guild-wide upgrade this cost does not include.</div>`
+            );
+        } else if (!candidate.shrineLevelKnown) {
+            parts.push(
+                `<div style="color:#888;">No guild shrine levels reached the client, so whether the shrine can
+                already support this level is unknown.</div>`
+            );
+        }
+
+        return `<div style="margin-top:4px; font-size:10px; line-height:1.4;">${parts.join('')}</div>`;
     }
 
     /**

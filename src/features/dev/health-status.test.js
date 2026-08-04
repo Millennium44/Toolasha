@@ -21,7 +21,32 @@ vi.mock('../../utils/panel-z-index.js', () => ({
     bringPanelToFront: () => {},
 }));
 
-import healthStatusPanel, { buildDiagnosticReport, diagnosticData, reportFailures } from './health-status.js';
+/** The database, as the panel sees it: numbers to report and a listener to fire */
+const storageMock = vi.hoisted(() => ({
+    diag: {},
+    budgets: [],
+    listener: null,
+    default: null,
+}));
+
+vi.mock('../../core/storage.js', () => ({
+    default: {
+        diagnostics: () => storageMock.diag,
+        estimate: async () => storageMock.diag.estimate,
+        budgetReport: async () => storageMock.budgets,
+        onQuotaExceeded: (fn) => {
+            storageMock.listener = fn;
+            return () => {};
+        },
+    },
+}));
+
+import healthStatusPanel, {
+    buildDiagnosticReport,
+    diagnosticData,
+    reportFailures,
+    refreshStorageFacts,
+} from './health-status.js';
 import { dismissAllToasts } from '../../utils/toast.js';
 
 const FAILURES = [
@@ -31,6 +56,21 @@ const FAILURES = [
 
 beforeEach(() => {
     document.body.innerHTML = '';
+    storageMock.diag = {
+        dbName: 'ToolashaDB',
+        dbVersion: 17,
+        available: true,
+        pendingWrites: 0,
+        activeTimers: 0,
+        quotaExceeded: false,
+        quotaFailures: 0,
+        lastQuotaTarget: null,
+        estimate: { usage: 25_000_000, quota: 100_000_000, percent: 25, at: 0 },
+    };
+    storageMock.budgets = [
+        { storeName: 'lootLogHistory', keys: 41, budget: 40, over: true },
+        { storeName: 'settings', keys: 120, budget: 500, over: false },
+    ];
     window.Toolasha = {
         version: '2.88.0',
         fork: 'Millennium44/Toolasha',
@@ -85,6 +125,91 @@ describe('the diagnostic report', () => {
         expect(data.script).toBe('2.88.0');
         expect(data.failures).toHaveLength(2);
         expect(data.startup.features[0].name).toBe('init:networth');
+    });
+});
+
+describe('what the report says about storage', () => {
+    test('how full the database is, in units a person can read', async () => {
+        await refreshStorageFacts();
+        const report = buildDiagnosticReport([]);
+
+        expect(report).toContain('Storage');
+        expect(report).toContain('usage: 23.8 MB of 95.4 MB (25.0%)');
+    });
+
+    test('a browser that will not say is said to have not said', async () => {
+        storageMock.diag.estimate = null;
+        await refreshStorageFacts();
+
+        expect(buildDiagnosticReport([])).toContain('usage: not reported by this browser');
+    });
+
+    test('a healthy database still states that no write has failed', async () => {
+        await refreshStorageFacts();
+        expect(buildDiagnosticReport([])).toContain('quota: no failed writes this session');
+    });
+
+    test('a full database says so, and says what stopped', async () => {
+        storageMock.diag.quotaExceeded = true;
+        storageMock.diag.quotaFailures = 3;
+        storageMock.diag.lastQuotaTarget = { storeName: 'networthHistory', key: 'networth_1' };
+        await refreshStorageFacts();
+
+        const report = buildDiagnosticReport([]);
+        expect(report).toContain('QUOTA EXCEEDED — 3 failed write(s), most recently networthHistory:networth_1');
+        expect(report).toContain('History recording has stood down');
+    });
+
+    test('stores that have outgrown their soft budget are named', async () => {
+        await refreshStorageFacts();
+
+        const report = buildDiagnosticReport([]);
+        expect(report).toContain('stores over their soft budget (1)');
+        expect(report).toContain('- lootLogHistory: 41 keys (budget 40)');
+    });
+
+    test('nothing over budget is stated as nothing, not left out', async () => {
+        storageMock.budgets = [{ storeName: 'settings', keys: 10, budget: 500, over: false }];
+        await refreshStorageFacts();
+
+        expect(buildDiagnosticReport([])).toContain('stores over their soft budget: none');
+    });
+
+    test('the machine-readable copy carries the same storage facts', async () => {
+        await refreshStorageFacts();
+
+        const data = diagnosticData([]);
+        expect(data.storage.estimate.usage).toBe(25_000_000);
+        expect(data.storage.budgets[0].storeName).toBe('lootLogHistory');
+    });
+});
+
+describe('a full database reaching the player', () => {
+    test('one toast, which leads to what it means', async () => {
+        expect(typeof storageMock.listener).toBe('function');
+
+        storageMock.listener({ key: 'lootLog_1', storeName: 'lootLogHistory', at: Date.now() });
+
+        const toasts = document.querySelectorAll('.toolasha-toast');
+        expect(toasts).toHaveLength(1);
+        expect(toasts[0].textContent).toContain('ran out of storage');
+
+        toasts[0].click();
+        const panel = document.getElementById('toolasha-health-status');
+        expect(panel.textContent).toContain('Storage (IndexedDB)');
+        expect(panel.textContent).toContain('lootLogHistory:lootLog_1');
+    });
+
+    test('the panel shows the usage line and the full-storage warning', async () => {
+        storageMock.diag.quotaExceeded = true;
+        healthStatusPanel.show([]);
+
+        await vi.waitFor(() => {
+            expect(document.querySelector('.toolasha-health-quota')).toBeTruthy();
+        });
+        const block = document.querySelector('.toolasha-health-storage');
+        expect(block.textContent).toContain('Storage: 23.8 MB of 95.4 MB');
+        expect(block.textContent).toContain('Over soft budget: lootLogHistory (41)');
     });
 });
 

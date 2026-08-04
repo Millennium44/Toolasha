@@ -45,6 +45,97 @@ export function buildGameDataPayload() {
 }
 
 /**
+ * Guild shrine buffs — the levels a character buys with guild credits and tokens.
+ *
+ * The server sends the *resolved* buffs it grants (`guildActionTypeBuffsMap`),
+ * not the levels behind them, so asking "what would one more level do" means
+ * rebuilding the buff object by hand. `guildBuffDetailMap` carries everything
+ * needed: the buff's level-1 value and its per-level bonus, in exactly the shape
+ * `Buff` reads (`value = base + (level − 1) × levelBonus`).
+ *
+ * This lives here rather than in the game-data payload because the synthesis
+ * happens on the main thread — a worker is handed the finished buff array and
+ * never needs the level table.
+ * @returns {Object} guildBuffDetailMap, or an empty object before data loads
+ */
+export function getGuildBuffDetailMap() {
+    return dataManager.getInitClientData()?.guildBuffDetailMap || {};
+}
+
+/**
+ * Highest level a shrine buff can be bought to, read from its own cost table.
+ * @param {Object} detail - Entry from guildBuffDetailMap
+ * @returns {number} Max level (0 when the entry carries no costs)
+ */
+export function guildBuffMaxLevel(detail) {
+    const levels = Object.keys(detail?.levelCosts || {})
+        .map(Number)
+        .filter((level) => Number.isFinite(level));
+    return levels.length > 0 ? Math.max(...levels) : 0;
+}
+
+/**
+ * The buff objects a shrine buff grants at a given level.
+ *
+ * Boosts are resolved here rather than left as base + bonus, because the combat
+ * engine adds `flatBoost`/`ratioBoost` straight into its permanent buffs without
+ * consulting a level. The level-bonus fields are zeroed for the same reason: a
+ * reader that *does* apply them (Buff, at level 1) must not double-count.
+ *
+ * @param {Object} detail - Entry from guildBuffDetailMap
+ * @param {number} level - Purchased level (0 or less grants nothing)
+ * @returns {Array<Object>} Buff objects in the shape the server sends
+ */
+export function synthesizeGuildBuffs(detail, level) {
+    if (!detail || !(level > 0)) return [];
+    return (detail.buffs || []).map((buff) => ({
+        uniqueHrid:
+            buff.uniqueHrid ||
+            `/buff_uniques/${String(detail.hrid || '')
+                .split('/')
+                .pop()}`,
+        typeHrid: buff.typeHrid,
+        ratioBoost: (buff.ratioBoost || 0) + (level - 1) * (buff.ratioBoostLevelBonus || 0),
+        ratioBoostLevelBonus: 0,
+        flatBoost: (buff.flatBoost || 0) + (level - 1) * (buff.flatBoostLevelBonus || 0),
+        flatBoostLevelBonus: 0,
+        startTime: '0001-01-01T00:00:00Z',
+        duration: 0,
+    }));
+}
+
+/**
+ * The same buff list with one shrine buff moved to a different level.
+ *
+ * Entries are matched by buff type rather than by unique hrid: the five combat
+ * shrines grant disjoint buff types, and the level a shrine sits at is the only
+ * thing that changes about its contribution. A shrine currently at 0 contributes
+ * nothing to match, so this also covers buying the first level.
+ *
+ * @param {Array<Object>} buffs - Current buff array (not mutated)
+ * @param {Object} detail - Entry from guildBuffDetailMap
+ * @param {number} level - Level to put that shrine buff at
+ * @returns {Array<Object>} New buff array
+ */
+export function applyGuildBuffLevel(buffs, detail, level) {
+    const replaced = new Set((detail?.buffs || []).map((buff) => buff.typeHrid));
+    const kept = (Array.isArray(buffs) ? buffs : []).filter((buff) => !replaced.has(buff?.typeHrid));
+    return [...kept, ...synthesizeGuildBuffs(detail, level)];
+}
+
+/**
+ * The character's purchased level in every guild shrine buff.
+ * @returns {Object} buffHrid → level (0 for anything unpurchased)
+ */
+export function readGuildShrineLevels() {
+    const levels = {};
+    for (const buffHrid of Object.keys(getGuildBuffDetailMap())) {
+        levels[buffHrid] = dataManager.getCharacterGuildBuffLevel?.(buffHrid) || 0;
+    }
+    return levels;
+}
+
+/**
  * Build a player DTO from the current character data.
  * Outputs the format expected by Player.createFromDTO():
  *   { staminaLevel, ..., equipment: { '/equipment_types/head': {hrid, enhancementLevel}, ... },
@@ -91,6 +182,7 @@ export function buildPlayerDTO() {
         communityBuffLevels: { productionEfficiency: 0, enhancingSpeed: 0, gatheringQuantity: 0, experience: 0 },
         guildCombatBuffs: [],
         achievementCombatBuffs: [],
+        guildShrineLevels: {},
     };
 
     // Extract all skill levels (combat + skilling)
@@ -124,6 +216,11 @@ export function buildPlayerDTO() {
 
     // Extract guild combat buffs (pre-computed server-side per action type)
     dto.guildCombatBuffs = characterData.guildActionTypeBuffsMap?.['/action_types/combat'] || [];
+
+    // The levels behind those buffs, which the buff array itself does not carry.
+    // Editing one re-synthesizes its entries in guildCombatBuffs; the rest of the
+    // array stays exactly as the server sent it.
+    dto.guildShrineLevels = readGuildShrineLevels();
 
     // Achievement buffs arrive the same shape and from the same kind of source —
     // completed achievement tiers, pre-computed per action type. They were being

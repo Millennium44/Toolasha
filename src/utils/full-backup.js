@@ -20,7 +20,43 @@ export async function listBackupStores() {
 }
 
 /**
+ * Export the whole database as JSON text, one store at a time.
+ *
+ * The object form held every store's values live at once and then handed the
+ * lot to `JSON.stringify`, so peak memory was the entire database as objects
+ * plus the entire database as a string — on an account with a year of history
+ * that is where a backup runs out of room and the tab dies. Here each store is
+ * read, serialized, and released before the next is read, so what is held is
+ * the finished text plus one store.
+ *
+ * @returns {Promise<string>} The backup file's contents
+ */
+export async function exportEverythingJSON() {
+    const storeNames = await listBackupStores();
+
+    const parts = [
+        `{"formatVersion":${FORMAT_VERSION},`,
+        `"exportedAt":${JSON.stringify(new Date().toISOString())},`,
+        '"stores":{',
+    ];
+
+    let first = true;
+    for (const storeName of storeNames) {
+        const entries = await storage.getAll(storeName);
+        parts.push(`${first ? '' : ','}${JSON.stringify(storeName)}:${JSON.stringify(entries)}`);
+        first = false;
+    }
+
+    parts.push('}}');
+    return parts.join('');
+}
+
+/**
  * Export every key/value pair from every object store in the database.
+ *
+ * The object form, for callers that want to inspect the payload rather than
+ * write it to a file. Anything writing it to a file should prefer
+ * `exportEverythingJSON()`, which never materializes both forms at once.
  * @returns {Promise<{formatVersion: number, exportedAt: string, stores: Record<string, Record<string, *>>}>}
  *   Backup payload
  */
@@ -85,5 +121,6 @@ export async function importEverything(payload, options = {}) {
 export default {
     listBackupStores,
     exportEverything,
+    exportEverythingJSON,
     importEverything,
 };
