@@ -910,6 +910,11 @@ function applyMenuButtonSetting() {
 export default {
     name: 'Watchlist',
     initialize: () => {
+        // getSetting, not isFeatureEnabled: this key is not in the legacy
+        // features map, so the registry's own check always passed and the
+        // checkbox did nothing
+        if (!config.getSetting('watchlist')) return;
+
         inventoryBadgeManager.registerProvider('watchlist-dot', markTrackedItem, 150);
         applyMenuButtonSetting();
         config.onSettingChange(MENU_BUTTON_SETTING, applyMenuButtonSetting);

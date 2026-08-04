@@ -1084,7 +1084,11 @@ class ListingPriceDisplay {
               : '#00FF00';
         const title = lastUpdated ? estimatedListingAge.getStalenessTooltip(lastUpdated) : undefined;
 
-        return createStyledCell(formatKMB(topOrderPrice, 1), color, { title });
+        return createStyledCell(
+            formatKMB(topOrderPrice, config.getSettingValue('market_listingPricePrecision', 1)),
+            color,
+            { title }
+        );
     }
 
     /**
@@ -1140,7 +1144,10 @@ class ListingPriceDisplay {
             unclaimedCoinCount,
             unclaimedItemCount
         );
-        return createStyledCell(formatKMB(totalPrice, 1), this.getAmountColor(totalPrice));
+        return createStyledCell(
+            formatKMB(totalPrice, config.getSettingValue('market_listingPricePrecision', 1)),
+            this.getAmountColor(totalPrice)
+        );
     }
 
     /**

@@ -70,8 +70,10 @@ class DungeonTrackerUI {
                 this.timerRegistry.registerTimeout(annotateTimeout);
             }
 
-            // Check if UI is enabled before updating the panel
-            if (!config.isFeatureEnabled('dungeonTrackerUI')) {
+            // Check if UI is enabled before updating the panel. getSetting, not
+            // isFeatureEnabled: this key is not in the legacy features map, so
+            // isFeatureEnabled fell through to true and the checkbox did nothing
+            if (!config.getSetting('dungeonTrackerUI')) {
                 this.hide();
                 return;
             }

@@ -98,6 +98,9 @@ const itemDetailMap = {
 };
 
 beforeEach(() => {
+    // The master toggle, on by default in the schema; initialize() is a no-op
+    // without it, which is its own test below
+    settings.watchlist = true;
     game.data = {
         itemDetailMap,
         actionDetailMap: {
@@ -326,6 +329,18 @@ describe('the header', () => {
 });
 
 describe('the Track button in the item menu', () => {
+    test('the master toggle off means initialize touches nothing', () => {
+        // The checkbox used to be decorative \u2014 isFeatureEnabled fell through
+        // to true for keys outside the legacy features map
+        settings.watchlist = false;
+        settings.watchlist_menuButton = true;
+        watchlist.initialize();
+
+        expect(observed).toHaveLength(0);
+        expect(badges.provider).toBeNull();
+        expect(trackButton(openMenu('Cheese'))).toBeNull();
+    });
+
     test('is off by default, so the game\u2019s menu is left alone', () => {
         // It sits next to Sell, and a misclick there is a sale
         watchlist.initialize();
