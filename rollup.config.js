@@ -69,7 +69,7 @@ const utilsExternalGlobals = new Map([
     // Shared or the overlay's row list is duplicated per bundle and the panel renders nothing
     // Every src/utils module used by more than one bundle is declared here.
     // Anything omitted is silently copied into each bundle that imports it,
-    // which is how the combat bundle grew to within 3 KB of its 2 MB ceiling.
+    // which is how the combat bundle grew to within 3 KB of its bundle-size ceiling (2.5 MiB in CI — a duplication guard, not a hosting limit).
     [normalize(join(__dirname, 'src/utils/drop-luck.js')), 'Toolasha.Utils.dropLuck'],
     [normalize(join(__dirname, 'src/utils/complex-fft.js')), 'Toolasha.Utils.complexFft'],
     [normalize(join(__dirname, 'src/utils/combat-drop-model.js')), 'Toolasha.Utils.combatDropModel'],
@@ -121,7 +121,7 @@ const utilsExternalGlobals = new Map([
 // About a megabyte of source reached into by four features across three bundles;
 // left inline it was copied into each of them, and both the combat and the UI
 // bundle carried the same `Monster` class while sitting a few kilobytes under
-// the 2 MB ceiling.
+// the bundle-size ceiling (2.5 MiB in CI — a duplication guard, not a hosting limit).
 const simExternalGlobals = new Map([
     [normalize(join(__dirname, 'src/features/combat-sim/combat-sim.js')), 'Toolasha.Sim.combatSim'],
     [normalize(join(__dirname, 'src/features/combat-sim/lab-sim.js')), 'Toolasha.Sim.labSim'],
@@ -175,7 +175,7 @@ const marketExternalGlobals = new Map([
     // has them, and the only bundle that can own them without a forward
     // reference. Left inline they were copied whole into every bundle that
     // imports them, which is ~29 KB of source each time and the largest single
-    // contributor to the ui bundle sitting over its 2 MB ceiling.
+    // contributor to the ui bundle sitting over its bundle-size ceiling (2.5 MiB in CI — a duplication guard, not a hosting limit).
     [normalize(join(__dirname, 'src/features/actions/gathering-profit.js')), 'Toolasha.Market.gatheringProfit'],
     [normalize(join(__dirname, 'src/features/actions/production-profit.js')), 'Toolasha.Market.productionProfit'],
 ]);
