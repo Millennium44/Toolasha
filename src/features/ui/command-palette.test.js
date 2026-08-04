@@ -46,7 +46,77 @@ const {
     filterCommands,
     isTypingTarget,
     isPaletteHotkey,
+    revealSetting,
 } = await import('./command-palette.js');
+
+/**
+ * Enough of the game's settings dialog and Toolasha's tab inside it for the
+ * palette to walk: the nav link it clicks, the tab it waits for, the search box
+ * it fills, and one collapsed group with a setting in it.
+ *
+ * The search box carries a listener that hides what does not match, because the
+ * real panel filters from its own input handler and the thing worth testing is
+ * that the filter and the reveal compose rather than undo each other.
+ *
+ * @returns {Object} The pieces, plus what got clicked
+ */
+function buildSettingsDom() {
+    const clicks = [];
+
+    const link = document.createElement('a');
+    link.className = 'NavigationBar_minorNavigationLink__xyz';
+    link.textContent = 'Settings';
+    link.addEventListener('click', () => clicks.push('nav'));
+    document.body.appendChild(link);
+
+    const tab = document.createElement('button');
+    tab.id = 'toolasha-settings-tab';
+    tab.addEventListener('click', () => clicks.push('tab'));
+    document.body.appendChild(tab);
+
+    const search = document.createElement('input');
+    search.className = 'toolasha-search-input';
+    document.body.appendChild(search);
+
+    const group = document.createElement('div');
+    group.className = 'toolasha-settings-group collapsed';
+    group.dataset.group = 'ui';
+    const content = document.createElement('div');
+    content.className = 'toolasha-settings-group-content';
+    group.appendChild(content);
+    document.body.appendChild(group);
+
+    const rowFor = (id, label) => {
+        const row = document.createElement('div');
+        row.className = 'toolasha-setting';
+        row.dataset.settingId = id;
+        row.style.display = 'flex';
+        const labelEl = document.createElement('span');
+        labelEl.className = 'toolasha-setting-label';
+        labelEl.textContent = label;
+        row.appendChild(labelEl);
+        row.scrollIntoView = vi.fn();
+        content.appendChild(row);
+        return row;
+    };
+
+    const modals = rowFor('draggableModals', 'Draggable modals');
+    const overlayRow = rowFor('overlayPanel', 'Overlay Panel: one floating panel');
+
+    search.addEventListener('input', () => {
+        const query = search.value.toLowerCase().trim();
+        let visible = 0;
+        for (const row of content.querySelectorAll('.toolasha-setting')) {
+            const text = row.querySelector('.toolasha-setting-label').textContent.toLowerCase();
+            const shown = !query || text.includes(query);
+            row.style.display = shown ? 'flex' : 'none';
+            if (shown) visible++;
+        }
+        group.style.display = visible ? 'block' : 'none';
+    });
+
+    return { clicks, link, tab, search, group, modals, overlayRow };
+}
 
 /**
  * A command in the shape the filter expects.
@@ -302,6 +372,74 @@ describe('the palette in the page', () => {
         outside.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
 
         expect(document.activeElement).toBe(palette.input);
+    });
+
+    test('choosing a setting opens settings, filters, expands, scrolls and flashes', async () => {
+        const dom = buildSettingsDom();
+
+        palette.initialize();
+        palette.open();
+        type('draggable');
+        expect(drawnLabels()[0]).toBe('Draggable modals');
+        press('Enter');
+
+        // The panel is the game's: the way in is the link a player would click,
+        // then the tab this script injects into the dialog it opens
+        await vi.waitFor(() => expect(dom.clicks).toEqual(['nav', 'tab']));
+
+        // The search is still pre-filled — the filter is what puts one row on
+        // screen — and the reveal happens on top of it rather than instead
+        await vi.waitFor(() => expect(dom.search.value).toBe('Draggable modals'));
+        expect(dom.overlayRow.style.display).toBe('none');
+        expect(dom.modals.style.display).toBe('flex');
+
+        await vi.waitFor(() => expect(dom.modals.dataset.toolashaFlash).toBe('on'));
+        expect(dom.group.classList.contains('collapsed')).toBe(false);
+        expect(dom.modals.scrollIntoView).toHaveBeenCalled();
+    });
+
+    test('expanding for one visit is not the same as expanding for good', async () => {
+        const dom = buildSettingsDom();
+        const collapsedWrites = [];
+        // The panel persists its collapsed set from the header's click handler;
+        // nothing here clicks a header, so nothing is written down
+        dom.group.addEventListener('click', () => collapsedWrites.push('header'));
+
+        await revealSetting('draggableModals');
+
+        expect(dom.group.classList.contains('collapsed')).toBe(false);
+        expect(collapsedWrites).toEqual([]);
+    });
+
+    test('a setting drawn as a chip rather than a row is still reached', async () => {
+        // Iron Cow is a mode: its schema entry is hidden and its control is a
+        // chip in the presets block, outside every settings group
+        const chip = document.createElement('button');
+        chip.className = 'toolasha-mode-chip';
+        chip.dataset.settingId = 'ironCow_enabled';
+        chip.scrollIntoView = vi.fn();
+        document.body.appendChild(chip);
+
+        const revealed = await revealSetting('ironCow_enabled');
+
+        expect(revealed).toBe(chip);
+        expect(chip.dataset.toolashaFlash).toBe('on');
+        expect(chip.scrollIntoView).toHaveBeenCalled();
+    });
+
+    test('a setting that is not on the page reveals nothing rather than throwing', async () => {
+        expect(await revealSetting('')).toBe(null);
+
+        // The wait is for a panel the game has not drawn yet; when it never
+        // arrives the answer is null, not an exception a few seconds later
+        vi.useFakeTimers();
+        try {
+            const pending = revealSetting('somethingElse');
+            await vi.advanceTimersByTimeAsync(4000);
+            expect(await pending).toBe(null);
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     test('cleanup takes it down and unhooks the chord', () => {

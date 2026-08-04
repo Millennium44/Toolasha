@@ -47,13 +47,16 @@ vi.mock('../../core/storage.js', () => ({
 const { settingsGroups, getSettingDefinition } = await import('../../core/settings-schema.js');
 const {
     SETTING_PRESETS,
+    MODE_PRESETS,
     DEFAULT_PRESET_ID,
     PRESET_EXCLUDED_IDS,
     getPreset,
+    getModePreset,
     presetTargetIds,
     defaultCheckboxValues,
     resolvePresetValues,
     applyPreset,
+    writeCheckboxValues,
     bulkSnapshotKey,
 } = await import('./setting-presets.js');
 
@@ -129,6 +132,59 @@ describe('the preset table matches the schema', () => {
         const again = new Set(getPreset('essentials').settings);
         for (const id of getPreset('market').settings) again.delete(id);
         expect([...again]).toEqual([]);
+    });
+});
+
+describe('modes sit beside the presets without being one', () => {
+    test('every mode names a label, an icon, a description and the setting it owns', () => {
+        expect(MODE_PRESETS.length).toBeGreaterThan(0);
+        for (const mode of MODE_PRESETS) {
+            expect(mode.id, JSON.stringify(mode)).toBeTruthy();
+            expect(mode.label, mode.id).toBeTruthy();
+            expect(mode.icon, mode.id).toBeTruthy();
+            expect(mode.description, mode.id).toBeTruthy();
+            expect(mode.settingId, mode.id).toBeTruthy();
+            expect(mode.kind, mode.id).toBe('mode');
+        }
+    });
+
+    test('Iron Cow is one of them, and is found by id', () => {
+        expect(getModePreset('ironCow')?.settingId).toBe('ironCow_enabled');
+        expect(getModePreset('essentials')).toBe(null);
+        expect(getPreset('ironCow')).toBe(null);
+    });
+
+    test('mode ids never collide with preset ids', () => {
+        const presetIds = new Set(SETTING_PRESETS.map((preset) => preset.id));
+        for (const mode of MODE_PRESETS) {
+            expect(presetIds.has(mode.id), `${mode.id} is both a mode and a preset`).toBe(false);
+        }
+    });
+
+    // The whole reason a mode is a separate list: a one-shot sweep that flipped
+    // it would strand the mode's own snapshot of everything it force-disables
+    test('every mode setting is real, excluded, and outside every bulk write', () => {
+        const targets = new Set(presetTargetIds());
+        for (const mode of MODE_PRESETS) {
+            expect(getSettingDefinition(mode.settingId), mode.settingId).not.toBe(null);
+            expect(PRESET_EXCLUDED_IDS.has(mode.settingId), mode.settingId).toBe(true);
+            expect(targets.has(mode.settingId), mode.settingId).toBe(false);
+        }
+        for (const preset of SETTING_PRESETS) {
+            const values = resolvePresetValues(preset);
+            for (const mode of MODE_PRESETS) {
+                expect(mode.settingId in values, `${preset.id} decides ${mode.settingId}`).toBe(false);
+            }
+        }
+    });
+
+    test('a bulk write refuses a mode even when handed one directly', () => {
+        mocks.written = [];
+        mocks.settingsMap = { ironCow_enabled: { id: 'ironCow_enabled', type: 'checkbox', isTrue: true } };
+
+        expect(writeCheckboxValues({ ironCow_enabled: false })).toEqual([]);
+        expect(mocks.written).toEqual([]);
+        expect(mocks.settingsMap.ironCow_enabled.isTrue).toBe(true);
     });
 });
 
