@@ -175,3 +175,89 @@ describe('recording the first seconds of a session', () => {
         expect(ticks[ticks.length - 1].panel).toBeUndefined();
     });
 });
+
+describe('handing the finished recording on', () => {
+    test('a listener is given the file the moment the recording ends', () => {
+        // The only moment anything knows a recording is complete. Polling
+        // `isRecording` would mean every reader owning a timer for an event that
+        // happens a handful of times a session.
+        const seen = [];
+        const detach = recorder.onRecordingComplete((file) => seen.push(file));
+
+        recorder.startRecording();
+        send('battle_updated', { pMap: { 0: { cHP: 9 } }, mMap: {} });
+        recorder.stopRecording();
+
+        expect(seen).toHaveLength(1);
+        expect(seen[0].ticks).toHaveLength(1);
+        detach();
+    });
+
+    test('a recording that caught nothing has not finished anything', () => {
+        const seen = [];
+        const detach = recorder.onRecordingComplete((file) => seen.push(file));
+
+        recorder.startRecording();
+        recorder.stopRecording();
+
+        expect(seen).toHaveLength(0);
+        detach();
+    });
+
+    test('stopping twice does not hand the same run over twice', () => {
+        // A reader that folded the run into a running tally would count every
+        // fight in it once per redundant stop
+        const seen = [];
+        const detach = recorder.onRecordingComplete((file) => seen.push(file));
+
+        recorder.startRecording();
+        send('battle_updated', { pMap: {}, mMap: {} });
+        recorder.stopRecording();
+        recorder.stopRecording();
+
+        expect(seen).toHaveLength(1);
+        detach();
+    });
+
+    test('starting a new recording ends the one before it', () => {
+        const seen = [];
+        const detach = recorder.onRecordingComplete((file) => seen.push(file));
+
+        recorder.startRecording();
+        send('battle_updated', { pMap: {}, mMap: {} });
+        recorder.startRecording();
+
+        expect(seen).toHaveLength(1);
+        detach();
+    });
+
+    test('a listener that throws does not take the recorder down with it', () => {
+        const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const seen = [];
+        const detachBad = recorder.onRecordingComplete(() => {
+            throw new Error('nope');
+        });
+        const detachGood = recorder.onRecordingComplete((file) => seen.push(file));
+
+        recorder.startRecording();
+        send('battle_updated', { pMap: {}, mMap: {} });
+        recorder.stopRecording();
+
+        expect(seen).toHaveLength(1);
+        detachBad();
+        detachGood();
+        error.mockRestore();
+    });
+
+    test('a detached listener hears nothing more', () => {
+        const seen = [];
+        const detach = recorder.onRecordingComplete((file) => seen.push(file));
+        detach();
+
+        recorder.startRecording();
+        send('battle_updated', { pMap: {}, mMap: {} });
+        recorder.stopRecording();
+
+        expect(seen).toHaveLength(0);
+    });
+});

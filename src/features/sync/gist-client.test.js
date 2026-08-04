@@ -65,32 +65,148 @@ describe('chunkPayload', () => {
     });
 });
 
+/**
+ * Classification, from responses shaped like the ones GitHub actually sends.
+ *
+ * Each fixture below is a real response shape: the status, the headers the API
+ * documents, and the JSON body with its `message` and `documentation_url`. The
+ * point of testing them whole rather than calling a classifier with a bare
+ * status is that the hard cases are precisely the ones where the status is not
+ * enough — a secondary rate limit and a missing scope are both a 403, and only
+ * the headers and the documentation URL tell them apart.
+ */
 describe('error classification', () => {
     test('401 is an auth problem, and the message mentions the gist scope', async () => {
-        responses.push({ status: 401, body: { message: 'Bad credentials' } });
-        await expect(findSyncGist('tok')).rejects.toMatchObject({ kind: 'auth' });
+        responses.push({
+            status: 401,
+            headers: { 'X-RateLimit-Remaining': '59' },
+            body: {
+                message: 'Bad credentials',
+                documentation_url: 'https://docs.github.com/rest',
+                status: '401',
+            },
+        });
+        const error = await findSyncGist('tok').catch((caught) => caught);
+        expect(error.kind).toBe('auth');
+        expect(error.message).toContain('gist');
+        expect(error.githubMessage).toBe('Bad credentials');
     });
 
-    test('403 with no quota left is a rate limit, with a reset time', async () => {
+    test('403 with no quota left is the primary rate limit, with a reset time', async () => {
         const reset = Math.floor(Date.now() / 1000) + 600;
         responses.push({
             status: 403,
-            headers: { 'X-RateLimit-Remaining': '0', 'X-RateLimit-Reset': String(reset) },
-            body: {},
+            headers: {
+                'X-RateLimit-Limit': '5000',
+                'X-RateLimit-Remaining': '0',
+                'X-RateLimit-Reset': String(reset),
+                'X-RateLimit-Resource': 'core',
+            },
+            body: {
+                message:
+                    'API rate limit exceeded for user ID 1234. If you reach out to GitHub Support for help, please include the request ID.',
+                documentation_url:
+                    'https://docs.github.com/rest/overview/rate-limits-for-the-rest-api#about-primary-rate-limits',
+            },
         });
         const error = await findSyncGist('tok').catch((caught) => caught);
         expect(error.kind).toBe('rate-limit');
         expect(error.resetAt).toBeInstanceOf(Date);
+        expect(error.message).toContain('hourly quota');
     });
 
-    test('403 with quota remaining is a scope problem, not a rate limit', async () => {
-        responses.push({ status: 403, headers: { 'X-RateLimit-Remaining': '4000' }, body: {} });
-        await expect(findSyncGist('tok')).rejects.toMatchObject({ kind: 'auth' });
+    test('403 with quota to spare and a Retry-After is the secondary limit, not a scope problem', async () => {
+        responses.push({
+            status: 403,
+            headers: { 'X-RateLimit-Remaining': '4987', 'Retry-After': '60' },
+            body: {
+                message: 'You have exceeded a secondary rate limit. Please wait a few minutes before you try again.',
+                documentation_url:
+                    'https://docs.github.com/rest/overview/rate-limits-for-the-rest-api#about-secondary-rate-limits',
+            },
+        });
+        const error = await findSyncGist('tok').catch((caught) => caught);
+        expect(error.kind).toBe('rate-limit');
+        // No X-RateLimit-Reset on a secondary limit — Retry-After is the clock
+        expect(error.resetAt).toBeInstanceOf(Date);
+        expect(error.message).toContain('too quickly');
+    });
+
+    test('403 with quota remaining and no rate-limit signal is a scope problem', async () => {
+        responses.push({
+            status: 403,
+            headers: { 'X-RateLimit-Remaining': '4000' },
+            body: {
+                message: 'Resource not accessible by personal access token',
+                documentation_url: 'https://docs.github.com/rest/gists/gists#list-gists-for-the-authenticated-user',
+            },
+        });
+        const error = await findSyncGist('tok').catch((caught) => caught);
+        expect(error.kind).toBe('auth');
+        expect(error.message).toContain('scope');
+    });
+
+    test('a 429 is a rate limit even with no headers to prove it', async () => {
+        responses.push({ status: 429, body: {} });
+        await expect(findSyncGist('tok')).rejects.toMatchObject({ kind: 'rate-limit' });
+    });
+
+    test('the prose is only consulted when no header or documentation URL decides', async () => {
+        // No remaining count, no Retry-After, no documentation_url — all that is
+        // left is what GitHub wrote, which is the last resort and still enough
+        responses.push({ status: 403, body: { message: 'You have triggered an abuse detection mechanism.' } });
+        await expect(findSyncGist('tok')).rejects.toMatchObject({ kind: 'rate-limit' });
     });
 
     test('404 says the gist is gone', async () => {
-        responses.push({ status: 404, body: {} });
+        responses.push({
+            status: 404,
+            body: { message: 'Not Found', documentation_url: 'https://docs.github.com/rest/gists/gists#get-a-gist' },
+        });
         await expect(readSyncGist('tok', 'abc')).rejects.toMatchObject({ kind: 'not-found' });
+    });
+
+    test('a 422 whose validation errors are about size reads as too large', async () => {
+        responses.push({
+            status: 422,
+            body: {
+                message: 'Validation Failed',
+                errors: [{ resource: 'Gist', code: 'custom', field: 'files', message: 'is too large' }],
+                documentation_url: 'https://docs.github.com/rest/gists/gists#update-a-gist',
+            },
+        });
+        await expect(writeSyncGist('tok', 'abc', { chunks: 1 }, ['data'])).rejects.toMatchObject({
+            kind: 'too-large',
+        });
+    });
+
+    test('a 422 about something other than size does not send the reader off to shrink a payload', async () => {
+        responses.push({
+            status: 422,
+            body: {
+                message: 'Validation Failed',
+                errors: [{ resource: 'Gist', code: 'missing_field', field: 'files' }],
+            },
+        });
+        const error = await writeSyncGist('tok', 'abc', { chunks: 1 }, ['data']).catch((caught) => caught);
+        expect(error.kind).toBe('http');
+        expect(error.message).toContain('Gist.files');
+    });
+
+    test('a bare 422 with nothing structured still reads as too large, which is what it always is', async () => {
+        responses.push({ status: 422, body: {} });
+        await expect(writeSyncGist('tok', 'abc', { chunks: 1 }, ['data'])).rejects.toMatchObject({
+            kind: 'too-large',
+        });
+    });
+
+    test('a 5xx says GitHub is at fault and to come back later', async () => {
+        responses.push({ status: 502, body: '<html>Bad gateway</html>' });
+        const error = await findSyncGist('tok').catch((caught) => caught);
+        expect(error.kind).toBe('http');
+        expect(error.message).toContain('502');
+        // An HTML body is not JSON; classification must survive that
+        expect(error.githubMessage).toBe('');
     });
 
     test('a dead network is offline, not an HTTP failure', async () => {

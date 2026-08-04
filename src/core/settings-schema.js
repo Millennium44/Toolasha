@@ -1699,6 +1699,13 @@ export const settingsGroups = {
                 max: 600,
                 help: 'How long the automatic recording runs before it saves itself',
             },
+            replayCheck: {
+                id: 'replayCheck',
+                label: 'Sim Accuracy: Replay recorded fights against the simulator',
+                type: 'checkbox',
+                default: true,
+                help: 'Derives damage dealt, damage taken and fight length from a recorded fight, runs the simulator for the same zone, and reports the deviation with a sampling-noise margin. Feeds the Sim Accuracy overlay row and the panel behind it',
+            },
             combatScore: {
                 id: 'combatScore',
                 label: 'Profile panel: Show gear score',
@@ -1793,7 +1800,7 @@ export const settingsGroups = {
                 min: 0.1,
                 max: 10,
                 step: 0.5,
-                help: 'How tightly a room clear chance is pinned down before its sim stops, in percentage points either side. A settled room reaches it in a few hundred fights and a close one needs thousands, so the work goes where the answer is still in doubt (lower = more accurate, slower)',
+                help: "A room's sim keeps fighting until its clear chance is pinned to within this many percentage points either side — the 95% confidence interval has to fit inside ±this before the run is allowed to stop. A settled room gets there in a few hundred fights and a close one needs thousands, so the work goes where the answer is still in doubt (lower = tighter interval, more fights, slower)",
             },
             labyrinthRecommendSimHours: {
                 id: 'labyrinthRecommendSimHours',
@@ -1819,7 +1826,7 @@ export const settingsGroups = {
                 id: 'labyrinthPathUnknownMode',
                 label: 'Labyrinth: Path treats unrevealed rooms as',
                 type: 'select',
-                default: 'clearable',
+                default: 'shroud',
                 options: [
                     { value: 'clearable', label: 'Clearable (optimistic)' },
                     { value: 'shroud', label: 'Needing a shroud (pessimistic)' },
@@ -1855,7 +1862,7 @@ export const settingsGroups = {
                 id: 'labyrinthLiveCombatSim',
                 label: 'Labyrinth: Replay the live fight for a better clear chance',
                 type: 'checkbox',
-                default: true,
+                default: false,
                 help: 'Replays the fight in progress hundreds of times from its current health and remaining time, instead of extrapolating from how fast health is being lost. Slower but far more accurate, since it runs the real combat engine',
             },
             labyrinthRoomLogs: {
@@ -2488,6 +2495,17 @@ export const settingsGroups = {
                 min: 0,
                 max: 100,
                 help: 'Height of the inventory/equipment panel beside the fight, as a percentage of the window. Set it taller to see more inventory at once, shorter to give the fight room. 0 leaves the height the game picks',
+            },
+            welcomeBackValue: {
+                id: 'welcomeBackValue',
+                label: 'Welcome Back modal: What the time offline was worth',
+                type: 'checkbox',
+                default: true,
+                help:
+                    'Adds one line to the game’s Welcome Back modal valuing what you gained and what got consumed ' +
+                    'while you were away — net coins, coins per hour offline and XP per hour — priced at market ' +
+                    'using the pricing mode from the Market settings. Items with no market price are left out of ' +
+                    'the total and counted instead, and the line is not drawn at all if nothing could be priced.',
             },
         },
     },

@@ -896,3 +896,118 @@ describe('targets nobody is selling at that level', () => {
         expect(watchedTargets()[0].cost).toBeNull();
     });
 });
+
+describe('the ladder', () => {
+    // A run whose cost follows how far it has to climb, so a ladder starting
+    // lower reads as dearer — the flat mock above cannot tell the two apart
+    const cape = (level, count = 1) => ({
+        itemHrid: '/items/sinister_cape',
+        itemLocationHrid: '/item_locations/inventory',
+        count,
+        enhancementLevel: level,
+    });
+
+    beforeEach(() => {
+        game.details['/items/sinister_cape'] = {
+            name: 'Sinister Cape',
+            itemLevel: 70,
+            enhancementCosts: [{ itemHrid: '/items/shard', count: 2 }],
+            equipmentDetail: { type: '/equipment_types/back' },
+        };
+        game.prices['/items/sinister_cape:0'] = { ask: 50_000_000, bid: 45_000_000 };
+        game.details['/items/mirror_of_protection'] = { name: 'Mirror of Protection', sellPrice: 2_000_000 };
+        game.prices['/items/mirror_of_protection:0'] = { ask: 2_000_000, bid: 1_800_000 };
+
+        // The one on your back, and a spare in the bag
+        game.inventory.push({ ...cape(5), itemLocationHrid: '/item_locations/back' }, cape(2));
+        game.equipment.set('/item_locations/back', { itemHrid: '/items/sinister_cape', enhancementLevel: 5 });
+
+        window.Toolasha = {
+            Utils: {
+                enhancementCalculator: {
+                    calculateEnhancement: ({ targetLevel, startLevel, protectFrom }) =>
+                        protectFrom > 0
+                            ? { attempts: 10 * (targetLevel - startLevel), protectionCount: targetLevel - startLevel }
+                            : { attempts: 100 * (targetLevel - startLevel), protectionCount: 0 },
+                },
+                enhancementConfig: {
+                    getAutoDetectedParams: () => ({ enhancingLevel: 100, teas: {}, guzzlingBonus: 1 }),
+                },
+            },
+        };
+    });
+
+    afterEach(() => {
+        delete window.Toolasha;
+    });
+
+    test('it counts from the second-best copy, not from the one you are wearing', () => {
+        watchTarget('/items/sinister_cape', 7);
+        const target = watchedTargets()[0];
+
+        // Direct: two levels to climb — 20 attempts × 2 shards at 1M, plus two
+        // mirrors at 2M
+        expect(target.cost).toBe(44_000_000);
+        // Ladder: five levels from the +2 spare, and the +5 stays on your back
+        expect(target.ladder).toMatchObject({ spare: true, fromLevel: 2, cost: 110_000_000 });
+    });
+
+    test('the card says which copy it would climb', () => {
+        watchTarget('/items/sinister_cape', 7);
+        equipmentSavingsPanel.show();
+
+        expect(text()).toContain('Ladder: enhance your +2 copy instead');
+        expect(text()).not.toContain(FAILED);
+    });
+
+    test('a stack of two is two copies, so the spare is at the same level', () => {
+        game.inventory = game.inventory.filter((item) => item.itemHrid !== '/items/sinister_cape');
+        game.equipment.delete('/item_locations/back');
+        game.inventory.push(cape(3, 2));
+        watchTarget('/items/sinister_cape', 7);
+
+        expect(watchedTargets()[0].ladder).toMatchObject({ spare: true, fromLevel: 3 });
+    });
+
+    test('with only the one copy it prices a fresh base and says so', () => {
+        game.inventory = game.inventory.filter((item) => (item.enhancementLevel || 0) !== 2);
+        watchTarget('/items/sinister_cape', 7);
+        equipmentSavingsPanel.show();
+
+        // 50M for a +0 off the market, then seven levels of run
+        expect(watchedTargets()[0].ladder).toMatchObject({
+            spare: false,
+            fromLevel: 0,
+            base: 50_000_000,
+            cost: 50_000_000 + 154_000_000,
+        });
+        expect(text()).toContain('Ladder: enhance a fresh +0 you buy instead');
+    });
+
+    test('with no spare and nowhere to get one there is no ladder to offer', () => {
+        game.inventory = game.inventory.filter((item) => (item.enhancementLevel || 0) !== 2);
+        game.prices['/items/sinister_cape:0'] = null;
+        watchTarget('/items/sinister_cape', 7);
+
+        expect(watchedTargets()[0].ladder).toBeNull();
+        expect(equipmentSavingsPanel.panel).toBeFalsy();
+    });
+
+    test('the copy it climbs is the second best, wherever the best one is', () => {
+        // A +6 in the bag is now the best copy, so the direct cost counts from
+        // there and the ladder falls to the +5 on your back
+        game.inventory.push(cape(6));
+        watchTarget('/items/sinister_cape', 7);
+        const target = watchedTargets()[0];
+
+        expect(target.fromLevel).toBe(6);
+        expect(target.ladder).toMatchObject({ spare: true, fromLevel: 5, cost: 44_000_000 });
+    });
+
+    test('a copy already at the target leaves no run to price, and so no ladder', () => {
+        game.inventory.push(cape(7));
+        watchTarget('/items/sinister_cape', 7);
+
+        expect(watchedTargets()[0].ladder).toBeNull();
+    });
+});

@@ -11,6 +11,7 @@ import { getItemPrices } from '../../utils/market-data.js';
 import { formatKMB, formatDateTime } from '../../utils/formatters.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
+import { getAlchemyCoinCost } from '../../utils/alchemy-fees.js';
 
 const CATALYST_OF_COINIFICATION_HRID = '/items/catalyst_of_coinification';
 const PRIME_CATALYST_HRID = '/items/prime_catalyst';
@@ -439,9 +440,9 @@ class CoinifyHistoryViewer {
             (session.catalystOfCoinificationUsed || 0) * catalystPrice(CATALYST_OF_COINIFICATION_HRID) +
             (session.primeCatalystUsed || 0) * catalystPrice(PRIME_CATALYST_HRID);
 
-        // Alchemy coin fee: max(50, vendorPrice / 5) per item, bulkMultiplier items per attempt
-        const sellPrice = itemDetails?.sellPrice || 0;
-        const coinCost = Math.max(50, Math.floor(sellPrice / 5)) * bulkMultiplier * attempts;
+        // Alchemy coin fee — see utils/alchemy-fees.js. The session's recorded bulkMultiplier
+        // is the one that was actually billed, so it overrides the item's current one.
+        const coinCost = getAlchemyCoinCost(itemDetails, 'coinify', bulkMultiplier) * attempts;
 
         return {
             profit: revenue - inputCost - catalystCost - coinCost,

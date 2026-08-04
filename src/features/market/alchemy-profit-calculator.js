@@ -11,9 +11,9 @@
  * - Tea: Catalytic Tea provides /buff_types/alchemy_success (5% ratio boost, scales with Drink Concentration)
  * - Catalyst (type-specific): +15% multiplicative, consumed once per successful action
  * - Catalyst (prime): +25% multiplicative, consumed once per successful action
- * - Transmute under-level penalty: perLevel = 0.9 / itemLevel, applied when alchemyLevel < itemLevel
- * - Formula (coinify/decompose): finalRate = min(1, baseRate × (1 + catalystBonus + teaBonus))
- * - Formula (transmute): finalRate = min(1, baseRate × (1 + catalyst + perLevel × (alchemyLvl - itemLvl) + tea))
+ * - Under-level penalty: perLevel = 0.9 / itemLevel, applied when alchemyLevel < itemLevel.
+ *   It keys off the item's level, not the action, so all three types take it.
+ * - Formula: finalRate = min(1, baseRate × (1 + catalyst + perLevel × (alchemyLvl - itemLvl) + tea))
  */
 
 import config from '../../core/config.js';
@@ -22,6 +22,7 @@ import { getDrinkConcentration } from '../../utils/tea-parser.js';
 import { getItemPrice } from '../../utils/market-data.js';
 import { SECONDS_PER_HOUR, MIN_ACTION_TIME_SECONDS } from '../../utils/profit-constants.js';
 import { getAlchemySuccessBonus } from '../../utils/buff-parser.js';
+import { getAlchemyCoinCost } from '../../utils/alchemy-fees.js';
 import {
     parseEquipmentSpeedBonuses,
     debugEquipmentSpeedBonuses,
@@ -60,21 +61,10 @@ const CATALYST_BONUSES = {
     prime: 0.25, // 25% multiplicative
 };
 
-/**
- * @param {Object} itemDetails - Item details from dataManager
- * @param {'decompose'|'transmute'} alchemyType - Which alchemy action
- * @returns {number} Gold cost per alchemy action (includes bulkMultiplier)
- */
-function calculateAlchemyCoinCost(itemDetails, alchemyType) {
-    const bulkMultiplier = itemDetails.alchemyDetail?.bulkMultiplier || 1;
-    if (alchemyType === 'transmute') {
-        const sellPrice = itemDetails.sellPrice || 0;
-        return Math.max(50, Math.floor(sellPrice / 5)) * bulkMultiplier;
-    }
-    // Decompose / Unrefine
-    const level = itemDetails.itemLevel || 1;
-    return (10 + level) * 5 * bulkMultiplier;
-}
+// Under-level penalty: perLevel = 0.9 / itemLevel per level below the item's level
+const UNDER_LEVEL_PENALTY_NUMERATOR = 0.9;
+
+// The alchemy coin fee lives in utils/alchemy-fees.js — see getAlchemyCoinCost.
 
 /**
  * Calculate alchemy-specific bonus drops (essences + rares) from item level.
@@ -331,6 +321,27 @@ class AlchemyProfitCalculator {
             this._itemDetailMap = initData?.itemDetailMap || {};
         }
         return this._itemDetailMap;
+    }
+
+    /**
+     * Under-level success penalty: alchemy punishes working above your level, and the
+     * penalty depends on the item's level, not on which alchemy action you ran. It used
+     * to be applied on the transmute path only, which left coinify and decompose quoting
+     * an under-levelled character the full base rate.
+     *
+     * Formula: `perLevel × (alchemyLevel - itemLevel)` with `perLevel = 0.9 / itemLevel`,
+     * so it is 0 at or above the item's level and never worse than -0.9 (a 90% cut) at
+     * level 1 against a max-level item.
+     *
+     * @param {number} itemLevel - The item's level
+     * @returns {number} Penalty term, <= 0, additive into the success-rate bonus sum
+     */
+    getUnderLevelPenalty(itemLevel) {
+        const level = itemLevel || 1;
+        const skills = dataManager.getSkills();
+        const alchemySkill = skills?.find((s) => s.skillHrid === '/skills/alchemy');
+        const alchemyLevel = alchemySkill?.level || 1;
+        return alchemyLevel < level ? (UNDER_LEVEL_PENALTY_NUMERATOR / level) * (alchemyLevel - level) : 0;
     }
 
     /**
@@ -634,6 +645,7 @@ class AlchemyProfitCalculator {
             const combo = _comboFn({
                 actionType: 'coinify',
                 baseSuccessRate: BASE_SUCCESS_RATES.COINIFY,
+                levelPenalty: this.getUnderLevelPenalty(itemLevel),
                 actionsPerHour: actionsPerHourWithEfficiency,
                 efficiencyDecimal,
                 actionTime,
@@ -892,7 +904,7 @@ class AlchemyProfitCalculator {
                 }
             }
 
-            const coinCost = calculateAlchemyCoinCost(itemDetails, 'decompose');
+            const coinCost = getAlchemyCoinCost(itemDetails, 'decompose');
 
             // Calculate per-hour values
             // Convert efficiency from percentage to decimal
@@ -921,6 +933,7 @@ class AlchemyProfitCalculator {
             const combo = _comboFn({
                 actionType: 'decompose',
                 baseSuccessRate: BASE_SUCCESS_RATES.DECOMPOSE,
+                levelPenalty: this.getUnderLevelPenalty(itemLevel),
                 actionsPerHour: actionsPerHourWithEfficiency,
                 efficiencyDecimal,
                 actionTime,
@@ -1092,13 +1105,8 @@ class AlchemyProfitCalculator {
                 return null; // Cannot transmute
             }
 
-            // Calculate under-level penalty for transmute
-            // Formula: perLevel × (alchemyLevel - itemLevel) where perLevel = 0.9 / itemLevel
             const itemLevel = itemDetails.itemLevel || 1;
-            const skills = dataManager.getSkills();
-            const alchemySkill = skills?.find((s) => s.skillHrid === '/skills/alchemy');
-            const alchemyLevel = alchemySkill?.level || 1;
-            const levelPenalty = alchemyLevel < itemLevel ? (0.9 / itemLevel) * (alchemyLevel - itemLevel) : 0;
+            const levelPenalty = this.getUnderLevelPenalty(itemLevel);
 
             // Get alchemy action details
             const actionDetails = gameData.actionDetailMap['/actions/alchemy/transmute'];
@@ -1186,7 +1194,7 @@ class AlchemyProfitCalculator {
                 }
             }
 
-            const coinCost = calculateAlchemyCoinCost(itemDetails, 'transmute');
+            const coinCost = getAlchemyCoinCost(itemDetails, 'transmute');
 
             // Gross material cost (before self-return adjustment)
             const grossMaterialCost = inputPrice * bulkMultiplier;

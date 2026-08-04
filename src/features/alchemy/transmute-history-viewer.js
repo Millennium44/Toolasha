@@ -11,6 +11,7 @@ import { getItemPrice } from '../../utils/market-data.js';
 import { formatKMB, formatDateTime } from '../../utils/formatters.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
+import { getAlchemyCoinCost } from '../../utils/alchemy-fees.js';
 
 /**
  * Check whether any mutation added nodes that are, contain, or sit under a tablist.
@@ -654,9 +655,8 @@ class TransmuteHistoryViewer {
         const inputPrice = getItemPrice(session.inputItemHrid, { context: 'profit', side: 'buy' }) || 0;
         const inputCost = netConsumed * inputPrice;
 
-        // Transmute coin fee: max(50, vendorPrice / 5) per item, bulkMultiplier items per attempt
-        const sellPrice = itemDetails?.sellPrice || 0;
-        const coinCost = Math.max(50, Math.floor(sellPrice / 5)) * bulkMultiplier * attempts;
+        // Transmute coin fee — see utils/alchemy-fees.js (bulkMultiplier already folded in)
+        const coinCost = getAlchemyCoinCost(itemDetails, 'transmute') * attempts;
 
         return { profit: revenue - inputCost - coinCost, revenue, inputCost, coinCost, netConsumed };
     }

@@ -13,9 +13,14 @@ const guild = vi.hoisted(() => ({
     applied: [],
 }));
 
+/** The books this character has read, which is what an ability swap is costed from */
+const character = vi.hoisted(() => ({ characterAbilities: [] }));
+
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getGuildBuildingLevel: (hrid) => guild.shrineLevels[hrid] || 0,
+        // The same object throughout, so a test can put books in it
+        characterData: character,
     },
 }));
 vi.mock('./combat-sim-adapter.js', () => ({
@@ -2419,6 +2424,11 @@ describe('what an ability upgrade costs', () => {
         upgradeLevel: 53,
     };
     const gameData = { levelExperienceTable: [0, 100, 200], itemDetailMap: {} };
+    const swap = { type: 'ability_swap', upgradeHrid: '/abilities/critical_aura', upgradeLevel: 20 };
+
+    beforeEach(() => {
+        character.characterAbilities = [];
+    });
 
     test('it is books, not a listing for the ability at that level', () => {
         // An ability is not an item: asking the market for "fireball +53" finds
@@ -2446,13 +2456,58 @@ describe('what an ability upgrade costs', () => {
         expect(explainAbilityLevelUpCost).toHaveBeenLastCalledWith('/abilities/fireball', 48, 0, 53);
     });
 
-    test('but a swap is learned from scratch', () => {
-        explainUpgradeCost(
-            { type: 'ability_swap', upgradeHrid: '/abilities/critical_aura', upgradeLevel: 20 },
-            gameData
-        );
+    test('a swap to an ability you have never read is learned from scratch', () => {
+        const detail = explainUpgradeCost(swap, gameData);
 
         expect(explainAbilityLevelUpCost).toHaveBeenLastCalledWith('/abilities/critical_aura', 0, 0, 20);
+        expect(detail.freshBook).toBe(true);
+        expect(detail.ownedFromLevel).toBeNull();
+    });
+
+    test('but one already in the book bag is topped up from where it is', () => {
+        // Quoting the whole path again for a book sitting at Lv14 prices an
+        // afternoon's reading as a fresh 900M ability, which is what sank
+        // perfectly affordable swaps to the bottom of the table
+        character.characterAbilities = [
+            { abilityHrid: '/abilities/critical_aura', level: 14, experience: 12_345 },
+            { abilityHrid: '/abilities/fireball', level: 48, experience: 99 },
+        ];
+        const detail = explainUpgradeCost(swap, gameData);
+
+        expect(explainAbilityLevelUpCost).toHaveBeenLastCalledWith('/abilities/critical_aura', 14, 12_345, 20);
+        expect(detail.freshBook).toBe(false);
+        expect(detail.ownedFromLevel).toBe(14);
+    });
+
+    test('an owned book with no experience recorded starts at its level, not at zero', () => {
+        character.characterAbilities = [{ abilityHrid: '/abilities/critical_aura', level: 1 }];
+        explainUpgradeCost(swap, gameData);
+
+        // levelExperienceTable[1] — the floor of the level it is on, which is
+        // the same reading a level-up candidate takes
+        expect(explainAbilityLevelUpCost).toHaveBeenLastCalledWith('/abilities/critical_aura', 1, 100, 20);
+    });
+
+    test('a book already past the target buys nothing, not a negative number of books', () => {
+        character.characterAbilities = [{ abilityHrid: '/abilities/critical_aura', level: 40, experience: 50_000 }];
+        explainAbilityLevelUpCost.mockReturnValueOnce({
+            bookName: 'Critical Aura',
+            books: -8,
+            bookPrice: 1000,
+            total: -8000,
+        });
+        const detail = explainUpgradeCost(swap, gameData);
+
+        expect(detail.books.books).toBe(0);
+        expect(detail.net).toBe(0);
+    });
+
+    test('a level-up is never a fresh book, however the swap rule reads', () => {
+        character.characterAbilities = [{ abilityHrid: '/abilities/fireball', level: 48, experience: 4321 }];
+        const detail = explainUpgradeCost(levelUp, gameData);
+
+        expect(detail.freshBook).toBe(false);
+        expect(detail.ownedFromLevel).toBeNull();
     });
 
     test('an ability nobody is selling costs unknown rather than nothing', () => {

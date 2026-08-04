@@ -19,6 +19,12 @@ const mocks = vi.hoisted(() => ({
     equipmentSpeed: 0,
     /** What calculateActionStats() hands back — tea speed is NOT part of it */
     actionStats: {},
+    /** Character skills, so a test can under-level the alchemist */
+    skills: [],
+    /** Default price for getItemPrice() lookups */
+    itemPrice: 0,
+    /** Per-hrid price overrides, so a test can make catalysts cheap and drops valuable */
+    itemPrices: {},
 }));
 
 vi.mock('../../core/config.js', () => ({ default: { getSetting: () => true, getSettingValue: (k, f) => f } }));
@@ -26,7 +32,7 @@ vi.mock('../../core/data-manager.js', () => ({
     default: {
         getInitClientData: () => mocks.initClientData,
         getItemDetails: (hrid) => mocks.initClientData?.itemDetailMap?.[hrid] ?? null,
-        getSkills: () => [],
+        getSkills: () => mocks.skills,
         getEquipment: () => new Map(),
         getActionDrinkSlots: () => mocks.drinkSlots,
         characterData: {},
@@ -35,7 +41,7 @@ vi.mock('../../core/data-manager.js', () => ({
     },
 }));
 vi.mock('../../utils/tea-parser.js', () => ({ getDrinkConcentration: () => mocks.drinkConcentration }));
-vi.mock('../../utils/market-data.js', () => ({ getItemPrice: () => 0 }));
+vi.mock('../../utils/market-data.js', () => ({ getItemPrice: (hrid) => mocks.itemPrices[hrid] ?? mocks.itemPrice }));
 vi.mock('../../utils/buff-parser.js', () => ({ getAlchemySuccessBonus: () => mocks.alchemyTeaBonus }));
 vi.mock('../../utils/equipment-parser.js', () => ({
     parseEquipmentSpeedBonuses: () => mocks.equipmentSpeed,
@@ -57,6 +63,9 @@ beforeEach(() => {
     mocks.drinkConcentration = 0;
     mocks.equipmentSpeed = 0;
     mocks.actionStats = {};
+    mocks.skills = [];
+    mocks.itemPrice = 0;
+    mocks.itemPrices = {};
 });
 
 describe('calculateSuccessRateBreakdown', () => {
@@ -282,5 +291,126 @@ describe('tea speed is applied on every alchemy path', () => {
         const result = alchemyProfitCalculator.calculateCoinifyProfit('/items/cheese');
 
         expect(result.actionTime).toBe(3);
+    });
+});
+
+describe('official alchemy rules', () => {
+    // A level-50 item, so a level-1 alchemist is 49 levels under it.
+    const ITEM_DETAIL_MAP = {
+        '/items/cheese': {
+            name: 'Cheese',
+            itemLevel: 50,
+            sellPrice: 100,
+            alchemyDetail: { isCoinifiable: true, bulkMultiplier: 3 },
+        },
+        '/items/cheese_hat': {
+            name: 'Cheese Hat',
+            itemLevel: 50,
+            sellPrice: 500,
+            alchemyDetail: { decomposeItems: [{ itemHrid: '/items/cheese', count: 2 }] },
+        },
+        '/items/milk': {
+            name: 'Milk',
+            itemLevel: 50,
+            sellPrice: 20,
+            alchemyDetail: {
+                transmuteSuccessRate: 0.5,
+                transmuteDropTable: [{ itemHrid: '/items/cheese', dropRate: 1, minCount: 1, maxCount: 1 }],
+            },
+        },
+        '/items/enhancing_essence': { name: 'Enhancing Essence' },
+    };
+
+    const alchemyAction = { type: '/action_types/alchemy', baseTimeCost: 20e9 };
+
+    const paths = [
+        ['coinify', (calc, enh = 0) => calc.calculateCoinifyProfit('/items/cheese', enh)],
+        ['decompose', (calc, enh = 0) => calc.calculateDecomposeProfit('/items/cheese_hat', enh)],
+        ['transmute', (calc) => calc.calculateTransmuteProfit('/items/milk')],
+    ];
+
+    beforeEach(() => {
+        mocks.initClientData = {
+            itemDetailMap: ITEM_DETAIL_MAP,
+            actionDetailMap: {
+                '/actions/alchemy/coinify': alchemyAction,
+                '/actions/alchemy/decompose': alchemyAction,
+                '/actions/alchemy/transmute': alchemyAction,
+            },
+        };
+        mocks.actionStats = { actionTime: 20, totalEfficiency: 0, efficiencyBreakdown: {} };
+        mocks.skills = [{ skillHrid: '/skills/alchemy', level: 50 }];
+    });
+
+    test('base success rates are 70% coinify, 60% decompose, per-item transmute', () => {
+        expect(alchemyProfitCalculator.calculateCoinifyProfit('/items/cheese').successRateBreakdown.base).toBe(0.7);
+        expect(alchemyProfitCalculator.calculateDecomposeProfit('/items/cheese_hat').successRateBreakdown.base).toBe(
+            0.6
+        );
+        // Transmute reads the rate off the item, not a constant
+        expect(alchemyProfitCalculator.calculateTransmuteProfit('/items/milk').successRateBreakdown.base).toBe(0.5);
+    });
+
+    test('coinify pays 5× the item sell price, at bulk scale, and is charged no coin fee', () => {
+        const result = alchemyProfitCalculator.calculateCoinifyProfit('/items/cheese');
+        const coins = result.dropRevenues.find((d) => d.itemHrid === '/items/coin');
+        // sellPrice 100 × bulkMultiplier 3 × 5
+        expect(coins.count).toBe(1500);
+        // Coinify is free: the only per-attempt cost is the item itself (priced 0 here)
+        expect(result.requirementCosts.some((c) => c.itemHrid === '/items/coin')).toBe(false);
+        expect(result.costPerAttempt).toBe(0);
+    });
+
+    test.each(paths)('%s: being under the item level cuts the success rate', (_name, run) => {
+        const atLevel = run(alchemyProfitCalculator);
+        mocks.skills = [{ skillHrid: '/skills/alchemy', level: 1 }];
+        const underLevelled = run(alchemyProfitCalculator);
+
+        expect(atLevel.successRateBreakdown.levelPenalty).toBe(0);
+        // perLevel = 0.9 / 50, 49 levels short
+        expect(underLevelled.successRateBreakdown.levelPenalty).toBeCloseTo((0.9 / 50) * -49, 10);
+        expect(underLevelled.successRate).toBeLessThan(atLevel.successRate);
+    });
+
+    test.each(paths)('%s: a catalyst is paid for only on success, not per attempt', (_name, run) => {
+        // Drops worth having, catalysts cheap enough that the combo search takes one
+        mocks.itemPrice = 10_000;
+        mocks.itemPrices = {
+            '/items/catalyst_of_coinification': 100,
+            '/items/catalyst_of_decomposition': 100,
+            '/items/catalyst_of_transmutation': 100,
+            '/items/prime_catalyst': 100,
+            // Inputs free, outputs valuable, so a catalyst is always worth buying
+            '/items/cheese_hat': 0,
+            '/items/milk': 0,
+        };
+
+        const result = run(alchemyProfitCalculator);
+
+        expect(result.catalystCost.itemHrid).toBeTruthy();
+        expect(result.successRate).toBeLessThan(1);
+        // Charging per attempt would be the full 100; consumed on success it is price × rate
+        expect(result.catalystCost.costPerAttempt).toBeCloseTo(100 * result.successRate, 8);
+        expect(result.catalystCost.costPerSuccess).toBe(100);
+    });
+
+    test('decompose enhancing-essence yield doubles with each enhancement level', () => {
+        const essence = (level) =>
+            alchemyProfitCalculator
+                .calculateDecomposeProfit('/items/cheese_hat', level)
+                .dropRevenues.find((d) => d.itemHrid === '/items/enhancing_essence').count;
+
+        // round(2 × (0.5 + 0.1 × 1.05^itemLevel) × 2^enhancementLevel)
+        const perLevel = 2 * (0.5 + 0.1 * Math.pow(1.05, 50));
+        for (const level of [1, 2, 3, 10]) {
+            expect(essence(level)).toBe(Math.round(perLevel * Math.pow(2, level)));
+        }
+        // The doubling itself, read off two levels large enough that rounding no longer bites
+        expect(essence(11) / essence(10)).toBeCloseTo(2, 3);
+    });
+
+    test('an unenhanced decompose yields no enhancing essence at all', () => {
+        const result = alchemyProfitCalculator.calculateDecomposeProfit('/items/cheese_hat', 0);
+        expect(result.dropRevenues.find((d) => d.itemHrid === '/items/enhancing_essence')).toBeUndefined();
     });
 });

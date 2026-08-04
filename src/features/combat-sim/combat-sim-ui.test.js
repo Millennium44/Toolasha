@@ -16,6 +16,9 @@ const mocks = vi.hoisted(() => ({
     saved: [],
     watched: [],
     store: new Map(),
+    /** Whether the page was left with the panel up, and what it recorded since */
+    wasOpen: false,
+    openCalls: [],
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -80,10 +83,18 @@ vi.mock('../../utils/panel-z-index.js', () => ({
     bringPanelToFront: () => {},
 }));
 
-// Geometry lives in IndexedDB and is never what these tests are about
+// Geometry lives in IndexedDB and is never what these tests are about — the
+// open flag beside it is, so that one records what it is told
 vi.mock('../../utils/panel-geometry.js', () => ({
     restoreGeometry: async () => {},
     saveGeometry: async () => {},
+    saveOpenState: async (panelKey, open) => {
+        mocks.openCalls.push({ panelKey, open });
+    },
+    wasOpen: async () => mocks.wasOpen,
+    reopenIfLeftOpen: async (panelKey, reopen) => {
+        if (mocks.wasOpen) reopen();
+    },
 }));
 
 vi.mock('./combat-sim-adapter.js', () => ({
@@ -284,12 +295,50 @@ describe('the panel', () => {
     beforeEach(() => {
         mocks.upgradeResult = { baseline: null, results: [], food: null };
         mocks.onRun = null;
+        mocks.wasOpen = false;
+        mocks.openCalls = [];
         ui.buildPanel();
     });
 
     afterEach(() => {
         ui.destroy();
         vi.restoreAllMocks();
+    });
+
+    test('a panel left open comes back up on the next load', async () => {
+        // Reverses an earlier choice not to remember: a refresh mid-analysis
+        // used to lose the panel, and a panel you left open is one you were
+        // using. Rebuilt here because the restore happens as the panel is built.
+        ui.destroy();
+        mocks.wasOpen = true;
+        ui.buildPanel();
+        await Promise.resolve();
+
+        expect(ui.panel.style.display).toBe('flex');
+        // Restoring a panel is not itself an opening worth recording
+        expect(mocks.openCalls).toEqual([]);
+    });
+
+    test('a panel left closed stays closed, and the toggle is what gets recorded', async () => {
+        await Promise.resolve();
+        expect(ui.panel.style.display).toBe('none');
+
+        ui.toggle();
+        ui.toggle();
+
+        expect(mocks.openCalls).toEqual([
+            { panelKey: 'combatSimPanel', open: true },
+            { panelKey: 'combatSimPanel', open: false },
+        ]);
+    });
+
+    test('the close button remembers the closing too', async () => {
+        ui.toggle();
+        mocks.openCalls = [];
+        ui.panel.querySelector('#mwi-csim-close').dispatchEvent(new window.Event('click', { bubbles: true }));
+
+        expect(ui.panel.style.display).toBe('none');
+        expect(mocks.openCalls).toEqual([{ panelKey: 'combatSimPanel', open: false }]);
     });
 
     test('keeps the progress bar and Stop outside the tab bodies', () => {
@@ -739,15 +788,29 @@ describe('the qualifiers a row carries', () => {
         );
     });
 
-    test('an ability swap says on the row that its price assumes a fresh book', () => {
+    test('a swap of an ability you do not own says its price is a fresh book', () => {
         const html = upgradeRowNotesHtml({
             candidate: { description: 'Fireball → Ice Spear', type: 'ability_swap' },
-            costDetail: { books: { books: 12.4, bookName: 'Ice Spear' } },
+            costDetail: { freshBook: true, ownedFromLevel: null, books: { books: 12.4, bookName: 'Ice Spear' } },
             significantBy: { dps: true, profit: true },
         });
 
         expect(html).toContain('fresh book');
         expect(html).toContain('13 Ice Spears');
+    });
+
+    test('and a swap of one you already own says which level it was costed from', () => {
+        // The chip is the only place the reader finds out that a suspiciously
+        // cheap swap is cheap because the book is already at Lv14
+        const html = upgradeRowNotesHtml({
+            candidate: { description: 'Fireball → Ice Spear', type: 'ability_swap' },
+            costDetail: { freshBook: false, ownedFromLevel: 14, books: { books: 3.2, bookName: 'Ice Spear' } },
+            significantBy: { dps: true, profit: true },
+        });
+
+        expect(html).toContain('from Lv14');
+        expect(html).not.toContain('>fresh book<');
+        expect(html).toContain('4 Ice Spears');
     });
 
     test('and a trinket says its gain is the on-task one', () => {

@@ -11,7 +11,7 @@ import { watchTarget } from '../inventory/equipment-savings-row.js';
 import { watchItem } from '../inventory/watchlist.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable } from '../../utils/floating-panel.js';
-import { restoreGeometry, saveGeometry } from '../../utils/panel-geometry.js';
+import { restoreGeometry, saveGeometry, saveOpenState, reopenIfLeftOpen } from '../../utils/panel-geometry.js';
 import { formatWithSeparator, formatKMB, parseKMB } from '../../utils/formatters.js';
 import { createEtaTracker } from '../../utils/progress-eta.js';
 import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
@@ -56,9 +56,12 @@ const UPGRADE_COLUMNS_KEY = 'combatSimUpgradeColumns';
 /**
  * Where this panel was left, in the shared panel-geometry store.
  *
- * Deliberately geometry only: the open flag `panel-geometry.js` also carries is
- * not written here, because a simulator that reopens itself on every page load
- * is in the way rather than helpful — you open it when you have a question.
+ * Geometry *and* the open flag. This deliberately went the other way once — the
+ * argument being that a simulator is opened when you have a question, so
+ * reopening it on every load would be in the way. In practice the question
+ * outlives the page: a refresh mid-analysis, or the game reloading itself,
+ * closed a panel that was being read and lost where you were in it. A panel you
+ * left open is a panel you were using, and closing it says so.
  */
 const GEOMETRY_KEY = 'combatSimPanel';
 
@@ -258,10 +261,12 @@ const ROW_NOTE_STYLE = 'font-size:9px; margin-left:4px; padding:0 3px; border-ra
  * - **within noise** — the row's DPS and profit deltas are both smaller than
  *   the simulation's own sampling error, so the numbers beside it are a sample,
  *   not a finding.
- * - **fresh book** — an ability *swap* is priced as a book learned and levelled
- *   from zero. That assumption is the single largest term in the cost, and it
- *   lived only in the Ability Swaps checkbox tooltip, where a row quoting 900M
- *   gave no hint that the 900M assumes you own none of it.
+ * - **fresh book** / **from LvN** — which book an ability *swap* was priced
+ *   from. An ability you have never read is a book learned and levelled from
+ *   zero; one already in your book bag is topped up from the level it is at,
+ *   which is a completely different figure. That term is the largest in the
+ *   cost, and it lived only in the Ability Swaps checkbox tooltip, where a row
+ *   quoting 900M gave no hint of which of the two it meant.
  * - **on task** — the row's ranked gain was simulated off task, where taskDamage
  *   pays nothing, so a task trinket's headline stat is deliberately not in the
  *   number. The chip's tooltip names what it would add on task instead.
@@ -284,14 +289,25 @@ export function upgradeRowNotesHtml(result) {
     }
 
     if (candidate.type === 'ability_swap') {
-        const books = result?.costDetail?.books;
+        const detail = result?.costDetail;
+        const books = detail?.books;
         const count = Number.isFinite(books?.books) ? Math.ceil(books.books) : null;
-        const detail = count
-            ? `Cost assumes ${count} ${books.bookName}${count === 1 ? '' : 's'} — learning the ability and levelling ` +
-              `it from nothing. Own some already and the real cost is lower.`
-            : 'Cost assumes learning the ability and levelling a book from nothing, not topping up one you own.';
+        // An ability already in the book bag is topped up from where it is, not
+        // learned again — two different costs, and the chip is where the reader
+        // finds out which one the row is quoting
+        const owned = detail?.ownedFromLevel != null;
+        const label = owned ? `from Lv${detail.ownedFromLevel}` : 'fresh book';
+        const title = owned
+            ? `You already own this ability at Lv${detail.ownedFromLevel}, so the cost is the ` +
+              `${count ? `${count} ${books.bookName}${count === 1 ? '' : 's'}` : 'books'} that take it from there to ` +
+              'the target — not a book learned from nothing.'
+            : count
+              ? `Cost assumes ${count} ${books.bookName}${count === 1 ? '' : 's'} — learning the ability and ` +
+                'levelling it from nothing, which is what an ability you do not own costs.'
+              : 'Cost assumes learning the ability and levelling a book from nothing, which is what an ability ' +
+                'you do not own costs.';
         notes.push(
-            `<span title="${detail}" style="${ROW_NOTE_STYLE} background:#1a2030; color:#8ab4f8;">fresh book</span>`
+            `<span title="${title}" style="${ROW_NOTE_STYLE} background:#1a2030; color:#8ab4f8;">${label}</span>`
         );
     }
 
@@ -675,8 +691,9 @@ const UPGRADE_MODES = [
             'Slow and rough. It sims every style-compatible ability for every slot, so it adds far more sims than ' +
             'the other sets — expect a long run. And a swapped-in ability is simmed at the level of the ability it ' +
             'replaces with that ability book’s default triggers, so it gets none of the trigger tuning your ' +
-            'equipped abilities have, and its cost assumes leveling a fresh book from scratch. Treat the ranking ' +
-            'as a hint about which abilities are worth trying by hand, not a verdict.',
+            'equipped abilities have. Cost is counted from the book you actually own — from its current level for ' +
+            'an ability in your book bag, from scratch only for one you have never read. Treat the ranking as a ' +
+            'hint about which abilities are worth trying by hand, not a verdict.',
     },
     {
         key: 'combat_level',
@@ -1270,9 +1287,7 @@ class CombatSimUI {
         registerFloatingPanel(this.panel);
 
         // Event listeners
-        this.panel.querySelector('#mwi-csim-close').addEventListener('click', () => {
-            this.panel.style.display = 'none';
-        });
+        this.panel.querySelector('#mwi-csim-close').addEventListener('click', () => this.hide());
         this.panel.querySelector('#mwi-csim-run').addEventListener('click', () => this._onSimulate());
         this.panel.querySelector('#mwi-csim-stop').addEventListener('click', () => this._onSimulate());
         this.panel.addEventListener('mousedown', () => bringPanelToFront(this.panel));
@@ -1387,6 +1402,10 @@ class CombatSimUI {
         });
 
         this.populateZones();
+        // Here rather than at module scope, where the other panels ask: this one
+        // is built by its feature module and only if the setting is on, so
+        // asking any earlier would be asking about a panel that does not exist
+        this.restore();
     }
 
     /**
@@ -4080,10 +4099,33 @@ class CombatSimUI {
 
         this._editor.openWithExternalDTO(dto, playerName);
 
+        this.show();
+        this._switchTab('configure');
+    }
+
+    /**
+     * Open the panel.
+     *
+     * @param {Object} [options] - `remember: false` when reopening at start-up,
+     *   so restoring a panel is not itself recorded as opening one
+     */
+    show({ remember = true } = {}) {
+        if (!this.panel) return;
+        if (remember) saveOpenState(GEOMETRY_KEY, true);
+
         this.panel.style.display = 'flex';
         bringPanelToFront(this.panel);
         this.populateZones();
-        this._switchTab('configure');
+        if (!this._editor.isInitialized()) {
+            this._editor.initEditor();
+        }
+    }
+
+    /** @param {Object} [options] - `remember: false` to close without forgetting it was open */
+    hide({ remember = true } = {}) {
+        if (!this.panel) return;
+        if (remember) saveOpenState(GEOMETRY_KEY, false);
+        this.panel.style.display = 'none';
     }
 
     /**
@@ -4091,15 +4133,18 @@ class CombatSimUI {
      */
     toggle() {
         if (!this.panel) return;
-        const visible = this.panel.style.display !== 'none';
-        this.panel.style.display = visible ? 'none' : 'flex';
-        if (!visible) {
-            bringPanelToFront(this.panel);
-            this.populateZones();
-            if (!this._editor.isInitialized()) {
-                this._editor.initEditor();
-            }
-        }
+        if (this.panel.style.display !== 'none') this.hide();
+        else this.show();
+    }
+
+    /**
+     * Reopen if the page was left with this panel up.
+     *
+     * The waiting is `panel-geometry.js`'s: the answer lives in IndexedDB, which
+     * is not open yet when the panel is built.
+     */
+    restore() {
+        reopenIfLeftOpen(GEOMETRY_KEY, () => this.show({ remember: false }));
     }
 
     /**
@@ -4890,7 +4935,14 @@ class CombatSimUI {
             parts.push(
                 `<span style="color:#8ab4f8;">Priced as a fresh ${detail.books.bookName}: ` +
                     `${count == null ? 'the whole level path' : `${formatWithSeparator(count)} books`} from nothing, ` +
-                    `since a swapped-in ability starts at zero. Own some already and this row overstates the cost.</span>`
+                    `since you do not own this ability.</span>`
+            );
+        } else if (detail?.ownedFromLevel != null && detail.books) {
+            const count = Number.isFinite(detail.books.books) ? Math.ceil(detail.books.books) : null;
+            parts.push(
+                `<span style="color:#8ab4f8;">Priced from the ${detail.books.bookName} you already own at ` +
+                    `Lv${detail.ownedFromLevel}: ` +
+                    `${count == null ? 'the level path from there' : `${formatWithSeparator(count)} more books`}.</span>`
             );
         }
 

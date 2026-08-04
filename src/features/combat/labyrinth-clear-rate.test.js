@@ -81,6 +81,8 @@ const {
     computeLabyrinthPath,
     computeBeaconPlan,
     countDisjointRoutes,
+    labyrinthGridSize,
+    labyrinthRoomRewards,
 } = await import('./labyrinth-clear-rate.js');
 
 describe('normalizeChance', () => {
@@ -798,6 +800,121 @@ describe('enhancing rooms report what they pay', () => {
     });
 });
 
+describe('official labyrinth skilling formulas', () => {
+    const metrics = (over = {}) => ({
+        skillLevelBonus: 0,
+        efficiencyBonus: 0,
+        actionSpeedBonus: 0,
+        successBonus: 0,
+        doubleProgressBonus: 0,
+        gatheringBonus: 0,
+        experienceBonus: 0,
+        ...over,
+    });
+
+    const clear = (over, baseLevel, roomLevel) =>
+        labyrinthClearRate.computeSkillingClearWithParams(metrics(over), baseLevel, roomLevel);
+
+    describe('SkillingSuccessRate = MAX(5%, 0.80 × (1 + LevelBonus + Buffs))', () => {
+        test('at the room level it is the flat 80%', () => {
+            expect(clear({}, 100, 100).successChance).toBeCloseTo(0.8, 10);
+        });
+
+        test('every level above the room is worth +0.5%, not +1%', () => {
+            // 20 over: 0.80 × (1 + 20 × 0.005) = 0.88
+            expect(clear({}, 120, 100).successChance).toBeCloseTo(0.88, 10);
+        });
+
+        test('every level below the room costs −1%, twice what a level above pays', () => {
+            // 20 under: 0.80 × (1 − 20 × 0.01) = 0.64
+            expect(clear({}, 80, 100).successChance).toBeCloseTo(0.64, 10);
+        });
+
+        test('buffs add inside the bracket alongside the level bonus', () => {
+            // 0.80 × (1 + 20 × 0.005 + 0.25) = 1.08 → capped at 100%
+            expect(clear({ successBonus: 0.25 }, 120, 100).successChance).toBeCloseTo(1, 10);
+            // 0.80 × (1 − 20 × 0.01 + 0.25) = 0.84
+            expect(clear({ successBonus: 0.25 }, 80, 100).successChance).toBeCloseTo(0.84, 10);
+        });
+
+        test('the 5% floor holds however far under the room you are', () => {
+            // 0.80 × (1 − 200 × 0.01) = −0.80, which is not what the game does
+            expect(clear({}, 1, 201).successChance).toBeCloseTo(0.05, 10);
+            expect(clear({}, 50, 500).successChance).toBeCloseTo(0.05, 10);
+        });
+
+        test('a level bonus that lands just above the floor is not raised to it', () => {
+            // 0.80 × (1 − 93 × 0.01) = 0.056, above the 5% floor and left alone
+            expect(clear({}, 7, 100).successChance).toBeCloseTo(0.056, 10);
+        });
+    });
+
+    describe('WorkPower = EffectiveLevel × (1 + Efficiency)', () => {
+        test('efficiency multiplies the effective level, and progress is its floor', () => {
+            const result = clear({ efficiencyBonus: 0.37 }, 100, 80);
+            expect(result.workPower).toBeCloseTo(137, 10);
+            expect(result.progressPerSuccess).toBe(137);
+        });
+
+        test('a level buff feeds effective level, so it lands inside the product', () => {
+            const result = clear({ skillLevelBonus: 15, efficiencyBonus: 0.1 }, 100, 80);
+            expect(result.effectiveLevel).toBe(115);
+            expect(result.workPower).toBeCloseTo(126.5, 10);
+            // Progress per success is whole, so 126.5 spends as 126
+            expect(result.progressPerSuccess).toBe(126);
+        });
+
+        test('the room asks for RoomLevel × 10 progress', () => {
+            expect(clear({}, 100, 80).targetProgress).toBe(800);
+        });
+    });
+
+    describe('DoubleProgress = Crate + Gathering + Upgrade', () => {
+        const applyGathering = (skillId) => {
+            const m = { doubleProgressBonus: 0, gatheringBonus: 0, experienceBonus: 0, successBonus: 0 };
+            labyrinthClearRate.applyBuff(
+                m,
+                '/buff_types/gathering',
+                0.15,
+                `/buff_types/${skillId}_level`,
+                `/buff_types/${skillId}_success`,
+                skillId
+            );
+            return m;
+        };
+
+        test('the gathering buff counts in the three gathering skills', () => {
+            for (const skillId of ['milking', 'foraging', 'woodcutting']) {
+                expect(applyGathering(skillId).gatheringBonus).toBeCloseTo(0.15, 10);
+            }
+        });
+
+        test('it does not count anywhere else — cheesesmithing has no gathering quantity', () => {
+            for (const skillId of ['cheesesmithing', 'cooking', 'brewing', 'tailoring']) {
+                expect(applyGathering(skillId).gatheringBonus).toBe(0);
+            }
+        });
+
+        test('the crate and upgrade terms add to the gathering one', () => {
+            expect(clear({ doubleProgressBonus: 0.2, gatheringBonus: 0.15 }, 100, 80).doubleChance).toBeCloseTo(
+                0.35,
+                10
+            );
+        });
+    });
+
+    describe('Experience = RoomLevel × 50', () => {
+        test('a skilling room pays its own level, not the character’s', () => {
+            expect(clear({}, 250, 80).xpPerRoom).toBeCloseTo(4000, 6);
+        });
+
+        test('an enhancing room uses the identical formula', () => {
+            const enhancing = labyrinthClearRate.computeEnhancingClearWithParams(metrics(), 250, 80);
+            expect(enhancing.xpPerRoom).toBeCloseTo(4000, 6);
+        });
+    });
+});
+
 describe('expected token and box rows', () => {
     /** Collect the rows appendExpectedRows produces */
     function rows(result) {
@@ -810,7 +927,7 @@ describe('expected token and box rows', () => {
         labyrinthClearRate.currentFloor = 0;
     });
 
-    test('a room you always clear is worth the full drop rate', () => {
+    test('a challenge room you always clear is worth the full drop rate', () => {
         labyrinthClearRate.currentFloor = 4;
         const [token, box] = rows({ type: 'combat', clearChance: 1 });
         expect(token.value).toBe('0.20');
@@ -826,10 +943,10 @@ describe('expected token and box rows', () => {
         expect(box.label).toBe('Skilling Box Expected');
     });
 
-    test('the rates are labelled as approximations, and the weighting is explained', () => {
+    test('the rates cite the official rule, and the weighting is explained', () => {
         labyrinthClearRate.currentFloor = 4;
         const [token] = rows({ type: 'combat', clearChance: 0.5 });
-        expect(token.title).toContain('approximate');
+        expect(token.title).toContain('MIN(Floor × 5%, 50%)');
         expect(token.title).toContain('50% clear chance');
     });
 
@@ -839,9 +956,116 @@ describe('expected token and box rows', () => {
         expect(token.value).toBe('0.20');
     });
 
+    test('a treasure room pays its whole table — no clear is asked of you', () => {
+        labyrinthClearRate.currentFloor = 6;
+        const [token, skilling, combat] = rows({ type: 'treasure', clearChance: 0.25 });
+        expect(token.value).toBe('6.00');
+        expect(skilling.label).toBe('Skilling Box Expected');
+        expect(skilling.value).toBe('0.30');
+        expect(combat.label).toBe('Combat Box Expected');
+        expect(combat.value).toBe('0.30');
+    });
+
+    test('the floor exit pays tokens, both boxes and a refinement chest', () => {
+        labyrinthClearRate.currentFloor = 8;
+        const [token, skilling, combat, chest] = rows({ type: 'exit' });
+        expect(token.value).toBe('40.00');
+        expect(skilling.value).toBe('2.50');
+        expect(combat.value).toBe('2.50');
+        expect(chest.label).toBe('Refinement Chest Expected');
+        expect(chest.value).toBe('2.00');
+    });
+
     test('floor 0 has no rewards to expect', () => {
         labyrinthClearRate.currentFloor = 0;
         expect(rows({ type: 'combat', clearChance: 1 })).toHaveLength(0);
+    });
+});
+
+describe('official labyrinth reward tables', () => {
+    test('a challenge room rolls MIN(Floor × 5%, 50%) for a token, capped from floor 10', () => {
+        expect(labyrinthRoomRewards(1, 'combat').tokens).toBeCloseTo(0.05, 10);
+        expect(labyrinthRoomRewards(7, 'skilling').tokens).toBeCloseTo(0.35, 10);
+        expect(labyrinthRoomRewards(10, 'combat').tokens).toBeCloseTo(0.5, 10);
+        expect(labyrinthRoomRewards(25, 'combat').tokens).toBeCloseTo(0.5, 10);
+    });
+
+    test("a challenge room rolls MIN(Floor × 1%, 10%) for a Purdora's Box of its own kind", () => {
+        const combat = labyrinthRoomRewards(7, 'combat');
+        expect(combat.combatBoxes).toBeCloseTo(0.07, 10);
+        expect(combat.skillingBoxes).toBe(0);
+
+        // Enhancing rooms are skilling rooms, so they pay the Skilling box
+        for (const kind of ['skilling', 'enhancing']) {
+            const skilling = labyrinthRoomRewards(7, kind);
+            expect(skilling.skillingBoxes).toBeCloseTo(0.07, 10);
+            expect(skilling.combatBoxes).toBe(0);
+        }
+
+        expect(labyrinthRoomRewards(10, 'combat').combatBoxes).toBeCloseTo(0.1, 10);
+        expect(labyrinthRoomRewards(30, 'combat').combatBoxes).toBeCloseTo(0.1, 10);
+    });
+
+    test('a treasure room always pays MIN(Floor, 10) tokens', () => {
+        expect(labyrinthRoomRewards(3, 'treasure').tokens).toBe(3);
+        expect(labyrinthRoomRewards(10, 'treasure').tokens).toBe(10);
+        expect(labyrinthRoomRewards(14, 'treasure').tokens).toBe(10);
+    });
+
+    test('a treasure room rolls MIN(Floor × 5%, 50%) for one box of each type', () => {
+        const mid = labyrinthRoomRewards(6, 'treasure');
+        expect(mid.skillingBoxes).toBeCloseTo(0.3, 10);
+        expect(mid.combatBoxes).toBeCloseTo(0.3, 10);
+
+        const capped = labyrinthRoomRewards(12, 'treasure');
+        expect(capped.skillingBoxes).toBeCloseTo(0.5, 10);
+        expect(capped.combatBoxes).toBeCloseTo(0.5, 10);
+    });
+
+    test('the floor exit always pays 5 × Floor tokens', () => {
+        expect(labyrinthRoomRewards(1, 'exit').tokens).toBe(5);
+        expect(labyrinthRoomRewards(9, 'exit').tokens).toBe(45);
+    });
+
+    test('the floor exit pays both box types from floor 4, averaging (Floor − 3) / 2 each', () => {
+        expect(labyrinthRoomRewards(3, 'exit').skillingBoxes).toBe(0);
+        expect(labyrinthRoomRewards(3, 'exit').combatBoxes).toBe(0);
+
+        expect(labyrinthRoomRewards(4, 'exit').skillingBoxes).toBeCloseTo(0.5, 10);
+        expect(labyrinthRoomRewards(4, 'exit').combatBoxes).toBeCloseTo(0.5, 10);
+        expect(labyrinthRoomRewards(9, 'exit').skillingBoxes).toBeCloseTo(3, 10);
+        expect(labyrinthRoomRewards(9, 'exit').combatBoxes).toBeCloseTo(3, 10);
+    });
+
+    test('the floor exit pays a Refinement Chest from floor 6, averaging (Floor − 4) / 2', () => {
+        expect(labyrinthRoomRewards(5, 'exit').refinementChests).toBe(0);
+        expect(labyrinthRoomRewards(6, 'exit').refinementChests).toBeCloseTo(1, 10);
+        expect(labyrinthRoomRewards(9, 'exit').refinementChests).toBeCloseTo(2.5, 10);
+    });
+
+    test('nothing drops below floor 1', () => {
+        for (const kind of ['combat', 'skilling', 'treasure', 'exit']) {
+            expect(labyrinthRoomRewards(0, kind)).toEqual({
+                tokens: 0,
+                skillingBoxes: 0,
+                combatBoxes: 0,
+                refinementChests: 0,
+            });
+        }
+    });
+});
+
+describe('labyrinthGridSize', () => {
+    test('a floor is MIN(3 + Floor, 8) rooms per side', () => {
+        expect(labyrinthGridSize(1)).toBe(4);
+        expect(labyrinthGridSize(4)).toBe(7);
+        expect(labyrinthGridSize(5)).toBe(8);
+        expect(labyrinthGridSize(12)).toBe(8);
+    });
+
+    test('there is no grid below floor 1', () => {
+        expect(labyrinthGridSize(0)).toBe(0);
+        expect(labyrinthGridSize(null)).toBe(0);
     });
 });
 

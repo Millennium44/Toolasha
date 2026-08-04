@@ -28,10 +28,25 @@ describe('getAlchemyCoinCost', () => {
         expect(getAlchemyCoinCost(item({ sellPrice: 10 }), 'transmute')).toBe(50);
     });
 
+    test('coinify is free — items go in, coins come out, no gold fee', () => {
+        // The transmute formula would charge 200 here; coinify pays nothing.
+        expect(getAlchemyCoinCost(item({ sellPrice: 1000 }), 'coinify')).toBe(0);
+        expect(
+            getAlchemyCoinCost(item({ sellPrice: 1_000_000, alchemyDetail: { bulkMultiplier: 10 } }), 'coinify')
+        ).toBe(0);
+    });
+
     test('the bulk multiplier scales both formulas', () => {
         const bulk = { alchemyDetail: { bulkMultiplier: 10 } };
         expect(getAlchemyCoinCost(item(bulk), 'decompose')).toBe(1000);
         expect(getAlchemyCoinCost(item(bulk), 'transmute')).toBe(2000);
+    });
+
+    test('a caller may bill at a recorded bulk size instead of the item current one', () => {
+        // History sessions recorded the multiplier in force at the time; it wins.
+        const stale = item({ alchemyDetail: { bulkMultiplier: 10 } });
+        expect(getAlchemyCoinCost(stale, 'transmute', 3)).toBe(600);
+        expect(getAlchemyCoinCost(stale, 'decompose', 3)).toBe(300);
     });
 
     test('a missing bulk multiplier counts as one', () => {

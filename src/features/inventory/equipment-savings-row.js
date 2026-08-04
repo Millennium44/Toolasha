@@ -17,6 +17,15 @@
  * for a second loadout pays the full ask, so the trade-in is the **Keep old
  * gear** switch rather than an assumption baked into the number.
  *
+ * ## The ladder
+ *
+ * A target nobody sells is a run at the anvil, and the cheapest run starts from
+ * the best copy you own — which is the one you are wearing. That number is
+ * honest and it is also a bet with your kit: a failure takes the equipped piece
+ * down or away. So the card carries the ladder beside it: the same target
+ * reached from your *second*-best copy, or from a base you buy or make when
+ * there is no second copy, leaving what you fight in untouched.
+ *
  * ## Everything, not just each thing
  *
  * A slot at a time answers the wrong question when you want three pieces. The
@@ -678,6 +687,87 @@ function highestOwnedLevel(itemHrid) {
 }
 
 /**
+ * The copy you would enhance instead of the one you are wearing.
+ *
+ * Enhancing your only copy puts your kit on the table: a failure drops it back
+ * to +0, or destroys it outright when there is nothing protecting it, and you
+ * fight in whatever the loss left you until you have built it back. The ladder
+ * is what people do instead — leave the equipped piece where it is and take a
+ * second copy up, so a bust costs the spare rather than the gear you are using.
+ *
+ * The *second*-best copy, not the best: the best one is the one on your back,
+ * which the direct cost already counts from. Two copies at the same level are
+ * two copies, so a stack of two +3s ladders from +3.
+ *
+ * @param {string} itemHrid - The piece
+ * @returns {{level: number, spare: boolean}} `spare` is false when there is no
+ *   second copy at all, and the ladder has to start from one you get hold of
+ */
+function ladderStart(itemHrid) {
+    const levels = [];
+    for (const item of dataManager.getInventory?.() || []) {
+        if (item.itemHrid !== itemHrid || !(item.count > 0)) continue;
+        const level = item.enhancementLevel || 0;
+        levels.push(level);
+        // A stack of two is two copies, and the second one is the spare
+        if (item.count > 1) levels.push(level);
+    }
+    if (levels.length < 2) return { level: 0, spare: false };
+
+    levels.sort((a, b) => b - a);
+    return { level: levels[1], spare: true };
+}
+
+/**
+ * What a fresh base costs, bought or made, whichever is cheaper.
+ *
+ * Both are read through the same helpers the rest of the panel prices with, so
+ * a ladder quoted here and a target quoted below cannot disagree. The craft
+ * reading treats an upgrade base already in the bag as free, as every other
+ * craft figure in this panel does — for a ladder that is the second copy you
+ * were going to spend anyway, and it is the same number the card above shows.
+ *
+ * @param {string} itemHrid - The piece
+ * @returns {{price: number, crafted: boolean}} Zero when nowhere sells or makes one
+ */
+function freshBasePrice(itemHrid) {
+    const market = basePrice(itemHrid);
+
+    const recipe = recipeFor(itemHrid);
+    const made = recipe?.inputItems?.length ? craftMaterialsCost(itemHrid, recipe) : null;
+    if (made !== null && made > 0 && (!(market > 0) || made < market)) return { price: made, crafted: true };
+
+    return { price: market, crafted: false };
+}
+
+/**
+ * The ladder alternative, costed, or nothing when there is no ladder to climb.
+ *
+ * Null rather than a zero when the spare is already at the target: there is
+ * nothing to enhance, you simply wear it, and a line saying "0" would read as a
+ * free upgrade. `enhancementCost` returns null for that on its own, because a
+ * run that starts at or above where it is going is not a run.
+ *
+ * @param {string} itemHrid - The piece
+ * @param {number} enhancementLevel - The level being aimed at
+ * @returns {{cost: number, fromLevel: number, spare: boolean, base: number, crafted: boolean}|null}
+ */
+function ladderOption(itemHrid, enhancementLevel) {
+    const { level, spare } = ladderStart(itemHrid);
+    const fromLevel = spare ? level : 0;
+
+    const run = enhancementCost(itemHrid, enhancementLevel, fromLevel);
+    if (run === null) return null;
+
+    const base = spare ? { price: 0, crafted: false } : freshBasePrice(itemHrid);
+    // No spare and nowhere to get one: there is no second copy to ladder with,
+    // and quoting the run alone would price a piece you cannot start from
+    if (!spare && !(base.price > 0)) return null;
+
+    return { cost: run + base.price, fromLevel, spare, base: base.price, crafted: base.crafted };
+}
+
+/**
  * What a +0 of something costs, from wherever it can actually be got.
  *
  * The market first, then the shops. Capes are drops and shop lines and are
@@ -736,6 +826,8 @@ function costOf(itemHrid, enhancementLevel) {
                     enhancing: true,
                     fromLevel: held ?? 0,
                     ownsBase: held !== null,
+                    // The safe way round the same run, priced beside it
+                    ladder: ladderOption(itemHrid, enhancementLevel),
                     recipe: null,
                 };
             }
@@ -839,6 +931,7 @@ export function watchedTargets() {
             enhancing,
             fromLevel,
             ownsBase: holdsBase,
+            ladder,
         } = costOf(itemHrid, enhancementLevel);
 
         const worn = wornRivalOf(itemHrid);
@@ -854,6 +947,7 @@ export function watchedTargets() {
             enhancing: Boolean(enhancing),
             ownsBase: Boolean(holdsBase),
             fromLevel: fromLevel || 0,
+            ladder: ladder || null,
             recipe,
             noSell: targetNoSell(itemHrid),
             ownNoSell: target.noSell !== undefined,
@@ -1070,7 +1164,7 @@ function costPreview(itemHrid, enhancementLevel) {
     // purchase — a +7 cape previewed as "nobody is selling this one" and then
     // watched perfectly well, which is a preview saying the opposite of what
     // the panel was about to do.
-    const { cost, ask, crafted, enhancing, fromLevel } = costOf(itemHrid, enhancementLevel);
+    const { cost, ask, crafted, enhancing, fromLevel, ladder } = costOf(itemHrid, enhancementLevel);
     const progress = savingsProgress(cost, spendable());
     const seconds = timeToAffordSeconds(progress.needed, incomePerDay());
 
@@ -1096,6 +1190,7 @@ function costPreview(itemHrid, enhancementLevel) {
         wrap.appendChild(
             priceLine(`Enhance +${fromLevel} → +${enhancementLevel}`, 'Enhancement Cost', ROW_COLORS.gold)
         );
+        if (ladder) wrap.appendChild(ladderLine(ladder, enhancementLevel));
     } else {
         wrap.appendChild(
             priceLine(crafted ? 'Materials:' : 'Lowest Ask:', formatWithSeparator(Math.round(ask)), ROW_COLORS.gold)
@@ -1424,6 +1519,7 @@ function targetCard(target) {
                 'rgba(232, 236, 245, 0.55)'
             )
         );
+        if (target.ladder) card.appendChild(ladderLine(target.ladder, target.enhancementLevel));
     } else if (target.crafted) {
         card.appendChild(recipeLines(target));
         if (target.recipe?.actionHrid) card.appendChild(missingMatsButton(target.recipe.actionHrid));
@@ -1606,6 +1702,36 @@ function priceLine(label, value, color, title = '') {
 
     line.append(name, figure);
     return line;
+}
+
+/**
+ * The ladder, said beside the cost of enhancing what you are wearing.
+ *
+ * The two figures answer different questions and both are worth having on the
+ * card: the one above is what the target costs if you bet your equipped piece,
+ * this is what it costs if you do not. The ladder is usually dearer — you are
+ * starting lower, and possibly paying for a copy — and that is the price of not
+ * fighting in a +0 for a week if it goes wrong.
+ *
+ * @param {Object} ladder - From `ladderOption`
+ * @param {number} targetLevel - Where the ladder is climbing to
+ * @returns {HTMLElement}
+ */
+function ladderLine(ladder, targetLevel) {
+    const label = ladder.spare
+        ? `Ladder: enhance your +${ladder.fromLevel} copy instead`
+        : `Ladder: enhance a fresh +0 ${ladder.crafted ? 'you make' : 'you buy'} instead`;
+
+    const why =
+        `Takes a second copy to +${targetLevel} and leaves the one you are wearing alone, so a failed ` +
+        'attempt costs the spare rather than your kit.\n';
+    const how = ladder.spare
+        ? `Counted from the second-best copy you own, at +${ladder.fromLevel}.`
+        : 'You own no second copy, so this starts from one you have to get: ' +
+          `${formatWithSeparator(Math.round(ladder.base))} for a +0 ` +
+          `${ladder.crafted ? 'at the crafting bench' : 'at the market or shop'}, plus the run.`;
+
+    return priceLine(label, formatWithSeparator(Math.round(ladder.cost)), ROW_COLORS.accent, why + how);
 }
 
 /**

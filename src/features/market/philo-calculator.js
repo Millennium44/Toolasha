@@ -14,6 +14,7 @@ import { formatLargeNumber, formatPercentage, timeReadable } from '../../utils/f
 import { getEnhancementMultiplier } from '../../utils/enhancement-multipliers.js';
 import { calculateActionStats } from '../../utils/action-calculator.js';
 import { SECONDS_PER_HOUR } from '../../utils/profit-constants.js';
+import { getAlchemyCoinCost } from '../../utils/alchemy-fees.js';
 import {
     calculateActionsPerHour,
     calculatePriceAfterTax,
@@ -658,9 +659,8 @@ class PhiloCalculator {
         // Catalyst cost per action (consumed only on success)
         const catalystCostPerAction = this.useCatalyst ? successRate * this.catalystPrice : 0;
 
-        // Transmute coin cost: max(50, sellPrice / 5) × bulkMultiplier per action
-        const sellPrice = itemDetails.sellPrice || 0;
-        const coinCost = Math.max(50, Math.floor(sellPrice / 5)) * bulkMultiplier;
+        // Transmute coin fee — see utils/alchemy-fees.js (bulkMultiplier already folded in)
+        const coinCost = getAlchemyCoinCost(itemDetails, 'transmute');
 
         // Real action time and efficiency from game data
         const { actionTime, efficiency, estimated } = this.getActionStats(itemLevel);
