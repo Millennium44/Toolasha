@@ -6,6 +6,16 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Panels can be dragged with a finger
+
+Every drag and resize in the script listened for mouse events, and `mousedown` never fires on a touchscreen — every panel was simply immovable on a phone, the dungeon tracker included. All of it now runs on pointer events, which fire for mouse and finger alike: the shared drag/resize utility (Treasure, overlay panels, combat panels, consumables, combat level), the dungeon tracker, both simulator panels, PFormance, and the game-modal dragger. Each handle sets `touch-action: none`, without which the browser claims the gesture for scrolling after a few pixels, and an interrupted touch (a notification landing mid-drag) releases the panel instead of gluing it to a pointer that no longer exists.
+
+The Lab Simulator's default size is clamped to the viewport — `900px` is wider than every phone — and resize grips grow from 14px to 26px on touch devices, since a mouse-sized target is unhittable with a finger.
+
+### A mobile mode, auto-detected and overridable
+
+**Mobile mode** (General Settings): Auto-detect / On / Off. Auto keys on `pointer: coarse` — whether the primary pointer is a finger — rather than user-agent sniffing, which lies for compatibility. The override exists for the touchscreen laptop that wants desktop layouts, and for testing the mobile layout from a desk. Features consult it through one shared utility, so future mobile adjustments have a single switch to key on.
+
 ### Arriving from another build of Toolasha asks before anything new runs
 
 Someone switching to this fork for the first time — usually from upstream, whose settings live under the same storage keys — now gets a one-time choice before any feature initialises: **"Turn the new things on"** or **"Keep everything as it was"**. Keeping things as they were forces every fork-added on-by-default switch off and enables "New settings start turned off" for the future; either way, the full what's-new popup follows with a live switch per setting, so the wholesale choice can be refined item by item.

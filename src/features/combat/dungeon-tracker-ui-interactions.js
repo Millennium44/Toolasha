@@ -51,7 +51,10 @@ class DungeonTrackerUIInteractions {
         const header = this.container.querySelector('#mwi-dt-header');
         if (!header) return;
 
-        header.addEventListener('mousedown', (e) => {
+        // A finger has to work like a cursor: mousedown never fires on touch,
+        // and without touch-action the browser claims the gesture for scrolling
+        header.style.touchAction = 'none';
+        header.addEventListener('pointerdown', (e) => {
             // Don't drag if clicking collapse button
             if (e.target.id === 'mwi-dt-collapse-btn') return;
 
@@ -67,10 +70,11 @@ class DungeonTrackerUIInteractions {
 
         // Remove old handlers if they exist
         if (this.dragMoveHandler) {
-            document.removeEventListener('mousemove', this.dragMoveHandler);
+            document.removeEventListener('pointermove', this.dragMoveHandler);
         }
         if (this.dragUpHandler) {
-            document.removeEventListener('mouseup', this.dragUpHandler);
+            document.removeEventListener('pointerup', this.dragUpHandler);
+            document.removeEventListener('pointercancel', this.dragUpHandler);
         }
 
         // Create and store new handlers
@@ -110,8 +114,9 @@ class DungeonTrackerUIInteractions {
             }
         };
 
-        document.addEventListener('mousemove', this.dragMoveHandler);
-        document.addEventListener('mouseup', this.dragUpHandler);
+        document.addEventListener('pointermove', this.dragMoveHandler);
+        document.addEventListener('pointerup', this.dragUpHandler);
+        document.addEventListener('pointercancel', this.dragUpHandler);
     }
 
     /**
@@ -559,11 +564,12 @@ class DungeonTrackerUIInteractions {
 
         // Remove document-level drag listeners
         if (this.dragMoveHandler) {
-            document.removeEventListener('mousemove', this.dragMoveHandler);
+            document.removeEventListener('pointermove', this.dragMoveHandler);
             this.dragMoveHandler = null;
         }
         if (this.dragUpHandler) {
-            document.removeEventListener('mouseup', this.dragUpHandler);
+            document.removeEventListener('pointerup', this.dragUpHandler);
+            document.removeEventListener('pointercancel', this.dragUpHandler);
             this.dragUpHandler = null;
         }
 

@@ -1,18 +1,23 @@
 /** @vitest-environment happy-dom
  *
- * Dragging a panel by its header.
+ * Dragging a panel by its header, with whatever pointer the device has.
  *
- * The interesting case is the one that is not a drag. `onDrop` is how a panel
- * records where it was put, and for the Treasure popup it is also how the popup
- * is told to stop following the chest dialog — so firing it on a press that
- * never moved silently pinned the popup and made auto-placement look broken.
+ * Two things live here. The click-versus-drag distinction: `onDrop` is how a
+ * panel records where it was put, and for the Treasure popup also how it is
+ * told to stop following the chest dialog, so firing it on a press that never
+ * moved silently pinned the popup. And the event model: every drag used mouse
+ * events, and mousedown never fires on a touchscreen — every panel was simply
+ * immovable on a phone. These tests drive the drags with pointer events and
+ * would fail against the mouse-event code outright.
  */
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
 vi.mock('./panel-z-index.js', () => ({ bringPanelToFront: () => {} }));
+vi.mock('./mobile.js', () => ({ hasCoarsePointer: vi.fn(() => false) }));
 
-const { makeDraggable } = await import('./floating-panel.js');
+const { makeDraggable, makeResizable } = await import('./floating-panel.js');
+const { hasCoarsePointer } = await import('./mobile.js');
 
 let panel;
 let handle;
@@ -28,9 +33,10 @@ beforeEach(() => {
     makeDraggable(panel, handle, dropped);
 });
 
-const press = (x, y) => handle.dispatchEvent(new MouseEvent('mousedown', { button: 0, clientX: x, clientY: y }));
-const move = (x, y) => document.dispatchEvent(new MouseEvent('mousemove', { clientX: x, clientY: y }));
-const release = () => document.dispatchEvent(new MouseEvent('mouseup'));
+const press = (x, y) => handle.dispatchEvent(new MouseEvent('pointerdown', { button: 0, clientX: x, clientY: y }));
+const move = (x, y) => document.dispatchEvent(new MouseEvent('pointermove', { clientX: x, clientY: y }));
+const release = () => document.dispatchEvent(new MouseEvent('pointerup'));
+const interrupt = () => document.dispatchEvent(new MouseEvent('pointercancel'));
 
 describe('what counts as having been moved', () => {
     test('a drag reports where it ended', () => {
@@ -68,11 +74,54 @@ describe('what counts as having been moved', () => {
         handle.innerHTML = '<button id="close"></button>';
         document
             .getElementById('close')
-            .dispatchEvent(new MouseEvent('mousedown', { button: 0, bubbles: true, clientX: 1, clientY: 1 }));
+            .dispatchEvent(new MouseEvent('pointerdown', { button: 0, bubbles: true, clientX: 1, clientY: 1 }));
         move(300, 300);
         release();
 
         expect(dropped).not.toHaveBeenCalled();
         expect(panel.style.left).toBe('100px');
+    });
+});
+
+describe('a finger as the pointer', () => {
+    test('the handle opts out of the browser scroll gesture', () => {
+        // Without touch-action:none the browser claims the gesture for
+        // scrolling and the pointermove stream ends after a few pixels
+        expect(handle.style.touchAction).toBe('none');
+    });
+
+    test('an interrupted touch releases the panel rather than gluing it on', () => {
+        // A system notification cancels the pointer instead of lifting it
+        press(120, 120);
+        interrupt();
+        const before = panel.style.left;
+
+        move(500, 500);
+
+        expect(panel.style.left).toBe(before);
+    });
+});
+
+describe('the resize grip', () => {
+    test('resizes by pointer', () => {
+        panel.getBoundingClientRect = () => ({ left: 100, top: 100, width: 300, height: 200, right: 400, bottom: 300 });
+        makeResizable(panel, { minWidth: 100, minHeight: 50 });
+        const grip = panel.lastElementChild;
+
+        grip.dispatchEvent(new MouseEvent('pointerdown', { button: 0, clientX: 400, clientY: 300 }));
+        document.dispatchEvent(new MouseEvent('pointermove', { clientX: 460, clientY: 330 }));
+        document.dispatchEvent(new MouseEvent('pointerup'));
+
+        expect(panel.style.width).toBe('360px');
+        expect(panel.style.height).toBe('230px');
+    });
+
+    test('and is finger-sized on a coarse pointer', () => {
+        // 14px is a mouse target; on a touchscreen the grip is the feature
+        hasCoarsePointer.mockReturnValue(true);
+        makeResizable(panel, {});
+
+        expect(panel.lastElementChild.style.width).toBe('26px');
+        hasCoarsePointer.mockReturnValue(false);
     });
 });

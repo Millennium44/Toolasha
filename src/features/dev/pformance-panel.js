@@ -172,27 +172,32 @@ class PFormancePanel {
         let offsetX = 0;
         let offsetY = 0;
 
-        const onMouseMove = (e) => {
+        const onPointerMove = (e) => {
             if (!this.isDragging) return;
             this.panel.style.left = `${e.clientX - offsetX}px`;
             this.panel.style.right = 'auto';
             this.panel.style.top = `${e.clientY - offsetY}px`;
         };
 
-        const onMouseUp = () => {
+        const onPointerUp = () => {
             this.isDragging = false;
-            document.removeEventListener('mousemove', onMouseMove);
-            document.removeEventListener('mouseup', onMouseUp);
+            document.removeEventListener('pointermove', onPointerMove);
+            document.removeEventListener('pointerup', onPointerUp);
+            document.removeEventListener('pointercancel', onPointerUp);
         };
 
-        this.headerEl.addEventListener('mousedown', (e) => {
+        // Pointer events so a finger can drag it too; touch-action stops the
+        // browser turning the drag into a scroll
+        this.headerEl.style.touchAction = 'none';
+        this.headerEl.addEventListener('pointerdown', (e) => {
             bringPanelToFront(this.panel);
             this.isDragging = true;
             const rect = this.panel.getBoundingClientRect();
             offsetX = e.clientX - rect.left;
             offsetY = e.clientY - rect.top;
-            document.addEventListener('mousemove', onMouseMove);
-            document.addEventListener('mouseup', onMouseUp);
+            document.addEventListener('pointermove', onPointerMove);
+            document.addEventListener('pointerup', onPointerUp);
+            document.addEventListener('pointercancel', onPointerUp);
         });
     }
 
