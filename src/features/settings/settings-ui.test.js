@@ -396,7 +396,7 @@ describe('a mode stacks with a preset', () => {
     // a bulk write owns the *values*, the mode owns the *panel*. A preset that
     // lists a market setting does write it, and the row stays locked and greyed
     // until the mode is next applied, which forces it off again.
-    test('a market preset writes market values; the mode keeps the rows locked', async () => {
+    test('a market preset is immediately re-forced off by the mode, rows stay locked', async () => {
         drawPanel();
         chip().click();
         await settle();
@@ -404,7 +404,9 @@ describe('a mode stacks with a preset', () => {
         presetButton('market').click();
         await settle();
 
-        expect(mocks.settingsMap.itemTooltip_profit.isTrue).toBe(true);
+        // The preset wrote true, and the mode's reapply put it straight back
+        // off — Iron Cow wins now, not on its next enable
+        expect(mocks.settingsMap.itemTooltip_profit.isTrue).toBe(false);
         expect(row('itemTooltip_profit').dataset.ironCowLocked).toBe('true');
         expect(chip().getAttribute('aria-pressed')).toBe('true');
     });
