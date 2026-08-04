@@ -8,8 +8,9 @@ import dataManager from '../../core/data-manager.js';
 import marketAPI from '../../api/marketplace.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
-import { formatWithSeparator, formatKMB } from '../../utils/formatters.js';
+import { formatWithSeparator, formatKMB, parseKMB } from '../../utils/formatters.js';
 import { createEtaTracker } from '../../utils/progress-eta.js';
+import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
 import {
     buildGameDataPayload,
     buildAllPlayerDTOs,
@@ -28,6 +29,7 @@ import {
     getStyleExcludedSkills,
     houseRoomAffectsCombat,
     assignRankScores,
+    planWithinBudget,
     RANK_PLACES,
     SCORE_METRICS,
     DEFAULT_SCORE_KEYS,
@@ -59,6 +61,80 @@ const MIN_PANEL_HEIGHT = 300;
  * width by default. Sixteen columns at once is what forced the panel wider.
  */
 const DEFAULT_HIDDEN_COLUMNS = ['deltaDps', 'deltaXp', 'deltaProfit', 'deltaEph', 'deltaDph', 'roi'];
+
+/**
+ * What the Upgrade-tab budget planner can shop for.
+ *
+ * A labyrinth plan has one axis — attempts saved — because every fight is the
+ * same kind of failure. A combat zone does not: the same 500M spent for DPS,
+ * for profit and for EXP buys three different lists, and which one is right is
+ * the player's question, not the panel's. So the axis is a choice, and each
+ * entry knows how to read its gain off a result row and how to say it.
+ */
+export const UPGRADE_PLAN_METRICS = [
+    {
+        key: 'profit',
+        label: 'Profit/hr',
+        gain: (row, baseline) =>
+            row?.economics?.profitGainPerHour ?? (row?.metrics?.profitPerHour ?? 0) - (baseline?.profitPerHour ?? 0),
+        format: (value) => `${formatKMB(Math.round(value))}/hr profit`,
+    },
+    {
+        key: 'dps',
+        label: 'DPS',
+        gain: (row, baseline) => (row?.metrics?.dps ?? 0) - (baseline?.dps ?? 0),
+        format: (value) => `+${value.toFixed(2)} DPS`,
+    },
+    {
+        key: 'xp',
+        label: 'EXP/hr',
+        gain: (row, baseline) => (row?.metrics?.xpPerHour ?? 0) - (baseline?.xpPerHour ?? 0),
+        format: (value) => `+${formatKMB(Math.round(value))} EXP/hr`,
+    },
+];
+
+/**
+ * The best set of upgrades a budget will buy, on one improvement axis.
+ *
+ * The planner itself lives in the upgrade advisor and speaks labyrinth: it
+ * values a candidate by how far it drives `attemptsDelta` below zero. Combat
+ * results have no attempts, so the gain on the chosen axis goes in negated —
+ * "one fewer attempt" and "one more coin per hour" are the same arithmetic, and
+ * the slot-conflict rules that stop it buying two chestpieces are the part
+ * worth reusing.
+ *
+ * Combat levels are dropped: they are not purchases, so a list of what a budget
+ * buys has nothing to say about them.
+ *
+ * @param {Array<Object>} rows - Upgrade results (`{candidate, cost, metrics, economics}`)
+ * @param {number} budget - Coins available
+ * @param {Object} [options] - `{ baseline, metricKey }`
+ * @returns {{picks: Array<Object>, totalCost: number, gainTotal: number,
+ *   skipped: Array<Object>, budget: number, metric: Object}}
+ */
+export function planUpgradeBudget(rows, budget, { baseline = {}, metricKey = 'profit' } = {}) {
+    const metric = UPGRADE_PLAN_METRICS.find((m) => m.key === metricKey) || UPGRADE_PLAN_METRICS[0];
+    const planRows = (rows || [])
+        .filter((row) => row?.candidate && row.candidate.type !== 'combat_level')
+        .map((row) => ({ ...row, attemptsDelta: -metric.gain(row, baseline) }));
+    const plan = planWithinBudget(planRows, Number.isFinite(budget) ? budget : 0);
+    return { ...plan, gainTotal: plan.attemptsSaved, metric };
+}
+
+/**
+ * A column's name where there is room for one line.
+ *
+ * The table header stacks the qualifier under the label to save width, so five
+ * separate columns all read `Gold/0.01%` with `DPS`, `EXP`, `Profit`, `EPH` and
+ * `DPH` beneath. In a list of checkboxes there is no second line to stack it on,
+ * and five identical labels are five checkboxes nobody can tell apart.
+ *
+ * @param {Object} column - A column definition from `_upgradeColumns`
+ * @returns {string} Label, with the qualifier joined on where there is one
+ */
+export function columnMenuLabel(column) {
+    return column?.sub ? `${column.label} ${column.sub}` : column?.label || '';
+}
 
 /**
  * Sort result rows by a computed key, treating Infinity as "worst" so unknown
@@ -202,6 +278,7 @@ class CombatSimUI {
         this.panel = null;
         this._editor = null;
         this.isRunning = false;
+        this._upgradeRunning = false;
         this.isDragging = false;
         this.dragOffset = { x: 0, y: 0 };
         this.elapsedTimer = null;
@@ -417,10 +494,14 @@ class CombatSimUI {
         resultsContent.id = 'mwi-csim-results-content';
         resultsContent.style.cssText = 'display:none; flex-direction:column; flex:1; overflow:hidden;';
 
-        // Progress bar container (hidden by default)
+        // Progress bar container (hidden by default). It lives beside the status
+        // line rather than inside the Results tab: Stop is the only way to end a
+        // run, and a tab switch used to take it off screen while the Simulate
+        // button stayed disabled — no way forward and no way back.
         const progressContainer = document.createElement('div');
         progressContainer.id = 'mwi-csim-progress-container';
-        progressContainer.style.cssText = 'display:none; padding:6px 14px; flex-shrink:0;';
+        progressContainer.style.cssText =
+            'display:none; padding:6px 14px; flex-shrink:0; border-top:1px solid #1a1a1a;';
         progressContainer.innerHTML = `
             <div style="display:flex; align-items:center; gap:8px;">
                 <div style="
@@ -465,7 +546,6 @@ class CombatSimUI {
         resultsContainer.id = 'mwi-csim-results';
         resultsContainer.style.cssText = 'display:none; overflow-y:auto; flex:1; padding:10px 14px;';
 
-        resultsContent.appendChild(progressContainer);
         resultsContent.appendChild(resultsContainer);
 
         // Seek tab content (hidden by default)
@@ -693,6 +773,7 @@ class CombatSimUI {
         this.panel.appendChild(resultsContent);
         this.panel.appendChild(seekContent);
         this.panel.appendChild(upgradeContent);
+        this.panel.appendChild(progressContainer);
         this.panel.appendChild(status);
 
         // Three grips, not one. The corner alone meant aiming at 16 square pixels
@@ -1015,6 +1096,76 @@ class CombatSimUI {
     }
 
     /**
+     * Turn a button into a CSV export, with its own "Saved ✓" feedback.
+     *
+     * The rows are built at click time rather than at render time, so a table
+     * that has since been re-sorted exports in the order on screen — and a
+     * button wired once against a stale array cannot quietly export last run.
+     *
+     * @param {HTMLElement} button - The button to wire
+     * @param {string} stem - Filename stem, e.g. `combatsim-upgrades`
+     * @param {Function} build - Returns `{ rows, columns }`
+     * @private
+     */
+    _wireCsvButton(button, stem, build) {
+        if (!button) return;
+
+        const flash = (text) => {
+            button.textContent = text;
+            clearTimeout(this._csvFlash);
+            this._csvFlash = setTimeout(() => {
+                button.textContent = 'Export CSV';
+            }, 1600);
+        };
+
+        button.addEventListener('click', (event) => {
+            event.stopPropagation();
+            try {
+                const { rows, columns } = build();
+                if (!rows?.length) {
+                    flash('Nothing to export');
+                    return;
+                }
+                flash(downloadCsv(csvFilename(stem), toCsv(rows, columns)) ? 'Saved ✓' : 'Failed');
+            } catch (error) {
+                console.error('[CombatSimUI] CSV export failed:', error);
+                flash('Failed');
+            }
+        });
+    }
+
+    /**
+     * An Export CSV bar at the top of a results container.
+     *
+     * Inside the container rather than beside it: every caller rebuilds the
+     * container's innerHTML, so a bar placed within it is replaced along with
+     * the table it belongs to instead of outliving it on a different view.
+     *
+     * @param {HTMLElement} container - The results container, already rendered
+     * @param {string} stem - Filename stem
+     * @param {Function} build - Returns `{ rows, columns }` at click time
+     * @private
+     */
+    _addCsvExport(container, stem, build) {
+        if (!container) return;
+        container.querySelector('[data-csv-export]')?.remove();
+
+        const bar = document.createElement('div');
+        bar.dataset.csvExport = stem;
+        bar.style.cssText = 'display:flex; justify-content:flex-end; margin:0 0 6px 0;';
+
+        const button = document.createElement('button');
+        button.textContent = 'Export CSV';
+        button.style.cssText =
+            'background:#1a1a2e; color:#8ab4f8; border:1px solid #333; border-radius:3px; ' +
+            'padding:2px 8px; font-size:11px; cursor:pointer; font-family:inherit;';
+        this._wireCsvButton(button, stem, build);
+
+        bar.appendChild(button);
+        container.insertBefore(bar, container.firstChild);
+    }
+
+    /**
      * Display all-zones comparison results in a sortable table.
      * @param {Array<Object>} zoneResults - Array of {zone, simResult, revenue}
      * @param {number} hours - Simulation hours
@@ -1174,6 +1325,29 @@ class CombatSimUI {
                 </table>
             </div>
         `;
+
+        // Raw numbers, not the formatted cells: a spreadsheet cannot sort "1.2B"
+        this._addCsvExport(container, 'combatsim-all-zones', () => ({
+            columns: [
+                { key: 'zone', label: 'Zone' },
+                { key: 'tier', label: 'Tier' },
+                { key: 'encounters', label: 'Encounters/hr' },
+                { key: 'deaths', label: 'Deaths/hr' },
+                { key: 'totalXP', label: 'Total XP/hr' },
+                { key: 'stamina', label: 'Stamina XP/hr' },
+                { key: 'intelligence', label: 'Intelligence XP/hr' },
+                { key: 'attack', label: 'Attack XP/hr' },
+                { key: 'melee', label: 'Melee XP/hr' },
+                { key: 'defense', label: 'Defense XP/hr' },
+                { key: 'ranged', label: 'Ranged XP/hr' },
+                { key: 'magic', label: 'Magic XP/hr' },
+                { key: 'revenue', label: 'Revenue/hr' },
+                { key: 'expenses', label: 'Cost/hr' },
+                { key: 'profit', label: 'Profit/hr' },
+                { key: 'profitDay', label: 'Profit/day' },
+            ],
+            rows,
+        }));
 
         // Add sort listeners
         container.querySelectorAll('th[data-col]').forEach((th) => {
@@ -1541,6 +1715,27 @@ class CombatSimUI {
             </div>
         `;
 
+        this._addCsvExport(container, 'combatsim-seek', () => ({
+            columns: [
+                { key: 'item', label: 'Item' },
+                { key: 'zone', label: 'Zone' },
+                { key: 'tier', label: 'Tier' },
+                { key: 'itemsPerHour', label: 'Items/hr' },
+                { key: 'profitPerHour', label: 'Profit/hr' },
+                { key: 'costPerHour', label: 'Cost/hr' },
+                { key: 'costPerDrop', label: 'Cost per drop' },
+            ],
+            rows: sorted.map((r) => ({
+                item: itemName,
+                zone: r.zone.name,
+                tier: r.zone.difficultyTier,
+                itemsPerHour: r.itemsPerHour,
+                profitPerHour: r.profitPerHour,
+                costPerHour: r.costPerHour,
+                costPerDrop: r.costPerDrop,
+            })),
+        }));
+
         container.querySelectorAll('th[data-col]').forEach((th) => {
             th.addEventListener('click', () => {
                 const col = th.dataset.col;
@@ -1595,27 +1790,43 @@ class CombatSimUI {
         if (tabSeek) tabSeek.style.cssText = inactiveStyle;
         if (tabUpgrade) tabUpgrade.style.cssText = inactiveStyle;
 
+        // A run owns the status line. The prompts below describe what the tab is
+        // for, which is true when nothing is happening and a lie mid-run — the
+        // elapsed timer and the progress description are the only honest text
+        // while a simulation or an analysis is in flight.
+        const idle = !this._isBusy();
+
         if (tab === 'configure') {
             configureContent.style.display = 'flex';
             tabConfigure.style.cssText = activeStyle;
-            this._setStatus('Select a zone and click Simulate.');
+            if (idle) this._setStatus('Select a zone and click Simulate.');
         } else if (tab === 'seek') {
             if (seekContent) seekContent.style.display = 'flex';
             if (tabSeek) tabSeek.style.cssText = activeStyle;
             this._populateSeekItems();
-            this._setStatus('Search for a combat drop item, then click Seek.');
+            if (idle) this._setStatus('Search for a combat drop item, then click Seek.');
         } else if (tab === 'upgrade') {
             if (upgradeContent) upgradeContent.style.display = 'flex';
             if (tabUpgrade) tabUpgrade.style.cssText = activeStyle;
             this._populateUpgradePlayerSelector();
-            this._setStatus('Select a player and click Analyze.');
+            if (idle) this._setStatus('Select a player and click Analyze.');
         } else {
             resultsContent.style.display = 'flex';
             tabResults.style.cssText = activeStyle;
-            if (!this.isRunning && !this._lastSimResult && !this._allZonesResults) {
+            if (idle && !this._lastSimResult && !this._allZonesResults) {
                 this._setStatus('No results yet. Run a simulation first.');
             }
         }
+    }
+
+    /**
+     * Whether anything long-running is in flight — a simulation, a seek, or an
+     * upgrade analysis. The status line belongs to whichever of them is running.
+     * @returns {boolean}
+     * @private
+     */
+    _isBusy() {
+        return Boolean(this.isRunning || this._upgradeRunning);
     }
 
     /**
@@ -2617,6 +2828,45 @@ class CombatSimUI {
             });
         }
 
+        // Comparison: every run of the session, not just the rows on screen —
+        // the point of the export is to keep runs that will scroll off the list
+        this._wireCsvButton(container.querySelector('#mwi-csim-history-csv'), 'combatsim-comparison', () => ({
+            columns: [
+                { key: 'scenario', label: 'Scenario' },
+                { key: 'role', label: 'Role' },
+                { key: 'hours', label: 'Simulated hours' },
+                { key: 'encountersPerHr', label: 'Encounters/hr' },
+                { key: 'dps', label: 'DPS' },
+                { key: 'totalXpPerHr', label: 'XP/hr' },
+                { key: 'revenuePerHr', label: 'Revenue/hr' },
+                { key: 'expensesPerHr', label: 'Cost/hr' },
+                { key: 'consumableCostPerHr', label: 'Consumable cost/hr' },
+                { key: 'keyCostPerHr', label: 'Key cost/hr' },
+                { key: 'profitPerHr', label: 'Profit/hr' },
+                { key: 'successRate', label: 'Dungeon success rate' },
+                { key: 'ranAt', label: 'Run at' },
+            ],
+            rows: this._simHistory.map((entry, idx) => {
+                const m = entry.metrics || {};
+                const isBase = idx === (this._comparisonBaseline ?? 0);
+                return {
+                    scenario: entry.label,
+                    role: isBase ? 'baseline' : this._comparisonSlots.includes(idx) ? 'compared' : '',
+                    hours: entry.hours ?? null,
+                    encountersPerHr: m.encountersPerHr ?? null,
+                    dps: m.dps ?? null,
+                    totalXpPerHr: m.totalXpPerHr ?? null,
+                    revenuePerHr: m.revenuePerHr ?? null,
+                    expensesPerHr: m.expensesPerHr ?? null,
+                    consumableCostPerHr: m.consumableCostPerHr ?? null,
+                    keyCostPerHr: m.keyCostPerHr ?? null,
+                    profitPerHr: m.profitPerHr ?? null,
+                    successRate: m.successRate ?? null,
+                    ranAt: entry.timestamp ? new Date(entry.timestamp).toISOString() : '',
+                };
+            }),
+        }));
+
         // Comparison: remove × buttons
         container.querySelectorAll('[data-remove-comparison]').forEach((btn) => {
             btn.addEventListener('click', (e) => {
@@ -2859,7 +3109,12 @@ class CombatSimUI {
             const sel = i === baseIdx ? ' selected' : '';
             html += '<option value="' + i + '"' + sel + '>' + history[i].label + '</option>';
         }
-        html += '</select></div>';
+        html += '</select>';
+        html +=
+            '<button id="mwi-csim-history-csv" style="background:#1a1a2e; color:#8ab4f8; border:1px solid #333; ' +
+            'border-radius:3px; padding:2px 8px; font-size:11px; cursor:pointer; font-family:inherit; ' +
+            'flex-shrink:0;">Export CSV</button>';
+        html += '</div>';
 
         // Table
         html += '<table style="width:100%; font-size:11px; border-collapse:collapse;">';
@@ -3264,6 +3519,7 @@ class CombatSimUI {
             this.panel = null;
         }
         this.isRunning = false;
+        this._upgradeRunning = false;
 
         // Clear cached character data so next open loads fresh state
         if (this._editor) this._editor.reset();
@@ -3737,6 +3993,7 @@ class CombatSimUI {
         runBtn.style.display = 'none';
         stopBtn.style.display = 'inline-block';
         this._upgradeAborted = false;
+        this._upgradeRunning = true;
         // One tracker per run: it starts its clock where it is made
         const eta = createEtaTracker();
 
@@ -3789,17 +4046,30 @@ class CombatSimUI {
                 { abortSignal: () => this._upgradeAborted }
             );
 
+            // Stopping is a decision about how long to wait, not about whether
+            // the answer is wanted: every candidate already simulated is a real
+            // measurement, and throwing them away meant a run stopped one short
+            // of the end showed nothing at all
+            const completed = results?.results?.length || 0;
             if (this._upgradeAborted) {
-                this._setStatus('Analysis cancelled.');
+                if (completed) {
+                    this._renderUpgradeResults(results);
+                    this._setStatus(
+                        `Analysis cancelled — showing ${completed} completed candidate${completed === 1 ? '' : 's'}.`
+                    );
+                } else {
+                    this._setStatus('Analysis cancelled.');
+                }
             } else {
                 this._renderUpgradeResults(results);
                 const foodNote = results.food ? ' Food search complete.' : '';
-                this._setStatus(`Analysis complete. ${results.results.length} upgrades evaluated.${foodNote}`);
+                this._setStatus(`Analysis complete. ${completed} upgrades evaluated.${foodNote}`);
             }
         } catch (error) {
             console.error('[CombatSimUI] Upgrade analysis failed:', error);
             this._setStatus('Analysis failed: ' + error.message);
         } finally {
+            this._upgradeRunning = false;
             progressEl.style.display = 'none';
             runBtn.style.display = 'inline-block';
             stopBtn.style.display = 'none';
@@ -4094,7 +4364,7 @@ class CombatSimUI {
             .map(
                 (c) => `<label style="${box}">
                     <input type="checkbox" data-upgrade-col="${c.key}" ${hidden.has(c.key) ? '' : 'checked'}>
-                    ${c.label}
+                    ${columnMenuLabel(c)}
                 </label>`
             )
             .join('');
@@ -4455,6 +4725,105 @@ class CombatSimUI {
     }
 
     /**
+     * The shopping list a budget buys, above the table it came from.
+     *
+     * The table answers "what is the best single thing"; nobody buys one thing.
+     * This answers the question people actually have — "I have 500M, what should
+     * I get" — by walking the ranked list and taking what fits, at most one
+     * purchase per equipment slot, so it can never suggest two chestpieces where
+     * only one can be worn.
+     *
+     * @param {Array<Object>} rows - Purchasable upgrade results
+     * @param {Object} baseline - Baseline metrics
+     * @returns {string} HTML
+     * @private
+     */
+    _renderUpgradeBudget(rows, baseline) {
+        const budget = this._upgradeBudget ?? 0;
+        const metricKey = this._upgradePlanMetric || UPGRADE_PLAN_METRICS[0].key;
+        const money = (value) => formatKMB(Math.round(value));
+        const inputStyle =
+            'width:90px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:3px; ' +
+            'padding:2px 6px; font-size:11px; font-family:inherit;';
+        const btnStyle =
+            'background:#1a1a2e; color:#8ab4f8; border:1px solid #333; border-radius:3px; ' +
+            'padding:2px 8px; font-size:11px; cursor:pointer; font-family:inherit;';
+        const selectStyle =
+            'background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:3px; ' +
+            'padding:2px 4px; font-size:11px; font-family:inherit;';
+
+        let body = '';
+        if (budget > 0) {
+            const plan = planUpgradeBudget(rows, budget, { baseline, metricKey });
+            if (!plan.picks.length) {
+                body = `<div style="color:#888; font-size:11px;">Nothing in the list both fits ${money(budget)}
+                    and improves ${plan.metric.label}.</div>`;
+            } else {
+                const picks = plan.picks
+                    .map(
+                        (pick) => `<div style="display:flex; justify-content:space-between; gap:10px; padding:1px 0;">
+                            <span style="color:#e0e0e0;">${pick.candidate.description}</span>
+                            <span style="white-space:nowrap; color:#aaa;">${money(pick.cost)}
+                                <span style="color:#4caf50;">${plan.metric.format(pick.marginalAttemptsSaved)}</span>
+                            </span>
+                        </div>`
+                    )
+                    .join('');
+                body =
+                    picks +
+                    `<div style="margin-top:4px; padding-top:4px; border-top:1px solid #222; color:#aaa; font-size:11px;">
+                        ${plan.picks.length} upgrade${plan.picks.length === 1 ? '' : 's'} ·
+                        ${money(plan.totalCost)} of ${money(budget)} ·
+                        <span style="color:#4caf50; font-weight:600;">${plan.metric.format(plan.gainTotal)}</span>
+                        <span style="color:#666;"> if gains in different slots add up</span>
+                    </div>`;
+            }
+        }
+
+        const options = UPGRADE_PLAN_METRICS.map(
+            (m) => `<option value="${m.key}"${m.key === metricKey ? ' selected' : ''}>${m.label}</option>`
+        ).join('');
+
+        return `<div id="mwi-csim-upgrade-budget" style="margin-bottom:8px; padding:6px 8px; background:#0d0d1a;
+            border:1px solid #222; border-radius:4px;">
+            <div style="display:flex; align-items:center; gap:6px; font-size:11px; color:#888; flex-wrap:wrap;">
+                <span style="color:${ACCENT}; font-weight:700;">Budget</span>
+                <input id="mwi-csim-budget-input" type="text" inputmode="numeric" placeholder="e.g. 500m"
+                    value="${this._upgradeBudgetText || ''}" style="${inputStyle}">
+                <span style="color:#666;">for</span>
+                <select id="mwi-csim-budget-metric" style="${selectStyle}">${options}</select>
+                <button id="mwi-csim-budget-plan" style="${btnStyle}">Plan</button>
+                <span style="color:#555;">best set that fits, one purchase per slot</span>
+            </div>
+            ${body ? `<div style="margin-top:6px;">${body}</div>` : ''}
+        </div>`;
+    }
+
+    /**
+     * Make the budget box work: parse what was typed and re-render on Plan, on
+     * Enter, or when the axis being shopped for changes.
+     * @param {HTMLElement} container - Upgrade results container
+     * @private
+     */
+    _wireUpgradeBudget(container) {
+        const input = container.querySelector('#mwi-csim-budget-input');
+        const select = container.querySelector('#mwi-csim-budget-metric');
+        const replan = () => {
+            this._upgradeBudgetText = input?.value || '';
+            const typed = parseKMB(this._upgradeBudgetText);
+            this._upgradeBudget = Number.isFinite(typed) ? typed : 0;
+            this._upgradePlanMetric = select?.value || UPGRADE_PLAN_METRICS[0].key;
+            this._renderUpgradeResults(this._upgradeResultsData);
+        };
+
+        container.querySelector('#mwi-csim-budget-plan')?.addEventListener('click', replan);
+        select?.addEventListener('change', replan);
+        input?.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') replan();
+        });
+    }
+
+    /**
      * Render upgrade analysis results: the food card, the gold-cost table, and
      * combat levels in their own box.
      * @param {Object} results - { baseline, results: [{candidate, cost, metrics, deltas, goldPer}], food }
@@ -4481,6 +4850,7 @@ class CombatSimUI {
         const goldRows = results.results.filter((r) => r.candidate?.type !== 'combat_level');
 
         let html = foodHtml;
+        if (goldRows.length) html += this._renderUpgradeBudget(goldRows, results.baseline);
         if (goldRows.length) html += this._renderUpgradeGoldTable(goldRows, results.baseline);
         if (levelRows.length) html += this._renderUpgradeLevelTable(levelRows, results.baseline);
         container.innerHTML = html;
@@ -4519,6 +4889,69 @@ class CombatSimUI {
         wireSort('data-sort-key', '_upgradeSort');
         wireSort('data-level-sort-key', '_upgradeLevelSort');
         this._wireUpgradeColumnMenu(container);
+        this._wireUpgradeBudget(container);
+
+        // Every measured figure, whatever the ⚙ menu is currently showing — the
+        // point of a spreadsheet is the columns you did not think to look at
+        this._addCsvExport(container, 'combatsim-upgrades', () => ({
+            columns: [
+                { key: 'upgrade', label: 'Upgrade' },
+                { key: 'type', label: 'Type' },
+                { key: 'cost', label: 'Cost' },
+                { key: 'score', label: 'Score' },
+                { key: 'dps', label: 'DPS' },
+                { key: 'xpPerHour', label: 'XP/hr' },
+                { key: 'profitPerHour', label: 'Profit/hr' },
+                { key: 'encountersPerHour', label: 'Encounters/hr' },
+                { key: 'deathsPerHour', label: 'Deaths/hr' },
+                { key: 'dpsPct', label: 'DPS change %' },
+                { key: 'xpPct', label: 'XP change %' },
+                { key: 'profitPct', label: 'Profit change %' },
+                { key: 'encountersPct', label: 'Encounters change %' },
+                { key: 'deathsPct', label: 'Deaths change %' },
+                { key: 'goldPerDps', label: 'Gold/0.01% DPS' },
+                { key: 'goldPerXp', label: 'Gold/0.01% EXP' },
+                { key: 'goldPerProfit', label: 'Gold/0.01% Profit' },
+                { key: 'goldPerEncounters', label: 'Gold/0.01% EPH' },
+                { key: 'goldPerDeaths', label: 'Gold/0.01% DPH' },
+                { key: 'profitGainPerHour', label: 'Profit gain/hr' },
+                { key: 'paybackHours', label: 'Hours to afford' },
+                { key: 'repayHours', label: 'Hours to repay' },
+                { key: 'roiAnnualPct', label: 'ROI 1yr %' },
+                { key: 'levelTimeHours', label: 'Hours to level' },
+            ],
+            // Infinity is not a number a spreadsheet can hold; blank says the
+            // same thing ("never repays") without pretending to be a measurement
+            rows: (this._upgradeResultsData?.results || []).map((r) => {
+                const finite = (value) => (Number.isFinite(value) ? value : null);
+                return {
+                    upgrade: r.candidate?.description || '',
+                    type: r.candidate?.type || 'equipment',
+                    cost: finite(r.cost),
+                    score: r.score ?? null,
+                    dps: finite(r.metrics?.dps),
+                    xpPerHour: finite(r.metrics?.xpPerHour),
+                    profitPerHour: finite(r.metrics?.profitPerHour),
+                    encountersPerHour: finite(r.metrics?.encountersPerHour),
+                    deathsPerHour: finite(r.metrics?.deathsPerHour),
+                    dpsPct: finite(r.deltas?.dps),
+                    xpPct: finite(r.deltas?.xp),
+                    profitPct: finite(r.deltas?.profit),
+                    encountersPct: finite(r.deltas?.encounters),
+                    deathsPct: finite(r.deltas?.deaths),
+                    goldPerDps: finite(r.goldPer?.dps),
+                    goldPerXp: finite(r.goldPer?.xp),
+                    goldPerProfit: finite(r.goldPer?.profit),
+                    goldPerEncounters: finite(r.goldPer?.encounters),
+                    goldPerDeaths: finite(r.goldPer?.deaths),
+                    profitGainPerHour: finite(r.economics?.profitGainPerHour),
+                    paybackHours: finite(r.economics?.paybackHours),
+                    repayHours: finite(r.economics?.repayHours),
+                    roiAnnualPct: finite(r.economics?.roiAnnualPct),
+                    levelTimeHours: finite(r.levelTimeHours),
+                };
+            }),
+        }));
     }
 
     /**
