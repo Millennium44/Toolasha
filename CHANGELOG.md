@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Multi-target lab analysis gets the big swaps
+
+- **Combined forced-armor swaps now appear under All targets / Chosen targets** — the multi-fight analysis never generated them before. Same keep-gear costing note as single-fight, pooled per fight with the standard win-rate aggregation; sets that also swap the weapon only apply to loadouts holding that weapon.
+- **Ability swaps are allowed in multi-fight scopes too**: swaps only weigh in loadouts that actually cast the replaced ability, one decision is one row, and a big run shortens each simulation rather than leaving fights out — the status line says how many simulations it comes to before starting.
+
 ### Dungeon keys cost whichever way is cheaper
 
 - **Dungeon profit charges each entry/chest key at the cheaper of buying or crafting it** (craft cost through the real crafting calculators at your efficiency; craft time shown separately, never priced as gold). Every key row says which side won and the saving — and a key with no market listing but a valid recipe now counts its craft cost instead of being silently dropped.

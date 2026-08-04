@@ -26,6 +26,9 @@ const token = vi.hoisted(() => ({ goldPerToken: null }));
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getGuildBuildingLevel: (hrid) => guild.shrineLevels[hrid] || 0,
+        // What the forced armor candidates read to price a piece at the level
+        // you already own it at; nothing in these tests owns anything
+        getInventory: () => [],
         // The same object throughout, so a test can put books in it
         characterData: character,
     },
@@ -145,6 +148,9 @@ const {
     getMainTrainingSkills,
     runLabyrinthAllFightsAnalysis,
     runLabyrinthCombinationCheck,
+    labAllFightsTrialBudget,
+    ALL_FIGHTS_SIM_BUDGET,
+    MIN_TRIAL_FRACTION,
     generateSkillingEquipmentCandidates,
     runSkillingUpgradeAnalysis,
     generateLabyrinthBuffCandidatesFromEditor,
@@ -857,6 +863,362 @@ describe('runLabyrinthAllFightsAnalysis', () => {
         const everyCandidateEverywhere = 2 * (candidateCount + 1);
         expect(runLabyrinthSimulation.mock.calls.length).toBe(total);
         expect(total).toBeLessThan(everyCandidateEverywhere);
+    });
+});
+
+/**
+ * The two candidate sets that used to be single-fight only.
+ *
+ * Ability Swaps were refused outright for a multi-fight scope on size, and the
+ * forced labyrinth armor sets — the Anchorbound plate, the elemental robes, and
+ * the combined weapon-and-robes swaps that read as one row — were simply never
+ * generated for one, so the scope that is about the whole run was missing the
+ * upgrades the whole run turns on. Both are here now, and the tests are about
+ * what "here" has to mean: measured only where they belong, aggregated the way
+ * every other row is, priced the way the single-fight table prices them.
+ */
+describe('swaps and forced armor sets across a whole labyrinth', () => {
+    const BODY = '/equipment_types/body';
+    const LEGS = '/equipment_types/legs';
+    const TWO_HAND = '/equipment_types/two_hand';
+
+    /** Ability entries with no effects read as universal, so any weapon may cast them */
+    function withAbilities(data, hrids) {
+        data.abilityDetailMap = Object.fromEntries(
+            hrids.map((hrid) => [hrid, { name: hrid.split('/').pop().replace(/_/g, ' ') }])
+        );
+        return data;
+    }
+
+    /** A melee loadout casting `hrid` at `level` from its second ability slot */
+    function caster(hrid, level) {
+        return {
+            equipment: { [MAIN_HAND]: { hrid: '/items/fine_sword', enhancementLevel: 0 } },
+            abilities: [null, { hrid, level }],
+            meleeLevel: 50,
+        };
+    }
+
+    const fight = (name, dto) => ({
+        monsterHrid: `/monsters/${name}`,
+        monsterName: name,
+        roomLevel: 100,
+        loadoutName: name,
+        dto,
+    });
+
+    beforeEach(() => {
+        runLabyrinthSimulation.mockReset();
+        runLabyrinthSimulation.mockResolvedValue({ labyAttemptCount: 100, encounters: 50 });
+        resolveItemPrice.mockImplementation(() => ({ price: 1_000_000 }));
+        getItemPrices.mockReturnValue({ ask: 2_000_000, bid: 1_500_000 });
+    });
+
+    test('a swap is weighed only in the loadouts that cast the ability it replaces', async () => {
+        // The prefilter that makes the run finite, and the reason it is also the
+        // more honest answer: "Smack → Cleave" measured against a loadout that
+        // has never slotted Smack is a different change from the one the row
+        // names, and the row would carry the average of the two
+        buildGameDataPayload.mockReturnValue(
+            withAbilities(buildGameData(), ['/abilities/smack', '/abilities/cleave', '/abilities/quick_shot'])
+        );
+
+        const result = await runLabyrinthAllFightsAnalysis(
+            {
+                fights: [
+                    fight('goblin', caster('/abilities/smack', 30)),
+                    fight('wisp', caster('/abilities/cleave', 12)),
+                ],
+                crates: [],
+                hours: 10,
+                communityBuffs: {},
+                labyrinthCombatBuffs: [],
+                modes: ['ability_swap'],
+            },
+            null,
+            {}
+        );
+
+        const byDescription = new Map(result.results.map((r) => [r.candidate.description, r]));
+        // The slot number and the level it was generated at are gone from the
+        // row: one decision, one row, whichever slot each loadout keeps it in
+        expect([...byDescription.keys()].sort()).toEqual([
+            'cleave → quick shot',
+            'cleave → smack',
+            'smack → cleave',
+            'smack → quick shot',
+        ]);
+
+        const smackRow = byDescription.get('smack → quick shot');
+        expect(smackRow.appliedFights).toBe(1);
+        expect(smackRow.fights[0]).toMatchObject({ monsterName: 'goblin', applied: true });
+        expect(smackRow.fights[1]).toMatchObject({ monsterName: 'wisp', applied: false, winRateDelta: 0 });
+
+        const cleaveRow = byDescription.get('cleave → smack');
+        expect(cleaveRow.fights.map((f) => f.applied)).toEqual([false, true]);
+    });
+
+    test('and lands at the level that loadout holds the replaced ability at', async () => {
+        // The swap rule is that the newcomer is tried at the level of the one it
+        // displaces — which is a different level in every room, so the level the
+        // candidate was generated with cannot be the one it is simmed at
+        buildGameDataPayload.mockReturnValue(
+            withAbilities(buildGameData(), ['/abilities/smack', '/abilities/quick_shot'])
+        );
+
+        const result = await runLabyrinthAllFightsAnalysis(
+            {
+                fights: [
+                    fight('goblin', caster('/abilities/smack', 30)),
+                    fight('wisp', caster('/abilities/smack', 12)),
+                ],
+                crates: [],
+                hours: 10,
+                communityBuffs: {},
+                labyrinthCombatBuffs: [],
+                modes: ['ability_swap'],
+            },
+            null,
+            {}
+        );
+
+        const row = result.results.find((r) => r.candidate.description === 'smack → quick shot');
+        expect(row.appliedFights).toBe(2);
+        // Books are bought once, to the highest of the levels it has to serve
+        expect(row.candidate.upgradeLevel).toBe(30);
+        expect(row.candidate.caveat).toMatch(/level that loadout holds it at/);
+
+        const swapped = runLabyrinthSimulation.mock.calls
+            .map(([call]) => ({ monster: call.monsterHrid, ability: call.playerDTOs[0].abilities[1] }))
+            .filter((call) => call.ability?.hrid === '/abilities/quick_shot');
+        expect(swapped).toEqual([
+            { monster: '/monsters/goblin', ability: { hrid: '/abilities/quick_shot', level: 30, triggers: null } },
+            { monster: '/monsters/wisp', ability: { hrid: '/abilities/quick_shot', level: 12, triggers: null } },
+        ]);
+    });
+
+    /**
+     * A labyrinth's worth of gear: the Anchorbound plate every loadout can wear,
+     * two elemental robe sets, and a trident in each of their elements.
+     */
+    function labyrinthGear() {
+        const data = withAbilities(buildGameData(), ['/abilities/fireball']);
+        data.abilityDetailMap['/abilities/fireball'] = {
+            name: 'Fireball',
+            abilityEffects: [{ damageType: '/damage_types/fire' }],
+        };
+        const piece = (name, type, combatStats) => ({ name, itemLevel: 95, equipmentDetail: { type, combatStats } });
+        Object.assign(data.itemDetailMap, {
+            '/items/anchorbound_plate_body': piece('Anchorbound Plate Body', BODY, { armor: 50 }),
+            '/items/anchorbound_plate_legs': piece('Anchorbound Plate Legs', LEGS, { armor: 40 }),
+            '/items/royal_nature_robe_top': piece('Royal Nature Robe Top', BODY, { natureAmplify: 0.1 }),
+            '/items/royal_nature_robe_bottoms': piece('Royal Nature Robe Bottoms', LEGS, { natureAmplify: 0.08 }),
+            '/items/royal_fire_robe_top': piece('Royal Fire Robe Top', BODY, { fireAmplify: 0.1 }),
+            '/items/royal_fire_robe_bottoms': piece('Royal Fire Robe Bottoms', LEGS, { fireAmplify: 0.08 }),
+            '/items/blooming_trident': piece('Blooming Trident', TWO_HAND, {
+                magicDamage: 20,
+                damageType: '/damage_types/nature',
+            }),
+            '/items/blazing_trident': piece('Blazing Trident', TWO_HAND, {
+                magicDamage: 20,
+                damageType: '/damage_types/fire',
+            }),
+        });
+        return data;
+    }
+
+    /** The nature-trident, fire-spell loadout the combined swap exists for */
+    function tridentLoadout() {
+        return {
+            equipment: {
+                [TWO_HAND]: { hrid: '/items/blooming_trident', enhancementLevel: 7 },
+                [BODY]: { hrid: '/items/royal_nature_robe_top', enhancementLevel: 7 },
+                [LEGS]: { hrid: '/items/royal_nature_robe_bottoms', enhancementLevel: 7 },
+            },
+            abilities: [null, { hrid: '/abilities/fireball', level: 20 }],
+            magicLevel: 50,
+        };
+    }
+
+    test('the combined weapon-and-robes swap is offered across several fights, as one row', async () => {
+        // The row the whole feature is about: "Blooming Trident + Royal Nature
+        // Robe Top + Bottoms → Blazing Trident + Royal Fire Robe Top + Bottoms".
+        // The tier progression cannot reach it — it is three slots at once, and
+        // sideways in two of them — so it is forced in, and it was being forced
+        // in for one fight only.
+        buildGameDataPayload.mockReturnValue(labyrinthGear());
+
+        const result = await runLabyrinthAllFightsAnalysis(
+            {
+                fights: [fight('mimic', tridentLoadout()), fight('gobo', tridentLoadout())],
+                crates: [],
+                hours: 10,
+                communityBuffs: {},
+                labyrinthCombatBuffs: [],
+                modes: ['equipment'],
+            },
+            null,
+            {}
+        );
+
+        const combined = result.results.find(
+            (r) =>
+                r.candidate.description.includes('Blazing Trident') &&
+                r.candidate.description.includes('Royal Fire Robe Bottoms')
+        );
+        expect(combined).toBeDefined();
+        expect(combined.candidate.description).toBe(
+            'Blooming Trident + Royal Nature Robe Top + Royal Nature Robe Bottoms → ' +
+                'Blazing Trident + Royal Fire Robe Top + Royal Fire Robe Bottoms (+7)'
+        );
+        // Both loadouts wield the trident, so both rooms are measured — and the
+        // aggregate columns are the ones every other row uses
+        expect(combined.appliedFights).toBe(2);
+        expect(combined.fights.every((f) => f.applied)).toBe(true);
+        expect(combined.avgWinDelta).toBeDefined();
+        expect(combined.expectedAttempts).toBeGreaterThan(0);
+        expect(combined.attemptsDeltaNoise).toBeGreaterThan(0);
+    });
+
+    test('the resale of what it replaces is still deliberately not credited', async () => {
+        buildGameDataPayload.mockReturnValue(labyrinthGear());
+
+        const result = await runLabyrinthAllFightsAnalysis(
+            {
+                fights: [fight('mimic', tridentLoadout())],
+                crates: [],
+                hours: 10,
+                communityBuffs: {},
+                labyrinthCombatBuffs: [],
+                modes: ['equipment'],
+            },
+            null,
+            {}
+        );
+
+        const combined = result.results.find(
+            (r) =>
+                r.candidate.description.includes('Blazing Trident') &&
+                r.candidate.description.includes('Royal Fire Robe Bottoms')
+        );
+        // Kept rather than sold: the labyrinth wants every element available, so
+        // the price is what leaves the bank, not what nets out
+        expect(combined.candidate.removedItems).toEqual([]);
+        expect(combined.candidate.keptItems.map((item) => item.hrid)).toEqual([
+            '/items/blooming_trident',
+            '/items/royal_nature_robe_top',
+            '/items/royal_nature_robe_bottoms',
+        ]);
+        // And the breakdown the panel writes the note from comes back with it
+        expect(combined.costDetail.kept.map((k) => k.name)).toContain('Blooming Trident');
+        expect(combined.costDetail.keptValue).toBeGreaterThan(0);
+    });
+
+    test('a set that comes with a weapon is not installed in a loadout swinging something else', async () => {
+        // The elemental weapon variant exists to fix *this* loadout's unused
+        // element. Put on a melee loadout it is a costume change, and would drag
+        // that room's number into the row's average
+        buildGameDataPayload.mockReturnValue(labyrinthGear());
+
+        const result = await runLabyrinthAllFightsAnalysis(
+            {
+                fights: [
+                    fight('mimic', tridentLoadout()),
+                    fight('gobo', {
+                        equipment: { [MAIN_HAND]: { hrid: '/items/fine_sword', enhancementLevel: 0 } },
+                        abilities: [],
+                        meleeLevel: 50,
+                    }),
+                ],
+                crates: [],
+                hours: 10,
+                communityBuffs: {},
+                labyrinthCombatBuffs: [],
+                modes: ['equipment'],
+            },
+            null,
+            {}
+        );
+
+        const combined = result.results.find((r) => r.candidate.description.includes('Blazing Trident'));
+        expect(combined.fights.map((f) => f.applied)).toEqual([true, false]);
+
+        // The armour-only set has no such quarrel with the melee loadout: one
+        // purchase, worn in both rooms
+        const plate = result.results.find(
+            (r) =>
+                r.candidate.addedSlots?.[BODY]?.hrid === '/items/anchorbound_plate_body' &&
+                r.candidate.addedSlots?.[LEGS]?.hrid === '/items/anchorbound_plate_legs'
+        );
+        expect(plate.appliedFights).toBe(2);
+    });
+});
+
+describe('what a big whole-run analysis gives up to fit', () => {
+    test('a small run is not shortened at all', () => {
+        expect(labAllFightsTrialBudget(ALL_FIGHTS_SIM_BUDGET, 10)).toEqual({ scale: 1, hours: 10, reduced: false });
+    });
+
+    test('a large one trades trial length, proportionally', () => {
+        const budget = labAllFightsTrialBudget(ALL_FIGHTS_SIM_BUDGET * 2, 10);
+        expect(budget.reduced).toBe(true);
+        expect(budget.scale).toBeCloseTo(0.5, 5);
+        expect(budget.hours).toBeCloseTo(5, 5);
+    });
+
+    test('but never below the floor, however large the run', () => {
+        const budget = labAllFightsTrialBudget(ALL_FIGHTS_SIM_BUDGET * 1000, 10);
+        expect(budget.scale).toBe(MIN_TRIAL_FRACTION);
+        expect(budget.hours).toBe(10 * MIN_TRIAL_FRACTION);
+    });
+
+    test('the run says what it comes to before it starts, and shortens sims rather than dropping fights', async () => {
+        // The rule the whole budget hangs on: a row's headline is attempts to
+        // clear *every* fight, so a run that left fights out would be answering
+        // a question about some other, smaller labyrinth. Trials are bounded;
+        // fights never are.
+        const gameData = buildGameData();
+        buildGameDataPayload.mockReturnValue(gameData);
+        runLabyrinthSimulation.mockReset();
+        runLabyrinthSimulation.mockResolvedValue({ labyAttemptCount: 100, encounters: 50 });
+
+        const fights = Array.from({ length: 100 }, (_, i) => ({
+            monsterHrid: `/monsters/m${i}`,
+            monsterName: `M${i}`,
+            roomLevel: 100,
+            dto: { staminaLevel: 50, meleeLevel: 50, equipment: {}, abilities: [] },
+        }));
+        const seen = [];
+
+        const result = await runLabyrinthAllFightsAnalysis(
+            {
+                fights,
+                crates: [],
+                hours: 10,
+                communityBuffs: {},
+                labyrinthCombatBuffs: [],
+                abilityTargetLevel: 5,
+                modes: ['combat_level'],
+            },
+            (progress) => seen.push(progress),
+            {}
+        );
+
+        // Reported once, before a single simulation, while Stop still costs nothing
+        const plan = seen[0].plan;
+        expect(plan).toMatchObject({ fights: 100, reduced: true });
+        expect(plan.sims).toBeGreaterThan(ALL_FIGHTS_SIM_BUDGET);
+        expect(plan.requestedHours).toBe(10);
+        expect(plan.hours).toBeLessThan(10);
+        expect(result.budget).toMatchObject({ sims: plan.sims, reduced: true, requestedHours: 10 });
+
+        // Every fight still simulated — the baseline pass alone covers all 100
+        const simmed = new Set(runLabyrinthSimulation.mock.calls.map(([call]) => call.monsterHrid));
+        expect(simmed.size).toBe(100);
+        // And what gave instead is the time each one was allowed
+        const hours = new Set(runLabyrinthSimulation.mock.calls.map(([call]) => call.hours));
+        expect(Math.min(...hours)).toBeCloseTo(10 * plan.trialScale, 5);
+        expect(Math.max(...hours)).toBeLessThanOrEqual(10 * plan.trialScale * 3);
     });
 });
 

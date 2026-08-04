@@ -19,6 +19,8 @@ import {
     labScopeTargetCount,
     labDimensionAvailability,
     labAbilityLevelTypeAvailability,
+    estimateLabUpgradeSims,
+    LAB_HEAVY_RUN_SIMS,
     planLabSingleTargetModes,
     planLabUpgradeRun,
 } from './lab-sim-upgrade-modes.js';
@@ -105,7 +107,7 @@ describe('how many fights a scope is', () => {
     });
 });
 
-describe('sets a scope genuinely cannot answer', () => {
+describe('what a scope can be asked', () => {
     test('every set is offered for a single fight', () => {
         const availability = labDimensionAvailability('current', 1);
         for (const key of LAB_UPGRADE_DIMENSION_KEYS) {
@@ -113,18 +115,16 @@ describe('sets a scope genuinely cannot answer', () => {
         }
     });
 
-    test('ability swaps are not offered across several fights, and say why', () => {
+    test('and every set is offered across a whole labyrinth too', () => {
+        // Ability Swaps used to be refused here on size — thousands of sims —
+        // which put the refusal on the one scope where "which ability should I
+        // change" is most worth asking. Size is handled by shortening the sims
+        // and saying the count, not by declining the question.
         const availability = labDimensionAvailability('all', 8);
-        expect(availability.ability_swap.enabled).toBe(false);
-        expect(availability.ability_swap.reason).toMatch(/single target|Configure fight/);
-        // and nothing else is collateral damage
-        expect(availability.equipment.enabled).toBe(true);
-        expect(availability.combat_level.enabled).toBe(true);
-        expect(availability.guild_shrine.enabled).toBe(true);
-    });
-
-    test('a subset of exactly one fight is a single fight', () => {
-        expect(labDimensionAvailability('selected', 1).ability_swap.enabled).toBe(true);
+        for (const key of LAB_UPGRADE_DIMENSION_KEYS) {
+            expect(availability[key].enabled).toBe(true);
+            expect(availability[key].reason).toBe('');
+        }
     });
 
     test('the per-ability target level is only meaningful for one loadout', () => {
@@ -132,6 +132,37 @@ describe('sets a scope genuinely cannot answer', () => {
         const multi = labAbilityLevelTypeAvailability('all', 4);
         expect(multi.enabled).toBe(false);
         expect(multi.reason).toMatch(/uniform/);
+    });
+});
+
+describe('how big a run the checkboxes are asking for', () => {
+    test('a single fight of equipment is a run nobody needs warning about', () => {
+        const estimate = estimateLabUpgradeSims(['equipment'], 1);
+        expect(estimate.heavy).toBe(false);
+        expect(estimate.text).toContain('1 fight');
+    });
+
+    test('swaps across a full labyrinth are, and the count is in the text', () => {
+        const estimate = estimateLabUpgradeSims(['ability_swap'], 12);
+        expect(estimate.heavy).toBe(true);
+        expect(estimate.sims).toBeGreaterThan(LAB_HEAVY_RUN_SIMS);
+        // The number is rounded, because it is an estimate and printing 1,043
+        // would claim a precision it has not got
+        expect(estimate.text).toMatch(/about [\d,]+ simulations \(12 fights\)/);
+    });
+
+    test('more fights and more sets is more work, monotonically', () => {
+        const one = estimateLabUpgradeSims(['equipment'], 4).sims;
+        const two = estimateLabUpgradeSims(['equipment', 'ability_swap'], 4).sims;
+        expect(two).toBeGreaterThan(one);
+        expect(estimateLabUpgradeSims(['equipment'], 8).sims).toBeGreaterThan(one);
+    });
+
+    test('a set this version does not have counts for nothing rather than NaN', () => {
+        expect(estimateLabUpgradeSims(['equipment', 'moon_phase'], 2).sims).toBe(
+            estimateLabUpgradeSims(['equipment'], 2).sims
+        );
+        expect(estimateLabUpgradeSims(null, 0).sims).toBe(0);
     });
 });
 
@@ -234,21 +265,20 @@ describe('a selection, resolved into the analysis to run', () => {
         expect(plan.error).toMatch(/at least one target/);
     });
 
-    test('a set the scope cannot answer is reported, and the rest still run', () => {
+    test('ability swaps ride along across every target rather than being dropped', () => {
         const plan = planLabUpgradeRun({
             dimensions: ['equipment', 'ability_swap'],
             scopeMode: 'all',
             allMonsters: ALL,
         });
         expect(plan.kind).toBe('allFights');
-        expect(plan.modes).toEqual(['equipment']);
-        expect(plan.dropped).toEqual(['ability_swap']);
+        expect(plan.modes).toEqual(['equipment', 'ability_swap']);
+        expect(plan.dropped).toEqual([]);
     });
 
-    test('a selection that is nothing but an unavailable set does not quietly run empty', () => {
+    test('and a selection of nothing but swaps is a run, not a refusal', () => {
         const plan = planLabUpgradeRun({ dimensions: ['ability_swap'], scopeMode: 'all', allMonsters: ALL });
-        expect(plan.kind).toBe('none');
-        expect(plan.error).toMatch(/unavailable for this target scope/);
+        expect(plan).toMatchObject({ kind: 'allFights', modes: ['ability_swap'], monsterHrids: ALL });
     });
 
     test('all targets with no fights resolving explains itself', () => {

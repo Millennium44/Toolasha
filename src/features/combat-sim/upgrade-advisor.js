@@ -1216,6 +1216,13 @@ export function generateCandidates(
                         currentLevel: ability.level,
                         upgradeHrid: abHrid,
                         upgradeLevel: ability.level,
+                        // The ability this swap is *about*, said out loud rather
+                        // than left to the slot index. Across several loadouts
+                        // the same ability sits in different slots, and a swap
+                        // is only a swap in the loadouts that cast the thing it
+                        // takes out — `candidateAppliesToDTO` reads this, and
+                        // `applyCandidateToDTO` puts the newcomer where it was.
+                        replacesHrid: ability.hrid,
                         description: `${abilityName} → ${swapName} (Lv${ability.level})`,
                         type: 'ability_swap',
                     });
@@ -3908,6 +3915,120 @@ function expectedFightAttempts(winRate) {
     return 1 / Math.max(winRate, ATTEMPT_WIN_RATE_FLOOR);
 }
 
+/** Weapon slots, for spotting a forced-armor candidate that also changes weapon */
+const WEAPON_SLOTS = new Set([MAIN_HAND_SLOT, OFF_HAND_SLOT, TWO_HAND_SLOT]);
+
+/**
+ * What two candidates have to share before the all-fights pool treats them as
+ * one purchase.
+ *
+ * `candidateAssignmentKey` is the general answer and is used for everything
+ * else, but it keys an ability on the slot number it sat in and the level it was
+ * generated at — and a swap pooled across a labyrinth is neither. "Replace Smack
+ * with Quick Strike" is one decision whether Smack is in slot 2 of one loadout at
+ * level 30 and slot 4 of another at level 12; keying on the slot would rank the
+ * same decision twice, at twice the simulation cost, and split its rooms between
+ * the two rows.
+ *
+ * @param {Object} candidate - Any upgrade candidate
+ * @returns {string} Pool key
+ */
+function allFightsPoolKey(candidate) {
+    if (candidate.type === 'ability_swap' && candidate.replacesHrid) {
+        return `ability_swap:${candidate.replacesHrid}->${candidate.upgradeHrid}`;
+    }
+    return candidateAssignmentKey(candidate);
+}
+
+/**
+ * A swap candidate as the whole-run table should carry it.
+ *
+ * The generated description ends in the level it was generated at — "Smack →
+ * Quick Strike (Lv30)" — which is a promise the multi-fight run does not keep:
+ * the newcomer is simmed at whatever level the loadout it lands in holds the
+ * replaced ability at, which is the point of the rule and different in every
+ * room. So the level comes off the description and goes into a caveat that also
+ * says what the cost was priced from.
+ *
+ * @param {Object} candidate - An `ability_swap` candidate from `generateCandidates`
+ * @param {Object} gameData - For ability names
+ * @returns {Object} A copy fit for pooling
+ */
+function pooledSwapCandidate(candidate, gameData) {
+    const nameOf = (hrid) =>
+        gameData?.abilityDetailMap?.[hrid]?.name ||
+        String(hrid || '')
+            .split('/')
+            .pop()
+            .replace(/_/g, ' ');
+    return {
+        ...candidate,
+        description: `${nameOf(candidate.replacesHrid || candidate.currentHrid)} → ${nameOf(candidate.upgradeHrid)}`,
+        caveat:
+            'Weighed in every loadout that casts the ability it replaces, each at the level that loadout holds it ' +
+            'at, with default triggers. The cost is for the highest of those levels.',
+    };
+}
+
+/**
+ * A forced labyrinth armor candidate as a whole-run candidate.
+ *
+ * Two things are added to it. The keep-gear rule, which is the same one the
+ * single-fight analysis applies: these swaps are usually an added purchase
+ * rather than a trade-in, because the labyrinth wants every element available,
+ * so the replaced pieces are recorded as kept and their resale is not credited
+ * against the price. And, when the candidate carries a weapon, the weapon the
+ * loadout it came from was holding — which is what stops the set being installed
+ * in a loadout that fights with something else entirely.
+ *
+ * @param {Object} candidate - From `generateLabArmorCandidates`
+ * @param {Object} dto - The loadout it was generated for
+ * @param {boolean} keepReplaced - The `labSim_keepReplacedGear` setting
+ * @returns {Object} A copy fit for pooling
+ */
+function labArmorForLoadout(candidate, dto, keepReplaced) {
+    const pooled = { ...candidate };
+    if (keepReplaced) {
+        pooled.keptItems = pooled.removedItems;
+        pooled.removedItems = [];
+    }
+    const weaponSlot = Object.keys(pooled.addedSlots || {}).find((slot) => WEAPON_SLOTS.has(slot));
+    if (weaponSlot) {
+        pooled.labArmorWeapon = { slot: weaponSlot, hrid: dto?.equipment?.[weaponSlot]?.hrid || null };
+    }
+    return pooled;
+}
+
+/**
+ * Sims a whole-run analysis will plan before it starts trading trial length for
+ * coverage.
+ *
+ * Ability swaps put this analysis in a different size class: one candidate per
+ * style-compatible ability per slot, pooled across a labyrinth's worth of
+ * loadouts. The wrong way to handle that is to sim a sample of the fights, which
+ * would leave rows whose headline number — attempts to clear *every* fight —
+ * silently referred to some other, smaller labyrinth. So every fight a candidate
+ * is about is always simulated, and what gives instead is how long each
+ * simulation runs. A shorter run is a noisier win rate, and the noise is already
+ * measured, carried on the row and used to grey out gains it swallows.
+ */
+export const ALL_FIGHTS_SIM_BUDGET = 500;
+
+/** However large the run, no fight is simmed on less than this share of the asked-for hours */
+export const MIN_TRIAL_FRACTION = 0.25;
+
+/**
+ * How long each simulation in a whole-run analysis gets.
+ *
+ * @param {number} sims - Simulations the run has planned
+ * @param {number} hours - Hours per fight the player asked for
+ * @returns {{scale: number, hours: number, reduced: boolean}}
+ */
+export function labAllFightsTrialBudget(sims, hours) {
+    const scale = sims > ALL_FIGHTS_SIM_BUDGET ? Math.max(MIN_TRIAL_FRACTION, ALL_FIGHTS_SIM_BUDGET / sims) : 1;
+    return { scale, hours: hours * scale, reduced: scale < 1 };
+}
+
 /**
  * Sim every labyrinth combat room — each with its assigned loadout at its
  * skip-derived room level — under each combat-level boost, to rank which
@@ -3925,12 +4046,27 @@ function expectedFightAttempts(winRate) {
  * `candidateAppliesToDTO`. A combat level is every fight; a piece of gear is the
  * fights whose loadout wears what it replaces, and the rest keep their baseline
  * untouched rather than being simulated wearing something they would never wear.
+ *
+ * Two candidate sets need more than the generator gives them, and get it here:
+ * the forced labyrinth armor sets — the Anchorbound plate, the elemental robes,
+ * and the combined weapon-and-robes swaps that read as one row — which the tier
+ * progression can never reach and which are priced without crediting the resale
+ * of what they replace; and ability swaps, pooled by the ability they replace
+ * rather than by the slot it sat in. Both are per loadout, since which set or
+ * which swap a room wants depends on what that room's loadout is holding.
+ *
+ * The size that comes with all that is paid for in trial length rather than in
+ * coverage — see `labAllFightsTrialBudget`. A fight a candidate touches is
+ * always simulated.
+ *
  * @param {Object} params - { fights, crates, hours, communityBuffs, labyrinthCombatBuffs, abilityTargetLevel, combatLevelTargets }
  *   where fights = [{ monsterHrid, monsterName, roomLevel, dto, loadoutName }]
- * @param {Function} onProgress - Called with { current, total, description }
+ * @param {Function} onProgress - Called with { current, total, description }, and
+ *   once before anything runs with a `plan` of what the run comes to
  * @param {Object} [options] - { abortSignal: () => boolean }
  * @returns {Promise<Object>} { baseline: { fights, runClearChance, expectedAttempts },
- *   results: [{candidate, fights, runClearChance, runClearDelta, expectedAttempts, attemptsDelta, avgWinDelta}] }
+ *   results: [{candidate, fights, costDetail, runClearChance, runClearDelta, expectedAttempts,
+ *   attemptsDelta, avgWinDelta}], budget }
  */
 export async function runLabyrinthAllFightsAnalysis(params, onProgress, options = {}) {
     const {
@@ -3962,6 +4098,29 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
     // Keyed by what the candidate actually changes rather than by skill, since
     // combat levels are one per skill but equipment is many per slot.
     const candidatesByKey = new Map();
+    /**
+     * Add one candidate to the pool, or reconcile it with the one already there.
+     * @param {Object} candidate - From a generator
+     */
+    const pool = (candidate) => {
+        const key = allFightsPoolKey(candidate);
+        const existing = candidatesByKey.get(key);
+        if (!existing) {
+            candidatesByKey.set(key, candidate);
+            return;
+        }
+        // The same swap out of two loadouts that hold the replaced ability at
+        // different levels. The books are bought once, to the highest of them —
+        // costing it from whichever loadout happened to be generated first
+        // would undercount the purchase for every other room.
+        if (candidate.type === 'ability_swap' && (candidate.upgradeLevel || 0) > (existing.upgradeLevel || 0)) {
+            candidatesByKey.set(key, candidate);
+        }
+    };
+
+    const keepReplacedGear = config.getSettingValue('labSim_keepReplacedGear', true);
+    const inventory = dataManager.getInventory();
+
     for (const fight of fights) {
         for (const mode of modes) {
             const fightCandidates = generateCandidates(
@@ -3975,13 +4134,22 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
                 abilityTargets
             );
             for (const candidate of fightCandidates) {
-                const key = candidateAssignmentKey(candidate);
-                if (!candidatesByKey.has(key)) candidatesByKey.set(key, candidate);
+                pool(candidate.type === 'ability_swap' ? pooledSwapCandidate(candidate, gameData) : candidate);
+            }
+        }
+        // The labyrinth lives or dies on body and legs, and the tier progression
+        // only ever steps one rung from what is worn — so the Anchorbound plate,
+        // the elemental sets and the two-piece combinations of them are forced in
+        // here exactly as they are for a single fight. Per loadout, because which
+        // set a loadout wants depends on the element it casts.
+        if (modes.includes('equipment')) {
+            for (const candidate of generateLabArmorCandidates(fight.dto, gameData, inventory)) {
+                pool(labArmorForLoadout(candidate, fight.dto, keepReplacedGear));
             }
         }
     }
     for (const candidate of extraCandidates) {
-        const key = candidateAssignmentKey(candidate);
+        const key = allFightsPoolKey(candidate);
         if (!candidatesByKey.has(key)) candidatesByKey.set(key, candidate);
     }
     // Which fights each candidate is actually about. A combat level is every
@@ -4000,10 +4168,33 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
     // baseline, which is both the truth and a great deal less work
     const simsPerCandidate = candidates.reduce((sum, c) => sum + c.appliesTo.filter(Boolean).length, 0);
     const total = fights.length + simsPerCandidate;
+    // What a big run gives up. Never a fight — every fight a candidate is about
+    // is simulated, or its row would be answering a different question from the
+    // one its column headings ask — but each simulation may be shorter.
+    const budget = labAllFightsTrialBudget(total, hours);
+    const simHours = budget.hours;
     // An object rather than a counter variable: the fight passes run
     // concurrently and close over it, and a plain `let` shared by closures
     // inside a loop is exactly the shape lint is right to be suspicious of
     const progress = { current: 0 };
+
+    // Said before any of it runs, and said as a count rather than a promise:
+    // this is the one moment where a run that is going to take a long time can
+    // still be stopped by somebody who did not mean to ask for it.
+    onProgress?.({
+        current: 0,
+        total,
+        description: `${candidates.length} upgrades × ${fights.length} fights = ${total} sims`,
+        plan: {
+            candidates: candidates.length,
+            fights: fights.length,
+            sims: total,
+            hours: simHours,
+            requestedHours: hours,
+            trialScale: budget.scale,
+            reduced: budget.reduced,
+        },
+    });
 
     // Per-fight seeds derived from one analysis seed: fight N is simmed with the
     // same random draws in the baseline pass and in every candidate pass, so a
@@ -4023,7 +4214,7 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
             monsterHrid: fight.monsterHrid,
             roomLevel: fight.roomLevel,
             crates,
-            hours: rule ? hours * PAIRED_TIME_HEADROOM : hours,
+            hours: rule ? simHours * PAIRED_TIME_HEADROOM : simHours,
             precision: rule,
             communityBuffs,
             labyrinthCombatBuffs,
@@ -4117,6 +4308,12 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
         results.push({
             candidate,
             fights: fightResults,
+            // Only where there is something in the breakdown a price alone does
+            // not say — the forced armor sets, whose replaced pieces are kept
+            // rather than sold, so the row's coin figure is deliberately gross.
+            // Pricing every row would put a market lookup per piece behind a
+            // table that can run to hundreds of rows.
+            costDetail: candidate.keptItems?.length ? explainLabCandidateCost(candidate, gameData) : null,
             appliedFights: applied.length,
             runClearChance,
             runClearDelta: runClearChance - baselineRunClear,
@@ -4147,10 +4344,21 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
     return {
         baseline: { fights: baselineFights, runClearChance: baselineRunClear, expectedAttempts: baselineAttempts },
         results,
+        // What the run cost and what it gave up to fit — read by the panel for
+        // its status line, so a table drawn from shortened sims says so
+        budget: {
+            candidates: candidates.length,
+            fights: fights.length,
+            sims: total,
+            hours: simHours,
+            requestedHours: hours,
+            trialScale: budget.scale,
+            reduced: budget.reduced,
+        },
         // Handed back so a combination check re-runs against the same random
         // draws and the same trial counts, rather than against a fresh sample
         pairing: { seed: simSeed, rules: [...pairedRules.entries()] },
-        context: { fights, crates, hours, communityBuffs, labyrinthCombatBuffs },
+        context: { fights, crates, hours: simHours, communityBuffs, labyrinthCombatBuffs },
     };
 }
 
@@ -4683,14 +4891,47 @@ export function candidateAppliesToDTO(candidate, dto, gameData = null) {
                 (ability) => ability?.hrid === candidate.upgradeHrid && (ability.level || 0) < candidate.upgradeLevel
             );
         }
-        // A swap brings a new ability in, so it applies unless this loadout is
-        // already running it at least that high
+        // A swap that names the ability it replaces is only about the loadouts
+        // that cast it. This is what keeps a multi-fight swap run finite and
+        // honest at the same time: "Smack → Quick Strike" measured against a
+        // loadout that has never slotted Smack is measuring a different change
+        // from the one the row describes, and the row would carry the average of
+        // the two. It is also most of the arithmetic — a swap generated from one
+        // room's loadout reaches the handful of rooms sharing that ability
+        // rather than every room in the labyrinth.
+        if (candidate.replacesHrid) {
+            if (abilities.some((ability) => ability?.hrid === candidate.upgradeHrid)) return false;
+            return abilities.some((ability) => ability?.hrid === candidate.replacesHrid);
+        }
+        // A hand-built swap that names no such ability — the Critical Aura row,
+        // which is about filling a slot rather than replacing one thing with
+        // another — brings its own, so it applies unless this loadout is already
+        // running it at least that high
         const slotIdx = parseInt(candidate.slot.split('_')[1]);
         const existing = abilities[slotIdx];
         return !(existing?.hrid === candidate.upgradeHrid && (existing.level || 0) >= candidate.upgradeLevel);
     }
 
     const equipment = dto.equipment || {};
+
+    // The forced labyrinth armor sets are one purchase every loadout can wear,
+    // so unlike a tier candidate they are not tied to the piece they displaced
+    // in the room they were generated for — a Royal Fire set bought for the
+    // Mimic is worn in every room whose loadout would rather have it. What it
+    // replaces is answered per room by `replacedIn`.
+    if (candidate.labArmor) {
+        // Except when the set comes with a weapon: that variant exists to fix
+        // one loadout's unused element, and installing it in a loadout swinging
+        // something else is the costume change all over again. Each loadout with
+        // the same problem generates its own, so nothing is lost by being strict.
+        const weapon = candidate.labArmorWeapon;
+        if (weapon && (equipment[weapon.slot]?.hrid || null) !== weapon.hrid) return false;
+        return !Object.entries(candidate.addedSlots || {}).every(
+            ([slot, piece]) =>
+                equipment[slot]?.hrid === piece.hrid &&
+                (equipment[slot]?.enhancementLevel || 0) >= (piece.enhancementLevel || 0)
+        );
+    }
 
     if (candidate.type === 'cross_slot') {
         const removed = candidate.removedItems || (candidate.currentHrid ? [{ hrid: candidate.currentHrid }] : []);
@@ -4801,17 +5042,26 @@ export function applyCandidateToDTO(playerDTO, candidate) {
         // happened to sit in on the loadout the candidate came from — another
         // loadout can cast the same ability from a different slot, and writing
         // to the index would overwrite whatever that one keeps there
-        const byName =
+        // A swap follows the ability it replaces for the same reason, and takes
+        // that loadout's level for it: the whole rule for a swap is that the
+        // newcomer is tried at the level of the one it displaces, and the level
+        // the candidate was born with belongs to the loadout it was born from.
+        const follows =
             candidate.type === 'ability_level'
-                ? (dto.abilities || []).findIndex((ability) => ability?.hrid === candidate.upgradeHrid)
-                : -1;
+                ? candidate.upgradeHrid
+                : candidate.type === 'ability_swap'
+                  ? candidate.replacesHrid
+                  : null;
+        const byName = follows ? (dto.abilities || []).findIndex((ability) => ability?.hrid === follows) : -1;
         const slotIdx = byName >= 0 ? byName : parseInt(candidate.slot.split('_')[1]);
         const existing = dto.abilities[slotIdx];
+        const swapLevel =
+            candidate.type === 'ability_swap' && byName >= 0 ? (existing?.level ?? candidate.upgradeLevel) : null;
         dto.abilities[slotIdx] =
             existing?.hrid === candidate.upgradeHrid
                 ? // Keep configured triggers when levelling the equipped ability
                   { ...existing, level: candidate.upgradeLevel }
-                : { hrid: candidate.upgradeHrid, level: candidate.upgradeLevel, triggers: null };
+                : { hrid: candidate.upgradeHrid, level: swapLevel ?? candidate.upgradeLevel, triggers: null };
         return dto;
     }
 

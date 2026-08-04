@@ -48,7 +48,10 @@ export const LAB_UPGRADE_DIMENSIONS = [
             'Replacing a slotted ability with a different one.\n\n' +
             'Slow and rough: it sims every style-compatible ability for every slot, and a swapped-in ability is ' +
             'simmed at the level of the one it replaces with default triggers. Treat it as a hint about what to ' +
-            'try by hand rather than a verdict.',
+            'try by hand rather than a verdict.\n\n' +
+            'Across several fights a swap is only weighed in the loadouts that actually cast the ability it ' +
+            'replaces, and a big run shortens each simulation rather than leaving fights out — the status line ' +
+            'says how many simulations it comes to before it starts.',
     },
     {
         key: 'combat_level',
@@ -192,35 +195,86 @@ export function labScopeTargetCount(scopeMode, allCount, chosenCount) {
 /**
  * Which dimensions can be asked of a given scope, and why not when they cannot.
  *
- * Only one rule, and it is a real one rather than a tidiness one. The
- * multi-fight analysis pools candidates across every fight's loadout and then
- * sims each candidate against each fight it applies to; ability swaps generate
- * one candidate per compatible ability per slot, which is a hundred-odd
- * candidates before the fight count multiplies them. Across a full labyrinth
- * that is thousands of simulations for a ranking the mode's own tooltip already
- * calls a hint. It is offered for a single fight, where it costs what it costs.
+ * Nothing is off the table any more. Ability Swaps used to be refused for a
+ * multi-fight scope on the grounds that a hundred-odd candidates times a full
+ * labyrinth is thousands of simulations — which was true, and still the wrong
+ * answer: the question "which ability should I change" is a question about the
+ * whole run, and refusing it for the whole run left the one scope where it
+ * mattered least. The size is handled where size belongs instead — swaps are
+ * only weighed in the loadouts that cast the ability they replace, the trial
+ * budget per fight shrinks on a big run, and `estimateLabUpgradeSims` puts the
+ * count in front of the player before anything starts. Fights are never sampled.
  *
- * @param {string} scopeMode - `current` | `all` | `selected`
- * @param {number} targetCount - From `labScopeTargetCount`
+ * Kept as a function, and kept called, because the shape is the right place for
+ * the next rule that is genuinely impossible rather than merely large.
+ *
+ * @param {string} _scopeMode - `current` | `all` | `selected`
+ * @param {number} _targetCount - From `labScopeTargetCount`
  * @returns {Object<string, {enabled: boolean, reason: string}>} Keyed by dimension
  */
-export function labDimensionAvailability(scopeMode, targetCount) {
-    const multiTarget = targetCount > 1;
+export function labDimensionAvailability(_scopeMode, _targetCount) {
     const availability = {};
     for (const dimension of LAB_UPGRADE_DIMENSIONS) {
-        if (dimension.key === 'ability_swap' && multiTarget) {
-            availability[dimension.key] = {
-                enabled: false,
-                reason:
-                    `Ability Swaps sims every compatible ability in every slot. Across ${targetCount} fights that ` +
-                    'is thousands of simulations, so it is offered one fight at a time — pick a single target, or ' +
-                    'the Configure fight.',
-            };
-            continue;
-        }
         availability[dimension.key] = { enabled: true, reason: '' };
     }
     return availability;
+}
+
+/**
+ * Roughly how many simulations one fight contributes, per dimension.
+ *
+ * Deliberately an order-of-magnitude figure rather than a computed one: the
+ * exact number needs every fight's loadout, the whole item map and the ability
+ * map, and the point of this estimate is to be available *before* any of that
+ * is loaded, while the player still has a hand on the Analyze button. The
+ * analysis reports its own exact count the moment it has pooled its candidates,
+ * and the status line is overwritten with it.
+ *
+ * Per *fight* rather than per candidate, because that is the shape the analysis
+ * has: each candidate is simmed only against the fights it is about, so a
+ * loadout-specific dimension contributes roughly its own candidate count to its
+ * own fight, and a character-wide one contributes its candidate count to every
+ * fight.
+ */
+export const LAB_DIMENSION_SIMS_PER_FIGHT = {
+    // Two-ish per combat slot, plus the forced labyrinth armor sets, plus what
+    // other loadouts contribute that this one can also wear
+    equipment: 60,
+    ability_level: 6,
+    // Every style-compatible ability in every slot, weighed in the loadouts
+    // that cast the ability it replaces
+    ability_swap: 100,
+    // One per combat skill, and a combat level is every fight
+    combat_level: 6,
+    guild_shrine: 6,
+};
+
+/** Sims above which a run is worth warning about before it starts */
+export const LAB_HEAVY_RUN_SIMS = 400;
+
+/**
+ * About how much work the checked selection comes to.
+ *
+ * @param {string[]} dimensions - Checked dimension keys
+ * @param {number} targetCount - From `labScopeTargetCount`
+ * @returns {{sims: number, heavy: boolean, text: string}} `text` is the phrase
+ *   for the status line, already rounded to something honest about its precision
+ */
+export function estimateLabUpgradeSims(dimensions, targetCount) {
+    const fights = Math.max(0, Math.floor(targetCount) || 0);
+    const perFight = (dimensions || [])
+        .filter((key) => LAB_UPGRADE_DIMENSION_KEYS.includes(key))
+        .reduce((sum, key) => sum + (LAB_DIMENSION_SIMS_PER_FIGHT[key] || 0), 0);
+    // The baseline pass is one sim per fight on top of the candidate passes
+    const sims = fights * (perFight + 1);
+    // Two significant figures: a number like 1,043 would claim a precision this
+    // estimate has not got
+    const rounded = sims >= 100 ? Math.round(sims / 100) * 100 : Math.round(sims / 10) * 10;
+    return {
+        sims,
+        heavy: sims > LAB_HEAVY_RUN_SIMS,
+        text: `about ${rounded.toLocaleString()} simulations (${fights} fight${fights === 1 ? '' : 's'})`,
+    };
 }
 
 /**
