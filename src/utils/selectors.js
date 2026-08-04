@@ -24,7 +24,7 @@ export const GAME = {
     // Skill Action Detail
     SKILL_ACTION_DETAIL: '[class*="SkillActionDetail_skillActionDetail"]',
     SKILL_ACTION_NAME: '[class*="SkillActionDetail_name"]',
-    ENHANCING_COMPONENT: 'div.SkillActionDetail_enhancingComponent__17bOx',
+    ENHANCING_COMPONENT: 'div[class*="SkillActionDetail_enhancingComponent"]',
 
     // Action Queue
     QUEUED_ACTIONS: '[class*="QueuedActions_action"]',
@@ -35,11 +35,18 @@ export const GAME = {
     TASK_LIST: '[class*="TasksPanel_taskList"]',
     TASK_CARD: '[class*="RandomTask_randomTask"]',
     TASK_NAME: '[class*="RandomTask_name"]',
-    TASK_INFO: '.RandomTask_taskInfo__1uasf',
-    TASK_ACTION: '.RandomTask_action__3eC6o',
-    TASK_REWARDS: '.RandomTask_rewards__YZk7D',
+    TASK_INFO: '[class*="RandomTask_taskInfo"]',
+    TASK_ACTION: '[class*="RandomTask_action"]',
+    TASK_REWARDS: '[class*="RandomTask_rewards"]',
     TASK_CONTENT: '[class*="RandomTask_content"]',
     TASK_NAME_DIV: 'div[class*="RandomTask_name"]',
+    // Buttons within a task card. "Button_button" is the shared base class every
+    // button carries, so it is paired with the variant class ("Button_buy"/
+    // "Button_success") that actually distinguishes a claim button from any other.
+    TASK_CLAIM_BUTTON: 'button[class*="Button_button"][class*="Button_buy"]',
+    TASK_GO_BUTTON: 'button[class*="Button_success"]',
+    // The Tasks panel's own <h1> title, used to anchor the sprite-warning banner
+    TASKS_PANEL_TITLE: 'h1[class*="TasksPanel_title"]',
 
     // House Panel
     HOUSE_HEADER: '[class*="HousePanel_header"]',
@@ -47,19 +54,24 @@ export const GAME = {
     HOUSE_ITEM_REQUIREMENTS: '[class*="HousePanel_itemRequirements"]',
 
     // Loot Log
-    LOOT_LOG_CONTAINER: '.LootLogPanel_actionLoots__3oTid',
-    LOOT_LOG_ENTRY: '.LootLogPanel_actionLoot__32gl_',
+    LOOT_LOG_CONTAINER: '[class*="LootLogPanel_actionLoots"]',
+    // "actionLoot" is a prefix of "actionLoots" (the container above), so this
+    // needs the trailing "__" — the point where the CSS-module hash begins — to
+    // stay a single entry rather than also matching the whole container.
+    LOOT_LOG_ENTRY: '[class*="LootLogPanel_actionLoot__"]',
 
     // Inventory
     INVENTORY_ITEMS: '[class*="Inventory_items"]',
-    INVENTORY_CATEGORY_BUTTON: '.Inventory_categoryButton__35s1x',
-    INVENTORY_LABEL: '.Inventory_label__XEOAx',
+    INVENTORY_CATEGORY_BUTTON: '[class*="Inventory_categoryButton"]',
+    INVENTORY_LABEL: '[class*="Inventory_label"]',
 
     // Items
-    ITEM_CONTAINER: '.Item_itemContainer__x7kH1',
-    ITEM_ITEM: '.Item_item__2De2O',
-    ITEM_COUNT: '.Item_count__1HVvv',
-    ITEM_TOOLTIP_TEXT: '.ItemTooltipText_itemTooltipText__zFq3A',
+    ITEM_CONTAINER: '[class*="Item_itemContainer"]',
+    // "Item_item" is a prefix of "Item_itemContainer" (above), so this needs the
+    // trailing "__" too, or it would match every item container as well.
+    ITEM_ITEM: '[class*="Item_item__"]',
+    ITEM_COUNT: '[class*="Item_count"]',
+    ITEM_TOOLTIP_TEXT: '[class*="ItemTooltipText_itemTooltipText"]',
 
     // Navigation/Experience Bars
     NAV_LEVEL: '[class*="NavigationBar_level"]',

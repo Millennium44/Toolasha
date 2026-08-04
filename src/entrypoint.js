@@ -24,6 +24,7 @@ const { storage, config, webSocketHook, domObserver, dataManager, featureRegistr
 
 const { setupScrollTooltipDismissal } = Utils.dom;
 const { showToast } = Utils.toast;
+const { GAME } = Utils.selectors;
 
 /**
  * Detect if running on Combat Simulator page
@@ -75,6 +76,14 @@ function isCombatSimulatorPage() {
  *   itemCountDisplay      marketplace item tiles           → .mwi-item-count
  *   zoneIndices           combat zone tab buttons          → span.script_mapIndex
  *   combatScore           a profile overview tab is open   → #mwi-combat-score-panel
+ *
+ * None of the above can catch the game renaming its own classes wholesale — an
+ * absent anchor just reads as "null, ignored" everywhere above. `checkAnchorCanaries`
+ * is the separate check for that: a handful of selectors for elements that exist
+ * on any loaded game page no matter which panel is open (the header, the page's
+ * own wrapper, the persistent skill nav bars). It runs once, on the same delay as
+ * the health pass, and reports through the same `UI.healthStatus.reportFailures`
+ * channel with reason "selector missing — game update?".
  * ------------------------------------------------------------------------- */
 
 /**
@@ -139,6 +148,38 @@ function mergeFailures(...lists) {
         }
     }
     return [...byKey.values()];
+}
+
+/**
+ * A conservative set of anchors that should exist on any loaded game page,
+ * regardless of which panel is open — the header, the page's own wrapper, and
+ * the persistent skill navigation bars. Checked once, well after startup, to
+ * catch the one failure a per-feature health check cannot: the game renaming
+ * its own classes out from under every selector at once. A missing feature
+ * mark says "reopen the panel"; a missing anchor says the game updated.
+ *
+ * Deliberately short. Anything that only exists on one screen (a task card,
+ * an inventory tile, an open settings panel) is left out on purpose — it is
+ * routinely absent on a perfectly healthy page, and canarying it would just
+ * be noise the moment somebody was looking at a different tab.
+ *
+ * @returns {Array<{key: string, name: string, reason: string}>} One entry per missing anchor
+ */
+function checkAnchorCanaries() {
+    const ANCHORS = [
+        { key: 'canaryHeaderTotalLevel', name: 'Header (total level)', selector: GAME.TOTAL_LEVEL },
+        { key: 'canaryGamePanel', name: 'Game panel wrapper', selector: GAME.GAME_PANEL },
+        { key: 'canaryNavLevel', name: 'Navigation bar (skill levels)', selector: GAME.NAV_LEVEL },
+        { key: 'canaryNavExperience', name: 'Navigation bar (skill XP)', selector: GAME.NAV_CURRENT_EXPERIENCE },
+    ];
+
+    const failures = [];
+    for (const { key, name, selector } of ANCHORS) {
+        if (!document.querySelector(selector)) {
+            failures.push({ key, name, reason: 'selector missing — game update?' });
+        }
+    }
+    return failures;
 }
 
 /**
@@ -1278,6 +1319,19 @@ if (isCombatSimulatorPage()) {
 
                     // Note: Settings tab health check removed - tab only appears when user opens settings panel
 
+                    // Selector canary: runs regardless of whether any single feature
+                    // reported unhealthy, because a game update can rename every
+                    // class at once without a single per-feature check noticing —
+                    // each one's anchor is just "not open," which reads as null.
+                    const canaryFailures = checkAnchorCanaries();
+                    if (canaryFailures.length > 0) {
+                        console.warn(
+                            '[Toolasha] Selector canary found missing anchors — the game may have updated:',
+                            canaryFailures.map((f) => f.name)
+                        );
+                        UI.healthStatus.reportFailures(canaryFailures);
+                    }
+
                     if (failedFeatures.length > 0) {
                         console.warn(
                             '[Toolasha] Health check found failed features:',
@@ -1370,5 +1424,8 @@ if (isCombatSimulatorPage()) {
             console.log('Active timers:', diag.activeTimers);
             return diag;
         },
+        // The selector canary, callable directly for a spot-check without
+        // waiting for the delayed health pass to run it on its own.
+        canary: checkAnchorCanaries,
     };
 }

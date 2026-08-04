@@ -595,7 +595,11 @@ class MarketHistoryViewer {
      * Create modal structure
      */
     createModal() {
-        // Modal overlay
+        // Modal overlay — full-screen intentional modal, so it sits at config.Z_MODAL
+        // rather than the persistent-floating-panel tier (PANEL_Z_CAP); popouts spawned
+        // from it (import progress, filter dropdowns) sit just above at Z_MODAL + 1/+2,
+        // still comfortably below native browser dialogs (confirm/alert), which are
+        // always topmost regardless of z-index.
         this.modal = document.createElement('div');
         this.modal.className = 'mwi-market-history-modal';
         this.modal.style.cssText = `
@@ -608,20 +612,22 @@ class MarketHistoryViewer {
             display: none;
             justify-content: center;
             align-items: center;
-            z-index: 10000;
+            z-index: ${config.Z_MODAL};
         `;
 
-        // Modal content
+        // Modal content — shared navy/blue-accent chrome (see simple-panel.js)
         const content = document.createElement('div');
         content.className = 'mwi-market-history-content';
         content.style.cssText = `
-            background: #2a2a2a;
+            background: rgba(10, 10, 20, 0.97);
+            border: 1px solid rgba(74, 158, 255, 0.5);
             border-radius: 8px;
             padding: 20px;
             max-width: 95%;
             max-height: 90%;
             overflow: auto;
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+            color: #e8ecf5;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
         `;
 
         // Header
@@ -631,13 +637,15 @@ class MarketHistoryViewer {
             justify-content: space-between;
             align-items: center;
             margin-bottom: 20px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid rgba(74, 158, 255, 0.3);
         `;
 
         const title = document.createElement('h2');
         title.textContent = 'Market History';
         title.style.cssText = `
             margin: 0;
-            color: #fff;
+            color: #8fb4ff;
         `;
 
         const closeBtn = document.createElement('button');
@@ -645,7 +653,7 @@ class MarketHistoryViewer {
         closeBtn.style.cssText = `
             background: none;
             border: none;
-            color: #fff;
+            color: #e8ecf5;
             font-size: 24px;
             cursor: pointer;
             padding: 0;
@@ -1685,11 +1693,12 @@ class MarketHistoryViewer {
                 top: 50%;
                 left: 50%;
                 transform: translate(-50%, -50%);
-                background: #2a2a2a;
+                background: rgba(10, 10, 20, 0.97);
+                border: 1px solid rgba(74, 158, 255, 0.5);
                 padding: 20px;
                 border-radius: 8px;
-                color: #fff;
-                z-index: 10001;
+                color: #e8ecf5;
+                z-index: ${config.Z_MODAL + 1};
                 box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
             `;
             progressMsg.textContent = `Importing ${lines.length - 1} listings from CSV...`;
@@ -1917,11 +1926,12 @@ class MarketHistoryViewer {
                 top: 50%;
                 left: 50%;
                 transform: translate(-50%, -50%);
-                background: #2a2a2a;
+                background: rgba(10, 10, 20, 0.97);
+                border: 1px solid rgba(74, 158, 255, 0.5);
                 padding: 20px;
                 border-radius: 8px;
-                color: #fff;
-                z-index: 10001;
+                color: #e8ecf5;
+                z-index: ${config.Z_MODAL + 1};
                 box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
             `;
             progressMsg.textContent = `Importing ${marketList.length} listings...`;
@@ -2180,7 +2190,7 @@ class MarketHistoryViewer {
         popup.style.position = 'fixed';
         popup.style.top = `${buttonRect.bottom + 5}px`;
         popup.style.left = `${buttonRect.left}px`;
-        popup.style.zIndex = '10002';
+        popup.style.zIndex = String(config.Z_MODAL + 2);
 
         document.body.appendChild(popup);
         this.activeFilterPopup = popup;

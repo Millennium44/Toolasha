@@ -11,7 +11,6 @@ import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
 
 const PROXY_BTN_ID = 'mwi-claim-proxy-btn';
-const CLAIM_BTN_SELECTOR = 'button.Button_button__1Fe9z.Button_buy__3s24l';
 
 class TaskClaimCollector {
     constructor() {
@@ -92,7 +91,7 @@ class TaskClaimCollector {
      * Return all enabled Claim Reward buttons in the task list.
      */
     _getClaimableButtons(taskList) {
-        return Array.from(taskList.querySelectorAll(CLAIM_BTN_SELECTOR)).filter(
+        return Array.from(taskList.querySelectorAll(GAME.TASK_CLAIM_BUTTON)).filter(
             (btn) => btn.textContent.trim() === 'Claim Reward' && !btn.disabled
         );
     }

@@ -92,6 +92,7 @@ import leaderboardXPDisplay from '../features/leaderboard/leaderboard-xp-display
 
 // Notifications
 import emptyQueueNotification from '../features/notifications/empty-queue-notification.js';
+import notificationService from '../features/notifications/notification-service.js';
 
 // Queue Monitor
 import queueMonitor from '../features/queue-monitor/queue-monitor.js';
@@ -171,6 +172,7 @@ toolashaRoot.UI = {
     leaderboardXPTracker,
     leaderboardXPDisplay,
     emptyQueueNotification,
+    notificationService,
     queueMonitor,
     pformancePanel,
     healthStatus,

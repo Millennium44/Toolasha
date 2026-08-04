@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Notifications, provenance, and selectors that survive game updates
+
+- **Opt-in notifications** (all off by default): consumables running low, a market listing filling, another character's queue going idle, plus the existing empty-queue alert — one service behind them all. Hidden tab → browser notification and a ❗ title flash; visible tab → toast; 10-minute cooldown per event so nothing nags. The browser-permission prompt now appears when you enable a notification, never at page load.
+- **Profit figures say where their prices came from**: pricing mode and price age on the profit line, and a ✱ marker wherever your own custom price override is feeding a number.
+- **Actual vs expected for gathering**: loot log stats now show expected run value beside the actual, phrased like the combat drop-luck line.
+- **Game-update armor**: the selectors that hardcoded build-hashed class names (guaranteed to break on any game rebuild) are prefix matches now, and a conservative four-anchor canary reports "selector missing — game update?" through the health system instead of features just silently vanishing.
+- The market history viewer joins the shared navy panel chrome and the z-index tiers.
+
 ### Panels remember where you put them, and stacking becomes predictable
 
 - **Both simulator panels persist their geometry.** The Lab Simulator forgot its position and size every reload (reposition it every session); the Combat Simulator remembered size but snapped back to the corner. Both now use the shared geometry store, and both drags run through the shared utility (touch support and the click-isn't-a-drag guard included). Deliberately not persisted: open state — a sim panel should not reopen itself on reload.

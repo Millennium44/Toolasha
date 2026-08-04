@@ -18,6 +18,7 @@
  */
 
 import { describe, test, expect, beforeAll, beforeEach } from 'vitest';
+import { GAME } from './utils/selectors.js';
 
 /** Settings the fake config answers with; mutated per test */
 const settings = {};
@@ -71,6 +72,7 @@ beforeAll(async () => {
         Utils: {
             dom: { setupScrollTooltipDismissal: () => {} },
             toast: { showToast: () => null },
+            selectors: { GAME },
         },
         Market: makeStub(),
         Actions: makeStub(),
@@ -231,5 +233,56 @@ describe('inventory badge prices health check', () => {
     test('passes once the badge is on it', () => {
         document.body.innerHTML = inventory('data-ask-price="1200"', '<div class="mwi-badge-price-ask">1.2K</div>');
         expect(check()).toBe(true);
+    });
+});
+
+describe('the selector canary', () => {
+    // window.Toolasha.debug is where the entrypoint already exposes internal
+    // checks for console use; the canary rides along on that seam rather than
+    // needing its own.
+    const canary = () => window.Toolasha.debug.canary();
+
+    /** All four ever-present anchors, drawn as a healthy loaded game page would */
+    const allAnchorsPresent = () => {
+        document.body.innerHTML = `
+            <div class="Header_totalLevel__1Ku1r">Total 1500</div>
+            <div class="GamePage_gamePanel__3uNKN"></div>
+            <span class="NavigationBar_level__2abcd">12</span>
+            <div class="NavigationBar_currentExperience__9wxyz" style="width: 40%"></div>
+        `;
+    };
+
+    test('finds nothing wrong on a normally-drawn page', () => {
+        allAnchorsPresent();
+        expect(canary()).toEqual([]);
+    });
+
+    test('reports every anchor missing on a blank page as the game having updated', () => {
+        document.body.innerHTML = '';
+        const failures = canary();
+
+        expect(failures).toHaveLength(4);
+        for (const failure of failures) {
+            expect(failure.reason).toBe('selector missing — game update?');
+            expect(failure.key).toBeTruthy();
+            expect(failure.name).toBeTruthy();
+        }
+    });
+
+    test('reports only the anchor that actually went missing, not the whole page', () => {
+        allAnchorsPresent();
+        document.querySelector(GAME.GAME_PANEL).remove();
+
+        const failures = canary();
+        expect(failures).toHaveLength(1);
+        expect(failures[0].reason).toBe('selector missing — game update?');
+    });
+
+    test('does not canary a screen-specific selector — only the ever-present ones', () => {
+        // TASK_LIST only exists while the Tasks panel is open; its absence here,
+        // on an otherwise fully-drawn page, must not turn into a false alarm.
+        allAnchorsPresent();
+        expect(document.querySelector(GAME.TASK_LIST)).toBeNull();
+        expect(canary()).toEqual([]);
     });
 });

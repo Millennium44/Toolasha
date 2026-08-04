@@ -203,7 +203,7 @@ class TaskSorter {
      * Check if task is completed (has Claim Reward button)
      */
     isTaskCompleted(taskCard) {
-        const claimButton = taskCard.querySelector('button.Button_button__1Fe9z.Button_buy__3s24l');
+        const claimButton = taskCard.querySelector(GAME.TASK_CLAIM_BUTTON);
         return claimButton && claimButton.textContent.includes('Claim Reward');
     }
 
