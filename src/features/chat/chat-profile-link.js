@@ -1,8 +1,9 @@
 /**
  * Chat Profile Link
  * Makes player names in system chat announcements clickable — messages like
- * "Az0r has reached level 150 Magic!" get the leading name wrapped in a link
- * that autofills "/profile <name>" into the chat input when clicked.
+ * "PlayerName has reached level 150 Magic!" or "PlayerName has joined the
+ * guild!" get the leading name wrapped in a link that autofills
+ * "/profile <name>" into the chat input when clicked.
  *
  * Regular player messages already have the game's own clickable name menu,
  * so only announcement-style messages (name followed by "has …") are
@@ -15,8 +16,8 @@ import { addStyles } from '../../utils/dom.js';
 
 const NAME_CLASS = 'mwi-chat-profile-name';
 // "<Name> has <verb> …" announcements; names are single tokens in MWI
-const ANNOUNCE_RE =
-    /^\s*(?:\[[^\]]*\]\s*)?([A-Za-z0-9_]+) has (?:reached|obtained|found|completed|defeated|earned|achieved|unlocked|opened|crafted|caught|leveled)\b/;
+export const ANNOUNCE_RE =
+    /^\s*(?:\[[^\]]*\]\s*)?([A-Za-z0-9_]+) has (?:reached|obtained|found|completed|defeated|earned|achieved|unlocked|opened|crafted|caught|leveled|joined|left)\b/;
 
 const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
 

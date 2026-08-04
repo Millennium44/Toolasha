@@ -6,6 +6,18 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Guild joins get a clickable name too
+
+"Mazo has joined the guild!" now gets the same clickable name as level-up announcements — clicking fills `/profile Mazo` into the chat input. Leaving the guild is covered too, since it is the same sentence pointed the other way. The settings help text also stops using a real player's name as its example.
+
+### The treasure popup sizes itself to the chest it is showing
+
+Opening the per-chest popup already measured its content and sized to fit — and then the remembered height from a manual resize was applied on top, clipping every chest with more rows than the one the resize happened on. The height now always fits the chest being shown (capped to the window); the width half of a resize is still remembered, and the height is re-fitted after the width lands since width changes how rows wrap.
+
+### Moving the popup no longer flips "Popup follows the chest dialog"
+
+Dragging the popup used to silently pin it — one nudge and it stopped following the chest dialog, with nothing on screen saying why. A drag now just puts it where you dragged it; whether it follows the dialog is decided by the settings gear alone. The dragged position is still saved, so a popup that _is_ pinned keeps opening where it was last put.
+
 ### The shared seed pairs the baseline again — no more phantom DPS from skilling rooms
 
 Yesterday's change gave every batched candidate one worker while the baseline kept splitting its hours across four. The shared seed only cancels sampling noise while both runs draw the same random streams, and the chunking decides the streams — so the baseline and every candidate became independent samples, and every combat-inert candidate wore the same deterministic phantom delta against the baseline. The visible symptom: Laboratory and Observatory each "improving" DPS by an identical +0.06%.
