@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Overlay tiles open their panels
+
+- **The Net Worth, Coins, Market Listings, and Inventory Value tiles now open the networth history chart** on double-click (single tap on touch), with the hint in the tooltip — matching the 26 tiles that already opened their feature's panel.
+
 ### Iron Cow Farm
 
 - **New "Iron Cow Farm" panel** for cowbell-farming characters: the standard plan as a self-ticking checklist (skill levels, jewelry, house rooms read from your character; the loop stage unlocks when prerequisites are met), the starfruit → decompose → coinify loop costed on the iron cow rule that nothing is ever sold (coinify's vendor coins are the only income, decompose fees the only outflow, no catalysts), and the payoff in bells: bells/hour, bells/day, a week's projection, whether loose bells or the bag of ten is the better buy, plus low-gold-buffer, queue-slot, and offline-window warnings.
