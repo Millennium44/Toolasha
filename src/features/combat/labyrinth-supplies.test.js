@@ -1,18 +1,30 @@
+/** @vitest-environment happy-dom */
+
 /**
  * Tests for reading labyrinth supplies and clamping plans to them.
  *
- * All pure: fixture inventories in, counts and shortfall wording out. The
- * reason this logic lives apart from the panel is exactly so it can be checked
- * without a game — the bug it exists to prevent (a plan calling for thirteen
- * shrouds against two owned) is arithmetic, not rendering.
+ * All pure: fixture inventories, payloads and markup in, counts and shortfall
+ * wording out. The reason this logic lives apart from the panel is exactly so it
+ * can be checked without a game — the bugs it exists to prevent (a plan calling
+ * for thirteen shrouds against two owned; a mid-run readout counting the bag the
+ * run already emptied) are arithmetic and sourcing, not rendering.
+ *
+ * A DOM is taken because one of the three sources is the game's own Supplies
+ * row, and the thing worth testing about it is that it reads that row and not
+ * the labyrinth shop sitting on the same screen.
  */
 
 import { describe, test, expect } from 'vitest';
 
 import {
     SUPPLY_HRIDS,
+    SUPPLY_SOURCE,
     resolveSupplyHrids,
     readSupplyCounts,
+    readRunSupplyCounts,
+    readSupplyRowCounts,
+    isLabyrinthRunActive,
+    chooseSupplyCounts,
     bestOwnedTier,
     clampToOwned,
     describeSupplyNeed,
@@ -71,6 +83,160 @@ describe('reading what is in the bag', () => {
         ]);
         expect(bestOwnedTier(counts, 'beacon')).toBe('/items/advanced_beacon');
         expect(bestOwnedTier(counts, 'shroud')).toBeNull();
+    });
+});
+
+/**
+ * The reported bug: a toolbar reading 260/16/16 beside a game reading 40/0/1.
+ * The counts were right about the bag and wrong about the question — a run takes
+ * its supplies out of the inventory when it starts and carries them itself.
+ */
+describe('reading the stock a run is carrying', () => {
+    const grid = [[{ roomType: '/labyrinth_room_types/combat' }]];
+
+    test('a floor on the table is a run; nothing on it is not', () => {
+        expect(isLabyrinthRunActive({ roomData: grid })).toBe(true);
+        expect(isLabyrinthRunActive({ pathData: '[{"x":0,"y":0}]' })).toBe(true);
+        expect(isLabyrinthRunActive({ roomData: [], pathData: '' })).toBe(false);
+        expect(isLabyrinthRunActive(null)).toBe(false);
+    });
+
+    test('finds stock carried as a map keyed by item hrid', () => {
+        const counts = readRunSupplyCounts({
+            roomData: grid,
+            supplyItemCountMap: { '/items/basic_torch': 40, '/items/expert_beacon': 1 },
+        });
+        expect(counts).toMatchObject({ torch: 40, shroud: 0, beacon: 1, known: true, source: SUPPLY_SOURCE.run });
+    });
+
+    test('finds stock carried as a list of item/count pairs, however deep', () => {
+        const counts = readRunSupplyCounts({
+            roomData: grid,
+            run: { consumables: { items: [{ itemHrid: '/items/basic_torch', count: 40 }] } },
+        });
+        expect(counts).toMatchObject({ torch: 40, known: true });
+    });
+
+    test('the same stock reported twice is one pile, not two', () => {
+        const counts = readRunSupplyCounts({
+            supplyItemCountMap: { '/items/basic_torch': 40 },
+            supplies: [{ itemHrid: '/items/basic_torch', count: 40 }],
+        });
+        expect(counts.torch).toBe(40);
+    });
+
+    test('different tiers of one kind still add up', () => {
+        const counts = readRunSupplyCounts({
+            supplies: [
+                { itemHrid: '/items/basic_torch', count: 40 },
+                { itemHrid: '/items/expert_torch', count: 2 },
+            ],
+        });
+        expect(counts.torch).toBe(42);
+    });
+
+    test('a key merely named for a supply is not a count of one', () => {
+        // `torches` on a payload is as likely to be a plan's cost as a stock,
+        // and guessing wrong is the whole bug
+        const counts = readRunSupplyCounts({ torches: 40, shrouds: 3 });
+        expect(counts.known).toBe(false);
+        expect(counts.torch).toBe(0);
+    });
+
+    test('a payload that names no supply is unknown, so the caller can look elsewhere', () => {
+        expect(readRunSupplyCounts({ roomData: grid }).known).toBe(false);
+        expect(readRunSupplyCounts(null).known).toBe(false);
+    });
+});
+
+describe("reading the game's own Supplies row", () => {
+    const icon = (id, count) =>
+        `<div class="Item_itemContainer__x7kH1"><div class="Item_item__2De2O">` +
+        `<svg><use href="/static/media/items_sprite.9c39e2ec.svg#${id}"></use></svg>` +
+        `<div class="Item_count__1HVvv">${count}</div></div></div>`;
+
+    const panel = (inner) => {
+        document.body.innerHTML = `<div class="LabyrinthPanel_labyrinthPanel__1a2b3">${inner}</div>`;
+        return document;
+    };
+
+    test('reads the row the user is looking at', () => {
+        const root = panel(
+            `<div><div>Supplies</div><div>${icon('basic_torch', 40)}${icon('expert_beacon', 1)}</div></div>`
+        );
+        expect(readSupplyRowCounts(root)).toMatchObject({
+            torch: 40,
+            shroud: 0,
+            beacon: 1,
+            known: true,
+            source: SUPPLY_SOURCE.run,
+        });
+    });
+
+    test('a count written as plain text beside the icon still counts', () => {
+        const root = panel(
+            '<div>Supplies</div>' +
+                '<div><span><svg><use href="items_sprite.svg#basic_torch"></use></svg>40</span></div>'
+        );
+        expect(readSupplyRowCounts(root).torch).toBe(40);
+    });
+
+    test("the shop's stock of the same items is not the run's", () => {
+        const root = panel(
+            `<div><div>Supplies</div><div>${icon('basic_torch', 40)}</div></div>` +
+                `<div class="LabyrinthPanel_buyableGrid__9z8y">${icon('basic_torch', 999)}</div>`
+        );
+        expect(readSupplyRowCounts(root).torch).toBe(40);
+    });
+
+    test("this script's own readout is not read back as a supply count", () => {
+        const root = panel(
+            `<div><div>Supplies</div><div>${icon('basic_torch', 40)}</div></div>` +
+                `<span class="mwi-labyrinth-tile-controls-supplies">${icon('basic_torch', 260)}</span>`
+        );
+        expect(readSupplyRowCounts(root).torch).toBe(40);
+    });
+
+    test('no row on screen is unknown, not a run carrying nothing', () => {
+        expect(readSupplyRowCounts(panel('<div>Floor 5</div>')).known).toBe(false);
+        expect(readSupplyRowCounts(null).known).toBe(false);
+    });
+});
+
+describe('choosing which pile to answer with', () => {
+    const bag = readSupplyCounts([
+        { itemHrid: '/items/expert_torch', count: 260, itemLocationHrid: '/item_locations/inventory' },
+    ]);
+    const carried = { ...readSupplyCounts([]), torch: 40, known: true, source: SUPPLY_SOURCE.run };
+
+    test('between runs the bag is the answer, and says so', () => {
+        const chosen = chooseSupplyCounts({ runActive: false, inventory: bag });
+        expect(chosen).toMatchObject({ torch: 260, source: SUPPLY_SOURCE.inventory, label: 'held', stale: false });
+    });
+
+    test('in a run the payload wins over the bag, which is stale by then', () => {
+        const chosen = chooseSupplyCounts({ runActive: true, run: carried, inventory: bag });
+        expect(chosen).toMatchObject({ torch: 40, source: SUPPLY_SOURCE.run, label: 'this run' });
+    });
+
+    test('in a run with no payload stock, the Supplies row answers', () => {
+        const chosen = chooseSupplyCounts({
+            runActive: true,
+            run: readRunSupplyCounts(null),
+            dom: carried,
+            inventory: bag,
+        });
+        expect(chosen).toMatchObject({ torch: 40, source: SUPPLY_SOURCE.run, label: 'this run' });
+    });
+
+    test('the bag is the last resort in a run, and is flagged rather than passed off', () => {
+        const chosen = chooseSupplyCounts({
+            runActive: true,
+            run: readRunSupplyCounts(null),
+            dom: readSupplyRowCounts(null),
+            inventory: bag,
+        });
+        expect(chosen).toMatchObject({ torch: 260, source: SUPPLY_SOURCE.inventory, label: 'in bag', stale: true });
     });
 });
 
