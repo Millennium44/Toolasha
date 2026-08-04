@@ -1188,6 +1188,13 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'guildTrialsInfo',
+            name: 'Guild Trials',
+            category: 'Guild',
+            module: UI.guildTrials,
+            async: true,
+        },
+        {
             key: 'insights_calibration',
             name: 'Prediction Calibration',
             category: 'Insights',

@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Guild trials get pace, ETA, and payout math
+
+- **Trial cards on the In Progress tab now carry live info**: measured party DPS (combat) or pool fill rate (skilling) read from the cards themselves, ETA to clear the current tier against the trial clock, how many tiers the hour is on pace for, and the next tier's projected size (+1% per participant applied exactly; the tier growth curve is fitted from observed tiers, never invented — it says so until a second tier gives it a curve).
+- **A payout block shows what the week is worth**: Guild Points banked vs on pace and tokens per eligible member (plus the 50% participant bonus), using the official formulas, with Builders Hall and Treasury bonuses read from captured guild building levels — or manual overrides in settings, with an honest "base figures" note until either arrives.
+- Trial state persists per guild, resetting with the Friday week; the official trial rules are pinned in the module docs.
+
 ### Guild shrines in your score and your net worth
 
 - **The profile score panel gains "+ Guild Shrine" lines** under both Combat Score and Skiller Score — each buff sorted into its bucket by the game's own combat flag, tokens in the tooltip, same coin-cost-per-million convention as House and Ability. Only shown when shrine data has actually reached the client; other players' profiles never show a fake zero.
