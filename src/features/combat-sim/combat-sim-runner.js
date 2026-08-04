@@ -26,6 +26,10 @@ const MAX_WORKERS = 4;
 export function getMaxWorkers() {
     const setting = config.getSetting('combatSim_maxThreads') || 0;
     const cores = typeof navigator !== 'undefined' ? navigator.hardwareConcurrency || 4 : 4;
+    // Normally the machine has the last word: more workers than cores is more
+    // memory and more contention for no more throughput. Someone who wants the
+    // number taken literally can say so.
+    if (config.getSetting('combatSim_uncapThreads') && setting > 0) return setting;
     return setting > 0 ? Math.min(setting, cores) : Math.min(MAX_WORKERS, cores);
 }
 

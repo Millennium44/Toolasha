@@ -1966,7 +1966,17 @@ export const settingsGroups = {
                 default: 0,
                 min: 0,
                 max: 32,
-                help: 'Maximum Web Worker threads for simulations (0 = auto, uses all available cores)',
+                help: 'Maximum Web Worker threads for simulations (0 = auto: 4, or fewer on a smaller machine)',
+            },
+            combatSim_uncapThreads: {
+                id: 'combatSim_uncapThreads',
+                label: 'Combat Simulator: Ignore the thread caps',
+                type: 'boolean',
+                default: false,
+                help:
+                    'Max threads is normally clamped to your core count, and an analysis runs at most 6 simulations ' +
+                    'at once — each one holds its own copy of the game data, and the tab running the game needs a ' +
+                    'core too. Turn this on to take the number above literally.',
             },
             labSim_keepReplacedGear: {
                 id: 'labSim_keepReplacedGear',

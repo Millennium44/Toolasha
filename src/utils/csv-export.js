@@ -84,9 +84,33 @@ export function csvFilename(stem, now = new Date()) {
  * @returns {boolean} False when the browser would not take it
  */
 export function downloadCsv(filename, csv, doc = typeof document !== 'undefined' ? document : null) {
+    // The BOM is for Excel, which reads a UTF-8 file without one as the local
+    // ANSI codepage and turns every arrow in a description into mojibake
+    return downloadFile(filename, '\ufeff' + csv, 'text/csv;charset=utf-8;', doc);
+}
+
+/**
+ * Save any text to the user's downloads.
+ *
+ * The same anchor trick as the CSV export, without the spreadsheet's opinions
+ * about encoding — a performance trace is read by a person or a parser, neither
+ * of which wants a byte-order mark in front of it.
+ *
+ * @param {string} filename - What to call it
+ * @param {string} text - The contents
+ * @param {string} [mime] - Content type
+ * @param {Document} [doc] - Injectable for tests
+ * @returns {boolean} False when the browser would not take it
+ */
+export function downloadFile(
+    filename,
+    text,
+    mime = 'text/plain;charset=utf-8;',
+    doc = typeof document !== 'undefined' ? document : null
+) {
     if (!doc) return false;
     try {
-        const blob = new Blob(['﻿', csv], { type: 'text/csv;charset=utf-8;' });
+        const blob = new Blob([text], { type: mime });
         const url = URL.createObjectURL(blob);
         const link = doc.createElement('a');
         link.href = url;
@@ -99,7 +123,7 @@ export function downloadCsv(filename, csv, doc = typeof document !== 'undefined'
         setTimeout(() => URL.revokeObjectURL(url), 10_000);
         return true;
     } catch (error) {
-        console.error('[CsvExport] Saving the CSV failed:', error);
+        console.error('[CsvExport] Saving the file failed:', error);
         return false;
     }
 }

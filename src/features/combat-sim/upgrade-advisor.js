@@ -2970,7 +2970,9 @@ async function mapConcurrent(items, run, limit = analysisConcurrency()) {
  * @returns {number} Simulations at once
  */
 function analysisConcurrency() {
-    return Math.max(1, Math.min(getMaxWorkers(), ANALYSIS_MAX_CONCURRENCY));
+    const budget = getMaxWorkers();
+    if (config.getSetting('combatSim_uncapThreads')) return Math.max(1, budget);
+    return Math.max(1, Math.min(budget, ANALYSIS_MAX_CONCURRENCY));
 }
 
 /** Ceiling on simultaneous sims per analysis, whatever the thread setting says */

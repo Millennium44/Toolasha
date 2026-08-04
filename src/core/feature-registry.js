@@ -24,6 +24,7 @@ async function initializeFeatures() {
     }
 
     const errors = [];
+    performanceMonitor.mark('features:start', { registered: featureRegistry.length });
 
     for (const feature of featureRegistry) {
         try {
@@ -37,9 +38,9 @@ async function initializeFeatures() {
             // initializers land in this try/catch even when the registry
             // entry forgot to set the async flag (awaiting sync undefined
             // is harmless).
-            const start = performance.now();
+            const startedAt = performanceMonitor.sinceBoot();
             await feature.initialize();
-            performanceMonitor.snapshot(`init:${feature.key}`, performance.now() - start);
+            performanceMonitor.snapshot(`init:${feature.key}`, performanceMonitor.sinceBoot() - startedAt, startedAt);
         } catch (error) {
             errors.push({
                 feature: feature.name,
@@ -48,6 +49,8 @@ async function initializeFeatures() {
             console.error(`[Toolasha] Failed to initialize ${feature.name}:`, error);
         }
     }
+
+    performanceMonitor.mark('features:done', { failed: errors.length });
 
     // Log errors if any occurred
     if (errors.length > 0) {
