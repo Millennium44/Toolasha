@@ -17,6 +17,7 @@ const game = vi.hoisted(() => ({
     clientData: null,
     prices: {},
     observers: {},
+    buildingLevels: {},
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -26,7 +27,7 @@ vi.mock('../../core/data-manager.js', () => ({
     default: {
         getInitClientData: () => game.clientData,
         getInventory: () => [],
-        getGuildBuildingLevel: () => 0,
+        getGuildBuildingLevel: (hrid) => game.buildingLevels[hrid] ?? 0,
         getCharacterGuildBuffLevel: () => 0,
     },
 }));
@@ -254,5 +255,82 @@ describe('guild credit value — trial tier badge', () => {
         game.observers['GuildPanel_tileSummary'](el);
 
         expect(el.querySelector('.mwi-trial-tier')).toBeNull();
+    });
+
+    test("a building tile's level (max 20, well under the trial floor of 100) never gets a tier badge", () => {
+        // Buildings tab format: "Lv. 10 / 20" — below TRIAL_START_LEVEL, so
+        // tierFromLevel() returns null and no badge is injected. This is the
+        // level range GUILD_BUILDING_MAX_LEVEL covers; it must never be treated
+        // as a trial level.
+        const el = buildTileSummary('Lv.20');
+        game.observers['GuildPanel_tileSummary'](el);
+
+        expect(el.querySelector('.mwi-trial-tier')).toBeNull();
+    });
+});
+
+describe('guild credit value — shrine upgrade planner building cap', () => {
+    beforeEach(() => {
+        game.settings = { guildCreditValue: true, guildCreditExchangeAdvisor: false, guildShrineUpgradePlanner: true };
+        game.observers = {};
+        game.prices = { '/items/bronze_bar': { ask: 100, bid: 90 } };
+        game.buildingLevels = {};
+        guildCreditValue.cleanup();
+        guildCreditValue.initialize();
+    });
+
+    function buildBuffClientData(levelCostsMaxLevel) {
+        return {
+            itemDetailMap: {
+                '/items/guild_credit_1': { name: 'Trade Credit', guildCreditConversions: [] },
+                '/items/bronze_bar': {
+                    name: 'Bronze Bar',
+                    guildCreditConversions: [
+                        { creditItemHrid: '/items/guild_credit_1', itemCount: 10, creditCount: 1 },
+                    ],
+                },
+            },
+            guildBuffDetailMap: {
+                '/guild_buffs/force_combat': {
+                    shrineHrid: '/guild_shrines/force',
+                    isCombat: true,
+                    levelCosts: Object.fromEntries(
+                        Array.from({ length: levelCostsMaxLevel }, (_, i) => [String(i + 1), {}])
+                    ),
+                },
+            },
+        };
+    }
+
+    test('the target-level input caps at 20 even when levelCosts data claims more', () => {
+        game.clientData = buildBuffClientData(25);
+
+        const modal = buildExchangeModal('Trade Credit');
+        game.observers['GuildPanel_exchangeModalContent'](modal);
+
+        const input = modal.querySelector('.mwi-shrine-planner input[type="number"]');
+        expect(Number(input.max)).toBe(20);
+    });
+
+    test("the target-level input caps at 20 even when the shrine's own level claims more", () => {
+        game.clientData = buildBuffClientData(20);
+        game.buildingLevels = { '/guild_shrines/force': 25 };
+
+        const modal = buildExchangeModal('Trade Credit');
+        game.observers['GuildPanel_exchangeModalContent'](modal);
+
+        const input = modal.querySelector('.mwi-shrine-planner input[type="number"]');
+        expect(Number(input.max)).toBe(20);
+    });
+
+    test('level 20 itself is a valid target — the cap excludes nothing in range', () => {
+        game.clientData = buildBuffClientData(20);
+        game.buildingLevels = { '/guild_shrines/force': 20 };
+
+        const modal = buildExchangeModal('Trade Credit');
+        game.observers['GuildPanel_exchangeModalContent'](modal);
+
+        const input = modal.querySelector('.mwi-shrine-planner input[type="number"]');
+        expect(Number(input.max)).toBe(20);
     });
 });

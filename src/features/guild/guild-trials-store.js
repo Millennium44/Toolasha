@@ -167,6 +167,19 @@ export async function saveTrialRecord(guildName, record) {
 
 // ─── Building bonuses ───────────────────────────────────────────────────────
 
+/**
+ * Highest level a guild building or shrine can reach.
+ *
+ * Confirmed against the in-game Buildings tab, which shows "Lv. 10 / 20" — a
+ * different ladder from the 21 trial tiers `guild-trials-math.js` encodes
+ * ({@link module:./guild-trials-math.TRIAL_MAX_TIER}), and the two must never be
+ * conflated. A level read off `guildBuildingLevelMap` above this is stale or
+ * corrupt data, not a building the confirmed 2%-per-level formula should be
+ * extrapolated past, so {@link readBuildingBonus} clamps to it rather than
+ * trusting the raw number.
+ */
+export const GUILD_BUILDING_MAX_LEVEL = 20;
+
 /** The buildings whose levels change a payout, and how their hrids are spelled */
 export const BUILDING_PATTERNS = {
     buildersHall: /buildershall/,
@@ -269,7 +282,10 @@ export function readBuildingBonus({ pattern, override = null, levelMap, detailMa
     const details = detailMap || probeBuildingDetailMap();
 
     const hrid = findBuildingHrid(levels, pattern);
-    const level = hrid ? Number(levels[hrid]) || 0 : 0;
+    // Clamped to GUILD_BUILDING_MAX_LEVEL: buildings cap at 20 in-game, so
+    // anything higher on the wire is bad data, not a level to trust or to
+    // extrapolate the 2%-per-level formula past.
+    const level = hrid ? Math.min(Number(levels[hrid]) || 0, GUILD_BUILDING_MAX_LEVEL) : 0;
 
     if (Number.isFinite(override) && override > 0) {
         return { hrid, level, bonus: override / 100, source: 'manual' };

@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Building levels cap at 20, trial tiers at 21 — and never each other
+
+- **Guild building bonuses clamp at the real level-20 cap** (the Buildings tab's "Lv. x / 20") instead of trusting and extrapolating any higher figure; the trial tier ladder keeps its separate 21 tiers (levels 100→300), and the trial badge was confirmed to never touch building tiles.
+
 ### The task board stops fighting the game
 
 - **The zone-index badge stops churning**: it removed and re-inserted its own span on every observer tick — a permanent 100ms mutation loop on React-owned task cards that also destabilized the profit rows' task keys. It now touches the DOM only when the index actually changed.
