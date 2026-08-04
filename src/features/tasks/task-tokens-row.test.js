@@ -8,9 +8,11 @@
  * progress are this tile's own and are worth holding down: a claimed task and a
  * quest that is not a random task both look like tasks from a distance.
  *
- * The other half is what happens when the Task Shop has not loaded. A token with
- * no price is not a token worth nothing, and a tile that drew a zero there would
- * be saying the board is worthless.
+ * The second half is what happens when a figure is missing. A token with no
+ * price is not a token worth nothing, and a tile that drew a zero there would be
+ * saying the board is worthless; a rate measured from one claim is not a rate at
+ * all, and the tile has to leave the line out rather than divide by the time
+ * since a single timestamp.
  */
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
@@ -23,6 +25,9 @@ const game = vi.hoisted(() => ({
     shown: 0,
     closed: 0,
     showThrows: false,
+    rates: null,
+    ratesThrows: false,
+    started: 0,
 }));
 
 vi.mock('../../utils/overlay-rows.js', () => ({
@@ -43,6 +48,18 @@ vi.mock('./task-profit-calculator.js', () => ({
     calculateTaskTokenValue: () => game.valuation,
 }));
 
+vi.mock('./task-completion-tracker.js', () => ({
+    default: {
+        initialize: () => {
+            game.started += 1;
+        },
+        rates: () => {
+            if (game.ratesThrows) throw new Error('storage is asleep');
+            return game.rates;
+        },
+    },
+}));
+
 vi.mock('./task-statistics.js', () => ({
     default: {
         get overlay() {
@@ -58,7 +75,26 @@ vi.mock('./task-statistics.js', () => ({
     },
 }));
 
-const { boardTokens } = await import('./task-tokens-row.js');
+const { boardTokens, formatRate } = await import('./task-tokens-row.js');
+
+/**
+ * A measured week.
+ * @param {Object} [overrides] - Fields to change
+ * @returns {Object} What the tracker's `rates()` returns
+ */
+function measured(overrides = {}) {
+    const week = {
+        completions: 6,
+        tokens: 24,
+        coins: 22000,
+        spanMs: 5 * 60 * 60 * 1000,
+        tokensPerHour: 4.2,
+        coinsPerHour: 3800,
+        basis: 'wall-clock',
+        ...overrides,
+    };
+    return { session: week, week, total: week };
+}
 
 /**
  * A task on the board.
@@ -96,6 +132,8 @@ describe('the task tokens tile', () => {
         game.shown = 0;
         game.closed = 0;
         game.showThrows = false;
+        game.rates = null;
+        game.ratesThrows = false;
     });
 
     test('registers, off by default', () => {
@@ -147,10 +185,65 @@ describe('the task tokens tile', () => {
         expect(container.title).toContain('Market data not loaded');
     });
 
-    test('it says outright that it is not a rate', () => {
+    test('the board figure still says outright that it is not a rate', () => {
         game.quests = [task(3)];
 
         expect(draw().title).toContain('not a rate');
+    });
+
+    test('the measured rate joins the tile once two tasks have been claimed', () => {
+        game.quests = [task(3)];
+        game.rates = measured();
+
+        const container = draw();
+        expect(container.textContent).toContain('4.2 tokens/hr');
+        expect(container.textContent).toContain('this week');
+        expect(container.title).toContain('6 tasks claimed over 5.0h');
+        expect(container.title).toContain('Wall-clock rate');
+    });
+
+    test('one claim draws no rate line, and says why', () => {
+        game.quests = [task(3)];
+        game.rates = measured({ completions: 1, tokensPerHour: null, coinsPerHour: null, spanMs: 0 });
+
+        const container = draw();
+        expect(container.textContent).not.toContain('tokens/hr');
+        expect(container.title).toContain('One task claimed in the last 7 days');
+        expect(container.title).toContain('a rate needs two');
+    });
+
+    test('no claims at all is a tile that still draws the board', () => {
+        game.quests = [task(3)];
+        game.rates = measured({ completions: 0, tokens: 0, coins: 0, tokensPerHour: null, coinsPerHour: null });
+
+        const container = draw();
+        expect(container.textContent).toContain('3');
+        expect(container.textContent).not.toContain('tokens/hr');
+        expect(container.title).toContain('No tasks claimed in the last 7 days');
+    });
+
+    test('a tracker that cannot answer costs the rate line, not the tile', () => {
+        const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+        game.quests = [task(3)];
+        game.ratesThrows = true;
+
+        const container = draw();
+        expect(container.textContent).toContain('3');
+        expect(container.textContent).not.toContain('tokens/hr');
+        expect(logged).toHaveBeenCalled();
+
+        logged.mockRestore();
+    });
+
+    test('recording starts with the module, not with the tile being switched on', () => {
+        expect(game.started).toBe(1);
+    });
+
+    test('a rate keeps a decimal while it is small and loses it when it is not', () => {
+        expect(formatRate(4.23)).toBe('4.2');
+        expect(formatRate(0)).toBe('0.0');
+        expect(formatRate(3800)).toBe('3.80K');
+        expect(formatRate(null)).toBe('—');
     });
 
     test('opening the tile shows the statistics popup', async () => {
