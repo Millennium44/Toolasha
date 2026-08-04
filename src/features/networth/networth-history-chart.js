@@ -9,6 +9,7 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
 import { networthFormatter, formatDateTime } from '../../utils/formatters.js';
+import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
 
 const RANGE_MS = {
     '24h': 24 * 60 * 60 * 1000,
@@ -150,7 +151,7 @@ class NetworthHistoryChart {
             border: 2px solid #555;
             border-radius: 8px;
             padding: 20px;
-            z-index: 100000;
+            z-index: ${PANEL_Z_CAP - 2};
             display: flex;
             flex-direction: column;
         `;
@@ -1077,7 +1078,7 @@ class NetworthHistoryChart {
             overflow-y: auto;
             font-size: 12px;
             color: #ccc;
-            z-index: 100001;
+            z-index: ${PANEL_Z_CAP - 1};
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
         `;
 
@@ -1578,7 +1579,7 @@ class NetworthHistoryChart {
 
         popup.style.cssText = `
             position: fixed;
-            z-index: 100002;
+            z-index: ${PANEL_Z_CAP};
             background: #1e1e2e;
             border: 1px solid #555;
             border-radius: 6px;

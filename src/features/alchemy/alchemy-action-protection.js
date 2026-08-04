@@ -11,6 +11,7 @@ import domObserver from '../../core/dom-observer.js';
 import storage from '../../core/storage.js';
 import actionPanelSort from '../actions/action-panel-sort.js';
 import { formatLargeNumber } from '../../utils/formatters.js';
+import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
 
 const STORAGE_KEY_PREFIX = 'alchemyProtectedCategories';
 const LOCKDOWN_MS = 3000;
@@ -472,7 +473,7 @@ class AlchemyActionProtection {
             border: 2px solid #555;
             border-radius: 8px;
             padding: 20px;
-            z-index: 100001;
+            z-index: ${PANEL_Z_CAP + 2};
             min-width: 340px;
             max-width: 500px;
             max-height: 90vh;
@@ -548,7 +549,7 @@ class AlchemyActionProtection {
         // Click outside to close
         const backdrop = document.createElement('div');
         backdrop.id = 'mwi-alchemy-protection-backdrop';
-        backdrop.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; z-index:100000;';
+        backdrop.style.cssText = `position:fixed; top:0; left:0; right:0; bottom:0; z-index:${PANEL_Z_CAP + 1};`;
         backdrop.addEventListener('click', () => this._closeConfigPopup());
 
         document.body.appendChild(backdrop);

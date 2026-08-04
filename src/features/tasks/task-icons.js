@@ -214,7 +214,7 @@ class TaskIcons {
      * Show warning notification in Tasks panel title
      */
     showSpriteWarning() {
-        const titleElement = document.querySelector('h1.TasksPanel_title__6_y-9');
+        const titleElement = document.querySelector(GAME.TASKS_PANEL_TITLE);
         if (!titleElement) {
             return;
         }
