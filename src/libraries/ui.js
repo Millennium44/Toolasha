@@ -118,6 +118,11 @@ import * as schemaCanary from '../core/schema-canary.js';
 import { consumablesPanel } from '../features/ui/consumables-panel.js';
 import { combatLevelPanel } from '../features/ui/combat-level-panel.js';
 
+// Iron Cow Farm. It composes the gathering and alchemy profit calculators,
+// both of which the market bundle already owns and hands out as globals, so
+// living here costs this bundle nothing but the panel itself.
+import ironCowFarmPanel from '../features/ironcow/ironcow-panel.js';
+
 // Export to global namespace
 const toolashaRoot = window.Toolasha || {};
 // Shared console-only debug namespace; nothing schedules these
@@ -201,6 +206,7 @@ toolashaRoot.UI = {
     schemaCanary,
     consumablesPanel,
     combatLevelPanel,
+    ironCowFarmPanel,
     combatText,
     dpsPanel,
     deathsPanel,

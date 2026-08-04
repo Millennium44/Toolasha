@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Iron Cow Farm
+
+- **New "Iron Cow Farm" panel** for cowbell-farming characters: the standard plan as a self-ticking checklist (skill levels, jewelry, house rooms read from your character; the loop stage unlocks when prerequisites are met), the starfruit → decompose → coinify loop costed on the iron cow rule that nothing is ever sold (coinify's vendor coins are the only income, decompose fees the only outflow, no catalysts), and the payoff in bells: bells/hour, bells/day, a week's projection, whether loose bells or the bag of ten is the better buy, plus low-gold-buffer, queue-slot, and offline-window warnings.
+
 ### Multi-target lab analysis gets the big swaps
 
 - **Combined forced-armor swaps now appear under All targets / Chosen targets** — the multi-fight analysis never generated them before. Same keep-gear costing note as single-fight, pooled per fight with the standard win-rate aggregation; sets that also swap the weapon only apply to loadouts holding that weapon.
