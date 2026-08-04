@@ -59,6 +59,7 @@ import {
     navigateToMarketplace,
     ensureClearAllTabsControl,
     setupMarketplaceCleanupObserver,
+    watchTabForAcquisition,
 } from '../../utils/marketplace-tabs.js';
 import { restoreGeometry, saveGeometry, saveOpenState, reopenIfLeftOpen } from '../../utils/panel-geometry.js';
 import { formatWithSeparator, formatKMB, parseKMB } from '../../utils/formatters.js';
@@ -271,6 +272,20 @@ async function openPlanInMarketplace(picks) {
         );
         container.appendChild(tab);
         marketPlanTabs.push(tab);
+
+        // Retire the tab on its own once the item is in inventory, instead of
+        // leaving "missing: 1" pinned forever — see watchTabForAcquisition for
+        // the enhancement-level matching this relies on.
+        watchTabForAcquisition(tab, {
+            itemHrid: item.itemHrid,
+            enhancementLevel: item.enhancementLevel,
+            requiredCount: 1,
+            itemName: item.name,
+            onRetire: () => {
+                const idx = marketPlanTabs.indexOf(tab);
+                if (idx !== -1) marketPlanTabs.splice(idx, 1);
+            },
+        });
     }
 
     ensureClearAllTabsControl(container, reference, () => {

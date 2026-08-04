@@ -4,7 +4,29 @@
  * Used by missing materials features (actions, houses, etc.)
  */
 
+import dataManager from '../core/data-manager.js';
+import webSocketHook from '../core/websocket.js';
 import { formatWithSeparator } from './formatters.js';
+
+/**
+ * Tabs currently watching their item for acquisition, keyed by the tab element,
+ * value is the unsubscribe function returned by `webSocketHook.on('*', …)`.
+ * A tab in here is a tab `watchTabForAcquisition` is still tracking; removing it
+ * from the map is how every retirement path — auto, manual dismiss, "× All",
+ * marketplace close — agrees the watch is over.
+ */
+const acquisitionWatchers = new Map();
+
+/**
+ * The "show a ✓ for a moment, then remove the tab" timeout for a tab that just
+ * got retired, keyed by tab. Tracked separately from `acquisitionWatchers` so a
+ * dismiss that lands during the brief ✓ window can cancel the pending removal
+ * and `onRetire` call instead of racing them.
+ */
+const pendingRetireTimeouts = new Map();
+
+/** How long the ✓ badge stays up before the tab is actually removed. */
+const ACQUIRED_BADGE_DELAY_MS = 900;
 
 /**
  * Create a custom material tab for the marketplace
@@ -153,6 +175,7 @@ function attachDismissButton(tab, material, onDismiss) {
     dismissBtn.addEventListener('click', (e) => {
         e.preventDefault();
         e.stopPropagation();
+        unwatchTabAcquisition(tab);
         if (onDismiss) onDismiss(material);
         tab.remove();
     });
@@ -252,7 +275,10 @@ export function visibleTabsContainer(contains = 'My Listings') {
  */
 export function removeMaterialTabs() {
     const customTabs = document.querySelectorAll('[data-mwi-custom-tab="true"]');
-    customTabs.forEach((tab) => tab.remove());
+    customTabs.forEach((tab) => {
+        unwatchTabAcquisition(tab);
+        tab.remove();
+    });
 }
 
 /**
@@ -383,4 +409,170 @@ export function navigateToMarketplace(itemHrid, enhancementLevel = 0) {
         game.handleGoToMarketplace(itemHrid, enhancementLevel);
     }
     // Silently fail if game API unavailable - feature still provides value without auto-navigation
+}
+
+/**
+ * How many of `itemHrid` at `enhancementLevel` currently sit in inventory.
+ *
+ * `characterItems` rows carry an `enhancementLevel` field for anything that can
+ * be enhanced (0/absent otherwise), the same field `material-calculator.js`
+ * checks to tell raw stock apart from a copy the player already improved. That
+ * makes an exact match possible here too — a pinned "+5" tab is only retired by
+ * a +5 in inventory, not by three +0 copies sitting next to it.
+ *
+ * The one gap: if a future inventory row ever omitted `enhancementLevel`
+ * entirely for an item that actually has one, this would read it as level 0 and
+ * could retire a tab against the wrong copy. Nothing observed in
+ * `data-manager.js` does that today, so this is a documented risk, not a known bug.
+ *
+ * @param {string} itemHrid - Item HRID to count
+ * @param {number} enhancementLevel - Enhancement level to match exactly (0 for unenhanced)
+ * @returns {number} Total count in inventory
+ */
+function currentAcquiredCount(itemHrid, enhancementLevel) {
+    const inventory = dataManager.getInventory?.() || [];
+    return inventory
+        .filter((item) => item.itemHrid === itemHrid && (item.enhancementLevel || 0) === (enhancementLevel || 0))
+        .reduce((sum, item) => sum + (item.count || 0), 0);
+}
+
+/**
+ * Swap a tab's badge to a brief "✓ Acquired" before it is removed, so retiring
+ * a tab reads as "got it" rather than as the tab silently vanishing.
+ * @param {HTMLElement} tab - Tab element
+ * @param {string} itemName - Display name to keep on the badge
+ */
+function showAcquiredBadge(tab, itemName) {
+    const badgeSpan = tab.querySelector('[class*="TabsComponent_badge"]');
+    if (badgeSpan) {
+        badgeSpan.innerHTML = `
+            <div style="text-align: center;">
+                <div>${itemName}</div>
+                <div style="font-size: 0.75em; color: #4ade80;">
+                    ✓ Acquired
+                </div>
+            </div>
+        `;
+    }
+    tab.style.opacity = '1';
+    tab.style.cursor = 'default';
+}
+
+/**
+ * Stop watching a tab for acquisition: cancel any pending retirement and drop
+ * the websocket subscription. Safe to call on a tab that was never watched.
+ *
+ * Called automatically by `removeMaterialTabs` and the per-tab dismiss (×)
+ * button, so callers of `watchTabForAcquisition` do not need to remember to
+ * unwind it themselves on every removal path — only on paths that bypass both
+ * (there are none in this module).
+ *
+ * @param {HTMLElement} tab - Tab element
+ */
+function unwatchTabAcquisition(tab) {
+    const pendingTimeout = pendingRetireTimeouts.get(tab);
+    if (pendingTimeout) {
+        clearTimeout(pendingTimeout);
+        pendingRetireTimeouts.delete(tab);
+    }
+
+    const unsubscribe = acquisitionWatchers.get(tab);
+    if (unsubscribe) {
+        unsubscribe();
+        acquisitionWatchers.delete(tab);
+    }
+}
+
+/**
+ * Auto-retire a pinned material tab once its item shows up in inventory.
+ *
+ * Reuses the exact mechanism `missing-materials-button.js` already uses to
+ * notice inventory changes — a `webSocketHook.on('*', …)` listener filtered to
+ * messages shaped like an inventory update (`type` containing "item",
+ * "inventory", or "market", or a top-level `inventory`/`characterItems` field).
+ * That filter is intentionally identical to the one in `missing-materials-button.js`
+ * rather than a second guess at which message types matter — see that file's
+ * `setupInventoryListener` for the original.
+ *
+ * @param {HTMLElement} tab - Tab element, e.g. one made by `createMaterialTab`
+ * @param {Object} options
+ * @param {string} options.itemHrid - Item HRID to watch for
+ * @param {number} [options.enhancementLevel=0] - Enhancement level to match exactly
+ *   (see `currentAcquiredCount` for how/when that match is exact)
+ * @param {number} [options.requiredCount=1] - Quantity that counts as "acquired"
+ * @param {string} [options.itemName] - Display name for badge updates; falls back to
+ *   the game's item name lookup, then to the HRID's last path segment
+ * @param {Function} [options.onRetire] - Called with `tab` right after it is removed
+ *   from the DOM because the item was acquired. Not called on manual dismiss,
+ *   "× All", or marketplace close — those retire the watch without this callback.
+ * @returns {Function} Unwatch function. Also invoked automatically by the tab's own
+ *   dismiss button, `removeMaterialTabs`, and therefore marketplace-close cleanup
+ *   (both of which route through `removeMaterialTabs`).
+ */
+export function watchTabForAcquisition(tab, options) {
+    const noop = () => {};
+    if (!tab || !options?.itemHrid) return noop;
+
+    const { itemHrid, enhancementLevel = 0, requiredCount = 1, onRetire } = options;
+
+    // Re-registering (e.g. the same tab watched twice) replaces the old watch
+    // rather than stacking a second subscription on top of it.
+    unwatchTabAcquisition(tab);
+
+    const itemName =
+        options.itemName || dataManager.getItemDetails?.(itemHrid)?.name || itemHrid.split('/').pop() || itemHrid;
+
+    const retire = () => {
+        showAcquiredBadge(tab, itemName);
+        // Stop listening immediately — only the DOM removal + onRetire are delayed,
+        // so a second inventory event during the ✓ window can't retire it twice.
+        const unsubscribe = acquisitionWatchers.get(tab);
+        if (unsubscribe) {
+            unsubscribe();
+            acquisitionWatchers.delete(tab);
+        }
+
+        const retireTimeout = setTimeout(() => {
+            pendingRetireTimeouts.delete(tab);
+            tab.remove();
+            if (onRetire) onRetire(tab);
+        }, ACQUIRED_BADGE_DELAY_MS);
+        pendingRetireTimeouts.set(tab, retireTimeout);
+    };
+
+    const check = () => {
+        const acquired = currentAcquiredCount(itemHrid, enhancementLevel);
+        if (acquired >= requiredCount) {
+            retire();
+        } else {
+            updateTabBadge(tab, {
+                itemName,
+                missing: requiredCount - acquired,
+                required: requiredCount,
+                isTradeable: true,
+                queued: 0,
+            });
+        }
+    };
+
+    const handler = (data) => {
+        if (
+            data.type?.includes('item') ||
+            data.type?.includes('inventory') ||
+            data.type?.includes('market') ||
+            data.inventory ||
+            data.characterItems
+        ) {
+            check();
+        }
+    };
+
+    webSocketHook.on('*', handler);
+    acquisitionWatchers.set(tab, () => webSocketHook.off('*', handler));
+
+    // Cover the case where the item was already sitting in inventory before
+    // this tab started watching (e.g. a stale plan reopened after buying).
+    check();
+
+    return () => unwatchTabAcquisition(tab);
 }

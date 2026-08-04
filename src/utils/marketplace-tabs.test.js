@@ -2,7 +2,21 @@
 /**
  * Tests for Marketplace Custom Tabs Utility
  */
-import { describe, test, expect, vi, beforeEach } from 'vitest';
+import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
+
+const inventory = vi.hoisted(() => ({ items: [] }));
+
+// watchTabForAcquisition reads inventory through dataManager, same as
+// missing-materials-button.js does — mocked here so tests control exactly
+// what's "owned" without a real character session.
+vi.mock('../core/data-manager.js', () => ({
+    default: {
+        getInventory: () => inventory.items,
+        getItemDetails: (itemHrid) => ({ name: itemHrid.split('/').pop() }),
+    },
+}));
+
+import webSocketHook from '../core/websocket.js';
 import {
     createMaterialTab,
     visibleTabsContainer,
@@ -12,7 +26,14 @@ import {
     navigateToMarketplace,
     createClearAllTabsControl,
     ensureClearAllTabsControl,
+    watchTabForAcquisition,
 } from './marketplace-tabs.js';
+
+/** Fire the exact wildcard path watchTabForAcquisition listens on — the same
+ * mechanism missing-materials-button.js's setupInventoryListener triggers off. */
+function sendInventoryUpdate() {
+    webSocketHook.processMessage(JSON.stringify({ type: 'items_updated' }));
+}
 
 function buildReferenceTab() {
     const tab = document.createElement('div');
@@ -322,5 +343,219 @@ describe('navigateToMarketplace', () => {
         navigateToMarketplace('/items/plank', 5);
         expect(handle).toHaveBeenCalledWith('/items/plank', 5);
         document.body.innerHTML = '';
+    });
+});
+
+describe('watchTabForAcquisition', () => {
+    beforeEach(() => {
+        document.body.innerHTML = '';
+        inventory.items = [];
+        vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+        // Sweep any tab/watcher a test left behind so its webSocketHook
+        // subscription doesn't leak into the next test in this file.
+        removeMaterialTabs();
+        vi.clearAllTimers();
+        vi.useRealTimers();
+    });
+
+    function buildTab(missing = 1) {
+        const ref = buildReferenceTab();
+        const tab = createMaterialTab(
+            { itemHrid: '/items/plank', itemName: 'plank', missing, required: 5, isTradeable: true },
+            ref,
+            () => {}
+        );
+        document.body.appendChild(tab);
+        return tab;
+    }
+
+    test('does nothing and returns a no-op unwatch without an itemHrid', () => {
+        const tab = buildTab();
+        const unwatch = watchTabForAcquisition(tab, { requiredCount: 1 });
+        expect(() => unwatch()).not.toThrow();
+    });
+
+    test('a partial acquisition updates the missing-count badge, without retiring the tab', () => {
+        inventory.items = [{ itemHrid: '/items/plank', enhancementLevel: 0, count: 3 }];
+        const tab = buildTab();
+
+        watchTabForAcquisition(tab, { itemHrid: '/items/plank', requiredCount: 5, itemName: 'plank' });
+
+        expect(tab.querySelector('[class*="TabsComponent_badge"]').innerHTML).toContain('Missing: 2');
+        expect(document.body.contains(tab)).toBe(true);
+
+        inventory.items = [{ itemHrid: '/items/plank', enhancementLevel: 0, count: 4 }];
+        sendInventoryUpdate();
+
+        expect(tab.querySelector('[class*="TabsComponent_badge"]').innerHTML).toContain('Missing: 1');
+        expect(document.body.contains(tab)).toBe(true);
+    });
+
+    test('reaching the required count shows a brief ✓ then retires the tab and fires onRetire', () => {
+        inventory.items = [{ itemHrid: '/items/plank', enhancementLevel: 0, count: 0 }];
+        const tab = buildTab();
+        const onRetire = vi.fn();
+
+        watchTabForAcquisition(tab, {
+            itemHrid: '/items/plank',
+            requiredCount: 1,
+            itemName: 'plank',
+            onRetire,
+        });
+
+        inventory.items = [{ itemHrid: '/items/plank', enhancementLevel: 0, count: 1 }];
+        sendInventoryUpdate();
+
+        // Still in the DOM, showing the acquired badge, before the delay elapses
+        expect(document.body.contains(tab)).toBe(true);
+        expect(tab.querySelector('[class*="TabsComponent_badge"]').innerHTML).toContain('Acquired');
+        expect(onRetire).not.toHaveBeenCalled();
+
+        vi.runAllTimers();
+
+        expect(document.body.contains(tab)).toBe(false);
+        expect(onRetire).toHaveBeenCalledWith(tab);
+    });
+
+    test('a second inventory event right after acquisition does not fire onRetire twice', () => {
+        inventory.items = [{ itemHrid: '/items/plank', enhancementLevel: 0, count: 0 }];
+        const tab = buildTab();
+        const onRetire = vi.fn();
+
+        watchTabForAcquisition(tab, { itemHrid: '/items/plank', requiredCount: 1, itemName: 'plank', onRetire });
+
+        inventory.items = [{ itemHrid: '/items/plank', enhancementLevel: 0, count: 1 }];
+        // The first event retires the watch (unsubscribing synchronously before it
+        // returns), so this second one has nothing left to fire it a second time.
+        sendInventoryUpdate();
+        sendInventoryUpdate();
+
+        vi.runAllTimers();
+
+        expect(onRetire).toHaveBeenCalledTimes(1);
+    });
+
+    test('matches enhancement level exactly, ignoring stock at a different level', () => {
+        inventory.items = [{ itemHrid: '/items/sword', enhancementLevel: 3, count: 5 }];
+        const tab = buildTab();
+        const onRetire = vi.fn();
+
+        watchTabForAcquisition(tab, {
+            itemHrid: '/items/sword',
+            enhancementLevel: 5,
+            requiredCount: 1,
+            itemName: 'sword',
+            onRetire,
+        });
+        sendInventoryUpdate();
+        vi.runAllTimers();
+
+        expect(onRetire).not.toHaveBeenCalled();
+        expect(document.body.contains(tab)).toBe(true);
+
+        inventory.items.push({ itemHrid: '/items/sword', enhancementLevel: 5, count: 1 });
+        sendInventoryUpdate();
+        vi.runAllTimers();
+
+        expect(onRetire).toHaveBeenCalledWith(tab);
+    });
+
+    test('manual dismissal unsubscribes — no retire fires after the tab is dismissed by hand', () => {
+        inventory.items = [{ itemHrid: '/items/plank', enhancementLevel: 0, count: 0 }];
+        const tab = buildTab();
+        const onRetire = vi.fn();
+
+        watchTabForAcquisition(tab, { itemHrid: '/items/plank', requiredCount: 1, itemName: 'plank', onRetire });
+
+        tab.querySelector('[data-mwi-tab-dismiss="true"]').dispatchEvent(
+            new MouseEvent('click', { bubbles: true, cancelable: true })
+        );
+        expect(document.body.contains(tab)).toBe(false);
+
+        inventory.items = [{ itemHrid: '/items/plank', enhancementLevel: 0, count: 1 }];
+        sendInventoryUpdate();
+        vi.runAllTimers();
+
+        expect(onRetire).not.toHaveBeenCalled();
+    });
+
+    test('removeMaterialTabs (the marketplace-close cleanup path) unsubscribes every watched tab', () => {
+        inventory.items = [{ itemHrid: '/items/plank', enhancementLevel: 0, count: 0 }];
+        const tab = buildTab();
+        const onRetire = vi.fn();
+
+        watchTabForAcquisition(tab, { itemHrid: '/items/plank', requiredCount: 1, itemName: 'plank', onRetire });
+
+        removeMaterialTabs();
+        expect(document.body.contains(tab)).toBe(false);
+
+        inventory.items = [{ itemHrid: '/items/plank', enhancementLevel: 0, count: 1 }];
+        sendInventoryUpdate();
+        vi.runAllTimers();
+
+        expect(onRetire).not.toHaveBeenCalled();
+    });
+
+    test('the unwatch function returned by watchTabForAcquisition stops the watch on its own', () => {
+        inventory.items = [{ itemHrid: '/items/plank', enhancementLevel: 0, count: 0 }];
+        const tab = buildTab();
+        const onRetire = vi.fn();
+
+        const unwatch = watchTabForAcquisition(tab, {
+            itemHrid: '/items/plank',
+            requiredCount: 1,
+            itemName: 'plank',
+            onRetire,
+        });
+        unwatch();
+
+        inventory.items = [{ itemHrid: '/items/plank', enhancementLevel: 0, count: 1 }];
+        sendInventoryUpdate();
+        vi.runAllTimers();
+
+        expect(onRetire).not.toHaveBeenCalled();
+    });
+
+    test('re-registering the same tab replaces the previous watch rather than stacking a second one', () => {
+        inventory.items = [{ itemHrid: '/items/plank', enhancementLevel: 0, count: 0 }];
+        const tab = buildTab();
+        const firstRetire = vi.fn();
+        const secondRetire = vi.fn();
+
+        watchTabForAcquisition(tab, {
+            itemHrid: '/items/plank',
+            requiredCount: 1,
+            itemName: 'plank',
+            onRetire: firstRetire,
+        });
+        watchTabForAcquisition(tab, {
+            itemHrid: '/items/sword',
+            requiredCount: 1,
+            itemName: 'sword',
+            onRetire: secondRetire,
+        });
+
+        inventory.items = [{ itemHrid: '/items/plank', enhancementLevel: 0, count: 1 }];
+        sendInventoryUpdate();
+        vi.runAllTimers();
+
+        // Only watching /items/sword now, so plank showing up retires nothing
+        expect(firstRetire).not.toHaveBeenCalled();
+        expect(secondRetire).not.toHaveBeenCalled();
+    });
+
+    test('retires immediately when the item is already in inventory at registration time', () => {
+        inventory.items = [{ itemHrid: '/items/plank', enhancementLevel: 0, count: 5 }];
+        const tab = buildTab();
+        const onRetire = vi.fn();
+
+        watchTabForAcquisition(tab, { itemHrid: '/items/plank', requiredCount: 1, itemName: 'plank', onRetire });
+        vi.runAllTimers();
+
+        expect(document.body.contains(tab)).toBe(false);
+        expect(onRetire).toHaveBeenCalledWith(tab);
     });
 });
