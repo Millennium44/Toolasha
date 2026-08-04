@@ -65,7 +65,8 @@ class PFormancePanel {
             top: '80px',
             right: '80px',
             zIndex: String(config.Z_FLOATING_PANEL),
-            width: '380px',
+            // Clamped so the first open on a phone is not wider than the screen
+            width: 'min(380px, 92vw)',
             background: COLORS.background,
             border: `1px solid ${COLORS.border}`,
             borderRadius: '8px',

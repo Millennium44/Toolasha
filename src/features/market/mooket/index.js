@@ -170,7 +170,11 @@ class MarketHistoryPanel {
             min-width: 260px; min-height: 60px;
         `;
 
-        panel.appendChild(this.buildToolbar());
+        // The toolbar is the one region a finger can drag from: the chip row
+        // has to keep touch scrolling, and the canvas keeps its own gestures
+        const toolbar = this.buildToolbar();
+        toolbar.style.touchAction = 'none';
+        panel.appendChild(toolbar);
 
         this.chipRow = document.createElement('div');
         this.chipRow.style.cssText =
@@ -341,7 +345,9 @@ class MarketHistoryPanel {
      * @param {HTMLElement} panel - The panel
      */
     makeDraggable(panel) {
-        panel.addEventListener('mousedown', (e) => {
+        // Pointer events so a finger works too; mousedown never fires on a
+        // touchscreen
+        panel.addEventListener('pointerdown', (e) => {
             if (this.prefs.locked) return;
             if (e.button !== 0 || e.target.closest('button, select, canvas, input')) return;
             // The browser's own resize handle lives in the bottom-right corner
@@ -359,8 +365,9 @@ class MarketHistoryPanel {
                 panel.style.top = `${Math.min(Math.max(0, move.clientY - grabY), maxTop)}px`;
             };
             const onUp = () => {
-                document.removeEventListener('mousemove', onMove);
-                document.removeEventListener('mouseup', onUp);
+                document.removeEventListener('pointermove', onMove);
+                document.removeEventListener('pointerup', onUp);
+                document.removeEventListener('pointercancel', onUp);
                 const final = panel.getBoundingClientRect();
                 this.prefs.x = final.left;
                 this.prefs.y = final.top;
@@ -369,8 +376,9 @@ class MarketHistoryPanel {
                 this.savePrefs();
             };
 
-            document.addEventListener('mousemove', onMove);
-            document.addEventListener('mouseup', onUp);
+            document.addEventListener('pointermove', onMove);
+            document.addEventListener('pointerup', onUp);
+            document.addEventListener('pointercancel', onUp);
         });
     }
 

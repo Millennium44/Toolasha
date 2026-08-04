@@ -255,8 +255,9 @@ class ConsumablesPanel {
             top: '110px',
             left: '70px',
             zIndex: String(config.Z_FLOATING_PANEL),
-            width: `${DEFAULT_PANEL.width}px`,
-            height: `${DEFAULT_PANEL.height}px`,
+            // Clamped so the first open on a phone is not wider than the screen
+            width: `min(${DEFAULT_PANEL.width}px, 92vw)`,
+            height: `min(${DEFAULT_PANEL.height}px, 80vh)`,
             background: COLORS.background,
             border: `1px solid ${COLORS.border}`,
             borderRadius: '8px',
@@ -295,7 +296,10 @@ class ConsumablesPanel {
 
         this._render();
         // Stock and rates both move as you play, and prices move under them
-        this.refreshId = setInterval(() => this._render(), REFRESH_MS);
+        this.refreshId = setInterval(() => {
+            if (document.hidden) return;
+            this._render();
+        }, REFRESH_MS);
     }
 
     _header() {

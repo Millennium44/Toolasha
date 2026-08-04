@@ -1085,27 +1085,34 @@ class LabyrinthRoomLogs {
     }
 
     setupDrag(panel, header) {
-        const onMouseDown = (e) => {
+        // Pointer events so a finger works too; mousedown never fires on a
+        // touchscreen, and touch-action:none stops the browser claiming the
+        // gesture for scrolling
+        header.style.touchAction = 'none';
+
+        const onPointerDown = (e) => {
             if (e.target.tagName === 'BUTTON') return;
             e.preventDefault();
             const rect = panel.getBoundingClientRect();
             const offsetX = e.clientX - rect.left;
             const offsetY = e.clientY - rect.top;
 
-            const onMouseMove = (moveEvent) => {
+            const onPointerMove = (moveEvent) => {
                 panel.style.left = `${moveEvent.clientX - offsetX}px`;
                 panel.style.top = `${moveEvent.clientY - offsetY}px`;
                 panel.style.right = 'auto';
             };
-            const onMouseUp = () => {
-                document.removeEventListener('mousemove', onMouseMove);
-                document.removeEventListener('mouseup', onMouseUp);
+            const onPointerUp = () => {
+                document.removeEventListener('pointermove', onPointerMove);
+                document.removeEventListener('pointerup', onPointerUp);
+                document.removeEventListener('pointercancel', onPointerUp);
             };
             // Attach document listeners only for the duration of the drag
-            document.addEventListener('mousemove', onMouseMove);
-            document.addEventListener('mouseup', onMouseUp);
+            document.addEventListener('pointermove', onPointerMove);
+            document.addEventListener('pointerup', onPointerUp);
+            document.addEventListener('pointercancel', onPointerUp);
         };
-        header.addEventListener('mousedown', onMouseDown);
+        header.addEventListener('pointerdown', onPointerDown);
     }
 
     renderIfOpen() {

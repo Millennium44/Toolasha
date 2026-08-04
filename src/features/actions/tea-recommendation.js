@@ -1138,7 +1138,12 @@ class TeaRecommendation {
         let hasDragged = false;
         let startX, startY, initialX, initialY;
 
-        handle.addEventListener('mousedown', (e) => {
+        // Pointer events so a finger works too; mousedown never fires on a
+        // touchscreen, and touch-action:none stops the browser claiming the
+        // gesture for scrolling
+        handle.style.touchAction = 'none';
+
+        handle.addEventListener('pointerdown', (e) => {
             isDragging = true;
             hasDragged = false;
             startX = e.clientX;
@@ -1149,7 +1154,7 @@ class TeaRecommendation {
             e.preventDefault();
         });
 
-        const onMouseMove = (e) => {
+        const onPointerMove = (e) => {
             if (!isDragging) return;
 
             hasDragged = true;
@@ -1160,7 +1165,7 @@ class TeaRecommendation {
             element.style.top = `${initialY + dy}px`;
         };
 
-        const onMouseUp = () => {
+        const onPointerUp = () => {
             if (isDragging) {
                 isDragging = false;
                 handle.style.cursor = 'grab';
@@ -1175,12 +1180,14 @@ class TeaRecommendation {
             }
         };
 
-        document.addEventListener('mousemove', onMouseMove);
-        document.addEventListener('mouseup', onMouseUp);
+        document.addEventListener('pointermove', onPointerMove);
+        document.addEventListener('pointerup', onPointerUp);
+        document.addEventListener('pointercancel', onPointerUp);
 
         this.dragCleanup = () => {
-            document.removeEventListener('mousemove', onMouseMove);
-            document.removeEventListener('mouseup', onMouseUp);
+            document.removeEventListener('pointermove', onPointerMove);
+            document.removeEventListener('pointerup', onPointerUp);
+            document.removeEventListener('pointercancel', onPointerUp);
             this.dragCleanup = null;
         };
     }

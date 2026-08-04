@@ -248,11 +248,11 @@ class CombatSimUI {
             background: rgba(10, 10, 20, 0.97);
             border: 2px solid ${ACCENT_BORDER};
             border-radius: 10px;
-            width: 600px;
-            height: 600px;
-            min-width: 400px;
+            width: min(600px, 92vw);
+            height: min(600px, 80vh);
+            min-width: min(400px, 92vw);
             min-height: 300px;
-            max-width: 90vw;
+            max-width: 92vw;
             max-height: 90vh;
             display: none;
             flex-direction: column;

@@ -21,6 +21,7 @@ import networthHistory from './networth-history.js';
 import networthHistoryChart from './networth-history-chart.js';
 import { initExclusions } from './networth-exclusions.js';
 import networthExclusionPopup from './networth-exclusion-popup.js';
+import { terminateItemValueWorkerPool } from '../../utils/networth-worker-manager.js';
 
 class NetworthFeature {
     constructor() {
@@ -233,6 +234,10 @@ class NetworthFeature {
 
         // Clear the enhancement cost cache (character-specific)
         networthCache.clear();
+
+        // The pool recreates itself on the next batch; idle workers should not
+        // outlive the feature that spawned them
+        terminateItemValueWorkerPool();
 
         this.currentData = null;
         this.isActive = false;

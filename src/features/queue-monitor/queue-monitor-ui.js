@@ -148,7 +148,12 @@ class QueueMonitorUI {
      * @param {HTMLElement} header
      */
     _setupDrag(header) {
-        const onMouseDown = (e) => {
+        // Pointer events so a finger works too; mousedown never fires on a
+        // touchscreen, and touch-action:none stops the browser claiming the
+        // gesture for scrolling
+        header.style.touchAction = 'none';
+
+        const onPointerDown = (e) => {
             if (e.target.tagName === 'BUTTON') return;
             this.isDragging = true;
             this.dragOffset.x = e.clientX - this.panel.getBoundingClientRect().left;
@@ -157,11 +162,12 @@ class QueueMonitorUI {
             e.preventDefault();
 
             // Attach document listeners only for the duration of the drag
-            document.addEventListener('mousemove', onMouseMove);
-            document.addEventListener('mouseup', onMouseUp);
+            document.addEventListener('pointermove', onPointerMove);
+            document.addEventListener('pointerup', onPointerUp);
+            document.addEventListener('pointercancel', onPointerUp);
         };
 
-        const onMouseMove = (e) => {
+        const onPointerMove = (e) => {
             if (!this.isDragging) return;
             const x = e.clientX - this.dragOffset.x;
             const y = e.clientY - this.dragOffset.y;
@@ -171,16 +177,17 @@ class QueueMonitorUI {
             this.panel.style.bottom = 'auto';
         };
 
-        const onMouseUp = () => {
+        const onPointerUp = () => {
             if (this.isDragging) {
                 this.isDragging = false;
                 header.style.cursor = 'grab';
             }
-            document.removeEventListener('mousemove', onMouseMove);
-            document.removeEventListener('mouseup', onMouseUp);
+            document.removeEventListener('pointermove', onPointerMove);
+            document.removeEventListener('pointerup', onPointerUp);
+            document.removeEventListener('pointercancel', onPointerUp);
         };
 
-        header.addEventListener('mousedown', onMouseDown);
+        header.addEventListener('pointerdown', onPointerDown);
     }
 
     /**

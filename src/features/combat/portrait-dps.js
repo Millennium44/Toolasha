@@ -177,11 +177,20 @@ class PortraitDps {
         // Two triggers, and both are needed. The observer catches the panel
         // being rebuilt — which is when the meters are lost — and the timer
         // keeps the figures moving between rebuilds.
-        this.observer = new MutationObserver(() => this._draw());
+        //
+        // Coalesced to one draw per frame: the observer watches the whole app
+        // (the battle panel comes and goes, so there is no stable element to
+        // scope to), and a busy game tick fires it dozens of times over.
+        this.observer = new MutationObserver(() => this._scheduleDraw());
         const root = document.getElementById('root') || document.body;
         this.observer.observe(root, { childList: true, subtree: true });
 
-        this.timers.registerInterval(setInterval(() => this._draw(), REFRESH_MS));
+        this.timers.registerInterval(
+            setInterval(() => {
+                if (document.hidden) return;
+                this._draw();
+            }, REFRESH_MS)
+        );
         this._draw();
     }
 
@@ -189,8 +198,21 @@ class PortraitDps {
         this.observer?.disconnect();
         this.observer = null;
         this.timers.clearAll();
+        if (this._drawScheduled) {
+            cancelAnimationFrame(this._drawScheduled);
+            this._drawScheduled = null;
+        }
         for (const meter of document.querySelectorAll(`[${MARK}]`)) meter.remove();
         this.isInitialized = false;
+    }
+
+    /** At most one redraw per frame, however many mutations asked for it */
+    _scheduleDraw() {
+        if (this._drawScheduled) return;
+        this._drawScheduled = requestAnimationFrame(() => {
+            this._drawScheduled = null;
+            this._draw();
+        });
     }
 
     /** Put a meter on every portrait, and a rate on every monster */

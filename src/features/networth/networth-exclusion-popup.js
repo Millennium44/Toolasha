@@ -658,7 +658,12 @@ class NetworthExclusionPopup {
     // ─── Drag ────────────────────────────────────────────────────
 
     _setupDragging(header) {
-        header.addEventListener('mousedown', (e) => {
+        // Pointer events so a finger works too; mousedown never fires on a
+        // touchscreen, and touch-action:none stops the browser claiming the
+        // gesture for scrolling
+        header.style.touchAction = 'none';
+
+        header.addEventListener('pointerdown', (e) => {
             if (e.target.tagName === 'BUTTON') return;
             bringPanelToFront(this.container);
             this.isDragging = true;
@@ -688,8 +693,9 @@ class NetworthExclusionPopup {
             header.style.cursor = 'grab';
         };
 
-        document.addEventListener('mousemove', this.dragMoveHandler);
-        document.addEventListener('mouseup', this.dragUpHandler);
+        document.addEventListener('pointermove', this.dragMoveHandler);
+        document.addEventListener('pointerup', this.dragUpHandler);
+        document.addEventListener('pointercancel', this.dragUpHandler);
     }
 
     _setupClickOutside() {
@@ -704,11 +710,12 @@ class NetworthExclusionPopup {
     _teardown() {
         clearTimeout(this.searchTimeout);
         if (this.dragMoveHandler) {
-            document.removeEventListener('mousemove', this.dragMoveHandler);
+            document.removeEventListener('pointermove', this.dragMoveHandler);
             this.dragMoveHandler = null;
         }
         if (this.dragUpHandler) {
-            document.removeEventListener('mouseup', this.dragUpHandler);
+            document.removeEventListener('pointerup', this.dragUpHandler);
+            document.removeEventListener('pointercancel', this.dragUpHandler);
             this.dragUpHandler = null;
         }
         if (this.clickOutsideHandler) {

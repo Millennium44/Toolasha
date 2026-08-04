@@ -9,7 +9,7 @@ import dataManager from '../../core/data-manager.js';
 import { calculateDungeonTokenValue } from '../../utils/token-valuation.js';
 import { getItemPrice } from '../../utils/market-data.js';
 import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
-import { calculateEVBatch } from '../../utils/ev-worker-manager.js';
+import { calculateEVBatch, terminateEVWorkerPool } from '../../utils/ev-worker-manager.js';
 
 /**
  * ExpectedValueCalculator class handles EV calculations for openable containers
@@ -423,6 +423,10 @@ class ExpectedValueCalculator {
 
         this.containerCache.clear();
         this.isInitialized = false;
+
+        // The pool recreates itself on the next batch; idle workers should not
+        // outlive the feature that spawned them
+        terminateEVWorkerPool();
     }
 
     disable() {

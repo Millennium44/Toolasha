@@ -259,8 +259,9 @@ class CombatPanel {
             top: '160px',
             left: '150px',
             zIndex: String(config.Z_FLOATING_PANEL),
-            width: `${this.size.width}px`,
-            height: `${this.size.height}px`,
+            // Clamped so the first open on a phone is not wider than the screen
+            width: `min(${this.size.width}px, 92vw)`,
+            height: `min(${this.size.height}px, 80vh)`,
             background: COLORS.background,
             border: `1px solid ${COLORS.border}`,
             borderRadius: '8px',
@@ -346,7 +347,10 @@ class CombatPanel {
         }
 
         this._render();
-        this.refreshId = setInterval(() => this._render(), REFRESH_MS);
+        this.refreshId = setInterval(() => {
+            if (document.hidden) return;
+            this._render();
+        }, REFRESH_MS);
     }
 
     /** Redraw now rather than on the next tick, after a control is pressed */

@@ -125,6 +125,11 @@ const CSS = `
     .${PINNED_CLASS} .${PIN_CLASS} { opacity: 1; color: #ffcf5c; }
     .${PINNED_CLASS} { outline: 1px solid rgba(255, 207, 92, 0.55); outline-offset: -1px; border-radius: 4px; }
     .${TILE_CLASS} { position: relative; }
+    /* No hover on a touchscreen: pins hidden behind it would simply not exist.
+       Always visible there, and sized for a finger rather than a cursor. */
+    @media (pointer: coarse) {
+        .${PIN_CLASS} { opacity: 1; width: 32px; height: 32px; font-size: 14px; }
+    }
 `;
 
 class AlchemyItemPins {

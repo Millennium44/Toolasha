@@ -6,6 +6,18 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The mobile sweep, part two: every panel, every drag, every timer
+
+The remaining mechanical fixes from the four-agent mobile audit, in one pass:
+
+- **Every remaining drag works by finger.** The thirteen panels still listening for mouse events — combat score abilities, queue monitor, networth exclusions, enhancement tracker, XP/h calculator, scroll simulator, mention popup, Mooket chart, labyrinth room logs, tea recommendation, bulk sell, and the overlay panel's dock bar, tile drag, and tile resize — now use pointer events with `touch-action: none` on their handles and release cleanly when a touch is interrupted. The Mooket panel drags by its toolbar on touch, so its chip row keeps scrolling.
+- **No panel opens wider than the screen.** First-open sizes are clamped (`min(Npx, 92vw)` wide, `min(Npx, 80vh)` tall) across fourteen panels — consumables, combat levels, treasure, the shared combat panels, combat sim, watchlist, house affordability, ability books, the overlay panel, mention popup, PFormance, enhancement tracker, custom-tabs modals, and the networth 24h breakdown, which also pulls itself back from the right edge instead of overflowing past it.
+- **The dungeon tracker fits a phone.** Its 480px minimum width — which pushed half the panel permanently off a 390px screen — is clamped to the viewport, a saved drag position from a wider window is pulled back on screen, and the content area scrolls within the window height instead of growing past it. The keys list also stops rebuilding its rows every second while collapsed.
+- **Hover-only controls exist on touch now.** Alchemy pin buttons and custom-tab section actions were revealed by hover, which a touchscreen does not have; on a coarse pointer they are always visible, and the pins grow to a 32px finger-sized target.
+- **Background tabs stop burning battery.** Nine once-a-second panel refreshers (portrait DPS, enhancement tracker, dungeon tracker, combat panels, combat levels, consumables, watchlist, ability books, house affordability) skip their tick while the tab is hidden. The action countdown throttles from every-frame to the ten redraws a second its tenths-of-a-second readout can actually show, and portrait DPS coalesces its observer-triggered redraws to one per frame.
+- **Worker pools are torn off with their features.** The EV, networth, and enhancement worker pools each had a terminate function nobody called; disabling those features now shuts the workers down instead of leaving them resident, and they recreate themselves on next use.
+- **Mobile mode caps simulation workers at two.** A phone reporting eight cores does not have eight cores of thermal headroom, and each worker holds its own clone of the game data. The all-zones simulator also now uses the same worker budget as every other sim path — it was reading raw `hardwareConcurrency` and spawning up to sixteen.
+
 ### Panels can be dragged with a finger
 
 Every drag and resize in the script listened for mouse events, and `mousedown` never fires on a touchscreen — every panel was simply immovable on a phone, the dungeon tracker included. All of it now runs on pointer events, which fire for mouse and finger alike: the shared drag/resize utility (Treasure, overlay panels, combat panels, consumables, combat level), the dungeon tracker, both simulator panels, PFormance, and the game-modal dragger. Each handle sets `touch-action: none`, without which the browser claims the gesture for scrolling after a few pixels, and an interrupted touch (a notification landing mid-drag) releases the panel instead of gluing it to a pointer that no longer exists.
