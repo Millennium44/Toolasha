@@ -16,7 +16,7 @@ import {
 } from './combat-sim-adapter.js';
 import { runLabyrinthSimulation, cancelSimulation } from './combat-sim-runner.js';
 import { wilsonInterval } from './engine/wilson.js';
-import { findMaxLabyrinthLevel } from './labyrinth-level-finder.js';
+import { findMaxLabyrinthLevel, defaultThreshold } from './labyrinth-level-finder.js';
 import {
     runLabyrinthUpgradeAnalysis,
     runLabyrinthAllFightsAnalysis,
@@ -1136,11 +1136,18 @@ class LabSimUI {
 
         try {
             if (this._labyFindMaxMode) {
+                // Same bar the labyrinth panel's Recommend button uses when the
+                // field is blank — a hardcoded 95 here meant the two features
+                // disagreed about what "clears" means
+                const entered = parseInt(this.panel.querySelector('#mwi-labsim-threshold')?.value, 10);
                 const threshold =
-                    Math.min(
-                        100,
-                        Math.max(1, parseInt(this.panel.querySelector('#mwi-labsim-threshold')?.value) || 95)
-                    ) / 100;
+                    Number.isFinite(entered) && entered > 0
+                        ? Math.min(100, Math.max(1, entered)) / 100
+                        : defaultThreshold();
+                // The search window follows the character rather than a fixed
+                // 20-300, so it covers every room the automation table could
+                // send them to and nothing else
+                const referenceLevel = labyrinthClearRate.getPlayerEffectiveCombatLevel();
                 const maxResult = await findMaxLabyrinthLevel(
                     {
                         gameData,
@@ -1152,6 +1159,7 @@ class LabSimUI {
                         communityBuffs,
                         labyrinthCombatBuffs,
                         threshold,
+                        referenceLevel,
                     },
                     (progress) => {
                         const percent = Math.round((progress.step / progress.totalSteps) * 100);
@@ -1166,7 +1174,9 @@ class LabSimUI {
 
                 this._maxLevel = maxResult.maxLevel;
                 const levelInput = this.panel.querySelector('#mwi-labsim-level');
-                if (levelInput) levelInput.value = maxResult.maxLevel;
+                // Nothing cleared means there is no level to put in the box —
+                // writing 0 would sim a room that does not exist
+                if (levelInput && maxResult.cleared) levelInput.value = maxResult.maxLevel;
 
                 this._displayFindMaxResults(maxResult, monsterHrid, simStartTime);
             } else {
@@ -1260,7 +1270,21 @@ class LabSimUI {
         this._setStatus(`Simulation complete \u2014 ${winRate}% win rate at level ${roomLevel}.`);
     }
 
-    /** @private */
+    /**
+     * Render a Find Max result.
+     *
+     * The objective is unchanged and stays unchanged: the highest room level
+     * that still clears at the target rate. Experience per hour is shown beside
+     * it as information \u2014 what that level is worth once losses and the walk are
+     * paid for \u2014 not as something the search optimised.
+     *
+     * Two cases the old version got wrong. Nothing clearing anywhere in the
+     * window used to print `0 - combatLevel + 1`, a large negative "recommended
+     * skip" that reads like advice; it now says so in words. And a character
+     * whose combat level is not known yet cannot have a skip derived at all,
+     * since skip is a level offset.
+     * @private
+     */
     _displayFindMaxResults(maxResult, monsterHrid, simStartTime) {
         const container = this.panel?.querySelector('#mwi-labsim-results');
         if (!container) return;
@@ -1271,30 +1295,74 @@ class LabSimUI {
             .pop()
             .replace(/_/g, ' ')
             .replace(/\b\w/g, (c) => c.toUpperCase());
+        const barPct = ((maxResult.threshold ?? 0) * 100).toFixed(0);
         const effectiveCombatLevel = labyrinthClearRate.getPlayerEffectiveCombatLevel();
-        const recommendedSkip = maxResult.maxLevel - effectiveCombatLevel + 1;
+
+        let headline;
+        let detail;
+        if (!maxResult.cleared) {
+            headline = `<div style="font-size:16px; font-weight:700; color:#f44336; margin-bottom:6px;">
+                    Nothing clears at ${barPct}%
+                </div>`;
+            detail = `<div style="font-size:12px; color:#888;">
+                    No room between level ${maxResult.minLevel} and ${maxResult.maxSearched} met the target.
+                    Lower the target win %, or bring stronger gear.
+                </div>`;
+        } else {
+            const xpPerHour = labyrinthClearRate.estimateCombatXpPerHour(
+                maxResult.maxLevel,
+                maxResult.avgFightSeconds,
+                maxResult.winRate
+            );
+            // Skip is a level offset, so it only exists once there is a level
+            // to offset from; and it never sensibly goes below 1
+            const rawSkip = effectiveCombatLevel > 0 ? maxResult.maxLevel - Math.floor(effectiveCombatLevel) + 1 : null;
+            const skipText =
+                rawSkip === null
+                    ? 'unavailable until your combat level is known'
+                    : rawSkip < 1
+                      ? `1 (the lowest the game accepts \u2014 level ${maxResult.maxLevel} is below your own level)`
+                      : String(rawSkip);
+
+            headline = `<div style="font-size:24px; font-weight:700; color:#4caf50; margin-bottom:6px;">
+                    Level ${maxResult.maxLevel}${maxResult.atCeiling ? '+' : ''}
+                </div>`;
+            detail =
+                `<div style="font-size:12px; color:#888;">
+                    Win Rate: <span style="color:#e0e0e0; font-weight:600;">${(maxResult.winRate * 100).toFixed(1)}%</span>
+                    at level ${maxResult.maxLevel} (target ${barPct}%)
+                </div>` +
+                (xpPerHour > 0
+                    ? `<div style="font-size:12px; color:#888; margin-top:4px;"
+                            title="Experience per hour at this level, once lost attempts and the walk to the room are paid for. Shown for information \u2014 the search still picks the highest level clearing at the target rate, not the best experience.">
+                            XP/hr here: <span style="color:#e0e0e0; font-weight:600;">${formatKMB(xpPerHour)}</span>
+                        </div>`
+                    : '') +
+                `<div style="font-size:12px; color:#888; margin-top:4px;">
+                    Recommended skip: <span style="color:#e0e0e0; font-weight:600;">${skipText}</span>
+                </div>` +
+                (maxResult.atCeiling
+                    ? `<div style="font-size:11px; color:#ff9800; margin-top:4px;">
+                            Still clearing at the top of the searched range (${maxResult.maxSearched}) \u2014 the true maximum may be higher.
+                        </div>`
+                    : '');
+        }
 
         container.innerHTML = `
             <div style="margin-bottom:12px;">
                 <div style="color:${ACCENT}; font-weight:700; font-size:13px; margin-bottom:6px;">
                     ${monsterName} \u2014 Find Max Result
                 </div>
-                <div style="font-size:24px; font-weight:700; color:#4caf50; margin-bottom:6px;">
-                    Level ${maxResult.maxLevel}
-                </div>
-                <div style="font-size:12px; color:#888;">
-                    Win Rate: <span style="color:#e0e0e0; font-weight:600;">${(maxResult.winRate * 100).toFixed(1)}%</span>
-                    at level ${maxResult.maxLevel}
-                </div>
-                <div style="font-size:12px; color:#888; margin-top:4px;">
-                    Recommended skip: <span style="color:#e0e0e0; font-weight:600;">${recommendedSkip}</span>
-                </div>
-                <div style="color:#555; font-size:10px; margin-top:6px;">Completed in ${totalElapsed} (${maxResult.steps} steps)</div>
+                ${headline}
+                ${detail}
+                <div style="color:#555; font-size:10px; margin-top:6px;">Completed in ${totalElapsed} (${maxResult.steps} steps, levels ${maxResult.minLevel}\u2013${maxResult.maxSearched})</div>
             </div>
         `;
 
         this._setStatus(
-            `Max beatable level: ${maxResult.maxLevel} (${(maxResult.winRate * 100).toFixed(1)}% win rate).`
+            maxResult.cleared
+                ? `Max beatable level: ${maxResult.maxLevel} (${(maxResult.winRate * 100).toFixed(1)}% win rate).`
+                : `No room cleared at ${barPct}% between levels ${maxResult.minLevel} and ${maxResult.maxSearched}.`
         );
     }
 

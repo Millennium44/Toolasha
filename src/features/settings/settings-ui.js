@@ -20,6 +20,7 @@ import { getDetectedGearSettings, getEnhancingParams } from '../../utils/enhance
 import pformancePanel from '../dev/pformance-panel.js';
 import treasureTracker from '../inventory/treasure-tracker.js';
 import overlayPanel from '../ui/overlay-panel.js';
+import syncManager from '../sync/sync-manager.js';
 import {
     getCustomPriceOverrides,
     getCustomPriceOverridesAsync,
@@ -85,6 +86,16 @@ class SettingsUI {
                 this.handleCharacterSwitch();
             };
             dataManager.on('character_initialized', this.characterSwitchHandler);
+        }
+
+        // Cross-device sync starts here rather than from the feature registry:
+        // its only entry points are the buttons in this panel and its own
+        // schedule, and the panel is guaranteed to have loaded settings by now.
+        // It no-ops unless sync_enabled and a token are both present.
+        try {
+            await syncManager.initialize();
+        } catch (error) {
+            console.error('[SettingsUI] Starting cross-device sync failed:', error);
         }
 
         // Wait for game's settings panel to load
@@ -433,6 +444,12 @@ class SettingsUI {
                 content.appendChild(settingEl);
             }
 
+            // Push/pull are actions, not settings, and belong beside the
+            // switches that configure them rather than in the global button row
+            if (groupKey === 'sync') {
+                this.addSyncControls(content);
+            }
+
             // Skip groups with no visible settings (all hidden or group is empty)
             if (content.children.length === 0) continue;
 
@@ -637,6 +654,24 @@ class SettingsUI {
                             Edit Template
                         </button>
                     </div>
+                `;
+            }
+
+            // A secret, not a preference: rendered masked so it is not readable
+            // over a shoulder or in a screenshot of the settings panel, which is
+            // the single most common way this script's settings get shared.
+            // `autocomplete="off"` keeps the browser's password manager from
+            // offering to remember a GitHub token against milkywayidle.com.
+            case 'password': {
+                const value = currentSetting?.value ?? settingDef.default ?? '';
+                return `
+                    <input type="password"
+                        id="${settingId}"
+                        class="toolasha-text-input"
+                        value="${String(value).replace(/"/g, '&quot;')}"
+                        autocomplete="off"
+                        spellcheck="false"
+                        placeholder="${settingDef.placeholder || ''}">
                 `;
             }
 
@@ -1121,6 +1156,99 @@ class SettingsUI {
             }
         });
         input.click();
+    }
+
+    /**
+     * Push / Pull / Unlink, plus a line saying where this device stands.
+     *
+     * Kept inside the Sync group rather than in the utility row at the bottom of
+     * the panel: those buttons are all local operations, and a button that
+     * uploads a year of history to the internet should not sit unlabelled next
+     * to "Export Settings".
+     *
+     * @param {HTMLElement} container - The Sync group's content element
+     */
+    addSyncControls(container) {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'toolasha-sync-controls';
+        wrapper.style.cssText = 'display:flex; flex-direction:column; gap:8px; padding:8px 0 4px;';
+
+        const status = document.createElement('div');
+        status.id = 'toolasha-sync-status';
+        status.style.cssText = 'font-size:12px; color:#aaa; line-height:1.5;';
+        status.textContent = 'Checking sync status…';
+
+        const refreshStatus = async () => {
+            try {
+                status.textContent = await syncManager.describeStatus();
+            } catch (error) {
+                console.error('[SettingsUI] Reading sync status failed:', error);
+                status.textContent = 'Sync status unavailable.';
+            }
+        };
+        refreshStatus();
+
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex; flex-wrap:wrap; gap:8px;';
+
+        /**
+         * A button whose label reports what happened, then goes back to normal.
+         * @param {string} label - Resting label
+         * @param {string} busyLabel - Label while the work runs
+         * @param {Function} run - Returns the sync manager's outcome object
+         * @returns {HTMLButtonElement} The button
+         */
+        const makeButton = (label, busyLabel, run) => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.textContent = label;
+            button.className = 'toolasha-utility-button';
+            button.addEventListener('click', async () => {
+                if (button.disabled) return;
+                button.disabled = true;
+                button.textContent = busyLabel;
+                try {
+                    const result = await run();
+                    button.textContent = result?.ok ? 'Done ✓' : 'Failed';
+                } catch (error) {
+                    console.error('[SettingsUI] Sync action failed:', error);
+                    button.textContent = 'Failed';
+                } finally {
+                    await refreshStatus();
+                    this.timerRegistry.registerTimeout(
+                        setTimeout(() => {
+                            button.textContent = label;
+                            button.disabled = false;
+                        }, 2000)
+                    );
+                }
+            });
+            return button;
+        };
+
+        row.appendChild(makeButton('⬆ Push to GitHub', 'Pushing…', () => syncManager.push()));
+        row.appendChild(makeButton('⬇ Pull from GitHub', 'Pulling…', () => syncManager.pull()));
+        row.appendChild(
+            makeButton('Unlink gist', 'Unlinking…', async () => {
+                const answer = await askChoice({
+                    title: 'Unlink the sync gist',
+                    message:
+                        'This device forgets which gist it was using and what it last synced. The gist itself is ' +
+                        'left alone on GitHub — the next push finds it again or makes a new one.',
+                    choices: [
+                        { value: 'unlink', label: 'Unlink' },
+                        { value: null, label: 'Cancel' },
+                    ],
+                });
+                if (answer !== 'unlink') return { ok: false };
+                await syncManager.forgetGist();
+                return { ok: true };
+            })
+        );
+
+        wrapper.appendChild(row);
+        wrapper.appendChild(status);
+        container.appendChild(wrapper);
     }
 
     addUtilityButtons(container) {

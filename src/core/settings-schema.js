@@ -2253,6 +2253,17 @@ export const settingsGroups = {
                 default: true,
                 help: 'Highlights tasks you want to reroll with a red border and reminder badge. Configure per-character via the target icon in the task panel.',
             },
+            taskBulkReroll: {
+                id: 'taskBulkReroll',
+                label: 'Task bulk reroll stepper',
+                type: 'checkbox',
+                default: false,
+                help:
+                    'Adds a stepper button to the task panel header that performs one reroll (or one discard, once a ' +
+                    'task is at its reroll limit) per click, always previewing the next action on its label. It spends ' +
+                    'real rerolls — coins first, then cowbells — and respects reroll protection and your configured ' +
+                    'cost limits. Protected and completed tasks are left alone.',
+            },
         },
     },
 
@@ -2260,6 +2271,17 @@ export const settingsGroups = {
         title: 'UI & Appearance',
         icon: '🎨',
         settings: {
+            accountView: {
+                id: 'accountView',
+                label: 'Account view: All characters on one screen',
+                type: 'checkbox',
+                default: true,
+                help:
+                    'A single panel covering the whole account rather than the character you happen to be logged in ' +
+                    'as: combined networth with each character’s share of it, per-character status (what each one is ' +
+                    'doing, how long is left, whether anything is idle). Reads the data each character has already ' +
+                    'recorded, so a character shows up once it has been played with Toolasha running.',
+            },
             overlayPanel: {
                 id: 'overlayPanel',
                 label: 'Overlay Panel: One floating panel other features add a row to',
@@ -2890,6 +2912,61 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'Displays your collection count on skilling actions (open Collections once to populate counts)',
+            },
+        },
+    },
+
+    sync: {
+        title: 'Cross-Device Sync',
+        icon: '☁️',
+        settings: {
+            sync_enabled: {
+                id: 'sync_enabled',
+                label: 'Enable cross-device sync (GitHub gist)',
+                type: 'checkbox',
+                default: false,
+                help:
+                    'Carries your Toolasha data between browsers through one private GitHub gist that you own. ' +
+                    'Nothing goes to any server of ours, and nothing is sent until you press Push or turn on ' +
+                    'automatic sync below.',
+            },
+            sync_token: {
+                id: 'sync_token',
+                label: 'GitHub personal access token',
+                type: 'password',
+                default: '',
+                placeholder: 'ghp_… or github_pat_…',
+                help:
+                    'Needs the "gist" scope and nothing else — a classic token with only that box ticked, or a ' +
+                    'fine-grained token with Gists set to read and write. SECURITY: the token is stored in this ' +
+                    "browser's local database in plain text, exactly like every other setting, and any script or " +
+                    'extension that can read this page can read it. Use a token that can only touch gists, and revoke ' +
+                    'it at github.com/settings/tokens if you stop using sync. It is never written into the synced ' +
+                    'payload, so pulling on another device will not plant it there.',
+            },
+            sync_scope: {
+                id: 'sync_scope',
+                label: 'What to sync',
+                type: 'select',
+                default: 'settings',
+                options: [
+                    { value: 'settings', label: 'Settings only' },
+                    { value: 'everything', label: 'Everything (settings + all tracked history)' },
+                ],
+                help:
+                    'Settings only is small and fast. Everything also carries dungeon runs, XP history, loot logs and ' +
+                    'the rest — the same contents as "Back Up Everything" — which on a played-in account can be many ' +
+                    'megabytes and is split across several files inside the gist.',
+            },
+            sync_auto: {
+                id: 'sync_auto',
+                label: 'Sync automatically',
+                type: 'checkbox',
+                default: false,
+                help:
+                    'Pulls once shortly after the page loads if the gist is newer than what this device last synced, ' +
+                    'and pushes every 15 minutes if anything changed. When both sides have changed you are asked ' +
+                    'which one wins rather than the older copy being overwritten quietly.',
             },
         },
     },

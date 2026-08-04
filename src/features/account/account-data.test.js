@@ -1,0 +1,233 @@
+/**
+ * What the account adds up to, and what it refuses to claim.
+ *
+ * The arithmetic here is all about characters that were recorded at different
+ * times, so most of these tests are about a series with a hole in it rather
+ * than about addition.
+ */
+
+import { describe, test, expect, beforeEach, vi } from 'vitest';
+
+const game = vi.hoisted(() => ({ id: 'char-1', name: 'Main' }));
+const db = vi.hoisted(() => ({ stores: {} }));
+
+vi.mock('../../core/data-manager.js', () => ({
+    default: {
+        getCurrentCharacterId: () => game.id,
+        getCurrentCharacterName: () => game.name,
+    },
+}));
+
+vi.mock('../../core/storage.js', () => ({
+    default: {
+        get: async (key, storeName, fallback = null) => db.stores[storeName]?.[key] ?? fallback,
+        set: async (key, value, storeName) => {
+            db.stores[storeName] = db.stores[storeName] || {};
+            db.stores[storeName][key] = value;
+            return true;
+        },
+        getAllKeys: async (storeName) => Object.keys(db.stores[storeName] || {}),
+        getAll: async (storeName) => ({ ...(db.stores[storeName] || {}) }),
+    },
+}));
+
+const {
+    idsFromKeys,
+    combineSeries,
+    windowChange,
+    queueState,
+    summarizeCharacters,
+    readAccount,
+    rememberCurrentCharacter,
+    STALE_SNAPSHOT_MS,
+} = await import('./account-data.js');
+
+const HOUR = 60 * 60 * 1000;
+const DAY = 24 * HOUR;
+
+beforeEach(() => {
+    db.stores = {};
+    game.id = 'char-1';
+    game.name = 'Main';
+});
+
+describe('finding the characters', () => {
+    test('a prefix scan names them', () => {
+        const keys = ['networth_a', 'networth_b', 'networthDetail_a_5', 'somethingElse'];
+        expect(idsFromKeys(keys, 'networth_')).toEqual(['a', 'b']);
+    });
+
+    test('the detail prefix is not the compact one', () => {
+        // `networthDetail_a_5` starts with `networth` but must not read as a
+        // character called `Detail_a_5`
+        expect(idsFromKeys(['networthDetail_a_5'], 'networth_')).toEqual([]);
+    });
+});
+
+describe('adding series that were never recorded together', () => {
+    test('each character holds its last value forward', () => {
+        const combined = combineSeries({
+            a: [
+                { t: 1, total: 100 },
+                { t: 3, total: 150 },
+            ],
+            b: [{ t: 2, total: 40 }],
+        });
+
+        expect(combined).toEqual([
+            { t: 1, total: 100, contributors: 1 },
+            { t: 2, total: 140, contributors: 2 },
+            { t: 3, total: 190, contributors: 2 },
+        ]);
+    });
+
+    test('a character contributes nothing before its first reading', () => {
+        const combined = combineSeries({
+            a: [{ t: 1, total: 100 }],
+            b: [{ t: 9, total: 500 }],
+        });
+
+        // Not 600 at t=1: b's networth at t=1 is not zero, it is unknown
+        expect(combined[0]).toEqual({ t: 1, total: 100, contributors: 1 });
+        expect(combined[1].contributors).toBe(2);
+    });
+
+    test('a long history is thinned but keeps its latest point', () => {
+        const series = Array.from({ length: 5000 }, (_, i) => ({ t: i, total: i }));
+        const combined = combineSeries({ a: series });
+
+        expect(combined.length).toBeLessThanOrEqual(400);
+        expect(combined[combined.length - 1].total).toBe(4999);
+    });
+});
+
+describe('what changed over a window', () => {
+    const now = 10 * DAY;
+
+    test('the baseline is the last reading before the window opened', () => {
+        const points = [
+            { t: now - 5 * DAY, total: 100 },
+            { t: now - 2 * HOUR, total: 150 },
+        ];
+
+        const change = windowChange(points, DAY, now);
+        expect(change.delta).toBe(50);
+        expect(change.percent).toBeCloseTo(50);
+    });
+
+    test('a series with only one reading claims no trend', () => {
+        expect(windowChange([{ t: now, total: 100 }], DAY, now)).toBeNull();
+    });
+
+    test('a zero baseline reports the delta without a percentage', () => {
+        const points = [
+            { t: now - 5 * DAY, total: 0 },
+            { t: now, total: 90 },
+        ];
+
+        expect(windowChange(points, DAY, now)).toMatchObject({ delta: 90, percent: null });
+    });
+});
+
+describe('what a queue snapshot still implies', () => {
+    const now = 1_000_000_000;
+
+    test('a queue with time left is busy', () => {
+        const state = queueState({ timestamp: now - HOUR, totalQueueSeconds: 7200 }, now);
+        expect(state.state).toBe('busy');
+        expect(state.remainingSeconds).toBeCloseTo(3600);
+    });
+
+    test('a queue that has run out is idle', () => {
+        expect(queueState({ timestamp: now - 3 * HOUR, totalQueueSeconds: 3600 }, now).state).toBe('idle');
+    });
+
+    test('an endless action is not idle just because the finite work ended', () => {
+        const snapshot = { timestamp: now - 3 * HOUR, totalQueueSeconds: 0, hasInfiniteAction: true };
+        expect(queueState(snapshot, now).state).toBe('endless');
+    });
+
+    test('an ancient snapshot is marked as such rather than trusted', () => {
+        const snapshot = { timestamp: now - STALE_SNAPSHOT_MS - DAY, totalQueueSeconds: 60 };
+        expect(queueState(snapshot, now).stale).toBe(true);
+    });
+
+    test('no snapshot is unknown, not idle', () => {
+        expect(queueState(null, now).state).toBe('unknown');
+    });
+});
+
+describe('the character rows', () => {
+    const now = 1_000_000_000;
+
+    test('the current character leads and the rest follow by value', () => {
+        const rows = summarizeCharacters({
+            ids: ['a', 'b', 'c'],
+            seriesById: {
+                a: [{ t: now - HOUR, total: 10 }],
+                b: [{ t: now - HOUR, total: 900 }],
+                c: [{ t: now - HOUR, total: 400 }],
+            },
+            snapshotsById: {},
+            namesById: { a: 'Main' },
+            currentId: 'a',
+            now,
+        });
+
+        expect(rows.map((r) => r.id)).toEqual(['a', 'b', 'c']);
+        expect(rows[0].isCurrent).toBe(true);
+    });
+
+    test('a queue snapshot names a character no name map has heard of', () => {
+        const rows = summarizeCharacters({
+            ids: ['b'],
+            seriesById: {},
+            snapshotsById: { b: { characterId: 'b', characterName: 'Alt', timestamp: now } },
+            namesById: {},
+            currentId: 'a',
+            now,
+        });
+
+        expect(rows[0].name).toBe('Alt');
+        expect(rows[0].networth).toBeNull();
+    });
+
+    test('last seen is the most recent of any recorder', () => {
+        const rows = summarizeCharacters({
+            ids: ['b'],
+            seriesById: { b: [{ t: now - 5 * DAY, total: 10 }] },
+            snapshotsById: { b: { characterId: 'b', timestamp: now - HOUR } },
+            namesById: {},
+            currentId: 'a',
+            now,
+        });
+
+        expect(rows[0].lastSeen).toBe(now - HOUR);
+    });
+});
+
+describe('reading it all back out of storage', () => {
+    const now = 1_000_000_000;
+
+    test('every recorder contributes a character', async () => {
+        db.stores.networthHistory = { networth_a: [{ t: now - HOUR, total: 100 }] };
+        db.stores.queueSnapshots = { queueSnapshot_b: { characterId: 'b', characterName: 'Alt', timestamp: now } };
+        db.stores.lootLogHistory = { lootLog_c: [] };
+        db.stores.settings = { tradeHistory_d: {} };
+
+        const account = await readAccount(now);
+
+        expect(account.characters.map((row) => row.id).sort()).toEqual(['a', 'b', 'c', 'char-1', 'd']);
+    });
+
+    test('the logged-in name is recorded for the next time it is an alt', async () => {
+        await rememberCurrentCharacter();
+        expect(db.stores.settings.accountCharacterNames).toEqual({ 'char-1': 'Main' });
+
+        game.id = 'char-2';
+        game.name = 'Alt';
+        await rememberCurrentCharacter();
+
+        expect(db.stores.settings.accountCharacterNames).toEqual({ 'char-1': 'Main', 'char-2': 'Alt' });
+    });
+});

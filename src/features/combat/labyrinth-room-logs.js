@@ -30,6 +30,19 @@ import { classifyFight, fightTally, failureShape } from './labyrinth-fight-log.j
 import { accuracyReport } from './labyrinth-outcome-log.js';
 import { formatKMB, timeReadable } from '../../utils/formatters.js';
 
+/**
+ * Walking to a room, in seconds.
+ *
+ * A room costs the walk to it plus the time spent in it, and retries happen
+ * where you already stand, so this is paid once per room however many attempts
+ * it takes. Both the forecast (`labyrinth-clear-rate.js`'s roomXpPerHour) and
+ * the measurement (`floorSummary` below) charge it, which is the only reason
+ * the two experience-per-hour figures can be read side by side — they were one
+ * second per room apart for a while, which is small per room and not small over
+ * a floor of fast rooms.
+ */
+export const ROOM_TRAVEL_SECONDS = 1;
+
 const STORAGE_KEY = 'labyrinthRoomLogs';
 /** Used when the setting is unreadable; the setting itself is the real bound */
 const DEFAULT_SESSIONS = 120;
@@ -109,20 +122,36 @@ export function groupByFloor(sessions) {
  * deciding where to go, and charging that to the rooms would make a floor you
  * thought about look slower than the same floor rushed.
  *
+ * The walk to each room is charged, though — `ROOM_TRAVEL_SECONDS` per finished
+ * room, exactly what the forecast charges. The measured rate is here to be set
+ * against the predicted one, and two rates over different denominators cannot
+ * be compared: this one used to read about a second per room too fast, which on
+ * a floor of ten-second skilling rooms is a tenth of the figure.
+ *
+ * `seconds` stays the time spent inside the rooms — it is displayed as such —
+ * while `chargedSeconds` is what the rate divides by.
+ *
  * @param {Array<Object>} sessions - The floor's rooms
- * @returns {{rooms: number, cleared: number, seconds: number, xp: number, xpPerHour: number|null}}
+ * @returns {{rooms: number, cleared: number, seconds: number, chargedSeconds: number,
+ *   xp: number, xpPerHour: number|null}}
  */
 export function floorSummary(sessions) {
     const list = sessions || [];
     let seconds = 0;
+    let chargedSeconds = 0;
     let xp = 0;
     let cleared = 0;
 
     for (const session of list) {
         const ended = session?.endedAt || 0;
         // Only a finished room has a duration; one still running has not
-        // taken its time yet
-        if (ended > 0) seconds += Math.max(0, (ended - (Number(session.startedAt) || 0)) / 1000);
+        // taken its time yet — and has not been walked away from either, so
+        // it is charged no travel
+        if (ended > 0) {
+            const inRoom = Math.max(0, (ended - (Number(session.startedAt) || 0)) / 1000);
+            seconds += inRoom;
+            chargedSeconds += inRoom + ROOM_TRAVEL_SECONDS;
+        }
         xp += Math.max(0, Number(session?.xp) || 0);
         if (session?.completed) cleared++;
     }
@@ -131,8 +160,9 @@ export function floorSummary(sessions) {
         rooms: list.length,
         cleared,
         seconds,
+        chargedSeconds,
         xp,
-        xpPerHour: seconds > 0 && xp > 0 ? (xp / seconds) * 3600 : null,
+        xpPerHour: chargedSeconds > 0 && xp > 0 ? (xp / chargedSeconds) * 3600 : null,
     };
 }
 
@@ -1182,7 +1212,9 @@ class LabyrinthRoomLogs {
             summary.seconds > 0 ? `${Math.round(summary.seconds)}s spent in them` : '',
             summary.xp > 0 ? `${Math.round(summary.xp).toLocaleString()} experience gained` : '',
             summary.xpPerHour
-                ? 'Rate is measured experience over measured time, across every room on this floor'
+                ? 'Rate is measured experience over measured time, across every room on this floor, ' +
+                  `plus ${ROOM_TRAVEL_SECONDS}s of travel per room — the same denominator the forecast uses, ` +
+                  'so the two rates can be compared'
                 : 'Experience is measured by the change in your skill totals, so rooms logged before that was recorded show none',
         ]
             .filter(Boolean)

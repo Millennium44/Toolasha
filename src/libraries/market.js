@@ -34,6 +34,13 @@ import marketplaceShortcuts from '../features/market/marketplace-shortcuts.js';
 import sellQueue from '../features/market/sell-queue.js';
 import milkywayMarketLink from '../features/market/milkyway-market-link.js';
 
+// Not market features, but this is the bundle that owns them: the actions,
+// combat and ui bundles all import these two calculators and all load after
+// market, so exporting them here is what stops each of those bundles carrying
+// its own copy. See marketExternalGlobals in rollup.config.js.
+import * as gatheringProfit from '../features/actions/gathering-profit.js';
+import * as productionProfit from '../features/actions/production-profit.js';
+
 // Networth/Economy features
 import networthFeature from '../features/networth/index.js';
 // Side-effect import: registers the coins, listings, inventory and books overlay rows
@@ -104,6 +111,8 @@ toolashaRoot.Market = {
     marketplaceShortcuts,
     sellQueue,
     milkywayMarketLink,
+    gatheringProfit,
+    productionProfit,
 };
 
 // Why the sidebar's Marketplace badge is or is not showing. The feature's only

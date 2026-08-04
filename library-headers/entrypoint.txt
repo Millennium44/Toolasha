@@ -12,6 +12,7 @@
 // @grant        GM_addStyle
 // @grant        GM.xmlHttpRequest
 // @grant        GM_xmlhttpRequest
+// @connect      api.github.com
 // @grant        GM_notification
 // @grant        GM_getValue
 // @grant        GM_setValue

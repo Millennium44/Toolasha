@@ -9,7 +9,7 @@ vi.mock('../../core/storage.js', () => ({ default: { getJSON: async () => null, 
 vi.mock('../../core/data-manager.js', () => ({ default: { getSkills: () => null } }));
 vi.mock('../../core/websocket.js', () => ({ default: { on: () => {}, off: () => {} } }));
 
-const { groupByFloor, floorSummary, labyrinthRoomLogs } = await import('./labyrinth-room-logs.js');
+const { groupByFloor, floorSummary, labyrinthRoomLogs, ROOM_TRAVEL_SECONDS } = await import('./labyrinth-room-logs.js');
 
 const room = (over = {}) => ({
     runKey: 'run|15',
@@ -56,14 +56,26 @@ describe('floorSummary', () => {
     test('adds up time, experience and clears', () => {
         const summary = floorSummary([room(), room({ endedAt: 1_120_000, xp: 30_000, completed: false })]);
         expect(summary).toMatchObject({ rooms: 2, cleared: 1, seconds: 180, xp: 60_000 });
-        expect(summary.xpPerHour).toBe(1_200_000);
+        // 180s in the rooms plus the walk to each of the two
+        expect(summary.chargedSeconds).toBe(180 + 2 * ROOM_TRAVEL_SECONDS);
+        expect(summary.xpPerHour).toBeCloseTo((60_000 / 182) * 3600, 6);
     });
 
-    test('a room still running contributes no time', () => {
+    test('the rate charges the walk to each room, as the forecast does', () => {
+        // Same denominator both sides, or the measured rate cannot be set
+        // against the predicted one — which is the only reason it is shown
+        const summary = floorSummary([room()]);
+        expect(summary.seconds).toBe(60);
+        expect(summary.chargedSeconds).toBe(60 + ROOM_TRAVEL_SECONDS);
+        expect(summary.xpPerHour).toBeCloseTo((30_000 / 61) * 3600, 6);
+    });
+
+    test('a room still running contributes no time, and no walk either', () => {
         // An unfinished room has no duration yet, and guessing one would make
         // the floor's rate lurch about while you are standing in it
         const summary = floorSummary([room({ endedAt: 0, xp: 0 })]);
         expect(summary.seconds).toBe(0);
+        expect(summary.chargedSeconds).toBe(0);
         expect(summary.xpPerHour).toBeNull();
     });
 
