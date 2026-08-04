@@ -4,11 +4,11 @@
  * A registry letting other scripts put their own toggle against each row of
  * Market History and of the live My Listings table.
  *
- * Deliberately ignorant of what a mark means. A listing might be part of a
- * flip, a purchase to record against a guild ledger, something to come back to
- * — the viewer needs a glyph, a state and a handler, and nothing else. That is
- * what lets a marker whose meaning lives in a private script appear in a public
- * one without the meaning coming with it.
+ * Deliberately ignorant of what a mark means. A listing might be one half of a
+ * trade somebody is tracking, a purchase to record against a guild ledger,
+ * something to come back to — the viewer needs a glyph, a state and a handler,
+ * and nothing else. That is what lets a marker whose meaning lives in a private
+ * script appear in a public one without the meaning coming with it.
  *
  * Pure registry: no DOM, so the decisions here are testable and the rendering
  * stays where the rest of the table is built.
@@ -79,13 +79,13 @@ class ListingMarkers {
     /**
      * Add a column of toggles to Market History.
      *
-     *     const remove = Toolasha.Market.listingMarkers.register('flip-finder', {
+     *     const remove = Toolasha.Market.listingMarkers.register('my-script', {
      *         stateFor: (listing) => ({
      *             glyph: '★',
-     *             active: isFlip(listing),
-     *             title: 'Count this listing as a flip',
+     *             active: isTracked(listing),
+     *             title: 'Track this listing',
      *         }),
-     *         onToggle: (listing) => toggleFlip(listing),
+     *         onToggle: (listing) => toggleTracked(listing),
      *     });
      *
      * Both functions are also handed a context object naming the surface the

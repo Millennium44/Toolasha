@@ -18,7 +18,7 @@ describe('holdKey', () => {
 describe('collectHeldKeys', () => {
     test('merges every provider and drops repeats', () => {
         const providers = new Map([
-            ['flips', () => ['/items/cheese', '/items/milk']],
+            ['reselling', () => ['/items/cheese', '/items/milk']],
             ['crafting', () => ['/items/milk', '/items/egg']],
         ]);
         expect([...collectHeldKeys(providers)].sort()).toEqual(['/items/cheese', '/items/egg', '/items/milk']);

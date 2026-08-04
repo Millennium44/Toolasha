@@ -15,9 +15,19 @@
  * Both directions talk to a third party, which is why the switch starts off and
  * why the setting says plainly what each does: reading tells the server which
  * items you look up, contributing tells it the books you opened and when.
+ *
+ * ## Never from the test server
+ *
+ * The test server has its own economy, so a book observed there is not a cheap
+ * price, it is a wrong one — and once it is in a pooled dataset there is nothing
+ * in it that says where it came from. Contributing is therefore off on the test
+ * server whatever the setting says, and the socket that carries it is never
+ * opened. Reading still works, because a test-server session asking for live
+ * history gets live history.
  */
 
 import config from '../../../core/config.js';
+import { isTestServer } from '../../../utils/game-server.js';
 
 /** The mooket project's server */
 export const HISTORY_HOST = 'https://q7.nainai.eu.org';
@@ -37,6 +47,8 @@ class MarketHistoryAPI {
         this.socket = null;
         this.reconnectTimer = null;
         this.closing = false;
+        /** Said once. The getter is read on every book, and on every reconnect. */
+        this.notedTestServer = false;
     }
 
     /** @returns {boolean} Whether history may be fetched at all */
@@ -46,11 +58,22 @@ class MarketHistoryAPI {
 
     /**
      * @returns {boolean} Whether observed books may be sent back. The same
-     *   switch as reading: taking from a pooled dataset without feeding it is
-     *   what empties it.
+     *   switch as reading — taking from a pooled dataset without feeding it is
+     *   what empties it — except on the test server, where the honest
+     *   contribution is none.
      */
     get contributing() {
-        return this.enabled;
+        if (!this.enabled) return false;
+
+        if (isTestServer()) {
+            if (!this.notedTestServer) {
+                this.notedTestServer = true;
+                console.log('[Mooket] test server — not sending data');
+            }
+            return false;
+        }
+
+        return true;
     }
 
     /**
