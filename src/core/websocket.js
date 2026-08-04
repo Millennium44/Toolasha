@@ -302,6 +302,12 @@ class WebSocketHook {
             messageType === 'market_listings_updated' ||
             messageType === 'profile_shared' ||
             messageType === 'battle_consumable_ability_updated' ||
+            // Equipping and unequipping the same ability produce messages whose
+            // first 100 characters are identical — type, character id and the
+            // opening ability hrid fill the window, and the slotNumber that says
+            // which way it went sits past it. Hashing them would drop the second
+            // and leave the equipped kit stuck on the first.
+            messageType === 'abilities_updated' ||
             messageType === 'battle_unit_fetched' ||
             // Consecutive combat ticks can open with identical text — same type,
             // same battle, same unit ids — and differ only in hitpoints further
