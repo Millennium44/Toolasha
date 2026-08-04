@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The lab planner reads the right bag
+
+- **During a run, supply counts come from the run itself** (what the game's Supplies row shows), not your inventory — the game moves torches/shrouds/beacons into the run at start, so the old inventory readout was counting supplies you couldn't use. Between runs it still reads inventory for planning the next entry, and the readout labels which it's showing ("this run:" vs "held:").
+- **The readout uses the game's item icons** (best tier held) instead of emoji.
+
 ### Dungeon run history stops lying
 
 - **A run-start key count can no longer end a fresh run at wave 0**: the completion fallback now requires the run to have progressed (or been restored mid-run), so the pre-scan race banks a start anchor instead of a seconds-long fake run.

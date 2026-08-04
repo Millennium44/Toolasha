@@ -22,6 +22,7 @@ import { setGameData } from '../combat-sim/engine/game-data.js';
 import loadoutSnapshot from './loadout-snapshot.js';
 import { hasCoarsePointer } from '../../utils/mobile.js';
 import { formatRelativeTime, formatKMB } from '../../utils/formatters.js';
+import { itemIcon, itemSpriteUrl } from '../../utils/overlay-format.js';
 import { combatLevel as computeCombatLevel, COMBAT_SKILLS } from '../../utils/combat-level.js';
 import labyrinthRoomLogs from './labyrinth-room-logs.js';
 import { getAnnotationContainer, pruneEmptyAnnotationContainers } from './labyrinth-annotations.js';
@@ -50,8 +51,14 @@ import {
 } from './labyrinth-pathing.js';
 import { parseLabyrinthActionName, monsterHridByName, liveClearDisplay } from './labyrinth-live-readout.js';
 import {
+    SUPPLY_KINDS,
     resolveSupplyHrids,
     readSupplyCounts,
+    readRunSupplyCounts,
+    readSupplyRowCounts,
+    isLabyrinthRunActive,
+    chooseSupplyCounts,
+    bestOwnedTier,
     clampToOwned,
     describeSupplyNeed,
     estimateRestockCost,
@@ -85,6 +92,8 @@ const LIVE_SIM_REFRESH_MS = 4000;
 /** A replay older than this describes a fight that has moved on */
 const LIVE_SIM_MAX_AGE_MS = 9000;
 const TILE_CONTROLS_CLASS = 'mwi-labyrinth-tile-controls';
+/** Only reached for when the game's item sheet has not been drawn from yet */
+const SUPPLY_EMOJI = { torch: '🔥', shroud: '👻', beacon: '📡' };
 const PATH_OVERLAY_CLASS = 'mwi-labyrinth-path-overlay';
 const BEACON_OVERLAY_CLASS = 'mwi-labyrinth-beacon-overlay';
 
@@ -111,6 +120,7 @@ class LabyrinthClearRate {
         this._settingsFingerprint = null;
         this._snapshotFingerprint = null;
         this._pathData = null;
+        this._labyrinth = null;
         this._outcomes = {};
         this._outcomesSeen = {};
         this._outcomesLoaded = false;
@@ -437,6 +447,9 @@ class LabyrinthClearRate {
     }
 
     onLabyrinthUpdated(data) {
+        // Kept whole, not just the grid: the run's supply stock rides this
+        // message, and the readout has to be able to look for it
+        this._labyrinth = data.labyrinth ?? null;
         this._pathData = data.labyrinth?.pathData ?? null;
         this.recordOutcomes(data.labyrinth);
         const previousFloor = this.currentFloor;
@@ -2375,26 +2388,65 @@ class LabyrinthClearRate {
      * recommendation target.
      */
     /**
-     * Torches, shrouds and beacons currently held, read fresh.
+     * The labyrinth state as last seen, whatever told us about it.
+     *
+     * The live message first, because it is the freshest; then the character
+     * data and the client's own React state, which are what a page reloaded
+     * mid-run has before any message arrives.
+     *
+     * @returns {Object|null}
+     */
+    currentLabyrinthState() {
+        return this._labyrinth || dataManager.characterData?.characterLabyrinth || this.getLabyrinthFromReactState();
+    }
+
+    /**
+     * Torches, shrouds and beacons available right now, read fresh.
+     *
+     * Which pile that means depends on whether a run is going — see
+     * `labyrinth-supplies.js`. Mid-run the bag is stale by construction, so the
+     * run's own stock is read from the payload, or failing that off the game's
+     * Supplies row; between runs the bag is the right answer and the only one.
      *
      * Never cached: supplies are spent as the run goes, and a plan drawn
      * against the count you had two floors ago is exactly the plan that told
      * the user to spend thirteen shrouds they did not have.
      *
-     * @returns {Object} readSupplyCounts shape, plus the hrids it was read with
+     * @returns {Object} readSupplyCounts shape, plus `label`, `source`, `stale`
+     *   and the hrids it was read with
      */
     getSupplyCounts() {
         try {
             const hrids = resolveSupplyHrids(dataManager.getInitClientData()?.itemDetailMap);
-            return { ...readSupplyCounts(dataManager.getInventory(), hrids), hrids };
+            const labyrinth = this.currentLabyrinthState();
+            // The grid being on screen is a run too — the state object can lag a
+            // fresh entry, and a lagging flag would send the readout back to the
+            // bag for exactly the moments this fix is about
+            const runActive = isLabyrinthRunActive(labyrinth) || Boolean(this.roomData?.length);
+
+            const run = runActive ? readRunSupplyCounts(labyrinth, hrids) : null;
+            const dom = runActive && !run?.known ? readSupplyRowCounts(document, hrids) : null;
+            const inventory = readSupplyCounts(dataManager.getInventory(), hrids);
+
+            return { ...chooseSupplyCounts({ runActive, run, dom, inventory }), hrids };
         } catch (error) {
             console.error('[LabyrinthClearRate] Reading labyrinth supplies failed:', error);
-            return { ...readSupplyCounts(null), hrids: resolveSupplyHrids(null) };
+            return { ...readSupplyCounts(null), label: 'held', hrids: resolveSupplyHrids(null) };
         }
     }
 
     /**
-     * Redraw the toolbar's "held: …" readout from the current inventory.
+     * Redraw the toolbar's supply readout.
+     *
+     * Drawn with the game's own item sprites rather than emoji: 🔥👻📡 were three
+     * guesses at what the game means by a torch, a shroud and a beacon, in
+     * whatever font the browser picked, sitting a few pixels off the baseline
+     * beside the game's own artwork. The sprite for the best tier held is used,
+     * so the icon also says which tier the count is mostly made of.
+     *
+     * The label says which pile is being shown — "this run" and "held" are
+     * different numbers during a run and a readout that does not say which one
+     * it means is the bug this replaced.
      *
      * Cheap enough to run on every labyrinth update, which is what keeps it
      * honest as supplies are spent mid-run.
@@ -2402,16 +2454,74 @@ class LabyrinthClearRate {
     refreshSupplyReadout() {
         const el = document.querySelector(`.${TILE_CONTROLS_CLASS}-supplies`);
         if (!el) return;
+
         const supplies = this.getSupplyCounts();
         if (!supplies.known) {
-            el.textContent = '';
+            el.replaceChildren();
             el.title = '';
             return;
         }
-        el.textContent = `held: ${supplies.torch}🔥 ${supplies.shroud}👻 ${supplies.beacon}📡`;
-        el.title =
-            `Torches ${supplies.torch}, shrouds ${supplies.shroud}, beacons ${supplies.beacon} — all tiers, ` +
-            'summed from your inventory. Plans are checked against these.';
+
+        el.replaceChildren();
+        el.style.display = 'inline-flex';
+        el.style.alignItems = 'center';
+        el.style.gap = '4px';
+
+        const label = document.createElement('span');
+        label.textContent = `${supplies.label}:`;
+        el.appendChild(label);
+
+        for (const kind of SUPPLY_KINDS) {
+            const count = document.createElement('span');
+            count.textContent = String(supplies[kind]);
+            el.appendChild(count);
+            el.appendChild(this.supplyIcon(kind, supplies));
+        }
+
+        el.title = this.supplyReadoutTitle(supplies);
+    }
+
+    /**
+     * One supply's icon: the game's sprite for the best tier held, or the emoji
+     * while the game has not drawn from the item sheet yet and there is nothing
+     * to point `<use>` at.
+     *
+     * @param {string} kind - 'torch' | 'shroud' | 'beacon'
+     * @param {Object} supplies - As returned by getSupplyCounts
+     * @returns {Element} An icon
+     */
+    supplyIcon(kind, supplies) {
+        const hrid = bestOwnedTier(supplies, kind, supplies.hrids) || supplies.hrids?.[kind]?.[0];
+        if (hrid && itemSpriteUrl()) {
+            const icon = itemIcon(hrid, 14);
+            icon.style.verticalAlign = 'middle';
+            return icon;
+        }
+        const fallback = document.createElement('span');
+        fallback.textContent = SUPPLY_EMOJI[kind] || '';
+        return fallback;
+    }
+
+    /**
+     * What the readout says when you hover it — including, when a run is going
+     * but neither the payload nor the screen would say what it is carrying, that
+     * the figures are the bag's and the run may hold fewer.
+     *
+     * @param {Object} supplies - As returned by getSupplyCounts
+     * @returns {string}
+     */
+    supplyReadoutTitle(supplies) {
+        const figures = `Torches ${supplies.torch}, shrouds ${supplies.shroud}, beacons ${supplies.beacon} — all tiers`;
+        if (supplies.source === 'run') {
+            return `${figures}, as carried by this run. Plans are checked against these.`;
+        }
+        if (supplies.stale) {
+            return (
+                `${figures}, from your inventory — this run's own stock could not be read. A run takes its ` +
+                'supplies out of the bag when it starts, so it may be carrying fewer than these.'
+            );
+        }
+        return `${figures}, from your inventory. Plans are checked against these.`;
     }
 
     /**

@@ -6,10 +6,32 @@
  * entered, a shroud to skip a room you cannot beat, a beacon to reveal a patch
  * of the floor — and each comes in three tiers.
  *
- * Everything here is pure: counts are read out of an inventory array that is
- * passed in, never off a singleton, so the clamping and shortfall logic can be
- * tested against fixture inventories without a game attached.
+ * There are two places a supply count can live, and which one is right depends
+ * on whether a run is going:
+ *
+ *  - **Out of a run**, the inventory is the answer. It is what the next entry
+ *    will be able to take in, which is the question a plan drawn between runs is
+ *    asking.
+ *  - **In a run**, the inventory is the wrong number and confidently so. The
+ *    game moves supplies out of the bag and into the run the moment you press
+ *    start, and what the bag still holds is the remainder it did not take. A
+ *    toolbar reading 260 torches beside a game that says 40 is not a counting
+ *    bug — it is a reading of the wrong pile. The run's own stock is what the
+ *    Supplies row at the bottom of the labyrinth screen shows, and it is the
+ *    only number a mid-run plan may be measured against.
+ *
+ * So the run's stock is looked for first, in the labyrinth payload and then on
+ * the Supplies row itself, and the inventory is the out-of-run answer and the
+ * last resort. Every reading carries the `source` it came from so the readout
+ * can say which pile it is showing rather than leaving the user to work out why
+ * two numbers on one screen disagree.
+ *
+ * Everything here is pure: counts are read out of an inventory array, a payload
+ * object or a DOM subtree that is passed in, never off a singleton, so the
+ * clamping and shortfall logic can be tested without a game attached.
  */
+
+import { parseItemCount } from '../../utils/number-parser.js';
 
 /**
  * The supply items, best tier last.
@@ -29,8 +51,77 @@ export const SUPPLY_HRIDS = {
 /** Tier order, worst first — the index a tier sorts at */
 export const SUPPLY_TIERS = ['basic', 'advanced', 'expert'];
 
+/** The three kinds, in the order a readout lists them */
+export const SUPPLY_KINDS = ['torch', 'shroud', 'beacon'];
+
+/**
+ * Which pile a reading came from.
+ *
+ * `run` is the stock the current run is carrying — the Supplies row's numbers.
+ * `inventory` is the bag, which is what the next entry can take in.
+ */
+export const SUPPLY_SOURCE = { run: 'run', inventory: 'inventory' };
+
 /** Only what is in the bag counts; equipped and listed items are not supplies */
 const INVENTORY_LOCATION = '/item_locations/inventory';
+
+/**
+ * A zero reading, ready to be filled in.
+ * @param {string} source - A value of `SUPPLY_SOURCE`
+ * @param {Object} [hrids] - Tiers to seed at zero, so a caller can tell "none of
+ *   this tier" from "this tier is not a thing"
+ * @returns {Object} readSupplyCounts shape
+ */
+function emptyCounts(source, hrids) {
+    const counts = {
+        torch: 0,
+        shroud: 0,
+        beacon: 0,
+        byTier: { torch: {}, shroud: {}, beacon: {} },
+        known: false,
+        source,
+    };
+    for (const kind of SUPPLY_KINDS) {
+        for (const hrid of hrids?.[kind] || []) counts.byTier[kind][hrid] = 0;
+    }
+    return counts;
+}
+
+/**
+ * hrid -> kind, for looking an item up without caring which tier it is.
+ * @param {Object} hrids - As returned by resolveSupplyHrids
+ * @returns {Map<string, string>}
+ */
+function kindByHrid(hrids) {
+    const kindOf = new Map();
+    for (const kind of SUPPLY_KINDS) {
+        for (const hrid of hrids?.[kind] || []) kindOf.set(hrid, kind);
+    }
+    return kindOf;
+}
+
+/**
+ * Fold per-hrid tallies into a counts object.
+ *
+ * Takes the largest figure seen for an hrid rather than the sum, because a
+ * payload may carry the same stock twice — once as a list and once as a map —
+ * and a run holding forty torches must not read as eighty because the server
+ * said so in two places. Different tiers of one kind still add up; they are
+ * different items.
+ *
+ * @param {Object} counts - Reading to fill in, mutated
+ * @param {Map<string, number>} tally - hrid -> count
+ * @param {Map<string, string>} kindOf - As returned by kindByHrid
+ */
+function applyTally(counts, tally, kindOf) {
+    for (const [hrid, value] of tally) {
+        const kind = kindOf.get(hrid);
+        if (!kind) continue;
+        const n = Math.max(0, Math.floor(Number(value) || 0));
+        counts.byTier[kind][hrid] = n;
+        counts[kind] += n;
+    }
+}
 
 /**
  * Which items the game currently calls torches, shrouds and beacons.
@@ -87,18 +178,11 @@ export function resolveSupplyHrids(itemDetailMap) {
  *   as owning nothing
  */
 export function readSupplyCounts(inventory, hrids = SUPPLY_HRIDS) {
-    const counts = { torch: 0, shroud: 0, beacon: 0, byTier: { torch: {}, shroud: {}, beacon: {} }, known: false };
+    const counts = emptyCounts(SUPPLY_SOURCE.inventory, hrids);
     if (!Array.isArray(inventory)) return counts;
     counts.known = true;
 
-    const kindOf = new Map();
-    for (const kind of Object.keys(counts.byTier)) {
-        for (const hrid of hrids[kind] || []) {
-            kindOf.set(hrid, kind);
-            counts.byTier[kind][hrid] = 0;
-        }
-    }
-
+    const kindOf = kindByHrid(hrids);
     for (const item of inventory) {
         if (!item || item.itemLocationHrid !== INVENTORY_LOCATION) continue;
         const kind = kindOf.get(item.itemHrid);
@@ -108,6 +192,254 @@ export function readSupplyCounts(inventory, hrids = SUPPLY_HRIDS) {
         counts.byTier[kind][item.itemHrid] += n;
     }
     return counts;
+}
+
+/** Keys whose contents are the floor, not a supply — skipped, and they are large */
+const NOT_SUPPLY_KEYS = new Set(['roomData', 'pathData', 'monsters', 'battleMonsters']);
+/** How deep into a payload the search goes before giving up */
+const MAX_SCAN_DEPTH = 6;
+/** How many objects it will look at, so a malformed payload cannot hang a frame */
+const MAX_SCAN_NODES = 4000;
+
+/**
+ * Whether a labyrinth run is currently going.
+ *
+ * A run is the thing that owns its own supplies, so this is what decides which
+ * pile the planners are allowed to read. Taken from the presence of a floor
+ * rather than from a flag: the grid and the path are the two things that only
+ * exist while a run does, and the same test is what the reference client uses.
+ *
+ * @param {Object|null} labyrinth - A `labyrinth_updated` payload's `labyrinth`,
+ *   or `characterData.characterLabyrinth`
+ * @returns {boolean}
+ */
+export function isLabyrinthRunActive(labyrinth) {
+    if (!labyrinth || typeof labyrinth !== 'object') return false;
+    if (Array.isArray(labyrinth.roomData) && labyrinth.roomData.length > 0) return true;
+    if (typeof labyrinth.roomData === 'string' && labyrinth.roomData.length > 2) return true;
+    if (Array.isArray(labyrinth.pathData) && labyrinth.pathData.length > 0) return true;
+    if (typeof labyrinth.pathData === 'string' && labyrinth.pathData.length > 2) return true;
+    return false;
+}
+
+/**
+ * The supplies the current run is carrying, read out of the labyrinth payload.
+ *
+ * Found by shape rather than by name. The field the server keeps the run's stock
+ * under is not something this code can know — it is not documented and it has
+ * changed once already — but whatever holds it has to name the items, and an
+ * item is named the same way everywhere in this game: `/items/expert_torch`. So
+ * the payload is walked for anything that pairs a supply hrid with a number,
+ * whether that is a map keyed by hrid or a list of `{ itemHrid, count }`, and
+ * nothing else is guessed at. A key called `torches` is not matched, because a
+ * key called `torches` could as easily be the plan's cost as the run's stock,
+ * and reading the wrong one is the bug this function exists to end.
+ *
+ * `known` stays false when the payload names no supply at all — which is the
+ * signal to fall back to the Supplies row rather than to report a run that owns
+ * nothing.
+ *
+ * @param {Object|null} labyrinth - A `labyrinth_updated` payload's `labyrinth`,
+ *   or `characterData.characterLabyrinth`
+ * @param {Object} [hrids] - As returned by resolveSupplyHrids
+ * @returns {Object} readSupplyCounts shape, with `source: 'run'`
+ */
+export function readRunSupplyCounts(labyrinth, hrids = SUPPLY_HRIDS) {
+    const counts = emptyCounts(SUPPLY_SOURCE.run, hrids);
+    if (!labyrinth || typeof labyrinth !== 'object') return counts;
+
+    const kindOf = kindByHrid(hrids);
+    const tally = new Map();
+    const record = (hrid, value) => {
+        const n = Number(value);
+        if (!Number.isFinite(n)) return;
+        tally.set(hrid, Math.max(tally.get(hrid) ?? 0, n));
+    };
+
+    let nodes = 0;
+    const visit = (value, depth) => {
+        if (!value || typeof value !== 'object' || depth > MAX_SCAN_DEPTH || nodes >= MAX_SCAN_NODES) return;
+        nodes++;
+
+        if (Array.isArray(value)) {
+            for (const entry of value) visit(entry, depth + 1);
+            return;
+        }
+
+        // { itemHrid: '/items/expert_torch', count: 40 }
+        if (kindOf.has(value.itemHrid)) {
+            record(value.itemHrid, value.count ?? value.quantity ?? value.amount);
+        }
+
+        for (const [key, entry] of Object.entries(value)) {
+            // { '/items/expert_torch': 40 }
+            if (kindOf.has(key)) {
+                record(key, entry);
+                continue;
+            }
+            if (NOT_SUPPLY_KEYS.has(key)) continue;
+            visit(entry, depth + 1);
+        }
+    };
+    visit(labyrinth, 0);
+
+    if (!tally.size) return counts;
+    counts.known = true;
+    applyTally(counts, tally, kindOf);
+    return counts;
+}
+
+/**
+ * The part of the labyrinth screen the Supplies row lives in.
+ *
+ * Narrowed rather than searching the whole panel, because the panel also holds
+ * the labyrinth shop, which sells the very same three items and puts a number
+ * beside each of them. Counting the shop's stock as the run's would be a
+ * plausible-looking, entirely wrong reading.
+ *
+ * @param {Document|HTMLElement} root - Where to look
+ * @param {Map<string, string>} kindOf - As returned by kindByHrid
+ * @returns {HTMLElement|Document|null}
+ */
+function supplyRowScope(root, kindOf) {
+    const panel = root.querySelector?.('[class*="LabyrinthPanel"]') || root;
+
+    for (const node of panel.querySelectorAll?.('div, span, h1, h2, h3') || []) {
+        let ownText = '';
+        for (const child of node.childNodes) {
+            if (child.nodeType === 3) ownText += child.textContent;
+        }
+        if (!/^supplies\b/i.test(ownText.trim())) continue;
+
+        // The heading itself holds no icons; its row does, and how far up that
+        // is depends on how the game nests the label
+        let current = node;
+        for (let depth = 0; depth < 4 && current; depth++) {
+            if (hasSupplyIcon(current, kindOf)) return current;
+            current = current.parentElement;
+        }
+    }
+    return panel;
+}
+
+/**
+ * Whether an element contains at least one supply icon we are allowed to read.
+ * @param {Element} element - Candidate container
+ * @param {Map<string, string>} kindOf - As returned by kindByHrid
+ * @returns {boolean}
+ */
+function hasSupplyIcon(element, kindOf) {
+    for (const use of element.querySelectorAll?.('use') || []) {
+        if (!readableSupplyIcon(use)) continue;
+        const fragment = (use.getAttribute('href') || use.getAttribute('xlink:href') || '').split('#')[1];
+        if (fragment && kindOf.has(`/items/${fragment}`)) return true;
+    }
+    return false;
+}
+
+/**
+ * Whether an icon on the labyrinth screen is the run's stock rather than
+ * something that merely draws the same item: the shop's buyable grid prices
+ * torches, and this script's own toolbar now draws them too.
+ * @param {Element} use - An SVG `<use>`
+ * @returns {boolean}
+ */
+function readableSupplyIcon(use) {
+    return !use.closest?.('[class*="buyableGrid"], [class*="mwi-labyrinth"], [class*="toolasha"]');
+}
+
+/**
+ * The supplies the current run is carrying, read off the game's Supplies row.
+ *
+ * The fallback for when the payload does not carry the stock in any shape this
+ * can recognise. Slower and more fragile than a message — it depends on the
+ * game's markup — but it reads exactly the numbers the user is looking at, which
+ * is the whole complaint this answers.
+ *
+ * @param {Document|HTMLElement|null} [root] - Where to look, `document` by default
+ * @param {Object} [hrids] - As returned by resolveSupplyHrids
+ * @returns {Object} readSupplyCounts shape, with `source: 'run'`
+ */
+export function readSupplyRowCounts(root = typeof document === 'undefined' ? null : document, hrids = SUPPLY_HRIDS) {
+    const counts = emptyCounts(SUPPLY_SOURCE.run, hrids);
+    if (!root?.querySelectorAll) return counts;
+
+    const kindOf = kindByHrid(hrids);
+    const scope = supplyRowScope(root, kindOf);
+    if (!scope?.querySelectorAll) return counts;
+
+    const tally = new Map();
+
+    for (const use of scope.querySelectorAll('use')) {
+        if (!readableSupplyIcon(use)) continue;
+        const fragment = (use.getAttribute('href') || use.getAttribute('xlink:href') || '').split('#')[1];
+        if (!fragment) continue;
+        const hrid = `/items/${fragment}`;
+        if (!kindOf.has(hrid)) continue;
+
+        const count = countBeside(use);
+        if (count === null) continue;
+        tally.set(hrid, Math.max(tally.get(hrid) ?? 0, count));
+    }
+
+    if (!tally.size) return counts;
+    counts.known = true;
+    applyTally(counts, tally, kindOf);
+    return counts;
+}
+
+/**
+ * The number printed with an item's icon, or null when there is none.
+ *
+ * The game's own count element is preferred; the walk outward is for a Supplies
+ * row that writes the figure as plain text beside the icon instead. A tier with
+ * no number at all is a tier the row is not claiming a count for, and returning
+ * zero for it would be an assertion this cannot make.
+ *
+ * @param {Element} use - An SVG `<use>` drawing the item
+ * @returns {number|null}
+ */
+function countBeside(use) {
+    const tile = use.closest?.('[class*="Item_itemContainer"]') || use.closest?.('[class*="Item_item"]');
+    const own = tile?.querySelector('[class*="Item_count"]')?.textContent?.trim();
+    if (own && /\d/.test(own)) return Math.max(0, Math.floor(parseItemCount(own, 0)));
+
+    let current = use.parentElement;
+    for (let depth = 0; depth < 4 && current; depth++) {
+        const text = (current.textContent || '').trim();
+        // Short, because a whole panel's text also contains digits and none of
+        // them are this item's count
+        if (text.length <= 12 && /\d/.test(text)) return Math.max(0, Math.floor(parseItemCount(text, 0)));
+        current = current.parentElement;
+    }
+    return null;
+}
+
+/**
+ * Which reading the planners should use, and what to call it.
+ *
+ * The order is not a preference, it is a correctness rule: in a run the bag is
+ * stale by definition, so it is used only when neither the payload nor the
+ * screen would say, and it is flagged when that happens rather than passed off
+ * as the run's stock.
+ *
+ * @param {Object} sources - The readings available
+ * @param {boolean} sources.runActive - Whether a run is going
+ * @param {Object|null} [sources.run] - readRunSupplyCounts result
+ * @param {Object|null} [sources.dom] - readSupplyRowCounts result
+ * @param {Object|null} [sources.inventory] - readSupplyCounts result
+ * @returns {Object} The chosen reading, plus `label` for the readout and
+ *   `stale` when a run is going but only the bag could be read
+ */
+export function chooseSupplyCounts({ runActive, run = null, dom = null, inventory = null }) {
+    const bag = inventory || emptyCounts(SUPPLY_SOURCE.inventory, SUPPLY_HRIDS);
+
+    if (runActive) {
+        const inRun = (run?.known && run) || (dom?.known && dom) || null;
+        if (inRun) return { ...inRun, label: 'this run', stale: false };
+        return { ...bag, label: 'in bag', stale: true };
+    }
+    return { ...bag, label: 'held', stale: false };
 }
 
 /**

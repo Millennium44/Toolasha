@@ -1166,6 +1166,147 @@ describe('planning against the supplies actually held', () => {
 });
 
 /**
+ * The toolbar's supply readout.
+ *
+ * Reported as "the amount of torches etc is not pulling correctly": the toolbar
+ * said 260 torches while the game's own Supplies row said 40. Both were right
+ * about their own pile — the game moves supplies out of the bag and into the run
+ * when it starts — and the toolbar was reading the wrong one and not saying
+ * which. So what is checked here is the source it picks and the label it puts on
+ * it, plus that the icons beside the figures are the game's own artwork rather
+ * than three emoji guessing at it.
+ */
+describe('the toolbar supply readout', () => {
+    const supplyItem = (itemHrid, count) => ({
+        itemHrid,
+        count,
+        itemLocationHrid: '/item_locations/inventory',
+    });
+
+    /** The span injectTileControls creates, on its own so nothing else is in the way */
+    function buildReadout() {
+        document.body.innerHTML = '';
+        const el = document.createElement('span');
+        el.className = 'mwi-labyrinth-tile-controls-supplies';
+        document.body.appendChild(el);
+        return el;
+    }
+
+    /** The game's Supplies row, and an item sheet for `itemIcon` to point at */
+    function buildSupplyRow(entries) {
+        const panel = document.createElement('div');
+        panel.className = 'LabyrinthPanel_labyrinthPanel__1a2b3';
+        panel.innerHTML =
+            '<div><div>Supplies</div><div>' +
+            entries
+                .map(
+                    ([id, count]) =>
+                        '<div class="Item_itemContainer__x7kH1"><svg><use ' +
+                        `href="/static/media/items_sprite.9c39e2ec.svg#${id}"></use></svg>` +
+                        `<div class="Item_count__1HVvv">${count}</div></div>`
+                )
+                .join('') +
+            '</div></div>';
+        document.body.appendChild(panel);
+        return panel;
+    }
+
+    const iconHrefs = (el) => Array.from(el.querySelectorAll('use')).map((use) => use.getAttribute('href'));
+
+    beforeEach(() => {
+        bag.items = [supplyItem('/items/expert_torch', 260), supplyItem('/items/expert_shroud', 16)];
+    });
+
+    afterEach(() => {
+        document.body.innerHTML = '';
+        labyrinthClearRate.roomData = null;
+        labyrinthClearRate._labyrinth = null;
+        bag.items = null;
+    });
+
+    // First, deliberately: `itemIcon` finds the sheet's hashed URL by looking at
+    // an icon the game has already drawn, and remembers it for the rest of the
+    // process. Once any test below has put one on the page there is no going
+    // back to "the sheet is unknown", which is the state this checks.
+    test('emoji stand in only while the game has drawn no item icon to copy a sheet from', () => {
+        const el = buildReadout();
+
+        labyrinthClearRate.refreshSupplyReadout();
+
+        expect(iconHrefs(el)).toHaveLength(0);
+        expect(el.textContent).toContain('🔥');
+    });
+
+    test('between runs it reads the bag and calls it held', () => {
+        const el = buildReadout();
+
+        labyrinthClearRate.refreshSupplyReadout();
+
+        expect(el.textContent).toContain('held:');
+        expect(el.textContent).toContain('260');
+        expect(el.title).toContain('from your inventory');
+    });
+
+    test("in a run it reads the run's own stock, not the bag it came out of", () => {
+        const el = buildReadout();
+        labyrinthClearRate._labyrinth = {
+            roomData: [[{ roomType: '/labyrinth_room_types/combat' }]],
+            supplyItemCountMap: { '/items/basic_torch': 40, '/items/expert_beacon': 1 },
+        };
+
+        labyrinthClearRate.refreshSupplyReadout();
+
+        expect(el.textContent).toContain('this run:');
+        expect(el.textContent).toContain('40');
+        expect(el.textContent).not.toContain('260');
+        expect(el.title).toContain('carried by this run');
+    });
+
+    test("with nothing in the payload it falls back to the game's Supplies row", () => {
+        const el = buildReadout();
+        buildSupplyRow([
+            ['basic_torch', 40],
+            ['expert_beacon', 1],
+        ]);
+        labyrinthClearRate._labyrinth = { roomData: [[{ roomType: '/labyrinth_room_types/combat' }]] };
+
+        labyrinthClearRate.refreshSupplyReadout();
+
+        expect(el.textContent).toContain('this run:');
+        expect(el.textContent).toContain('40');
+        expect(el.textContent).not.toContain('260');
+    });
+
+    test('a run whose stock cannot be read anywhere says the figures are the bag’s', () => {
+        const el = buildReadout();
+        labyrinthClearRate._labyrinth = { roomData: [[{ roomType: '/labyrinth_room_types/combat' }]] };
+
+        labyrinthClearRate.refreshSupplyReadout();
+
+        expect(el.textContent).toContain('in bag:');
+        expect(el.textContent).toContain('260');
+        expect(el.title).toContain('may be carrying fewer');
+    });
+
+    test("the figures wear the game's item sprites, not emoji", () => {
+        const el = buildReadout();
+        // itemIcon reads the sheet's hashed URL off an icon the game has drawn
+        buildSupplyRow([['basic_torch', 40]]);
+
+        labyrinthClearRate.refreshSupplyReadout();
+
+        const hrefs = iconHrefs(el);
+        expect(hrefs).toHaveLength(3);
+        // The best tier held for each kind, and the basic tier for a kind held none of
+        expect(hrefs[0]).toContain('#expert_torch');
+        expect(hrefs[1]).toContain('#expert_shroud');
+        expect(hrefs[2]).toContain('#basic_beacon');
+        expect(hrefs.every((href) => href.includes('items_sprite'))).toBe(true);
+        expect(el.textContent).not.toMatch(/🔥|👻|📡/);
+    });
+});
+
+/**
  * The live readout on the attempt bar, driven through the real battle_updated
  * path. The reported symptom — a percentage that "changes wildly till I open
  * the lab room tab" — had two causes, and both are checked here: the room the
