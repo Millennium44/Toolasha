@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Iron Cow re-forces instantly, and one more clickable name
+
+- **Applying a preset (or All Off / Restore) while Iron Cow Mode is on now re-forces the locked settings immediately** — previously the stored values changed underneath and only got forced back on the mode's next apply. The mode's snapshot of your real pre-IC values is never touched by the re-force.
+- **Community-buff announcements are /profile-clickable** ("KimNG has added 31 minutes of community buff…").
+
 ### Settings you can actually get to
 
 - **Picking a setting in Ctrl+K now opens settings itself**, expands the group it lives in (temporarily), scrolls to the row, and flashes it — composing with the search pre-fill.

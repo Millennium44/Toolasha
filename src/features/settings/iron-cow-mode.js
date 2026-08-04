@@ -154,6 +154,27 @@ class IronCowMode {
     }
 
     /**
+     * Re-force every managed setting without touching the snapshot.
+     *
+     * For after a preset/All Off/Restore writes stored values while the mode
+     * is on. Calling {@link enable} here instead would re-snapshot the
+     * already-forced values and lose the user's real pre-Iron-Cow settings.
+     */
+    reapply() {
+        if (!this.isEnabled()) return;
+        for (const id of IRON_COW_SETTINGS) {
+            const entry = config.settingsMap[id];
+            if (!entry) continue;
+            const val = getIronCowDisabledValue(id);
+            if (entry.type === 'checkbox') {
+                config.setSetting(id, val);
+            } else {
+                config.setSettingValue(id, val);
+            }
+        }
+    }
+
+    /**
      * Disable Iron Cow mode.
      * Restores each setting to its pre-Iron-Cow value from the snapshot.
      * @returns {Promise<void>}

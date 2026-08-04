@@ -26,7 +26,7 @@ import { addStyles } from '../../utils/dom.js';
 const NAME_CLASS = 'mwi-chat-profile-name';
 // "<Name> has <verb> …" announcements; names are single tokens in MWI
 export const ANNOUNCE_RE =
-    /^\s*(?:\[[^\]]*\]\s*)?([A-Za-z0-9_]+) has (?:reached|obtained|found|completed|defeated|earned|achieved|unlocked|opened|crafted|caught|leveled|joined|left)\b/;
+    /^\s*(?:\[[^\]]*\]\s*)?([A-Za-z0-9_]+) has (?:reached|obtained|found|completed|defeated|earned|achieved|unlocked|opened|crafted|caught|leveled|joined|left|added)\b/;
 // MWI player names are a single alphanumeric/underscore token — reject anything else
 // (spaces, punctuation, etc.) so a malformed name can't produce a broken /profile command.
 export const VALID_NAME_RE = /^[A-Za-z0-9_]+$/;

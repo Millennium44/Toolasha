@@ -1219,6 +1219,9 @@ class SettingsUI {
             if (this.currentSettings[id]) this.currentSettings[id].isTrue = value;
         }
 
+        // A preset writes stored values even for settings the mode locks;
+        // re-force them so Iron Cow wins immediately, not on its next apply
+        this._reapplyModes();
         this._syncAllCheckboxInputs();
         // A preset is a one-shot and a mode is not: whichever modes were on
         // before are still on, and the chips have to keep saying so
@@ -1226,6 +1229,21 @@ class SettingsUI {
         this.applyDisabledByState();
         this.applySettingsFilter();
         if (this.restoreButton) this.restoreButton.style.display = '';
+    }
+
+    /**
+     * Re-force every active mode's managed settings after a bulk write.
+     */
+    _reapplyModes() {
+        try {
+            ironCowMode.reapply();
+            for (const id of Object.keys(this.currentSettings)) {
+                const entry = config.settingsMap[id];
+                if (entry && this.currentSettings[id]) this.currentSettings[id].isTrue = entry.isTrue;
+            }
+        } catch (error) {
+            console.error('[SettingsUI] Re-applying modes after a bulk write failed:', error);
+        }
     }
 
     /**
@@ -2121,6 +2139,7 @@ class SettingsUI {
             if (this.currentSettings[id]) this.currentSettings[id].isTrue = false;
         }
 
+        this._reapplyModes();
         this._syncAllCheckboxInputs();
         this._refreshModeChips();
         this.applyDisabledByState();
@@ -2143,6 +2162,7 @@ class SettingsUI {
         }
         await clearBulkSnapshot();
 
+        this._reapplyModes();
         this._syncAllCheckboxInputs();
         // Restore undoes the last bulk write, which never included a mode
         this._refreshModeChips();
