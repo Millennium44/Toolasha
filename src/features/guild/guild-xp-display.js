@@ -8,6 +8,7 @@ import domObserver from '../../core/dom-observer.js';
 import webSocketHook from '../../core/websocket.js';
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
+import { markAsProfileLink } from '../chat/chat-profile-link.js';
 import { guildXPTracker } from './guild-xp-tracker.js';
 import { formatDateTime } from '../../utils/formatters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
@@ -317,6 +318,11 @@ class GuildXPDisplay {
         const idleHTML = this._buildIdleHTML();
         dataGridEl.insertAdjacentHTML('beforeend', statsHTML + idleHTML + chartHTML);
 
+        // Idle names fill "/profile Name" on click, same as chat names do
+        dataGridEl.querySelectorAll('[data-idle-member]').forEach((el) => {
+            markAsProfileLink(el, el.dataset.idleMember);
+        });
+
         // Attach chart bar event listeners
         dataGridEl.querySelectorAll(`.${CSS_PREFIX}__bar`).forEach((bar) => {
             bar.addEventListener('mouseenter', this._onBarEnter);
@@ -362,7 +368,7 @@ class GuildXPDisplay {
                           const title = m.hideOnlineStatus
                               ? 'No action running'
                               : `${m.isOnline ? 'Online' : 'Offline'}, no action running`;
-                          return `<span style="color: ${online ? '#f0a830' : '#8a90a5'};" title="${title}">${m.name}</span>`;
+                          return `<span style="color: ${online ? '#f0a830' : '#8a90a5'}; cursor: pointer;" title="${title}" data-idle-member="${m.name}">${m.name}</span>`;
                       })
                       .join(', ');
 
