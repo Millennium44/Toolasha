@@ -25,7 +25,7 @@ vi.mock('../networth/networth-cache.js', () => ({ default: { get: () => null, se
 vi.mock('../market/expected-value-calculator.js', () => ({ default: { isInitialized: false } }));
 vi.mock('../../utils/market-data.js', () => ({ getItemPrice: (hrid) => mocks.prices[hrid] ?? null }));
 vi.mock('../../utils/number-parser.js', () => ({ parseItemCount: (text) => parseInt(text, 10) || 0 }));
-vi.mock('../combat-stats/combat-stats-calculator.js', () => ({ DUNGEON_CHEST_CHEST_KEYS: {} }));
+vi.mock('../../utils/dungeon-keys.js', () => ({ DUNGEON_CHEST_CHEST_KEYS: {} }));
 vi.mock('../../utils/dom-observer-helpers.js', () => ({ createMutationWatcher: () => () => {} }));
 
 const { default: inventoryBadgeManager } = await import('./inventory-badge-manager.js');

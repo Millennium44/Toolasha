@@ -66,7 +66,7 @@ vi.mock('../../utils/market-data.js', () => ({
     getItemPrices: (hrid) => mocks.itemPrices[hrid] ?? null,
 }));
 vi.mock('../../utils/networth-worker-manager.js', () => ({ calculateItemValueBatch: vi.fn() }));
-vi.mock('../combat-stats/combat-stats-calculator.js', () => ({ DUNGEON_CHEST_CHEST_KEYS: {} }));
+vi.mock('../../utils/dungeon-keys.js', () => ({ DUNGEON_CHEST_CHEST_KEYS: {} }));
 vi.mock('../../utils/game-lookups.js', () => ({ getShopCoinCost: (hrid) => mocks.shopCosts[hrid] ?? 0 }));
 vi.mock('./networth-exclusions.js', () => ({ isExcluded: () => false, getExclusions: () => [] }));
 vi.mock('../combat/loadout-snapshot.js', () => ({ default: { getAllSnapshots: () => [] } }));

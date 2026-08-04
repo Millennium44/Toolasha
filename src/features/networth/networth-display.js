@@ -12,7 +12,7 @@ import marketAPI from '../../api/marketplace.js';
 import { networthFormatter, formatKMB } from '../../utils/formatters.js';
 import networthHistoryChart, { CHART_BUTTON_ID } from './networth-history-chart.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
-import { DUNGEON_CHEST_CHEST_KEYS } from '../combat-stats/combat-stats-calculator.js';
+import { DUNGEON_CHEST_CHEST_KEYS } from '../../utils/dungeon-keys.js';
 import networthExclusionPopup from './networth-exclusion-popup.js';
 import { removeExclusion } from './networth-exclusions.js';
 

@@ -22,7 +22,7 @@ import config from '../../core/config.js';
 import networthCache from './networth-cache.js';
 import { getItemPrice, getItemPrices } from '../../utils/market-data.js';
 import { calculateItemValueBatch } from '../../utils/networth-worker-manager.js';
-import { DUNGEON_CHEST_CHEST_KEYS } from '../combat-stats/combat-stats-calculator.js';
+import { DUNGEON_CHEST_CHEST_KEYS } from '../../utils/dungeon-keys.js';
 import { getShopCoinCost } from '../../utils/game-lookups.js';
 import { isExcluded, getExclusions } from './networth-exclusions.js';
 import loadoutSnapshot from '../combat/loadout-snapshot.js';
