@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Dungeon keys cost whichever way is cheaper
+
+- **Dungeon profit charges each entry/chest key at the cheaper of buying or crafting it** (craft cost through the real crafting calculators at your efficiency; craft time shown separately, never priced as gold). Every key row says which side won and the saving — and a key with no market listing but a valid recipe now counts its craft cost instead of being silently dropped.
+
 ### Building levels cap at 20, trial tiers at 21 — and never each other
 
 - **Guild building bonuses clamp at the real level-20 cap** (the Buildings tab's "Lv. x / 20") instead of trusting and extrapolating any higher figure; the trial tier ladder keeps its separate 21 tiers (levels 100→300), and the trial badge was confirmed to never touch building tiles.

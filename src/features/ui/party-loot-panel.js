@@ -188,6 +188,16 @@ function drawPlayer(body, stats) {
         `${formatWithSeparator(Math.round(stats.income.bid))} of loot, less ` +
         `${formatWithSeparator(Math.round(stats.consumableCosts?.bid || 0))} of consumables and ` +
         `${formatWithSeparator(Math.round(stats.keyCosts?.bid || 0))} of keys.`;
+
+    // A key is costed at the cheaper of buying and crafting it, and which one
+    // that was changes the figure above — so say so rather than leave the
+    // number unexplained.
+    const craftedKeys = (stats.keyBreakdown || []).filter((entry) => entry.keyCost?.cheaper === 'craft');
+    if (craftedKeys.length) {
+        summary.title += `\nPriced as crafted, cheaper than buying: ${craftedKeys
+            .map((entry) => entry.itemName)
+            .join(', ')}.`;
+    }
     card.appendChild(summary);
 
     const items = stats.lootList || [];
