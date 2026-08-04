@@ -2573,6 +2573,35 @@ export const settingsGroups = {
                     { key: '{name}', label: 'Player Name', description: 'The name of the unsigned guild member' },
                 ],
             },
+            guildTrialsInfo: {
+                id: 'guildTrialsInfo',
+                label: 'Guild Trials: Show rates, pace and payout on the In Progress tab',
+                type: 'checkbox',
+                default: true,
+                help:
+                    'Measures the pool fill rate or party DPS off the trial cards and adds the ETA to clear the ' +
+                    'current tier, how many tiers the hour is on pace for, the next tier’s projected size, and the ' +
+                    'Guild Points and token payout the week’s tiers are worth.',
+            },
+            guildTrialsBuildersHallBonus: {
+                id: 'guildTrialsBuildersHallBonus',
+                label: 'Guild Trials: Builders Hall bonus override (%)',
+                type: 'number',
+                default: 0,
+                help:
+                    'Guild Points are Base × (1 + Builders Hall bonus). Leave at 0 to read it from the game once ' +
+                    'the guild Buildings tab has been opened; set it here if your guild knows the number and the ' +
+                    'game does not expose it.',
+            },
+            guildTrialsTreasuryBonus: {
+                id: 'guildTrialsTreasuryBonus',
+                label: 'Guild Trials: Treasury bonus override (%)',
+                type: 'number',
+                default: 0,
+                help:
+                    'Token payouts are 0.5 × TotalBasePoints × (1 + Treasury bonus). Leave at 0 to read it from ' +
+                    'the game once the guild Buildings tab has been opened.',
+            },
             guildMembersActivityTab: {
                 id: 'guildMembersActivityTab',
                 label: 'Guild Members: Show Activity column on',

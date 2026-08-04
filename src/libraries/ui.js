@@ -89,6 +89,7 @@ import guildXPTracker from '../features/guild/guild-xp-tracker.js';
 import guildXPDisplay from '../features/guild/guild-xp-display.js';
 import guildCreditValue from '../features/guild/guild-credit-value.js';
 import guildRosterView from '../features/guild/guild-roster-view.js';
+import guildTrials from '../features/guild/guild-trials.js';
 
 // Insights
 import predictionCalibration from '../features/insights/index.js';
@@ -187,6 +188,7 @@ toolashaRoot.UI = {
     guildXPDisplay,
     guildCreditValue,
     guildRosterView,
+    guildTrials,
     predictionCalibration,
     leaderboardXPTracker,
     leaderboardXPDisplay,
