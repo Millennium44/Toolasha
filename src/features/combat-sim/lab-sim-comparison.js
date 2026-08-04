@@ -23,6 +23,7 @@
  */
 
 import storage from '../../core/storage.js';
+import { characterKey } from '../../utils/character-key.js';
 import { formatWithSeparator } from '../../utils/formatters.js';
 
 /** Where recorded runs live, in the shared settings store. */
@@ -457,8 +458,8 @@ export class LabComparisonStore {
         if (this._loaded) return this.runs;
         this._loaded = true;
         try {
-            this.runs = sanitizeLabRuns(await storage.get(LAB_COMPARISON_KEY, 'settings', null));
-            const savedBaseline = await storage.get(LAB_COMPARISON_BASELINE_KEY, 'settings', null);
+            this.runs = sanitizeLabRuns(await storage.get(characterKey(LAB_COMPARISON_KEY), 'settings', null));
+            const savedBaseline = await storage.get(characterKey(LAB_COMPARISON_BASELINE_KEY), 'settings', null);
             this.baselineId = this.runs.some((entry) => entry.id === savedBaseline) ? savedBaseline : null;
         } catch (error) {
             console.error('[LabSimComparison] Failed to load recorded runs:', error);
@@ -540,8 +541,10 @@ export class LabComparisonStore {
     /** @private */
     async _persist() {
         try {
-            await storage.set(LAB_COMPARISON_KEY, this.runs, 'settings');
-            await storage.set(LAB_COMPARISON_BASELINE_KEY, this.baselineId, 'settings');
+            // Keyed per character: a run is a comparison against one
+            // character's gear, and the runs were recorded on this one.
+            await storage.set(characterKey(LAB_COMPARISON_KEY), this.runs, 'settings');
+            await storage.set(characterKey(LAB_COMPARISON_BASELINE_KEY), this.baselineId, 'settings');
         } catch (error) {
             console.error('[LabSimComparison] Failed to save recorded runs:', error);
         }

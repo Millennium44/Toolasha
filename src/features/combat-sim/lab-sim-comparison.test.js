@@ -14,6 +14,10 @@ import { describe, test, expect, beforeEach, vi } from 'vitest';
 
 const db = vi.hoisted(() => ({ values: new Map(), failWrites: false }));
 
+vi.mock('../../utils/character-key.js', () => ({
+    characterKey: (base) => `${base}_char1`,
+}));
+
 vi.mock('../../core/storage.js', () => ({
     default: {
         get: async (key, _store, fallback = null) => (db.values.has(key) ? db.values.get(key) : fallback),
@@ -262,13 +266,13 @@ describe('the store behind it', () => {
 
         expect(reopened.runs.map((e) => e.settings.roomLevel)).toEqual([100, 120]);
         expect(reopened.baselineId).toBe(pinned);
-        expect(db.values.get(LAB_COMPARISON_KEY)).toHaveLength(2);
-        expect(db.values.get(LAB_COMPARISON_BASELINE_KEY)).toBe(pinned);
+        expect(db.values.get(`${LAB_COMPARISON_KEY}_char1`)).toHaveLength(2);
+        expect(db.values.get(`${LAB_COMPARISON_BASELINE_KEY}_char1`)).toBe(pinned);
     });
 
     test('a baseline pointing at a run that is no longer stored is not restored', async () => {
-        db.values.set(LAB_COMPARISON_KEY, [run()]);
-        db.values.set(LAB_COMPARISON_BASELINE_KEY, 'a-run-from-another-life');
+        db.values.set(`${LAB_COMPARISON_KEY}_char1`, [run()]);
+        db.values.set(`${LAB_COMPARISON_BASELINE_KEY}_char1`, 'a-run-from-another-life');
 
         const store = new LabComparisonStore();
         await store.load();
@@ -325,7 +329,7 @@ describe('the store behind it', () => {
 
         expect(store.runs).toEqual([]);
         expect(store.baselineId).toBeNull();
-        expect(db.values.get(LAB_COMPARISON_KEY)).toEqual([]);
+        expect(db.values.get(`${LAB_COMPARISON_KEY}_char1`)).toEqual([]);
     });
 
     test('a storage that cannot write does not take the panel down with it', async () => {

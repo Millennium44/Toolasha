@@ -12,6 +12,7 @@ import { watchItem } from '../inventory/watchlist.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable } from '../../utils/floating-panel.js';
 import { restoreGeometry, saveGeometry, saveOpenState, reopenIfLeftOpen } from '../../utils/panel-geometry.js';
+import { characterKey, readScoped, writeScoped } from '../../utils/character-key.js';
 import { formatWithSeparator, formatKMB, parseKMB } from '../../utils/formatters.js';
 import { createEtaTracker } from '../../utils/progress-eta.js';
 import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
@@ -450,7 +451,7 @@ export function buildAllZonesSnapshot(zoneResults, options = {}) {
  */
 export async function saveAllZonesSnapshot(snapshot) {
     try {
-        return await storage.setJSON(ALL_ZONES_SNAPSHOT_KEY, snapshot, ALL_ZONES_SNAPSHOT_STORE, true);
+        return await storage.setJSON(characterKey(ALL_ZONES_SNAPSHOT_KEY), snapshot, ALL_ZONES_SNAPSHOT_STORE, true);
     } catch (error) {
         console.error('[CombatSimUI] Saving the all-zones snapshot failed:', error);
         return false;
@@ -463,7 +464,9 @@ export async function saveAllZonesSnapshot(snapshot) {
  */
 export async function loadAllZonesSnapshot() {
     try {
-        const saved = await storage.getJSON(ALL_ZONES_SNAPSHOT_KEY, ALL_ZONES_SNAPSHOT_STORE, null);
+        // Discard any legacy global snapshot: a sim run against another
+        // character's gear is actively misleading, so no adoption.
+        const saved = await readScoped(ALL_ZONES_SNAPSHOT_KEY, ALL_ZONES_SNAPSHOT_STORE, null, { migrate: 'discard' });
         return saved && Array.isArray(saved.zones) ? saved : null;
     } catch (error) {
         console.error('[CombatSimUI] Reading the all-zones snapshot failed:', error);
@@ -4794,7 +4797,7 @@ class CombatSimUI {
      */
     async _saveUpgradeModes() {
         try {
-            await storage.set(UPGRADE_MODES_KEY, this._getUpgradeModes());
+            await writeScoped(UPGRADE_MODES_KEY, this._getUpgradeModes());
         } catch (error) {
             console.error('[CombatSimUI] Failed to save upgrade modes:', error);
         }
@@ -4807,7 +4810,7 @@ class CombatSimUI {
      */
     async _restoreUpgradeModes() {
         try {
-            const saved = await storage.get(UPGRADE_MODES_KEY, 'settings', null);
+            const saved = await readScoped(UPGRADE_MODES_KEY, 'settings', null);
             if (Array.isArray(saved) && saved.length > 0) {
                 const wanted = new Set(saved);
                 this.panel?.querySelectorAll('[data-upgrade-mode]').forEach((box) => {

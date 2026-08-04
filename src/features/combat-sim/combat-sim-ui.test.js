@@ -55,6 +55,11 @@ vi.mock('../../core/storage.js', () => {
                 mocks.store.set(keyOf(key, store), value);
                 return true;
             },
+            delete: async (key, store) => {
+                mocks.store.delete(keyOf(key, store));
+                return true;
+            },
+            getAllKeys: async () => [],
         },
     };
 });
@@ -70,7 +75,12 @@ vi.mock('../inventory/watchlist.js', () => ({
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
-    default: { getItemDetails: () => null, getSkills: () => [] },
+    default: {
+        getItemDetails: () => null,
+        getSkills: () => [],
+        getCurrentCharacterId: () => 'char1',
+        getCurrentCharacterGameMode: () => 'standard',
+    },
 }));
 
 vi.mock('../../api/marketplace.js', () => ({

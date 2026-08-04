@@ -6,7 +6,7 @@
 
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
-import storage from '../../core/storage.js';
+import { readScoped, writeScoped } from '../../utils/character-key.js';
 import {
     buildGameDataPayload,
     buildAllPlayerDTOs,
@@ -1305,8 +1305,8 @@ class LabSimUI {
      */
     async _saveUpgradeSelection() {
         try {
-            await storage.set(UPGRADE_DIMENSIONS_KEY, this._getUpgradeDimensions(), 'settings');
-            await storage.set(
+            await writeScoped(UPGRADE_DIMENSIONS_KEY, this._getUpgradeDimensions(), 'settings');
+            await writeScoped(
                 UPGRADE_SCOPE_KEY,
                 { mode: this._getUpgradeScopeMode(), monsters: this._getChosenTargets() },
                 'settings'
@@ -1324,11 +1324,11 @@ class LabSimUI {
     async _restoreUpgradeSelection() {
         let selection;
         try {
-            const savedDimensions = await storage.get(UPGRADE_DIMENSIONS_KEY, 'settings', null);
-            const savedScope = await storage.get(UPGRADE_SCOPE_KEY, 'settings', null);
+            const savedDimensions = await readScoped(UPGRADE_DIMENSIONS_KEY, 'settings', null);
+            const savedScope = await readScoped(UPGRADE_SCOPE_KEY, 'settings', null);
             const legacyMode =
                 savedDimensions === null && savedScope === null
-                    ? await storage.get(LEGACY_UPGRADE_MODE_KEY, 'settings', null)
+                    ? await readScoped(LEGACY_UPGRADE_MODE_KEY, 'settings', null)
                     : null;
             selection = sanitizeLabUpgradeSelection(savedDimensions ?? legacyMode, savedScope);
         } catch (error) {
@@ -3075,7 +3075,9 @@ class LabSimUI {
         // Load persisted overrides once
         if (!this._skillLoadoutsLoaded) {
             this._skillLoadoutsLoaded = true;
-            const persisted = await storage.get('labSimSkillingLoadouts', 'settings', null);
+            // Discard any legacy global value: loadout names resolve against
+            // this character's snapshots, so another character's map is noise.
+            const persisted = await readScoped('labSimSkillingLoadouts', 'settings', null, { migrate: 'discard' });
             if (persisted && typeof persisted === 'object') {
                 this._skillLoadouts = persisted;
             }
@@ -3137,7 +3139,7 @@ class LabSimUI {
             select.addEventListener('change', () => {
                 const skillHrid = select.dataset.skillLoadout;
                 this._skillLoadouts[skillHrid] = select.value;
-                storage.set('labSimSkillingLoadouts', this._skillLoadouts, 'settings');
+                writeScoped('labSimSkillingLoadouts', this._skillLoadouts, 'settings');
             });
         });
 
