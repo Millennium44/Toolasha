@@ -15,6 +15,7 @@
  */
 import dataManager from '../core/data-manager.js';
 import storage from '../core/storage.js';
+import { getAdoptionTargetId, requestAdoptionConsent } from './adoption-consent.js';
 import { idsFromRecordKeys, recordKeysFor } from './chunked-history.js';
 
 const NETWORTH_SERIES_RE = /^networth_[0-9a-zA-Z]+$/;
@@ -168,8 +169,23 @@ export async function readScoped(base, storeName = 'settings', defaultValue = nu
     }
 
     const charId = dataManager.getCurrentCharacterId();
-    if (!charId || !(await isAdoptionCandidate(charId))) {
-        // Leave the legacy value in place for the main character to claim.
+    if (!charId) {
+        return defaultValue;
+    }
+
+    // Adoption is user-confirmed, never automatic. The heuristics only pick
+    // which character the dialog preselects.
+    const targetId = await getAdoptionTargetId();
+    if (targetId === null) {
+        // Fire-and-forget: awaiting a modal here would hang feature init.
+        isAdoptionCandidate(charId).then(
+            (candidate) => requestAdoptionConsent({ recommendedId: candidate ? charId : null }),
+            () => requestAdoptionConsent({})
+        );
+        return defaultValue;
+    }
+    if (targetId !== charId) {
+        // Leave the legacy value in place for the chosen character to claim.
         return defaultValue;
     }
 

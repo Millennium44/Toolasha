@@ -12,6 +12,13 @@ import { describe, test, expect, beforeEach, vi } from 'vitest';
 const store = vi.hoisted(() => ({ data: {}, networth: {} }));
 const character = vi.hoisted(() => ({ id: 'market123', mode: 'standard' }));
 
+// Adoption is consent-gated now; these suites test the data plumbing,
+// so the decision is treated as already made for the main character.
+vi.mock('./adoption-consent.js', () => ({
+    getAdoptionTargetId: async () => 'market123',
+    requestAdoptionConsent: () => Promise.resolve(null),
+}));
+
 vi.mock('../core/data-manager.js', () => ({
     default: {
         getCurrentCharacterId: () => character.id,

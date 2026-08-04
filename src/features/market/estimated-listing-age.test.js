@@ -62,6 +62,13 @@ const dataManagerMock = vi.hoisted(() => ({
     getCurrentCharacterGameMode: () => dataManagerMock.gameMode,
 }));
 
+// Adoption is consent-gated now; these suites test the data plumbing,
+// so the decision is treated as already made for the main character.
+vi.mock('../../utils/adoption-consent.js', () => ({
+    getAdoptionTargetId: async () => 'market123',
+    requestAdoptionConsent: () => Promise.resolve(null),
+}));
+
 vi.mock('../../core/storage.js', () => ({ default: storageMock }));
 vi.mock('../../core/data-manager.js', () => ({ default: dataManagerMock }));
 vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: () => () => {} } }));

@@ -23,6 +23,13 @@ const mockDataManager = vi.hoisted(() => ({
     off: () => {},
 }));
 
+// Adoption is consent-gated now; these suites test the data plumbing,
+// so the decision is treated as already made for the main character.
+vi.mock('../../utils/adoption-consent.js', () => ({
+    getAdoptionTargetId: async () => 'market123',
+    requestAdoptionConsent: () => Promise.resolve(null),
+}));
+
 vi.mock('../../core/config.js', () => ({
     default: { getSetting: () => true, onSettingChange: () => {}, offSettingChange: () => {} },
 }));

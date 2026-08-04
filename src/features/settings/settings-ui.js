@@ -44,6 +44,20 @@ import { askChoice } from '../../utils/choice-dialog.js';
 
 const COLLAPSED_GROUPS_KEY = 'toolasha_collapsedGroups';
 
+/** Game mode → the abbreviation the backup filename carries. */
+const BACKUP_MODE_ABBR = { standard: 'MC', ironcow: 'IC', legacy_ironcow: 'LC' };
+
+/**
+ * `-<charname>-<MC|IC|LC>` for backup filenames, or '' before login.
+ * @returns {string} Filename suffix identifying who the backup was taken from
+ */
+function backupCharacterSuffix() {
+    const name = (dataManager.getCurrentCharacterName?.() || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+    if (!name) return '';
+    const mode = BACKUP_MODE_ABBR[dataManager.getCurrentCharacterGameMode?.()] || '';
+    return `-${name}${mode ? `-${mode}` : ''}`;
+}
+
 class SettingsUI {
     constructor() {
         this.config = config;
@@ -1091,7 +1105,9 @@ class SettingsUI {
      */
     /**
      * Export every IndexedDB store — settings and all tracked history — as one
-     * versioned JSON file.
+     * versioned JSON file. The filename carries which character and game mode
+     * the backup was taken from — the payload is account-wide either way, but
+     * a folder of dated backups is unreadable without it.
      * @param {HTMLElement} button - The button, for inline status feedback
      */
     async handleFullBackup(button) {
@@ -1102,7 +1118,11 @@ class SettingsUI {
             // plus its stringification is two copies of everything at once
             const json = await exportEverythingJSON();
             const stamp = new Date().toISOString().slice(0, 10);
-            downloadFile(`toolasha-backup-${stamp}.json`, json, 'application/json;charset=utf-8;');
+            downloadFile(
+                `toolasha-backup-${stamp}${backupCharacterSuffix()}.json`,
+                json,
+                'application/json;charset=utf-8;'
+            );
             button.textContent = 'Saved ✓';
         } catch (error) {
             console.error('[SettingsUI] Full backup failed:', error);
