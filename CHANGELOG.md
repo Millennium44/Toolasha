@@ -6,6 +6,15 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The simulator models more, and breaks less
+
+- **taskDamage now raises damage** in sims (deliberate divergence from reference sims — the stat is real; it already applied to thorns).
+- **Achievement combat buffs are simulated**, wired per player like guild buffs; empty data changes nothing.
+- **Unknown game mechanics no longer crash whole sims**: unknown ability effects, target types, styles, and damage types are skipped with a once-per-type warning, surfaced as a banner on results ("results may understate").
+- An item with 0 base stat but an enhancement bonus no longer loses the bonus.
+- **Healing/mana breakdown**: HP/MP gained and HP spent per source (food, regen, abilities), collapsed under the results — the engine always computed it; now you can see it.
+- **The Experience token is ranked in the skilling advisor** by XP/room per token, with XP/Room and Tokens/XP columns.
+
 ### Ctrl+K, named layouts, and the features finally talk to each other
 
 - **A command palette.** Ctrl+K (Cmd+K) opens a fuzzy-searchable launcher for every panel, every overlay row, every setting (deep-linked into the settings search), and every saved layout. Keyboard-first, never fires while you're typing in chat, and can be switched off (`Command palette` setting).

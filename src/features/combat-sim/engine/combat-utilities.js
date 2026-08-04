@@ -1,6 +1,27 @@
 import { random } from './rng.js';
+import { recordUnknown } from './sim-warnings.js';
 
 class CombatUtilities {
+    /**
+     * The result of an attack the engine could not model, shaped like a real
+     * one so callers need no special case: nothing hit, nothing was drained,
+     * and no unit's state was touched.
+     * @returns {Object} A zeroed attack result
+     */
+    static skippedAttackResult() {
+        return {
+            damageDone: 0,
+            didHit: false,
+            thornDamageDone: 0,
+            thornType: undefined,
+            retaliationDamageDone: 0,
+            lifeStealHeal: 0,
+            hpDrain: 0,
+            manaLeechMana: 0,
+            isCrit: false,
+        };
+    }
+
     static getTarget(enemies) {
         if (!enemies) {
             return null;
@@ -57,6 +78,10 @@ class CombatUtilities {
         let sourceAccuracyRating = 1;
         let sourceAutoAttackMaxDamage = 1;
         let targetEvasionRating = 1;
+        // An unrecognized style or damage type used to throw and take the whole
+        // run with it. Neither switch mutates anything, so the attack can be
+        // dropped after both have looked, leaving every unit untouched.
+        let unknownMechanic = null;
 
         switch (combatStyle) {
             case '/combat_styles/stab':
@@ -85,7 +110,8 @@ class CombatUtilities {
                 targetEvasionRating = target.combatDetails.magicEvasionRating;
                 break;
             default:
-                throw new Error('Unknown combat style: ' + combatStyle);
+                unknownMechanic = { category: 'combat style', value: combatStyle };
+                break;
         }
 
         let sourceDamageMultiplier = 1;
@@ -134,7 +160,13 @@ class CombatUtilities {
                 thornType = 'elementalThorns';
                 break;
             default:
-                throw new Error('Unknown damage type: ' + damageType);
+                unknownMechanic = unknownMechanic || { category: 'damage type', value: damageType };
+                break;
+        }
+
+        if (unknownMechanic) {
+            recordUnknown(unknownMechanic.category, unknownMechanic.value);
+            return CombatUtilities.skippedAttackResult();
         }
 
         let hitChance = 1;
@@ -176,8 +208,12 @@ class CombatUtilities {
         }
 
         let damageRoll = CombatUtilities.randomInt(sourceMinDamage, sourceMaxDamage);
-        // taskDamage intentionally excluded — trinket slot not exported by reference sims
-        // damageRoll *= 1 + source.combatDetails.combatStats.taskDamage;
+        // A deliberate divergence from the reference sims, which leave taskDamage
+        // out of the attacker's roll. The stat is real — the game applies it, and
+        // this engine already applies it to the same unit's thorns and
+        // retaliation. Omitting it here only understated anyone wearing a task
+        // trinket, and made the two paths disagree about the same number.
+        damageRoll *= 1 + source.combatDetails.combatStats.taskDamage;
         damageRoll *= 1 + target.combatDetails.combatStats.damageTaken;
         if (!abilityEffect) {
             damageRoll += damageRoll * source.combatDetails.combatStats.autoAttackDamage;
@@ -306,6 +342,11 @@ class CombatUtilities {
         };
     }
 
+    // The combat-style guards on processHeal and processRevive stay fatal on
+    // purpose: CombatSimulator screens for an unsupported style before it
+    // touches anything, so reaching one of these means a new caller skipped
+    // that screen and is about to heal or revive off a formula that does not
+    // apply. Better a loud stop than a silently wrong heal.
     static processHeal(source, abilityEffect, target) {
         if (abilityEffect.combatStyleHrid !== '/combat_styles/magic') {
             throw new Error('Heal ability effect not supported for combat style: ' + abilityEffect.combatStyleHrid);

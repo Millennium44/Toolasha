@@ -3512,17 +3512,73 @@ function computeAverageSkillingClearRateFromEditor(roomLevel, editorDTO, crateHr
 }
 
 /**
+ * Average XP a cleared skilling room awards, across the rooms being run.
+ *
+ * Enhancing rooms are left out: computeEnhancingClearWithParams reports no
+ * xpPerRoom, and averaging in a zero would understate every other room.
+ * @param {number|Object} roomLevel - One level, or a per-skill map
+ * @param {Object} editorDTO - Player DTO from editor
+ * @param {string[]} crateHrids - Selected crate HRIDs
+ * @param {Object} gameData - From buildGameDataPayload()
+ * @param {Object} [options] - { skillEquipmentMap, targetSkill }
+ * @returns {number} Average XP per room (0 when no room qualifies)
+ */
+function computeAverageSkillingXpPerRoomFromEditor(roomLevel, editorDTO, crateHrids, gameData, options = {}) {
+    const { skillEquipmentMap = {}, targetSkill = null } = options;
+
+    let total = 0;
+    let count = 0;
+
+    const skillsToEval = targetSkill ? [targetSkill] : LABYRINTH_SKILLS;
+
+    for (const skillHrid of skillsToEval) {
+        if (skillHrid === '/skills/enhancing') continue;
+
+        const skillRoomLevel = resolveSkillRoomLevel(roomLevel, skillHrid);
+        if (skillRoomLevel <= 0) continue;
+
+        const skillId = skillHrid.replace('/skills/', '');
+        const actionTypeHrid = `/action_types/${skillId}`;
+        const dtoKey = SKILLING_DTO_KEYS[skillHrid];
+        const baseLevel = editorDTO[dtoKey] || 1;
+
+        const editorState = {
+            equipment: skillEquipmentMap[skillHrid] || editorDTO.equipment,
+            houseRooms: editorDTO.houseRooms,
+            tokenUpgrades: editorDTO.tokenUpgrades,
+            communityBuffLevels: editorDTO.communityBuffLevels,
+        };
+
+        const overrides = buildOverridesForSkill(editorState, actionTypeHrid, crateHrids, gameData);
+        const metrics = labyrinthClearRate.getSkillingMetricsFromOverrides(skillId, actionTypeHrid, overrides);
+        const result = labyrinthClearRate.computeSkillingClearWithParams(metrics, baseLevel, skillRoomLevel);
+
+        total += result.xpPerRoom || 0;
+        count++;
+    }
+
+    return count > 0 ? total / count : 0;
+}
+
+/**
  * Generate labyrinth buff candidates from editor token upgrade levels.
- * @param {Object} tokenUpgrades - { speed, efficiency, success, doubleProgress }
+ *
+ * The Experience token comes along despite not being category 'skilling'. It
+ * buys no clear rate at all — every other row here is ranked by that — so it
+ * used to fall out of both filters and never appear anywhere, which read as
+ * "not worth buying" rather than "measured against the wrong yardstick". Its
+ * rows are scored on XP per room instead.
+ * @param {Object} tokenUpgrades - { speed, efficiency, success, doubleProgress, experience }
  * @returns {Array} Buff candidates with type 'labyrinth_buff'
  */
-function generateLabyrinthBuffCandidatesFromEditor(tokenUpgrades) {
-    const skillingDefs = LABYRINTH_BUFF_DEFS.filter((d) => d.category === 'skilling');
+export function generateLabyrinthBuffCandidatesFromEditor(tokenUpgrades) {
+    const skillingDefs = LABYRINTH_BUFF_DEFS.filter((d) => d.category === 'skilling' || d.category === 'experience');
     const editorKeyMap = {
         labyrinthSkillActionSpeedLevel: 'speed',
         labyrinthSkillingEfficiencyLevel: 'efficiency',
         labyrinthSkillingSuccessLevel: 'success',
         labyrinthSkillingDoubleProgressLevel: 'doubleProgress',
+        labyrinthExperienceLevel: 'experience',
     };
 
     const candidates = [];
@@ -3912,6 +3968,13 @@ export async function runSkillingUpgradeAnalysis(params, onProgress, options = {
 
     onProgress?.({ current, total, description: `Baseline: ${(baselineClearRate * 100).toFixed(1)}%` });
 
+    // Only paid for when something is ranked on it — the Experience token is the
+    // one candidate that is, and it is often already maxed and absent
+    const hasXpCandidate = buffCandidates.some((c) => c.category === 'experience');
+    const baselineXpPerRoom = hasXpCandidate
+        ? computeAverageSkillingXpPerRoomFromEditor(roomLevel, editorDTO, crateHrids, gameData, clearRateOpts)
+        : 0;
+
     const results = [];
 
     for (const buffCandidate of buffCandidates) {
@@ -3922,6 +3985,34 @@ export async function runSkillingUpgradeAnalysis(params, onProgress, options = {
 
         const modifiedDTO = JSON.parse(JSON.stringify(editorDTO));
         modifiedDTO.tokenUpgrades[buffCandidate.editorKey] = buffCandidate.currentLevel + 1;
+
+        if (buffCandidate.category === 'experience') {
+            const modifiedXpPerRoom = computeAverageSkillingXpPerRoomFromEditor(
+                roomLevel,
+                modifiedDTO,
+                crateHrids,
+                gameData,
+                clearRateOpts
+            );
+            const xpPerRoomDelta = modifiedXpPerRoom - baselineXpPerRoom;
+
+            results.push({
+                candidate: buffCandidate,
+                costType: 'token',
+                tokenCost: buffCandidate.tokenCost,
+                // The room is cleared exactly as often as before; only what it
+                // pays out changes, so the clear-rate columns stay at baseline
+                clearRate: baselineClearRate,
+                clearRateDelta: 0,
+                xpPerRoom: modifiedXpPerRoom,
+                xpPerRoomDelta,
+                tokensPerXp: xpPerRoomDelta > 0 ? buffCandidate.tokenCost / xpPerRoomDelta : Infinity,
+                metricType: 'xpPerRoom',
+            });
+            current++;
+            onProgress?.({ current, total, description: buffCandidate.description });
+            continue;
+        }
 
         const modifiedClearRate = computeAverageSkillingClearRateFromEditor(
             roomLevel,
@@ -4022,7 +4113,7 @@ export async function runSkillingUpgradeAnalysis(params, onProgress, options = {
     });
 
     return {
-        baseline: { clearRate: baselineClearRate },
+        baseline: { clearRate: baselineClearRate, xpPerRoom: baselineXpPerRoom },
         results,
     };
 }
@@ -4033,6 +4124,7 @@ export default {
     runUpgradeAnalysis,
     runLabyrinthUpgradeAnalysis,
     generateLabyrinthBuffCandidates,
+    generateLabyrinthBuffCandidatesFromEditor,
     getEquipmentTierProgression,
     computeSkillingClearRatesFromEditor,
     generateSkillingEquipmentCandidates,

@@ -22,6 +22,7 @@ import WeakenExpirationEvent from './events/weaken-expiration-event.js';
 import FuryExpirationEvent from './events/fury-expiration-event.js';
 import EnrageTickEvent from './events/enrage-tick-event.js';
 import SimResult from './sim-result.js';
+import { getSimWarnings, recordUnknown, resetSimWarnings } from './sim-warnings.js';
 import AbilityCastEndEvent from './events/ability-cast-end-event.js';
 import AwaitCooldownEvent from './events/await-cooldown-event.js';
 import Monster from './monster.js';
@@ -182,6 +183,7 @@ class CombatSimulator {
      * @returns {SimResult}
      */
     simulate(simulationTimeLimit, stopRule = null) {
+        resetSimWarnings();
         this.reset();
         this.stopRule = this.labyrinth && isStoppingRule(stopRule) ? stopRule : null;
         this.converged = false;
@@ -246,6 +248,7 @@ class CombatSimulator {
         }
 
         this.simResult.simulatedTime = this.simulationTime;
+        this._collectWarnings();
 
         for (let i = 0; i < this.players.length; i++) {
             this.simResult.setDropRateMultipliers(this.players[i]);
@@ -268,6 +271,14 @@ class CombatSimulator {
         }
 
         return this.simResult;
+    }
+
+    /**
+     * Hand the run's skipped-mechanic warnings to the result, so a caller who
+     * only ever sees the SimResult still learns the numbers are incomplete.
+     */
+    _collectWarnings() {
+        this.simResult.warnings = getSimWarnings();
     }
 
     reset() {
@@ -1145,6 +1156,10 @@ class CombatSimulator {
     }
 
     checkTriggersForUnit(unit, friendlies, enemies) {
+        // Still fatal, unlike the unknown-mechanic paths above. This is not the
+        // game having grown a feature the engine has not learned — it is the
+        // engine's own bookkeeping being wrong, and a corpse that goes on eating
+        // and casting poisons every number downstream of it.
         if (unit.combatDetails.currentHitpoints <= 0) {
             throw new Error('Checking triggers for a dead unit');
         }
@@ -1320,12 +1335,11 @@ class CombatSimulator {
                         break;
                     }
                     default:
-                        throw new Error(
-                            'Unsupported effect type for ability: ' +
-                                todoAbility.hrid +
-                                ' effectType: ' +
-                                abilityEffect.effectType
-                        );
+                        // Skipping one effect of one ability costs the damage or
+                        // healing that effect would have done; throwing costs
+                        // every number in the run
+                        recordUnknown('ability effect type', abilityEffect.effectType, todoAbility.hrid);
+                        break;
                 }
             }
         }
@@ -1387,7 +1401,8 @@ class CombatSimulator {
         }
 
         if (abilityEffect.targetType !== 'self') {
-            throw new Error('Unsupported target type for buff ability effect: ' + ability.hrid);
+            recordUnknown('buff ability target type', abilityEffect.targetType, ability.hrid);
+            return;
         }
 
         for (const buff of abilityEffect.buffs) {
@@ -1405,7 +1420,9 @@ class CombatSimulator {
                 targets = source.isPlayer ? this.enemies : this.players;
                 break;
             default:
-                throw new Error('Unsupported target type for damage ability effect: ' + ability.hrid);
+                recordUnknown('damage ability target type', abilityEffect.targetType, ability.hrid);
+                targets = null;
+                break;
         }
 
         if (!targets) {
@@ -1698,6 +1715,13 @@ class CombatSimulator {
     }
 
     processAbilityHealEffect(source, ability, abilityEffect) {
+        // Checked here rather than inside CombatUtilities.processHeal, which by
+        // then is mid-loop over allies with some already healed
+        if (abilityEffect.combatStyleHrid !== '/combat_styles/magic') {
+            recordUnknown('heal combat style', abilityEffect.combatStyleHrid, ability.hrid);
+            return;
+        }
+
         if (abilityEffect.targetType === 'allAllies') {
             const targets = source.isPlayer ? this.players : this.enemies;
             for (const target of targets.filter((unit) => unit && unit.combatDetails.currentHitpoints > 0)) {
@@ -1731,7 +1755,8 @@ class CombatSimulator {
         }
 
         if (abilityEffect.targetType !== 'self') {
-            throw new Error('Unsupported target type for heal ability effect: ' + ability.hrid);
+            recordUnknown('heal ability target type', abilityEffect.targetType, ability.hrid);
+            return;
         }
 
         const amountHealed = CombatUtilities.processHeal(source, abilityEffect, source);
@@ -1740,7 +1765,16 @@ class CombatSimulator {
 
     processAbilityReviveEffect(source, ability, abilityEffect) {
         if (abilityEffect.targetType !== 'deadAlly') {
-            throw new Error('Unsupported target type for revive ability effect: ' + ability.hrid);
+            recordUnknown('revive ability target type', abilityEffect.targetType, ability.hrid);
+            return;
+        }
+
+        // Both checks come before the respawn event is cleared. Bailing out
+        // after that point would leave the target dead with nothing scheduled
+        // to bring it back — the one state this path can genuinely corrupt.
+        if (abilityEffect.combatStyleHrid !== '/combat_styles/magic') {
+            recordUnknown('revive combat style', abilityEffect.combatStyleHrid, ability.hrid);
+            return;
         }
 
         const targets = source.isPlayer ? this.players : this.enemies;
@@ -1770,7 +1804,8 @@ class CombatSimulator {
 
     processAbilitySpendHpEffect(source, ability, abilityEffect) {
         if (abilityEffect.targetType !== 'self') {
-            throw new Error('Unsupported target type for spend hp ability effect: ' + ability.hrid);
+            recordUnknown('spend hp ability target type', abilityEffect.targetType, ability.hrid);
+            return;
         }
 
         const hpSpent = CombatUtilities.processSpendHp(source, abilityEffect);

@@ -2505,6 +2505,16 @@ class CombatSimUI {
         // Pre-compute metrics for history entries (recomputed on player-tab change)
         this._ensureHistoryMetrics(activeTab);
 
+        // Mechanics the engine could not model. Shown above everything because
+        // it changes how every number below should be read.
+        if (simResult.warnings?.length) {
+            html += `<div style="margin-bottom:10px; padding:6px 8px; border:1px solid #6b5a1f; background:rgba(255,200,60,0.08); border-radius:4px; font-size:11px; color:#e8c66c;">`;
+            for (const warning of simResult.warnings) {
+                html += `<div>&#9888; ${warning}</div>`;
+            }
+            html += '</div>';
+        }
+
         // History panel (above everything)
         if (this._simHistory.length > 0) {
             html += this._renderHistoryPanel();
@@ -2661,6 +2671,9 @@ class CombatSimUI {
             html += '</div>';
         }
         html += '</div>';
+
+        // Sustain — HP/MP the engine has always tracked per source and never shown
+        html += this._renderSustainBreakdown(simResult, hours, gameData, activeTab);
 
         // XP/hr by skill — per active tab player
         const xpTotals = {};
@@ -3203,6 +3216,19 @@ class CombatSimUI {
             });
         });
 
+        // Healing & Mana collapsible toggle
+        container.querySelectorAll('[data-toggle="sustain-section"]').forEach((el) => {
+            el.addEventListener('click', () => {
+                const section = container.querySelector('#mwi-csim-sustain-section');
+                const arrow = container.querySelector('[data-arrow="sustain-section"]');
+                if (section) {
+                    const isOpen = section.style.display !== 'none';
+                    section.style.display = isOpen ? 'none' : 'block';
+                    if (arrow) arrow.innerHTML = isOpen ? '&#9654;' : '&#9660;';
+                }
+            });
+        });
+
         // History collapsible toggle
         container.querySelectorAll('[data-toggle="history-section"]').forEach((el) => {
             el.addEventListener('click', () => {
@@ -3215,6 +3241,113 @@ class CombatSimUI {
                 }
             });
         });
+    }
+
+    /**
+     * Human name for a healing/mana source. The engine writes either a bare
+     * label it made up ('regen', 'lifesteal') or an hrid of whatever did it.
+     * @param {string} source - Source key from the SimResult
+     * @param {Object} gameData - Game data payload, for ability names
+     * @returns {string} Display name
+     * @private
+     */
+    _sustainSourceName(source, gameData) {
+        const labels = {
+            regen: 'Regen',
+            lifesteal: 'Lifesteal',
+            manaLeech: 'Mana Leech',
+            ripple: 'Ripple',
+        };
+        if (labels[source]) return labels[source];
+
+        if (source.startsWith('/abilities/')) {
+            return gameData?.abilityDetailMap?.[source]?.name || source.split('/').pop();
+        }
+        if (source.startsWith('/items/')) {
+            return dataManager.getItemDetails(source)?.name || source.split('/').pop();
+        }
+        return source;
+    }
+
+    /**
+     * Where the active player's hitpoints and manapoints came from and went.
+     *
+     * The engine has always recorded this per unit per source — food, regen,
+     * lifesteal, each healing ability — and nothing ever displayed it, so a
+     * loadout that survives on food and one that survives on lifesteal looked
+     * identical. Collapsed by default: it answers a question most runs do not
+     * raise.
+     * @param {Object} simResult - Merged SimResult
+     * @param {number} hours - Simulated hours
+     * @param {Object} gameData - Game data payload
+     * @param {string} activeTab - Player hrid whose numbers are shown
+     * @returns {string} HTML, or '' when the player neither healed nor spent
+     * @private
+     */
+    _renderSustainBreakdown(simResult, hours, gameData, activeTab) {
+        const groups = [
+            { key: 'hitpointsGained', label: 'HP gained', color: '#7ec87e' },
+            { key: 'manapointsGained', label: 'MP gained', color: '#93c5fd' },
+            { key: 'hitpointsSpent', label: 'HP spent', color: '#ff6b6b' },
+        ];
+
+        const sections = [];
+        for (const group of groups) {
+            const bySource = simResult[group.key]?.[activeTab];
+            if (!bySource) continue;
+
+            const rows = Object.entries(bySource)
+                .filter(([, amount]) => amount > 0)
+                .map(([source, amount]) => ({ name: this._sustainSourceName(source, gameData), amount }))
+                .sort((a, b) => b.amount - a.amount);
+            if (rows.length === 0) continue;
+
+            sections.push({ ...group, rows, total: rows.reduce((sum, row) => sum + row.amount, 0) });
+        }
+
+        if (sections.length === 0) return '';
+
+        const rowStyle = 'display:flex; align-items:center; padding:2px 0; font-size:12px; gap:6px;';
+        const colNum = 'flex:0; white-space:nowrap; min-width:70px; text-align:right;';
+        const perHour = (amount) => (hours > 0 ? amount / hours : 0);
+        const fmt = (value) => (value >= 1 ? formatWithSeparator(Math.round(value)) : value.toFixed(2));
+
+        const headline = sections
+            .map((section) => `${section.label} ${formatKMB(Math.round(perHour(section.total)))}/hr`)
+            .join(' · ');
+
+        let html = `<div style="margin-bottom:12px;">`;
+        html += `<div style="color:${ACCENT}; font-weight:700; font-size:12px; margin-bottom:6px; border-bottom:1px solid #222; padding-bottom:4px; cursor:pointer; user-select:none;" data-toggle="sustain-section">`;
+        html += `<span data-arrow="sustain-section" style="display:inline-block; width:14px; font-size:10px;">&#9654;</span> Healing &amp; Mana`;
+        html += `<span style="color:#666; font-weight:400; font-size:10px; margin-left:6px;">${headline}</span>`;
+        html += '</div>';
+        html += `<div id="mwi-csim-sustain-section" style="display:none;">`;
+
+        for (const section of sections) {
+            html += `<div style="color:#888; font-size:10px; margin:6px 0 2px;">${section.label}</div>`;
+            html += `<div style="display:flex; align-items:center; padding:0 0 2px; font-size:10px; gap:6px; color:#666;">`;
+            html += `<span style="flex:1;">Source</span>`;
+            html += `<span style="${colNum}">/hr</span>`;
+            html += `<span style="${colNum}">Total</span>`;
+            html += '</div>';
+
+            for (const row of section.rows) {
+                html += `<div style="${rowStyle}">`;
+                html += `<span style="color:#aaa; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${row.name}</span>`;
+                html += `<span style="color:${section.color}; font-weight:600; ${colNum}">${fmt(perHour(row.amount))}</span>`;
+                html += `<span style="color:#e0e0e0; font-weight:600; ${colNum}">${fmt(row.amount)}</span>`;
+                html += '</div>';
+            }
+
+            html += `<div style="display:flex; align-items:center; padding:3px 0 0; font-size:12px; border-top:1px solid #333; margin-top:3px; gap:6px;">`;
+            html += `<span style="color:#aaa; font-weight:700; flex:1;">Total</span>`;
+            html += `<span style="color:${section.color}; font-weight:700; ${colNum}">${fmt(perHour(section.total))}</span>`;
+            html += `<span style="color:#e0e0e0; font-weight:700; ${colNum}">${fmt(section.total)}</span>`;
+            html += '</div>';
+        }
+
+        html += '</div></div>';
+        return html;
     }
 
     /**

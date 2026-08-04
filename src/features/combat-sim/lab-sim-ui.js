@@ -2741,6 +2741,11 @@ class LabSimUI {
             const deltaColor = deltaVal > 0 ? '#4caf50' : deltaVal < 0 ? '#f44336' : '#888';
             const tokenCost = r.tokenCost || 0;
             const tokensPerPct = deltaVal > 0 ? Math.round(tokenCost / deltaVal) : Infinity;
+            // The Experience token buys XP, not clears, so its two columns are
+            // the ones that carry its case; every other row leaves them blank
+            const isXpRow = r.metricType === 'xpPerRoom';
+            const xpDelta = r.xpPerRoomDelta || 0;
+            const tokensPerXp = r.tokensPerXp ?? Infinity;
 
             return {
                 desc: r.candidate?.description || '',
@@ -2748,10 +2753,16 @@ class LabSimUI {
                 clearRate,
                 clearRateStr: clearRate.toFixed(1) + '%',
                 deltaVal,
-                deltaStr: (deltaVal >= 0 ? '+' : '') + deltaVal.toFixed(2) + '%',
-                deltaColor,
+                deltaStr: isXpRow ? '\u2014' : (deltaVal >= 0 ? '+' : '') + deltaVal.toFixed(2) + '%',
+                deltaColor: isXpRow ? '#888' : deltaColor,
                 tokensPerPct,
-                tokensPerPctStr: deltaVal > 0 ? formatWithSeparator(tokensPerPct) : '\u2014',
+                tokensPerPctStr: !isXpRow && deltaVal > 0 ? formatWithSeparator(tokensPerPct) : '\u2014',
+                xpDelta,
+                xpDeltaStr: isXpRow ? (xpDelta >= 0 ? '+' : '') + xpDelta.toFixed(1) : '\u2014',
+                xpDeltaColor: isXpRow && xpDelta > 0 ? '#4caf50' : '#888',
+                tokensPerXp,
+                tokensPerXpStr:
+                    isXpRow && Number.isFinite(tokensPerXp) ? formatWithSeparator(Math.round(tokensPerXp)) : '\u2014',
             };
         });
 
@@ -2805,6 +2816,8 @@ class LabSimUI {
                 ${th('Clear Rate', 'clearRate', 'right')}
                 ${th('Delta', 'deltaVal', 'right')}
                 ${th('Tokens/1%', 'tokensPerPct', 'right')}
+                ${th('XP/Room', 'xpDelta', 'right')}
+                ${th('Tokens/XP', 'tokensPerXp', 'right')}
             </tr></thead><tbody>`;
 
             for (const row of tokenRows) {
@@ -2814,6 +2827,8 @@ class LabSimUI {
                     <td style="${tdStyle} color:#ccc;">${row.clearRateStr}</td>
                     <td style="${tdStyle} color:${row.deltaColor}; font-weight:600;">${row.deltaStr}</td>
                     <td style="${tdStyle} color:#888;">${row.tokensPerPctStr}</td>
+                    <td style="${tdStyle} color:${row.xpDeltaColor}; font-weight:600;">${row.xpDeltaStr}</td>
+                    <td style="${tdStyle} color:#888;">${row.tokensPerXpStr}</td>
                 </tr>`;
             }
             html += '</tbody></table>';
@@ -2854,8 +2869,10 @@ class LabSimUI {
         const renderAll = () => {
             sortRows(tokenRows, sortState.token.key, sortState.token.dir);
             sortRows(goldRows, sortState.gold.key, sortState.gold.dir);
+            const baselineXp = baseline?.xpPerRoom || 0;
             let html = `<div style="color:#888; font-size:11px; margin-bottom:8px;">
                 Baseline Avg Clear: <span style="color:#e0e0e0; font-weight:600;">${((baseline?.clearRate || 0) * 100).toFixed(1)}%</span>
+                ${baselineXp > 0 ? ` · Avg XP/Room: <span style="color:#e0e0e0; font-weight:600;">${baselineXp.toFixed(1)}</span>` : ''}
             </div>`;
             if (tokenRows.length > 0) html += renderTokenTable();
             if (goldRows.length > 0) html += renderGoldTable();
@@ -2874,6 +2891,8 @@ class LabSimUI {
                 { key: 'clearRate', label: 'Avg clear rate' },
                 { key: 'clearRateDelta', label: 'Clear rate change' },
                 { key: 'perPercent', label: 'Cost per +1%' },
+                { key: 'xpPerRoomDelta', label: 'XP/room change' },
+                { key: 'tokensPerXp', label: 'Tokens per +1 XP/room' },
             ],
             rows: results.map((r) => {
                 const paid = r.costType === 'token' ? r.tokenCost : r.cost;
@@ -2889,6 +2908,8 @@ class LabSimUI {
                     clearRate: r.clearRate ?? null,
                     clearRateDelta: r.clearRateDelta ?? null,
                     perPercent: gain > 0 && paid ? Math.round(paid / gain) : null,
+                    xpPerRoomDelta: r.xpPerRoomDelta ?? null,
+                    tokensPerXp: Number.isFinite(r.tokensPerXp) ? Math.round(r.tokensPerXp) : null,
                 };
             }),
         }));

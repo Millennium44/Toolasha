@@ -87,9 +87,10 @@ export function buildPlayerDTO() {
         drinks: [],
         abilities: [],
         houseRooms: {},
-        tokenUpgrades: { speed: 0, efficiency: 0, success: 0, doubleProgress: 0 },
+        tokenUpgrades: { speed: 0, efficiency: 0, success: 0, doubleProgress: 0, experience: 0 },
         communityBuffLevels: { productionEfficiency: 0, enhancingSpeed: 0, gatheringQuantity: 0, experience: 0 },
         guildCombatBuffs: [],
+        achievementCombatBuffs: [],
     };
 
     // Extract all skill levels (combat + skilling)
@@ -123,6 +124,12 @@ export function buildPlayerDTO() {
 
     // Extract guild combat buffs (pre-computed server-side per action type)
     dto.guildCombatBuffs = characterData.guildActionTypeBuffsMap?.['/action_types/combat'] || [];
+
+    // Achievement buffs arrive the same shape and from the same kind of source —
+    // completed achievement tiers, pre-computed per action type. They were being
+    // read for every skilling calculation and dropped on the floor for combat.
+    const achievementCombatBuffs = dataManager.getAchievementBuffs('/action_types/combat');
+    dto.achievementCombatBuffs = Array.isArray(achievementCombatBuffs) ? achievementCombatBuffs : [];
 
     // Extract equipped items → keyed by equipment type
     // Prefer the always-current characterEquipment Map (updated on every items_updated WS message)
