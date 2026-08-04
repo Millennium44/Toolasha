@@ -411,6 +411,15 @@ class WebSocketHook {
      * Save combat sim data for export (cross-domain via GM storage + IndexedDB).
      * Character/client/battle data is saved to GM storage so the Shykai sim page can read it.
      * Profile shares are saved to IndexedDB for cross-session persistence.
+     *
+     * Every GM-bridged payload written here is also stamped with an ownership marker —
+     * `{characterId, characterName, writtenAt}` — written to a namespaced *sibling* key
+     * (`${key}_meta`) rather than wrapped around the payload itself. That keeps the raw
+     * payload key byte-for-byte identical to what it always was, which matters because the
+     * external Shykai combat sim page reads these exact GM keys directly (see the
+     * cross-domain fallback comments on the keys below) — wrapping the payload would break
+     * it. See combat-sim-integration.js / combat-sim-export.js for the read-side guard that
+     * checks this stamp before trusting a GM-bridged value.
      * @param {string} messageType - Message type
      * @param {string} message - Raw message JSON string
      */
@@ -419,9 +428,23 @@ class WebSocketHook {
         try {
             // Save character/client/battle data to GM storage for cross-domain Shykai access
             if (hasGM && messageType === 'init_character_data') {
+                // The writer's own character id/name must be read from THIS message, not from
+                // dataManager: saveCombatSimData runs before dataManager's own init_character_data
+                // handler (see processMessage), so dataManager.getCurrentCharacterId() would still
+                // report the *previous* character during a character switch.
+                try {
+                    const parsedCharacter = JSON.parse(message);
+                    if (parsedCharacter.character?.id) {
+                        this.bridgeCharacterId = parsedCharacter.character.id;
+                        this.bridgeCharacterName = parsedCharacter.character.name || null;
+                    }
+                } catch {
+                    /* ignore — meta write below falls back to the last known bridge character */
+                }
                 setTimeout(() => {
                     try {
                         GM_setValue('toolasha_init_character_data', message);
+                        this.writeBridgeMeta('toolasha_init_character_data_meta');
                     } catch {
                         /* ignore */
                     }
@@ -430,6 +453,7 @@ class WebSocketHook {
                 setTimeout(() => {
                     try {
                         GM_setValue('toolasha_init_client_data', message);
+                        this.writeBridgeMeta('toolasha_init_client_data_meta');
                     } catch {
                         /* ignore */
                     }
@@ -438,6 +462,7 @@ class WebSocketHook {
                 setTimeout(() => {
                     try {
                         GM_setValue('toolasha_new_battle', message);
+                        this.writeBridgeMeta('toolasha_new_battle_meta');
                     } catch {
                         /* ignore */
                     }
@@ -484,6 +509,7 @@ class WebSocketHook {
                 if (hasGM) {
                     try {
                         GM_setValue('toolasha_profile_list', JSON.stringify(profileList));
+                        this.writeBridgeMeta('toolasha_profile_list_meta');
                     } catch {
                         /* ignore */
                     }
@@ -491,6 +517,31 @@ class WebSocketHook {
             }
         } catch (error) {
             console.error('[WebSocket] Failed to save Combat Sim data:', error);
+        }
+    }
+
+    /**
+     * Stamp a GM-bridged combat sim key with who wrote it and when, under a namespaced sibling
+     * meta key (e.g. 'toolasha_init_character_data_meta'). Kept separate from the payload key so
+     * the external Shykai sim page, which reads the raw payload key directly, is unaffected.
+     * Uses the character last seen via init_character_data on this tab (`this.bridgeCharacterId` /
+     * `this.bridgeCharacterName`) since that is the only writer identity reliably available
+     * synchronously at write time.
+     * @param {string} metaKey - Namespaced meta key to write, e.g. 'toolasha_init_character_data_meta'
+     */
+    writeBridgeMeta(metaKey) {
+        if (typeof GM_setValue === 'undefined') return;
+        try {
+            GM_setValue(
+                metaKey,
+                JSON.stringify({
+                    characterId: this.bridgeCharacterId || null,
+                    characterName: this.bridgeCharacterName || null,
+                    writtenAt: Date.now(),
+                })
+            );
+        } catch {
+            /* ignore */
         }
     }
 
