@@ -40,6 +40,7 @@ import {
     labScopeTargetCount,
     labDimensionAvailability,
     labAbilityLevelTypeAvailability,
+    estimateLabUpgradeSims,
     planLabUpgradeRun,
 } from './lab-sim-upgrade-modes.js';
 // The upgrade-row vocabulary — what a row would have you buy, and the handoff
@@ -1976,6 +1977,14 @@ class LabSimUI {
                     );
                     return;
                 }
+                // Nothing is refused for being large any more, so the size is
+                // said instead — first from the rough per-dimension estimate,
+                // which needs nothing but the checkboxes, then replaced by the
+                // analysis's own count the moment it has pooled its candidates.
+                // Both land before the first simulation, while Stop still means
+                // "I did not mean to ask for that".
+                const estimate = estimateLabUpgradeSims(plan.modes, fights.length);
+                this._setStatus(`Starting: ${estimate.text}. Stop cancels at any point.`);
                 const analysisResult = await runLabyrinthAllFightsAnalysis(
                     {
                         fights,
@@ -1989,8 +1998,9 @@ class LabSimUI {
                         modes: plan.modes,
                         extraCandidates: this._critAuraCandidates(fights[0]?.dto),
                     },
-                    ({ current, total, description }) => {
+                    ({ current, total, description, plan: runPlan }) => {
                         if (this._upgradeAborted) return;
+                        if (runPlan) this._setStatus(describeAllFightsPlan(runPlan));
                         const fill = this.panel.querySelector('#mwi-labsim-upgrade-progress-fill');
                         const text = this.panel.querySelector('#mwi-labsim-upgrade-progress-text');
                         const { text: remaining } = eta.update(total > 0 ? current / total : 0);
@@ -2631,7 +2641,8 @@ class LabSimUI {
                 </div>`;
             }
             html += `<tr data-allfights-detail="${i}" style="display:none;">
-                <td colspan="7" style="padding:6px 12px; background:#0d0d1a; border-bottom:1px solid #222; font-size:11px;">${fightRows}</td>
+                <td colspan="7" style="padding:6px 12px; background:#0d0d1a; border-bottom:1px solid #222; font-size:11px;">
+                    ${fightRows}${this._renderAllFightsNotes(r)}</td>
             </tr>`;
         });
 
@@ -2691,9 +2702,49 @@ class LabSimUI {
             });
         });
 
+        const budget = analysisResult.budget;
         this._setStatus(
-            `All-fights analysis complete: ${results.length} skill upgrades × ${baseline.fights.length} fights.`
+            `All-fights analysis complete: ${results.length} upgrades across ${baseline.fights.length} fights` +
+                (budget?.sims ? `, ${budget.sims.toLocaleString()} simulations` : '') +
+                (budget?.reduced
+                    ? ` at ${Math.round(budget.trialScale * 100)}% of the ${budget.requestedHours}h per fight — every fight simulated, win rates noisier.`
+                    : '.')
         );
+    }
+
+    /**
+     * The notes a row's own numbers cannot carry.
+     *
+     * The forced armor swaps are priced without crediting the resale of what
+     * they replace, because the labyrinth wants every element kept — a gross
+     * price that reads as an overcharge unless the row says why. And a pooled
+     * ability swap is measured at a different level in every loadout it reaches,
+     * which the description no longer states now that it is one row for the
+     * whole run.
+     *
+     * @param {Object} result - One all-fights result row
+     * @returns {string} HTML, empty where there is nothing to add
+     * @private
+     */
+    _renderAllFightsNotes(result) {
+        const notes = [];
+        const kept = result.costDetail?.kept;
+        if (kept?.length) {
+            notes.push(
+                `Keeping ${kept.map((k) => `${k.name} +${k.enhancementLevel}`).join(', ')} — resale of ` +
+                    `${formatKMB(Math.round(result.costDetail.keptValue || 0))} deliberately not credited, since the labyrinth needs ` +
+                    'every set. Turn off "Keep gear the forced armor swaps replace" in settings to price these as ' +
+                    'straight swaps.'
+            );
+        }
+        if (result.candidate?.caveat) notes.push(result.candidate.caveat);
+        if (!notes.length) return '';
+        return notes
+            .map(
+                (note) =>
+                    `<div style="color:#8ab4f8; margin-top:6px; white-space:normal; line-height:1.4;">${note}</div>`
+            )
+            .join('');
     }
 
     /** @private */
@@ -4024,6 +4075,32 @@ export function criticalAuraAbility() {
         special: Boolean(abilityDetailMap[hrid]?.isSpecialAbility),
         learned: Boolean(learned),
     };
+}
+
+/**
+ * What a whole-run analysis has just committed to, in one sentence.
+ *
+ * Nothing about the Upgrade tab is refused for being large any more — ability
+ * swaps across a full labyrinth used to be, and the refusal landed on the one
+ * scope where the question is most worth asking. What replaces the refusal is
+ * this: the count is put in front of the player before the first simulation,
+ * while Stop still costs nothing, and if the run is large enough that each
+ * simulation has been shortened to fit, the sentence says so rather than letting
+ * a noisier table pass for the same table.
+ *
+ * @param {Object} plan - The `plan` an all-fights analysis reports up front
+ * @returns {string} Status line text
+ */
+export function describeAllFightsPlan(plan) {
+    if (!plan) return '';
+    const head =
+        `${plan.candidates.toLocaleString()} upgrades across ${plan.fights} fights — ` +
+        `${plan.sims.toLocaleString()} simulations (each upgrade only in the rooms it reaches)`;
+    if (!plan.reduced) return `${head}. Stop cancels at any point.`;
+    return (
+        `${head}. Big enough that each one runs ${Math.round(plan.trialScale * 100)}% of the ${plan.requestedHours}h ` +
+        'asked for — every fight is still simulated, the win rates are just noisier. Stop cancels at any point.'
+    );
 }
 
 /**

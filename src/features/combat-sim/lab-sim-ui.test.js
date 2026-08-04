@@ -141,7 +141,8 @@ vi.mock('../combat/labyrinth-clear-rate.js', () => ({
 }));
 vi.mock('../combat/loadout-snapshot.js', () => ({ default: { get: () => null, snapshots: {} } }));
 
-const { default: ui } = await import('./lab-sim-ui.js');
+const { default: ui, describeAllFightsPlan } = await import('./lab-sim-ui.js');
+const { estimateLabUpgradeSims } = await import('./lab-sim-upgrade-modes.js');
 
 /** A pointer event happy-dom will hand to the drag helper's listeners. */
 function pointer(type, x, y) {
@@ -377,25 +378,67 @@ describe('the Upgrade tab asks two questions instead of one', () => {
         expect(ui._planFromControls()).toMatchObject({ kind: 'allFights', monsterHrids: ['/monsters/mimic'] });
     });
 
-    test('ability swaps are disabled across several fights, with the reason on the label', () => {
-        expect(box('ability_swap').disabled).toBe(false);
-
+    test('ability swaps are offered across several fights, with no refusal left on the label', () => {
+        // They used to be disabled here, on the grounds that a hundred-odd
+        // candidates times a labyrinth is thousands of sims. The size is now
+        // handled by shortening each sim and saying the count up front.
         setScope('all');
 
-        expect(box('ability_swap').disabled).toBe(true);
-        expect(ui.panel.querySelector('[data-lab-mode-label="ability_swap"]').title).toMatch(/single target/);
-        // Nothing else is caught by it
-        expect(box('equipment').disabled).toBe(false);
+        expect(box('ability_swap').disabled).toBe(false);
+        const label = ui.panel.querySelector('[data-lab-mode-label="ability_swap"]');
+        expect(label.title).not.toMatch(/single target|one fight at a time/);
+        expect(ui.panel.querySelector('[data-lab-mode-chip="ability_swap"]').style.opacity).toBe('1');
     });
 
-    test('and are offered again as soon as the scope is one fight', () => {
+    test('and they reach the multi-fight analysis instead of being dropped from the plan', () => {
+        check('ability_swap', true);
         setScope('all');
-        expect(box('ability_swap').disabled).toBe(true);
-        setScope('selected');
-        const mimic = ui.panel.querySelector('[data-lab-target="/monsters/mimic"]');
-        mimic.checked = true;
-        mimic.dispatchEvent(new window.Event('change', { bubbles: true }));
-        expect(box('ability_swap').disabled).toBe(false);
+
+        expect(ui._planFromControls()).toMatchObject({
+            kind: 'allFights',
+            modes: ['equipment', 'ability_swap'],
+            dropped: [],
+        });
+    });
+
+    test('the size of a swap run across every fight is said before it starts', () => {
+        check('ability_swap', true);
+        setScope('all');
+
+        const estimate = estimateLabUpgradeSims(ui._getUpgradeDimensions(), ui._upgradeTargetCount());
+        expect(estimate.heavy).toBe(true);
+        expect(estimate.text).toMatch(/about [\d,]+ simulations \(3 fights\)/);
+    });
+
+    test('and what the analysis actually planned replaces the estimate', () => {
+        const text = describeAllFightsPlan({
+            candidates: 284,
+            fights: 12,
+            sims: 1043,
+            requestedHours: 10,
+            trialScale: 0.48,
+            reduced: true,
+        });
+
+        expect(text).toContain('284 upgrades across 12 fights');
+        expect(text).toContain('1,043 simulations');
+        // Bounded trials, never sampled fights — the sentence has to say which
+        expect(text).toContain('48% of the 10h');
+        expect(text).toContain('every fight is still simulated');
+    });
+
+    test('a run small enough to leave the trials alone does not claim it shortened them', () => {
+        const text = describeAllFightsPlan({
+            candidates: 30,
+            fights: 3,
+            sims: 64,
+            requestedHours: 10,
+            trialScale: 1,
+            reduced: false,
+        });
+
+        expect(text).toContain('64 simulations');
+        expect(text).not.toContain('%');
     });
 
     test('the per-ability Target Lv rule is disabled where it cannot be honoured', () => {
