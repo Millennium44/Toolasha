@@ -200,10 +200,11 @@ function root() {
  * @returns {Array<{name: string, hint: string, run: Function}>}
  */
 function panelCommands() {
-    const { UI = {}, Market = {}, Sim = {} } = root();
+    const { UI = {}, Market = {}, Sim = {}, Actions = {} } = root();
 
     const entries = [
         { name: 'Overlay', hint: 'The tile overlay', run: () => overlayPanel.toggle() },
+        { name: 'Goal Planner', hint: 'Ordered steps to a goal, costed', target: Actions.goalPlanner },
         { name: 'Treasure Tracker', hint: 'Chests opened and what came out', target: Market.treasureTracker },
         { name: 'PFormance', hint: "What the script's own timers say", target: UI.pformancePanel },
         { name: 'Combat Simulator', hint: 'Simulate a fight', target: Sim.combatSimUI },

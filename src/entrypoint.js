@@ -612,6 +612,13 @@ function registerFeatures() {
             module: Actions.skillingOptimizer,
             async: false,
         },
+        {
+            key: 'goalPlanner',
+            name: 'Goal Planner',
+            category: 'General',
+            module: Actions.goalPlanner,
+            async: true,
+        },
     ];
 
     // Combat Features
