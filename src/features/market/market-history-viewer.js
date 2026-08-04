@@ -1717,6 +1717,9 @@ class MarketHistoryViewer {
 
             let imported = 0;
             let skipped = 0;
+            // Imported rows are exact id↔time pairs too — mirror them into the
+            // shared anchor pool the same way live recording does
+            const newAnchors = [];
 
             // Build item name to HRID map
             const itemNameToHrid = {};
@@ -1812,11 +1815,13 @@ class MarketHistoryViewer {
                 };
 
                 existingListings.push(listing);
+                newAnchors.push({ id: listing.id, timestamp: listing.timestamp });
                 imported++;
             }
 
             // Save to storage
             await writeScoped(this.storageKey, existingListings, 'marketListings', true);
+            await estimatedListingAge.addAnchors(newAnchors);
 
             // Remove progress message
             document.body.removeChild(progressMsg);
@@ -1950,6 +1955,9 @@ class MarketHistoryViewer {
 
             let imported = 0;
             let skipped = 0;
+            // Imported rows are exact id↔time pairs too — mirror them into the
+            // shared anchor pool the same way live recording does
+            const newAnchors = [];
 
             for (const etListing of marketList) {
                 // Skip if we already have this listing
@@ -1972,11 +1980,13 @@ class MarketHistoryViewer {
                 };
 
                 existingListings.push(toolashaListing);
+                newAnchors.push({ id: toolashaListing.id, timestamp: toolashaListing.timestamp });
                 imported++;
             }
 
             // Save to storage
             await writeScoped(this.storageKey, existingListings, 'marketListings', true);
+            await estimatedListingAge.addAnchors(newAnchors);
 
             // Remove progress message
             document.body.removeChild(progressMsg);
@@ -2019,6 +2029,7 @@ class MarketHistoryViewer {
             `⚠️ WARNING: This will permanently delete ALL market history data!\n` +
                 `You are about to delete ${this.listings.length} listings.\n` +
                 `RECOMMENDATION: Export to CSV first using the "Export CSV" button.\n` +
+                `Anonymous age anchors are kept so age estimates stay accurate.\n` +
                 `This action CANNOT be undone!\n` +
                 `Are you absolutely sure you want to continue?`
         );
@@ -2028,6 +2039,16 @@ class MarketHistoryViewer {
         }
 
         try {
+            // "Clear History" only wipes this character's personal listing log —
+            // the item/price/status record of what *you* sold. It deliberately
+            // leaves the anonymous {id, timestamp} anchor mirror in place: those
+            // pairs carry no item, price, or character info, so keeping them isn't
+            // keeping "history", and every other listing's age estimate on this
+            // and every other character depends on that shared pool staying intact.
+            // Backfill it one last time first, in case any of these listings predate
+            // anchor growth and were never mirrored.
+            await estimatedListingAge.addAnchors(this.listings.map((l) => ({ id: l.id, timestamp: l.timestamp })));
+
             // Clear from storage
             await writeScoped(this.storageKey, [], 'marketListings', true);
 

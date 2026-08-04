@@ -70,7 +70,7 @@ vi.mock('../../core/config.js', () => ({
 }));
 vi.mock('../../api/marketplace.js', () => ({ default: { updatePrice: vi.fn() } }));
 
-const { default: estimatedListingAge } = await import('./estimated-listing-age.js');
+const { default: estimatedListingAge, ANCHOR_POOL_MAX } = await import('./estimated-listing-age.js');
 const { _resetAdoptionCache } = await import('../../utils/character-key.js');
 
 /** The key this character's listing log lives under */
@@ -430,5 +430,200 @@ describe('splitting the old shared key', () => {
         copies[0].status = 'meddled';
 
         expect(estimatedListingAge.knownListings[0].status).toBeUndefined();
+    });
+});
+
+describe('addAnchors — growing the shared pool', () => {
+    test('appends a new {id, timestamp} pair', async () => {
+        estimatedListingAge.anchors = [{ id: 100, timestamp: 1000 }];
+
+        await estimatedListingAge.addAnchors([{ id: 200, timestamp: 2000 }]);
+
+        expect(estimatedListingAge.anchors).toEqual([
+            { id: 100, timestamp: 1000 },
+            { id: 200, timestamp: 2000 },
+        ]);
+    });
+
+    test('dedupes by id, keeping the existing timestamp rather than the new one', async () => {
+        estimatedListingAge.anchors = [{ id: 100, timestamp: 1000 }];
+
+        await estimatedListingAge.addAnchors([{ id: 100, timestamp: 9999 }]);
+
+        expect(estimatedListingAge.anchors).toEqual([{ id: 100, timestamp: 1000 }]);
+    });
+
+    test('persists the grown pool to storage', async () => {
+        estimatedListingAge.anchors = [{ id: 100, timestamp: 1000 }];
+
+        await estimatedListingAge.addAnchors([{ id: 200, timestamp: 2000 }]);
+
+        expect(
+            storageMock
+                .storeFor('marketListings')
+                .get(ANCHORS_KEY)
+                .map((a) => a.id)
+        ).toEqual([100, 200]);
+    });
+
+    test('does not write to storage when every candidate is already known', async () => {
+        estimatedListingAge.anchors = [{ id: 100, timestamp: 1000 }];
+
+        await estimatedListingAge.addAnchors([{ id: 100, timestamp: 1000 }]);
+
+        expect(storageMock.setJSON).not.toHaveBeenCalled();
+    });
+
+    test('ignores malformed candidates (missing fields, non-numeric, NaN)', async () => {
+        estimatedListingAge.anchors = [{ id: 100, timestamp: 1000 }];
+
+        await estimatedListingAge.addAnchors([
+            null,
+            { id: 'not-a-number', timestamp: 2000 },
+            { id: 200 },
+            { id: NaN, timestamp: 3000 },
+            { id: 300, timestamp: NaN },
+        ]);
+
+        expect(estimatedListingAge.anchors).toEqual([{ id: 100, timestamp: 1000 }]);
+    });
+
+    test('immediately improves estimation for ids the growth just covered', async () => {
+        estimatedListingAge.anchors = [
+            { id: 100, timestamp: 1000 },
+            { id: 300, timestamp: 3000 },
+        ];
+        estimatedListingAge.knownListings = [];
+        estimatedListingAge.rebuildEstimationPoints();
+        // Before growth, 200 is a crude interpolation between the two endpoints
+        expect(estimatedListingAge.estimateTimestamp(200)).toBe(2000);
+
+        // A new, exact midpoint anchor arrives
+        await estimatedListingAge.addAnchors([{ id: 200, timestamp: 2500 }]);
+
+        // Estimation for 200 itself is now exact, and never regresses relative to before
+        expect(estimatedListingAge.estimateTimestamp(200)).toBe(2500);
+    });
+
+    test('a no-op call (empty array) does not touch storage or the pool', async () => {
+        estimatedListingAge.anchors = [{ id: 100, timestamp: 1000 }];
+
+        await estimatedListingAge.addAnchors([]);
+
+        expect(estimatedListingAge.anchors).toEqual([{ id: 100, timestamp: 1000 }]);
+        expect(storageMock.setJSON).not.toHaveBeenCalled();
+    });
+});
+
+describe('_evictToCapacity — bounding the anchor pool', () => {
+    test('leaves a pool at or under the cap untouched', () => {
+        const points = Array.from({ length: 10 }, (_, i) => ({ id: i, timestamp: i * 1000 }));
+        expect(estimatedListingAge._evictToCapacity(points)).toEqual(points);
+    });
+
+    test('trims an over-cap pool down to exactly the cap', () => {
+        const points = Array.from({ length: ANCHOR_POOL_MAX + 50 }, (_, i) => ({ id: i, timestamp: i * 1000 }));
+        const trimmed = estimatedListingAge._evictToCapacity(points);
+        expect(trimmed).toHaveLength(ANCHOR_POOL_MAX);
+    });
+
+    test('never evicts the two endpoints, preserving the id range', () => {
+        const points = Array.from({ length: ANCHOR_POOL_MAX + 50 }, (_, i) => ({ id: i, timestamp: i * 1000 }));
+        const trimmed = estimatedListingAge._evictToCapacity(points);
+        expect(trimmed[0]).toEqual(points[0]);
+        expect(trimmed[trimmed.length - 1]).toEqual(points[points.length - 1]);
+    });
+
+    test('thins the densest cluster before touching sparser, wide-coverage points', () => {
+        // A handful of points spread wide, plus a tight cluster of near-duplicates
+        // packed together — the cluster is the redundant part for interpolation.
+        const wide = [
+            { id: 0, timestamp: 0 },
+            { id: 1_000_000, timestamp: 1_000_000_000 },
+        ];
+        const cluster = Array.from({ length: ANCHOR_POOL_MAX }, (_, i) => ({
+            id: 500_000 + i,
+            timestamp: 500_000_000 + i,
+        }));
+        const points = [...wide, ...cluster].sort((a, b) => a.id - b.id);
+
+        const trimmed = estimatedListingAge._evictToCapacity(points);
+
+        expect(trimmed).toHaveLength(ANCHOR_POOL_MAX);
+        // Both wide endpoints survive...
+        expect(trimmed.find((p) => p.id === 0)).toBeTruthy();
+        expect(trimmed.find((p) => p.id === 1_000_000)).toBeTruthy();
+        // ...at the cost of thinning the cluster, not the wide points around it
+        expect(trimmed.filter((p) => p.id >= 500_000 && p.id < 500_000 + ANCHOR_POOL_MAX).length).toBeLessThan(
+            cluster.length
+        );
+    });
+
+    test('stops at 2 points rather than evicting an endpoint', () => {
+        const points = [
+            { id: 1, timestamp: 1 },
+            { id: 2, timestamp: 2 },
+        ];
+        expect(estimatedListingAge._evictToCapacity(points)).toEqual(points);
+    });
+});
+
+describe('recordListing grows the shared anchor pool', () => {
+    test('recording an own listing appends a deduped anchor', () => {
+        estimatedListingAge.anchors = [];
+        estimatedListingAge.knownListings = [];
+
+        estimatedListingAge.recordListing({
+            id: 500,
+            createdTimestamp: '2026-01-01T00:00:00.000Z',
+            itemHrid: '/items/a',
+        });
+
+        expect(estimatedListingAge.anchors).toEqual([
+            { id: 500, timestamp: new Date('2026-01-01T00:00:00.000Z').getTime() },
+        ]);
+    });
+
+    test('re-recording the same id (e.g. a status update) does not duplicate the anchor', () => {
+        estimatedListingAge.anchors = [];
+        estimatedListingAge.knownListings = [];
+
+        estimatedListingAge.recordListing({
+            id: 500,
+            createdTimestamp: '2026-01-01T00:00:00.000Z',
+            itemHrid: '/items/a',
+        });
+        estimatedListingAge.recordListing({
+            id: 500,
+            createdTimestamp: '2026-01-01T00:00:00.000Z',
+            itemHrid: '/items/a',
+            _toolashaStatus: 'filled',
+        });
+
+        expect(estimatedListingAge.anchors).toHaveLength(1);
+    });
+
+    test('a listing with no createdTimestamp grows neither the log nor the anchor pool', () => {
+        estimatedListingAge.anchors = [];
+        estimatedListingAge.knownListings = [];
+
+        estimatedListingAge.recordListing({ id: 500, itemHrid: '/items/a' });
+
+        expect(estimatedListingAge.anchors).toEqual([]);
+    });
+});
+
+describe('clearing the personal log keeps the anonymous anchor mirror', () => {
+    test('clearing knownListings does not remove ids already mirrored into anchors', () => {
+        estimatedListingAge.anchors = [{ id: 500, timestamp: 1000 }];
+        estimatedListingAge.knownListings = [{ id: 500, timestamp: 1000, itemHrid: '/items/a', status: 'filled' }];
+        estimatedListingAge.rebuildEstimationPoints();
+
+        // Simulate clearHistory's personal-log wipe: only knownListings is cleared
+        estimatedListingAge.knownListings = [];
+        estimatedListingAge.rebuildEstimationPoints();
+
+        expect(estimatedListingAge.anchors).toEqual([{ id: 500, timestamp: 1000 }]);
+        expect(estimatedListingAge.estimateTimestamp(500)).toBe(1000);
     });
 });

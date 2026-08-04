@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Listing-age estimates get sharper over time
+
+- **The anonymous id→time anchor pool now grows**: every listing you record, import, or observe with a real timestamp in the order book adds an anchor (deduped, capped at 3,000 with eviction that thins dense clusters and never gives up the range endpoints). Clear History keeps the anonymous anchors — the dialog says so — so wiping your personal log no longer degrades age estimates.
+
 ### Missing-material tabs retire themselves
 
 - **Pinned marketplace tabs now watch your inventory**: partial acquisitions update the "Missing: N" badge, and when the needed count (at the exact enhancement level) is reached the tab flashes "✓ Acquired" and removes itself. Manual dismiss, "✕ All", and marketplace close all unsubscribe cleanly.

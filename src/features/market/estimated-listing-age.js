@@ -37,6 +37,17 @@ const LISTINGS_BASE = 'marketListingTimestamps';
 const ANCHORS_KEY = 'marketListingAnchors';
 
 /**
+ * Cap on the shared anchor pool.
+ *
+ * The estimator interpolates/regresses over id→time, so what it benefits from
+ * is coverage across the id range, not raw point count — a few thousand points
+ * spread over the range estimate just as well as ten times that many packed
+ * densely in one region. Bounded so the pool can grow indefinitely at runtime
+ * without the stored array or the per-lookup scan becoming a problem.
+ */
+const ANCHOR_POOL_MAX = 3000;
+
+/**
  * Anchor points from the RWI script author's data, for a fresh install that has
  * no listings of its own to interpolate between.
  */
@@ -205,6 +216,95 @@ class EstimatedListingAge {
     }
 
     /**
+     * Grow the shared anchor pool with new {id, timestamp} candidates.
+     *
+     * Growth-only merge: an id already in the pool keeps its existing timestamp,
+     * so re-observing the same id (a status update re-recording a listing, the
+     * same order book row on a later refresh) is a no-op rather than a
+     * potentially-noisier overwrite. Never removes an id except via capacity
+     * eviction, so adding anchors never regresses an estimate that already had
+     * a point to work with — it only ever has more to work with.
+     * @param {Array<{id: number, timestamp: number}>} entries - Candidate anchor points
+     * @returns {Promise<void>}
+     */
+    async addAnchors(entries) {
+        if (!Array.isArray(entries) || entries.length === 0) {
+            return;
+        }
+
+        const byId = new Map();
+        for (const anchor of this.anchors) byId.set(anchor.id, anchor);
+
+        let grew = false;
+        for (const entry of entries) {
+            if (!entry || typeof entry.id !== 'number' || typeof entry.timestamp !== 'number') continue;
+            if (isNaN(entry.id) || isNaN(entry.timestamp)) continue;
+            if (byId.has(entry.id)) continue;
+            byId.set(entry.id, { id: entry.id, timestamp: entry.timestamp });
+            grew = true;
+        }
+
+        if (!grew) {
+            return;
+        }
+
+        this.anchors = this._evictToCapacity([...byId.values()].sort((a, b) => a.id - b.id));
+        this.rebuildEstimationPoints();
+        await this._persistAnchors();
+    }
+
+    /**
+     * Trim a sorted anchor array down to ANCHOR_POOL_MAX, thinning the densest
+     * neighborhoods first.
+     *
+     * Repeatedly removes whichever interior point has the smallest combined gap
+     * to its neighbors (points[i+1].id - points[i-1].id) — that point is the
+     * most redundant one for interpolation, since its neighbors already bracket
+     * it tightly. The two endpoints are never evicted: they define the id range
+     * the pool can interpolate across at all, and losing either would shrink
+     * coverage rather than just density.
+     * @param {Array<{id: number, timestamp: number}>} sorted - Anchors sorted by id
+     * @returns {Array<{id: number, timestamp: number}>} At most ANCHOR_POOL_MAX anchors, still sorted by id
+     */
+    _evictToCapacity(sorted) {
+        if (sorted.length <= ANCHOR_POOL_MAX) {
+            return sorted;
+        }
+
+        const points = [...sorted];
+        while (points.length > ANCHOR_POOL_MAX && points.length > 2) {
+            let victimIndex = 1;
+            let smallestGap = Infinity;
+            for (let i = 1; i < points.length - 1; i++) {
+                const gap = points[i + 1].id - points[i - 1].id;
+                if (gap < smallestGap) {
+                    smallestGap = gap;
+                    victimIndex = i;
+                }
+            }
+            points.splice(victimIndex, 1);
+        }
+
+        return points;
+    }
+
+    /**
+     * Persist the anchor pool.
+     *
+     * Debounced (no `immediate` flag) like the rest of storage — growth events
+     * (a new listing, an order book response) can arrive in bursts and do not
+     * each need a separate IndexedDB write.
+     * @returns {Promise<void>}
+     */
+    async _persistAnchors() {
+        try {
+            await storage.setJSON(this.anchorsKey, this.anchors, LISTINGS_STORE);
+        } catch (error) {
+            console.error('[EstimatedListingAge] Failed to save listing anchors:', error);
+        }
+    }
+
+    /**
      * This character's stored listing log, migrated and split.
      *
      * The one reader-side entry point, so nothing else has to know the key, the
@@ -365,6 +465,25 @@ class EstimatedListingAge {
 
                 // IMPORTANT: Populate createdTimestamp on all listings (for queue length estimator)
                 // RWI does this in their saveOrderBooks function
+                //
+                // Growth: a listing that already carries a createdTimestamp we did not just
+                // write ourselves is a real, observed id↔time pair for someone else's
+                // listing — free calibration data this handler already sees on every order
+                // book response, with no new listener required.
+                const observedAnchors = [];
+                const captureRealTimestamp = (listing) => {
+                    if (!listing.createdTimestamp || !listing.listingId) {
+                        return;
+                    }
+                    const ts =
+                        typeof listing.createdTimestamp === 'number'
+                            ? listing.createdTimestamp
+                            : new Date(listing.createdTimestamp).getTime();
+                    if (!isNaN(ts)) {
+                        observedAnchors.push({ id: listing.listingId, timestamp: ts });
+                    }
+                };
+
                 if (orderBooks) {
                     // Handle both array and object format
                     const orderBooksArray = Array.isArray(orderBooks) ? orderBooks : Object.values(orderBooks);
@@ -378,6 +497,8 @@ class EstimatedListingAge {
                                 if (!listing.createdTimestamp && listing.listingId) {
                                     const estimatedTimestamp = this.estimateTimestamp(listing.listingId);
                                     listing.createdTimestamp = new Date(estimatedTimestamp).toISOString();
+                                } else {
+                                    captureRealTimestamp(listing);
                                 }
                             }
                         }
@@ -388,10 +509,16 @@ class EstimatedListingAge {
                                 if (!listing.createdTimestamp && listing.listingId) {
                                     const estimatedTimestamp = this.estimateTimestamp(listing.listingId);
                                     listing.createdTimestamp = new Date(estimatedTimestamp).toISOString();
+                                } else {
+                                    captureRealTimestamp(listing);
                                 }
                             }
                         }
                     }
+                }
+
+                if (observedAnchors.length > 0) {
+                    this.addAnchors(observedAnchors);
                 }
 
                 // Store with timestamp for staleness tracking
@@ -551,6 +678,11 @@ class EstimatedListingAge {
 
         // Save to storage (debounced)
         this.saveHistoricalData();
+
+        // Growth: this id↔time pair is exact, so mirror it into the shared
+        // anchor pool too — dedup means re-recording the same id on a later
+        // status update is a no-op here.
+        this.addAnchors([{ id: entry.id, timestamp: entry.timestamp }]);
     }
 
     /**
@@ -1166,3 +1298,4 @@ class EstimatedListingAge {
 const estimatedListingAge = new EstimatedListingAge();
 
 export default estimatedListingAge;
+export { ANCHOR_POOL_MAX };
