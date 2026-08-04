@@ -25,6 +25,7 @@ import {
 import Monster from '../combat-sim/engine/monster.js';
 import { setGameData } from '../combat-sim/engine/game-data.js';
 import loadoutSnapshot from './loadout-snapshot.js';
+import { hasCoarsePointer } from '../../utils/mobile.js';
 import labyrinthRoomLogs from './labyrinth-room-logs.js';
 import { getAnnotationContainer, pruneEmptyAnnotationContainers } from './labyrinth-annotations.js';
 import {
@@ -4251,28 +4252,71 @@ class LabyrinthClearRate {
         badge.addEventListener('mouseleave', () => this.hidePreview());
         badge.addEventListener('contextmenu', (e) => {
             const res = badge.__mwiPreviewResult;
-            if (!res) return;
-            const isCombat = res.type === 'combat';
-            if (isCombat ? !res.monsterHrid : !res.skillHrid) return;
-            const simButton = document.querySelector('.toolasha-lab-sim-btn');
-            if (!simButton) return;
+            if (!res || !this.canOpenSim(res)) return;
             e.preventDefault();
-            const panel = document.getElementById('mwi-lab-sim-panel');
-            if (!panel || panel.style.display === 'none') {
-                simButton.click();
-            }
-            // Preconfigure the sim from this tile: combat tiles select the
-            // monster (applying its assigned loadout) at the tile's room
-            // level; skilling tiles open the Skilling tab at that level
-            document.dispatchEvent(
-                new CustomEvent('mwi-labsim-open', {
-                    detail: isCombat
-                        ? { monsterHrid: res.monsterHrid, roomLevel: res.roomLevel }
-                        : { skillHrid: res.skillHrid, roomLevel: res.roomLevel },
-                })
-            );
-            this.hidePreview();
+            this.openSimFromPreview(res);
         });
+        // A tap is the touch equivalent of hovering: no mouseenter ever fires,
+        // so without this the preview simply does not exist on a phone. The
+        // right-click path lives in the preview itself as a tappable action.
+        badge.addEventListener('click', (e) => {
+            if (!hasCoarsePointer()) return;
+            const res = badge.__mwiPreviewResult;
+            if (!res) return;
+            e.preventDefault();
+            e.stopPropagation();
+            this.showPreview(res, e.clientX, e.clientY);
+            this._armPreviewDismiss(badge);
+        });
+    }
+
+    /**
+     * Whether a preview result carries enough to preconfigure the simulator
+     * @param {Object} res - A preview result
+     * @returns {boolean}
+     */
+    canOpenSim(res) {
+        const hrid = res.type === 'combat' ? res.monsterHrid : res.skillHrid;
+        return Boolean(hrid) && Boolean(document.querySelector('.toolasha-lab-sim-btn'));
+    }
+
+    /**
+     * Open the lab simulator preconfigured from a preview result: combat tiles
+     * select the monster (applying its assigned loadout) at the tile's room
+     * level; skilling tiles open the Skilling tab at that level.
+     * @param {Object} res - A preview result
+     */
+    openSimFromPreview(res) {
+        const simButton = document.querySelector('.toolasha-lab-sim-btn');
+        if (!simButton) return;
+        const isCombat = res.type === 'combat';
+        const panel = document.getElementById('mwi-lab-sim-panel');
+        if (!panel || panel.style.display === 'none') {
+            simButton.click();
+        }
+        document.dispatchEvent(
+            new CustomEvent('mwi-labsim-open', {
+                detail: isCombat
+                    ? { monsterHrid: res.monsterHrid, roomLevel: res.roomLevel }
+                    : { skillHrid: res.skillHrid, roomLevel: res.roomLevel },
+            })
+        );
+        this.hidePreview();
+    }
+
+    /**
+     * Hide the tap-opened preview when the next press lands outside it.
+     * Hover previews need none of this — mouseleave does the job.
+     * @param {HTMLElement} badge - The badge the preview belongs to
+     */
+    _armPreviewDismiss(badge) {
+        if (this._previewDismiss) return;
+        this._previewDismiss = (e) => {
+            const el = document.getElementById(PREVIEW_ID);
+            if ((el && el.contains(e.target)) || badge.contains(e.target)) return;
+            this.hidePreview();
+        };
+        document.addEventListener('pointerdown', this._previewDismiss, true);
     }
 
     /**
@@ -4299,8 +4343,13 @@ class LabyrinthClearRate {
         const el = this.ensurePreviewEl();
         if (this._previewFor !== result) {
             this.renderPreviewContent(el, result);
+            this._appendTouchAction(el, result);
             this._previewFor = result;
         }
+        // Interactive only on touch, where it holds the open-in-sim action; a
+        // hover tooltip that catches the pointer would fire mouseleave on the
+        // badge under it and dismiss itself
+        el.style.pointerEvents = hasCoarsePointer() ? 'auto' : 'none';
         el.style.display = 'block';
 
         const offset = 12;
@@ -4323,6 +4372,31 @@ class LabyrinthClearRate {
         const el = document.getElementById(PREVIEW_ID);
         if (el) el.style.display = 'none';
         this._previewFor = null;
+        if (this._previewDismiss) {
+            document.removeEventListener('pointerdown', this._previewDismiss, true);
+            this._previewDismiss = null;
+        }
+    }
+
+    /**
+     * The tappable stand-in for right-click, appended after whichever branch
+     * of renderPreviewContent built the rows.
+     * @param {HTMLElement} el - The preview element
+     * @param {Object} result - The preview result the button acts on
+     */
+    _appendTouchAction(el, result) {
+        if (!hasCoarsePointer() || !this.canOpenSim(result)) return;
+        const action = document.createElement('button');
+        action.textContent = 'Open in sim →';
+        action.style.cssText =
+            'display:block; width:100%; margin-top:6px; padding:6px 8px; border-radius:4px; ' +
+            'border:1px solid rgba(128,170,255,0.45); background:rgba(77,151,255,0.18); color:#9ec4ff; ' +
+            'font-size:11px; font-weight:700; cursor:pointer;';
+        action.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.openSimFromPreview(result);
+        });
+        el.appendChild(action);
     }
 
     /**
@@ -4412,7 +4486,9 @@ class LabyrinthClearRate {
         }
 
         this.appendExpectedRows(addRow, result.type);
-        if (result.skillHrid && document.querySelector('.toolasha-lab-sim-btn')) {
+        // On touch the instruction would be wrong — the tappable button
+        // appended after this stands in for right-click there
+        if (!hasCoarsePointer() && result.skillHrid && document.querySelector('.toolasha-lab-sim-btn')) {
             addRow('Action', 'Right-click to open simulator');
         }
     }

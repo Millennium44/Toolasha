@@ -6,7 +6,16 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
-### The mobile sweep, part two: every panel, every drag, every timer
+### The mobile sweep, part three: gestures that had no touch equivalent
+
+The Phase 2 items from the mobile audit — the ones where a mouse gesture had to be redesigned rather than translated:
+
+- **The Sell Queue feature is removed.** Its entry point was Shift+RightClick, and the feature no longer worked anyway. The `sellQueue` setting is gone from the schema; the marketplace tab utilities it shared with other features are untouched.
+- **Overlay tiles open with a single tap on touch.** Double-click stays on desktop, where it guards against accidental opens while reading; on a touchscreen that guard is unnecessary — a tap that follows a scroll gesture never fires a click — and double-tap fights the browser's tap-to-zoom. Taps while the layout is unlocked still arrange rather than open.
+- **Labyrinth tile previews exist on touch now.** Tapping a clear-rate badge shows the preview that hover shows on desktop, and the preview carries an "Open in sim →" button standing in for right-click; tapping anywhere else dismisses it. The "Right-click to open simulator" hint only renders for mouse users, where it is true.
+- **Mooket watchlist chips are workable by finger.** The reorder arrows grow from 8px to a tappable size on coarse pointers, and each chip gains a visible × for removal — explicitly, rather than a long-press that could silently delete a watch mid-scroll. Desktop keeps right-click removal and the compact arrows.
+
+Also: `CLAUDE.md` notes that Opus/Sonnet subagents may be used at the assistant's discretion for research and sweeps.
 
 The remaining mechanical fixes from the four-agent mobile audit, in one pass:
 

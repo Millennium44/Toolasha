@@ -18,6 +18,10 @@ This file contains general workflow and behavioral guidelines for AI assistants 
 
 - **No time estimates**: Never give estimates for how long something will take
 
+### Subagents
+
+- **Use Opus or Sonnet subagents when helpful**: For parallel research, codebase sweeps, or audits, delegate to Opus/Sonnet subagents at your discretion — no need to ask first
+
 ## Project-Specific Context
 
 ### Recent Breaking Changes
