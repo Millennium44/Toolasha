@@ -7,7 +7,9 @@
  * a different rule than the one actually configured.
  */
 
-import { describe, test, expect, vi } from 'vitest';
+import { describe, test, expect, vi, beforeEach } from 'vitest';
+
+const stub = vi.hoisted(() => ({ currentCharacterId: 7, toggles: 0 }));
 
 vi.mock('../../core/config.js', () => ({
     default: {
@@ -17,7 +19,9 @@ vi.mock('../../core/config.js', () => ({
         COLOR_ACCENT: '#5b8def',
     },
 }));
-vi.mock('../../core/data-manager.js', () => ({ default: {} }));
+vi.mock('../../core/data-manager.js', () => ({
+    default: { getCurrentCharacterId: () => stub.currentCharacterId },
+}));
 vi.mock('../../core/storage.js', () => ({ default: { getJSON: async () => null, setJSON: async () => {} } }));
 vi.mock('../../core/websocket.js', () => ({ default: { on: () => {}, off: () => {} } }));
 vi.mock('./score-calculator.js', () => ({ calculateCombatScore: () => ({}) }));
@@ -31,10 +35,17 @@ vi.mock('../../utils/dom-observer-helpers.js', () => ({ createMutationWatcher: (
 vi.mock('../../utils/timer-registry.js', () => ({
     createTimerRegistry: () => ({ registerTimeout: () => {}, clearAll: () => {} }),
 }));
-vi.mock('../combat/loadout-snapshot.js', () => ({ default: {} }));
+vi.mock('../combat/loadout-snapshot.js', () => ({ default: { getAllSnapshots: () => [] } }));
 vi.mock('../combat-sim/combat-sim-ui.js', () => ({ default: {} }));
 vi.mock('../combat-sim/combat-sim-adapter.js', () => ({ buildPlayerDTOFromProfile: () => ({}) }));
 vi.mock('../../utils/enhancement-worker-manager.js', () => ({ terminateWorkerPool: () => {} }));
+vi.mock('./build-score-panel.js', () => ({
+    buildScorePanel: {
+        toggle: () => {
+            stub.toggles += 1;
+        },
+    },
+}));
 
 const combatScore = (await import('./combat-score.js')).default;
 
@@ -294,5 +305,71 @@ describe('buildAbilitiesTriggersHTML', () => {
         });
 
         expect(withoutAbilities).not.toContain('Food & Drinks');
+    });
+});
+
+describe('the breakdown link, own profile only', () => {
+    /**
+     * A scored profile, in the shape `showScorePanel` draws.
+     * @param {number} characterId - Whose profile this is
+     * @returns {{profileData: Object, scoreData: Object}}
+     */
+    function profile(characterId) {
+        return {
+            profileData: { profile: { sharableCharacter: { id: characterId, name: 'Someone' } } },
+            scoreData: {
+                total: 300,
+                house: 50,
+                ability: 100,
+                equipment: 150,
+                skillerTotal: 90,
+                skillerEquipment: 90,
+                equipmentHidden: false,
+                hasEquipmentData: true,
+                breakdown: { houses: [], abilities: [], equipment: [] },
+                skillerBreakdown: { equipment: [] },
+            },
+        };
+    }
+
+    beforeEach(() => {
+        document.body.innerHTML = '';
+        stub.currentCharacterId = 7;
+        stub.toggles = 0;
+        combatScore.currentPanel = null;
+    });
+
+    test('your own profile offers a way through to the breakdown', () => {
+        const { profileData, scoreData } = profile(7);
+        combatScore.showScorePanel(profileData, scoreData, document.createElement('div'));
+
+        expect(document.querySelector('#mwi-score-breakdown-link')).not.toBeNull();
+    });
+
+    test('clicking it toggles the Build Score panel', () => {
+        const { profileData, scoreData } = profile(7);
+        combatScore.showScorePanel(profileData, scoreData, document.createElement('div'));
+
+        document.querySelector('#mwi-score-breakdown-link').click();
+
+        expect(stub.toggles).toBe(1);
+    });
+
+    test("another player's profile shows no link — the panel can only score your own build", () => {
+        const { profileData, scoreData } = profile(99);
+        combatScore.showScorePanel(profileData, scoreData, document.createElement('div'));
+
+        expect(document.querySelector('#mwi-score-breakdown-link')).toBeNull();
+    });
+
+    test('a payload with no character id at all is not treated as yours', () => {
+        expect(combatScore.isOwnProfile({ profile: {} })).toBe(false);
+        expect(combatScore.isOwnProfile(null)).toBe(false);
+    });
+
+    test('the id is found wherever the payload happens to carry it', () => {
+        expect(combatScore.isOwnProfile({ profile: { characterSkills: [{ characterID: 7 }] } })).toBe(true);
+        expect(combatScore.isOwnProfile({ profile: { character: { id: 7 } } })).toBe(true);
+        expect(combatScore.isOwnProfile({ profile: { character: { id: 8 } } })).toBe(false);
     });
 });

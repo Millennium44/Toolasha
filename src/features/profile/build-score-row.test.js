@@ -9,6 +9,8 @@ const game = vi.hoisted(() => ({
     wsHandlers: {},
     rows: {},
     scoreResult: { total: 42 },
+    toggles: 0,
+    scoreSource: null,
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -43,6 +45,16 @@ vi.mock('../../utils/overlay-rows.js', () => ({
 }));
 vi.mock('./score-calculator.js', () => ({
     calculateCombatScore: async () => game.scoreResult,
+}));
+vi.mock('./build-score-panel.js', () => ({
+    buildScorePanel: {
+        toggle: () => {
+            game.toggles += 1;
+        },
+    },
+    setScoreSource: (source) => {
+        game.scoreSource = source;
+    },
 }));
 
 const { ownProfileData } = await import('./build-score-row.js');
@@ -211,5 +223,39 @@ describe('BuildScore', () => {
         await buildScore.refresh();
 
         expect(buildScore.score).toBeNull();
+    });
+});
+
+describe('the tile and the panel behind it', () => {
+    beforeEach(() => {
+        game.setting = true;
+        game.characterData = { characterAbilities: [], combatUnit: { combatAbilities: [] } };
+        game.combined = { characterHouseRoomMap: {} };
+        game.wsHandlers = {};
+        game.toggles = 0;
+        buildScore.disable();
+        buildScore.score = null;
+        buildScore.computedAt = 0;
+    });
+
+    test('double-clicking the tile toggles the breakdown panel', () => {
+        game.rows.buildScore.onOpen();
+
+        expect(game.toggles).toBe(1);
+    });
+
+    test('the panel is given a way to read the same figure the tile shows', () => {
+        buildScore.score = { total: 42 };
+
+        expect(typeof game.scoreSource).toBe('function');
+        expect(game.scoreSource()).toEqual({ total: 42 });
+    });
+
+    test('asking for the score is what starts the watcher, so opening the panel first still works', () => {
+        expect(game.wsHandlers.items_updated).toBeUndefined();
+
+        game.scoreSource();
+
+        expect(game.wsHandlers.items_updated).toBeDefined();
     });
 });

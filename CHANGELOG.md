@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Build Score opens something now
+
+- **New Build Score breakdown panel**: the tile double-clicks (and an own-profile "breakdown" link on the score popup) into the full tree — Combat and Skiller scores with Equipment / Abilities / House / Guild Shrine sections sorted largest-first, each unfolding to its per-item, per-ability, per-room, per-buff lines, a top-5 contributors list, and the header finally saying what the number means: what the kit would cost to buy, in millions.
+
 ### The watch card stops overcharging, and laddering becomes a mode
 
 - **Real pricing bug fixed**: the equipment-watch cost search refused protection strategies below your start level, so a +5→+7 run was quoted at 214M when the genuinely cheapest protected run (protect from +2) costs 84M — a ~2.5× overquote that also made laddering from a lower copy look cheaper than it is. Every path now searches the full strategy set; starting higher is never dearer.
