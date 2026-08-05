@@ -1072,9 +1072,11 @@ function addGuideEmptySlotCandidates(playerDTO, gameData, guide, playerStyle, ca
  * @param {string} [abilityLevelType='increment'] - 'increment' (add N levels) or 'target' (absolute level)
  * @param {Object} [communityBuffs=null] - Configured community buffs, for the 'community_buff' set
  * @param {number} [guildShrineTargetLevel=0] - Absolute shrine buff level to buy up to; 0 means one level up
- * @param {Object} [options] - `{ signatureSwapsOnly, houseWinRateOnly, communityBuffTargetLevel }`.
- *   `houseWinRateOnly` narrows the house set to rooms that can move a fight's outcome, for an
- *   analysis ranked on win rate alone; `communityBuffTargetLevel` buys several buff levels at once.
+ * @param {Object} [options] - `{ signatureSwapsOnly, houseWinRateOnly, communityBuffTargetLevel,
+ *   guildShrineTargets }`. `houseWinRateOnly` narrows the house set to rooms that can move a
+ *   fight's outcome, for an analysis ranked on win rate alone; `communityBuffTargetLevel` buys
+ *   several buff levels at once; `guildShrineTargets` is a per-shrine target map that takes
+ *   precedence over `guildShrineTargetLevel`, skipping any shrine it does not name.
  * @returns {Array} Candidates: [{slot, currentHrid, currentLevel, upgradeHrid, upgradeLevel, description, type}]
  */
 export function generateCandidates(
@@ -1552,7 +1554,11 @@ export function generateCandidates(
 
     if (mode === 'guild_shrine') {
         candidates.push(
-            ...generateGuildShrineCandidates(playerDTO, { combat: true, targetLevel: guildShrineTargetLevel })
+            ...generateGuildShrineCandidates(playerDTO, {
+                combat: true,
+                targetLevel: guildShrineTargetLevel,
+                perBuffTargets: options?.guildShrineTargets || null,
+            })
         );
     }
 
@@ -1927,6 +1933,11 @@ function sumGuildShrineLevelCosts(detail, fromLevel, toLevel) {
  * cost table holds is clamped to the top of it — so one number can be typed once
  * and applied to five shrines sitting at five different levels.
  *
+ * A `perBuffTargets` map takes precedence over the single number, on the same
+ * terms the House grid set: a shrine absent from it — the input left blank — is
+ * deliberately skipped rather than falling back to one level up, because a grid
+ * of boxes is a list of what to buy and an empty box means "not this one".
+ *
  * Cost is cumulative over every level crossed; the benefit is measured at the
  * target, because that is the loadout the sim runs.
  *
@@ -1934,9 +1945,14 @@ function sumGuildShrineLevelCosts(detail, fromLevel, toLevel) {
  * @param {Object} [options]
  * @param {boolean} [options.combat=true] - Combat shrines when true, skilling when false
  * @param {number} [options.targetLevel=0] - Absolute level to buy up to; 0/unset means one level up
+ * @param {Object|null} [options.perBuffTargets=null] - buffHrid → target level; takes precedence
+ *   over targetLevel, and a buff absent from it is skipped
  * @returns {Array<Object>} Candidates of type 'guild_shrine'
  */
-export function generateGuildShrineCandidates(playerDTO, { combat = true, targetLevel = 0 } = {}) {
+export function generateGuildShrineCandidates(
+    playerDTO,
+    { combat = true, targetLevel = 0, perBuffTargets = null } = {}
+) {
     const detailMap = getGuildBuffDetailMap();
     const levels = playerDTO?.guildShrineLevels;
     // No level map means this DTO is somebody whose guild we know nothing about
@@ -1945,6 +1961,7 @@ export function generateGuildShrineCandidates(playerDTO, { combat = true, target
     if (!levels || Object.keys(detailMap).length === 0) return [];
 
     const target = Math.max(0, Math.floor(Number(targetLevel) || 0));
+    const explicit = perBuffTargets && typeof perBuffTargets === 'object' ? perBuffTargets : null;
 
     const candidates = [];
     for (const [buffHrid, detail] of Object.entries(detailMap)) {
@@ -1953,7 +1970,8 @@ export function generateGuildShrineCandidates(playerDTO, { combat = true, target
 
         const maxLevel = guildBuffMaxLevel(detail);
         const currentLevel = Math.max(0, Math.floor(Number(levels[buffHrid]) || 0));
-        const upgradeLevel = Math.min(maxLevel, target > 0 ? target : currentLevel + 1);
+        const wanted = explicit ? Math.floor(Number(explicit[buffHrid]) || 0) : target > 0 ? target : currentLevel + 1;
+        const upgradeLevel = Math.min(maxLevel, wanted);
         if (maxLevel <= 0 || upgradeLevel <= currentLevel) continue;
 
         const { guildTokenCost, creditCosts } = sumGuildShrineLevelCosts(detail, currentLevel, upgradeLevel);
@@ -3732,10 +3750,18 @@ const LABYRINTH_SKILLS = [
 
 /**
  * Generate labyrinth buff upgrade candidates from characterInfo.
+ *
+ * `levels` overrides where a current level is read from, for a panel that is
+ * simulating token levels other than the ones the character owns: a row reading
+ * "Damage Lv3 → Lv4" beside sims run at Damage 8 would be pricing a purchase
+ * that has already been assumed. Absent, this reads the live character, which
+ * is what every caller did before the Lab Sim could set them.
+ *
+ * @param {Object} [levels] - buffKey → level to step from; defaults to characterInfo
  * @returns {Array} Buff candidates with type 'labyrinth_buff'
  */
-export function generateLabyrinthBuffCandidates() {
-    const info = dataManager.characterData?.characterInfo;
+export function generateLabyrinthBuffCandidates(levels = null) {
+    const info = levels && typeof levels === 'object' ? levels : dataManager.characterData?.characterInfo;
     if (!info) return [];
 
     const candidates = [];
@@ -3828,6 +3854,10 @@ function explainLabCandidateCost(candidate, gameData) {
  * @param {number} [params.abilityTargetLevel] - Target ability level
  * @param {boolean} [params.signatureSwapsOnly] - Restrict ability swaps to the build guide's
  *   aura options and the archetype's signature ability
+ * @param {number} [params.guildShrineTargetLevel] - One level for every shrine buff
+ * @param {Object} [params.guildShrineTargets] - buffHrid → target level; takes precedence
+ * @param {Object} [params.tokenLevels] - buffKey → level the token rows step up from,
+ *   matching whatever `labyrinthCombatBuffs` was built out of
  * @param {Function} onProgress - Called with { current, total, description }
  * @param {Object} [options] - { abortSignal: () => boolean }
  * @returns {Promise<Object>} { baseline, results: [{candidate, costType, ...}] }
@@ -3852,6 +3882,8 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
         houseTargetLevel = 0,
         houseTargets = null,
         guildShrineTargetLevel = 0,
+        guildShrineTargets = null,
+        tokenLevels = null,
         extraCandidates = [],
     } = params;
     const { abortSignal } = options;
@@ -3886,7 +3918,7 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
             // This table ranks win rate and Gold/1% and nothing else, so a room
             // whose only combat-facing buffs are the global wisdom and rare find
             // every room grants has nothing it could move here
-            { signatureSwapsOnly, houseWinRateOnly: true }
+            { signatureSwapsOnly, houseWinRateOnly: true, guildShrineTargets }
         )
     );
 
@@ -3941,7 +3973,7 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
     // Generate buff candidates. Skilling buffs are handled in the skilling tab;
     // the Experience token is ranked in neither tab — it moves XP/room, not
     // clear rate, and this analysis has no XP metric to rank it by.
-    const buffCandidates = generateLabyrinthBuffCandidates();
+    const buffCandidates = generateLabyrinthBuffCandidates(tokenLevels);
     const combatBuffCandidates = buffCandidates.filter((c) => c.category === 'combat');
 
     const total = candidatesWithCost.length + combatBuffCandidates.length + communityCandidates.length + 1;
@@ -4809,7 +4841,8 @@ export function labAllFightsTrialBudget(sims, hours) {
  * always simulated.
  *
  * @param {Object} params - { fights, crates, hours, communityBuffs, labyrinthCombatBuffs, abilityTargetLevel,
- *   combatLevelTargets, signatureSwapsOnly, houseTargetLevel, houseTargets, guildShrineTargetLevel }
+ *   combatLevelTargets, signatureSwapsOnly, houseTargetLevel, houseTargets, guildShrineTargetLevel,
+ *   guildShrineTargets, tokenLevels }
  *   where fights = [{ monsterHrid, monsterName, roomLevel, dto, loadoutName }]
  * @param {Function} onProgress - Called with { current, total, description }, and
  *   once before anything runs with a `plan` of what the run comes to
@@ -4833,6 +4866,8 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
         houseTargetLevel = 0,
         houseTargets = null,
         guildShrineTargetLevel = 0,
+        guildShrineTargets = null,
+        tokenLevels = null,
         extraCandidates = [],
     } = params;
     const { abortSignal } = options;
@@ -4893,7 +4928,7 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
                 // Every row in this table is ranked on attempts to clear, so a
                 // house room that can only move XP or loot is a row that can
                 // only report the sims' own noise
-                { signatureSwapsOnly, houseWinRateOnly: true }
+                { signatureSwapsOnly, houseWinRateOnly: true, guildShrineTargets }
             );
             for (const candidate of fightCandidates) {
                 pool(candidate.type === 'ability_swap' ? pooledSwapCandidate(candidate, gameData) : candidate);
@@ -4939,7 +4974,7 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
     // the fights they are about. Only the combat half: the skilling and
     // experience tokens move numbers this table does not have a column for.
     const tokenCandidates = modes.includes('labyrinth_buff')
-        ? generateLabyrinthBuffCandidates()
+        ? generateLabyrinthBuffCandidates(tokenLevels)
               .filter((candidate) => candidate.category === 'combat')
               .map((candidate) => ({ ...candidate, cost: null, appliesTo: fights.map(() => true) }))
         : [];

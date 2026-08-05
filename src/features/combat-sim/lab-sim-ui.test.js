@@ -29,6 +29,22 @@ const game = vi.hoisted(() => ({
     houseRoomDetailMap: {},
     /** The room levels every labyrinth loadout's DTO carries */
     houseRooms: {},
+    /** Ability hrid → display name, for the target grid's labels */
+    abilityDetailMap: {},
+    /** Monster hrid → the loadout id the labyrinth has assigned it */
+    loadoutByMonster: {},
+    /** Loadout id → the name the game shows for it */
+    loadoutNames: {},
+    /** Loadout id → the abilities that loadout casts */
+    loadoutAbilities: {},
+    /** buffHrid → level, on every labyrinth loadout's DTO */
+    guildShrineLevels: {},
+    /** What `getGuildBuffDetailMap` reports */
+    guildBuffDetailMap: {},
+    /** What `dataManager.characterData.characterInfo` holds */
+    characterInfo: null,
+    /** What the Configure editor reports, or null when it has none */
+    editedDTOs: null,
 }));
 const sim = vi.hoisted(() => ({ calls: [] }));
 /** Every key the panel wrote, so a persisted choice can be asserted on */
@@ -65,7 +81,9 @@ vi.mock('../../core/data-manager.js', () => ({
         getCurrentCharacterGameMode: () => 'standard',
         characterItems: [],
         characterEquipment: new Map(),
-        characterData: { characterAbilities: [] },
+        get characterData() {
+            return { characterAbilities: [], characterInfo: game.characterInfo };
+        },
     },
 }));
 
@@ -108,11 +126,17 @@ vi.mock('./combat-sim-adapter.js', () => ({
         itemDetailMap: {},
         actionDetailMap: { '/actions/combat/fly': {} },
         houseRoomDetailMap: game.houseRoomDetailMap,
+        abilityDetailMap: game.abilityDetailMap,
     }),
     buildAllPlayerDTOs: async () => ({ players: game.players, selfHrid: game.players[0]?.hrid }),
     getCombatZones: () => [],
     getCommunityBuffs: () => ({}),
     getLabyrinthMonsters: () => game.monsters,
+    getGuildBuffDetailMap: () => game.guildBuffDetailMap,
+    guildBuffMaxLevel: (detail) => {
+        const levels = Object.keys(detail?.levelCosts || {}).map(Number);
+        return levels.length ? Math.max(...levels) : 0;
+    },
 }));
 
 vi.mock('./combat-sim-runner.js', () => ({
@@ -135,7 +159,7 @@ vi.mock('./sim-editor.js', () => ({
             return [{ name: 'Tester' }];
         }
         getEditedDTOs() {
-            return null;
+            return game.editedDTOs;
         }
     },
 }));
@@ -177,8 +201,13 @@ vi.mock('../combat/labyrinth-clear-rate.js', () => ({
         getCombatSkipRoomLevel: (hrid) => game.skipLevels[hrid] || 0,
         getCombatRoomLevel: (hrid) => game.skipLevels[hrid] || 0,
         getRecommendedCombatRoomLevel: (hrid) => game.recommendedLevels[hrid] || 0,
-        getLabyrinthLoadoutId: () => null,
-        buildLabyrinthPlayerDTO: () => ({ equipment: {}, abilities: [], houseRooms: { ...game.houseRooms } }),
+        getLabyrinthLoadoutId: (monsterHrid) => game.loadoutByMonster[monsterHrid] ?? null,
+        buildLabyrinthPlayerDTO: (loadoutId) => ({
+            equipment: {},
+            abilities: (game.loadoutAbilities[loadoutId] || []).map((ability) => ({ ...ability })),
+            houseRooms: { ...game.houseRooms },
+            guildShrineLevels: { ...game.guildShrineLevels },
+        }),
         getPlayerEffectiveCombatLevel: () => 100,
         estimateCombatXpPerHour: () => 0,
         getTargetRoomLevel: () => 0,
@@ -230,7 +259,14 @@ vi.mock('../combat/labyrinth-clear-rate.js', () => ({
         }),
     },
 }));
-vi.mock('../combat/loadout-snapshot.js', () => ({ default: { get: () => null, snapshots: {} } }));
+vi.mock('../combat/loadout-snapshot.js', () => ({
+    default: {
+        get: () => null,
+        get snapshots() {
+            return Object.fromEntries(Object.entries(game.loadoutNames).map(([id, name]) => [id, { name }]));
+        },
+    },
+}));
 
 const { default: ui, describeAllFightsPlan, describeArchetypes } = await import('./lab-sim-ui.js');
 const { estimateLabUpgradeSims } = await import('./lab-sim-upgrade-modes.js');
@@ -1643,5 +1679,452 @@ describe('a Skilling gear row unfolds into what it is buying', () => {
         const detail = container.querySelector('[data-skilling-gold-detail="0"]');
 
         expect(detail.textContent).toContain('No cost breakdown available');
+    });
+});
+
+/**
+ * Choosing the labyrinth tokens a simulation runs under.
+ *
+ * The Configure tab's Labyrinth Buffs section was a readout: it printed what
+ * the live run had bought and nothing could be asked of it. A simulator whose
+ * buffs can only be the ones you already own cannot answer "would Damage 8 get
+ * me through the Eye Watcher", which is the question people open it with.
+ *
+ * The arithmetic is asserted in `lab-token-buffs.test.js`. What is worth
+ * asserting here is the wiring: that a level typed into the section reaches the
+ * simulations, that it is remembered, and — the failure this feature can
+ * produce and nothing else can — that the panel says out loud when the run it
+ * is reporting is not the live character's.
+ */
+describe('the labyrinth tokens a simulation runs under can be chosen', () => {
+    const openSection = () => ui.panel.querySelector('#mwi-labsim-buffs-header').click();
+    const damageInput = () => ui.panel.querySelector('[data-lab-token-buff="labyrinthCombatDamageLevel"]');
+    const setDamage = (value) => {
+        const input = damageInput();
+        input.value = value;
+        input.dispatchEvent(new window.Event('change', { bubbles: true }));
+    };
+    /** The damage buff the last simulation was handed, as a ratio. */
+    const simmedDamage = () =>
+        sim.calls.at(-1)?.labyrinthCombatBuffs?.find((buff) => buff.typeHrid === '/buff_types/damage')?.ratioBoost ?? 0;
+
+    beforeEach(async () => {
+        geometry.saved = null;
+        geometry.wasOpen = false;
+        sim.calls = [];
+        storage.written = {};
+        game.characterInfo = { labyrinthCombatDamageLevel: 3, labyrinthTorchLevel: 2 };
+        game.monsters = [{ hrid: '/monsters/mimic', name: 'Mimic' }];
+        game.players = [{ hrid: 'p1', equipment: {}, abilities: [], houseRooms: {} }];
+
+        ui.buildPanel();
+        await settle();
+        ui.panel.querySelector('#mwi-labsim-monster').value = '/monsters/mimic';
+    });
+
+    afterEach(() => {
+        ui.destroy();
+        game.characterInfo = null;
+        game.players = [];
+    });
+
+    test('with nothing chosen, the sim runs on what the character owns', async () => {
+        await ui._onSimulate();
+
+        expect(simmedDamage()).toBeCloseTo(0.03, 10);
+    });
+
+    test('a level typed into the section is the level the sim runs at', async () => {
+        openSection();
+        setDamage(8);
+
+        await ui._onSimulate();
+
+        expect(simmedDamage()).toBeCloseTo(0.08, 10);
+    });
+
+    test('and the Upgrade tab’s sims run under it too, not only the Configure one', async () => {
+        openSection();
+        setDamage(8);
+        ui._switchTab('upgrade');
+
+        await ui._onUpgradeAnalyze();
+
+        expect(sim.calls.length).toBeGreaterThan(0);
+        expect(simmedDamage()).toBeCloseTo(0.08, 10);
+    });
+
+    test('the section only offers the four the combat engine reads', () => {
+        openSection();
+
+        expect(damageInput()).not.toBeNull();
+        expect(ui.panel.querySelector('[data-lab-token-buff="labyrinthCastSpeedLevel"]')).not.toBeNull();
+        // The skilling and utility tokens move numbers no fight simulation has,
+        // so they stay a readout rather than becoming an inert box
+        expect(ui.panel.querySelector('[data-lab-token-buff="labyrinthTorchLevel"]')).toBeNull();
+        expect(ui.panel.querySelector('#mwi-labsim-buffs-body').textContent).toContain('Torch');
+    });
+
+    test('each box opens on the live level rather than on nothing', () => {
+        openSection();
+
+        expect(damageInput().value).toBe('3');
+    });
+
+    test('a chosen level says so on the collapsed header, where it cannot be missed', () => {
+        openSection();
+        setDamage(8);
+        openSection();
+
+        expect(ui.panel.querySelector('#mwi-labsim-buffs-note').textContent).toBe('simulating Damage 3→8');
+    });
+
+    test('and a level put back to what is owned stops claiming a difference', () => {
+        openSection();
+        setDamage(8);
+        setDamage(3);
+
+        expect(ui.panel.querySelector('#mwi-labsim-buffs-note').textContent).toBe('');
+    });
+
+    test('Reset to live drops every chosen level at once', async () => {
+        openSection();
+        setDamage(8);
+        ui.panel.querySelector('#mwi-labsim-buffs-reset').click();
+
+        await ui._onSimulate();
+
+        expect(simmedDamage()).toBeCloseTo(0.03, 10);
+        expect(ui.panel.querySelector('#mwi-labsim-buffs-note').textContent).toBe('');
+    });
+
+    test('the choice is remembered per character, beside the rest of this tab', async () => {
+        openSection();
+        setDamage(8);
+        await settle();
+
+        expect(storage.written.labSimTokenBuffLevels_me).toEqual({ labyrinthCombatDamageLevel: 8 });
+    });
+
+    test('and the Token Upgrades rows step up from the level being simulated', async () => {
+        openSection();
+        setDamage(8);
+        ui._switchTab('upgrade');
+        for (const box of ui.panel.querySelectorAll('[data-lab-upgrade-dimension]')) {
+            box.checked = box.getAttribute('data-lab-upgrade-dimension') === 'labyrinth_buff';
+            box.dispatchEvent(new window.Event('change', { bubbles: true }));
+        }
+
+        await ui._onUpgradeAnalyze();
+
+        // Not Lv3→4: the sims already ran at 8, so pricing the fourth level
+        // would be charging for a purchase the whole table has assumed
+        const results = ui.panel.querySelector('#mwi-labsim-upgrade-results').textContent;
+        expect(results).toContain('Combat Damage Lv8→9');
+        expect(results).not.toContain('Combat Damage Lv3→4');
+    });
+
+    test('a token turned off is a choice, not a blank', async () => {
+        openSection();
+        setDamage(0);
+
+        await ui._onSimulate();
+
+        expect(simmedDamage()).toBe(0);
+        expect(ui.panel.querySelector('#mwi-labsim-buffs-note').textContent).toBe('simulating Damage 3→0');
+    });
+});
+
+/**
+ * Which abilities the target-levels grid offers.
+ *
+ * With Targets set to every fight, the grid listed one loadout's five abilities
+ * — whichever loadout the Configure tab happened to be showing — and there was
+ * no way to give a target to any ability in any of the other nine fights. The
+ * grid belongs to the target scope, so it is built from the loadouts that scope
+ * actually runs.
+ */
+describe('the ability target grid covers every fight it is being asked about', () => {
+    const FIREBALL = '/abilities/fireball';
+    const PRECISION = '/abilities/precision';
+    const MAIM = '/abilities/maim';
+
+    const openGrid = () => ui.panel.querySelector('#mwi-labsim-ability-targets-toggle').click();
+    const grid = () => ui.panel.querySelector('#mwi-labsim-ability-targets');
+    const offered = () => [...grid().querySelectorAll('[data-ability-target]')].map((i) => i.dataset.abilityTarget);
+    const setScope = (value) => {
+        const select = ui.panel.querySelector('#mwi-labsim-upgrade-scope');
+        select.value = value;
+        select.dispatchEvent(new window.Event('change', { bubbles: true }));
+    };
+
+    beforeEach(async () => {
+        geometry.saved = null;
+        geometry.wasOpen = false;
+        game.monsters = [
+            { hrid: '/monsters/mimic', name: 'Mimic' },
+            { hrid: '/monsters/eye_watcher', name: 'Eye Watcher' },
+        ];
+        game.skipLevels = { '/monsters/mimic': 130, '/monsters/eye_watcher': 150 };
+        game.abilityDetailMap = {
+            [FIREBALL]: { name: 'Fireball' },
+            [PRECISION]: { name: 'Precision' },
+            [MAIM]: { name: 'Maim' },
+        };
+        // Two fights, two loadouts: one shared ability, one each
+        game.loadoutByMonster = { '/monsters/mimic': 'fire', '/monsters/eye_watcher': 'sword' };
+        game.loadoutNames = { fire: 'Fire Lab', sword: 'Sword Lab' };
+        game.loadoutAbilities = {
+            fire: [
+                { hrid: FIREBALL, level: 48 },
+                { hrid: PRECISION, level: 40 },
+            ],
+            sword: [
+                { hrid: MAIM, level: 30 },
+                { hrid: PRECISION, level: 44 },
+            ],
+        };
+        // The Configure loadout, which is all the grid used to show
+        game.editedDTOs = { p1: { abilities: [{ hrid: FIREBALL, level: 48 }] } };
+
+        ui.buildPanel();
+        await settle();
+        ui._switchTab('upgrade');
+        for (const box of ui.panel.querySelectorAll('[data-lab-upgrade-dimension]')) {
+            box.checked = box.getAttribute('data-lab-upgrade-dimension') === 'ability_level';
+            box.dispatchEvent(new window.Event('change', { bubbles: true }));
+        }
+    });
+
+    afterEach(() => {
+        ui.destroy();
+        game.abilityDetailMap = {};
+        game.loadoutByMonster = {};
+        game.loadoutNames = {};
+        game.loadoutAbilities = {};
+        game.editedDTOs = null;
+    });
+
+    test('the Configure fight still offers its own loadout and nothing else', () => {
+        openGrid();
+
+        expect(offered()).toEqual([FIREBALL]);
+    });
+
+    test('every fight offers the union across their loadouts', () => {
+        setScope('all');
+        openGrid();
+
+        expect(offered().sort()).toEqual([FIREBALL, MAIM, PRECISION].sort());
+    });
+
+    test('an ability two loadouts both cast appears once', () => {
+        setScope('all');
+        openGrid();
+
+        expect(offered().filter((hrid) => hrid === PRECISION)).toHaveLength(1);
+    });
+
+    test('and is labelled with the loadouts holding it, when they are not all of them', () => {
+        setScope('all');
+        openGrid();
+
+        expect(grid().textContent).toContain('Fireball (48) [Fire Lab]');
+        expect(grid().textContent).toContain('Maim (30) [Sword Lab]');
+        // Cast by both, so a label would be noise — and its two levels are said
+        // as the range they are
+        expect(grid().textContent).toContain('Precision (40–44)');
+        expect(grid().textContent).not.toContain('Precision (40–44) [');
+    });
+
+    test('the target opens off the highest level it is held at, so the boost is a boost everywhere', () => {
+        setScope('all');
+        openGrid();
+
+        const precision = grid().querySelector(`[data-ability-target="${PRECISION}"]`);
+        expect(precision.value).toBe('49');
+    });
+
+    test('a chosen subset covers only the loadouts it ticked', () => {
+        setScope('selected');
+        // The Eye Watcher alone, which is the sword loadout alone
+        const watcher = ui.panel.querySelector('[data-lab-target="/monsters/eye_watcher"]');
+        watcher.checked = true;
+        watcher.dispatchEvent(new window.Event('change', { bubbles: true }));
+        openGrid();
+
+        expect(offered().sort()).toEqual([MAIM, PRECISION].sort());
+        // One loadout in the set, so its abilities are all shared and unlabelled
+        expect(grid().textContent).not.toContain('[Sword Lab]');
+    });
+
+    test('widening the scope while the grid is open widens the grid', () => {
+        openGrid();
+        expect(offered()).toEqual([FIREBALL]);
+
+        setScope('all');
+
+        expect(offered().sort()).toEqual([FIREBALL, MAIM, PRECISION].sort());
+    });
+
+    test('and a target already typed survives that rebuild', () => {
+        setScope('all');
+        openGrid();
+        const fireball = grid().querySelector(`[data-ability-target="${FIREBALL}"]`);
+        fireball.value = '77';
+
+        setScope('selected');
+        const mimic = ui.panel.querySelector('[data-lab-target="/monsters/mimic"]');
+        mimic.checked = true;
+        mimic.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        expect(grid().querySelector(`[data-ability-target="${FIREBALL}"]`).value).toBe('77');
+    });
+
+    test('what the grid holds is what the analysis is handed, keyed by ability', () => {
+        setScope('all');
+        openGrid();
+
+        expect(ui._getAbilityTargets('#mwi-labsim-ability-targets')).toMatchObject({
+            [FIREBALL]: 53,
+            [MAIM]: 35,
+            [PRECISION]: 49,
+        });
+    });
+});
+
+/**
+ * The Guild Shrine include used to carry a single Lv spinner while the House
+ * include next to it had both a spinner and a per-room grid. Same complaint,
+ * same answer: one absolute level across shrines sitting at different levels is
+ * a no-op for the ones already past it.
+ */
+describe('guild shrine targets are asked for one shrine at a time', () => {
+    const FORCE = '/guild_buffs/force_combat';
+    const AEGIS = '/guild_buffs/aegis_combat';
+    const RARITY = '/guild_buffs/rarity_skilling';
+
+    const openGrid = () => ui.panel.querySelector('#mwi-labsim-shrine-targets-toggle').click();
+    const grid = () => ui.panel.querySelector('#mwi-labsim-shrine-targets');
+    const offered = () =>
+        [...grid().querySelectorAll('[data-lab-shrine-target]')].map((i) => i.dataset.labShrineTarget);
+    const costs = (top) => Object.fromEntries(Array.from({ length: top }, (_, i) => [i + 1, { guildTokenCost: 10 }]));
+
+    beforeEach(async () => {
+        geometry.saved = null;
+        geometry.wasOpen = false;
+        game.monsters = [{ hrid: '/monsters/mimic', name: 'Mimic' }];
+        game.guildBuffDetailMap = {
+            [FORCE]: { shrineHrid: '/guild_shrines/force', isCombat: true, levelCosts: costs(20) },
+            [AEGIS]: { shrineHrid: '/guild_shrines/aegis', isCombat: true, levelCosts: costs(8) },
+            // Skilling shrines cannot move a win rate, which is all this tab ranks
+            [RARITY]: { shrineHrid: '/guild_shrines/rarity', isCombat: false, levelCosts: costs(20) },
+        };
+        game.editedDTOs = { p1: { guildShrineLevels: { [FORCE]: 4, [AEGIS]: 8 } } };
+
+        ui.buildPanel();
+        await settle();
+        ui._switchTab('upgrade');
+        for (const box of ui.panel.querySelectorAll('[data-lab-upgrade-dimension]')) {
+            box.checked = box.getAttribute('data-lab-upgrade-dimension') === 'guild_shrine';
+            box.dispatchEvent(new window.Event('change', { bubbles: true }));
+        }
+    });
+
+    afterEach(() => {
+        ui.destroy();
+        game.guildBuffDetailMap = {};
+        game.editedDTOs = null;
+    });
+
+    test('there is a Targets grid at all, the way the House include has one', () => {
+        expect(ui.panel.querySelector('#mwi-labsim-shrine-targets-toggle')).not.toBeNull();
+        expect(grid().style.display).toBe('none');
+    });
+
+    test('it lists each combat shrine with the level it is at', () => {
+        openGrid();
+
+        expect(offered().sort()).toEqual([AEGIS, FORCE].sort());
+        expect(grid().textContent).toContain('Force (4)');
+        expect(grid().textContent).toContain('Aegis (8)');
+        expect(grid().textContent).not.toContain('Rarity');
+    });
+
+    test('and it says a blank box skips the shrine, in the House grid’s words', () => {
+        openGrid();
+
+        expect(grid().textContent).toContain('blank or ≤ current level skips the shrine');
+        expect(grid().textContent).toContain('used instead of the Lv box while open');
+    });
+
+    test('each box opens one level up, or at the Lv box when one was typed', () => {
+        ui.panel.querySelector('#mwi-labsim-shrine-target-level').value = '9';
+        openGrid();
+
+        expect(grid().querySelector(`[data-lab-shrine-target="${FORCE}"]`).value).toBe('9');
+    });
+
+    test('a shrine at its own cap is offered nothing to buy', () => {
+        openGrid();
+        const aegis = grid().querySelector(`[data-lab-shrine-target="${AEGIS}"]`);
+
+        expect(aegis.value).toBe('');
+        expect(aegis.disabled).toBe(true);
+    });
+
+    test('nothing is capped past twenty, whatever the cost table runs to', () => {
+        openGrid();
+
+        expect(grid().querySelector(`[data-lab-shrine-target="${FORCE}"]`).getAttribute('max')).toBe('20');
+    });
+
+    test('a closed grid is not a set of targets — the Lv box still governs', () => {
+        expect(ui._getShrineTargets()).toBeNull();
+    });
+
+    test('an open one is read per shrine, clamped at twenty', () => {
+        openGrid();
+        grid().querySelector(`[data-lab-shrine-target="${FORCE}"]`).value = '40';
+
+        expect(ui._getShrineTargets()).toEqual({ [FORCE]: 20 });
+    });
+
+    test('and a box emptied by hand drops that shrine out of the ask', () => {
+        openGrid();
+        grid().querySelector(`[data-lab-shrine-target="${FORCE}"]`).value = '';
+
+        expect(ui._getShrineTargets()).toBeNull();
+    });
+
+    test('the map reaches the candidate generator, one level per shrine', () => {
+        const dto = { equipment: {}, guildShrineLevels: { [FORCE]: 4, [AEGIS]: 2 } };
+        const candidates = ui._extraDimensionCandidates(
+            ['guild_shrine'],
+            dto,
+            { itemDetailMap: {} },
+            {
+                guildShrineTargets: { [FORCE]: 9, [AEGIS]: 5 },
+            }
+        );
+
+        expect(Object.fromEntries(candidates.map((candidate) => [candidate.buffHrid, candidate.upgradeLevel]))).toEqual(
+            { [FORCE]: 9, [AEGIS]: 5 }
+        );
+    });
+
+    test('and a shrine the map leaves out is not bought at the Lv box’s level instead', () => {
+        const dto = { equipment: {}, guildShrineLevels: { [FORCE]: 4, [AEGIS]: 2 } };
+        const candidates = ui._extraDimensionCandidates(
+            ['guild_shrine'],
+            dto,
+            { itemDetailMap: {} },
+            {
+                guildShrineTargetLevel: 7,
+                guildShrineTargets: { [AEGIS]: 5 },
+            }
+        );
+
+        expect(candidates.map((candidate) => candidate.buffHrid)).toEqual([AEGIS]);
     });
 });

@@ -13,6 +13,8 @@ import {
     getCombatZones,
     getCommunityBuffs,
     getLabyrinthMonsters,
+    getGuildBuffDetailMap,
+    guildBuffMaxLevel,
 } from './combat-sim-adapter.js';
 import { runLabyrinthSimulation, cancelSimulation } from './combat-sim-runner.js';
 import { wilsonInterval } from './engine/wilson.js';
@@ -51,6 +53,15 @@ import {
     estimateLabUpgradeSims,
     planLabUpgradeRun,
 } from './lab-sim-upgrade-modes.js';
+import {
+    LAB_TOKEN_BUFF_GROUPS,
+    MAX_LAB_TOKEN_LEVEL,
+    readLiveTokenLevels,
+    sanitizeTokenLevels,
+    resolveTokenLevels,
+    buildLabyrinthCombatBuffs,
+    describeTokenOverrides,
+} from './lab-token-buffs.js';
 import { scopeEquipmentToSkill } from './skilling-gear-candidates.js';
 import { generateSkillingCommunityBuffCandidates, MAX_COMMUNITY_BUFF_LEVEL } from './skilling-sim-helpers.js';
 // The upgrade-row vocabulary — what a row would have you buy, and the handoff
@@ -116,6 +127,17 @@ const UPGRADE_LEVEL_SOURCE_KEY = 'labSimUpgradeLevelSource';
  * much across a whole labyrinth.
  */
 const UPGRADE_SWAP_SIGNATURE_KEY = 'labSimSwapSignatureOnly';
+
+/**
+ * Labyrinth token levels the Configure tab is simulating under.
+ *
+ * Only the ones typed over the live run are stored, so a character who buys the
+ * level they were exploring stops being told they differ from themselves — an
+ * override equal to what is owned is simply an override that no longer shows.
+ * Scoped per character alongside the rest of this tab's configuration, because
+ * the tokens are a character's own and an alt has bought different ones.
+ */
+const TOKEN_BUFF_LEVELS_KEY = 'labSimTokenBuffLevels';
 
 /**
  * The retired single `Mode` dropdown's value.
@@ -267,6 +289,7 @@ const LAB_MODE_OPTIONS = {
             <input id="mwi-labsim-shrine-target-level" type="number" min="1" max="${MAX_GUILD_SHRINE_LEVEL}" placeholder="Lv" style="
                 width:48px; text-align:center; ${CHIP_INPUT_STYLE}"
                 title="Buy every shrine buff up to this level in one row, costed at every level in between. Blank means one level up. Capped at each buff's own maximum.">
+            <button id="mwi-labsim-shrine-targets-toggle" title="Set a target level per shrine instead of one number for all of them" style="${CHIP_BUTTON_STYLE}">Targets</button>
         </span>`,
     community_buff: `
         <span id="mwi-labsim-community-group" data-lab-mode-options="community_buff" style="display:none; align-items:center; gap:4px;">
@@ -276,6 +299,26 @@ const LAB_MODE_OPTIONS = {
                 title="Sim the buff at this level rather than one level up — Lv3 → Lv8 in one row. Capped at ${MAX_COMMUNITY_BUFF_LEVEL}, which is what the game calls max. The cowbell figure is per minute of uptime either way; a level has no price of its own.">
         </span>`,
 };
+
+/**
+ * Display name for a guild shrine, from its hrid.
+ *
+ * The same reading `generateGuildShrineCandidates` gives its rows, so a target
+ * input and the row it produces name the same shrine the same way.
+ * @param {string} shrineHrid - e.g. `/guild_shrines/force`
+ * @returns {string} e.g. `Force`
+ */
+function shrineDisplayName(shrineHrid) {
+    const slug = String(shrineHrid || '')
+        .split('/')
+        .filter(Boolean)
+        .pop();
+    if (!slug) return 'Shrine';
+    return slug
+        .split('_')
+        .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+        .join(' ');
+}
 
 /**
  * @param {number} seconds
@@ -463,6 +506,10 @@ class LabSimUI {
         this._comparison = new LabComparisonStore();
         // Which labyrinth fights the target picker was last built from
         this._upgradeTargetHrids = null;
+        // Labyrinth token levels typed over the live run's, buffKey → level.
+        // Only the ones deliberately set: an empty object is "simulate what this
+        // character actually owns", which is where every panel starts.
+        this._tokenBuffOverrides = {};
     }
 
     buildPanel() {
@@ -620,11 +667,15 @@ class LabSimUI {
         buffsSection.style.cssText = 'border-bottom:1px solid #222; flex-shrink:0;';
 
         const buffsHeader = document.createElement('div');
+        buffsHeader.id = 'mwi-labsim-buffs-header';
         buffsHeader.style.cssText =
             'display:flex; align-items:center; justify-content:space-between; padding:6px 14px; cursor:pointer; color:#888; font-size:12px;';
         buffsHeader.innerHTML = `
             <span>Labyrinth Buffs</span>
-            <span id="mwi-labsim-buffs-toggle" style="font-size:10px;">\u25B6</span>
+            <span style="display:inline-flex; align-items:center; gap:8px;">
+                <span id="mwi-labsim-buffs-note" style="color:#ffb74d; font-size:11px;"></span>
+                <span id="mwi-labsim-buffs-toggle" style="font-size:10px;">\u25B6</span>
+            </span>
         `;
 
         const buffsBody = document.createElement('div');
@@ -840,6 +891,14 @@ class LabSimUI {
         labHouseTargets.style.cssText =
             'display:none; padding:4px 14px 8px; flex-shrink:0; gap:8px 14px; flex-wrap:wrap; align-items:center;';
 
+        // Per-shrine target levels, on exactly the House grid's terms: a shrine
+        // sitting at Lv2 and one sitting at Lv14 have no business sharing a
+        // single Lv box, which is what the one spinner made them do
+        const labShrineTargets = document.createElement('div');
+        labShrineTargets.id = 'mwi-labsim-shrine-targets';
+        labShrineTargets.style.cssText =
+            'display:none; padding:4px 14px 8px; flex-shrink:0; gap:8px 14px; flex-wrap:wrap; align-items:center;';
+
         const upgradeProgress = document.createElement('div');
         upgradeProgress.id = 'mwi-labsim-upgrade-progress';
         upgradeProgress.style.cssText = 'display:none; padding:6px 14px; flex-shrink:0;';
@@ -862,6 +921,7 @@ class LabSimUI {
         upgradeContent.appendChild(labAbilityTargets);
         upgradeContent.appendChild(labCombatTargets);
         upgradeContent.appendChild(labHouseTargets);
+        upgradeContent.appendChild(labShrineTargets);
         upgradeContent.appendChild(upgradeProgress);
         upgradeContent.appendChild(upgradeResults);
 
@@ -1140,6 +1200,7 @@ class LabSimUI {
             void this._saveUpgradeSelection();
         });
         void this._restoreUpgradeSelection();
+        void this._restoreTokenBuffLevels();
         this.panel.querySelector('#mwi-labsim-ability-targets-toggle').addEventListener('click', () => {
             const grid = this.panel.querySelector('#mwi-labsim-ability-targets');
             const opening = grid.style.display === 'none';
@@ -1161,6 +1222,12 @@ class LabSimUI {
             const opening = grid.style.display === 'none';
             grid.style.display = opening ? 'flex' : 'none';
             if (opening) this._buildLabHouseTargets();
+        });
+        this.panel.querySelector('#mwi-labsim-shrine-targets-toggle')?.addEventListener('click', () => {
+            const grid = this.panel.querySelector('#mwi-labsim-shrine-targets');
+            const opening = grid.style.display === 'none';
+            grid.style.display = opening ? 'flex' : 'none';
+            if (opening) this._buildLabShrineTargets();
         });
         this.panel.querySelector('#mwi-labsim-upgrade-stop').addEventListener('click', () => {
             this._upgradeAborted = true;
@@ -1531,8 +1598,16 @@ class LabSimUI {
             if (isCombatLevelMode && !parseInt(levelInput.value, 10)) levelInput.value = '5';
         }
 
-        if (!isLevelMode) this.panel.querySelector('#mwi-labsim-ability-targets').style.display = 'none';
+        const abilityGrid = this.panel.querySelector('#mwi-labsim-ability-targets');
+        if (!isLevelMode) abilityGrid.style.display = 'none';
         if (!isCombatLevelMode) this.panel.querySelector('#mwi-labsim-combat-targets').style.display = 'none';
+
+        // The grid lists whatever the target scope covers, so a scope change is
+        // a change to the list — leaving it showing one loadout's abilities
+        // after the scope grew to ten fights is exactly the bug it had
+        if (isLevelMode && abilityGrid.style.display !== 'none') {
+            this._prefillAbilityTargets(abilityGrid, '#mwi-labsim-upgrade-player', '#mwi-labsim-upgrade-target-level');
+        }
 
         // Scope row: the subset picker and the skip-level rule only mean
         // something once the analysis is walking the labyrinth's own fight list
@@ -1658,7 +1733,57 @@ class LabSimUI {
         this._onUpgradeSelectionChanged();
     }
 
-    /** @private */
+    /**
+     * The token levels the live run has bought.
+     * @returns {Object} buffKey → level
+     * @private
+     */
+    _liveTokenLevels() {
+        return readLiveTokenLevels(dataManager.characterData?.characterInfo);
+    }
+
+    /**
+     * The token levels every simulation this panel runs should use: the live
+     * ones, with whatever the Configure tab has been set to on top.
+     *
+     * Null when nothing is known and nothing has been set, which is not the
+     * same answer as "every token at level 0": the Token Upgrades rows read
+     * this, and a character the client cannot read would be offered nine
+     * purchases off levels nobody has established.
+     * @returns {Object|null} buffKey → level
+     * @private
+     */
+    _resolvedTokenLevels() {
+        const info = dataManager.characterData?.characterInfo;
+        if (!info && !Object.keys(this._tokenBuffOverrides || {}).length) return null;
+        return resolveTokenLevels(info, this._tokenBuffOverrides);
+    }
+
+    /**
+     * The labyrinth combat buff array to hand a simulation.
+     *
+     * Every lab-sim path reads this rather than `labyrinthClearRate`: the live
+     * getter answers "what is this run carrying", which is the right question
+     * for a tile badge and the wrong one for a simulator being asked what a
+     * different set of tokens would do.
+     * @returns {Array<Object>}
+     * @private
+     */
+    _labyrinthCombatBuffs() {
+        return buildLabyrinthCombatBuffs(this._resolvedTokenLevels() || {});
+    }
+
+    /**
+     * Draw the Labyrinth Buffs section: the live levels, and the ones being
+     * simulated where those differ.
+     *
+     * Only the Combat four take an input. They are the tokens the combat engine
+     * reads — the rest are levels no fight simulation consults, and an input
+     * that silently changes nothing is worse than a readout that admits it is
+     * one. The Skilling tab's Player Setup edits the skilling levels, which is
+     * where they do change an answer.
+     * @private
+     */
     _renderBuffsSection() {
         const container = this.panel?.querySelector('#mwi-labsim-buffs-body');
         if (!container) return;
@@ -1669,54 +1794,122 @@ class LabSimUI {
             return;
         }
 
-        const groups = [
-            {
-                label: 'Combat',
-                buffs: [
-                    { key: 'labyrinthCombatDamageLevel', name: 'Damage' },
-                    { key: 'labyrinthAttackSpeedLevel', name: 'Atk Speed' },
-                    { key: 'labyrinthCastSpeedLevel', name: 'Cast Speed' },
-                    { key: 'labyrinthCriticalRateLevel', name: 'Crit Rate' },
-                ],
-            },
-            {
-                label: 'Skilling',
-                buffs: [
-                    { key: 'labyrinthSkillActionSpeedLevel', name: 'Speed' },
-                    { key: 'labyrinthSkillingEfficiencyLevel', name: 'Efficiency' },
-                    { key: 'labyrinthSkillingSuccessLevel', name: 'Success' },
-                    { key: 'labyrinthSkillingDoubleProgressLevel', name: 'Double' },
-                ],
-            },
-            {
-                label: 'Other',
-                buffs: [
-                    { key: 'labyrinthExperienceLevel', name: 'Experience' },
-                    { key: 'labyrinthCooldownLevel', name: 'Cooldown' },
-                    { key: 'labyrinthTorchLevel', name: 'Torch' },
-                    { key: 'labyrinthShroudLevel', name: 'Shroud' },
-                    { key: 'labyrinthBeaconLevel', name: 'Beacon' },
-                    { key: 'labyrinthAutomationLevel', name: 'Automation' },
-                ],
-            },
-        ];
+        const live = this._liveTokenLevels();
+        const simulated = this._resolvedTokenLevels();
 
-        let html = '';
-        for (const group of groups) {
+        let html =
+            '<div style="color:#666; padding:2px 0 4px;">Combat levels are what the sims run under — change one ' +
+            'to ask what those tokens would do. Blank restores the live level.</div>';
+
+        for (const group of LAB_TOKEN_BUFF_GROUPS) {
             html += `<div style="color:#666; font-weight:600; font-size:10px; text-transform:uppercase; margin-top:4px; margin-bottom:2px;">${group.label}</div>`;
             html += '<div style="display:grid; grid-template-columns:1fr 1fr; gap:1px 16px;">';
-            for (const b of group.buffs) {
-                const level = Math.max(0, Math.floor(Number(info[b.key]) || 0));
-                const isMaxed = level >= 12;
-                const color = isMaxed ? '#4caf50' : '#e0e0e0';
-                html += `<div style="display:flex; justify-content:space-between; padding:1px 0;">
-                    <span style="color:#aaa;">${b.name}</span>
-                    <span style="color:${color}; font-weight:${isMaxed ? '600' : '400'};">${level}/12</span>
+            for (const buff of group.buffs) {
+                const liveLevel = live[buff.key];
+                const isMaxed = liveLevel >= MAX_LAB_TOKEN_LEVEL;
+                if (!buff.uniqueKey) {
+                    const color = isMaxed ? '#4caf50' : '#e0e0e0';
+                    html += `<div style="display:flex; justify-content:space-between; align-items:center; padding:1px 0;">
+                        <span style="color:#aaa;">${buff.name}</span>
+                        <span style="color:${color}; font-weight:${isMaxed ? '600' : '400'};">${liveLevel}/${MAX_LAB_TOKEN_LEVEL}</span>
+                    </div>`;
+                    continue;
+                }
+                const chosen = simulated[buff.key];
+                const differs = chosen !== liveLevel;
+                html += `<div style="display:flex; justify-content:space-between; align-items:center; gap:6px; padding:1px 0;">
+                    <span style="color:#aaa;">${buff.name}</span>
+                    <span style="display:inline-flex; align-items:center; gap:4px;">
+                        <input type="number" min="0" max="${MAX_LAB_TOKEN_LEVEL}" value="${chosen}"
+                            data-lab-token-buff="${buff.key}"
+                            title="Level to simulate. Live: ${liveLevel}/${MAX_LAB_TOKEN_LEVEL}."
+                            style="width:44px; text-align:center; background:#1a1a2e;
+                            color:${differs ? '#ffb74d' : '#e0e0e0'};
+                            border:1px solid ${differs ? '#ffb74d' : '#444'};
+                            border-radius:3px; padding:1px 3px; font-size:11px;">
+                        <span style="color:${differs ? '#ffb74d' : '#666'}; min-width:56px;">${
+                            differs ? `live ${liveLevel}` : `/${MAX_LAB_TOKEN_LEVEL}`
+                        }</span>
+                    </span>
                 </div>`;
             }
             html += '</div>';
         }
+
+        html +=
+            '<div style="display:flex; align-items:center; gap:8px; margin-top:6px;">' +
+            `<button id="mwi-labsim-buffs-reset" style="${CHIP_BUTTON_STYLE}">Reset to live</button>` +
+            '<span id="mwi-labsim-buffs-body-note" style="color:#ffb74d;"></span>' +
+            '</div>';
+
         container.innerHTML = html;
+
+        container.querySelectorAll('[data-lab-token-buff]').forEach((input) => {
+            input.addEventListener('change', () => {
+                const key = input.dataset.labTokenBuff;
+                const raw = input.value.trim();
+                if (raw === '') {
+                    delete this._tokenBuffOverrides[key];
+                } else {
+                    const level = Math.min(MAX_LAB_TOKEN_LEVEL, Math.max(0, parseInt(raw, 10) || 0));
+                    this._tokenBuffOverrides[key] = level;
+                }
+                void this._saveTokenBuffLevels();
+                this._renderBuffsSection();
+            });
+        });
+        container.querySelector('#mwi-labsim-buffs-reset')?.addEventListener('click', () => {
+            this._tokenBuffOverrides = {};
+            void this._saveTokenBuffLevels();
+            this._renderBuffsSection();
+        });
+
+        const note = container.querySelector('#mwi-labsim-buffs-body-note');
+        const summary = describeTokenOverrides(info, this._tokenBuffOverrides);
+        if (note) note.textContent = summary ? `Simulating ${summary}` : '';
+        this._refreshBuffsHeaderNote();
+    }
+
+    /**
+     * Say on the collapsed header that the sims are not running on the live
+     * tokens — the section is shut by default, and a silent override is a run
+     * reported as the live character that never was.
+     * @private
+     */
+    _refreshBuffsHeaderNote() {
+        const note = this.panel?.querySelector('#mwi-labsim-buffs-note');
+        if (!note) return;
+        const summary = describeTokenOverrides(dataManager.characterData?.characterInfo, this._tokenBuffOverrides);
+        note.textContent = summary ? `simulating ${summary}` : '';
+    }
+
+    /**
+     * Persist the token levels being simulated, per character.
+     * @private
+     */
+    async _saveTokenBuffLevels() {
+        try {
+            this._tokenBuffOverrides = sanitizeTokenLevels(this._tokenBuffOverrides);
+            await writeScoped(TOKEN_BUFF_LEVELS_KEY, this._tokenBuffOverrides, 'settings');
+        } catch (error) {
+            console.error('[LabSimUI] Failed to save labyrinth token levels:', error);
+        }
+    }
+
+    /**
+     * Read the remembered token levels back.
+     * @private
+     */
+    async _restoreTokenBuffLevels() {
+        try {
+            this._tokenBuffOverrides = sanitizeTokenLevels(await readScoped(TOKEN_BUFF_LEVELS_KEY, 'settings', null));
+        } catch (error) {
+            console.error('[LabSimUI] Failed to restore labyrinth token levels:', error);
+            this._tokenBuffOverrides = {};
+        }
+        this._refreshBuffsHeaderNote();
+        const body = this.panel?.querySelector('#mwi-labsim-buffs-body');
+        if (body && body.style.display !== 'none') this._renderBuffsSection();
     }
 
     /**
@@ -1827,7 +2020,7 @@ class LabSimUI {
         }
 
         const crates = this.getSelectedCrates();
-        const labyrinthCombatBuffs = labyrinthClearRate.getLabyrinthCombatBuffs();
+        const labyrinthCombatBuffs = this._labyrinthCombatBuffs();
 
         let selfDTO;
         const editedDTOs = this._editor?.getEditedDTOs();
@@ -2226,7 +2419,11 @@ class LabSimUI {
         }
 
         const communityBuffs = getCommunityBuffs();
-        const labyrinthCombatBuffs = labyrinthClearRate.getLabyrinthCombatBuffs();
+        // Both halves of the same answer: the buff array the sims run under, and
+        // the levels those buffs came from — a Token Upgrades row steps up from
+        // the level being simulated, not from the level the live run owns
+        const tokenLevels = this._resolvedTokenLevels();
+        const labyrinthCombatBuffs = this._labyrinthCombatBuffs();
 
         const progressEl = this.panel.querySelector('#mwi-labsim-upgrade-progress');
         const resultsEl = this.panel.querySelector('#mwi-labsim-upgrade-results');
@@ -2266,6 +2463,7 @@ class LabSimUI {
         const houseTargetLevel = selectedDimensions.has('house') ? this._getHouseTargetLevel() : 0;
         const houseTargets = selectedDimensions.has('house') ? this._getHouseTargets() : null;
         const guildShrineTargetLevel = selectedDimensions.has('guild_shrine') ? this._getShrineTargetLevel() : 0;
+        const guildShrineTargets = selectedDimensions.has('guild_shrine') ? this._getShrineTargets() : null;
 
         if (plan.dropped.length) {
             this._setStatus(
@@ -2343,6 +2541,8 @@ class LabSimUI {
                         houseTargetLevel,
                         houseTargets,
                         guildShrineTargetLevel,
+                        guildShrineTargets,
+                        tokenLevels,
                     },
                     ({ current, total, description, plan: runPlan }) => {
                         if (this._upgradeAborted) return;
@@ -2397,6 +2597,8 @@ class LabSimUI {
                     houseTargetLevel,
                     houseTargets,
                     guildShrineTargetLevel,
+                    guildShrineTargets,
+                    tokenLevels,
                     extraCandidates: this._extraDimensionCandidates(
                         plan.extraModes,
                         playerDTOs[playerIndex],
@@ -2410,6 +2612,7 @@ class LabSimUI {
                             houseTargetLevel,
                             houseTargets,
                             guildShrineTargetLevel,
+                            guildShrineTargets,
                             communityBuffs,
                             communityBuffTargetLevel: this._getCommunityTargetLevel(),
                         }
@@ -2456,7 +2659,7 @@ class LabSimUI {
      * @param {Object} playerDTO - The loadout being analyzed
      * @param {Object} gameData - From `buildGameDataPayload`
      * @param {Object} options - `{ abilityTargetLevel, abilityLevelType, combatLevelTargets, abilityTargets,
-     *   signatureSwapsOnly }`
+     *   signatureSwapsOnly, houseTargetLevel, houseTargets, guildShrineTargetLevel, guildShrineTargets }`
      * @returns {Array<Object>} Candidates, deduplicated by the analysis itself
      * @private
      */
@@ -2471,6 +2674,7 @@ class LabSimUI {
             houseTargetLevel = 0,
             houseTargets = null,
             guildShrineTargetLevel = 0,
+            guildShrineTargets = null,
             communityBuffs = null,
             communityBuffTargetLevel = 0,
         } = options;
@@ -2489,7 +2693,7 @@ class LabSimUI {
                     houseTargets,
                     communityBuffs,
                     guildShrineTargetLevel,
-                    { signatureSwapsOnly, houseWinRateOnly: true, communityBuffTargetLevel }
+                    { signatureSwapsOnly, houseWinRateOnly: true, communityBuffTargetLevel, guildShrineTargets }
                 )
             );
         } catch (error) {
@@ -2657,6 +2861,87 @@ class LabSimUI {
     }
 
     /**
+     * Build the per-shrine target inputs, prefilled from the uniform Lv box.
+     *
+     * The House grid's arrangement, for the same reason it exists there: one Lv
+     * box across the board asks every shrine for the same absolute level, and
+     * shrines are not at the same level as each other — a single 6 was a no-op
+     * for everything already past 6 and a five-level purchase for everything
+     * below it, in one undifferentiated row set.
+     *
+     * Combat shrines only, matching what `generateGuildShrineCandidates` is
+     * asked for here: this tab ranks win rate, and a skilling shrine has no
+     * column it could move.
+     * @private
+     */
+    _buildLabShrineTargets() {
+        const grid = this.panel?.querySelector('#mwi-labsim-shrine-targets');
+        if (!grid) return;
+
+        const detailMap = getGuildBuffDetailMap();
+        const playerIndex = parseInt(this.panel.querySelector('#mwi-labsim-upgrade-player')?.value) || 0;
+        const editedDTOs = this._editor?.getEditedDTOs();
+        const dto = editedDTOs ? Object.values(editedDTOs)[playerIndex] : null;
+        const uniform = Math.min(MAX_GUILD_SHRINE_LEVEL, Math.max(0, this._getShrineTargetLevel()));
+
+        const shrines = Object.entries(detailMap)
+            .filter(([, detail]) => Boolean(detail?.isCombat))
+            .map(([buffHrid, detail]) => ({
+                buffHrid,
+                name: shrineDisplayName(detail.shrineHrid || buffHrid),
+                level: Math.max(0, Math.floor(Number(dto?.guildShrineLevels?.[buffHrid]) || 0)),
+                maxLevel: Math.min(MAX_GUILD_SHRINE_LEVEL, guildBuffMaxLevel(detail) || MAX_GUILD_SHRINE_LEVEL),
+            }))
+            .sort((a, b) => a.name.localeCompare(b.name));
+
+        if (!shrines.length) {
+            grid.innerHTML =
+                '<span style="color:#666; font-size:11px;">No combat guild shrine reached the client — join a ' +
+                'guild, or open the shrine screen once, so the levels are known.</span>';
+            return;
+        }
+
+        grid.innerHTML =
+            '<span style="color:#666; font-size:11px; flex-basis:100%;"><b>Guild Shrine</b> target levels (blank ' +
+            'or ≤ current level skips the shrine; used instead of the Lv box while open):</span>' +
+            shrines
+                .map(
+                    (shrine) => `
+                <span style="display:inline-flex; align-items:center; gap:4px;">
+                    <label style="color:#888; font-size:11px;">${shrine.name} (${shrine.level})</label>
+                    <input type="number" min="1" max="${shrine.maxLevel}" data-lab-shrine-target="${shrine.buffHrid}"
+                        value="${
+                            shrine.level >= shrine.maxLevel
+                                ? ''
+                                : Math.min(shrine.maxLevel, Math.max(uniform, shrine.level + 1))
+                        }"
+                        ${shrine.level >= shrine.maxLevel ? 'disabled title="Already at max level"' : ''} style="
+                        width:48px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
+                        border-radius:3px; padding:2px 4px; font-size:11px; text-align:center;">
+                </span>`
+                )
+                .join('');
+    }
+
+    /**
+     * Per-shrine target levels, or null when the grid is closed.
+     * @returns {Object|null} buffHrid → target level
+     * @private
+     */
+    _getShrineTargets() {
+        const grid = this.panel?.querySelector('#mwi-labsim-shrine-targets');
+        if (!grid || grid.style.display === 'none') return null;
+        const targets = {};
+        grid.querySelectorAll('[data-lab-shrine-target]').forEach((input) => {
+            const value = parseInt(input.value, 10);
+            if (Number.isFinite(value) && value > 0) {
+                targets[input.dataset.labShrineTarget] = Math.min(MAX_GUILD_SHRINE_LEVEL, value);
+            }
+        });
+        return Object.keys(targets).length > 0 ? targets : null;
+    }
+
+    /**
      * The community buff level the Skilling tab should sim at, 0 when the box is
      * empty (one level up).
      * @returns {number}
@@ -2751,34 +3036,125 @@ class LabSimUI {
     }
 
     /**
-     * Rebuild and prefill the per-ability target inputs from the selected
-     * player's equipped abilities (current level + the +Levels boost).
+     * Every ability the current target scope can level, deduplicated.
+     *
+     * For the Configure fight that is one loadout, which is what this grid
+     * always showed. For a whole run — or a chosen subset — it is the *union*
+     * across the loadouts those fights are assigned, which is what it showed
+     * before and should have: ten fights across a melee and a magic loadout
+     * offered targets for five magic abilities, and every melee ability in the
+     * run had no way to be given one at all.
+     *
+     * An ability slotted in two loadouts is one entry, because a target is a
+     * level on the ability itself and applies wherever it is equipped. The
+     * loadouts it belongs to come with it, so the label can say so when they
+     * are not all of them, and the levels come as a set, because the same
+     * ability is often held at different levels in different loadouts.
+     *
+     * @param {string} [playerSelector] - Which player select the single-loadout
+     *   fallback reads its index from
+     * @returns {Array<Object>} `[{ hrid, name, levels, loadouts, shared }]`, by name
+     * @private
+     */
+    _upgradeAbilityEntries(playerSelector = '#mwi-labsim-upgrade-player') {
+        const gameData = buildGameDataPayload();
+        const nameOf = (hrid) => gameData?.abilityDetailMap?.[hrid]?.name || hrid.split('/').pop();
+
+        const scopeMode = this._getUpgradeScopeMode();
+        if (scopeMode !== 'current') {
+            const chosen = scopeMode === 'selected' ? new Set(this._getChosenTargets()) : null;
+            const useSkipLevels = this.panel?.querySelector('#mwi-labsim-allfights-useskip')?.checked ?? true;
+            const fights = this._collectLabyrinthFights(useSkipLevels).filter(
+                (fight) => !chosen || chosen.has(fight.monsterHrid)
+            );
+            const loadoutCount = new Set(fights.map((fight) => fight.loadoutName)).size;
+            const byHrid = new Map();
+            for (const fight of fights) {
+                for (const ability of fight.dto?.abilities || []) {
+                    if (!ability?.hrid) continue;
+                    let entry = byHrid.get(ability.hrid);
+                    if (!entry) {
+                        entry = { hrid: ability.hrid, levels: new Set(), loadouts: new Set() };
+                        byHrid.set(ability.hrid, entry);
+                    }
+                    entry.levels.add(Math.max(1, Math.floor(Number(ability.level) || 1)));
+                    entry.loadouts.add(fight.loadoutName);
+                }
+            }
+            if (byHrid.size) {
+                return [...byHrid.values()]
+                    .map((entry) => ({
+                        hrid: entry.hrid,
+                        name: nameOf(entry.hrid),
+                        levels: [...entry.levels].sort((a, b) => a - b),
+                        loadouts: [...entry.loadouts],
+                        // Unlabelled when every loadout in the set casts it —
+                        // a label on all of them is noise on all of them
+                        shared: entry.loadouts.size >= loadoutCount,
+                    }))
+                    .sort((a, b) => a.name.localeCompare(b.name));
+            }
+            // No fight resolves a loadout yet; the Configure loadout below is a
+            // better answer than an empty grid
+        }
+
+        const playerIndex = parseInt(this.panel?.querySelector(playerSelector)?.value) || 0;
+        const editedDTOs = this._editor?.getEditedDTOs();
+        const dto = editedDTOs ? Object.values(editedDTOs)[playerIndex] : null;
+        return (dto?.abilities || [])
+            .filter((ability) => ability?.hrid)
+            .map((ability) => ({
+                hrid: ability.hrid,
+                name: nameOf(ability.hrid),
+                levels: [Math.max(1, Math.floor(Number(ability.level) || 1))],
+                loadouts: [],
+                shared: true,
+            }));
+    }
+
+    /**
+     * Rebuild and prefill the per-ability target inputs for whatever the target
+     * scope covers (highest current level + the +Levels boost).
+     *
+     * Anything already typed survives the rebuild: the grid is redrawn whenever
+     * the scope changes, and a target typed for Fireball should not be lost
+     * because a second fight was ticked.
      * @private
      */
     _prefillAbilityTargets(grid, playerSelector, levelSelector) {
-        const playerIndex = parseInt(this.panel.querySelector(playerSelector)?.value) || 0;
-        const editedDTOs = this._editor?.getEditedDTOs();
-        const dto = editedDTOs ? Object.values(editedDTOs)[playerIndex] : null;
-        const abilities = (dto?.abilities || []).filter(Boolean);
         const boost = parseInt(this.panel.querySelector(levelSelector)?.value) || 5;
-        const gameData = buildGameDataPayload();
+        const typed = {};
+        grid.querySelectorAll('[data-ability-target]').forEach((input) => {
+            const value = parseInt(input.value, 10);
+            if (Number.isFinite(value) && value > 0) typed[input.dataset.abilityTarget] = value;
+        });
 
-        if (!abilities.length) {
+        const entries = this._upgradeAbilityEntries(playerSelector);
+        if (!entries.length) {
             grid.innerHTML =
                 '<span style="color:#666; font-size:11px;">No abilities equipped — configure a simulation first.</span>';
             return;
         }
 
+        const multiLoadout = entries.some((entry) => entry.loadouts.length > 0);
         grid.innerHTML =
-            '<span style="color:#666; font-size:11px; flex-basis:100%;">Target levels (blank or ≤ current level skips the ability; used instead of the +Levels boost while open):</span>' +
-            abilities
-                .map((ability) => {
-                    const name = gameData?.abilityDetailMap?.[ability.hrid]?.name || ability.hrid.split('/').pop();
-                    const target = Math.min(200, (ability.level || 1) + boost);
+            '<span style="color:#666; font-size:11px; flex-basis:100%;">Target levels (blank or ≤ current level ' +
+            'skips the ability; used instead of the +Levels boost while open)' +
+            (multiLoadout ? ' — every ability across the checked fights, with the loadouts it is slotted in' : '') +
+            ':</span>' +
+            entries
+                .map((entry) => {
+                    const lowest = entry.levels[0];
+                    const highest = entry.levels[entry.levels.length - 1];
+                    const levelText = lowest === highest ? `${lowest}` : `${lowest}–${highest}`;
+                    const loadoutText = entry.shared ? '' : ` [${entry.loadouts.join(', ')}]`;
+                    // Off the highest of them, so the boost is a real boost in
+                    // every loadout rather than a no-op in the ones already past it
+                    const target = Math.min(200, typed[entry.hrid] || highest + boost);
                     return `
                 <span style="display:inline-flex; align-items:center; gap:4px;">
-                    <label style="color:#888; font-size:11px;">${name} (${ability.level})</label>
-                    <input type="number" min="1" max="200" data-ability-target="${ability.hrid}" value="${target}" style="
+                    <label style="color:#888; font-size:11px;" title="${entry.loadouts.join(', ')}">${entry.name} (${levelText})<span style="color:#666;">${loadoutText}</span></label>
+                    <input type="number" min="1" max="200" data-ability-target="${entry.hrid}" value="${target}" style="
                         width:52px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
                         border-radius:3px; padding:2px 4px; font-size:11px; text-align:center;">
                 </span>`;
