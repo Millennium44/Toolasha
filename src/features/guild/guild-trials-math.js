@@ -449,10 +449,23 @@ export function trialBankedBasePoints({ type, bankedTiers, pointsByTier = {}, bu
  * whole number of 2% steps, and it must lie within the twenty levels a building
  * has. Anything else returns null and the caller reports the level as unknown.
  *
+ * The step and the ceiling are the building's own, so a rebalance that changes
+ * either does not turn this into a wrong answer: `guild-trials-store.js` reads
+ * both off the game's `guildBuildingDetailMap` and passes them in, and the
+ * confirmed constants stand in when there is no client data to read.
+ *
  * @param {Array<{type: string, pointsByTier: Object}>} tiles - Trials with their stated points
+ * @param {Object} [rules] - The building's own rules
+ * @param {number} [rules.bonusPerLevel] - Bonus one level grants
+ * @param {number} [rules.maxLevel] - Levels the building has
  * @returns {{bonus: number, level: number, ratio: number, cards: number}|null} The bonus, or null
  */
-export function inferBuildersHallBonus(tiles) {
+export function inferBuildersHallBonus(
+    tiles,
+    { bonusPerLevel = BUILDING_BONUS_PER_LEVEL, maxLevel = GUILD_BUILDING_MAX_LEVEL } = {}
+) {
+    const step = Number.isFinite(bonusPerLevel) && bonusPerLevel > 0 ? bonusPerLevel : BUILDING_BONUS_PER_LEVEL;
+    const ceiling = (Number.isFinite(maxLevel) && maxLevel > 0 ? maxLevel : GUILD_BUILDING_MAX_LEVEL) * step;
     const ratios = [];
     for (const tile of tiles || []) {
         for (const [tier, points] of Object.entries(tile?.pointsByTier || {})) {
@@ -468,12 +481,12 @@ export function inferBuildersHallBonus(tiles) {
     if (ratios.some((candidate) => Math.abs(candidate - ratio) > 0.005)) return null;
 
     const bonus = ratio - 1;
-    if (bonus < 0 || bonus > MAX_BUILDING_BONUS + 1e-9) return null;
+    if (bonus < 0 || bonus > ceiling + 1e-9) return null;
 
-    const level = Math.round(bonus / BUILDING_BONUS_PER_LEVEL);
-    if (Math.abs(level * BUILDING_BONUS_PER_LEVEL - bonus) > 0.001) return null;
+    const level = Math.round(bonus / step);
+    if (Math.abs(level * step - bonus) > 0.001) return null;
 
-    return { bonus: level * BUILDING_BONUS_PER_LEVEL, level, ratio, cards: ratios.length };
+    return { bonus: level * step, level, ratio, cards: ratios.length };
 }
 
 /**

@@ -17,6 +17,7 @@ import {
     classifyReadings,
     findTrialClockMs,
     findTrialsRoot,
+    isTrialsSetupTab,
     parsePoints,
     parseSignups,
     isCombatTrialName,
@@ -566,6 +567,76 @@ describe('a card that states its tier instead of its level', () => {
             )
         )[0];
         expect(tile.tier).toBe(4);
+    });
+});
+
+describe('a card that says the trial is over', () => {
+    /**
+     * A guild panel holding one card.
+     * @param {string} html - The card's markup
+     * @returns {Element} The panel
+     */
+    function panelWith(html) {
+        document.body.innerHTML = `<div class="GuildPanel_guildPanel__r">${html}</div>`;
+        return document.querySelector('[class*="GuildPanel_guildPanel"]');
+    }
+
+    test('“Completed” is read off the card', () => {
+        // The finished Trial Chameleon. Worth reading because it settles what
+        // the tier badge means: 960 pts is the ladder's three-tier total at
+        // +20%, so a finished card's badge is the tiers earned
+        const tile = readTrialTiles(
+            panelWith(
+                '<div class="GuildPanel_tile__a"><div class="GuildPanel_tileName__n">Trial Chameleon</div>' +
+                    '<div class="GuildPanel_tileSummary__s">Lv.120</div>' +
+                    '<div>960 pts</div><div>Completed</div><div>1/28 signed up</div></div>'
+            )
+        )[0];
+
+        expect(tile).toMatchObject({ name: 'Trial Chameleon', tier: 3, points: 960, completed: true });
+    });
+
+    test('a card still running does not say it', () => {
+        const tile = readTrialTiles(
+            panelWith(
+                '<div class="GuildPanel_tile__a"><div class="GuildPanel_tileName__n">Alchemy</div>' +
+                    '<div class="GuildPanel_tileSummary__s">Lv.170</div><div>1,080 pts</div><div>20m 53s</div></div>'
+            )
+        )[0];
+        expect(tile.completed).toBe(false);
+    });
+});
+
+describe('isTrialsSetupTab', () => {
+    /**
+     * A guild panel holding one card.
+     * @param {string} html - The card's markup
+     * @returns {Element} The panel
+     */
+    function panelWith(html) {
+        document.body.innerHTML = `<div class="GuildPanel_guildPanel__r">${html}</div>`;
+        return document.querySelector('[class*="GuildPanel_guildPanel"]');
+    }
+
+    test('the setup tab is cards with points and sign-ups and no bar', () => {
+        const root = panelWith(
+            '<div class="GuildPanel_tile__a"><div class="GuildPanel_tileName__n">Alchemy</div>' +
+                '<div class="GuildPanel_tileSummary__s">Lv.170</div><div>1,080 pts</div>' +
+                '<div>1/28 signed up</div></div>'
+        );
+        expect(isTrialsSetupTab(root)).toBe(true);
+    });
+
+    test('a card with a reading on it is the In Progress tab', () => {
+        const root = panelWith(
+            '<div class="GuildPanel_card__a"><div>Trial Chameleon</div><div>506,273 / 669,500</div></div>'
+        );
+        expect(isTrialsSetupTab(root)).toBe(false);
+    });
+
+    test('a guild page with no trial cards is neither', () => {
+        expect(isTrialsSetupTab(panelWith('<div class="GuildPanel_tile__a"><div>Treasury</div></div>'))).toBe(false);
+        expect(isTrialsSetupTab(null)).toBe(false);
     });
 });
 

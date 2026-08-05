@@ -129,6 +129,18 @@ export function parseBarReadings(text) {
 const SIGNUP_PATTERN = /signed\s*up/i;
 
 /**
+ * A card that says the trial is over.
+ *
+ * Worth reading because it settles the one inference on the block that nothing
+ * else confirms. While a trial runs, the tier on the card is the tier being
+ * fought and the tiers *earned* are one fewer; on a finished card the two are
+ * the same number — the completed Trial Chameleon read "Lv.120, 960 pts, T3",
+ * and 960 is the ladder's three-tier total with the Builder's Hall bonus on it.
+ * So "Completed" is what makes the banked count exact rather than inferred.
+ */
+const COMPLETED_PATTERN = /\bcomplet(?:e|ed)\b/i;
+
+/**
  * How many members have signed up for a trial, from its card.
  *
  * The Trials tab writes it both ways round — "1/28 signed up" under a skilling
@@ -404,6 +416,33 @@ export function findTrialsRoot(scope = typeof document === 'undefined' ? null : 
     return hasSummary || hasReading ? panel : null;
 }
 
+/**
+ * Whether the tab on screen is the **Trials** setup tab rather than In Progress.
+ *
+ * Both tabs live under the same panel and {@link findTrialsRoot} deliberately
+ * cannot tell them apart — it is looking for trial cards, and both tabs have
+ * some. Anything that belongs to one tab specifically has to ask.
+ *
+ * Told apart by what the cards carry, which is the one difference confirmed from
+ * a live client: the In Progress tab's card is a *reading* and the Trials tab's
+ * cards have no progress bar anywhere on them, carrying sign-ups and points
+ * instead. So the setup tab is "trial cards, at least one of which says what it
+ * is worth or who signed up, and not one of which is a bar".
+ *
+ * The sign-up roster was being drawn on In Progress because it asked
+ * `findTrialsRoot` and that answers for either tab — reported after a trial
+ * advanced a tier, which is exactly when the In Progress tab redraws.
+ *
+ * @param {Element|null} root - The trials root
+ * @returns {boolean} True on the Trials tab
+ */
+export function isTrialsSetupTab(root) {
+    const tiles = readTrialTiles(root);
+    if (!tiles.length) return false;
+    if (tiles.some((tile) => tile.readings.length > 0)) return false;
+    return tiles.some((tile) => tile.signups !== null || Number.isFinite(tile.points) || Number.isFinite(tile.tier));
+}
+
 /** How far to climb from a reading before giving up on finding its card */
 const CARD_CLIMB_LIMIT = 6;
 
@@ -470,7 +509,7 @@ function cardFor(start, root) {
  *
  * @param {Element} root - The trials root, from {@link findTrialsRoot}
  * @returns {Array<{element: Element, name: string, level: number|null, tier: number|null,
- *   kind: 'combat'|'skilling', readings: Array<{current: number, max: number}>,
+ *   kind: 'combat'|'skilling', completed: boolean, readings: Array<{current: number, max: number}>,
  *   signups: {signed: number, total: number}|null, points: number|null}>} Cards, in document order
  */
 export function readTrialTiles(root) {
@@ -531,6 +570,7 @@ export function readTrialTiles(root) {
             element: tile,
             name,
             level,
+            completed: lines.some((candidate) => COMPLETED_PATTERN.test(candidate)),
             tier: statedTier ?? (level === null ? null : tierFromLevel(level)),
             kind: isCombatTrialName(name) ? 'combat' : 'skilling',
             // Sign-up counts are excluded rather than filtered afterwards:

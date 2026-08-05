@@ -189,6 +189,40 @@ describe('the trial sign-up block', () => {
         expect(block().previousElementSibling.className).toContain('GuildPanel_eventStatusRow');
     });
 
+    test('the In Progress tab is not the sign-up sheet’s tab', () => {
+        // Reported: the roster appeared over the In Progress tab after the trial
+        // advanced a tier — which is precisely when that tab redraws and the
+        // observer fires again. Both tabs are trial cards under one panel, so
+        // the root finder cannot tell them apart and this has to ask.
+        unsignedMember('Ada');
+        guildXPDisplay.initialize();
+
+        document.body.innerHTML =
+            '<div class="GuildPanel_guildPanel__z"><div class="GuildPanel_inProgress__p">' +
+            '<div class="GuildPanel_tile__c"><div class="GuildPanel_tileName__d">Trial Chameleon</div>' +
+            '<div class="ProgressBar_text__f">506,273 / 669,500</div></div></div></div>';
+        game.observers['GuildPanel_tileSummary']();
+
+        expect(block()).toBeNull();
+    });
+
+    test('switching to In Progress takes the block away with it', () => {
+        unsignedMember('Ada');
+        guildXPDisplay.initialize();
+
+        buildTab();
+        game.observers['GuildPanel_tileSummary']();
+        expect(block()).toBeTruthy();
+
+        document.body.innerHTML =
+            '<div class="GuildPanel_guildPanel__z"><div class="GuildPanel_inProgress__p">' +
+            '<div class="GuildPanel_tile__c"><div class="GuildPanel_tileName__d">Trial Chameleon</div>' +
+            '<div class="ProgressBar_text__f">506,273 / 669,500</div></div></div></div>';
+        game.observers['GuildPanel_tileSummary']();
+
+        expect(block()).toBeNull();
+    });
+
     test('a guild page with no trial cards on it is not drawn into', () => {
         // The members tab is a guild panel too, and the fallback root is the
         // panel — so "is there a card" has to be what decides
