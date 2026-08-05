@@ -30,6 +30,12 @@ vi.mock('../../core/settings-schema.js', () => ({
 }));
 vi.mock('../../utils/panel-z-index.js', () => ({ PANEL_Z_CAP: 1199 }));
 
+/** What the palette said when a command had nowhere to land */
+const toasts = vi.hoisted(() => ({ said: [] }));
+vi.mock('../../utils/toast.js', () => ({
+    showToast: (message) => toasts.said.push(message),
+}));
+
 const rows = vi.hoisted(() => ({ current: [] }));
 vi.mock('../../utils/overlay-rows.js', () => ({ registeredRows: () => rows.current }));
 
@@ -47,6 +53,7 @@ const {
     isTypingTarget,
     isPaletteHotkey,
     revealSetting,
+    openGuildTrials,
 } = await import('./command-palette.js');
 
 /**
@@ -154,6 +161,7 @@ function press(key) {
 
 beforeEach(() => {
     rows.current = [];
+    toasts.said = [];
     overlay.toggle.mockClear();
     overlay.listLayouts.mockClear();
     overlay.listLayouts.mockResolvedValue([]);
@@ -450,5 +458,105 @@ describe('the palette in the page', () => {
         expect(palette.isOpen).toBe(false);
         document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true }));
         expect(palette.isOpen).toBe(false);
+    });
+});
+
+/**
+ * The guild trial figures are not a panel — they are drawn into the game's own
+ * guild page — so nothing in the script points at them and the reasonable
+ * conclusion, reached by an actual player mid-trial, is that they do not exist.
+ * This entry is the signpost, and what it does when there is nothing to point at
+ * matters as much as what it does when there is.
+ */
+describe('the Guild Trials entry', () => {
+    /**
+     * The guild page, as much of it as the walk touches.
+     * @param {Object} [options] - `withBlock: false` for a tab that has drawn nothing yet
+     * @returns {Object} The pieces, plus what got clicked
+     */
+    function buildGuildDom({ withBlock = true } = {}) {
+        const clicks = [];
+
+        const link = document.createElement('a');
+        link.className = 'NavigationBar_minorNavigationLink__xyz';
+        link.textContent = 'Guild';
+        link.addEventListener('click', () => clicks.push('guild'));
+        document.body.appendChild(link);
+
+        const panel = document.createElement('div');
+        panel.className = 'GuildPanel_guildPanel__a';
+
+        const members = document.createElement('div');
+        members.className = 'TabsComponent_tab__b';
+        members.textContent = 'Members';
+        members.addEventListener('click', () => clicks.push('members'));
+
+        const trials = document.createElement('div');
+        trials.className = 'TabsComponent_tab__b';
+        trials.textContent = 'Trials';
+        trials.addEventListener('click', () => clicks.push('trials'));
+
+        panel.append(members, trials);
+
+        let block = null;
+        if (withBlock) {
+            block = document.createElement('div');
+            block.className = 'mwi-trial-info';
+            block.textContent = 'Trial payout';
+            block.scrollIntoView = vi.fn();
+            panel.appendChild(block);
+        }
+
+        document.body.appendChild(panel);
+        return { clicks, panel, block };
+    }
+
+    test('is offered, and is not pretending to be a panel', async () => {
+        palette.initialize();
+        palette.open();
+        await vi.waitFor(() => expect(overlay.listLayouts).toHaveBeenCalled());
+
+        expect(drawnLabels()).toContain('Guild Trials');
+    });
+
+    test('walks to the guild page, opens the Trials tab and lights up the figures', async () => {
+        const dom = buildGuildDom();
+
+        expect(await openGuildTrials()).toBe(true);
+
+        expect(dom.clicks).toEqual(['guild', 'trials']);
+        expect(dom.block.dataset.toolashaFlash).toBe('on');
+        expect(dom.block.scrollIntoView).toHaveBeenCalled();
+    });
+
+    test('says so when there is nothing drawn yet, rather than leaving you on a page', async () => {
+        // Which is the ordinary case: readings are only taken while the tab is
+        // open, so a player arriving from the palette has not fed it anything
+        const dom = buildGuildDom({ withBlock: false });
+
+        vi.useFakeTimers();
+        try {
+            const pending = openGuildTrials();
+            await vi.advanceTimersByTimeAsync(4000);
+            expect(await pending).toBe(false);
+        } finally {
+            vi.useRealTimers();
+        }
+
+        expect(dom.clicks).toEqual(['guild', 'trials']);
+        expect(toasts.said.join(' ')).toContain('No trial figures yet');
+    });
+
+    test('a guild page that never appears is reported, not thrown', async () => {
+        vi.useFakeTimers();
+        try {
+            const pending = openGuildTrials();
+            await vi.advanceTimersByTimeAsync(4000);
+            expect(await pending).toBe(false);
+        } finally {
+            vi.useRealTimers();
+        }
+
+        expect(toasts.said.join(' ')).toContain('Could not open the guild page');
     });
 });

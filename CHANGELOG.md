@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The trials feature existed on a guess
+
+- **Why nothing trials-related ever rendered**: the whole feature — observer, refresh, sampler — hung off a single unverified class name that the game evidently doesn't use, so no reading was ever taken and both the panel block and the tile stayed silently dark through live trials. The trials container is now *found* (three candidate names, then any guild panel showing a trial card), with junk guards so buildings and sign-up cards can't pollute the record. Also fixed en route: a card whose first line was its numbers got named "1.2M / 4M" and misclassified, and a one-reading trial showed the same "—" as no trial at all — it now says "T7 · measuring…".
+- **Switching a tile on always shows something now**: an explicitly-enabled tile renders dim with "waiting for data — …" until it first draws something real, instead of hiding as if the click did nothing. The passive auto-hide default is unchanged (fresh characters still aren't buried); ⚙ chips carry a ◌ badge saying "shows when it has data" so the contract is visible before clicking. Applies to every measurement/watch tile.
+- **"Guild Trials" is in Ctrl+K**: navigates to the guild's trial tab, scrolls to and flashes the injected figures — the analysis renders under the game's own trial cards, which is why no panel existed to find — and says so when there's nothing drawn yet.
+
 ### The lab sims the run you choose
 
 - **Token buffs are settable from Configure**: the four combat token buffs take inputs (defaulting to live levels, orange with "live N" beside them when overridden, Reset-to-live one click away, remembered per character), and every sim path honours them — Configure/Max Level sims, Find Max, both Upgrade scopes, and the combination check. The Token Upgrades rows step up from the level being simulated, so a run under Damage 8 offers Lv8→9, not a purchase the table already assumed. Skilling tokens stay a readout here — nothing in a combat sim reads them, and the Skilling tab's own setup owns those.

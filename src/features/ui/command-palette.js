@@ -38,6 +38,7 @@ import config from '../../core/config.js';
 import { settingsGroups } from '../../core/settings-schema.js';
 import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
 import { registeredRows } from '../../utils/overlay-rows.js';
+import { showToast } from '../../utils/toast.js';
 import overlayPanel from './overlay-panel.js';
 
 const PALETTE_ID = 'toolasha-command-palette';
@@ -217,6 +218,13 @@ function panelCommands() {
             target: Sim.labSimUI,
             fallback: () => document.querySelector('.toolasha-lab-sim-btn'),
         },
+        {
+            name: 'Guild Trials',
+            // Not a panel: the figures are drawn into the game's guild page, and
+            // this is the only signpost to them there is
+            hint: 'Trial pace and payout, on the guild page',
+            run: () => openGuildTrials(),
+        },
         { name: 'Settings', hint: "Toolasha's settings tab", run: () => openSettings() },
     ];
 
@@ -300,6 +308,72 @@ async function openSettings(search = '', settingId = '') {
         if (settingId) await revealSetting(settingId);
     } catch (error) {
         console.error('[CommandPalette] Opening settings failed:', error);
+    }
+}
+
+/**
+ * The class the trials feature tags every block it injects with.
+ *
+ * Duplicated rather than imported: `guild-trials.js` is in this same bundle
+ * today, but the palette's rule is that it reaches features through the page
+ * and through `window.Toolasha` and never through an import that could be
+ * copied across a bundle boundary. A class name is a fact about the DOM, which
+ * is the surface both of them already share.
+ */
+const TRIAL_BLOCK_SELECTOR = '.mwi-trial-info';
+
+/**
+ * Show the player the guild trial analysis, wherever it currently is.
+ *
+ * There is no trials *panel* to toggle. The pace, the ETA and the payout
+ * projection are drawn into the game's own guild page, under the trial cards —
+ * which is a perfectly good place for them and a completely undiscoverable one,
+ * since nothing anywhere says they exist. Hence this entry: it walks the same
+ * path a player would (guild page, Trials tab) and then lights up the block, so
+ * one keystroke both answers "where is it" and proves it is there.
+ *
+ * The blocks only exist while the game is showing trial cards, and readings are
+ * only taken while that tab is open — so when nothing has been drawn, this says
+ * so rather than leaving the player on a page wondering what was meant to
+ * happen. That case is not a failure: it is the feature's actual contract.
+ *
+ * @returns {Promise<boolean>} Whether a trial block was found and lit
+ */
+export async function openGuildTrials() {
+    try {
+        const links = document.querySelectorAll('[class*="NavigationBar_minorNavigationLink"]');
+        const guildLink = [...links].find((link) => (link.textContent || '').trim().toLowerCase() === 'guild');
+        guildLink?.click();
+
+        const panel = await waitFor('[class*="GuildPanel"]');
+        if (!panel) {
+            showToast('Could not open the guild page — the trial figures live under its Trials tab.', {
+                kind: 'warning',
+            });
+            return false;
+        }
+
+        // Whatever the tab strip calls its tabs, the one wanted is the one that
+        // reads as the trials tab; the game has called it both "Trials" and
+        // "In Progress" in different places
+        const tabs = panel.querySelectorAll('[class*="TabsComponent_tab"]');
+        const trialsTab = [...tabs].find((tab) => /trial|in progress/i.test((tab.textContent || '').trim()));
+        trialsTab?.click();
+
+        const block = await waitFor(TRIAL_BLOCK_SELECTOR);
+        if (!block) {
+            showToast('No trial figures yet — they are drawn under the trial cards while this tab is open.', {
+                kind: 'info',
+            });
+            return false;
+        }
+
+        block.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
+        for (const injected of document.querySelectorAll(TRIAL_BLOCK_SELECTOR)) flash(injected);
+        return true;
+    } catch (error) {
+        console.error('[CommandPalette] Opening the guild trials failed:', error);
+        return false;
     }
 }
 

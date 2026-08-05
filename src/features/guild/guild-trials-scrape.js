@@ -22,6 +22,20 @@
  * on a combat card are told apart by which of them *moves which way* over time
  * rather than by which comes first in the markup.
  *
+ * That caution turned out to be warranted and not cautious enough. The whole
+ * feature was hung off one *unverified* container class — `GuildPanel_trialsContent`
+ * — and if the game does not spell it that way, every reading, every projection
+ * and the overlay tile that reads from them are all dark at once, silently,
+ * with no error anywhere: the observer simply never fires and the interval's
+ * `querySelector` simply never matches. Which is what was reported during a live
+ * trial. So the container is now *found* rather than named: {@link findTrialsRoot}
+ * prefers the class if it exists and otherwise falls back to the guild panel
+ * itself, and {@link readTrialTiles} is safe to point at a whole panel because a
+ * tile only counts as a trial when its level lands on the trial ladder — a guild
+ * building's "Lv. 10 / 20" is below the first tier's level 100 and drops out,
+ * which is the same discriminator `guild-credit-value.js` already uses to decide
+ * which tile summaries get a tier badge.
+ *
  * That last one matters: the observed combat card shows both a small falling
  * number over a large one (boss health) and a large rising number over a round
  * one. Assuming an order would silently invert every rate the moment the game
@@ -148,12 +162,52 @@ export function matchTrialHrid(name, hrids) {
 }
 
 /**
+ * Class names the trials tab might carry, most specific first.
+ *
+ * Two spellings rather than one because only the *shape* of the tab has been
+ * observed, not its markup: the members tab is `GuildPanel_membersTab` and the
+ * overview `GuildPanel_overviewTab`, so `trialsTab` is at least as likely as the
+ * `trialsContent` this was written against.
+ */
+const TRIALS_ROOT_CLASSES = ['GuildPanel_trialsContent', 'GuildPanel_trialsTab'];
+
+/**
+ * Where to look for trial tiles.
+ *
+ * The named container when the game has one, and the guild panel as a whole when
+ * it does not. Falling back to the panel is safe because {@link readTrialTiles}
+ * only accepts tiles whose level is on the trial ladder, and it is what stops
+ * one unverified class name from taking the entire feature offline.
+ *
+ * `querySelector` returns the first match in document order, and an ancestor
+ * always precedes its descendants — so the guild-panel fallback is the outermost
+ * `GuildPanel_*` element rather than whichever small child happens to match.
+ *
+ * @param {Document|Element} [scope] - Where to look
+ * @returns {Element|null} The narrowest container known to hold the tiles, or null
+ */
+export function findTrialsRoot(scope = typeof document === 'undefined' ? null : document) {
+    if (!scope || typeof scope.querySelector !== 'function') return null;
+
+    for (const className of TRIALS_ROOT_CLASSES) {
+        const named = scope.querySelector(`[class*="${className}"]`);
+        if (named) return named;
+    }
+    // No tiles anywhere means the guild panel is on another tab, and handing
+    // back the panel would only make the caller scrape it for nothing
+    if (!scope.querySelector('[class*="GuildPanel_tileSummary"]')) return null;
+    return scope.querySelector('[class*="GuildPanel"]');
+}
+
+/**
  * The tiles on the In Progress tab.
  *
  * A tile is an element containing a `GuildPanel_tileSummary`; the outermost such
  * element wins, so a summary nested two levels deep still yields one tile rather
  * than two. Tiles without a level are dropped — a card with no `Lv.` on it is
- * not a trial.
+ * not a trial — and so are tiles whose level is below the first tier's, which is
+ * what keeps a guild building's "Lv. 10 / 20" out when the root being scraped is
+ * a whole guild panel rather than the trials tab.
  *
  * @param {Element} root - The `GuildPanel_trialsContent` element, or any ancestor
  * @returns {Array<{element: Element, name: string, level: number, tier: number|null,
@@ -187,12 +241,16 @@ export function readTrialTiles(root) {
         const level = lines.map(parseTrialLevel).find((candidate) => candidate !== null) ?? null;
         if (level === null) continue;
 
+        // Below the trial ladder is a guild building, not a trial
+        const tier = tierFromLevel(level);
+        if (tier === null) continue;
+
         const name = readTileName(tile, summary, lines);
         tiles.push({
             element: tile,
             name,
             level,
-            tier: tierFromLevel(level),
+            tier,
             kind: isCombatTrialName(name) ? 'combat' : 'skilling',
             readings: lines.flatMap(parseBarReadings),
         });
@@ -226,10 +284,14 @@ export function textLines(tile) {
 /**
  * A tile's trial name.
  *
- * Taken from a name element when the markup offers one, and otherwise from the
- * first line that is not the summary — which is where "Trial Chameleon" sits on
- * the observed card. When the summary is the whole card, the name is the words
- * in front of the level marker.
+ * Taken from a name element when the markup offers one. Failing that, from the
+ * line that carries the level marker with words in front of it — "Trial
+ * Jellyfish Lv.170" — because that is where a name provably is, whereas "the
+ * first line that is not the summary" is only where a name usually is: on a card
+ * whose summary holds both the name and the level, that rule picks up the
+ * progress bar instead and calls the trial "1.2M / 4M", which then classifies as
+ * skilling and matches no sign-up hrid. Only when neither is available does it
+ * fall back to the first line that is not the summary.
  *
  * @param {Element} tile - The tile
  * @param {Element} summary - Its summary element
@@ -240,11 +302,16 @@ function readTileName(tile, summary, lines) {
     const named = tile.querySelector?.('[class*="GuildPanel_tileName"], [class*="GuildPanel_name"]');
     if (named?.textContent?.trim()) return named.textContent.trim();
 
+    const levelMarker = /Lv\.?\s*\d+/i;
+    for (const line of lines) {
+        if (!levelMarker.test(line)) continue;
+        const beforeLevel = line.split(levelMarker)[0].trim();
+        if (beforeLevel) return beforeLevel;
+    }
+
     const summaryText = summary?.textContent?.trim() || '';
     const first = lines.find((line) => line !== summaryText) || summaryText;
-
-    const beforeLevel = first.split(/Lv\.?\s*\d+/i)[0].trim();
-    return beforeLevel || first;
+    return first.split(levelMarker)[0].trim() || first;
 }
 
 /**

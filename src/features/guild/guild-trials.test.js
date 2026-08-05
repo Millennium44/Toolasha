@@ -39,9 +39,14 @@ vi.mock('../../core/config.js', () => ({
 }));
 vi.mock('../../core/dom-observer.js', () => ({
     default: {
-        onClass: (id, className, callback) => {
-            game.observers[className] = callback;
-            return () => delete game.observers[className];
+        // The feature watches several class names now, because the trials tab's
+        // own container class is unverified — so the mock has to accept a list
+        onClass: (id, classNames, callback) => {
+            const names = Array.isArray(classNames) ? classNames : [classNames];
+            for (const name of names) game.observers[name] = callback;
+            return () => {
+                for (const name of names) delete game.observers[name];
+            };
         },
     },
 }));
@@ -373,7 +378,9 @@ describe('the panel, end to end', () => {
         return root;
     }
 
-    const fire = (root) => game.observers['GuildPanel_trialsContent'](root);
+    // The callback takes no element: it finds the root itself, so that a tab
+    // whose container is called something else is still read
+    const fire = () => game.observers['GuildPanel_tileSummary']();
     const text = () => document.body.textContent;
 
     beforeEach(async () => {
@@ -402,6 +409,44 @@ describe('the panel, end to end', () => {
         expect(document.querySelectorAll('.mwi-trial-info')).toHaveLength(2);
         expect(text()).toContain('Trial payout');
         expect(text()).toContain('measuring');
+    });
+
+    test('a tab whose container is called something else is still read', () => {
+        // The reported bug, in one test. Everything hung off one unverified
+        // class name, and if the game does not spell it `GuildPanel_trialsContent`
+        // then the observer never fires, the interval never matches, no reading
+        // is ever taken, and the panel block and the overlay tile are both dark
+        // during a live trial — with nothing logged anywhere.
+        const root = buildTab([{ name: 'Trial Chameleon', level: 140, bar: '618,000 / 618,000' }]);
+        root.className = 'GuildPanel_whateverTheyCallItNow__z';
+        fire();
+
+        expect(document.querySelectorAll('.mwi-trial-info').length).toBeGreaterThan(0);
+        expect(text()).toContain('Trial payout');
+    });
+
+    test('a card with no progress bar is not recorded as a trial in progress', () => {
+        // The sign-up dialog draws trial cards too, and the root can now be a
+        // whole guild panel. A card with nothing to measure must not reach the
+        // record, or the overlay tile reports it as the newest reading there is.
+        const root = buildTab([{ name: 'Trial Chameleon', level: 140, bar: '618,000 / 618,000' }]);
+        root.querySelector('[class*="ProgressBar_text"]').textContent = 'Sign up';
+        fire();
+
+        expect(document.querySelectorAll('.mwi-trial-info')).toHaveLength(0);
+        expect(text()).not.toContain('Trial payout');
+    });
+
+    test('the payout block sits above the cards when there is no status row to hang it on', () => {
+        const root = buildTab([{ name: 'Trial Chameleon', level: 140, bar: '618,000 / 618,000' }]);
+        root.querySelector('[class*="GuildPanel_eventStatusRow"]').remove();
+        fire();
+
+        const payout = [...document.querySelectorAll('.mwi-trial-info')].find((el) =>
+            el.textContent.includes('Trial payout')
+        );
+        const card = document.querySelector('[class*="GuildPanel_tile__"]');
+        expect(payout.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     });
 
     test('a second reading five seconds later produces a rate', () => {
