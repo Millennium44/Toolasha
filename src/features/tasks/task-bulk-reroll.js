@@ -3,8 +3,9 @@
  * Adds a stepper button to the task panel header (next to the Claim Reward
  * collector). The game allows one server action per user click, so each click
  * performs exactly one action on the first task that needs one:
- * - a reroll (coins first, then cowbells) on a non-protected task that hasn't
- *   hit the per-character reroll limits from the reroll-protection popup, or
+ * - a reroll (the MooPass free reroll first, then coins, then cowbells) on a
+ *   non-protected task that hasn't hit the per-character reroll limits from the
+ *   reroll-protection popup, or
  * - a discard (Back if the reroll view is open → trash can icon → "Confirm
  *   Discard") once a task is at the limit for both categories.
  * The button label always previews the next action. Tasks that land on a
@@ -23,7 +24,7 @@ import domObserver from '../../core/dom-observer.js';
 import storage from '../../core/storage.js';
 import webSocketHook from '../../core/websocket.js';
 import { readVisibleTaskRatings } from './task-profit-display.js';
-import { formatKMB } from '../../utils/formatters.js';
+import { findRerollOptions, formatBulkRerollLabel, hasMooPass, readFreeRerollOffer } from './task-reroll-options.js';
 
 const BTN_ID = 'mwi-bulk-reroll-btn';
 
@@ -32,6 +33,32 @@ const MIN_COIN_COST = 10000;
 const MAX_COIN_COST = 320000;
 const MIN_COWBELL_COST = 1;
 const MAX_COWBELL_COST = 32;
+
+/**
+ * How long a free reroll stays demoted after going nowhere twice.
+ *
+ * It used to be forever, which is the whole of the bug the third report is
+ * about: a MooPass allowance refills, and a latch that never lifts means the
+ * one session where two replies were missed is a session — and every session
+ * after it, since nothing but disable() cleared it — where the free reroll is
+ * never chosen again. Ten minutes is longer than any server hiccup and shorter
+ * than a day's allowance.
+ */
+const FREE_REROLL_STALL_MS = 10 * 60 * 1000;
+
+/** What the header button explains about itself on hover */
+const BTN_TITLE =
+    'Each click performs one action on the first task that needs one: reroll a non-protected task (the MooPass free reroll first, then coins, then cowbells) until it lands on a protected task or hits the per-character reroll limits from the 🛡️ popup, then discard it once a limit is hit. Tasks rating at or above the board median, and completed tasks, are never touched.';
+
+/**
+ * The footnote on a starred cost.
+ *
+ * A free reroll can only be seen while some card's chooser is open, so a board
+ * at rest cannot be priced exactly. Saying so is better than a FREE that turns
+ * out to cost 10K.
+ */
+const MAYBE_FREE_NOTE =
+    '\n\n* Your MooPass may make the first reroll free — Toolasha can only see the free option once a task’s Reroll menu is open.';
 
 /**
  * Is a card at the reroll cap?
@@ -60,6 +87,26 @@ function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * What makes one task different from the task that replaced it.
+ *
+ * A reroll keeps the quest id and changes everything else about it; a free
+ * reroll changes the task without moving either reroll counter, so a check that
+ * watched only the counters would call every free reroll silent.
+ *
+ * @param {Object|null|undefined} quest - A character quest
+ * @returns {string} A comparable signature
+ */
+export function questSignature(quest) {
+    return [
+        quest?.actionHrid || '',
+        quest?.monsterHrid || '',
+        quest?.goalCount ?? '',
+        quest?.coinRerollCount ?? 0,
+        quest?.cowbellRerollCount ?? 0,
+    ].join('|');
+}
+
 export class TaskBulkReroll {
     constructor() {
         this.isInitialized = false;
@@ -67,12 +114,30 @@ export class TaskBulkReroll {
         this.button = null;
         this.busy = false;
         this.noDeleteIds = new Set(); // questIds whose trash/discard buttons weren't found
-        // Set once free rerolls have been pressed and the server has said
-        // nothing back twice running. See _actOnCard: preferring a button that
-        // does not act is a loop with no way out of it.
-        this.freeRerollStalled = false;
+        this.noRerollIds = new Set(); // questIds whose chooser offered nothing pressable
+        // When free rerolls stop being chosen, and until when. See _actOnCard:
+        // preferring a button that does not act is a loop with no way out of it,
+        // and demoting it forever is a loop that never lets the pass back in.
+        this.freeRerollStalledUntil = 0;
         this.lastClickWasFree = false;
         this.silentFreeClicks = 0;
+    }
+
+    /**
+     * Is the free reroll currently demoted?
+     *
+     * An accessor rather than a flag so that setting it books a cooldown: every
+     * assignment site wants "stop choosing free for a while", and none of them
+     * wants "stop choosing free until the page is reloaded".
+     *
+     * @returns {boolean}
+     */
+    get freeRerollStalled() {
+        return Date.now() < this.freeRerollStalledUntil;
+    }
+
+    set freeRerollStalled(value) {
+        this.freeRerollStalledUntil = value ? Date.now() + FREE_REROLL_STALL_MS : 0;
     }
 
     initialize() {
@@ -89,6 +154,7 @@ export class TaskBulkReroll {
         // Re-evaluate the next action whenever the server confirms task changes
         const questHandler = () => {
             this.noDeleteIds.clear();
+            this.noRerollIds.clear();
             setTimeout(() => this._refreshLabel(), 400);
         };
         webSocketHook.on('quests_updated', questHandler);
@@ -103,8 +169,7 @@ export class TaskBulkReroll {
         btn.className = 'Button_button__1Fe9z Button_small__3fqC7';
         btn.style.cssText = 'margin-left: 8px;';
         btn.textContent = '🎲 Reroll Next';
-        btn.title =
-            'Each click performs one action on the first task that needs one: reroll a non-protected task (coins first, then cowbells) until it lands on a protected task or hits the per-character reroll limits from the 🛡️ popup, then discard it once a limit is hit. Tasks rating at or above the board median, and completed tasks, are never touched.';
+        btn.title = BTN_TITLE;
         btn.addEventListener('click', () => this._onClick());
 
         const claimBtn = headerElement.querySelector('#mwi-claim-proxy-btn');
@@ -119,7 +184,13 @@ export class TaskBulkReroll {
         this.button = btn;
     }
 
-    /** Update the button label to preview the next pending action */
+    /**
+     * Update the button label to preview the next pending action.
+     *
+     * The price it quotes is MooPass-aware: a free reroll visible in an open
+     * chooser is quoted as FREE, and a board with no chooser open is quoted with
+     * a star rather than a promise.
+     */
     async _refreshLabel() {
         if (!this.button || this.busy) return;
         try {
@@ -127,14 +198,17 @@ export class TaskBulkReroll {
             const protectedHrids = await this._loadProtectedHrids();
             const pending = this._collectPending(protectedHrids, limits);
             const next = pending[0] || null;
-            if (!next) {
-                this.button.textContent = '✓ Tasks settled';
-            } else if (next.mode === 'delete') {
-                this.button.textContent = `🗑 Discard Task (${pending.length})`;
-            } else {
-                const costLabel = next.mode === 'coin' ? `${formatKMB(next.cost)}💰` : `${next.cost}🔔`;
-                this.button.textContent = `🎲 Reroll ${costLabel} (${pending.length})`;
-            }
+            const free = readFreeRerollOffer(document);
+            const mooPass = hasMooPass();
+            this.button.textContent = formatBulkRerollLabel({
+                pendingCount: next ? pending.length : 0,
+                mode: next?.mode,
+                cost: next?.cost,
+                free,
+                mooPass,
+            });
+            const starred = this.button.textContent.includes('*');
+            this.button.title = starred ? BTN_TITLE + MAYBE_FREE_NOTE : BTN_TITLE;
         } catch (error) {
             console.error('[TaskBulkReroll] Failed to refresh label:', error);
         }
@@ -152,8 +226,12 @@ export class TaskBulkReroll {
             if (next) {
                 const acted = await this._actOnCard(next.card, next.mode);
                 if (acted) {
-                    // Wait for the server to confirm before previewing the next action
-                    const confirmed = await this._waitForQuestsUpdate();
+                    // Wait for the server to confirm before previewing the next
+                    // action. The confirmation has to be this task's, not any
+                    // quests_updated: task progress from whatever the character
+                    // is doing produces those constantly, and counting one as
+                    // proof would make the free reroll's health check meaningless
+                    const confirmed = await this._waitForQuestsUpdate(next.questId, next.signature);
                     if (this.lastClickWasFree) this._noteFreeRerollResult(confirmed);
                     await sleep(400);
                 } else if (next.mode === 'delete') {
@@ -161,6 +239,16 @@ export class TaskBulkReroll {
                     // next click moves on instead of retrying forever
                     this.noDeleteIds.add(next.questId);
                     console.warn('[TaskBulkReroll] Discard buttons not found on task card');
+                } else {
+                    // The chooser offered nothing this reroller could press. It
+                    // used to return here in silence, which is the click the
+                    // player reported as "nothing happens": the label kept
+                    // quoting a cost for a card that was never going to move.
+                    this.noRerollIds.add(next.questId);
+                    console.warn(
+                        '[TaskBulkReroll] No usable reroll option on this task card; skipping it. Offered:',
+                        findRerollOptions(next.card).map((option) => `${option.text} [${option.kind}]`)
+                    );
                 }
             }
         } catch (error) {
@@ -200,7 +288,7 @@ export class TaskBulkReroll {
      * than not running it. Below that, coin rerolls are spent before cowbell
      * ones, and a card at the cap is discarded.
      *
-     * @returns {Array<{card: HTMLElement, questId: number, mode: string, cost: number}>}
+     * @returns {Array<{card: HTMLElement, questId: number, signature: string, mode: string, cost: number}>}
      */
     _collectPending(protectedHrids, limits) {
         const pending = [];
@@ -223,14 +311,18 @@ export class TaskBulkReroll {
             const nextCoinCost = Math.min(MIN_COIN_COST * Math.pow(2, quest.coinRerollCount || 0), MAX_COIN_COST);
             const nextCowbellCost = Math.min(Math.pow(2, quest.cowbellRerollCount || 0), MAX_COWBELL_COST);
 
+            const signature = questSignature(quest);
+
             if (isAtRerollCap(nextCoinCost, nextCowbellCost, limits)) {
                 if (!this.noDeleteIds.has(quest.id)) {
-                    pending.push({ card, questId: quest.id, mode: 'delete', cost: 0 });
+                    pending.push({ card, questId: quest.id, signature, mode: 'delete', cost: 0 });
                 }
+            } else if (this.noRerollIds.has(quest.id)) {
+                continue;
             } else if (nextCoinCost < limits.coin) {
-                pending.push({ card, questId: quest.id, mode: 'coin', cost: nextCoinCost });
+                pending.push({ card, questId: quest.id, signature, mode: 'coin', cost: nextCoinCost });
             } else {
-                pending.push({ card, questId: quest.id, mode: 'cowbell', cost: nextCowbellCost });
+                pending.push({ card, questId: quest.id, signature, mode: 'cowbell', cost: nextCowbellCost });
             }
         }
         return pending;
@@ -246,33 +338,37 @@ export class TaskBulkReroll {
         this.lastClickWasFree = false;
         if (mode === 'delete') return this._discardCard(card);
 
-        let payButtons = this._findPayButtons(card);
-        if (!payButtons.length) {
+        let options = findRerollOptions(card);
+        if (!options.length) {
             const expandBtn = Array.from(card.querySelectorAll('button')).find(
                 (b) => b.textContent.trim().toLowerCase() === 'reroll'
             );
             if (!expandBtn) return false;
             expandBtn.click();
             await sleep(300);
-            payButtons = this._findPayButtons(card);
+            options = findRerollOptions(card);
         }
-        if (!payButtons.length) return false;
+        if (!options.length) return false;
+
+        const usable = options.filter((option) => option.available);
 
         // The free reroll is preferred while it works, and only while it works.
         // A MooPass whose rerolls are spent can leave the button on the card
         // looking exactly as it did — same label, not disabled — and clicking
         // it reaches no server, so every later click chose it again and the
-        // bulk reroller never moved off that card.
-        const freeBtn = this.freeRerollStalled ? null : payButtons.find((b) => this._isFreeReroll(b));
-        if (freeBtn) {
+        // bulk reroller never moved off that card. The demotion is a cooldown,
+        // not a life sentence: the allowance refills.
+        const freeOption = this.freeRerollStalled ? null : usable.find((option) => option.kind === 'free');
+        if (freeOption) {
             this.lastClickWasFree = true;
-            freeBtn.click();
+            freeOption.button.click();
             return true;
         }
-        const wantCoin = mode === 'coin';
-        const target = payButtons.find((b) => !this._isFreeReroll(b) && this._isCoinCost(b.textContent) === wantCoin);
+
+        const wantKind = mode === 'coin' ? 'coin' : 'cowbell';
+        const target = usable.find((option) => option.kind === wantKind);
         if (!target) return false;
-        target.click();
+        target.button.click();
         return true;
     }
 
@@ -297,42 +393,6 @@ export class TaskBulkReroll {
             this.freeRerollStalled = true;
             console.warn('[TaskBulkReroll] Free reroll is not reaching the server; paying from here on');
         }
-    }
-
-    /** Is this the MooPass free reroll rather than a paid one? */
-    _isFreeReroll(button) {
-        return /\bfree\b/i.test(button.textContent || '');
-    }
-
-    /**
-     * Is the game refusing this button?
-     *
-     * `disabled` is the honest form, but a button greyed out by class or by
-     * aria alone is just as unclickable, and treating it as available is a
-     * click that goes nowhere.
-     */
-    _isUnavailable(button) {
-        if (button.disabled) return true;
-        if (button.getAttribute('aria-disabled') === 'true') return true;
-        return /disabled/i.test(button.className || '');
-    }
-
-    /** Pay/Free reroll buttons currently visible on a card */
-    _findPayButtons(card) {
-        return Array.from(card.querySelectorAll('button')).filter((b) => {
-            if (this._isUnavailable(b)) return false;
-            const text = b.textContent.trim();
-            return text.startsWith('Pay') || this._isFreeReroll(b);
-        });
-    }
-
-    /** Coin costs render as 10K+; cowbell costs are plain small numbers */
-    _isCoinCost(btnText) {
-        const match = btnText.match(/([\d,]+)\s*(K?)/);
-        if (!match) return false;
-        const raw = parseInt(match[1].replace(/,/g, ''), 10);
-        const cost = match[2] === 'K' ? raw * 1000 : raw;
-        return cost >= 1000;
     }
 
     /**
@@ -387,8 +447,23 @@ export class TaskBulkReroll {
         return true;
     }
 
-    /** Resolve once the server confirms the task change (or time out) */
-    _waitForQuestsUpdate(timeoutMs = 3500) {
+    /**
+     * Resolve once the server confirms THIS task changed (or time out).
+     *
+     * Any `quests_updated` used to count, and the game sends one every time a
+     * task's progress ticks — so a character that was mid-action confirmed
+     * every click, including the ones that did nothing, and the free reroll's
+     * health check could never notice a click going nowhere. The other way
+     * round matters more: a card whose task is genuinely replaced comes back
+     * with a different action, goal or reroll count, and that is what is
+     * checked for.
+     *
+     * @param {number} [questId] - The task acted on
+     * @param {string} [before] - Its signature before the click
+     * @param {number} [timeoutMs=3500] - How long to wait
+     * @returns {Promise<boolean>} Did this task change?
+     */
+    _waitForQuestsUpdate(questId, before, timeoutMs = 3500) {
         return new Promise((resolve) => {
             let settled = false;
             const finish = (result) => {
@@ -398,7 +473,24 @@ export class TaskBulkReroll {
                 clearTimeout(timer);
                 resolve(result);
             };
-            const handler = () => finish(true);
+            const handler = (data) => {
+                const quests = data?.endCharacterQuests;
+                // Nothing to compare against — an older payload shape, or no
+                // task was identified. Any update is taken as confirmation
+                // rather than reporting a working reroll as silent.
+                if (!Array.isArray(quests) || questId === undefined || before === undefined) {
+                    finish(true);
+                    return;
+                }
+                const updated = quests.find((quest) => quest?.id === questId);
+                // The task left the board entirely: discarded, or replaced by
+                // one the server gave a new id
+                if (!updated) {
+                    finish(true);
+                    return;
+                }
+                if (questSignature(updated) !== before) finish(true);
+            };
             const timer = setTimeout(() => finish(false), timeoutMs);
             webSocketHook.on('quests_updated', handler);
         });
@@ -460,6 +552,7 @@ export class TaskBulkReroll {
         }
         this.busy = false;
         this.noDeleteIds.clear();
+        this.noRerollIds.clear();
         this.freeRerollStalled = false;
         this.lastClickWasFree = false;
         this.silentFreeClicks = 0;

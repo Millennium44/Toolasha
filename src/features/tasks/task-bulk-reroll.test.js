@@ -15,9 +15,9 @@
  * point preferring it is a loop that never chooses anything else.
  */
 
-import { describe, test, expect } from 'vitest';
+import { describe, test, expect, vi, afterEach } from 'vitest';
 
-import { isAtRerollCap, TaskBulkReroll } from './task-bulk-reroll.js';
+import { isAtRerollCap, questSignature, TaskBulkReroll } from './task-bulk-reroll.js';
 
 // Thresholds as the shield popup stores them
 const bothOpen = { coin: 320000, cowbell: 32 };
@@ -178,5 +178,160 @@ describe('which reroll button gets pressed', () => {
         reroller._noteFreeRerollResult(false);
 
         expect(reroller.freeRerollStalled).toBe(false);
+    });
+});
+
+describe('the chooser the player actually has', () => {
+    /**
+     * The card from the user's devtools capture: the chooser is open, "Back"
+     * and the MooPass free reroll sit in the row, and the paid options are a
+     * currency icon and a number rather than anything beginning with "Pay".
+     *
+     * @param {Object} [options] - Shape of the chooser
+     * @param {boolean} [options.free=true] - Is the free reroll still offered?
+     * @returns {HTMLElement} The card
+     */
+    function screenshotCard({ free = true } = {}) {
+        const card = document.createElement('div');
+        card.className = 'RandomTask_randomTask__1abc';
+
+        const row = document.createElement('div');
+        row.className = 'RandomTask_action__4jkl';
+
+        const add = (label, className, icon) => {
+            const button = document.createElement('button');
+            button.className = className;
+            if (icon) {
+                const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+                const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+                use.setAttribute('href', `/static/media/misc_sprite.svg#${icon}`);
+                svg.appendChild(use);
+                button.appendChild(svg);
+            }
+            button.appendChild(document.createTextNode(label));
+            button.addEventListener('click', () => {
+                card.dataset.pressed = label;
+            });
+            row.appendChild(button);
+        };
+
+        add('Back', 'Button_button__1Fe9z');
+        add('10,000', 'Button_button__1Fe9z', 'coin');
+        add('1', 'Button_button__1Fe9z', 'cowbell');
+        if (free) add('MooPass Free Reroll', 'Button_button__1Fe9z Button_fullWidth__17pVU');
+
+        card.appendChild(row);
+        return card;
+    }
+
+    test('the free reroll on the captured card is the one that gets pressed', async () => {
+        const reroller = new TaskBulkReroll();
+        const card = screenshotCard();
+
+        expect(await reroller._actOnCard(card, 'coin')).toBe(true);
+        expect(card.dataset.pressed).toBe('MooPass Free Reroll');
+    });
+
+    test('the coin option is pressable even though its label never says "Pay"', async () => {
+        // The dead end behind the third report. With the free reroll demoted,
+        // the old reader had no paid button to fall back on — it returned false
+        // and the click did nothing at all, in silence, while the header button
+        // went on quoting "Reroll 10.0K💰 (1)" forever
+        const reroller = new TaskBulkReroll();
+        reroller.freeRerollStalled = true;
+        const card = screenshotCard();
+
+        expect(await reroller._actOnCard(card, 'coin')).toBe(true);
+        expect(card.dataset.pressed).toBe('10,000');
+    });
+
+    test('and the cowbell option, told apart by its icon rather than its size', async () => {
+        const reroller = new TaskBulkReroll();
+        reroller.freeRerollStalled = true;
+        const card = screenshotCard();
+
+        expect(await reroller._actOnCard(card, 'cowbell')).toBe(true);
+        expect(card.dataset.pressed).toBe('1');
+    });
+
+    test('a chooser whose free reroll has already gone still rerolls for coins', async () => {
+        const reroller = new TaskBulkReroll();
+        const card = screenshotCard({ free: false });
+
+        expect(await reroller._actOnCard(card, 'coin')).toBe(true);
+        expect(card.dataset.pressed).toBe('10,000');
+    });
+
+    test('an already-open chooser is acted on without hunting for a Reroll button', async () => {
+        // Nothing on the card says "Reroll" once the chooser is open, and the
+        // game leaves it open after every reroll — so a path that needs that
+        // button first is a path that stops working after the first reroll
+        const reroller = new TaskBulkReroll();
+        const card = screenshotCard();
+        expect([...card.querySelectorAll('button')].some((b) => b.textContent.trim() === 'Reroll')).toBe(false);
+
+        expect(await reroller._actOnCard(card, 'coin')).toBe(true);
+    });
+});
+
+describe('the free reroll is demoted, not exiled', () => {
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    test('the demotion lifts on its own', () => {
+        // A MooPass allowance refills. A latch that only disable() could clear
+        // meant one session of missed replies was every session after it too:
+        // the free reroll was never chosen again, which is precisely the
+        // "it is still not rerolling the free MooPass reroll" being reported
+        vi.useFakeTimers();
+        const reroller = new TaskBulkReroll();
+
+        reroller._noteFreeRerollResult(false);
+        reroller._noteFreeRerollResult(false);
+        expect(reroller.freeRerollStalled).toBe(true);
+
+        vi.advanceTimersByTime(11 * 60 * 1000);
+
+        expect(reroller.freeRerollStalled).toBe(false);
+    });
+
+    test('a free reroll pressed after the demotion lifts is preferred again', async () => {
+        vi.useFakeTimers();
+        const reroller = new TaskBulkReroll();
+        reroller._noteFreeRerollResult(false);
+        reroller._noteFreeRerollResult(false);
+
+        vi.advanceTimersByTime(11 * 60 * 1000);
+
+        const card = document.createElement('div');
+        card.className = 'RandomTask_randomTask__1abc';
+        for (const label of ['Back', 'Pay 10K', 'MooPass Free Reroll']) {
+            const button = document.createElement('button');
+            button.textContent = label;
+            button.addEventListener('click', () => {
+                card.dataset.pressed = label;
+            });
+            card.appendChild(button);
+        }
+
+        await reroller._actOnCard(card, 'coin');
+        expect(card.dataset.pressed).toBe('MooPass Free Reroll');
+    });
+});
+
+describe('what counts as the server confirming a reroll', () => {
+    test('a task whose action changed is confirmation; the same task again is not', () => {
+        // A free reroll moves neither reroll counter, so a check that watched
+        // only the counters would report every working free reroll as silent
+        // and demote it after two of them
+        const before = questSignature({ actionHrid: '/actions/milking/cow', goalCount: 100 });
+
+        expect(questSignature({ actionHrid: '/actions/milking/cow', goalCount: 100 })).toBe(before);
+        expect(questSignature({ actionHrid: '/actions/cheesesmithing/cheese', goalCount: 100 })).not.toBe(before);
+        expect(questSignature({ actionHrid: '/actions/milking/cow', goalCount: 250 })).not.toBe(before);
+        expect(questSignature({ actionHrid: '/actions/milking/cow', goalCount: 100, coinRerollCount: 1 })).not.toBe(
+            before
+        );
     });
 });
