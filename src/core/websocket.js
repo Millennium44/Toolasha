@@ -49,7 +49,6 @@ class WebSocketHook {
         }
 
         this.wrapWebSocketConstructor();
-        this.wrapWebSocketPrototype();
 
         // Capture hook instance for closure
         const hookInstance = this;
@@ -86,65 +85,6 @@ class WebSocketHook {
         Object.defineProperty(pageMessageEvent.prototype, 'data', dataProperty);
 
         this.isHooked = true;
-    }
-
-    /**
-     * Wrap WebSocket prototype handlers to intercept message events
-     */
-    wrapWebSocketPrototype() {
-        const targetWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
-        if (typeof targetWindow === 'undefined' || !targetWindow.WebSocket || !targetWindow.WebSocket.prototype) {
-            return;
-        }
-
-        const hookInstance = this;
-        const proto = targetWindow.WebSocket.prototype;
-
-        if (!proto.__toolashaPatched) {
-            const originalAddEventListener = proto.addEventListener;
-            proto.addEventListener = function toolashaAddEventListener(type, listener, options) {
-                if (type === 'message' && typeof listener === 'function') {
-                    const wrappedListener = function toolashaMessageListener(event) {
-                        if (!hookInstance.isMessageEventProcessed(event) && typeof event?.data === 'string') {
-                            hookInstance.markMessageEventProcessed(event);
-                            hookInstance.processMessage(event.data);
-                        }
-                        return listener.call(this, event);
-                    };
-
-                    wrappedListener.__toolashaOriginal = listener;
-                    return originalAddEventListener.call(this, type, wrappedListener, options);
-                }
-
-                return originalAddEventListener.call(this, type, listener, options);
-            };
-
-            const originalOnMessage = Object.getOwnPropertyDescriptor(proto, 'onmessage');
-            if (originalOnMessage && originalOnMessage.set) {
-                Object.defineProperty(proto, 'onmessage', {
-                    configurable: true,
-                    get: originalOnMessage.get,
-                    set(handler) {
-                        if (typeof handler !== 'function') {
-                            return originalOnMessage.set.call(this, handler);
-                        }
-
-                        const wrappedHandler = function toolashaOnMessage(event) {
-                            if (!hookInstance.isMessageEventProcessed(event) && typeof event?.data === 'string') {
-                                hookInstance.markMessageEventProcessed(event);
-                                hookInstance.processMessage(event.data);
-                            }
-                            return handler.call(this, event);
-                        };
-
-                        wrappedHandler.__toolashaOriginal = handler;
-                        return originalOnMessage.set.call(this, wrappedHandler);
-                    },
-                });
-            }
-
-            proto.__toolashaPatched = true;
-        }
     }
 
     /**
@@ -186,8 +126,8 @@ class WebSocketHook {
 
             // Only subclass native WebSocket constructors. Third-party wrappers
             // (other userscripts replacing window.WebSocket) are passed through
-            // as-is — Toolasha still intercepts via MessageEvent.data hook and
-            // WebSocket.prototype patches.
+            // as-is — Toolasha still intercepts via the MessageEvent.data hook,
+            // which also attaches the per-socket listener on first read.
             const isNative = /\[native code\]/.test(Function.prototype.toString.call(OriginalWebSocket));
             if (!isNative) {
                 hookInstance.currentWebSocket = OriginalWebSocket;
@@ -344,11 +284,11 @@ class WebSocketHook {
             }
         } else if (messageType === 'action_completed' || messageType === 'loot_opened') {
             // action_completed and loot_opened bypass the content-hash dedup (Gabriel's fix,
-            // commit 1007215, and the treasure ledger respectively)
-            // but the WebSocket prototype wrapper can fire two listeners for the same physical
-            // message object. The WeakSet guard catches same-object duplicates, but if two
-            // independent listeners each receive a distinct MessageEvent wrapping the same
-            // payload, both pass the WeakSet check and processMessage is called twice.
+            // commit 1007215, and the treasure ledger respectively). The WeakSet guard catches
+            // the same MessageEvent object reaching both remaining interception paths, but two
+            // distinct MessageEvents wrapping the same payload (e.g. another userscript
+            // re-dispatching, or a game reconnect replay) would both pass the WeakSet check and
+            // call processMessage twice.
             // Use a short 50ms TTL keyed on full message content to collapse these duplicates.
             // Two genuine consecutive messages of either type are far enough apart that a
             // byte-identical repeat inside 50ms is a duplicate rather than a second event.
