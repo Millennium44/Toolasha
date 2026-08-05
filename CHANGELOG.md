@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The cycler clicks the people fighting beside you
+
+- **A fight on screen outranks the roster walk**: the profile button now finds your guildmates' unit boxes in the spectated trial fight and clicks those first — that's the Battle Info popup, the only source of a combat stat sheet (`/profile` carries skills but no sheet). The boss can never be offered (only roster names match), a sheet older than 15 minutes is worth re-clicking mid-fight, and ⟲ Redo covers battle sheets too.
+- **Dead units are skipped and said**: a dead unit's popup hides its abilities, so the button skips them, counts them ("2 dead skipped — abilities hide on death"), and tells you to ask again after a revive rather than half-capturing.
+
 ### Beacons cover the way out before they chase dark corners
 
 - **A set beacon count is planned against the same objective the automatic one uses**: cover a revealed path to the exit first, a second independent route next, and only then reveal as many rooms as the count allows. Set counts used to maximise rooms and nothing else, which is how four beacons could be planned onto the fattest dark pockets of a floor while the plan's own caption admitted "a covered path to the exit needs 3". A count too small to cover a path now spends itself getting as close as it can — and still says what it would take.

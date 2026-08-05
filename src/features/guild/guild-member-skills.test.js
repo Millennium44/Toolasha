@@ -11,7 +11,7 @@
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
-const game = vi.hoisted(() => ({ store: {}, members: [], wsHandlers: {} }));
+const game = vi.hoisted(() => ({ store: {}, members: [], wsHandlers: {}, loadouts: [] }));
 
 vi.mock('../../core/storage.js', () => ({
     default: {
@@ -36,14 +36,19 @@ vi.mock('../../core/data-manager.js', () => ({
 vi.mock('./guild-xp-tracker.js', () => ({
     guildXPTracker: { getMemberList: () => game.members },
 }));
+vi.mock('./guild-loadout-capture.js', () => ({
+    default: { seen: () => game.loadouts },
+}));
 
 const {
     extractProfileSkills,
+    findBattleUnits,
     guildMemberSkills,
     memberSkillsStorageKey,
     nextMemberToLog,
     REQUEST_TIMEOUT_MS,
     STALE_AFTER_MS,
+    UNIT_FRESH_MS,
 } = await import('./guild-member-skills.js');
 
 const now = Date.parse('2026-08-05T15:00:00Z');
@@ -73,6 +78,8 @@ beforeEach(async () => {
     game.store = {};
     game.members = [{ name: 'Ada' }, { name: 'Bo' }, { name: 'Cy' }];
     game.wsHandlers = {};
+    game.loadouts = [];
+    guildMemberSkills.unitRequests = {};
     guildMemberSkills.forget();
     guildMemberSkills.initialized = false;
     await guildMemberSkills.initialize('Milky Way');
@@ -306,5 +313,82 @@ describe('per guild, and forgotten with the character', () => {
 
         guildMemberSkills.forget();
         expect(guildMemberSkills.all()).toEqual({});
+    });
+});
+
+describe('people in the battle come first', () => {
+    /**
+     * A spectated fight: unit boxes with a name line and a health reading.
+     * @param {Array<[string, string]>} units - [name, hp] pairs
+     */
+    function fightView(units) {
+        const view = document.createElement('div');
+        for (const [name, hp] of units) {
+            const box = document.createElement('div');
+            const nameEl = document.createElement('div');
+            nameEl.textContent = name;
+            const hpEl = document.createElement('div');
+            hpEl.textContent = hp;
+            box.append(nameEl, hpEl);
+            view.appendChild(box);
+        }
+        document.body.appendChild(view);
+        return view;
+    }
+
+    test('finds roster members by their unit boxes, and the boss never', () => {
+        fightView([
+            ['Ada', '2,612/2,612'],
+            ['Trial Chameleon', '454,807/618,000'],
+        ]);
+        const units = findBattleUnits(game.members);
+        expect(units.map((u) => u.name)).toEqual(['Ada']);
+        expect(units[0].dead).toBe(false);
+    });
+
+    test('a dead unit is skipped and counted, never clicked', () => {
+        fightView([['Ada', '0/1,923']]);
+        const unit = guildMemberSkills.nextBattleUnit(now);
+        expect(unit.el).toBeNull();
+        expect(unit.deadSkipped).toBe(1);
+    });
+
+    test('openNext clicks the alive unit before walking the roster', () => {
+        const view = fightView([['Bo', '2,612/2,612']]);
+        let clicked = null;
+        view.addEventListener('click', (event) => {
+            clicked = event.target;
+        });
+
+        const result = guildMemberSkills.openNext(now);
+        expect(result.how).toBe('unit');
+        expect(result.opened).toBe('Bo');
+        expect(clicked).toBeTruthy();
+
+        // In flight: not offered again until the window passes
+        expect(guildMemberSkills.nextBattleUnit(now)).toBeNull();
+        expect(guildMemberSkills.nextBattleUnit(now + REQUEST_TIMEOUT_MS + 1)?.name).toBe('Bo');
+    });
+
+    test('a fresh sheet stands down; a stale one is offered again', () => {
+        fightView([['Ada', '2,612/2,612']]);
+        game.loadouts = [{ name: 'Ada', at: now - 60_000 }];
+        expect(guildMemberSkills.nextBattleUnit(now)).toBeNull();
+
+        game.loadouts = [{ name: 'Ada', at: now - UNIT_FRESH_MS - 1 }];
+        expect(guildMemberSkills.nextBattleUnit(now)?.name).toBe('Ada');
+    });
+
+    test('redo makes a fresh sheet due again', () => {
+        fightView([['Ada', '2,612/2,612']]);
+        game.loadouts = [{ name: 'Ada', at: now - 60_000 }];
+        guildMemberSkills.redoAll(now);
+        expect(guildMemberSkills.nextBattleUnit(now)?.name).toBe('Ada');
+    });
+
+    test('no fight on screen falls back to the roster walk', () => {
+        const result = guildMemberSkills.openNext(now);
+        expect(result.how).not.toBe('unit');
+        expect(result.opened).toBe('Ada');
     });
 });
