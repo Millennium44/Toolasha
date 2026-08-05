@@ -49,8 +49,19 @@ const mockStorage = vi.hoisted(() => {
 vi.mock('../../core/data-manager.js', () => ({ default: mockDataManager }));
 vi.mock('../../core/storage.js', () => ({ default: mockStorage }));
 
-const { loadGoals, saveGoals, addGoal, removeGoal, loadSnapshot, saveSnapshot, GOALS_KEY, SNAPSHOT_KEY } =
-    await import('./goal-planner-store.js');
+const {
+    loadGoals,
+    saveGoals,
+    addGoal,
+    removeGoal,
+    loadSnapshot,
+    saveSnapshot,
+    loadCombatGear,
+    saveCombatGear,
+    GOALS_KEY,
+    SNAPSHOT_KEY,
+    COMBAT_GEAR_KEY,
+} = await import('./goal-planner-store.js');
 const { _resetAdoptionCache } = await import('../../utils/character-key.js');
 
 const settings = () => mockStorage.storeFor('settings');
@@ -139,5 +150,34 @@ describe('the goal list', () => {
 
         expect(await loadGoals()).toEqual([]);
         expect(settings().has(GOALS_KEY)).toBe(false);
+    });
+});
+
+describe('the combat gear record', () => {
+    test('starts empty rather than undefined, so nothing has to guard it', async () => {
+        expect(await loadCombatGear()).toEqual({ preferred: null, baseline: null });
+    });
+
+    test('a patch leaves the half it did not touch alone', async () => {
+        await saveCombatGear({ preferred: 'Ranged' });
+        await saveCombatGear({ baseline: { savedAt: 12, signature: 'sword+5' } });
+
+        expect(await loadCombatGear()).toEqual({
+            preferred: 'Ranged',
+            baseline: { savedAt: 12, signature: 'sword+5' },
+        });
+    });
+
+    test('belongs to the character who fights in it', async () => {
+        await saveCombatGear({ preferred: 'Ranged' });
+        expect(settings().has(`${COMBAT_GEAR_KEY}_market123`)).toBe(true);
+
+        mockDataManager.currentCharacterId = 'other456';
+        expect(await loadCombatGear()).toEqual({ preferred: null, baseline: null });
+    });
+
+    test('a baseline with no timestamp is not a baseline', async () => {
+        settings().set(`${COMBAT_GEAR_KEY}_market123`, { baseline: { signature: 'sword+5' } });
+        expect((await loadCombatGear()).baseline).toBeNull();
     });
 });
