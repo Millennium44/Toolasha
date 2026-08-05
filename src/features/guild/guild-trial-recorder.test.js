@@ -190,7 +190,7 @@ describe('stopping', () => {
 
         expect(guildTrialRecorder.session.endedBy).toBe('button');
         // And written down, so a reload still has it
-        expect(game.store[trialSessionStorageKey(null)]).toBeTruthy();
+        expect(game.store[trialSessionStorageKey(null, game.characterId)]).toBeTruthy();
     });
 
     test('stopping what was never started is not an error', () => {
@@ -237,6 +237,25 @@ describe('snapshots', () => {
     });
 });
 
+describe('a character switch', () => {
+    test('two characters do not share the fallback key', () => {
+        // The reported leak, at its root: both wrote to `guildTrialSession_default`
+        expect(trialSessionStorageKey(null, 30404)).not.toBe(trialSessionStorageKey(null, 99));
+        // And a guild's own key is still shared, which is the point of it
+        expect(trialSessionStorageKey('Milky Way', 30404)).toBe(trialSessionStorageKey('Milky Way', 99));
+    });
+
+    test('the session is forgotten with the character that recorded it', () => {
+        guildTrialRecorder.start('button');
+        expect(guildTrialRecorder.recording).toBe(true);
+
+        guildTrialRecorder.forget();
+
+        expect(guildTrialRecorder.session).toBeNull();
+        expect(guildTrialRecorder.recording).toBe(false);
+    });
+});
+
 describe('the export bundle', () => {
     test('carries everything it used to, plus the session and the coverage note', async () => {
         guildTrialRecorder.start('button');
@@ -258,7 +277,7 @@ describe('the export bundle', () => {
     });
 
     test('the last session is read back off storage when none is in hand', async () => {
-        game.store[trialSessionStorageKey(null)] = { startedAt: 1, endedAt: 2, snapshots: [] };
+        game.store[trialSessionStorageKey(null, game.characterId)] = { startedAt: 1, endedAt: 2, snapshots: [] };
         guildTrialRecorder.session = null;
 
         const bundle = await buildTrialExport({});

@@ -393,19 +393,47 @@ function exact(value) {
 }
 
 /**
- * A row of label and value.
+ * Longest a value can be before it stops being a value.
+ *
+ * "106 work/s" is a figure and belongs in a column beside its label. "no data —
+ * only trials you join can be measured" is a sentence, and squeezing a sentence
+ * into the right-hand column of a 126px-wide card is what produced the reported
+ * screenshot: a tall ragged noodle with two words per line and a label column
+ * narrow enough to break "needs a second tier" mid-phrase.
+ */
+const VALUE_MAX_CHARS = 22;
+
+/**
+ * A row of label and value, or a label with a caption under it.
+ *
+ * The shape is chosen by the content rather than by the caller, so a row that is
+ * usually a figure and occasionally a sentence — "Rate" is `106 work/s` on a
+ * trial you are in and a full explanation on one you are not — gets the right
+ * layout in both cases without every call site having to think about it.
+ *
  * @param {string} label - Left side
- * @param {string} value - Right side
+ * @param {string} value - Right side, or the caption
  * @param {string} [color] - Value colour
  * @param {string} [title] - Tooltip
  * @returns {string} HTML
  */
 function line(label, value, color = '#e8ecf5', title = '') {
     const tip = title ? ` title="${title.replace(/"/g, '&quot;')}"` : '';
+    const text = String(value ?? '');
+    const isSentence = text.length > VALUE_MAX_CHARS;
+
+    if (isSentence) {
+        return (
+            `<div style="margin:2px 0;"${tip}>` +
+            `<div style="color:${DIM};">${label}</div>` +
+            `<div style="color:${color}; font-weight:600; line-height:1.45;">${text}</div></div>`
+        );
+    }
+
     return (
-        `<div style="display:flex; justify-content:space-between; gap:12px;"${tip}>` +
-        `<span style="color:${DIM};">${label}</span>` +
-        `<span style="color:${color}; font-weight:600;">${value}</span></div>`
+        `<div style="display:flex; justify-content:space-between; align-items:baseline; gap:12px;"${tip}>` +
+        `<span style="color:${DIM}; white-space:nowrap;">${label}</span>` +
+        `<span style="color:${color}; font-weight:600; text-align:right;">${text}</span></div>`
     );
 }
 
@@ -686,6 +714,44 @@ export function renderTrialPlayers(breakdown) {
 }
 
 /**
+ * Do something to the page without losing the reader's place.
+ *
+ * Inserting an element into a scrolling container makes the browser re-lay the
+ * content out, and a container whose content changes height while the user is
+ * partway down it is routinely scrolled back to the top. The trials panel
+ * redraws every five seconds and on every observer burst, so "routinely" here
+ * means "every few seconds, forever", which is what was reported.
+ *
+ * Every scrollable ancestor is recorded rather than only the nearest, because
+ * the game nests scrolling boxes and it is not always the same one that moves.
+ *
+ * @param {Element} node - Where the change is happening
+ * @param {Function} change - The mutation
+ * @returns {*} Whatever `change` returned
+ */
+export function withScrollKept(node, change) {
+    const kept = [];
+    for (let el = node; el; el = el.parentElement) {
+        if (typeof el.scrollTop === 'number' && el.scrollTop > 0) kept.push([el, el.scrollTop]);
+    }
+    const documentTop =
+        typeof document !== 'undefined'
+            ? document.scrollingElement?.scrollTop || document.documentElement?.scrollTop
+            : 0;
+
+    try {
+        return change();
+    } finally {
+        for (const [el, top] of kept) {
+            if (el.scrollTop !== top) el.scrollTop = top;
+        }
+        if (documentTop && document.scrollingElement && document.scrollingElement.scrollTop !== documentTop) {
+            document.scrollingElement.scrollTop = documentTop;
+        }
+    }
+}
+
+/**
  * Put a card's block somewhere it takes a row of its own.
  *
  * Third attempt, and the first two are why this is a function rather than a
@@ -795,6 +861,12 @@ class GuildTrials {
         this.samplerId = null;
         /** Guild name seen on the socket, when the XP tracker is not the one who saw it */
         this.socketGuildName = null;
+        /** The character whose record is in hand; a switch invalidates everything below it */
+        this.characterId = null;
+        /** True between a character switch and the arriving character's data landing */
+        this.awaitingCharacter = false;
+        /** Block key → the markup last drawn into it, so an unchanged pass touches nothing */
+        this.blockHtml = new Map();
     }
 
     async initialize() {
@@ -821,6 +893,14 @@ class GuildTrials {
         // one yet: a tick before the load lands writes into a fresh record and
         // the load merges into it rather than replacing it.
         this._armSampler();
+
+        // A character switch invalidates every cached answer this feature holds.
+        // Registered here, above the awaits, for the same reason the sampler is:
+        // a reset that only exists once storage has answered is a reset that can
+        // be skipped entirely.
+        this._onCharacterSwitch = (event) => this._forgetCharacter(event?.newId ?? null);
+        dataManager.on?.('character_switching', this._onCharacterSwitch);
+        this.unregister.push(() => dataManager.off?.('character_switching', this._onCharacterSwitch));
 
         // Any guild panel node at all, rather than a list of guesses at what the
         // two trial tabs are called. The In Progress tab's card carries neither
@@ -860,9 +940,10 @@ class GuildTrials {
 
         this.initialized = true;
 
+        this.characterId = dataManager.getCurrentCharacterId?.() ?? null;
         this.guildName = this._resolveGuildName();
         guildTrialRecorder.setGuildName(this.guildName);
-        const stored = await loadTrialRecord(this.guildName);
+        const stored = await loadTrialRecord(this.guildName, Date.now(), this.characterId);
         this.record = mergeTrialRecords(stored, this.record);
         this._publishTrialNames();
 
@@ -906,6 +987,76 @@ class GuildTrials {
     }
 
     /**
+     * Drop everything belonging to the character that is leaving.
+     *
+     * The reported bug, and it was every cache at once. Switching characters in
+     * one tab left the previous guild's finished trial on the new guild's Trials
+     * tab — "Guild Points banked 2,880" beside a header reading 0, "Banked 5
+     * tiers" on a card reading "0 pts" — and the warning line went so far as to
+     * judge the *old* record's 840 pts against the *new* guild's Builder's Hall
+     * level, which is two guilds' data in one sentence.
+     *
+     * Nothing here is recoverable by reloading one thing: the record, the guild
+     * name and its socket-seen fallback, the encounters pushed into the damage
+     * gate, and the recorder's open session all belong to the character that is
+     * leaving. They are dropped together, and the record for the arriving
+     * character is read back once the socket says who they are.
+     */
+    _forgetCharacter(newId = null) {
+        try {
+            this.record = null;
+            this.guildName = null;
+            this.socketGuildName = null;
+            this.characterId = newId;
+            this.adopting = false;
+            // The switch message arrives *before* the arriving character's own
+            // data does, so for a moment every source of a guild name still
+            // holds the departing one's. Adopting then would file the new
+            // character's readings under the guild they just left — the leak,
+            // one layer down. Nothing is adopted until the ids agree again.
+            this.awaitingCharacter = true;
+
+            // Nothing on screen belongs to the arriving character either, and it
+            // comes off first: a later step failing must not leave the previous
+            // guild's figures on a page that has already changed hands
+            document.querySelectorAll(`.${CSS_CLASS}`).forEach((el) => el.remove());
+            this.blockHtml.clear();
+            guildTrialScoreboard.close?.();
+
+            // The gate's "this week's combat trials" is the old guild's answer
+            guildTrialDamage.setTrialNames?.([]);
+            guildTrialDamage.reset?.();
+            guildTrialRecorder.forget?.();
+            guildTrialRecorder.setGuildName?.(null);
+
+            // Re-read for whoever arrives. Not awaited on this path — the
+            // character's own id lands on the same message that triggered this
+            this._adoptArrivingCharacter(newId).catch(() => {});
+        } catch (error) {
+            console.error('[GuildTrials] Clearing the outgoing character failed:', error);
+        }
+    }
+
+    /**
+     * Read the arriving character's own record, once there is one to read.
+     * @returns {Promise<void>}
+     */
+    async _adoptArrivingCharacter(characterId) {
+        // Strictly the character's own record: the guild is not knowable yet, so
+        // the character-scoped key is the only one that cannot be the last
+        // guild's. `_adoptGuildName` merges it onto the guild's key later, once
+        // a name has arrived that belongs to *this* character.
+        guildTrialRecorder.setGuildName(null);
+        const stored = await loadTrialRecord(null, Date.now(), characterId);
+
+        // Another switch may have happened while the read was in flight
+        if (this.characterId !== characterId) return;
+
+        this.record = stored;
+        this._publishTrialNames();
+    }
+
+    /**
      * The guild's name, from whichever source has it.
      *
      * Three, in order of how directly they saw it. The XP tracker is the one
@@ -920,6 +1071,15 @@ class GuildTrials {
      * @returns {string|null} The name, or null when nothing has seen one
      */
     _resolveGuildName() {
+        // Mid-switch every source still answers with the departing character's
+        // guild. The ids agreeing again is what says the arriving character's
+        // own data has landed
+        if (this.awaitingCharacter) {
+            const current = dataManager.getCurrentCharacterId?.() ?? null;
+            if (current === null || current !== this.characterId) return null;
+            this.awaitingCharacter = false;
+        }
+
         return (
             guildXPTracker.getOwnGuildName?.() || this.socketGuildName || dataManager.characterData?.guild?.name || null
         );
@@ -958,11 +1118,11 @@ class GuildTrials {
 
         this.adopting = true;
         try {
-            const stored = await loadTrialRecord(name);
+            const stored = await loadTrialRecord(name, Date.now(), this.characterId);
             this.record = mergeTrialRecords(stored, this.record);
             this.guildName = name;
             guildTrialRecorder.setGuildName(name);
-            await saveTrialRecord(name, this.record);
+            await saveTrialRecord(name, this.record, this.characterId);
         } catch (error) {
             console.error('[GuildTrials] Moving the record onto the guild key failed:', error);
         } finally {
@@ -1000,7 +1160,7 @@ class GuildTrials {
                 const withPersonal = tile === live ? { ...tile, personal } : tile;
                 this.record = recordTileSample(this.record, withPersonal, now);
             }
-            if (tiles.length) saveTrialRecord(this.guildName, this.record);
+            if (tiles.length) saveTrialRecord(this.guildName, this.record, this.characterId);
 
             // A reading is a trial in progress, which is one of the two things
             // the recorder starts itself on
@@ -1017,8 +1177,17 @@ class GuildTrials {
             // waited on storage would drop a frame of the tab every time.
             this._adoptGuildName().catch(() => {});
 
-            root.querySelectorAll(`.${CSS_CLASS}`).forEach((el) => el.remove());
-            if (!tiles.length) return;
+            // Nothing is removed up front. A redraw that tears its own output
+            // out of the page and puts it back re-lays the panel out, and the
+            // browser answers by putting the scroll back at the top — every five
+            // seconds, which is what the reported "keeps scrolling to the top"
+            // is. Blocks are matched by key and updated in place instead, and
+            // only a block whose trial has gone is removed. See `_placeBlock`.
+            const drawn = new Set();
+            if (!tiles.length) {
+                this._reapBlocks(root, drawn);
+                return;
+            }
 
             const counts = participantCounts();
             const timeLeftMs = this._timeLeftMs(root);
@@ -1050,21 +1219,93 @@ class GuildTrials {
                     pointsByTier: analysis.pointsByTier,
                 });
 
-                const block = document.createElement('div');
-                block.className = CSS_CLASS;
-                block.style.cssText =
-                    'position:static; display:block; box-sizing:border-box; clear:both;' +
-                    'margin:6px 0 8px; padding:6px 10px; background:rgba(0,0,0,0.25);' +
-                    'border-radius:6px; font-size:11px; line-height:1.6;';
-                block.innerHTML = renderTrialBlock(analysis, participants, undefined, {
-                    participating: ownParticipation(tile.name),
+                const key = `tile:${tileKey(tile)}`;
+                drawn.add(key);
+                this._placeBlock(root, key, {
+                    html: renderTrialBlock(analysis, participants, undefined, {
+                        participating: ownParticipation(tile.name),
+                    }),
+                    // Wide enough that a label and a figure fit on one line, and
+                    // capped so it cannot stretch a whole panel — the reported
+                    // screenshot was this block one card wide and a mile tall
+                    style:
+                        'position:static; display:block; box-sizing:border-box; clear:both;' +
+                        'min-width:min(260px, 100%); max-width:520px;' +
+                        'margin:6px 0 8px; padding:6px 10px; background:rgba(0,0,0,0.25);' +
+                        'border-radius:6px; font-size:11px; line-height:1.6;',
+                    place: (block) => placeTrialBlock(root, tile.element, block, tile.name),
                 });
-                placeTrialBlock(root, tile.element, block, tile.name);
             }
 
-            this._renderPayout(root, trialsForPayout, tiles[0]?.element || null, bonuses);
+            if (this._renderPayout(root, trialsForPayout, tiles[0]?.element || null, bonuses)) {
+                drawn.add('payout');
+            }
+            this._reapBlocks(root, drawn);
         } catch (error) {
             console.error('[GuildTrials] Drawing the trial panel failed:', error);
+        }
+    }
+
+    /**
+     * Draw one block, without disturbing the page when it has not changed.
+     *
+     * The whole of the scroll fix. `innerHTML` is only assigned when the markup
+     * actually differs, and an element that is already in the right place is
+     * left exactly where it is — so the common case, a five-second sample that
+     * moved a figure by a hundred points, touches one text node and nothing
+     * else. A block that has to move is moved with the scroll position of every
+     * scrollable ancestor recorded and put back, because inserting into a
+     * scrolling container is the other half of the same bug.
+     *
+     * @param {Element} root - The trials root
+     * @param {string} key - Stable identity for this block
+     * @param {Object} spec - `{html, style, place, onBuild}`; `place` inserts a fresh block
+     * @returns {Element} The block
+     */
+    _placeBlock(root, key, { html, style, place, onBuild }) {
+        const existing = root.querySelector(`.${CSS_CLASS}[data-mwi-block="${key}"]`);
+
+        // Compared against what this drew last time rather than against the
+        // element's own `innerHTML`: a block that has had listeners attached to
+        // appended children no longer reads back as the markup it was built
+        // from, and would therefore look changed on every single pass
+        const unchanged = this.blockHtml.get(key) === html;
+
+        if (existing) {
+            if (!unchanged) {
+                existing.innerHTML = html;
+                this.blockHtml.set(key, html);
+                onBuild?.(existing);
+            }
+            if (existing.style.cssText !== style) existing.style.cssText = style;
+            return existing;
+        }
+
+        const block = document.createElement('div');
+        block.className = CSS_CLASS;
+        block.dataset.mwiBlock = key;
+        block.style.cssText = style;
+        block.innerHTML = html;
+        this.blockHtml.set(key, html);
+        onBuild?.(block);
+
+        withScrollKept(root, () => place(block));
+        return block;
+    }
+
+    /**
+     * Remove blocks whose trial is no longer on screen.
+     * @param {Element} root - The trials root
+     * @param {Set<string>} drawn - Keys drawn this pass
+     */
+    _reapBlocks(root, drawn) {
+        for (const block of root.querySelectorAll(`.${CSS_CLASS}`)) {
+            const key = block.dataset?.mwiBlock;
+            // A block with no key is from an older build, or from a redraw that
+            // failed halfway; either way it is not this pass's and goes
+            if (key && drawn.has(key)) continue;
+            if (key) this.blockHtml.delete(key);
+            block.remove();
         }
     }
 
@@ -1133,9 +1374,10 @@ class GuildTrials {
      * @param {Array<{name: string, type: string, banked: number, projected: number}>} trials - This week's trials
      * @param {Element|null} [firstTile] - The topmost trial card, for placement when there is no status row
      * @param {Object} [payoutBonuses] - From {@link _payoutBonuses}; resolved here when omitted
+     * @returns {boolean} Whether a payout block is on screen
      */
     _renderPayout(root, trials, firstTile = null, payoutBonuses = null) {
-        if (!trials.length) return;
+        if (!trials.length) return false;
 
         const bonuses = payoutBonuses || this._payoutBonuses();
         const buildersHallBonus = bonuses.buildersHall.bonus;
@@ -1192,12 +1434,6 @@ class GuildTrials {
         const anyBanked = trials.some(
             (trial) => trial.banked > 0 || Number.isFinite(trial.points?.quoted?.statedPoints)
         );
-
-        const wrapper = document.createElement('div');
-        wrapper.className = CSS_CLASS;
-        wrapper.style.cssText =
-            'margin:8px 0 4px; padding:8px 12px; background:rgba(0,0,0,0.25);' +
-            'border-radius:6px; font-size:12px; line-height:1.7;';
 
         const eligible = tokenPayoutLine(
             projected.eligibleTokens,
@@ -1279,17 +1515,30 @@ class GuildTrials {
             );
         }
 
-        wrapper.innerHTML = rows.join('');
-        wrapper.appendChild(this._controls());
+        // Built as markup rather than inserted straight away: `_placeBlock`
+        // compares it with what is already on screen and leaves the page alone
+        // when nothing moved, which is what keeps the scroll where the reader
+        // put it. The buttons are appended after, since they carry listeners
+        // that markup cannot
+        this._placeBlock(root, 'payout', {
+            html: rows.join('') + this._controlsHTML(),
+            style:
+                'margin:8px 0 4px; padding:8px 12px; background:rgba(0,0,0,0.25);' +
+                'border-radius:6px; font-size:12px; line-height:1.7;',
+            place: (block) => {
+                // Under the game's own status row when there is one. Otherwise
+                // directly above the first card, which is where it belongs and —
+                // unlike the panel's own top edge — is somewhere the reader is
+                // already looking when the root is a whole guild panel.
+                const statusRow = root.querySelector('[class*="GuildPanel_eventStatusRow"]');
+                if (statusRow) statusRow.insertAdjacentElement('afterend', block);
+                else if (firstTile?.isConnected) firstTile.insertAdjacentElement('beforebegin', block);
+                else root.insertAdjacentElement('afterbegin', block);
+            },
+            onBuild: (block) => this._bindControls(block),
+        });
 
-        // Under the game's own status row when there is one. Otherwise directly
-        // above the first card, which is where it belongs and — unlike the
-        // panel's own top edge — is somewhere the reader is already looking when
-        // the root being drawn into is a whole guild panel.
-        const statusRow = root.querySelector('[class*="GuildPanel_eventStatusRow"]');
-        if (statusRow) statusRow.insertAdjacentElement('afterend', wrapper);
-        else if (firstTile?.isConnected) firstTile.insertAdjacentElement('beforebegin', wrapper);
-        else root.insertAdjacentElement('afterbegin', wrapper);
+        return true;
     }
 
     /**
@@ -1300,53 +1549,60 @@ class GuildTrials {
      * works and is still the programmatic path — the button calls the same
      * builder rather than a second copy of it, so the two cannot drift.
      *
-     * @returns {Element} A row of buttons
+     * @returns {string} The buttons, as markup
      */
-    _controls() {
-        // No class of its own: it lives inside the payout block, which already
-        // carries the one the redraw clears by
-        const row = document.createElement('div');
-        row.style.cssText = 'display:flex; gap:6px; margin-top:6px; flex-wrap:wrap;';
+    _controlsHTML() {
+        const recording = guildTrialRecorder.recording;
+        const button = (action, label, color, title) =>
+            `<button data-action="${action}" title="${title.replace(/"/g, '&quot;')}" ` +
+            `style="flex:1 1 auto; cursor:pointer; padding:3px 8px; border-radius:4px; font-size:11px;` +
+            `border:1px solid ${color}66; background:transparent; color:${color};">${label}</button>`;
 
-        const button = (label, color, title, onClick) => {
-            const element = document.createElement('button');
-            element.textContent = label;
-            element.title = title;
-            element.style.cssText =
-                `flex:1 1 auto; cursor:pointer; padding:3px 8px; border-radius:4px; font-size:11px;` +
-                `border:1px solid ${color}66; background:transparent; color:${color};`;
-            element.addEventListener('click', (event) => {
+        return (
+            '<div data-mwi-controls="1" style="display:flex; gap:6px; margin-top:6px; flex-wrap:wrap;">' +
+            button(
+                'record',
+                recording ? '■ Stop recording' : '● Record trial',
+                recording ? WARN : GOOD,
+                recording
+                    ? 'Stop the session and write it down. The export keeps it either way.'
+                    : 'Start a session now. One starts by itself when a trial fight or a live reading is seen, ' +
+                          'unless that is switched off in settings.'
+            ) +
+            button('export', '⤓ Export', ACCENT, 'Download everything captured this week as one JSON file.') +
+            button('scoreboard', 'Per-player', ACCENT, 'Damage and healing per player, ranked.') +
+            '</div>'
+        );
+    }
+
+    /**
+     * Attach the controls' listeners.
+     *
+     * Separate from the markup because the markup is compared against the last
+     * pass to decide whether the page needs touching at all — and a listener
+     * cannot be compared. The recording state is *in* the markup, so pressing
+     * Record changes the signature and this runs again with the new label.
+     *
+     * @param {Element} block - The payout block, freshly built
+     */
+    _bindControls(block) {
+        const on = (action, handler) =>
+            block.querySelector(`[data-action="${action}"]`)?.addEventListener('click', (event) => {
                 event.preventDefault();
                 event.stopPropagation();
-                onClick();
+                handler();
             });
-            row.appendChild(element);
-            return element;
-        };
 
-        const recording = guildTrialRecorder.recording;
-        button(
-            recording ? '■ Stop recording' : '● Record trial',
-            recording ? WARN : GOOD,
-            recording
-                ? 'Stop the session and write it down. The export keeps it either way.'
-                : 'Start a session now. One starts by itself when a trial fight or a live reading is seen, ' +
-                      'unless that is switched off in settings.',
-            () => {
-                if (guildTrialRecorder.recording) guildTrialRecorder.stop('button');
-                else guildTrialRecorder.start('button');
-                this._render(findTrialsRoot());
-            }
-        );
-
-        button('⤓ Export', ACCENT, 'Download everything captured this week as one JSON file.', async () => {
+        on('record', () => {
+            if (guildTrialRecorder.recording) guildTrialRecorder.stop('button');
+            else guildTrialRecorder.start('button');
+            this._render(findTrialsRoot());
+        });
+        on('export', async () => {
             const bundle = await buildTrialExport({ guildName: this.guildName });
             downloadTrialExport(bundle);
         });
-
-        button('Per-player', ACCENT, 'Damage and healing per player, ranked.', () => guildTrialScoreboard.toggle());
-
-        return row;
+        on('scoreboard', () => guildTrialScoreboard.toggle());
     }
 
     /**
@@ -1392,6 +1648,7 @@ class GuildTrials {
         guildTrialRecorder.cleanup();
         guildTrialScoreboard.close();
         guildLoadoutCapture.cleanup();
+        this.blockHtml.clear();
         document.querySelectorAll(`.${CSS_CLASS}`).forEach((el) => el.remove());
         this.initialized = false;
     }

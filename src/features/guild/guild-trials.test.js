@@ -30,6 +30,9 @@ const game = vi.hoisted(() => ({
     currentWeek: '2026-07-31T00:00:00Z',
     members: [],
     characterId: null,
+    characterData: null,
+    dmHandlers: {},
+    trialNames: [],
     recorder: { recording: false, activity: [], downloads: [], startedBy: null, endedBy: null },
     scoreboardToggles: 0,
 }));
@@ -68,6 +71,15 @@ vi.mock('../../core/data-manager.js', () => ({
         },
         getInitClientData: () => game.clientData,
         getCurrentCharacterId: () => game.characterId,
+        get characterData() {
+            return game.characterData;
+        },
+        on: (event, handler) => {
+            (game.dmHandlers[event] ||= []).push(handler);
+        },
+        off: (event, handler) => {
+            game.dmHandlers[event] = (game.dmHandlers[event] || []).filter((entry) => entry !== handler);
+        },
     },
 }));
 vi.mock('../../core/storage.js', () => ({
@@ -84,11 +96,24 @@ vi.mock('../../core/storage.js', () => ({
 vi.mock('../../utils/market-data.js', () => ({
     getItemPrice: (itemHrid, { mode } = {}) => game.prices[itemHrid]?.[mode] ?? 0,
 }));
+vi.mock('./guild-trial-damage.js', () => ({
+    default: {
+        initialize: vi.fn(),
+        cleanup: vi.fn(),
+        reset: vi.fn(),
+        setTrialNames: (names) => (game.trialNames = names),
+        breakdown: () => ({ measured: false, reason: 'no trial fight seen yet', players: [] }),
+    },
+}));
 vi.mock('./guild-trial-recorder.js', () => ({
     default: {
         initialize: vi.fn(),
         cleanup: vi.fn(),
         setGuildName: vi.fn(),
+        forget: () => {
+            game.recorder.recording = false;
+            game.recorder.forgotten = true;
+        },
         noteActivity: (kind) => game.recorder.activity.push(kind),
         start: (reason) => {
             game.recorder.recording = true;
@@ -126,6 +151,7 @@ const {
     renderTrialBlock,
     renderTrialPlayers,
     tokenPayoutLine,
+    withScrollKept,
 } = await import('./guild-trials.js');
 const trialsFeature = (await import('./guild-trials.js')).default;
 
@@ -440,6 +466,48 @@ describe('ownParticipation', () => {
     });
 });
 
+describe('withScrollKept', () => {
+    test('puts every scrolled ancestor back where it was', () => {
+        document.body.innerHTML = '<div id="outer"><div id="inner"><div id="leaf"></div></div></div>';
+        const outer = document.getElementById('outer');
+        const inner = document.getElementById('inner');
+        const leaf = document.getElementById('leaf');
+        Object.defineProperty(outer, 'scrollTop', { value: 120, writable: true, configurable: true });
+        Object.defineProperty(inner, 'scrollTop', { value: 40, writable: true, configurable: true });
+
+        withScrollKept(leaf, () => {
+            // What a browser does when the content it is scrolling changes height
+            outer.scrollTop = 0;
+            inner.scrollTop = 0;
+        });
+
+        expect(outer.scrollTop).toBe(120);
+        expect(inner.scrollTop).toBe(40);
+    });
+
+    test('a page nobody has scrolled is left alone, and the return value passes through', () => {
+        document.body.innerHTML = '<div id="leaf"></div>';
+        const leaf = document.getElementById('leaf');
+
+        expect(withScrollKept(leaf, () => 'done')).toBe('done');
+    });
+
+    test('a throwing change still restores the scroll', () => {
+        document.body.innerHTML = '<div id="outer"><div id="leaf"></div></div>';
+        const outer = document.getElementById('outer');
+        const leaf = document.getElementById('leaf');
+        Object.defineProperty(outer, 'scrollTop', { value: 80, writable: true, configurable: true });
+
+        expect(() =>
+            withScrollKept(leaf, () => {
+                outer.scrollTop = 0;
+                throw new Error('nope');
+            })
+        ).toThrow('nope');
+        expect(outer.scrollTop).toBe(80);
+    });
+});
+
 describe('placeTrialBlock', () => {
     // Devtools, from the tab the user actually has: our block measured 126 ×
     // 152.8 as a *Grid Item* — one cell of a four-column grid, not the full-width
@@ -565,6 +633,28 @@ describe('the panel, end to end', () => {
         return root;
     }
 
+    /**
+     * A Trials-tab card, which is where points and tiers come from.
+     * @param {string} name - Trial name
+     * @param {number} level - Its level
+     * @param {number} points - What the card states
+     * @returns {Element} The tab
+     */
+    function buildTrialsTabFor(name, level, points) {
+        document.body.innerHTML = '';
+        const root = document.createElement('div');
+        root.className = 'GuildPanel_trialsContent__a';
+        const tile = document.createElement('div');
+        tile.className = 'GuildPanel_tile__c';
+        tile.innerHTML =
+            `<div class="GuildPanel_tileName__d">${name}</div>` +
+            `<div class="GuildPanel_tileSummary__e">Lv.${level}</div>` +
+            `<div class="Card_points__g">${points} pts</div>`;
+        root.appendChild(tile);
+        document.body.appendChild(root);
+        return root;
+    }
+
     // The callback takes no element: it finds the root itself, so that a tab
     // whose container is called something else is still read
     const fire = () => game.observers['GuildPanel_']();
@@ -581,6 +671,9 @@ describe('the panel, end to end', () => {
         game.store = {};
         game.members = [];
         game.characterId = null;
+        game.characterData = null;
+        game.dmHandlers = {};
+        game.trialNames = [];
         game.recorder = { recording: false, activity: [], downloads: [], startedBy: null, endedBy: null };
         game.scoreboardToggles = 0;
         await trialsFeature.initialize();
@@ -910,6 +1003,78 @@ describe('the panel, end to end', () => {
         });
     });
 
+    test('an unchanged redraw does not touch the page', () => {
+        // The reported "keeps scrolling to the top": the sampler redraws every
+        // five seconds and the observer redraws on every React burst, and each
+        // one used to tear the blocks out and put them back. A container whose
+        // content changes height while you are partway down it gets scrolled
+        // back to the top, every few seconds, forever.
+        const root = buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]);
+        // Two passes to settle: the second reading is what turns "measuring…"
+        // into a rate, so the markup legitimately changes once
+        fire(root);
+        vi.setSystemTime(now + 5000);
+        fire(root);
+
+        const block = document.querySelector('.mwi-trial-info[data-mwi-block^="tile:"]');
+        const payout = document.querySelector('.mwi-trial-info[data-mwi-block="payout"]');
+        const firstChild = block.firstElementChild;
+        const payoutChild = payout.firstElementChild;
+
+        // Two more passes with nothing whatsoever changed
+        fire(root);
+        fire(root);
+
+        // The very same elements, and the very same nodes inside them: an
+        // assignment to `innerHTML` rebuilds the subtree even when the markup is
+        // identical, and rebuilding is what moves the scroll
+        expect(document.querySelector('.mwi-trial-info[data-mwi-block^="tile:"]')).toBe(block);
+        expect(document.querySelector('.mwi-trial-info[data-mwi-block="payout"]')).toBe(payout);
+        expect(block.firstElementChild).toBe(firstChild);
+        expect(payout.firstElementChild).toBe(payoutChild);
+    });
+
+    test('a reading that has moved updates in place rather than being replaced', () => {
+        const root = buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]);
+        fire(root);
+        const block = document.querySelector('.mwi-trial-info[data-mwi-block^="tile:"]');
+
+        root.querySelector('[class*="ProgressBar_text"]').textContent = '28,850 / 65,280';
+        vi.setSystemTime(now + 10_000);
+        fire(root);
+
+        // Same element — the reader's place in the page is not disturbed — with
+        // new figures in it
+        expect(document.querySelector('.mwi-trial-info[data-mwi-block^="tile:"]')).toBe(block);
+        expect(block.textContent).toContain('Fill rate');
+    });
+
+    test('the scroll position survives a block being inserted', () => {
+        const root = buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]);
+        // A scrolling container around the cards, which is what the guild panel is
+        root.style.cssText = 'height:80px; overflow-y:auto;';
+        Object.defineProperty(root, 'scrollTop', { value: 40, writable: true, configurable: true });
+
+        fire(root);
+
+        expect(root.scrollTop).toBe(40);
+    });
+
+    test('a trial that leaves the tab takes its block with it', () => {
+        const root = buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]);
+        fire(root);
+        expect(document.querySelectorAll('.mwi-trial-info[data-mwi-block^="tile:"]')).toHaveLength(1);
+
+        // The player switches to a tab with a different trial on it
+        const swapped = buildTab([{ name: 'Milking', level: 130, bar: '1,000 / 65,280' }]);
+        fire(swapped);
+
+        const keys = [...document.querySelectorAll('.mwi-trial-info[data-mwi-block^="tile:"]')].map(
+            (block) => block.dataset.mwiBlock
+        );
+        expect(keys).toEqual(['tile:skilling::milking']);
+    });
+
     test('the card block is a block of its own, never inside the card', () => {
         // Appended into the card it sat on top of the game's own footer —
         // "Completed", "1/28 signed up" — because a card places its last rows
@@ -923,6 +1088,68 @@ describe('the panel, end to end', () => {
         expect(card.contains(block)).toBe(false);
         expect(block.previousElementSibling).toBe(card);
         expect(block.style.position).toBe('static');
+    });
+
+    test('switching character in the same tab leaves nothing of the old one behind', async () => {
+        // Live-tested and reported: a fresh character in a different guild was
+        // shown the previous guild's finished trial — "Guild Points banked
+        // 2,880" beside a header reading 0, and a warning that judged the old
+        // record's 840 pts against the new guild's Builder's Hall level.
+        trialsFeature.cleanup();
+        game.characterId = 111;
+        game.guildName = 'Old Guild';
+        game.store = {};
+        await trialsFeature.initialize();
+
+        fire(buildTab([{ name: 'Alchemy', level: 170, bar: '18,850 / 65,280' }]));
+        expect(guildTrials.record.tiles['skilling::alchemy']).toBeTruthy();
+        expect(game.trialNames).toBeDefined();
+
+        // The switch message arrives before the arriving character's own data,
+        // so every source of a guild name still answers with the old one
+        game.characterId = 111;
+        game.dmHandlers.character_switching.forEach((handler) => handler({ oldId: 111, newId: 222 }));
+        await vi.advanceTimersByTimeAsync(0);
+
+        // Nothing of the old character's survives, on screen or in hand
+        expect(document.querySelectorAll('.mwi-trial-info')).toHaveLength(0);
+        expect(guildTrials.guildName).toBeNull();
+        expect(guildTrials.record?.tiles?.['skilling::alchemy']).toBeUndefined();
+        expect(game.trialNames).toEqual([]);
+        expect(game.recorder.forgotten).toBe(true);
+
+        // And the old guild's name is not adopted while the ids still disagree
+        expect(guildTrials._resolveGuildName()).toBeNull();
+
+        // Once the arriving character's data lands, it is their own guild
+        game.characterId = 222;
+        game.guildName = 'New Guild';
+        expect(guildTrials._resolveGuildName()).toBe('New Guild');
+    });
+
+    test('the fresh character draws its own empty state, not the last one’s', async () => {
+        trialsFeature.cleanup();
+        game.characterId = 111;
+        game.guildName = null;
+        game.store = {};
+        await trialsFeature.initialize();
+
+        // Character A banks a trial
+        buildTrialsTabFor('Alchemy', 170, 1080);
+        fire();
+        expect(text()).toContain('Guild Points banked');
+
+        game.dmHandlers.character_switching.forEach((handler) => handler({ oldId: 111, newId: 222 }));
+        game.characterId = 222;
+        await vi.advanceTimersByTimeAsync(0);
+
+        // Character B's guild has run nothing: its cards state nothing, and the
+        // panel must say nothing rather than the previous guild's total
+        buildTrialsTabFor('Milking', 130, 0);
+        fire();
+
+        expect(text()).not.toContain('1,080');
+        expect(guildTrials.record.tiles['skilling::alchemy']).toBeUndefined();
     });
 
     test('the guild name is taken off a guild message when the XP tracker never saw one', async () => {
@@ -1032,6 +1259,9 @@ describe('the two trial tabs, as the game draws them', () => {
         game.store = {};
         game.members = [];
         game.characterId = null;
+        game.characterData = null;
+        game.dmHandlers = {};
+        game.trialNames = [];
         game.recorder = { recording: false, activity: [], downloads: [], startedBy: null, endedBy: null };
         game.scoreboardToggles = 0;
         guildTrials.record = null;
@@ -1234,6 +1464,39 @@ describe('zero is a claim, and usually the wrong one', () => {
     });
 });
 
+describe('the side block’s shape', () => {
+    // Reported from a screenshot: the two-column rows wrapped badly on a narrow
+    // card — "Rate | no data — only trials you join can be measured" became a
+    // tall ragged column, and "Next tier | needs a second tier to fit the curve"
+    // broke mid-phrase. A caption is a sentence, not a value.
+    test('a sentence gets the full width, under its label', () => {
+        const analysis = analyseTrial(record({ tier: 6, samples: [] }), {});
+        const html = renderTrialBlock(analysis, 3, { measured: false, reason: 'none' }, { participating: false });
+
+        // Not squeezed into a right-hand column
+        expect(html).not.toMatch(/justify-content:space-between[^>]*>\s*<span[^>]*>Rate<\/span>\s*<span[^>]*>no data/);
+        expect(html).toContain('no data — only trials you join can be measured');
+    });
+
+    test('a real figure stays a two-column row', () => {
+        const analysis = analyseTrial(
+            record({
+                kind: 'skilling',
+                samples: [
+                    { t: now, readings: [{ current: 1000, max: 65_280 }] },
+                    { t: now + 10_000, readings: [{ current: 2060, max: 65_280 }] },
+                ],
+            }),
+            {}
+        );
+        const html = renderTrialBlock(analysis, 3, { measured: false, reason: 'none' });
+
+        expect(html).toMatch(/justify-content:space-between/);
+        expect(html).toContain('Fill rate');
+        expect(html).toContain('work/s');
+    });
+});
+
 describe('renderTrialPlayers', () => {
     const breakdown = {
         measured: true,
@@ -1433,6 +1696,9 @@ describe('the payout block, audited', () => {
         game.store = {};
         game.members = [];
         game.characterId = null;
+        game.characterData = null;
+        game.dmHandlers = {};
+        game.trialNames = [];
         game.recorder = { recording: false, activity: [], downloads: [], startedBy: null, endedBy: null };
         game.scoreboardToggles = 0;
         await trialsFeature.initialize();

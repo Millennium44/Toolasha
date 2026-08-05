@@ -64,11 +64,20 @@ export const MAX_SNAPSHOTS = 400;
 
 /**
  * Storage key for a guild's most recent session.
+ *
+ * Falls back to the character rather than to one shared bucket, for the reason
+ * `guildTrialsStorageKey` spells out: two characters in one tab must not read
+ * each other's trials back.
+ *
  * @param {string|null} guildName - Guild name, or null before it is known
+ * @param {string|number|null} [characterId] - The viewing character, for the fallback key
  * @returns {string} Storage key
  */
-export function trialSessionStorageKey(guildName) {
-    return `${KEY_PREFIX}_${guildName || 'default'}`;
+export function trialSessionStorageKey(guildName, characterId = null) {
+    if (guildName) return `${KEY_PREFIX}_${guildName}`;
+    return characterId === null || characterId === undefined
+        ? `${KEY_PREFIX}_default`
+        : `${KEY_PREFIX}_char_${characterId}`;
 }
 
 /**
@@ -109,6 +118,7 @@ class GuildTrialRecorder {
         this.watcherId = null;
         this.session = null;
         this.guildName = null;
+        this.characterId = null;
         /** Last moment anything said a trial was happening */
         this.lastActivityAt = 0;
     }
@@ -119,6 +129,7 @@ class GuildTrialRecorder {
      */
     initialize(guildName = null) {
         this.guildName = guildName;
+        this.characterId = dataManager.getCurrentCharacterId?.() ?? null;
         if (this.initialized) return;
         this.initialized = true;
 
@@ -135,6 +146,20 @@ class GuildTrialRecorder {
     /** @param {string|null} guildName - The key sessions are stored under */
     setGuildName(guildName) {
         this.guildName = guildName || null;
+        this.characterId = dataManager.getCurrentCharacterId?.() ?? null;
+    }
+
+    /**
+     * Forget this character's session entirely.
+     *
+     * Called when the tab changes character: a session belongs to the character
+     * that recorded it, and carrying one across would file the next guild's
+     * trial under the last one's snapshots.
+     */
+    forget() {
+        this.session = null;
+        this.lastActivityAt = 0;
+        this.characterId = dataManager.getCurrentCharacterId?.() ?? null;
     }
 
     /** @returns {boolean} Whether a session is open */
@@ -258,7 +283,7 @@ class GuildTrialRecorder {
     async _persist() {
         try {
             if (!this.session) return;
-            await storage.set(trialSessionStorageKey(this.guildName), this.session, STORE_NAME);
+            await storage.set(trialSessionStorageKey(this.guildName, this.characterId), this.session, STORE_NAME);
         } catch (error) {
             console.error('[GuildTrialRecorder] Saving the session failed:', error);
         }
@@ -271,7 +296,7 @@ class GuildTrialRecorder {
     async loadSession() {
         if (this.session) return this.session;
         try {
-            return await storage.get(trialSessionStorageKey(this.guildName), STORE_NAME, null);
+            return await storage.get(trialSessionStorageKey(this.guildName, this.characterId), STORE_NAME, null);
         } catch (error) {
             console.error('[GuildTrialRecorder] Reading the session failed:', error);
             return null;
@@ -298,7 +323,7 @@ const guildTrialRecorder = new GuildTrialRecorder();
  */
 export async function buildTrialExport({ guildName = null } = {}) {
     const characterId = dataManager.getCurrentCharacterId?.() ?? null;
-    const record = await loadTrialRecord(guildName);
+    const record = await loadTrialRecord(guildName, Date.now(), characterId);
     const loadouts = characterId ? await loadLoadouts(characterId) : null;
     const trialDamage = guildTrialDamage.breakdown?.() ?? null;
     const session = await guildTrialRecorder.loadSession();

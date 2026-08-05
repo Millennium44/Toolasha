@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Trials stop following you to your next guild, and the tab stops yanking you around
+
+- **A character switch drops everything**: switching accounts in the same tab showed the old guild's 2,880 points, banked tiers, and payout in the new guild — two causes, both fixed. The unnamed-guild fallback bucket was shared (`guildTrials_default`), so both characters read and wrote one record; it's now per character. And every in-memory cache — record, guild name, trial names in the damage gate, recorder session, injected blocks, scoreboard — resets on the switch event, with guild-name adoption held off until the arriving character's own data has landed (the switch fires _before_ it, so adopting early would have re-filed the new character's readings under the guild they just left).
+- **Side blocks read like text, not noodles**: a long caption ("no data — only trials you join can be measured") now takes its own full-width line under its label instead of wrapping down a squeezed value column; genuine figures keep their two-column rows; the block has sane min/max widths.
+- **The Trials tab keeps your scroll position**: blocks are updated in place and only re-rendered when their markup actually changed (compared against what we last drew, not against live DOM that stops matching once listeners attach); when insertion is unavoidable, every scrolled ancestor's position is saved and restored. Reading the bottom of the page no longer means being yanked to the top every five seconds.
+
 ### The bulk reroller now closes the door behind itself, and takes the free reroll on faith
 
 - **Protected tasks get their green outline back after a bulk reroll**: the reroller left the game's chooser standing open on the card it had just rerolled, which kept that card permanently "mid-flow" — and every decoration pass (protection outline, profit rows, reroll-spend line, icons) rightly refuses to touch a mid-flow card, so nothing ever repainted. The reroller now settles every card it touches: reads the chooser, presses Back, and arms the repaint watch unconditionally instead of hoping another feature does.
