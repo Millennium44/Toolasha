@@ -207,8 +207,8 @@ describe('the panel', () => {
     });
 
     test('with no measurement but captured builds, the Damage tab estimates the split', () => {
-        // A trial is simulated by the game from the members' builds, so a
-        // measurement can never arrive. The tab says so and shows the estimate
+        // Nothing has been watched, so no measurement has arrived. The tab
+        // says what to do about that and shows the estimate meanwhile
         game.breakdown = { measured: false, reason: 'simulated', players: [], seconds: 0 };
         game.seen = [
             { name: 'Tib', at: 1, stats: { attackInterval: 3_000_000_000, autoAttackDamage: 0.6 } },
@@ -218,7 +218,7 @@ describe('the panel', () => {
         guildTrialScoreboard.open();
 
         expect(text()).toContain('Estimated from builds');
-        expect(text()).toContain('does not expose real per-player trial figures');
+        expect(text()).toContain('only while the In Progress');
         expect(text()).toContain('est. party dps');
         expect(text()).toContain('2/3 builds');
         // Nobody is dropped for having no sheet — they are named
@@ -235,16 +235,55 @@ describe('the panel', () => {
         guildTrialScoreboard.open();
         document.querySelector('[data-tab="healing"]').click();
 
-        expect(text()).toContain('cannot be measured or estimated');
-        expect(text()).toContain('simulated by the game');
+        expect(text()).toContain('No healing has been watched');
+        expect(text()).toContain('fight view is open');
         // A build cannot predict healing, so there is no estimate to offer here
         expect(text()).not.toContain('Estimated from builds');
     });
 
     test('a measured panel says where its figures came from', () => {
         guildTrialScoreboard.open();
-        expect(text()).toContain('Attributed off the battle feed');
-        expect(text()).toContain('Only fights this character took part in');
+        expect(text()).toContain('Attributed off this client’s own battle feed');
+    });
+
+    test('a watched trial is measured, and the panel prefers it over the estimate', () => {
+        game.breakdown = breakdown({ source: 'spectated', seconds: 45 });
+        game.seen = [{ name: 'Tib', at: 1, stats: { attackInterval: 3_000_000_000, autoAttackDamage: 0.6 } }];
+        guildTrialScoreboard.noteContext({ trialName: 'Trial Chameleon', members: ['Tib', 'Moo'] });
+        guildTrialScoreboard.open();
+
+        expect(text()).toContain('Measured from the trial fight — 45s watched');
+        expect(text()).toContain('closing it pauses these');
+        expect(text()).not.toContain('Estimated from builds');
+    });
+
+    test('a placeholder name is flagged as one', () => {
+        game.breakdown = breakdown({
+            source: 'spectated',
+            nameCoverage: { named: 1, of: 2, placeholders: ['Player 3'], bySource: {} },
+        });
+        guildTrialScoreboard.open();
+
+        expect(text()).toContain('1 of 2 units could be named');
+        expect(text()).toContain('Player 3 is a placeholder');
+    });
+
+    test('watched but unsplittable is its own message, not "nothing to show"', () => {
+        // The boss's lost health is party damage and is real; naming who dealt
+        // it needs attack counters the stream did not carry
+        game.breakdown = {
+            measured: false,
+            source: 'spectated',
+            splitFromCounters: false,
+            reason: 'watched',
+            players: [],
+            seconds: 30,
+        };
+        guildTrialScoreboard.open();
+
+        expect(text()).toContain('no attack counters for the players');
+        expect(text()).toContain('Healing tab come from the same ticks');
+        expect(text()).not.toContain('Nothing to show yet');
     });
 
     test('“end and start new” goes through the recorder, not a second mechanism', () => {

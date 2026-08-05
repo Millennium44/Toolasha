@@ -17,6 +17,7 @@ import {
     classifyReadings,
     findTrialClockMs,
     findTrialsRoot,
+    inFloatingDialog,
     isTrialsSetupTab,
     onTrialTab,
     parsePoints,
@@ -252,6 +253,61 @@ describe('readTrialTiles', () => {
 
         const tiles = readTrialTiles(document.querySelector('[class*="GuildPanel_guildPanel"]'));
         expect(tiles.map((tile) => tile.name)).toEqual(['Trial Milking']);
+    });
+});
+
+describe('a card is not allowed to be in a dialog', () => {
+    // Reported live: clicking the boss in the trial fight view opens a stat
+    // popup headed "Trial Chameleon - Lv.110", and the whole trial block —
+    // Rate, On pace, Banked, Per player — was drawn inside it, above the boss's
+    // own stat lines. A trial name over a level is exactly what a card is
+    // anchored by, so no card filter could ever have caught this
+    function buildPopup() {
+        document.body.innerHTML =
+            '<div class="GuildPanel_trialsContent__a">' +
+            '<div class="Modal_modalContainer__m" role="dialog">' +
+            '<div class="Modal_modalContent__n">' +
+            '<div class="GuildPanel_tileName__q">Trial Chameleon</div>' +
+            '<div class="GuildPanel_tileSummary__p">Lv.110</div>' +
+            '<div class="ProgressBar_text__r">618,000 / 618,000</div>' +
+            '</div></div></div>';
+        return document.querySelector('[class*="GuildPanel_trialsContent"]');
+    }
+
+    test('the boss’s stat popup yields no cards', () => {
+        expect(readTrialTiles(buildPopup())).toEqual([]);
+    });
+
+    test('a dialog is recognised by its class or by its role', () => {
+        buildPopup();
+        const inside = document.querySelector('[class*="GuildPanel_tileSummary"]');
+        expect(inFloatingDialog(inside)).toBe(true);
+
+        document.body.innerHTML = '<div class="GuildPanel_tile__a"><span id="plain">Lv.110</span></div>';
+        expect(inFloatingDialog(document.getElementById('plain'))).toBe(false);
+        expect(inFloatingDialog(null)).toBe(false);
+    });
+
+    test('an aria-modal wrapper counts even without a matching class', () => {
+        document.body.innerHTML = '<div aria-modal="true"><span id="in">Lv.110</span></div>';
+        expect(inFloatingDialog(document.getElementById('in'))).toBe(true);
+    });
+
+    test('the real cards beside a popup are still read', () => {
+        document.body.innerHTML =
+            '<div class="GuildPanel_trialsContent__a">' +
+            '<div class="GuildPanel_tile__c">' +
+            '<div class="GuildPanel_tileName__q">Trial Chameleon</div>' +
+            '<div class="GuildPanel_tileSummary__p">Lv.140</div>' +
+            '</div>' +
+            '<div class="Modal_modalContent__n">' +
+            '<div class="GuildPanel_tileName__q">Trial Chameleon</div>' +
+            '<div class="GuildPanel_tileSummary__p">Lv.110</div>' +
+            '</div></div>';
+
+        const tiles = readTrialTiles(document.querySelector('[class*="GuildPanel_trialsContent"]'));
+        expect(tiles).toHaveLength(1);
+        expect(tiles[0].level).toBe(140);
     });
 });
 

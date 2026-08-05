@@ -417,6 +417,44 @@ export function findTrialsRoot(scope = typeof document === 'undefined' ? null : 
 }
 
 /**
+ * Class fragments and attributes that mark a floating dialog.
+ *
+ * The game's own modal structure — a close cross, a dotted drag handle, a
+ * backdrop — is drawn inside an element whose class carries one of these.
+ * `guild-loadout-capture.js` already watches `Modal_modalContent`, so the first
+ * of them is confirmed on a live client rather than guessed at.
+ */
+const DIALOG_CLASSES = ['Modal_', 'Dialog', 'Popup', 'Popover', 'Tooltip', 'Overlay'];
+
+/**
+ * Whether an element is inside a floating dialog rather than the panel behind it.
+ *
+ * Reported live, and it is the worst kind of bug because it looks deliberate:
+ * clicking the boss in the trial fight view opens a stat popup headed **"Trial
+ * Chameleon - Lv.110"**, and this feature drew its whole block — Rate, On pace,
+ * Banked, Per player — *inside* that popup, above the boss's own stat lines. The
+ * popup's title is a trial name over a level, which is precisely the shape a
+ * card is recognised by, so every filter this file has said yes.
+ *
+ * The fix is not a better card filter; it is a statement about *where* a card is
+ * allowed to be. A trial card lives in the guild panel's tab content. Anything
+ * inside a modal is something else, however card-shaped it reads.
+ *
+ * @param {Element|null} el - Any element
+ * @returns {boolean} True when a floating dialog is an ancestor
+ */
+export function inFloatingDialog(el) {
+    for (let node = el; node; node = node.parentElement) {
+        if (node.getAttribute?.('role') === 'dialog') return true;
+        if (node.getAttribute?.('aria-modal') === 'true') return true;
+
+        const className = typeof node.className === 'string' ? node.className : '';
+        if (className && DIALOG_CLASSES.some((fragment) => className.includes(fragment))) return true;
+    }
+    return false;
+}
+
+/**
  * Whether the guild page is showing a trial tab at all.
  *
  * A second, independent gate on top of "are there trial cards here", and it
@@ -686,6 +724,9 @@ export function readTrialTiles(root) {
         // Never this script's own output: the per-card block is appended to the
         // card it describes, so a careless anchor list reads it straight back
         if (el.closest?.('[class*="mwi-"]')) return false;
+        // And never a floating dialog. The boss's stat popup is headed with a
+        // trial name over a level, which is exactly what a card is anchored by
+        if (inFloatingDialog(el)) return false;
         if (typeof el.className === 'string' && el.className.includes('GuildPanel_tileSummary')) return true;
 
         // A stated tier or a points line anchors a card too. Without them a

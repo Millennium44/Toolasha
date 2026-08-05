@@ -144,15 +144,14 @@ export function buildGuildReport({
 
     if (!players.length) {
         const close = describeShortfall({ tier, ...(shortfall || {}) });
-        // A trial is simulated by the game from the members' builds, so there is
-        // never a measurement to paste — but there is an estimate, and a guild
-        // arguing about who to sign up wants it. Labelled at the top, where
-        // somebody skimming a chat message will actually read it
+        // Nothing was watched, so there is no measurement to paste — but there is
+        // an estimate, and a guild arguing about who to sign up wants it.
+        // Labelled at the top, where somebody skimming a chat message reads it
         if (estimate?.players?.length) {
             const lines = [
                 headline,
-                'Per-player figures below are ESTIMATED FROM BUILDS — the game does not expose real ' +
-                    'per-player trial figures.',
+                'Per-player figures below are ESTIMATED FROM BUILDS — nobody had the In Progress fight view ' +
+                    'open, which is what streams the real ones.',
                 `Est. party · ~${whole(estimate.total)}/s from ${estimate.covered} of ${estimate.of} builds`,
             ];
 
@@ -174,11 +173,11 @@ export function buildGuildReport({
             return lines.join('\n');
         }
 
-        // Not "no trial fight seen", which promises a fight that could arrive:
-        // the trial is simulated by the game and no client is in it
+        // Not "no trial fight seen", which reads as a fight that was missed: the
+        // fight is real and streams to whoever has the fight view open
         const why =
             breakdown?.reason ||
-            'the trial is simulated by the game from the signed-up members’ builds, so no client fights it';
+            'nobody had the In Progress fight view open, which is what streams a trial’s own battle ticks';
         return [headline, `Nothing was measured here — ${why}.`, ...(close ? [close] : [])].join('\n');
     }
 
@@ -210,8 +209,13 @@ export function buildGuildReport({
     if (close) lines.push(close);
 
     // Said once, at the bottom, because a guild reading a table of numbers
-    // should know the game did not produce them
-    lines.push('(estimated from the battle feed — only fights this client took part in are counted)');
+    // should know where they came from
+    lines.push(
+        breakdown?.source === 'spectated'
+            ? `(measured from the trial fight itself, over the ${shortTime((breakdown.seconds || 0) * 1000)} ` +
+                  'somebody had the In Progress fight view open)'
+            : '(attributed from this client’s own battle feed)'
+    );
 
     return lines.join('\n');
 }

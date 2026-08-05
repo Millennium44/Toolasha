@@ -360,3 +360,35 @@ describe('the acting ability, tick by tick', () => {
         expect(second[0].action).toBe('/abilities/second');
     });
 });
+
+describe('the party-of-one rung, and when it must not be used', () => {
+    test('a spectated tick will not credit the only unit that moved', () => {
+        // From the guild trial capture: the boss lost 1,405 health on a tick
+        // whose only `pMap` entry was there because it was *being hit*. There is
+        // no roster message on that stream, so "one person is known, so it was
+        // them" is not a fact — it is the delta having shown one person
+        const state = newAttributionState();
+        const tick = (hp, dmg) => ({
+            pMap: { 1: { cHP: 2612, mHP: 2612, cMP: 2180 } },
+            mMap: { 0: { cHP: hp, dmgCounter: dmg } },
+        });
+
+        attributeTick(tick(454_807, 301), state, { soloFallback: false });
+        noteActions(state, tick(454_807, 301).pMap);
+        const events = attributeTick(tick(453_402, 302), state, { soloFallback: false });
+
+        expect(events).toEqual([]);
+    });
+
+    test('this client’s own solo fight still credits its one character', () => {
+        const state = newAttributionState();
+        const tick = (hp, dmg) => ({ pMap: { 0: { cHP: 100, cMP: 50 } }, mMap: { 0: { cHP: hp, dmgCounter: dmg } } });
+
+        attributeTick(tick(1000, 0), state);
+        noteActions(state, tick(1000, 0).pMap);
+        const events = attributeTick(tick(900, 1), state);
+
+        expect(events).toHaveLength(1);
+        expect(events[0]).toMatchObject({ playerIndex: '0', amount: 100 });
+    });
+});

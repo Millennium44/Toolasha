@@ -36,6 +36,7 @@ const game = vi.hoisted(() => ({
     alerts: { status: [], payouts: [], reset: 0 },
     recorder: { recording: false, activity: [], lifecycle: [], downloads: [], startedBy: null, endedBy: null },
     scoreboardToggles: 0,
+    breakdown: {},
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -108,7 +109,7 @@ vi.mock('./guild-trial-damage.js', () => ({
         cleanup: vi.fn(),
         reset: vi.fn(),
         setTrialNames: (names) => (game.trialNames = names),
-        breakdown: () => ({ measured: false, reason: 'no trial fight seen yet', players: [] }),
+        breakdown: () => ({ measured: false, reason: 'no trial fight seen yet', players: [], ...game.breakdown }),
     },
 }));
 vi.mock('./guild-trial-recorder.js', () => ({
@@ -639,6 +640,22 @@ describe('placeTrialBlock', () => {
         expect(block.style.gridColumn).toBe('');
     });
 
+    test('a card inside a dialog is refused, not decorated', () => {
+        // The boss's stat popup is headed with a trial name over a level, which
+        // is what a card is recognised by — so placement is the last point at
+        // which "this is not the guild panel" can still be said
+        document.body.innerHTML =
+            '<div id="root"><div class="Modal_modalContainer__m" role="dialog">' +
+            '<div class="GuildPanel_tile__a" id="popup-card">Trial Chameleon Lv.110</div>' +
+            '</div></div>';
+        const block = newBlock();
+        const card = document.getElementById('popup-card');
+
+        expect(placeTrialBlock(document.getElementById('root'), card, block, 'Trial Chameleon')).toBe('refused');
+        expect(card.contains(block)).toBe(false);
+        expect(document.body.contains(block)).toBe(false);
+    });
+
     test('a card with nothing around it keeps the block inside itself', () => {
         document.body.innerHTML = '<div id="lone" class="GuildPanel_tile__a">Alchemy</div>';
         const card = document.getElementById('lone');
@@ -736,6 +753,7 @@ describe('the panel, end to end', () => {
             endedBy: null,
         };
         game.scoreboardToggles = 0;
+        game.breakdown = {};
         await trialsFeature.initialize();
     });
 
@@ -1528,6 +1546,46 @@ describe('the panel, end to end', () => {
         expect(guildTrials.guildName).toBe('Milky Way');
         expect(Object.keys(game.store)).toContain('guildTrials_Milky Way');
         game.guildName = 'Milky Way';
+    });
+
+    test('a watched fight feeds the pool to a card the game draws no bar on', async () => {
+        // The Trials tab's combat card carries a level and no bar at all, so
+        // every projection said "measuring…" for the whole hour. The spectator
+        // stream states the same pool to the unit, and the tier with it
+        game.breakdown = { pool: { current: 454_807, max: 618_000, tier: 2, at: now } };
+        const root = buildTab([{ name: 'Trial Chameleon', level: 110, points: 400, bar: '' }]);
+        root.querySelector('[class*="ProgressBar_text"]').remove();
+        fire(root);
+
+        game.breakdown = { pool: { current: 453_402, max: 618_000, tier: 2, at: now + 10_000 } };
+        vi.setSystemTime(now + 10_000);
+        fire(root);
+
+        const record = guildTrials.record.tiles['combat::trial chameleon'];
+        expect(record.samples.length).toBeGreaterThan(1);
+        // The tier is the stream's own, not the badge plus one
+        expect(record.tiers.some((entry) => entry.tier === 2 && entry.total === 618_000)).toBe(true);
+        expect(text()).toContain('Party DPS');
+    });
+
+    test('a stale pool stops standing in, rather than reading as a rate of zero', async () => {
+        game.breakdown = { pool: { current: 454_807, max: 618_000, tier: 2, at: now - 60_000 } };
+        const root = buildTab([{ name: 'Trial Chameleon', level: 110, points: 400, bar: '' }]);
+        root.querySelector('[class*="ProgressBar_text"]').remove();
+        fire(root);
+
+        const record = guildTrials.record.tiles['combat::trial chameleon'];
+        expect(record.samples).toHaveLength(0);
+    });
+
+    test('a card the game is drawing a bar on keeps its own numbers', async () => {
+        // Two sources must never disagree on screen
+        game.breakdown = { pool: { current: 1, max: 618_000, tier: 2, at: now } };
+        const root = buildTab([{ name: 'Trial Chameleon', level: 140, bar: '618,000 / 618,000' }]);
+        fire(root);
+
+        const record = guildTrials.record.tiles['combat::trial chameleon'];
+        expect(record.samples[0].readings[0]).toMatchObject({ current: 618_000 });
     });
 
     test('a card wearing a Completed badge shows results, whatever the header says', async () => {
@@ -2414,16 +2472,49 @@ describe('renderTrialPlayers', () => {
         expect(html).toContain('3 fights');
     });
 
-    test('nothing measured says the mechanic, not that a fight was missed', () => {
+    test('nothing measured is an instruction, not an apology', () => {
         // "no trial fight seen here" reads as a fight that could have been seen
-        // and was not, and was reported as a bug twice on that basis. The trial
-        // is simulated by the game from the members' builds; nobody fights it
+        // and was not, and was reported as a bug twice on that basis. The fight
+        // is real and streams to whoever opens the In Progress fight view
         const html = renderTrialPlayers({ measured: false, reason: 'the monsters are not this week’s trial' }).join('');
 
         expect(html).toContain('Per player');
-        expect(html).toContain('simulated, not fought');
-        expect(html).toContain('estimates the split from the members');
+        expect(html).toContain('open the fight view');
+        expect(html).toContain('fills from the trial');
         expect(html).not.toContain('no trial fight seen here');
+    });
+
+    test('a watched fight that could not be split says exactly that', () => {
+        const html = renderTrialPlayers({ measured: false, source: 'spectated', reason: 'watched' }).join('');
+
+        expect(html).toContain('watched, but unsplittable');
+        expect(html).toContain('no attack counters');
+        // The support figures did arrive, and the line must not imply otherwise
+        expect(html).toContain('Damage taken, healing and mana came through');
+    });
+
+    test('a measured split says it was watched', () => {
+        const html = renderTrialPlayers({
+            measured: true,
+            source: 'spectated',
+            fights: 2,
+            players: [
+                {
+                    name: 'ICMeow',
+                    damage: 1000,
+                    dps: 100,
+                    share: 100,
+                    hits: 4,
+                    crits: 1,
+                    accuracy: 1,
+                    critRate: 0.25,
+                    deaths: 0,
+                },
+            ],
+        }).join('');
+
+        expect(html).toContain('2 fights · watched');
+        expect(html).toContain('ICMeow');
     });
 
     test('a stale trial says it is the last one', () => {
@@ -2589,6 +2680,7 @@ describe('the payout block, audited', () => {
             endedBy: null,
         };
         game.scoreboardToggles = 0;
+        game.breakdown = {};
         await trialsFeature.initialize();
     });
 

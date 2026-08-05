@@ -118,7 +118,7 @@ describe('buildGuildReport', () => {
         expect(report).toContain('ran dry 3×');
         expect(report).toContain('Healing · 150,000 attributed');
         expect(report).toContain('83% into T4');
-        expect(report).toContain('estimated from the battle feed');
+        expect(report).toContain('this client’s own battle feed');
     });
 
     test('carries no markup and no long lines', () => {
@@ -131,9 +131,9 @@ describe('buildGuildReport', () => {
     });
 
     test('with no measurement it pastes the estimate, labelled at the top', () => {
-        // A trial is simulated by the game from the members' builds, so there is
-        // never a measurement to paste — but a guild deciding who to sign up
-        // still wants the shape, and must not mistake it for the real thing
+        // Nobody watched, so there is no measurement to paste — but a guild
+        // deciding who to sign up still wants the shape, and must not mistake
+        // it for the real thing
         const report = buildGuildReport({
             trialName: 'Trial Chameleon',
             tiersCleared: 4,
@@ -154,7 +154,7 @@ describe('buildGuildReport', () => {
 
         // The label is the second line, where a skimmer will read it
         expect(report.split('\n')[1]).toContain('ESTIMATED FROM BUILDS');
-        expect(report).toContain('does not expose real per-player trial figures');
+        expect(report).toContain('nobody had the In Progress fight view open');
         expect(report).toContain('Est. party · ~4,000/s from 2 of 3 builds');
         expect(report).toContain('1. Tib · ~3,000/s · 75%');
         expect(report).toContain('No build captured, so not estimated · Ada');
