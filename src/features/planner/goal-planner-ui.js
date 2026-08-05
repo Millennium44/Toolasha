@@ -179,6 +179,8 @@ class GoalPlannerPanel {
         this.statusEl = null;
         this.goals = [];
         this.plans = [];
+        /** What the rate providers want said — a missing or stale combat snapshot, say */
+        this.rateNotes = [];
         this.pricedAt = null;
         this.busy = false;
         this.formType = null;
@@ -254,6 +256,7 @@ class GoalPlannerPanel {
             const context = await buildPlannerContext();
             await withHouseCosts(context, this.goals);
             this.plans = planGoals(this.goals, context);
+            this.rateNotes = context.rateNotes || [];
             this.pricedAt = Date.now();
             await saveSnapshot(this.plans);
         } catch (error) {
@@ -405,6 +408,20 @@ class GoalPlannerPanel {
         );
 
         this.bodyEl.appendChild(this._addSection());
+
+        // A rate that is missing or old is worth a line: a plan that ranks
+        // gathering first because nobody has ever run an all-zones sim looks
+        // exactly like a plan that ranks gathering first because it wins.
+        for (const note of this.rateNotes || []) {
+            this.bodyEl.appendChild(
+                span(note, {
+                    display: 'block',
+                    color: COLORS.textDim,
+                    fontSize: '11px',
+                    marginTop: '6px',
+                })
+            );
+        }
 
         if (!this.goals.length) {
             this.bodyEl.appendChild(

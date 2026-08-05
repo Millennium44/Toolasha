@@ -100,6 +100,78 @@ describe('a gold target', () => {
         expect(earn.description).toContain('Fast');
     });
 
+    test('ranks all four sources of income against each other and takes the winner', () => {
+        // One rate per provider, in the shape each of them hands over
+        const fromEveryProvider = [
+            { actionHrid: '/actions/milking/cow', label: 'Milk a Cow', goldPerHour: 900_000, kind: 'gathering' },
+            { actionHrid: '/actions/cooking/stew', label: 'Cook Stew', goldPerHour: 1_400_000, kind: 'production' },
+            {
+                actionHrid: '/actions/alchemy/transmute',
+                label: 'Transmute Ore',
+                goldPerHour: 1_800_000,
+                kind: 'alchemy',
+            },
+            {
+                actionHrid: '/actions/combat/fly',
+                label: 'Fly Zone T2 — from your all-zones run 3d ago',
+                goldPerHour: 2_100_000,
+                kind: 'combat',
+            },
+        ];
+
+        const plan = planGoal(
+            { type: 'gold', amount: 21_000_000 },
+            context({ gold: 0, goldRates: () => fromEveryProvider })
+        );
+
+        const earn = step(plan, 'earn');
+        expect(earn.details.rate.kind).toBe('combat');
+        expect(earn.timeHours).toBeCloseTo(10, 6);
+        // And the losers stay on the card as alternatives, best first
+        expect(earn.details.alternatives.map((rate) => rate.kind)).toEqual([
+            'combat',
+            'alchemy',
+            'production',
+            'gathering',
+        ]);
+    });
+
+    test('picks alchemy when alchemy is what wins', () => {
+        const plan = planGoal(
+            { type: 'gold', amount: 12_000_000 },
+            context({
+                gold: 0,
+                goldRates: () => [
+                    { label: 'Milk a Cow', goldPerHour: 900_000, kind: 'gathering' },
+                    { label: 'Transmute Ore', goldPerHour: 3_000_000, kind: 'alchemy' },
+                ],
+            })
+        );
+
+        const earn = step(plan, 'earn');
+        expect(earn.description).toContain('Transmute Ore');
+        expect(earn.timeHours).toBeCloseTo(4, 6);
+    });
+
+    test('ignores a provider that offered nothing, rather than quoting a zero rate', () => {
+        // What a character with no all-zones run and no profitable alchemy sees
+        const plan = planGoal(
+            { type: 'gold', amount: 2_000_000 },
+            context({
+                gold: 0,
+                goldRates: () => [
+                    { label: 'Milk a Cow', goldPerHour: 500_000, kind: 'gathering' },
+                    { label: 'Transmute Ore', goldPerHour: 0, kind: 'alchemy' },
+                ],
+            })
+        );
+
+        const earn = step(plan, 'earn');
+        expect(earn.details.rate.kind).toBe('gathering');
+        expect(earn.details.alternatives).toHaveLength(1);
+        expect(earn.timeHours).toBeCloseTo(4, 6);
+    });
+
     test('a target already met comes back done, with nothing left to do', () => {
         const plan = planGoal({ type: 'gold', amount: 100 }, context({ gold: 250 }));
 

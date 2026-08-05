@@ -21,6 +21,8 @@ const game = vi.hoisted(() => ({
     initClientData: null,
     /** itemHrid → item details, for getItemDetails */
     items: {},
+    /** Character skills — the ranking reads the alchemy level to flag under-levelled rows */
+    skills: [],
 }));
 
 const calculator = vi.hoisted(() => ({
@@ -44,6 +46,7 @@ vi.mock('../../core/data-manager.js', () => ({
     default: {
         getInitClientData: () => game.initClientData,
         getItemDetails: (hrid) => game.items[hrid] || null,
+        getSkills: () => game.skills,
     },
 }));
 
@@ -95,6 +98,7 @@ function profit(overrides = {}) {
 beforeEach(() => {
     game.initClientData = null;
     game.items = {};
+    game.skills = [];
     market.prices = {};
     experience.totalMultiplier = 1;
     calculator.coinify.mockReset().mockReturnValue(profit());

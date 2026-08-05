@@ -11,7 +11,9 @@
  * Every figure is somebody else's:
  *
  * - gold per hour — `gathering-profit.js` / `production-profit.js`, the same
- *   calculators behind the action panel's profit line
+ *   calculators behind the action panel's profit line; `alchemy-rankings.js`,
+ *   which is the loop behind the Best Items table; and the last all-zones
+ *   simulation, by way of `combat-rates.js`
  * - experience per hour — `experience-calculator.js`, the one the skill tiles use
  * - buy versus craft — `crafting-plan-calculator.js`
  * - an enhancement run — `tooltip-enhancement.js`'s path optimiser, over the
@@ -39,6 +41,8 @@ import dataManager from '../../core/data-manager.js';
 import marketAPI from '../../api/marketplace.js';
 import { calculateGatheringProfit } from '../actions/gathering-profit.js';
 import { calculateProductionProfit } from '../actions/production-profit.js';
+import { alchemyGoldRates } from '../alchemy/alchemy-rankings.js';
+import { loadCombatRates } from './combat-rates.js';
 import { computeBestCraftingPlan } from '../crafting-plan/crafting-plan-calculator.js';
 import {
     calculateEnhancementPath,
@@ -179,16 +183,29 @@ function availableActions(types) {
 /**
  * What every activity the character can do pays per hour.
  *
- * Combat is absent — its income is a drop table against a kill rate rather than
- * an action rate, and the simulator that could answer it is a different kind of
- * calculation. So is alchemy, whose profit calculator is driven per item from
- * the panel the player has open. Both are worth adding; quoting a wrong number
- * for them now would be worse than saying nothing.
+ * Four sources, ranked against each other on one number:
  *
- * @returns {Promise<Array<Object>>} Rates, best first
+ * - **gathering and production** — the action profit calculators, over every
+ *   action the character's levels allow;
+ * - **alchemy** — `alchemy-rankings.js`, which runs the real alchemy profit
+ *   calculator over every item each of the three actions applies to. The coin
+ *   fee alchemy charges is inside those figures, because the calculator
+ *   subtracts it before it reports a profit;
+ * - **combat** — the last all-zones simulation, which is a measurement rather
+ *   than a live calculation and says its own age in its label.
+ *
+ * Only the first two are returned as a per-action map. Alchemy quotes many
+ * rates against the same three action hrids and combat quotes one per zone, so
+ * folding either into a map keyed by action would either clobber entries or
+ * pair an experience rate with the gold from a different item.
+ *
+ * @returns {Promise<{rates: Array<Object>, byAction: Map<string, number>, notes: Array<string>}>}
+ *   Rates best first, gold by action for the skilling rates, and anything the panel should say
  */
 async function measureGoldRates() {
     const rates = [];
+    const byAction = new Map();
+    const notes = [];
 
     for (const { hrid, action } of availableActions(GATHERING_TYPES)) {
         try {
@@ -200,6 +217,7 @@ async function measureGoldRates() {
                     goldPerHour: profit.profitPerHour,
                     kind: 'gathering',
                 });
+                byAction.set(hrid, profit.profitPerHour);
             }
         } catch (error) {
             console.error(`[GoalPlanner] Costing ${hrid} failed:`, error);
@@ -216,14 +234,31 @@ async function measureGoldRates() {
                     goldPerHour: profit.profitPerHour,
                     kind: 'production',
                 });
+                byAction.set(hrid, profit.profitPerHour);
             }
         } catch (error) {
             console.error(`[GoalPlanner] Costing ${hrid} failed:`, error);
         }
     }
 
+    try {
+        rates.push(...alchemyGoldRates({ priceStamp: marketAPI.lastFetchTimestamp || 0 }));
+    } catch (error) {
+        console.error('[GoalPlanner] Ranking alchemy failed:', error);
+        notes.push('Alchemy could not be ranked — see the console.');
+    }
+
+    try {
+        const combat = await loadCombatRates();
+        rates.push(...combat.rates);
+        if (combat.status.note) notes.push(combat.status.note);
+    } catch (error) {
+        console.error('[GoalPlanner] Reading combat rates failed:', error);
+        notes.push('Combat could not be ranked — see the console.');
+    }
+
     rates.sort((a, b) => b.goldPerHour - a.goldPerHour);
-    return rates;
+    return { rates, byAction, notes };
 }
 
 /**
@@ -485,8 +520,9 @@ export async function buildPlannerContext({ measureRates = true } = {}) {
     }
 
     const gameData = dataManager.getInitClientData();
-    const rates = measureRates ? await measureGoldRates() : [];
-    const goldByAction = new Map(rates.map((rate) => [rate.actionHrid, rate.goldPerHour]));
+    const measured = measureRates ? await measureGoldRates() : { rates: [], byAction: new Map(), notes: [] };
+    const rates = measured.rates;
+    const goldByAction = measured.byAction;
 
     const acquisitions = new Map();
     const runs = new Map();
@@ -498,6 +534,10 @@ export async function buildPlannerContext({ measureRates = true } = {}) {
         gold: coinsHeld(),
         levelExperienceTable: gameData?.levelExperienceTable || null,
         pricingNote: `Priced against market data from ${getPriceAgeString() || 'an unknown time'}. Costs move with the book — re-price before committing.`,
+
+        // What a rate provider wants said out loud: a combat snapshot that is
+        // missing or stale is a fact about the ranking, not a silent omission
+        rateNotes: measured.notes,
 
         itemName: (itemHrid) => dataManager.getItemDetails(itemHrid)?.name || humanise(itemHrid),
         skillName: (skillHrid) => humanise(skillHrid),
