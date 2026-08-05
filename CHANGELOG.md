@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The watched fight knows its own name, and a wipe is an outcome
+
+- **The spectated stream attaches to the encounter being watched, and only that one**: the Chameleon fight's pool had been injected into the Hedgehog card (both barless, both claimed it) and the report narrated the wrong trial. Identity now travels with the stream — the fight view's own boss tile first, a clicked boss sheet second — is dropped on a new battle and kept across tier changes, and an unidentified pool is claimed by _no_ card ("click the boss to identify") rather than all of them. The report context is rank-gated the same way.
+- **The cycler only offers people in the fight's own subtree** (anchored by the boss's "Trial …" name — the skilling panel beside it draws members too, and those boxes are inert; that's how someone off foraging got offered mid-fight), and **dead units are clicked like anyone else** — death hides nothing; a unit without abilities simply has none.
+- **Per-tier personal stats actually record now**: the footer only ever attached to a card with a live bar (none exists between tiers or after the hour) and the tier join rode a live-only field — both fixed, so the success-decline model gets its per-tier inputs next trial.
+- **The stats reader no longer swallows session logs**: "59m": "5s" pairs are not stats — labels need a real word, aren't number+unit, and a tiny denylist catches bare generic headings, while the open-ended capture keeps working for real stats.
+- **A party that wipes before tier 1 gets an outcome, not a promise**: a stated 0 outranks the Completed badge (absent stays absent — no points seen is not zero), and the banked row says "0 tiers — fell before tier 1" instead of the live "tier 1 in progress" line; zero-point tiles survive merges and archiving, because a failed trial belongs in the record.
+
 ### Spectating measures: the trial fight is on the wire after all
 
 - **Per-player trial measurement is real** — the user's wire capture proved the fight view streams `guild_battle_updated`: the same tick shape as ordinary battles plus `battleId` and the tier stated outright. The trial damage machinery now consumes it: damage taken, healing, mana, and deaths fill from every tick; the damage split fills when the stream carries attack counters (the first capture carried none for players — the scoreboard says "watched, but the stream carried no attack counters" instead of guessing, and the export's `spectator.playerActionTicks` answers it from the next watch). The message joins the dedup skip-list — byte-identical consecutive ticks would otherwise collapse an entire trial to one.

@@ -120,7 +120,7 @@ import {
     trialBankedBasePoints,
     trialWeekStart,
 } from './guild-trials-math.js';
-import guildTrialDamage from './guild-trial-damage.js';
+import guildTrialDamage, { encounterOf } from './guild-trial-damage.js';
 import guildLoadoutCapture from './guild-loadout-capture.js';
 import guildTrialRecorder, { buildTrialExport, downloadTrialExport } from './guild-trial-recorder.js';
 import guildTrialScoreboard from './guild-trial-scoreboard.js';
@@ -232,7 +232,15 @@ export function analyseTrial(
     // of that rule a combat card sitting at Lv.100 during the *skilling* hour
     // claimed a banked tier for a trial that had not started, and put it in the
     // payout.
-    const earned = statedPoints || record?.points > 0 || completed;
+    //
+    // A card that *states* zero is the third reading, and it is a wipe: the
+    // Hedgehog party fell before clearing tier one, so its card read "Lv.100,
+    // 0 pts, Completed". Letting `completed` imply "earned" credited it the tier
+    // it was fighting, and the block said "Banked 1 tier · finished" for a trial
+    // that banked nothing. A stated zero outranks the completed badge; a card
+    // whose points were never seen at all is unchanged.
+    const statedZero = record?.points === 0;
+    const earned = statedPoints || record?.points > 0 || (completed && !statedZero);
     const assumeFirst = phase === 'live' && badge === null && !earned;
 
     // The tier being fought, which is what a rate, a pace and a forecast are about
@@ -607,6 +615,22 @@ export function tokenPayoutLine(tokens, baseTitle) {
  * @returns {string} HTML
  */
 function bankedRow(analysis) {
+    // A trial that ended on nothing is an outcome, not a reading that has not
+    // arrived — and it is answered before "tier not seen yet", because a card
+    // that wiped on tier one carries no badge either. Reported from exactly
+    // that: the Hedgehog party fell before clearing the first tier, so its card
+    // read Completed with no points and no badge, and this said "nothing yet —
+    // tier 1 in progress" underneath it
+    if (analysis.completed && !analysis.tiersClearedSoFar) {
+        return line(
+            'Banked',
+            '0 tiers — fell before tier 1',
+            DIM,
+            'This trial is over and its card states no points, so nothing was banked: the party did not ' +
+                'finish the first tier. Zero here is a result rather than a figure still to arrive.'
+        );
+    }
+
     if (!analysis.tierKnown) {
         return line(
             'Banked',
@@ -931,30 +955,37 @@ export function renderTrialPlayers(breakdown) {
     if (!breakdown) return [];
 
     if (!breakdown.measured) {
-        // Three different nothings, and a player can act on two of them
+        // Four different nothings, and a player can act on three of them
         const watched = breakdown.source === 'spectated';
-        const value = breakdown.stale
-            ? 'last trial, not this one'
-            : watched
-              ? 'watched, but unsplittable'
-              : 'open the fight view';
+        // A fight is streaming and nothing has said which trial it is, so no
+        // card may claim it. One click on the boss settles that
+        const unidentified = watched && !breakdown.pool?.encounter;
+
+        let value = 'open the fight view';
+        if (breakdown.stale) value = 'last trial, not this one';
+        else if (unidentified) value = 'click the boss to identify';
+        else if (watched) value = 'watched, but unsplittable';
+
+        let why =
+            `${breakdown.reason}.\nOpen the In Progress fight view and this fills from the trial's own ` +
+            'battle ticks. Until then the scoreboard estimates the split from the members\u2019 captured ' +
+            'builds, and says so.';
+        if (unidentified) {
+            why =
+                'A trial fight is being watched, but nothing has said which trial it is — the fight ' +
+                'view\u2019s boss tile could not be read. Click the boss once and its figures attach to the ' +
+                'right card. Until then they attach to none, rather than to every combat card that has no ' +
+                'bar of its own.';
+        } else if (watched) {
+            why =
+                'The trial fight was streamed, but its ticks carried no attack counters for the players, ' +
+                'so the damage cannot be split between them. Damage taken, healing and mana came through ' +
+                'and are on the scoreboard.';
+        }
 
         // A line rather than silence: an empty space under a combat card is
         // indistinguishable from the split having failed
-        return [
-            line(
-                'Per player',
-                value,
-                DIM,
-                watched
-                    ? 'The trial fight was streamed, but its ticks carried no attack counters for the ' +
-                          'players, so the damage cannot be split between them. Damage taken, healing and mana ' +
-                          'came through and are on the scoreboard.'
-                    : `${breakdown.reason}.\nOpen the In Progress fight view and this fills from the trial's ` +
-                          'own battle ticks. Until then the scoreboard estimates the split from the members\u2019 ' +
-                          'captured builds, and says so.'
-            ),
-        ];
+        return [line('Per player', value, DIM, why)];
     }
 
     const rows = [
@@ -983,6 +1014,26 @@ export function renderTrialPlayers(breakdown) {
     }
 
     return rows;
+}
+
+/**
+ * The one card a kind-wide footer can belong to, or nothing.
+ *
+ * The In Progress tab draws the player's own action stats once, in a footer,
+ * with no statement of which card they are about. A bar answers it when there is
+ * one; failing that the header's kind narrows it, and only a *single* match may
+ * be taken — two skilling cards and a skilling header is an ambiguity, and
+ * putting one trial's success rate on another's row is worse than losing it.
+ *
+ * @param {Array<Object>} tiles - Cards from `readTrialTiles`
+ * @param {string|null} kind - From `readTrialStatus`
+ * @returns {Object|null} The card, or null when it cannot be said
+ */
+export function soleTileOfKind(tiles, kind) {
+    if (!kind) return tiles?.length === 1 ? tiles[0] : null;
+
+    const matching = (tiles || []).filter((tile) => tile.kind === kind);
+    return matching.length === 1 ? matching[0] : null;
 }
 
 /**
@@ -1150,6 +1201,10 @@ class GuildTrials {
         this.phase = null;
         /** The last combat forecast, for the per-player panel to echo */
         this.lastForecast = null;
+        /** The spectated pool this render is working from, and its encounter */
+        this.watchedPool = null;
+        /** How strong a claim the card that owns the guild-report context has */
+        this.contextRank = 0;
     }
 
     async initialize() {
@@ -1473,12 +1528,22 @@ class GuildTrials {
             // is the live one — the only card that can have produced them
             const personal = readPersonalStats(root);
             const live = tiles.find((tile) => tile.readings.length > 0) || null;
+            // Whose footer this is. A bar identifies the card outright, but the
+            // card does not always have one — between tiers, and once the hour
+            // ends, the In Progress card is a name and nothing else — and the
+            // stats were then attached to no card at all, which is how a whole
+            // trial's Success Rate readings never reached `personalByTier`
+            const owner = live || soleTileOfKind(tiles, status.kind);
             // The spectator stream's own reading of the pool, when somebody has
             // the fight view open. Same number as the DOM bar, to the unit, but
             // per tick and with the tier stated rather than inferred
             const watched = this._spectatedPool(now);
+            // Held for `_contextRank`, which decides which card the guild report
+            // is about — and is asked once per card rather than once per render
+            this.watchedPool = watched;
+            this.contextRank = 0;
             for (const tile of tiles) {
-                const withPersonal = this._withSpectatedPool(tile === live ? { ...tile, personal } : tile, watched);
+                const withPersonal = this._withSpectatedPool(tile === owner ? { ...tile, personal } : tile, watched);
                 // A running trial whose cards state nothing is on its first
                 // tier, so its readings belong to T1 rather than to no tier at
                 // all — which is what the growth fit needs them filed under
@@ -1488,8 +1553,9 @@ class GuildTrials {
                 // Which tier a live reading belongs to. The badge counts tiers
                 // *finished*, so the pool on screen is the next one along; with
                 // no badge yet, a running trial is on its first tier.
+                const tilePhase = this._phaseFor(status, withPersonal, held);
                 let readingTier = null;
-                if (this._phaseFor(status, withPersonal, held) === 'live' && withPersonal.readings.length) {
+                if (tilePhase === 'live' && withPersonal.readings.length) {
                     // The stream states the tier outright. Nothing else does —
                     // the badge counts tiers *finished*, so every other route to
                     // this number is the badge plus one and an assumption
@@ -1500,11 +1566,24 @@ class GuildTrials {
                     }
                 }
 
-                this.record = recordTileSample(
-                    this.record,
-                    readingTier === null ? withPersonal : { ...withPersonal, readingTier },
-                    now
-                );
+                // Which tier the footer's stats describe, stated rather than
+                // left to fall out of the reading's tier. They only ever landed
+                // on a *live* card with a bar, so a whole skilling trial's worth
+                // of Success Rate readings — the input the success-decline model
+                // is built from — went into the flat `personal` and never into
+                // `personalByTier`, which stayed empty across two exports.
+                //
+                // A footer read while a tier is filling belongs to that tier; one
+                // read after it clears, or on a completed card, belongs to the
+                // tier the card has just banked.
+                const personalTier =
+                    readingTier ?? (Number.isFinite(badge) ? Math.max(FIRST_TIER, badge) : null) ?? held?.tier ?? null;
+
+                const sampled = { ...withPersonal };
+                if (readingTier !== null) sampled.readingTier = readingTier;
+                if (Number.isFinite(personalTier)) sampled.personalTier = personalTier;
+
+                this.record = recordTileSample(this.record, sampled, now);
             }
             if (tiles.length) {
                 saveTrialRecord(this.guildName, this.record, this.characterId, { guildId: this._guildId() });
@@ -1724,7 +1803,9 @@ class GuildTrials {
             });
             // Pushed to the per-player panel, which draws the same conclusion
             // beside the split rather than working it out a second time
-            if (analysis.kind === 'combat') {
+            const rank = analysis.kind === 'combat' ? this._contextRank(tile, analysis) : 0;
+            if (rank > 0 && rank >= this.contextRank) {
+                this.contextRank = rank;
                 this.lastForecast = forecast;
                 guildTrialScoreboard.noteForecast?.(forecast);
                 // What the guild-shareable report needs and cannot work out for
@@ -2229,6 +2310,26 @@ class GuildTrials {
     }
 
     /**
+     * Whether a card is the one the watched figures belong to.
+     *
+     * Ranked rather than decided, because the guild-report context is pushed
+     * once per combat card and the last one used to win — which on a two-combat
+     * week meant the alphabetically-later trial narrated somebody else's fight.
+     * A watched identity outranks everything; failing that, the card with live
+     * readings; failing that, the card that has actually banked something.
+     *
+     * @param {Object} tile - The card
+     * @param {Object} analysis - From `analyseTrial`
+     * @returns {number} 0 when it has no claim at all
+     */
+    _contextRank(tile, analysis) {
+        const watched = this.watchedPool?.encounter || null;
+        if (watched) return encounterOf(tile.name) === watched ? 3 : 0;
+        if (tile.readings?.length) return 2;
+        return analysis?.tiersClearedSoFar > 0 ? 1 : 0;
+    }
+
+    /**
      * Put the watched pool on the combat card that has no reading of its own.
      *
      * Additive only: a card the game is already drawing a bar on keeps its own
@@ -2242,6 +2343,11 @@ class GuildTrials {
      */
     _withSpectatedPool(tile, pool) {
         if (!pool || tile.kind !== 'combat' || tile.readings?.length) return tile;
+        // The reading belongs to the encounter that was watched and to no other.
+        // A week with two combat trials has two barless cards, and standing in
+        // for both put a Chameleon fight's pool on the Hedgehog card — which
+        // then reported it under Hedgehog's name, tier ladder and banked count
+        if (!pool.encounter || encounterOf(tile.name) !== pool.encounter) return tile;
 
         return {
             ...tile,

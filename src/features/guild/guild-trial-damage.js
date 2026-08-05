@@ -94,7 +94,7 @@ import { guildLoadoutCapture } from './guild-loadout-capture.js';
 import { isMonsterUnit } from './guild-loadouts.js';
 import { autoAttackDps } from './guild-trial-forecast.js';
 import { foldSupportTick, newSupportState, summariseSupport, supportCoverage } from './guild-trial-support.js';
-import { fightViewNames, nameCoverage, resolveUnitNames } from './guild-trial-units.js';
+import { fightViewBossNames, fightViewNames, nameCoverage, resolveUnitNames } from './guild-trial-units.js';
 import { COMBAT_ENCOUNTERS, TRIAL_ACTIVE_MS, tierFromLevel } from './guild-trials-math.js';
 
 /** Below this the per-player rates are one exchange's luck rather than a rate */
@@ -391,6 +391,8 @@ class GuildTrialDamage {
         this.spectator = { ticks: 0, playerActionTicks: 0, bossTicks: 0, lastAt: 0, firstAt: 0 };
         /** The boss's own stat sheet, per tier, from clicking it in the fight view */
         this.bossSheets = {};
+        /** What the fight view says is being watched, exactly as it wrote it */
+        this.spectatedBossName = null;
     }
 
     /**
@@ -502,6 +504,7 @@ class GuildTrialDamage {
             const pMap = data.pMap || {};
             const mMap = data.mMap || {};
 
+            this._identifyEncounter();
             this._nameUnits(pMap);
             this._readPool(mMap, tier, now);
 
@@ -570,6 +573,13 @@ class GuildTrialDamage {
             const tier = this.tier ?? tierFromLevel(level);
             if (!Number.isFinite(tier)) return;
 
+            // One click on the boss is enough to say which trial this is, and it
+            // outlives the fight view being closed
+            if (!this.encounter) {
+                this.encounter = encounterOf(name);
+                this.spectatedBossName = name;
+            }
+
             this.bossSheets[tier] = {
                 name,
                 tier,
@@ -607,6 +617,14 @@ class GuildTrialDamage {
         this.support.lastMP = {};
         this.playersHP = {};
 
+        if (newFight) {
+            // A different battle is a different encounter until something says
+            // otherwise. Carrying the last one over is how a Chameleon fight
+            // gets filed under Hedgehog
+            this.spectatedBossName = null;
+            this.encounter = null;
+        }
+
         this.guildBattleId = battleId;
         this.tier = tier;
         this.fights += 1;
@@ -616,6 +634,46 @@ class GuildTrialDamage {
         if (newFight) this.lastTickAt = 0;
         this.pool = null;
         this.spectator.lastAt = at;
+    }
+
+    /**
+     * Which encounter is being watched.
+     *
+     * The stream carries a `battleId` and a `tier` and no name at all, so the
+     * identity has to come from beside it. Two sources, and neither is a guess:
+     *
+     * 1. **The fight view's own boss tile.** It draws "Trial Chameleon" in the
+     *    monsters area exactly as it draws the party's names in the players
+     *    area, and this reads it the same way.
+     * 2. **A boss sheet already clicked.** `battle_unit_fetched` names the unit
+     *    outright, so one click identifies a fight for the rest of it.
+     *
+     * When neither can say, the answer stays null and the pool attaches to *no*
+     * card. That is the whole point: standing in for every barless combat card
+     * is what filed a Chameleon fight under Hedgehog, and "no data" on both is
+     * strictly better than the right number on the wrong trial.
+     */
+    _identifyEncounter() {
+        if (this.encounter) return;
+
+        for (const name of fightViewBossNames()) {
+            const encounter = encounterOf(name);
+            if (!encounter) continue;
+
+            this.spectatedBossName = name;
+            this.encounter = encounter;
+            return;
+        }
+
+        // A sheet for the tier being fought first, then any sheet at all — one
+        // click on the boss identifies the fight even after the view is shut
+        const sheets = Object.values(this.bossSheets);
+        const preferred = sheets.find((sheet) => sheet.tier === this.tier) || sheets[sheets.length - 1];
+        const fromSheet = encounterOf(preferred?.name || '');
+        if (!fromSheet) return;
+
+        this.spectatedBossName = preferred.name;
+        this.encounter = fromSheet;
     }
 
     /**
@@ -653,7 +711,9 @@ class GuildTrialDamage {
             const max = Number(unit?.mHP);
             if (!Number.isFinite(current) || !Number.isFinite(max) || max <= 0) continue;
 
-            this.pool = { current, max, tier, at };
+            // The encounter travels with the reading. A pool with no name on it
+            // is a pool no card may claim
+            this.pool = { current, max, tier, at, encounter: this.encounter, bossName: this.spectatedBossName };
             return;
         }
     }
@@ -820,6 +880,8 @@ class GuildTrialDamage {
             // off the DOM, from the wire instead
             pool: this.pool ? { ...this.pool } : null,
             spectator: { ...this.spectator },
+            // What the fight view called the thing being fought, verbatim
+            bossName: this.spectatedBossName,
             // The boss's tier-scaled sheet, per tier, for the export. Not a
             // loadout and never stored as one — see `isMonsterUnit`
             bossSheets: { ...this.bossSheets },

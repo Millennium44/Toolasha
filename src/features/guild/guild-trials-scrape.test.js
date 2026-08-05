@@ -18,6 +18,7 @@ import {
     findTrialClockMs,
     findTrialsRoot,
     inFloatingDialog,
+    isStatLabel,
     isTrialsSetupTab,
     onTrialTab,
     parsePoints,
@@ -814,8 +815,47 @@ describe('readPersonalStats', () => {
     });
 
     test('a label and value on one run are read too', () => {
-        const stats = readPersonalStats(tab(['Success Rate: 60.8%', 'Time: 3.14s']));
-        expect(stats).toMatchObject({ 'Success Rate': '60.8%', Time: '3.14s' });
+        const stats = readPersonalStats(tab(['Success Rate: 60.8%', 'Work Time: 3.14s']));
+        expect(stats).toMatchObject({ 'Success Rate': '60.8%', 'Work Time': '3.14s' });
+    });
+
+    test('the per-minute time list is not a stat sheet', () => {
+        // Exactly what the export carried beside the real stats: fifty-eight
+        // rows of a session log, read as labelled numbers and stored as stats
+        const stats = readPersonalStats(
+            tab([
+                'Work Power',
+                '146',
+                'Success Rate',
+                '49.6%',
+                '59m',
+                '5s',
+                '58m',
+                '2s',
+                '1m',
+                '3s',
+                'Time',
+                '1s',
+                'Lv.100',
+                '6',
+            ])
+        );
+
+        expect(stats).toEqual({ 'Work Power': '146', 'Success Rate': '49.6%' });
+    });
+
+    test('what counts as a stat name is a word, not a number with a unit', () => {
+        expect(isStatLabel('Work Power')).toBe(true);
+        expect(isStatLabel('Double Progress')).toBe(true);
+        expect(isStatLabel('Armor')).toBe(true);
+        // A number with a unit stuck to it, a bare heading, and a level badge
+        expect(isStatLabel('59m')).toBe(false);
+        expect(isStatLabel('1m')).toBe(false);
+        expect(isStatLabel('Time')).toBe(false);
+        expect(isStatLabel('Total')).toBe(false);
+        expect(isStatLabel('Lv.100')).toBe(false);
+        expect(isStatLabel('T3')).toBe(false);
+        expect(isStatLabel('')).toBe(false);
     });
 
     test('a progress bar is not a stat', () => {

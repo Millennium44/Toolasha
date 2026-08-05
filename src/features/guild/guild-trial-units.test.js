@@ -12,7 +12,14 @@
 
 import { describe, test, expect, afterEach } from 'vitest';
 
-import { fightViewNames, loadoutVitals, matchByVitals, nameCoverage, resolveUnitNames } from './guild-trial-units.js';
+import {
+    fightViewBossNames,
+    fightViewNames,
+    loadoutVitals,
+    matchByVitals,
+    nameCoverage,
+    resolveUnitNames,
+} from './guild-trial-units.js';
 
 /**
  * A captured sheet, as the loadout store holds one.
@@ -92,6 +99,27 @@ describe('fightViewNames', () => {
     test('no fight view is no answer, not an empty party', () => {
         expect(fightViewNames(document)).toEqual([]);
         expect(fightViewNames(null)).toEqual([]);
+    });
+});
+
+describe('fightViewBossNames', () => {
+    test('reads what is being fought, from the monsters area only', () => {
+        document.body.innerHTML =
+            '<div class="BattlePanel_playersArea__a">' +
+            '<div class="CombatUnit_combatUnit__b"><div class="CombatUnit_name__c">ICMeow</div></div>' +
+            '</div>' +
+            '<div class="BattlePanel_monstersArea__d">' +
+            '<div class="CombatUnit_combatUnit__b"><div class="CombatUnit_name__c">Trial Chameleon</div></div>' +
+            '</div>';
+
+        // The identity of the stream: a week with two combat trials had the
+        // Chameleon fight filed under Hedgehog because nothing read this
+        expect(fightViewBossNames(document)).toEqual(['Trial Chameleon']);
+    });
+
+    test('no fight view is no answer', () => {
+        expect(fightViewBossNames(document)).toEqual([]);
+        expect(fightViewBossNames(null)).toEqual([]);
     });
 });
 

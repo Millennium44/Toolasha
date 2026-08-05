@@ -221,6 +221,13 @@ export function recordTileSample(record, tile, at) {
     // tiers' pool sizes under one number and broke the ladder that is fitted
     // from them. The caller says so explicitly rather than this file guessing.
     const observationTier = Number.isFinite(tile?.readingTier) ? tile.readingTier : tier;
+
+    // Which tier the footer's stats describe. Stated by the caller when it can —
+    // the stats are read on a live card, a card between tiers and a completed
+    // card alike, and only the first of those has a reading tier at all. Riding
+    // on `observationTier` meant a skilling trial's whole run of Success Rate
+    // readings landed in the flat `personal` and nothing in `personalByTier`.
+    const personalTier = Number.isFinite(tile?.personalTier) ? tile.personalTier : observationTier;
     const tiers = [...(existing.tiers || [])];
     if (Number.isFinite(observationTier)) {
         for (const reading of readings) {
@@ -265,8 +272,8 @@ export function recordTileSample(record, tile, at) {
         // a reading it can overwrite
         personalByTier: {
             ...(existing.personalByTier || {}),
-            ...(Number.isFinite(observationTier) && tile?.personal && Object.keys(tile.personal).length
-                ? { [observationTier]: { ...(existing.personalByTier?.[observationTier] || {}), ...tile.personal } }
+            ...(Number.isFinite(personalTier) && tile?.personal && Object.keys(tile.personal).length
+                ? { [personalTier]: { ...(existing.personalByTier?.[personalTier] || {}), ...tile.personal } }
                 : {}),
         },
         signups: tile?.signups || existing.signups || null,

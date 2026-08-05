@@ -55,6 +55,9 @@ const UNIT_NAME = '[class*="CombatUnit_name"]';
 /** Where the party's tiles live, as opposed to the monsters' */
 const PLAYERS_AREA = '[class*="BattlePanel_playersArea"]';
 
+/** And where what they are fighting lives */
+const MONSTERS_AREA = '[class*="BattlePanel_monstersArea"]';
+
 /**
  * The party names the fight view is showing, in slot order.
  *
@@ -71,6 +74,30 @@ export function fightViewNames(root = typeof document === 'undefined' ? null : d
     if (!area) return [];
 
     return [...area.querySelectorAll(UNIT)].map((unit) => unit.querySelector(UNIT_NAME)?.textContent?.trim() || '');
+}
+
+/**
+ * What the fight view says is being fought.
+ *
+ * The identity of a spectated stream, and the fix for the worst thing this
+ * feature has done: a week with **two** combat trials, both cards barless on the
+ * Trials tab, and the watched pool stood in for both of them — so a report of a
+ * Chameleon fight was filed under Hedgehog, with Hedgehog's banked count (zero)
+ * and Hedgehog's tier ladder. The stream itself never says which encounter it
+ * is; the view drawing it does, in the same tiles the party's names come from.
+ *
+ * @param {Document|Element} [root] - Where to look; the document by default
+ * @returns {string[]} Monster names in DOM order, empty when the view is shut
+ */
+export function fightViewBossNames(root = typeof document === 'undefined' ? null : document) {
+    if (!root || typeof root.querySelector !== 'function') return [];
+
+    const area = root.querySelector(MONSTERS_AREA);
+    if (!area) return [];
+
+    return [...area.querySelectorAll(UNIT)]
+        .map((unit) => unit.querySelector(UNIT_NAME)?.textContent?.trim() || '')
+        .filter(Boolean);
 }
 
 /**
