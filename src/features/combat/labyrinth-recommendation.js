@@ -86,6 +86,33 @@ export const recommendationMethods = {
     },
 
     /**
+     * The room level a Recommend run says this fight should be skipped to.
+     *
+     * The recommendation is a *threshold* — an offset — and the room it picks
+     * out is `effectiveCombatLevel + threshold − 1`, the same arithmetic
+     * `getCombatSkipRoomLevel` does for the threshold actually configured. What
+     * makes it worth having separately is the objective behind it: a
+     * recommendation is the highest offset whose rooms still clear at the
+     * panel's Target Win %, where the configured one is only whatever the player
+     * last typed into the automation table.
+     *
+     * Zero when no Recommend run has produced one for this monster — it is a
+     * search over simulations and is never run on demand from here. A caller
+     * wanting a level regardless falls back to the configured skip.
+     *
+     * @param {string} monsterHrid - Labyrinth monster
+     * @returns {number} Room level, 0 when there is no recommendation
+     */
+    getRecommendedCombatRoomLevel(monsterHrid) {
+        const threshold = this.recommendations?.get(monsterHrid)?.threshold;
+        if (!Number.isFinite(threshold)) return 0;
+
+        const effectiveCombatLevel = this.getPlayerEffectiveCombatLevel();
+        if (!(effectiveCombatLevel > 0)) return 0;
+        return Math.max(0, Math.floor(effectiveCombatLevel + threshold - 1));
+    },
+
+    /**
      * djb2 string hash — cheap change detection for snapshot contents
      * @private
      */

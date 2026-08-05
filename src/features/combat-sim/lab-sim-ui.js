@@ -14,7 +14,7 @@ import {
     getCommunityBuffs,
     getLabyrinthMonsters,
 } from './combat-sim-adapter.js';
-import { runLabyrinthSimulation, cancelSimulation, getMaxWorkers } from './combat-sim-runner.js';
+import { runLabyrinthSimulation, cancelSimulation } from './combat-sim-runner.js';
 import { wilsonInterval } from './engine/wilson.js';
 import { findMaxLabyrinthLevel, defaultThreshold } from './labyrinth-level-finder.js';
 import {
@@ -28,10 +28,7 @@ import {
     generateCandidates,
     generateHouseCandidates,
     describeHouseScan,
-    calculateUpgradeCost,
-    explainUpgradeCost,
 } from './upgrade-advisor.js';
-import { randomSeed } from './engine/rng.js';
 import {
     LabComparisonStore,
     makeLabRunEntry,
@@ -41,7 +38,10 @@ import {
 import {
     LAB_UPGRADE_DIMENSIONS,
     LAB_SCOPES,
+    LAB_LEVEL_SOURCES,
     sanitizeLabUpgradeSelection,
+    sanitizeLabLevelSource,
+    resolveLabTargetLevel,
     labScopeTargetCount,
     labDimensionAvailability,
     labAbilityLevelTypeAvailability,
@@ -100,6 +100,9 @@ const UPGRADE_DIMENSIONS_KEY = 'labSimUpgradeDimensions';
 
 /** Which fights the Upgrade tab is weighing them for: `{ mode, monsters }`. */
 const UPGRADE_SCOPE_KEY = 'labSimUpgradeScope';
+
+/** Where the Configure-fight scope takes its room level from. */
+const UPGRADE_LEVEL_SOURCE_KEY = 'labSimUpgradeLevelSource';
 
 /**
  * The retired single `Mode` dropdown's value.
@@ -172,62 +175,6 @@ const LAB_MODE_OPTIONS = {
             <button id="mwi-labsim-combat-targets-toggle" title="Set a desired target level per skill instead of a uniform boost" style="${CHIP_BUTTON_STYLE}">Targets</button>
         </span>`,
 };
-
-/**
- * Extra simulated time a house-room run may take to reach the baseline's fight
- * count. A room that adds armor kills no faster and can need longer; a run cut
- * short by the clock is no longer paired with the baseline it is measured
- * against. The same figure the shared analyses use for the same reason.
- */
-const HOUSE_PAIRED_TIME_HEADROOM = 3;
-
-/** Ceiling on house-room simulations in flight at once */
-const HOUSE_MAX_CONCURRENCY = 4;
-
-/**
- * How many house-room sims to run at a time.
- *
- * Each is its own worker against its own copy of the game data, so the budget is
- * the machine's rather than the panel's.
- * @returns {number}
- */
-function houseSimConcurrency() {
-    return Math.max(1, Math.min(getMaxWorkers(), HOUSE_MAX_CONCURRENCY));
-}
-
-/**
- * Run an async job over every item, a few at a time, keeping input order.
- *
- * A lane that throws stops the others being handed more work rather than leaving
- * them spawning simulations for a result already thrown away.
- *
- * @param {Array} items - What to run
- * @param {Function} run - `(item, index) => Promise`
- * @param {number} limit - How many at once
- * @returns {Promise<Array>} Results, in input order
- */
-async function mapWithLimit(items, run, limit) {
-    const results = new Array(items.length);
-    const width = Math.max(1, Math.min(limit, items.length));
-    let next = 0;
-    let failure = null;
-
-    const lane = async () => {
-        while (failure === null) {
-            const index = next++;
-            if (index >= items.length) return;
-            try {
-                results[index] = await run(items[index], index);
-            } catch (error) {
-                failure = error;
-            }
-        }
-    };
-
-    await Promise.all(Array.from({ length: width }, lane));
-    if (failure) throw failure;
-    return results;
-}
 
 /**
  * @param {number} seconds
@@ -398,6 +345,9 @@ class LabSimUI {
         this.elapsedTimer = null;
         this._activeTab = 'configure';
         this._maxLevel = null;
+        // Monster hrid → the level its last Find Max search cleared at. Per
+        // monster because a max level belongs to a fight, not to the panel.
+        this._maxLevelByMonster = {};
         this._labyFindMaxMode = false;
         this._labyResults = null;
         this._upgradeAborted = false;
@@ -728,6 +678,17 @@ class LabSimUI {
                 <input type="checkbox" id="mwi-labsim-allfights-useskip" checked style="margin:0; cursor:pointer;">
                 Use Skip Levels
             </label>
+            <label id="mwi-labsim-level-source-label" style="display:none; align-items:center; gap:4px; color:#888; font-size:12px;"
+                title="Which level the Configure fight is analysed at. The other scopes take each fight's own room level from the automation table.">
+                At
+                <select id="mwi-labsim-level-source" style="${upgradeSelectStyle}">
+                    ${LAB_LEVEL_SOURCES.map(
+                        (levelSource) =>
+                            `<option value="${levelSource.key}" title="${levelSource.title.replace(/"/g, '&quot;')}">${levelSource.label}</option>`
+                    ).join('')}
+                </select>
+                <span id="mwi-labsim-level-source-resolved" style="color:#666; font-size:11px; white-space:nowrap;"></span>
+            </label>
             <span id="mwi-labsim-scope-summary" style="color:#666; font-size:11px;"></span>
         `;
 
@@ -1027,6 +988,12 @@ class LabSimUI {
 
         this.panel.querySelector('#mwi-labsim-monster').addEventListener('change', (e) => {
             this._onMonsterChange(e.target.value);
+            // Every level source is per monster, so the readout is stale the
+            // moment the fight changes
+            this._refreshLevelSourceReadout();
+        });
+        this.panel.querySelector('#mwi-labsim-level').addEventListener('change', () => {
+            this._refreshLevelSourceReadout();
         });
 
         // Max Level listeners
@@ -1060,6 +1027,10 @@ class LabSimUI {
         this.panel.querySelector('#mwi-labsim-allfights-useskip').addEventListener('change', () => {
             this._populateUpgradeTargets(this._getChosenTargets());
             this._onUpgradeSelectionChanged();
+        });
+        this.panel.querySelector('#mwi-labsim-level-source').addEventListener('change', () => {
+            this._refreshLevelSourceReadout();
+            void this._saveUpgradeSelection();
         });
         void this._restoreUpgradeSelection();
         this.panel.querySelector('#mwi-labsim-ability-targets-toggle').addEventListener('click', () => {
@@ -1160,6 +1131,94 @@ class LabSimUI {
             option.textContent = 'Player 1';
             select.appendChild(option);
         }
+    }
+
+    /**
+     * What the Configure tab's Level box holds.
+     * @returns {number} 0 when it holds nothing usable
+     * @private
+     */
+    _configureLevel() {
+        return Math.max(0, Math.floor(Number(this.panel?.querySelector('#mwi-labsim-level')?.value) || 0));
+    }
+
+    /**
+     * The room level this monster's skip threshold sends the character to.
+     *
+     * A Recommend run's answer when there is one — that is the threshold with an
+     * objective behind it, the highest one whose rooms still clear at the Target
+     * Win % — and the threshold actually configured in the automation table
+     * otherwise.
+     * @param {string} monsterHrid - Labyrinth monster
+     * @returns {number} 0 when neither resolves
+     * @private
+     */
+    _skipRoomLevel(monsterHrid) {
+        if (!monsterHrid) return 0;
+        const recommended = labyrinthClearRate.getRecommendedCombatRoomLevel?.(monsterHrid) || 0;
+        return recommended || labyrinthClearRate.getCombatSkipRoomLevel(monsterHrid) || 0;
+    }
+
+    /**
+     * Which level the Configure-fight scope is being analysed at, resolved.
+     *
+     * The Sim max figure is whatever the last Find Max run produced for this
+     * monster, kept per monster for the life of the panel — it is a property of
+     * the fight rather than of the panel, and the box it used to be written into
+     * was overwritten by the next monster's search. It is not persisted: a max
+     * level is a statement about the gear it was searched with, and gear changes
+     * between sessions far more often than it does inside one.
+     *
+     * @param {string} [monsterHrid] - Defaults to the Configure tab's monster
+     * @returns {{level: number, usedSource: string, label: string, fellBack: boolean}}
+     * @private
+     */
+    _resolveTargetLevel(monsterHrid = this.panel?.querySelector('#mwi-labsim-monster')?.value || '') {
+        return resolveLabTargetLevel({
+            source: this._getLevelSource(),
+            simMaxLevel: this._maxLevelByMonster[monsterHrid] || 0,
+            skipLevel: this._skipRoomLevel(monsterHrid),
+            configureLevel: this._configureLevel(),
+        });
+    }
+
+    /**
+     * Which of the three level sources the Configure-fight scope is set to.
+     * @returns {string} A key from `LAB_LEVEL_SOURCES`
+     * @private
+     */
+    _getLevelSource() {
+        return this.panel?.querySelector('#mwi-labsim-level-source')?.value || 'configure';
+    }
+
+    /**
+     * Show the level the current source comes to, beside the source itself.
+     *
+     * The whole point of the control is that the number it produces is visible
+     * before Analyze is pressed — a scope that quietly ran at 100 because that
+     * is what the Level box opens on is what it replaces.
+     * @private
+     */
+    _refreshLevelSourceReadout() {
+        const label = this.panel?.querySelector('#mwi-labsim-level-source-label');
+        const readout = this.panel?.querySelector('#mwi-labsim-level-source-resolved');
+        if (!label || !readout) return;
+
+        label.style.display = this._getUpgradeScopeMode() === 'current' ? 'inline-flex' : 'none';
+
+        const source = this._getLevelSource();
+        const resolved = this._resolveTargetLevel();
+        if (source === 'sim_max' && resolved.usedSource !== 'sim_max') {
+            // Not "unavailable": Analyze runs the search itself. Saying which
+            // level it would use instead would be a promise it does not keep.
+            readout.textContent = 'not simmed yet — Analyze will search';
+            readout.title = 'Find Max has not run for this monster this session. Analyze runs it before the analysis.';
+            return;
+        }
+        readout.textContent = resolved.level ? `= L${resolved.level}` : 'no level resolves';
+        readout.title = resolved.fellBack
+            ? `${resolved.label} — the level you asked for has no value, so this is what will be used.`
+            : resolved.label;
     }
 
     /**
@@ -1364,6 +1423,8 @@ class LabSimUI {
         if (targetList) targetList.style.display = scopeMode === 'selected' ? 'flex' : 'none';
         if (useSkipLabel) useSkipLabel.style.display = scopeMode === 'current' ? 'none' : 'flex';
 
+        this._refreshLevelSourceReadout();
+
         const summary = this.panel.querySelector('#mwi-labsim-scope-summary');
         if (summary) {
             summary.textContent =
@@ -1407,6 +1468,7 @@ class LabSimUI {
                 { mode: this._getUpgradeScopeMode(), monsters: this._getChosenTargets() },
                 'settings'
             );
+            await writeScoped(UPGRADE_LEVEL_SOURCE_KEY, this._getLevelSource(), 'settings');
         } catch (error) {
             console.error('[LabSimUI] Failed to save upgrade selection:', error);
         }
@@ -1419,9 +1481,11 @@ class LabSimUI {
      */
     async _restoreUpgradeSelection() {
         let selection;
+        let savedLevelSource = null;
         try {
             const savedDimensions = await readScoped(UPGRADE_DIMENSIONS_KEY, 'settings', null);
             const savedScope = await readScoped(UPGRADE_SCOPE_KEY, 'settings', null);
+            savedLevelSource = await readScoped(UPGRADE_LEVEL_SOURCE_KEY, 'settings', null);
             const legacyMode =
                 savedDimensions === null && savedScope === null
                     ? await readScoped(LEGACY_UPGRADE_MODE_KEY, 'settings', null)
@@ -1439,6 +1503,13 @@ class LabSimUI {
         });
         const scopeSelect = this.panel.querySelector('#mwi-labsim-upgrade-scope');
         if (scopeSelect) scopeSelect.value = selection.scopeMode;
+        // Nothing saved falls to the rule rather than to a fixed option: a Level
+        // box left on its default means Sim max, a Level box that was typed into
+        // means the number that was typed
+        const levelSourceSelect = this.panel.querySelector('#mwi-labsim-level-source');
+        if (levelSourceSelect) {
+            levelSourceSelect.value = sanitizeLabLevelSource(savedLevelSource, this._configureLevel());
+        }
         this._populateUpgradeTargets(selection.monsters);
         this._onUpgradeSelectionChanged();
     }
@@ -1694,10 +1765,15 @@ class LabSimUI {
                 );
 
                 this._maxLevel = maxResult.maxLevel;
+                // Filed against the monster it was searched for, so the Upgrade
+                // tab's "Sim max" can use it without re-searching and without
+                // reading whichever fight happened to be searched last
+                if (maxResult.cleared) this._maxLevelByMonster[monsterHrid] = maxResult.maxLevel;
                 const levelInput = this.panel.querySelector('#mwi-labsim-level');
                 // Nothing cleared means there is no level to put in the box —
                 // writing 0 would sim a room that does not exist
                 if (levelInput && maxResult.cleared) levelInput.value = maxResult.maxLevel;
+                this._refreshLevelSourceReadout();
 
                 this._displayFindMaxResults(maxResult, monsterHrid, simStartTime);
             } else {
@@ -1966,7 +2042,6 @@ class LabSimUI {
     /** @private */
     async _onUpgradeAnalyze() {
         const playerIndex = parseInt(this.panel.querySelector('#mwi-labsim-upgrade-player')?.value) || 0;
-        const roomLevel = parseInt(this.panel.querySelector('#mwi-labsim-level')?.value) || 100;
         const monsterHrid = this.panel.querySelector('#mwi-labsim-monster')?.value;
         const hours = Math.min(
             10000,
@@ -2048,6 +2123,43 @@ class LabSimUI {
             this._setStatus(
                 `Skipped ${plan.dropped.join(', ')} — not available for this target scope. See the checkbox tooltip.`
             );
+        }
+
+        // Only worth a word when House Rooms is checked and the scan found
+        // nothing to weigh; the rows speak for themselves when it did
+        this._houseScanNote = selectedDimensions.has('house')
+            ? this._describeHouseScan(playerDTOs[playerIndex], gameData)
+            : '';
+
+        // Which level the Configure fight is analysed at. Resolved from the
+        // level source rather than read off the Level box, which opens on 100
+        // and so quietly decided most of this panel's analyses. The whole-run
+        // scopes never come through here — each of their fights carries its own
+        // room level from the automation table.
+        let roomLevel = 0;
+        if (!isAllFights) {
+            roomLevel = await this._resolveUpgradeRoomLevel({
+                monsterHrid,
+                gameData,
+                playerDTOs,
+                playerIndex,
+                crates,
+                hours,
+                communityBuffs,
+                labyrinthCombatBuffs,
+            });
+            if (!roomLevel || this._upgradeAborted) {
+                if (!this._upgradeAborted) {
+                    this._setStatus(
+                        'No room level resolves for this fight. Pick a level source with a value behind it, ' +
+                            'or put a level in the Configure tab.'
+                    );
+                }
+                progressEl.style.display = 'none';
+                runBtn.style.display = '';
+                stopBtn.style.display = 'none';
+                return;
+            }
         }
 
         if (isAllFights) {
@@ -2154,33 +2266,6 @@ class LabSimUI {
                 { abortSignal: () => this._upgradeAborted }
             );
 
-            // House rooms are weighed after it rather than inside it — see
-            // `_runHouseUpgradePass` for why they cannot ride along — and their
-            // rows join the same table, ranked on the same Gold/1%
-            if (plan.standaloneModes?.includes('house') && !this._upgradeAborted) {
-                const house = await this._runHouseUpgradePass({
-                    playerDTO: playerDTOs[playerIndex],
-                    gameData,
-                    monsterHrid,
-                    roomLevel,
-                    crates,
-                    hours,
-                    communityBuffs,
-                    labyrinthCombatBuffs,
-                    onProgress: ({ current, total, description }) => {
-                        if (this._upgradeAborted) return;
-                        const fill = this.panel.querySelector('#mwi-labsim-upgrade-progress-fill');
-                        const text = this.panel.querySelector('#mwi-labsim-upgrade-progress-text');
-                        if (fill) fill.style.width = `${Math.round((current / total) * 100)}%`;
-                        if (text) text.textContent = `House rooms ${current} / ${total}: ${description}`;
-                    },
-                });
-                analysisResult.results.push(...house.results);
-                this._houseScanNote = house.note;
-            } else {
-                this._houseScanNote = '';
-            }
-
             this._renderUpgradeResults(analysisResult, resultsEl);
         } catch (error) {
             if (error.message !== 'Cancelled' && error.message !== 'Aborted') {
@@ -2234,166 +2319,106 @@ class LabSimUI {
     }
 
     /**
-     * Weigh one more level on each combat-relevant house room.
+     * The room level the Configure-fight analysis should run at.
      *
-     * ## Why this is a pass of its own
+     * Everything but Sim max is already known and costs nothing to look up. Sim
+     * max is a binary search over simulations, so it is run here — once per
+     * monster per panel session, on the way into the analysis, with its progress
+     * on the analysis's own bar. Doing it here rather than making the player run
+     * Find Max first is the point of offering it as a default at all.
      *
-     * Every other candidate set rides along inside `runLabyrinthUpgradeAnalysis`
-     * as an extra candidate. A house room cannot, because the shared
-     * `applyCandidateToDTO` — which that analysis uses to build the modified
-     * character for each candidate — installs equipment, abilities, skill
-     * levels, shrine levels and drinks, and has no branch for a room level. A
-     * house candidate handed to it falls through to the equipment branch and
-     * writes a junk slot, so the simulation runs the *unchanged* character and
-     * the row comes back a confident +0.00%. A wrong row that looks measured is
-     * worse than no row, so the levels are applied here instead, straight onto
-     * the DTO the way the game holds them.
+     * A search that clears nothing leaves the source with no level, and the
+     * resolver falls through to the skip level and then to the Configure box
+     * rather than analysing a room that does not exist.
      *
-     * ## Which rooms
-     *
-     * Whatever `houseRoomAffectsCombat` admits: a room the game itself tags as
-     * usable in combat, or one whose buffs are stats the combat engine reads —
-     * damage, armor, accuracy, evasion, the amplifies and resistances, crit rate
-     * and damage, attack and cast speed, tenacity, threat, life steal, thorns,
-     * HP and MP regen, healing amplify, wisdom, rare find and the combat drop
-     * rates. A room that only feeds a skilling action never appears. Rooms
-     * already at level 8 are skipped, having nothing to buy.
-     *
-     * ## What it costs
-     *
-     * `calculateUpgradeCost` on the room candidate: the build cost of that one
-     * level — coins at face value plus the materials at their buy price — which
-     * is what the Gold/1% column then divides by the win-rate gain.
-     *
-     * The pass runs its own baseline. It has to: the analysis's baseline was
-     * simulated on a seed this file never sees, and a delta read off two
-     * independently sampled numbers is noise. Its own baseline, its own seed and
-     * the same paired trial count give each room row an honest delta — the
-     * absolute win rate beside it may differ by a fraction of a percent from the
-     * table's other rows, which is the price of the pairing.
-     *
-     * @param {Object} params
-     * @param {Object} params.playerDTO - The character being analyzed
-     * @param {Object} params.gameData - From `buildGameDataPayload`
-     * @param {string} params.monsterHrid - Labyrinth monster
-     * @param {number} params.roomLevel - Room level to fight at
-     * @param {string[]} params.crates - Crate hrids in force
-     * @param {number} params.hours - Hour budget per simulation
-     * @param {Object} params.communityBuffs - Community buffs
-     * @param {Array} params.labyrinthCombatBuffs - Labyrinth upgrade buffs
-     * @param {Function} [params.onProgress] - `({ current, total, description })`
-     * @returns {Promise<{results: Array<Object>, note: string}>} Rows shaped like
-     *   the analysis's own gold rows, plus a line for the status bar
+     * @param {Object} params - `{ monsterHrid, gameData, playerDTOs, playerIndex,
+     *   crates, hours, communityBuffs, labyrinthCombatBuffs }`
+     * @returns {Promise<number>} Room level, 0 when nothing resolves
      * @private
      */
-    async _runHouseUpgradePass({
-        playerDTO,
-        gameData,
+    async _resolveUpgradeRoomLevel({
         monsterHrid,
-        roomLevel,
+        gameData,
+        playerDTOs,
+        playerIndex,
         crates,
         hours,
         communityBuffs,
         labyrinthCombatBuffs,
-        onProgress,
     }) {
-        const empty = { results: [], note: '' };
+        if (this._getLevelSource() === 'sim_max' && monsterHrid && !this._maxLevelByMonster[monsterHrid]) {
+            try {
+                const text = this.panel?.querySelector('#mwi-labsim-upgrade-progress-text');
+                const fill = this.panel?.querySelector('#mwi-labsim-upgrade-progress-fill');
+                if (text) text.textContent = 'Finding the highest level this loadout clears…';
+
+                const maxResult = await findMaxLabyrinthLevel(
+                    {
+                        gameData,
+                        playerDTOs: [playerDTOs[playerIndex]],
+                        zoneHrid: getCombatZones()[0]?.hrid || '/actions/combat/fly',
+                        monsterHrid,
+                        crates,
+                        simHours: hours,
+                        communityBuffs,
+                        labyrinthCombatBuffs,
+                        threshold: defaultThreshold(),
+                        referenceLevel: labyrinthClearRate.getPlayerEffectiveCombatLevel(),
+                    },
+                    (progress) => {
+                        // Stop cannot cut the search short — it has no abort of
+                        // its own — but the flag is honoured the moment it ends
+                        if (this._upgradeAborted) return;
+                        if (fill) fill.style.width = `${Math.round((progress.step / progress.totalSteps) * 100)}%`;
+                        if (text) {
+                            text.textContent =
+                                `Find Max: level ${progress.level} — ${(progress.winRate * 100).toFixed(0)}% ` +
+                                `(step ${progress.step}/${progress.totalSteps})`;
+                        }
+                    }
+                );
+
+                if (maxResult?.cleared) this._maxLevelByMonster[monsterHrid] = maxResult.maxLevel;
+                this._refreshLevelSourceReadout();
+            } catch (error) {
+                if (error?.message !== 'Cancelled') {
+                    console.error('[LabSimUI] Find Max for the upgrade level failed:', error);
+                }
+            }
+        }
+
+        return this._resolveTargetLevel(monsterHrid).level;
+    }
+
+    /**
+     * What to say about house rooms when the set came back empty.
+     *
+     * House candidates ride along inside the shared analyses now — the applier
+     * they build each candidate's character with has a branch for a room level,
+     * so a room goes in the same table, against the same baseline, on the same
+     * seed as every other row. What no table can say for itself is *why* it has
+     * no house rows in it: every combat room already at the cap is a different
+     * answer from a game with no combat-relevant rooms in it, and neither of
+     * them reads as "nothing worth buying".
+     *
+     * Costs nothing to ask — it is a scan of the room map, not a simulation.
+     *
+     * @param {Object} playerDTO - The character being analyzed
+     * @param {Object} gameData - From `buildGameDataPayload`
+     * @returns {string} A phrase for the status line, empty when rooms were found
+     * @private
+     */
+    _describeHouseScan(playerDTO, gameData) {
         try {
-            if (!playerDTO || !gameData || !monsterHrid) return empty;
-
-            const candidates = generateHouseCandidates(playerDTO, gameData);
-            if (!candidates.length) {
-                // An empty list explains itself rather than reading as "no
-                // upgrades": every combat room at level 8 is a different answer
-                // from a scan that found no combat rooms at all
-                const scan = describeHouseScan(playerDTO, gameData);
-                return {
-                    results: [],
-                    note: scan.combatRelevant
-                        ? `all ${scan.combatRelevant} combat house rooms are already maxed`
-                        : 'no combat-relevant house rooms found',
-                };
-            }
-
-            const zoneHrid = getCombatZones()[0]?.hrid || '/actions/combat/fly';
-            const seed = config.getSettingValue('combatSim_sharedSeed', true) ? randomSeed() : undefined;
-            const total = candidates.length + 1;
-
-            onProgress?.({ current: 0, total, description: 'baseline' });
-            const baselineRun = await runLabyrinthSimulation({
-                gameData,
-                playerDTOs: [playerDTO],
-                zoneHrid,
-                monsterHrid,
-                roomLevel,
-                crates,
-                hours,
-                communityBuffs,
-                labyrinthCombatBuffs,
-                seed,
-            });
-            if (this._upgradeAborted) return empty;
-
-            const baselineAttempts = Math.max(1, baselineRun.labyAttemptCount || 1);
-            const baselineWinRate = (baselineRun.encounters || 0) / baselineAttempts;
-            // Every room plays exactly the baseline's fight count, on the same
-            // seed, so the shared draws cancel out of the difference
-            const paired = { minTrials: baselineAttempts, maxTrials: baselineAttempts };
-
-            const done = { count: 1 };
-            const runOne = async (candidate) => {
-                if (this._upgradeAborted) return null;
-                const dto = JSON.parse(JSON.stringify(playerDTO));
-                // A room sitting at level 0 is not in the map at all yet
-                if (!dto.houseRooms) dto.houseRooms = {};
-                dto.houseRooms[candidate.roomHrid] = candidate.upgradeLevel;
-
-                const run = await runLabyrinthSimulation({
-                    gameData,
-                    playerDTOs: [dto],
-                    zoneHrid,
-                    monsterHrid,
-                    roomLevel,
-                    crates,
-                    // Headroom, because a defensive room can need longer than
-                    // the baseline did to reach the same number of fights
-                    hours: hours * HOUSE_PAIRED_TIME_HEADROOM,
-                    precision: paired,
-                    communityBuffs,
-                    labyrinthCombatBuffs,
-                    seed,
-                });
-                if (this._upgradeAborted) return null;
-
-                done.count++;
-                onProgress?.({ current: done.count, total, description: candidate.description });
-
-                const attempts = Math.max(1, run.labyAttemptCount || 1);
-                const winRate = (run.encounters || 0) / attempts;
-                const cost = calculateUpgradeCost(candidate, gameData);
-                const winRateDelta = winRate - baselineWinRate;
-                return {
-                    candidate: { ...candidate, cost },
-                    costDetail: explainUpgradeCost(candidate, gameData),
-                    costType: 'gold',
-                    cost,
-                    winRate,
-                    winRateDelta,
-                    goldPerWinRate: winRateDelta > 0 && cost != null ? cost / (winRateDelta * 100) : Infinity,
-                    metricType: 'winRate',
-                };
-            };
-
-            const rows = (await mapWithLimit(candidates, runOne, houseSimConcurrency())).filter(Boolean);
-            return {
-                results: rows,
-                note: rows.length ? `${rows.length} house rooms weighed` : '',
-            };
+            if (!playerDTO || !gameData) return '';
+            if (generateHouseCandidates(playerDTO, gameData).length) return '';
+            const scan = describeHouseScan(playerDTO, gameData);
+            return scan.combatRelevant
+                ? `all ${scan.combatRelevant} combat house rooms are already maxed`
+                : 'no combat-relevant house rooms found';
         } catch (error) {
-            if (error?.message !== 'Cancelled' && error?.message !== 'Aborted') {
-                console.error('[LabSimUI] House room pass failed:', error);
-            }
-            return empty;
+            console.error('[LabSimUI] House room scan failed:', error);
+            return '';
         }
     }
 
@@ -2987,7 +3012,8 @@ class LabSimUI {
                 (budget?.sims ? `, ${budget.sims.toLocaleString()} simulations` : '') +
                 (budget?.reduced
                     ? ` at ${Math.round(budget.trialScale * 100)}% of the ${budget.requestedHours}h per fight — every fight simulated, win rates noisier.`
-                    : '.')
+                    : '.') +
+                (this._houseScanNote ? ` House rooms: ${this._houseScanNote}.` : '')
         );
     }
 
@@ -3030,9 +3056,14 @@ class LabSimUI {
     _renderUpgradeResults(analysisResult, container) {
         const results = analysisResult?.results;
         if (!results || !results.length) {
+            // The house note matters most here: an empty table is exactly where
+            // "every combat room is already at the cap" reads as "nothing to buy"
+            const note = this._houseScanNote ? ` House rooms: ${this._houseScanNote}.` : '';
             container.innerHTML =
-                '<div style="color:#888; font-size:12px; padding:20px 0; text-align:center;">No upgrade candidates found.</div>';
-            this._setStatus('No upgrade candidates found.');
+                '<div style="color:#888; font-size:12px; padding:20px 0; text-align:center;">No upgrade candidates found.' +
+                (note ? `<div style="margin-top:6px; color:#666; font-size:11px;">${note.trim()}</div>` : '') +
+                '</div>';
+            this._setStatus(`No upgrade candidates found.${note}`);
             return;
         }
 

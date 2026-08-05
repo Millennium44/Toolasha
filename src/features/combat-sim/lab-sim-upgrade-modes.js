@@ -61,6 +61,9 @@ export const LAB_UPGRADE_DIMENSIONS = [
             'One more level on each house room the combat engine actually reads — the rooms whose buffs are ' +
             'combat stats (damage, armor, accuracy, evasion, resistances, crit, tenacity, life steal and the ' +
             'rest), plus any room the game itself tags as usable in combat.\n\n' +
+            'Available for every target scope. A room level is one thing the character owns rather than ' +
+            'something a loadout carries, so across several fights the same level is installed into each ' +
+            'fight and measured against that fight — one purchase, its effect on each room it reaches.\n\n' +
             'Cost is the build cost of that one level: the coins at face value plus the materials at their ' +
             'buy price. Ranked on the same win rate and Gold/1% as every other row.',
     },
@@ -83,19 +86,6 @@ export const LAB_UPGRADE_DIMENSIONS = [
 
 /** Every dimension key, for validating what came back from storage. */
 export const LAB_UPGRADE_DIMENSION_KEYS = LAB_UPGRADE_DIMENSIONS.map((d) => d.key);
-
-/**
- * Dimensions the shared analysis cannot generate for itself, and which the panel
- * therefore measures in a pass of its own.
- *
- * House rooms are the only one. A room level lives on the character rather than
- * in a loadout, and the candidate applier the labyrinth analyses share installs
- * equipment, abilities, skill levels, shrines and drinks — but not a room level,
- * so a house candidate handed to it would be simulated as no change at all and
- * come back at a confident +0.00%. Keeping them out of the mode lists here is
- * what stops that row from ever being drawn.
- */
-export const LAB_STANDALONE_DIMENSIONS = new Set(['house']);
 
 /**
  * How many fights an analysis is about.
@@ -126,6 +116,121 @@ export const LAB_SCOPES = [
 
 /** Scope keys, for validating what came back from storage. */
 export const LAB_SCOPE_KEYS = LAB_SCOPES.map((s) => s.key);
+
+/**
+ * What the Configure tab's Level input opens on.
+ *
+ * The number matters because it is the one value that carries no intent: a
+ * player who has never touched the box is not asking for level 100, they are
+ * looking at the default. A box holding anything else was typed into.
+ */
+export const DEFAULT_CONFIGURE_LEVEL = 100;
+
+/**
+ * Where the Configure-fight scope gets the room level it analyses at.
+ *
+ * The Configure tab's Level input used to be the only answer, which made the
+ * most common analysis in the panel run against a level nobody chose — the box
+ * opens on 100 and stays there. These are the three levels that actually mean
+ * something for a fight, and the panel resolves whichever is picked into a
+ * number it then shows.
+ *
+ * `all` and `selected` never consult this: those scopes take each fight's own
+ * room level from the labyrinth's automation table.
+ */
+export const LAB_LEVEL_SOURCES = [
+    {
+        key: 'sim_max',
+        label: 'Sim max',
+        title: 'The highest level Find Max clears at the target win rate, for this monster with this loadout. Simulated on demand the first time it is needed, then reused until the panel is closed.',
+    },
+    {
+        key: 'skip',
+        label: 'Skip level',
+        title: 'The level this fight’s skip threshold sends you to. The labyrinth panel’s Recommend result when there is one — the highest threshold whose rooms still clear at the Target Win % — otherwise the threshold currently set in the automation table.',
+    },
+    {
+        key: 'configure',
+        label: 'Configure value',
+        title: 'Whatever the Configure tab’s Level box holds.',
+    },
+];
+
+/** Level-source keys, for validating what came back from storage. */
+export const LAB_LEVEL_SOURCE_KEYS = LAB_LEVEL_SOURCES.map((s) => s.key);
+
+/**
+ * Which level source to start on.
+ *
+ * Sim max, because "how good is my kit for the hardest room it can take" is the
+ * question the Upgrade tab is nearly always being asked — unless the Level box
+ * holds something other than its default, in which case it was typed and the
+ * typed number wins. A box left on 100 is not a request for level 100.
+ *
+ * @param {number} configureLevel - What the Configure tab's Level input holds
+ * @returns {string} A key from `LAB_LEVEL_SOURCES`
+ */
+export function defaultLabLevelSource(configureLevel) {
+    const level = Math.floor(Number(configureLevel) || 0);
+    return level > 0 && level !== DEFAULT_CONFIGURE_LEVEL ? 'configure' : 'sim_max';
+}
+
+/**
+ * Whatever came back from storage, made into a level source.
+ * @param {*} raw - Stored value
+ * @param {number} configureLevel - What the Configure tab's Level input holds
+ * @returns {string} A key from `LAB_LEVEL_SOURCES`
+ */
+export function sanitizeLabLevelSource(raw, configureLevel) {
+    return typeof raw === 'string' && LAB_LEVEL_SOURCE_KEYS.includes(raw) ? raw : defaultLabLevelSource(configureLevel);
+}
+
+/**
+ * The level a source comes to, and what to call it on screen.
+ *
+ * Falls through rather than failing: a sim max that has not been computed yet,
+ * or a fight with no skip threshold set, leaves the source with no number, and a
+ * scope that cannot produce a level is not an analysis. The order it falls
+ * through in is the order of decreasing specificity — the asked-for source, then
+ * the skip level, then the Configure box, which always holds something.
+ *
+ * `usedSource` is what actually supplied the number, which is not always what
+ * was asked for; the panel shows it so a fallback is visible rather than silent.
+ *
+ * @param {Object} params
+ * @param {string} params.source - Requested key from `LAB_LEVEL_SOURCES`
+ * @param {number} [params.simMaxLevel] - From Find Max, 0 when not computed
+ * @param {number} [params.skipLevel] - From the skip threshold or a Recommend run
+ * @param {number} [params.configureLevel] - The Configure tab's Level input
+ * @returns {{level: number, usedSource: string, label: string, fellBack: boolean}}
+ */
+export function resolveLabTargetLevel({ source, simMaxLevel = 0, skipLevel = 0, configureLevel = 0 } = {}) {
+    const clean = (value) => {
+        const level = Math.floor(Number(value) || 0);
+        return level > 0 ? level : 0;
+    };
+    const levels = {
+        sim_max: clean(simMaxLevel),
+        skip: clean(skipLevel),
+        configure: clean(configureLevel),
+    };
+    const requested = LAB_LEVEL_SOURCE_KEYS.includes(source) ? source : 'configure';
+    const order = [requested, 'skip', 'configure'];
+
+    for (const key of order) {
+        if (!levels[key]) continue;
+        const label = LAB_LEVEL_SOURCES.find((s) => s.key === key)?.label || key;
+        return {
+            level: levels[key],
+            usedSource: key,
+            label: `${label} (L${levels[key]})`,
+            fellBack: key !== requested,
+        };
+    }
+
+    const label = LAB_LEVEL_SOURCES.find((s) => s.key === requested)?.label || requested;
+    return { level: 0, usedSource: requested, label: `${label} (not resolved)`, fellBack: false };
+}
 
 /**
  * The old `Mode` dropdown values, as a dimension set plus a scope.
@@ -219,39 +324,35 @@ export function labScopeTargetCount(scopeMode, allCount, chosenCount) {
 /**
  * Which dimensions can be asked of a given scope, and why not when they cannot.
  *
- * Nothing is off the table any more. Ability Swaps used to be refused for a
- * multi-fight scope on the grounds that a hundred-odd candidates times a full
- * labyrinth is thousands of simulations — which was true, and still the wrong
- * answer: the question "which ability should I change" is a question about the
- * whole run, and refusing it for the whole run left the one scope where it
- * mattered least. The size is handled where size belongs instead — swaps are
- * only weighed in the loadouts that cast the ability they replace, the trial
- * budget per fight shrinks on a big run, and `estimateLabUpgradeSims` puts the
- * count in front of the player before anything starts. Fights are never sampled.
+ * Nothing is off the table. Ability Swaps used to be refused for a multi-fight
+ * scope on the grounds that a hundred-odd candidates times a full labyrinth is
+ * thousands of simulations — which was true, and still the wrong answer: the
+ * question "which ability should I change" is a question about the whole run,
+ * and refusing it for the whole run left the one scope where it mattered least.
+ * The size is handled where size belongs instead — swaps are only weighed in the
+ * loadouts that cast the ability they replace, the trial budget per fight
+ * shrinks on a big run, and `estimateLabUpgradeSims` puts the count in front of
+ * the player before anything starts. Fights are never sampled.
  *
- * House rooms are the one entry that still has a rule, and it is a genuine
- * limit rather than a size worry: the whole-run analysis installs each candidate
- * into each fight's own loadout, and a room level is not something a loadout
- * carries — so across several fights there is nowhere for it to land.
+ * House rooms were the last entry with a rule, and it was never really about the
+ * scope: the whole-run analysis could not install a room level because the
+ * shared candidate applier had no branch for one. It has one now, and a room
+ * level being character-wide rather than loadout-held is what makes the
+ * multi-fight question the *interesting* one — the same purchase, measured
+ * against each fight it changes.
  *
- * Keyed on the scope rather than on how many fights it came to: a subset of one
- * is still the whole-run analysis, so "one fight" is not the question — "is this
- * the Configure fight" is.
+ * Kept as a function rather than collapsed into a constant because the rules
+ * that lived here are the kind that come back, and a caller that has to ask is
+ * a caller that will show the next reason without being rewritten.
  *
- * @param {string} scopeMode - `current` | `all` | `selected`
+ * @param {string} _scopeMode - `current` | `all` | `selected`
  * @param {number} _targetCount - From `labScopeTargetCount`
  * @returns {Object<string, {enabled: boolean, reason: string}>} Keyed by dimension
  */
-export function labDimensionAvailability(scopeMode, _targetCount) {
+export function labDimensionAvailability(_scopeMode, _targetCount) {
     const availability = {};
     for (const dimension of LAB_UPGRADE_DIMENSIONS) {
         availability[dimension.key] = { enabled: true, reason: '' };
-    }
-    if (scopeMode !== 'current') {
-        availability.house = {
-            enabled: false,
-            reason: 'House rooms are weighed for the Configure fight only — the whole-run analysis installs each candidate into a fight’s loadout, and a room level is not part of a loadout.',
-        };
     }
     return availability;
 }
@@ -283,7 +384,7 @@ export const LAB_DIMENSION_SIMS_PER_FIGHT = {
     // One per combat skill, and a combat level is every fight
     combat_level: 6,
     guild_shrine: 6,
-    // One per combat-relevant room, plus the pass's own baseline
+    // One per combat-relevant room, and a room level is every fight
     house: 12,
 };
 
@@ -349,8 +450,7 @@ export function labAbilityLevelTypeAvailability(scopeMode, targetCount) {
  */
 export function planLabSingleTargetModes(dimensions) {
     const dims = [...new Set((dimensions || []).filter((key) => LAB_UPGRADE_DIMENSION_KEYS.includes(key)))];
-    // Nothing for the analysis to generate — which happens when the only thing
-    // checked is measured in a pass of its own. `none` matches no branch in the
+    // Nothing for the analysis to generate. `none` matches no branch in the
     // generator, so it produces an empty candidate list rather than quietly
     // falling back to equipment and ranking gear nobody asked about.
     if (!dims.length) return { upgradeMode: 'none', extraModes: [] };
@@ -404,11 +504,6 @@ export function planLabUpgradeRun({
         };
     }
 
-    // What the shared analysis generates, and what the panel has to measure for
-    // itself alongside it
-    const standaloneModes = kept.filter((key) => LAB_STANDALONE_DIMENSIONS.has(key));
-    const analysisModes = kept.filter((key) => !LAB_STANDALONE_DIMENSIONS.has(key));
-
     if (scopeMode === 'current') {
         if (!configureMonsterHrid) {
             return { kind: 'none', dropped, error: 'Select a monster in the Configure tab first.' };
@@ -417,8 +512,7 @@ export function planLabUpgradeRun({
             kind: 'single',
             dropped,
             monsterHrids: [configureMonsterHrid],
-            standaloneModes,
-            ...planLabSingleTargetModes(analysisModes),
+            ...planLabSingleTargetModes(kept),
         };
     }
 
@@ -438,5 +532,5 @@ export function planLabUpgradeRun({
         };
     }
 
-    return { kind: 'allFights', dropped, monsterHrids, modes: analysisModes, standaloneModes: [] };
+    return { kind: 'allFights', dropped, monsterHrids, modes: kept };
 }
