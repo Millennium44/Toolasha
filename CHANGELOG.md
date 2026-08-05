@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The notice board is not a trial, and the ladders are theorems now
+
+- **A guild notice board can no longer become a trial tile**: an older build had stored one guild's entire welcome notice — braille art, Discord links and all — as a "skilling trial", with the Discord channel IDs read as pool bars and the Overview stats attached as personal figures. Names now must be one short line before any matching, readings must be plausible (a nineteen-digit channel ID is not a progress bar; an 8.4M boss bar is), personal stats and the recorder only consume real tiles, and stored records self-heal on load — history included, since an archived notice board is a payout error a week later. The exact 987-character string is a fixture.
+- **Both points ladders are exact and locked**: skilling cumulative base = 100×(tier+1), combat = 200×(tier+1) — verified against ten observations across three guilds and three Builder's Hall levels. And the one apparent exception dissolved into a discovery: **points bank live at the bonus in effect per tier**, so a Builder's Hall upgrade mid-trial makes the total a mixture of two bonuses (the user's three high-tier cards decompose exactly: 500×1.10 + 600×1.12 = 1,222). A stated total inside that upgrade envelope gets a calm explanatory note instead of a warning; outside it, the genuine warning stands. The game's stated figures still win for payout, as ever.
+
 ### The watched fight knows its own name, and a wipe is an outcome
 
 - **The spectated stream attaches to the encounter being watched, and only that one**: the Chameleon fight's pool had been injected into the Hedgehog card (both barless, both claimed it) and the report narrated the wrong trial. Identity now travels with the stream — the fight view's own boss tile first, a clicked boss sheet second — is dropped on a new battle and kept across tier changes, and an unidentified pool is claimed by _no_ card ("click the boss to identify") rather than all of them. The report context is rank-gated the same way.

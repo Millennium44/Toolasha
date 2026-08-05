@@ -64,6 +64,8 @@ const {
     archiveCycle,
     clearTrialStorage,
     MAX_ARCHIVED_CYCLES,
+    isJunkTile,
+    purgeJunkTiles,
     purgeLegacyTrialRecord,
     recordProvenance,
     probeBuildingDetailMap,
@@ -74,6 +76,9 @@ const {
     saveTrialRecord,
     tileKey,
 } = await import('./guild-trials-store.js');
+
+const { NOTICE_BOARD_KEY, NOTICE_BOARD_NAME, NOTICE_BOARD_PERSONAL, NOTICE_BOARD_SAMPLES } =
+    await import('./guild-notice-board.fixture.js');
 
 const { TRIAL_MAX_TIER, trialWeekStart } = await import('./guild-trials-math.js');
 
@@ -195,11 +200,14 @@ describe('recording samples', () => {
 
 describe('loading and saving', () => {
     test('a record from this week comes back', async () => {
-        game.store['guildTrials_Milky Way'] = { weekStart: thisWeek, tiles: { a: { samples: [] } } };
+        game.store['guildTrials_Milky Way'] = {
+            weekStart: thisWeek,
+            tiles: { 'skilling::milking': { name: 'Milking', kind: 'skilling', samples: [] } },
+        };
         const record = await loadTrialRecord('Milky Way', now);
 
         expect(record.weekStart).toBe(thisWeek);
-        expect(Object.keys(record.tiles)).toEqual(['a']);
+        expect(Object.keys(record.tiles)).toEqual(['skilling::milking']);
     });
 
     test('a record from last week is discarded, not merged', async () => {
@@ -618,6 +626,95 @@ describe('the building level cap', () => {
             detailMap: { '/guild_buildings/treasury': { bonusPerLevel: 0.01 } },
         });
         expect(bonus).toMatchObject({ level: 20, bonus: 0.2, source: 'client' });
+    });
+});
+
+describe('a guild notice board that is already on disk', () => {
+    /** The tile exactly as the live export carried it */
+    const noticeTile = () => ({
+        name: NOTICE_BOARD_NAME,
+        kind: 'skilling',
+        level: null,
+        tier: null,
+        points: null,
+        completed: false,
+        personal: { ...NOTICE_BOARD_PERSONAL },
+        samples: NOTICE_BOARD_SAMPLES.map((sample) => ({ ...sample })),
+        tiers: [],
+    });
+
+    test('it is recognised as junk on every count', () => {
+        expect(isJunkTile(noticeTile(), NOTICE_BOARD_KEY)).toBe(true);
+        // The Overview tab's guild statistics, attached to it as a player's own
+        expect(noticeTile().personal['Guild Members']).toBe('106');
+    });
+
+    test('a real trial is not', () => {
+        expect(
+            isJunkTile(
+                { name: 'Milking', kind: 'skilling', samples: [{ t: 1, readings: [{ current: 20, max: 57_120 }] }] },
+                'skilling::milking'
+            )
+        ).toBe(false);
+    });
+
+    test('a real trial carrying one impossible reading is refused too', () => {
+        // Whatever the name says, a nineteen-digit bar is not a bar
+        const tile = {
+            name: 'Milking',
+            kind: 'skilling',
+            samples: [{ t: 1, readings: [{ current: 1_309_080_597_314_011_148, max: 1_525_897_111_936_438_314 }] }],
+        };
+        expect(isJunkTile(tile, 'skilling::milking')).toBe(true);
+    });
+
+    test('purging drops it and names what went, keeping everything else', () => {
+        const record = {
+            weekStart: 1,
+            tiles: {
+                [NOTICE_BOARD_KEY]: noticeTile(),
+                'skilling::milking': { name: 'Milking', kind: 'skilling', samples: [] },
+            },
+        };
+
+        const { record: cleaned, purged } = purgeJunkTiles(record);
+        expect(Object.keys(cleaned.tiles)).toEqual(['skilling::milking']);
+        expect(purged).toHaveLength(1);
+        // One short line of it, so a log line stays a log line
+        expect(purged[0].length).toBeLessThan(50);
+    });
+
+    test('an archived cycle is cleaned too, or the export carries it a week later', () => {
+        const record = {
+            weekStart: 1,
+            tiles: {},
+            history: [{ endedAt: 2, tiles: { [NOTICE_BOARD_KEY]: noticeTile() } }],
+        };
+
+        const { record: cleaned, purged } = purgeJunkTiles(record);
+        expect(cleaned.history[0].tiles).toEqual({});
+        expect(purged).toHaveLength(1);
+    });
+
+    test('nothing to purge is the same record back, so there is no needless write', () => {
+        const record = { weekStart: 1, tiles: { 'skilling::milking': { name: 'Milking', samples: [] } } };
+        expect(purgeJunkTiles(record).record).toBe(record);
+        expect(purgeJunkTiles(null).purged).toEqual([]);
+    });
+
+    test('loading heals what is stored, once, and writes the clean copy back', async () => {
+        game.store['guildTrials_MilkMaxxing'] = {
+            weekStart: thisWeek,
+            tiles: {
+                [NOTICE_BOARD_KEY]: noticeTile(),
+                'skilling::milking': { name: 'Milking', kind: 'skilling', samples: [] },
+            },
+        };
+
+        const record = await loadTrialRecord('MilkMaxxing', now);
+        expect(Object.keys(record.tiles)).toEqual(['skilling::milking']);
+        // And it is gone from storage rather than filtered on every read
+        expect(Object.keys(game.store['guildTrials_MilkMaxxing'].tiles)).toEqual(['skilling::milking']);
     });
 });
 

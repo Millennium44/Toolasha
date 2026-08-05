@@ -98,6 +98,16 @@ export const TRIAL_SKILLS = [
 ];
 
 /**
+ * The longest a card's name may be before it is prose.
+ *
+ * The longest real one is "Trial Chameleon" with a level and a tier badge beside
+ * it — "Trial Chameleon Lv.140 T6", twenty-five characters — so forty is
+ * generous for every name the game has been seen to write and refuses anything
+ * that is a sentence.
+ */
+export const MAX_TRIAL_NAME_CHARS = 40;
+
+/**
  * Whether a card's name is a trial's name.
  *
  * A trial card's name is *only* the trial's name — "Milking", "Alchemy", "Trial
@@ -120,7 +130,17 @@ export const TRIAL_SKILLS = [
  * @returns {boolean} True when it names a trial
  */
 export function isTrialName(name) {
-    const lowered = String(name || '')
+    const raw = String(name || '');
+    // A precondition, not a match: a trial's name is one short line, and asking
+    // the matcher about anything else is asking the wrong question. A guild's
+    // **notice board** — braille art, "Welcome to Creamland!", three Discord
+    // links and the kick rules, 987 characters over twenty lines — reached this
+    // as a card name, and the two Discord channel ids in it read as a progress
+    // bar. The matcher happened to reject that particular paragraph; it is not
+    // the sort of thing that should depend on happening to.
+    if (!raw || raw.length > MAX_TRIAL_NAME_CHARS || /[\r\n]/.test(raw)) return false;
+
+    const lowered = raw
         .toLowerCase()
         .replace(/\b(?:lv\.?\s*\d+|tier\s*\d+|t\d+)\b/g, ' ')
         .replace(/^\s*trial\s+/, ' ')
@@ -312,6 +332,12 @@ export function interpretCardPoints({ type, tier, statedPoints, buildersHallBonu
     let interpretation = 'disagrees';
     if (same(ladderCumulative)) interpretation = 'cumulative';
     else if (same(ladderMarginal)) interpretation = 'marginal';
+    else if (withinMidTrialUpgrade(statedPoints, ladderCumulative, buildersHallBonus)) {
+        // Not a near-miss: a total banked across a Builder's Hall upgrade, which
+        // is a mixture of two bonuses by construction — see
+        // {@link MAX_MID_TRIAL_UPGRADE_LEVELS}
+        interpretation = 'mid-trial-upgrade';
+    }
 
     return {
         interpretation,
@@ -323,6 +349,64 @@ export function interpretCardPoints({ type, tier, statedPoints, buildersHallBonu
         ladderMarginal,
     };
 }
+
+/**
+ * Whether a stated total is the ladder banked across a building upgrade.
+ *
+ * The window is closed at the top — a total that matches today's bonus exactly
+ * is already `cumulative` and never reaches here — and open at the bottom by as
+ * many levels as {@link MAX_MID_TRIAL_UPGRADE_LEVELS} allows. Anything under
+ * that is a figure no arrangement of this guild's buildings produces, and stays
+ * a genuine disagreement.
+ *
+ * @param {number} statedPoints - The card's own figure
+ * @param {number} ladderCumulative - The ladder's base total for that tier
+ * @param {number} bonus - The Builder's Hall bonus in force now, as a fraction
+ * @returns {boolean} True when a mid-trial upgrade explains it
+ */
+export function withinMidTrialUpgrade(statedPoints, ladderCumulative, bonus) {
+    if (!Number.isFinite(statedPoints) || !Number.isFinite(ladderCumulative) || ladderCumulative <= 0) return false;
+    if (!Number.isFinite(bonus)) return false;
+
+    const atNow = ladderCumulative * (1 + bonus);
+    const older = Math.max(-1, bonus - BUILDING_BONUS_PER_LEVEL * MAX_MID_TRIAL_UPGRADE_LEVELS);
+    const atThen = ladderCumulative * (1 + older);
+
+    return statedPoints < atNow - POINTS_EPSILON && statedPoints >= atThen - POINTS_EPSILON;
+}
+
+/**
+ * How many Builder's Hall levels a guild may gain during one trial.
+ *
+ * A trial banks its points **live**, tier by tier, at the bonus in force when
+ * each tier clears — so a guild that levels its Builder's Hall partway through
+ * an hour pays the early tiers at the old bonus and the late ones at the new. A
+ * card's total is then a *mixture*, and dividing it by today's bonus does not
+ * give a whole number of base points. That is not a wrong figure and it is not a
+ * wrinkle in the ladder; it is the ladder plus a clock.
+ *
+ * Confirmed by the guild it happened to, whose Hall went 5 → 6 (+10% → +12%)
+ * during the skilling hour. The three cards decompose exactly, with nothing
+ * rounded:
+ *
+ * ```
+ * Milking  T10  base 1,100 =  500 × 1.10 +  600 × 1.12 =  550 + 672 = 1,222
+ * Foraging T11  base 1,200 =  600 × 1.10 +  600 × 1.12 =  660 + 672 = 1,332
+ * Crafting T12  base 1,300 =  600 × 1.10 +  700 × 1.12 =  660 + 784 = 1,444
+ * ```
+ *
+ * The upgrade lands between each trial's fourth and fifth clear, and the combat
+ * hour ran afterwards — entirely at +12% — which is why those cards divided
+ * cleanly and these did not. **The ladder is uniform at every tier**: cumulative
+ * base is 100 × (tier + 1) for skilling and 200 × (tier + 1) for combat, exact
+ * across three guilds and five bonuses.
+ *
+ * So the envelope is a statement about buildings rather than a tolerance. Two
+ * levels is generous — a guild banking two Hall levels inside one hour is
+ * remarkable — and at 2% a level it is a four-percent window that no genuinely
+ * wrong figure has ever landed in.
+ */
+export const MAX_MID_TRIAL_UPGRADE_LEVELS = 2;
 
 /**
  * What a trial has banked, in Guild Points and in base points.
