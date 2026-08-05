@@ -33,6 +33,7 @@ const game = vi.hoisted(() => ({
     characterData: null,
     dmHandlers: {},
     trialNames: [],
+    alerts: { status: [], payouts: [], reset: 0 },
     recorder: { recording: false, activity: [], downloads: [], startedBy: null, endedBy: null },
     scoreboardToggles: 0,
 }));
@@ -89,6 +90,11 @@ vi.mock('../../core/storage.js', () => ({
             game.store[key] = value;
             return true;
         },
+        delete: async (key) => {
+            delete game.store[key];
+            return true;
+        },
+        getAllKeys: async () => Object.keys(game.store),
     },
 }));
 // Token payouts are valued through the credit exchange, which prices items —
@@ -129,6 +135,13 @@ vi.mock('./guild-trial-recorder.js', () => ({
     },
     buildTrialExport: async () => ({ exportedAt: 'now', bundle: true }),
     downloadTrialExport: (bundle) => game.recorder.downloads.push(bundle),
+}));
+vi.mock('../notifications/guild-trial-alerts.js', () => ({
+    default: {
+        noteTrialStatus: (status) => game.alerts.status.push(status),
+        notePayout: (payout) => game.alerts.payouts.push(payout),
+        reset: () => (game.alerts.reset += 1),
+    },
 }));
 vi.mock('./guild-trial-scoreboard.js', () => ({
     default: { toggle: () => (game.scoreboardToggles += 1), close: vi.fn() },
@@ -674,6 +687,7 @@ describe('the panel, end to end', () => {
         game.characterData = null;
         game.dmHandlers = {};
         game.trialNames = [];
+        game.alerts = { status: [], payouts: [], reset: 0 };
         game.recorder = { recording: false, activity: [], downloads: [], startedBy: null, endedBy: null };
         game.scoreboardToggles = 0;
         await trialsFeature.initialize();
@@ -1090,6 +1104,120 @@ describe('the panel, end to end', () => {
         expect(block.style.position).toBe('static');
     });
 
+    test('a record the panel contradicts is archived, without anyone clearing anything', async () => {
+        // The reported failure after the keying fix: the poisoned record was
+        // already on disk under the *new* guild's own key, so nothing about
+        // provenance could reach it. The page could — it was saying "Scheduled"
+        // with every card at 0 pts while the block above claimed banked tiers.
+        trialsFeature.cleanup();
+        game.characterId = 111;
+        game.guildName = 'New Guild';
+        game.store = {};
+        await trialsFeature.initialize();
+
+        // A cycle's worth of readings, as an older build would have left them
+        guildTrials.record = {
+            weekStart: guildTrials.record.weekStart,
+            tiles: {
+                'skilling::milking': {
+                    name: 'Milking',
+                    kind: 'skilling',
+                    tier: 6,
+                    pointsByTier: { 6: 840 },
+                    samples: [{ t: now - 60_000, readings: [{ current: 100, max: 200 }] }],
+                    tiers: [],
+                },
+            },
+        };
+
+        // The panel the user actually has: scheduled, and every card at nothing
+        document.body.innerHTML = '';
+        const root = document.createElement('div');
+        root.className = 'GuildPanel_trialsContent__a';
+        root.innerHTML =
+            '<div class="GuildPanel_eventStatusRow__b">Scheduled Wed 04:00 PM 2h 24m</div>' +
+            '<div class="GuildPanel_tile__c"><div class="GuildPanel_tileName__d">Milking</div>' +
+            '<div class="GuildPanel_tileSummary__e">Lv.130</div><div>0 pts</div>' +
+            '<div>1/22 signed up</div></div>';
+        document.body.appendChild(root);
+        fire();
+
+        // The phantom cycle is gone from the record and from the screen — and
+        // kept, because the figures were real when they were taken
+        // The old cycle's tier and its 840 are gone; what is left is what this
+        // cycle's card actually states, which is nothing yet
+        expect(guildTrials.record.tiles['skilling::milking']?.pointsByTier?.[6]).toBeUndefined();
+        expect(guildTrials.record.tiles['skilling::milking']?.samples).toEqual([]);
+        expect(guildTrials.record.history).toHaveLength(1);
+        expect(guildTrials.record.history[0].tiles['skilling::milking'].pointsByTier).toEqual({ 6: 840 });
+        expect(text()).not.toContain('840');
+        expect(text()).not.toContain('Banked5 tiers');
+    });
+
+    test('the legacy shared bucket is purged at startup', async () => {
+        trialsFeature.cleanup();
+        game.store = { guildTrials_default: { weekStart: 1, tiles: { a: {} } } };
+        await trialsFeature.initialize();
+        await vi.advanceTimersByTimeAsync(0);
+
+        // One bucket for every character in the tab is what poisoned a guild's
+        // record in the first place
+        expect(game.store.guildTrials_default).toBeUndefined();
+    });
+
+    test('a live trial whose cards are still at zero is not mistaken for a stale record', () => {
+        // The guard on the guard: a running trial routinely shows 0 pts before
+        // the first tier clears, so "0 pts" alone must not throw anything away
+        const root = buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]);
+        fire(root);
+        expect(guildTrials.record.tiles['skilling::alchemy']).toBeTruthy();
+
+        vi.setSystemTime(now + 5000);
+        fire(root);
+
+        expect(guildTrials.record.tiles['skilling::alchemy'].samples.length).toBeGreaterThan(1);
+        expect(guildTrials.record.history || []).toHaveLength(0);
+    });
+
+    test('a finished cycle stops projecting a future', () => {
+        document.body.innerHTML = '';
+        const root = document.createElement('div');
+        root.className = 'GuildPanel_trialsContent__a';
+        root.innerHTML =
+            '<div class="GuildPanel_eventStatusRow__b">Completed Thu 09:00 AM</div>' +
+            '<div class="GuildPanel_tile__c"><div class="GuildPanel_tileName__d">Alchemy</div>' +
+            '<div class="GuildPanel_tileSummary__e">Lv.170</div>' +
+            '<div class="ProgressBar_text__f">18,850 / 65,280</div></div>';
+        document.body.appendChild(root);
+
+        fire();
+        root.querySelector('[class*="ProgressBar_text"]').textContent = '28,850 / 65,280';
+        vi.setSystemTime(now + 10_000);
+        fire();
+
+        // The rate is still shown — it happened — but nothing is projected from it
+        expect(text()).toContain('Final fill rate');
+        expect(text()).not.toContain('Tier clears in');
+        expect(text()).not.toContain('On pace for');
+    });
+
+    test('the lifecycle is passed to the alerts', () => {
+        document.body.innerHTML = '';
+        const root = document.createElement('div');
+        root.className = 'GuildPanel_trialsContent__a';
+        root.innerHTML =
+            '<div class="GuildPanel_eventStatusRow__b">Scheduled Wed 04:00 PM 2h 24m</div>' +
+            '<div class="GuildPanel_tile__c"><div class="GuildPanel_tileName__d">Milking</div>' +
+            '<div class="GuildPanel_tileSummary__e">Lv.130</div><div>0 pts</div></div>';
+        document.body.appendChild(root);
+        fire();
+
+        expect(game.alerts.status.at(-1)).toMatchObject({
+            phase: 'scheduled',
+            startsInMs: 2 * 3600_000 + 24 * 60_000,
+        });
+    });
+
     test('switching character in the same tab leaves nothing of the old one behind', async () => {
         // Live-tested and reported: a fresh character in a different guild was
         // shown the previous guild's finished trial — "Guild Points banked
@@ -1262,6 +1390,7 @@ describe('the two trial tabs, as the game draws them', () => {
         game.characterData = null;
         game.dmHandlers = {};
         game.trialNames = [];
+        game.alerts = { status: [], payouts: [], reset: 0 };
         game.recorder = { recording: false, activity: [], downloads: [], startedBy: null, endedBy: null };
         game.scoreboardToggles = 0;
         guildTrials.record = null;
@@ -1699,6 +1828,7 @@ describe('the payout block, audited', () => {
         game.characterData = null;
         game.dmHandlers = {};
         game.trialNames = [];
+        game.alerts = { status: [], payouts: [], reset: 0 };
         game.recorder = { recording: false, activity: [], downloads: [], startedBy: null, endedBy: null };
         game.scoreboardToggles = 0;
         await trialsFeature.initialize();

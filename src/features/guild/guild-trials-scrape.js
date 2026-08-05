@@ -417,6 +417,59 @@ export function findTrialsRoot(scope = typeof document === 'undefined' ? null : 
 }
 
 /**
+ * Where the trial cycle currently is, from the header the game writes.
+ *
+ * The page says it plainly and this feature had never read it: **"Scheduled Wed
+ * 04:00 PM 2h 24m"** above a tab whose cards all read "0 pts", or **"Completed
+ * Thu 09:00 AM"**, or a running clock. Three states, and each one changes what
+ * the figures below mean:
+ *
+ * - `scheduled` — the next cycle has not started. Anything the record still
+ *   holds is the *previous* cycle's and is finished business.
+ * - `completed` — this cycle is over. The last samples are a photograph, so a
+ *   live-sounding "Tier clears in 11m" projected from them is describing an
+ *   event nobody is running.
+ * - `live` — the normal case, and what everything here already assumed.
+ *
+ * Found by words rather than by class name, in the first lines of the tab, and
+ * only where the line is short enough to be a status rather than prose that
+ * happens to contain the word. The countdown beside it — "2h 24m" — is read
+ * with the same parser the trial clock uses.
+ *
+ * @param {Element} root - The trials root
+ * @returns {{phase: 'scheduled'|'completed'|'live'|null, text: string, startsInMs: number|null}} The status
+ */
+export function readTrialStatus(root) {
+    const none = { phase: null, text: '', startsInMs: null };
+    if (!root || typeof root.querySelectorAll !== 'function') return none;
+
+    const lines = textLines(root).slice(0, STATUS_LINE_LIMIT);
+    for (const line of lines) {
+        if (line.length > STATUS_MAX_CHARS) continue;
+
+        const phase = /\bscheduled\b/i.test(line)
+            ? 'scheduled'
+            : /\bcompleted?\b/i.test(line)
+              ? 'completed'
+              : /\bin\s*progress\b/i.test(line)
+                ? 'live'
+                : null;
+        if (!phase) continue;
+
+        const startsInMs = phase === 'scheduled' ? parseWordyDurationMs(line) : null;
+        return { phase, text: line, startsInMs: Number.isFinite(startsInMs) ? startsInMs : null };
+    }
+
+    return none;
+}
+
+/** How far into the tab a status line can be before it is something else */
+const STATUS_LINE_LIMIT = 12;
+
+/** Longer than this and the line is prose, not a status */
+const STATUS_MAX_CHARS = 60;
+
+/**
  * The labelled numbers the In Progress tab puts in its footer.
  *
  * "Work Time 3.14s, Success Rate 60.8%" — the player's *own* action stats for

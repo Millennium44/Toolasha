@@ -20,7 +20,14 @@ const game = vi.hoisted(() => ({
 }));
 
 vi.mock('../../core/config.js', () => ({
-    default: { getSetting: () => game.setting },
+    // `onSettingChange` is reached through the guild trials feature, which now
+    // imports the notification service; the service hooks every notification
+    // setting at import time so it can ask for permission on a real gesture
+    default: {
+        getSetting: () => game.setting,
+        getSettingValue: (_key, fallback) => fallback,
+        onSettingChange: () => {},
+    },
 }));
 vi.mock('../../core/data-manager.js', () => ({
     default: {

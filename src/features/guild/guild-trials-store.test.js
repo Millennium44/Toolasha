@@ -32,6 +32,11 @@ vi.mock('../../core/storage.js', () => ({
             game.store[key] = value;
             return true;
         },
+        delete: async (key) => {
+            delete game.store[key];
+            return true;
+        },
+        getAllKeys: async () => Object.keys(game.store),
     },
 }));
 vi.mock('../../core/data-manager.js', () => ({
@@ -56,6 +61,11 @@ const {
     guildTrialsStorageKey,
     loadTrialRecord,
     mergeTrialRecords,
+    archiveCycle,
+    clearTrialStorage,
+    MAX_ARCHIVED_CYCLES,
+    purgeLegacyTrialRecord,
+    recordProvenance,
     probeBuildingDetailMap,
     readBuildingBonus,
     readBuildingRules,
@@ -199,16 +209,16 @@ describe('loading and saving', () => {
         };
         const record = await loadTrialRecord('Milky Way', now);
 
-        expect(record).toEqual({ weekStart: thisWeek, tiles: {} });
+        expect(record).toMatchObject({ weekStart: thisWeek, tiles: {} });
     });
 
     test('no record at all is a fresh one for this week', async () => {
-        expect(await loadTrialRecord('Milky Way', now)).toEqual({ weekStart: thisWeek, tiles: {} });
+        expect(await loadTrialRecord('Milky Way', now)).toMatchObject({ weekStart: thisWeek, tiles: {} });
     });
 
     test('a storage failure is a fresh record, not a crash', async () => {
         game.failNextRead = true;
-        expect(await loadTrialRecord('Milky Way', now)).toEqual({ weekStart: thisWeek, tiles: {} });
+        expect(await loadTrialRecord('Milky Way', now)).toMatchObject({ weekStart: thisWeek, tiles: {} });
     });
 
     test('saving round-trips', async () => {
@@ -218,7 +228,121 @@ describe('loading and saving', () => {
             now
         );
         expect(await saveTrialRecord('Milky Way', record)).toBe(true);
-        expect(await loadTrialRecord('Milky Way', now)).toEqual(record);
+        expect(await loadTrialRecord('Milky Way', now)).toMatchObject({ tiles: record.tiles });
+    });
+});
+
+describe('provenance, and healing what is already stored', () => {
+    test('a record naming another guild is not this guild\u2019s', () => {
+        // The reported failure lived exactly here: the poisoned copy had been
+        // adopted onto the *new* guild's own key, so nothing about keying could
+        // reach it. What it could not fake is which guild it was recorded in.
+        expect(recordProvenance({ guildId: 'g1' }, { guildId: 'g2' })).toBe('foreign');
+        expect(recordProvenance({ guildName: 'Old Guild' }, { guildName: 'New Guild' })).toBe('foreign');
+        expect(recordProvenance({ guildId: 'g1' }, { guildId: 'g1' })).toBe('own');
+        expect(recordProvenance({ guildName: 'Milky Way' }, { guildName: 'milky way' })).toBe('own');
+    });
+
+    test('a record from before provenance existed is unknown, not foreign', () => {
+        // Discarding these outright would throw away every correct record the
+        // moment this shipped. They are settled by the panel instead
+        expect(recordProvenance({ tiles: {} }, { guildId: 'g1' })).toBe('unknown');
+        expect(recordProvenance({ guildId: 'g1' }, {})).toBe('unknown');
+        expect(recordProvenance(null, {})).toBe('unknown');
+    });
+
+    test('loading refuses a record belonging to another guild', async () => {
+        game.store['guildTrials_New Guild'] = {
+            weekStart: thisWeek,
+            guildId: 'old-guild',
+            tiles: { 'skilling::milking': { name: 'Milking', samples: [{ t: 1, readings: [] }] } },
+        };
+
+        const record = await loadTrialRecord('New Guild', now, null, { guildId: 'new-guild' });
+        expect(record.tiles).toEqual({});
+    });
+
+    test('a record that names this guild is loaded as ever', async () => {
+        game.store['guildTrials_New Guild'] = {
+            weekStart: thisWeek,
+            guildId: 'new-guild',
+            tiles: { 'skilling::milking': { name: 'Milking', samples: [] } },
+        };
+
+        const record = await loadTrialRecord('New Guild', now, null, { guildId: 'new-guild' });
+        expect(Object.keys(record.tiles)).toEqual(['skilling::milking']);
+    });
+
+    test('saving stamps which guild the record belongs to', async () => {
+        await saveTrialRecord('Milky Way', emptyRecord(thisWeek), null, { guildId: 'g1' });
+        expect(game.store['guildTrials_Milky Way']).toMatchObject({ guildId: 'g1', guildName: 'Milky Way' });
+    });
+
+    test('the legacy shared bucket is purged', async () => {
+        game.store['guildTrials_default'] = { weekStart: thisWeek, tiles: {} };
+        expect(await purgeLegacyTrialRecord()).toBe(true);
+        expect(game.store['guildTrials_default']).toBeUndefined();
+    });
+
+    test('the escape hatch clears trial keys and leaves the XP history alone', async () => {
+        game.store['guildTrials_Milky Way'] = { weekStart: thisWeek, tiles: {} };
+        game.store['guildTrials_char_30404'] = { weekStart: thisWeek, tiles: {} };
+        game.store['guildTrialSession_Milky Way'] = { startedAt: 1 };
+        game.store['guildXP_Milky Way'] = { 'Milky Way': [{ t: 1, xp: 2 }] };
+
+        const { removed } = await clearTrialStorage();
+
+        expect(removed.sort()).toEqual([
+            'guildTrialSession_Milky Way',
+            'guildTrials_Milky Way',
+            'guildTrials_char_30404',
+        ]);
+        // Months of guild XP, nothing to do with trials
+        expect(game.store['guildXP_Milky Way']).toBeTruthy();
+    });
+});
+
+describe('archiving a finished cycle', () => {
+    /**
+     * A record with one tile that has been sampled.
+     * @param {number[]} times - Sample times
+     * @returns {Object} The record
+     */
+    const sampled = (times) => ({
+        weekStart: thisWeek,
+        tiles: {
+            'skilling::milking': {
+                name: 'Milking',
+                kind: 'skilling',
+                tier: 2,
+                samples: times.map((t) => ({ t, readings: [{ current: t, max: 4000 }] })),
+                tiers: [],
+            },
+        },
+    });
+
+    test('the tiles are put away rather than thrown away', () => {
+        const before = sampled([10, 20]);
+        const after = archiveCycle(before, 'a new cycle is scheduled', now);
+
+        expect(after.tiles).toEqual({});
+        expect(after.history).toHaveLength(1);
+        expect(after.history[0]).toMatchObject({ reason: 'a new cycle is scheduled', archivedAt: now });
+        expect(Object.keys(after.history[0].tiles)).toEqual(['skilling::milking']);
+    });
+
+    test('archiving nothing adds no entry', () => {
+        const after = archiveCycle(emptyRecord(thisWeek), 'nothing to keep', now);
+        expect(after.history).toEqual([]);
+    });
+
+    test('only the last few cycles are kept', () => {
+        let held = sampled([10]);
+        for (let cycle = 0; cycle < MAX_ARCHIVED_CYCLES + 3; cycle += 1) {
+            held = archiveCycle(held, `cycle ${cycle}`, now + cycle);
+            held.tiles = sampled([cycle]).tiles;
+        }
+        expect(held.history.length).toBeLessThanOrEqual(MAX_ARCHIVED_CYCLES);
     });
 });
 
@@ -536,7 +660,7 @@ describe('merging two records for one guild', () => {
         const held = record(thisWeek, [20]);
         held.tiles['combat::badger'] = { name: 'Trial Badger', kind: 'combat', samples: [{ t: 5, readings: [] }] };
 
-        expect(Object.keys(mergeTrialRecords(stored, held)).length).toBe(2);
+        expect(Object.keys(mergeTrialRecords(stored, held).tiles).length).toBe(2);
         expect(Object.keys(mergeTrialRecords(stored, held).tiles).sort()).toEqual([
             'combat::badger',
             'skilling::milking',
