@@ -1259,6 +1259,14 @@ function registerFeatures() {
             customCheck: () => config.getSetting('notifications_enhancementTarget'),
         },
         {
+            key: 'taskSlotAlerts',
+            name: 'Task Slot Alerts',
+            category: 'Notifications',
+            module: UI.taskSlotAlerts,
+            async: true,
+            customCheck: () => config.getSetting('notifications_taskSlotsFull'),
+        },
+        {
             key: 'queueMonitor',
             name: 'Queue Monitor',
             category: 'General',

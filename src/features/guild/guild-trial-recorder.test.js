@@ -53,6 +53,9 @@ vi.mock('./guild-loadouts.js', () => ({
 vi.mock('./guild-trials-store.js', () => ({
     loadTrialRecord: async () => game.record,
 }));
+vi.mock('./guild-member-skills.js', () => ({
+    default: { all: () => ({ ada: { name: 'Ada', skills: { '/skills/alchemy': 90 } } }) },
+}));
 
 const { buildTrialExport, guildTrialRecorder, IDLE_STOP_MS, SNAPSHOT_MS, thinBreakdown, trialSessionStorageKey } =
     await import('./guild-trial-recorder.js');
@@ -327,6 +330,7 @@ describe('the export bundle', () => {
         // Additive
         expect(bundle.session.startedBy).toBe('button');
         expect(bundle.coverage.damageMitigated).toMatch(/not carried/);
+        expect(bundle.memberSkills.ada.skills['/skills/alchemy']).toBe(90);
     });
 
     test('the last session is read back off storage when none is in hand', async () => {

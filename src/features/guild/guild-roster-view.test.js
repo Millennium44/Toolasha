@@ -29,6 +29,15 @@ vi.mock('../../utils/panel-geometry.js', () => ({
     reopenIfLeftOpen: async () => {},
 }));
 vi.mock('../../utils/overlay-rows.js', () => ({ registerRow: (definition) => tracker.rows.push(definition) }));
+vi.mock('./guild-member-skills.js', () => ({
+    default: {
+        progress: () => tracker.cycler,
+        openNext: () => {
+            tracker.opened.push(tracker.cycler.next?.name ?? null);
+            return tracker.cyclerResult;
+        },
+    },
+}));
 vi.mock('./guild-xp-tracker.js', () => ({
     guildXPTracker: {
         getOwnGuildName: () => tracker.guildName,
@@ -40,8 +49,12 @@ vi.mock('./guild-xp-tracker.js', () => ({
 }));
 
 tracker.rows = [];
+tracker.cycler = { logged: 0, total: 0, next: null, stale: 0 };
+tracker.cyclerResult = { opened: null, how: 'done' };
+tracker.opened = [];
 
 const {
+    drawProfileCycler,
     drawSeenLoadouts,
     seriesDelta,
     ratePerHour,
@@ -64,6 +77,68 @@ const now = Date.parse('2026-08-04T12:00:00Z');
  * @returns {Array<{t: number, xp: number}>} Oldest first
  */
 const series = (points) => points.map(([hoursAgo, xp]) => ({ t: now - hoursAgo * HOUR, xp })).sort((a, b) => a.t - b.t);
+
+describe('the profile cycler', () => {
+    beforeEach(() => {
+        tracker.opened = [];
+        tracker.cycler = { logged: 2, total: 8, next: { name: 'Ada' }, stale: 0 };
+        tracker.cyclerResult = { opened: 'Ada', how: 'row' };
+        document.body.innerHTML = '';
+    });
+
+    test('shows how far along the roster it is, and who is next', () => {
+        const body = document.createElement('div');
+        drawProfileCycler(body);
+
+        expect(body.textContent).toContain('logged 2/8');
+        expect(body.querySelector('button').textContent).toContain('Ada');
+    });
+
+    test('one click opens one profile', () => {
+        const body = document.createElement('div');
+        drawProfileCycler(body);
+        body.querySelector('button').click();
+
+        // One click, one profile — nothing loops
+        expect(tracker.opened).toEqual(['Ada']);
+    });
+
+    test('when the chat command is the only way in, it says to press Enter', () => {
+        tracker.cyclerResult = { opened: 'Ada', how: 'chat' };
+        const body = document.createElement('div');
+        drawProfileCycler(body);
+        const button = body.querySelector('button');
+        button.click();
+
+        expect(button.textContent).toContain('Press Enter');
+    });
+
+    test('a fully logged roster has nothing to click', () => {
+        tracker.cycler = { logged: 8, total: 8, next: null, stale: 0 };
+        const body = document.createElement('div');
+        drawProfileCycler(body);
+
+        expect(body.querySelector('button').disabled).toBe(true);
+        expect(body.textContent).toContain('Every member logged');
+    });
+
+    test('stale captures are counted so they can be refreshed', () => {
+        tracker.cycler = { logged: 8, total: 8, next: { name: 'Bo' }, stale: 3 };
+        const body = document.createElement('div');
+        drawProfileCycler(body);
+
+        expect(body.textContent).toContain('3 captures older than a week');
+    });
+
+    test('no roster is a note rather than a dead button', () => {
+        tracker.cycler = { logged: 0, total: 0, next: null, stale: 0 };
+        const body = document.createElement('div');
+        drawProfileCycler(body);
+
+        expect(body.querySelector('button')).toBeNull();
+        expect(body.textContent).toContain('No roster yet');
+    });
+});
 
 describe('seriesDelta', () => {
     test('measures what was gained inside the window, and over how long', () => {
@@ -201,6 +276,9 @@ describe('the panel and tile', () => {
         vi.useFakeTimers();
         vi.setSystemTime(now);
         tracker.rows = [];
+        tracker.cycler = { logged: 0, total: 0, next: null, stale: 0 };
+        tracker.cyclerResult = { opened: null, how: 'done' };
+        tracker.opened = [];
         tracker.members = [
             { characterID: 'a', name: 'Alice' },
             { characterID: 'b', name: 'Bob' },

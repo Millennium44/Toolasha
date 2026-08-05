@@ -79,6 +79,11 @@ describe('a trial about to start', () => {
         expect(game.sent).toHaveLength(1);
         expect(game.sent[0].message).toContain('Guild trial starts in');
         expect(game.sent[0].message).toContain('Milking');
+        // Five minutes, read as five minutes. `timeReadable` takes seconds, and
+        // the countdown is milliseconds — handed over unconverted it announced
+        // a ten-minute warning as "6 days 22 hours"
+        expect(game.sent[0].message).toContain('5m');
+        expect(game.sent[0].message).not.toMatch(/day/i);
     });
 
     test('the moment it actually starts is its own announcement', () => {

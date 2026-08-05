@@ -1807,6 +1807,68 @@ describe('one row set per phase', () => {
     });
 });
 
+describe('the expected-tier row', () => {
+    /** Nothing attributed */
+    const breakdown = { measured: false, reason: 'no trial fight seen yet', players: [] };
+
+    test('a measured forecast names the tier and is captioned as derived', () => {
+        const html = renderTrialBlock(analyseTrial(record({ tier: 2 }), {}), 3, breakdown, {
+            phase: 'live',
+            forecast: { tier: 6, tiersCleared: 4, source: 'measured', limitedBy: 'time', coverage: null },
+        });
+
+        expect(html).toContain('Expected');
+        expect(html).toContain('~T6');
+        expect(html).toContain('derived rather than fitted');
+    });
+
+    test('an estimated one says how many loadouts it rests on', () => {
+        const html = renderTrialBlock(analyseTrial(record({ tier: 2 }), {}), 8, breakdown, {
+            phase: 'live',
+            forecast: { tier: 4, source: 'estimated', limitedBy: 'time', coverage: { known: 3, of: 8 } },
+        });
+
+        expect(html).toContain('~T4');
+        expect(html).toContain('3 of 8 members');
+        expect(html).toContain('rough shape rather than a measurement');
+    });
+
+    test('a wall is called a wall, not a slow climb', () => {
+        const html = renderTrialBlock(analyseTrial(record({ tier: 2 }), {}), 3, breakdown, {
+            phase: 'live',
+            forecast: { tier: 3, source: 'measured', limitedBy: 'enrage', coverage: null },
+        });
+
+        expect(html).toContain('walled by the enrage timer');
+    });
+
+    test('nothing to project says which kind of nothing', () => {
+        const html = renderTrialBlock(analyseTrial(record({ tier: 2 }), {}), 3, breakdown, {
+            phase: 'live',
+            forecast: { tier: null, source: 'none', reason: 'no clock on the tab' },
+        });
+
+        expect(html).toContain('not projectable');
+        expect(html).toContain('no clock on the tab');
+    });
+
+    test('a finished or scheduled card does not carry one at all', () => {
+        const forecast = { tier: 6, source: 'measured', limitedBy: 'time' };
+        expect(
+            renderTrialBlock(analyseTrial(record({ tier: 2 }), {}), 3, breakdown, {
+                phase: 'scheduled',
+                forecast,
+            })
+        ).not.toContain('Expected');
+        expect(
+            renderTrialBlock(analyseTrial(record({ tier: 2, completed: true }), {}), 3, breakdown, {
+                phase: 'completed',
+                forecast,
+            })
+        ).not.toContain('Expected');
+    });
+});
+
 describe('renderTrialPlayers', () => {
     const breakdown = {
         measured: true,

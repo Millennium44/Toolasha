@@ -167,8 +167,12 @@ class GuildTrialAlerts {
         if (this.announcedStartFor === key) return null;
         this.announcedStartFor = key;
 
+        // Seconds, not milliseconds: `timeReadable` takes seconds, and handing
+        // it a millisecond count turned a ten-minute warning into "6 days 22
+        // hours" — the one number in the message the player would act on
         const named = this.trials.length ? ` (${this.trials.join(', ')})` : '';
-        return notificationService.notify(key, `Guild trial starts in ${timeReadable(startsInMs)}${named}.`, {
+        const remaining = timeReadable(Math.round(startsInMs / 1000));
+        return notificationService.notify(key, `Guild trial starts in ${remaining}${named}.`, {
             title: 'Guild trial starting',
         });
     }

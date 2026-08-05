@@ -121,6 +121,8 @@ import guildTrialDamage from './guild-trial-damage.js';
 import guildLoadoutCapture from './guild-loadout-capture.js';
 import guildTrialRecorder, { buildTrialExport, downloadTrialExport } from './guild-trial-recorder.js';
 import guildTrialScoreboard from './guild-trial-scoreboard.js';
+import guildMemberSkills from './guild-member-skills.js';
+import { forecastTrial } from './guild-trial-forecast.js';
 import guildTrialAlerts from '../notifications/guild-trial-alerts.js';
 import { describeGuildTokenGold } from './guild-token-value.js';
 import {
@@ -546,13 +548,14 @@ function bankedRow(analysis) {
  * @param {boolean|null} [options.participating] - Whether this character is in this trial
  * @param {string|null} [options.phase] - `scheduled`, `live` or `completed`
  * @param {number|null} [options.startsInMs] - Countdown to the scheduled start
+ * @param {Object|null} [options.forecast] - From `guild-trial-forecast.js`
  * @returns {string} HTML
  */
 export function renderTrialBlock(
     analysis,
     participants,
     breakdown = guildTrialDamage.breakdown(),
-    { participating = null, phase = null, startsInMs = null } = {}
+    { participating = null, phase = null, startsInMs = null, forecast = null } = {}
 ) {
     const unit = analysis.kind === 'combat' ? 'dmg' : 'work';
     const rows = [];
@@ -704,6 +707,30 @@ export function renderTrialBlock(
                 'Current rate held flat for the rest of the hour. A tier only counts when it fits whole.'
             )
         );
+    }
+
+    if (forecast && forecast.tier !== null) {
+        const margin = forecast.limitedBy === 'enrage' ? ' · walled by the enrage timer' : '';
+        rows.push(
+            line(
+                'Expected',
+                `~T${forecast.tier}${margin}`,
+                forecast.source === 'measured' ? GOOD : WARN,
+                forecast.source === 'measured'
+                    ? 'Walked from the health each tier actually has — the game states the trial\u2019s monsters ' +
+                          'and its own health formula, so the ladder is derived rather than fitted — at the rate ' +
+                          'this party is measured to be producing.\n' +
+                          'A fight enrages after ten minutes, so a tier that cannot be killed inside one is a ' +
+                          'wall rather than a slow climb.'
+                    : 'Estimated from the loadouts captured so far' +
+                          (forecast.coverage
+                              ? ` (${forecast.coverage.known} of ${forecast.coverage.of} members)`
+                              : '') +
+                          ' — a rough shape rather than a measurement, until the party\u2019s own damage has been seen.'
+            )
+        );
+    } else if (forecast?.reason) {
+        rows.push(line('Expected', 'not projectable', DIM, `${forecast.reason}.`));
     }
 
     if (analysis.next) {
@@ -940,6 +967,8 @@ class GuildTrials {
         this.blockHtml = new Map();
         /** Where the cycle was last seen to be: scheduled, live or completed */
         this.phase = null;
+        /** The last combat forecast, for the per-player panel to echo */
+        this.lastForecast = null;
     }
 
     async initialize() {
@@ -1010,6 +1039,7 @@ class GuildTrials {
         // recognised without the tab having been opened this session.
         guildTrialDamage.initialize();
         guildTrialRecorder.initialize(this.guildName);
+        guildMemberSkills.initialize(this.guildName).catch(() => {});
         // One bucket for every character in the tab is what poisoned a guild's
         // record in the first place; nothing writes to it now, so it goes
         purgeLegacyTrialRecord().catch(() => {});
@@ -1107,6 +1137,7 @@ class GuildTrials {
             guildTrialRecorder.forget?.();
             guildTrialRecorder.setGuildName?.(null);
             guildTrialAlerts.reset?.();
+            guildMemberSkills.forget?.();
             this.phase = null;
 
             // Re-read for whoever arrives. Not awaited on this path — the
@@ -1202,6 +1233,7 @@ class GuildTrials {
             this.record = mergeTrialRecords(stored, this.record);
             this.guildName = name;
             guildTrialRecorder.setGuildName(name);
+            guildMemberSkills.setGuildName(name).catch(() => {});
             await saveTrialRecord(name, this.record, this.characterId, { guildId: this._guildId() });
         } catch (error) {
             console.error('[GuildTrials] Moving the record onto the guild key failed:', error);
@@ -1331,6 +1363,7 @@ class GuildTrials {
                         participating: ownParticipation(tile.name),
                         phase: status?.phase || null,
                         startsInMs: status?.startsInMs ?? null,
+                        forecast: this._forecast(tile, analysis, participants),
                     }),
                     // Wide enough that a label and a figure fit on one line, and
                     // capped so it cannot stretch a whole panel — the reported
@@ -1350,6 +1383,45 @@ class GuildTrials {
             this._reapBlocks(root, drawn);
         } catch (error) {
             console.error('[GuildTrials] Drawing the trial panel failed:', error);
+        }
+    }
+
+    /**
+     * What tier this trial should reach, with where the number came from.
+     *
+     * @param {Object} tile - The card
+     * @param {Object} analysis - From `analyseTrial`
+     * @param {number} participants - Members signed up
+     * @returns {Object|null} The forecast
+     */
+    _forecast(tile, analysis, participants) {
+        try {
+            const breakdown = guildTrialDamage.breakdown?.();
+            // The card's own bar first: it covers everybody in the trial, where
+            // the attributed figure covers only the fights this client was in
+            const measuredDps =
+                analysis.kind === 'combat' && Number.isFinite(analysis.rate)
+                    ? analysis.rate * 1000
+                    : (breakdown?.measured && breakdown.partyDps) || null;
+
+            const forecast = forecastTrial({
+                analysis,
+                clientData: dataManager.getInitClientData?.() || null,
+                name: tile.name,
+                participants,
+                loadouts: guildLoadoutCapture.seen?.() || [],
+                measuredDps,
+            });
+            // Pushed to the per-player panel, which draws the same conclusion
+            // beside the split rather than working it out a second time
+            if (analysis.kind === 'combat') {
+                this.lastForecast = forecast;
+                guildTrialScoreboard.noteForecast?.(forecast);
+            }
+            return forecast;
+        } catch (error) {
+            console.error('[GuildTrials] Forecasting the trial failed:', error);
+            return null;
         }
     }
 

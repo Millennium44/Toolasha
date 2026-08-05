@@ -2841,6 +2841,22 @@ export const settingsGroups = {
                 default: false,
                 help: 'Announces the Guild Points banked and the token payout — every eligible member’s share and a participant’s — as soon as the guild panel reports the cycle complete.',
             },
+            notifications_taskSlotsFull: {
+                id: 'notifications_taskSlotsFull',
+                label: 'Notify before your task slots fill up',
+                type: 'checkbox',
+                default: false,
+                help: 'A task that arrives with no free slot is simply not given — there is no queue behind the board. This projects when the last free slot fills, from the server’s own slot cap, task cooldown and last-task time, so it works with the task panel closed. It is a projection, not an observation: it assumes the cadence holds and that nothing frees a slot in the meantime, and it can only be as fresh as the last message the game sent this tab. Completing, claiming or discarding a task moves the deadline and re-arms the warning. A board that is already full says so once.',
+            },
+            notifications_taskSlotsLeadHours: {
+                id: 'notifications_taskSlotsLeadHours',
+                label: 'Task slots warning lead time (hours)',
+                type: 'number',
+                default: 8,
+                min: 1,
+                max: 48,
+                help: 'How long before the last free task slot fills to warn you — enough notice to claim or clear something. Default: 8.',
+            },
             notifications_communityBuffExpiring: {
                 id: 'notifications_communityBuffExpiring',
                 label: 'Notify before a community buff expires',

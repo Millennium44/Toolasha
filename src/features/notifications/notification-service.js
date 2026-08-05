@@ -74,6 +74,7 @@ export const NOTIFICATION_SETTING_KEYS = [
     'notifications_enhancementTarget',
     'notifications_trialStarting',
     'notifications_trialResults',
+    'notifications_taskSlotsFull',
     'notifiEmptyAction',
 ];
 
