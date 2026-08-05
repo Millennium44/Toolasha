@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The listing says who built what
+
+- **`docs/GREASYFORK.md`**: a paste-ready "Additional info" body for the GreasyFork listing — the fork's biggest changes since diverging from upstream, and a Credits section that makes every attributed script visible from the listing itself (bot7420's MWITools, Celasha's Toolasha, Frotty's MWI Combat Suite/Scaley Way Idle/OPanel, Q7's market history, jigglymoose's JIGS, dakonglong's labyrinth calculator, and the combat-sim team), linking the full per-file licence record.
+- **The `@description` header** now identifies the fork, its major additions, and the credited authors in one line, so the recognition rides with the script itself.
+
 ### The session starts when combat does
 
 - **The Combat Level session no longer waits for its panel**: tracking now arms on the first battle and joins every later battle to the same run, so opening the panel an hour into a grind shows the run's duration and exp — not `5s` and `measuring…`. Leaving combat marks the next battle as a new session; figures stay readable after a run, and Reset still re-baselines from now. The Start value says whose clock it is.

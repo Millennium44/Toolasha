@@ -10,3 +10,5 @@ dist/
 docs/*
 # Exception: attribution that is not in the repository is not attribution
 !docs/THIRD-PARTY-LICENSES.md
+# Exception: the GreasyFork listing body carries that attribution to the listing
+!docs/GREASYFORK.md
