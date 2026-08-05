@@ -23,6 +23,17 @@
  * `noncombatStats` carry a milking stat — which is exactly what a celestial
  * milking tool and a milking outfit have in common, and what a name list would
  * have to be updated for on every content patch.
+ *
+ * ## Which stats, exactly
+ *
+ * The ones the labyrinth skilling model reads off equipment, and only those.
+ * `buildEquipmentBuffsForSkill` turns a kit into exactly two numbers — an
+ * `/buff_types/action_speed` from `parseEquipmentSpeedBonuses` and an
+ * `/buff_types/efficiency` from `parseEquipmentEfficiencyBonuses` — so a rare
+ * find, an essence find or a gathering quantity worn on a piece of gear reaches
+ * the room simulation nowhere at all. Counting them meant ranking a rare-find
+ * charm above a speed tool, and offering candidates that could only ever come
+ * back at +0.00% after a full simulation each.
  */
 
 /**
@@ -36,8 +47,45 @@
  */
 export const NEW_GEAR_LEVEL = 5;
 
-/** Skills whose gathering quantity is worth counting */
-const GATHERING_SKILLS = new Set(['milking', 'foraging', 'woodcutting']);
+/**
+ * Skills whose `<skill>Speed` field the equipment parser will actually read.
+ *
+ * Mirrors `VALID_SPEED_FIELDS` in `utils/equipment-parser.js`, which is the list
+ * the parser checks a field name against before summing it. A field that is not
+ * on it is read as nothing, so an item carrying only that field is an item the
+ * room simulation cannot see.
+ */
+const SPEED_SKILLS = new Set([
+    'milking',
+    'foraging',
+    'woodcutting',
+    'cheesesmithing',
+    'crafting',
+    'tailoring',
+    'brewing',
+    'cooking',
+    'alchemy',
+    'enhancing',
+]);
+
+/**
+ * Skills whose `<skill>Efficiency` field the equipment parser will read.
+ *
+ * Mirrors `VALID_EFFICIENCY_FIELDS`. Enhancing is absent from it in the game's
+ * own data — enhancing runs on success rate rather than efficiency — so an
+ * `enhancingEfficiency` would be summed by nobody.
+ */
+const EFFICIENCY_SKILLS = new Set([
+    'milking',
+    'foraging',
+    'woodcutting',
+    'cheesesmithing',
+    'crafting',
+    'tailoring',
+    'brewing',
+    'cooking',
+    'alchemy',
+]);
 
 /**
  * The bare skill name, whichever form the caller has.
@@ -73,28 +121,83 @@ const TOOL_TYPES = {
 };
 
 /**
- * The `noncombatStats` fields that matter to one skill.
+ * The `noncombatStats` fields that can move one skill's labyrinth room.
  *
- * The skill's own three, plus the generic skilling ones every skill shares. The
- * generic ones are why an outfit piece with only `skillingSpeed` is still a
- * candidate for every skill rather than for none.
+ * The skill's own speed and efficiency, plus the two generic skilling ones every
+ * skill shares. The generic ones are why an outfit piece with only
+ * `skillingSpeed` is still a candidate for every skill rather than for none.
+ *
+ * Rare find, essence find and gathering quantity are deliberately absent: the
+ * kit reaches the room model through `parseEquipmentSpeedBonuses` and
+ * `parseEquipmentEfficiencyBonuses` and through nothing else, so a piece
+ * carrying only those is a piece the room cannot feel. (Gathering quantity does
+ * move a gathering room's double-progress chance — but only the *community*
+ * buff's, which arrives as a `/buff_types/gathering` buff rather than off the
+ * character's gear.)
  *
  * @param {string} skill - Skill name, e.g. `milking`
  * @returns {Set<string>}
  */
 export function relevantStats(skill) {
     const key = skillName(skill);
-    const fields = new Set([
-        `${key}Speed`,
-        `${key}Efficiency`,
-        `${key}RareFind`,
-        'skillingSpeed',
-        'skillingEfficiency',
-        'skillingRareFind',
-        'skillingEssenceFind',
-    ]);
-    if (GATHERING_SKILLS.has(key)) fields.add('gatheringQuantity');
+    const fields = new Set(['skillingSpeed', 'skillingEfficiency']);
+    if (SPEED_SKILLS.has(key)) fields.add(`${key}Speed`);
+    if (EFFICIENCY_SKILLS.has(key)) fields.add(`${key}Efficiency`);
     return fields;
+}
+
+/**
+ * Whether this item can change the outcome of this skill's room at all.
+ *
+ * Read off the item's own stats rather than a list of names, so a tool added in
+ * next month's patch is scoped correctly the day it ships and a renamed one does
+ * not silently fall out.
+ *
+ * @param {Object} itemDetail - From `itemDetailMap`
+ * @param {string} skill - `cooking` or `/skills/cooking`
+ * @returns {boolean}
+ */
+export function affectsSkill(itemDetail, skill) {
+    return skillScore(itemDetail, relevantStats(skill)) > 0;
+}
+
+/**
+ * A worn kit with the pieces that cannot touch this skill's room taken out.
+ *
+ * Simming one skill used to weigh every noncombat piece the character had on,
+ * whichever skill it belonged to — a Cooking run spent simulations on "Holy
+ * Chisel +5 → +7", which is a crafting tool and cannot move a cooking room by
+ * any amount. Each of those is a full room evaluation spent proving +0.00%, and
+ * a row in the results that reads as a considered "not worth it" rather than as
+ * a question that was never worth asking.
+ *
+ * Only pieces that *have* noncombat stats and have none this skill reads are
+ * dropped. A piece with no noncombat stats at all — a combat necklace worn
+ * because nothing better is on — stays: it generates no enhancement candidate
+ * anyway, and it is what the philosopher's-accessory swap is measured against,
+ * so removing it would turn "trade this necklace for the philosopher's one"
+ * into "fill an empty slot" and price the trade without its sale.
+ *
+ * Safe to hand straight to the simulation: everything dropped contributes zero
+ * to this skill's speed and efficiency by construction, so the baseline is the
+ * number it always was.
+ *
+ * @param {Object} equipment - Slot → `{ hrid, enhancementLevel }`
+ * @param {string} skill - The skill being simmed
+ * @param {Object} itemDetailMap - Game data
+ * @returns {Object} A new equipment object
+ */
+export function scopeEquipmentToSkill(equipment = {}, skill, itemDetailMap = {}) {
+    const scoped = {};
+    for (const [slot, worn] of Object.entries(equipment || {})) {
+        if (!worn?.hrid) continue;
+        const detail = itemDetailMap[worn.hrid];
+        const noncombat = detail?.equipmentDetail?.noncombatStats;
+        const hasNoncombat = noncombat && Object.values(noncombat).some((value) => value > 0);
+        if (hasNoncombat && !affectsSkill(detail, skill)) continue;
+        scoped[slot] = worn;
+    }
+    return scoped;
 }
 
 /**

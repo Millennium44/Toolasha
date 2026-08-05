@@ -48,6 +48,8 @@ import {
     estimateLabUpgradeSims,
     planLabUpgradeRun,
 } from './lab-sim-upgrade-modes.js';
+import { scopeEquipmentToSkill } from './skilling-gear-candidates.js';
+import { generateSkillingCommunityBuffCandidates, MAX_COMMUNITY_BUFF_LEVEL } from './skilling-sim-helpers.js';
 // The upgrade-row vocabulary — what a row would have you buy, and the handoff
 // buttons for it — belongs to the combat sim panel; a labyrinth pick is the same
 // candidate shape, so it gets the same two buttons rather than a second pair.
@@ -107,6 +109,28 @@ const UPGRADE_SCOPE_KEY = 'labSimUpgradeScope';
  * defaults. Never written.
  */
 const LEGACY_UPGRADE_MODE_KEY = 'labSimUpgradeMode';
+
+/** What a skilling upgrade row is actually paid for with, for the CSV column. */
+const CSV_PAID_IN = {
+    token: 'tokens',
+    guild: 'credits + tokens',
+    community: 'donated cowbells',
+    gold: 'gold',
+};
+
+/** The skills the labyrinth runs a skilling room for, in the tab's own order. */
+const SKILLING_SKILL_HRIDS = [
+    '/skills/milking',
+    '/skills/foraging',
+    '/skills/woodcutting',
+    '/skills/cheesesmithing',
+    '/skills/crafting',
+    '/skills/tailoring',
+    '/skills/cooking',
+    '/skills/brewing',
+    '/skills/alchemy',
+    '/skills/enhancing',
+];
 
 const ACCENT = '#4a9eff';
 const ACCENT_BORDER = 'rgba(74, 158, 255, 0.5)';
@@ -3701,8 +3725,13 @@ class LabSimUI {
         }
 
         const crateHrids = this._getSkillingCrates();
-        const skillEquipmentMap = this._buildSkillEquipmentMap(gameData);
         const targetSkill = this.panel.querySelector('#mwi-labsim-skilling-filter')?.value || null;
+        const skillEquipmentMap = this._scopeSkillEquipmentMap(
+            this._buildSkillEquipmentMap(gameData),
+            dto,
+            targetSkill,
+            gameData
+        );
 
         const progressEl = this.panel.querySelector('#mwi-labsim-skilling-progress');
         const resultsEl = this.panel.querySelector('#mwi-labsim-skilling-results');
@@ -3734,6 +3763,27 @@ class LabSimUI {
                 { abortSignal: () => this._skillingAborted }
             );
 
+            // Community buffs are an argument to the skilling calculation rather
+            // than anything on the character, so the shared analysis — which
+            // works by applying a candidate to a DTO — has nowhere to put one.
+            // They get a pass of their own, for the same reason house rooms do.
+            await this._runSkillingCommunityPass({
+                dto,
+                roomLevel,
+                crateHrids,
+                skillEquipmentMap,
+                targetSkill,
+                gameData,
+                analysisResult,
+                onProgress: ({ current, total, description }) => {
+                    if (this._skillingAborted) return;
+                    const fill = this.panel.querySelector('#mwi-labsim-skilling-progress-fill');
+                    const text = this.panel.querySelector('#mwi-labsim-skilling-progress-text');
+                    if (fill) fill.style.width = `${total > 0 ? Math.round((current / total) * 100) : 100}%`;
+                    if (text) text.textContent = `Community buffs ${current} / ${total}: ${description}`;
+                },
+            });
+
             this._renderSkillingUpgradeResults(analysisResult, resultsEl);
         } catch (error) {
             console.error('[LabSimUI] Skilling upgrade analysis failed:', error);
@@ -3743,6 +3793,131 @@ class LabSimUI {
             calcBtn.style.display = '';
             upgradeBtn.style.display = '';
             stopBtn.style.display = 'none';
+        }
+    }
+
+    /**
+     * The per-skill kits, with the pieces a single-skill run cannot feel removed.
+     *
+     * A skilling run over one skill used to weigh every noncombat piece the kit
+     * had on — a Cooking run spent a full room evaluation on "Holy Chisel +5 →
+     * +7", a crafting tool that cannot change a cooking room by any amount, and
+     * then printed the +0.00% as though it were a finding. `scopeEquipmentToSkill`
+     * decides what stays from the item's own stats, so it keeps up with the item
+     * data rather than with a list kept here.
+     *
+     * Only for a single-skill run. Across every skill each kit is the kit some
+     * room is actually wearing, and a chisel is exactly what the Crafting room
+     * wants weighed.
+     *
+     * The kit is materialised for the target skill even when no loadout is
+     * assigned to it, because the analysis falls back to the character's base
+     * equipment when the map has no entry — and the base equipment is the
+     * unscoped kit this is trying to avoid.
+     *
+     * @private
+     * @param {Object} skillEquipmentMap - From `_buildSkillEquipmentMap`
+     * @param {Object} dto - The editor's player
+     * @param {string|null} targetSkill - The skill being simmed, when only one is
+     * @param {Object} gameData - From `buildGameDataPayload`
+     * @returns {Object} A per-skill equipment map
+     */
+    _scopeSkillEquipmentMap(skillEquipmentMap, dto, targetSkill, gameData) {
+        if (!targetSkill) return skillEquipmentMap;
+        const worn = skillEquipmentMap?.[targetSkill] || dto?.equipment || {};
+        return {
+            ...skillEquipmentMap,
+            [targetSkill]: scopeEquipmentToSkill(worn, targetSkill, gameData?.itemDetailMap || {}),
+        };
+    }
+
+    /**
+     * Weigh one more level of each community buff the rooms being run can feel.
+     *
+     * The skilling tab could see the buffs — they have been part of the baseline
+     * since the adapter started reading them — but never asked what another
+     * level of one would do, which is the question a player who watches the
+     * Gathering Quantity buff tick up actually has.
+     *
+     * Results are appended to the analysis the shared advisor returned, so one
+     * table set covers the whole run. The XP baseline is filled in here when the
+     * advisor did not need one: it only pays for the XP pass when something it
+     * generated is ranked on XP, and the Experience buff is not something it
+     * generates.
+     *
+     * @private
+     * @param {Object} params - The run, plus `analysisResult` to append to
+     * @returns {Promise<void>}
+     */
+    async _runSkillingCommunityPass({
+        dto,
+        roomLevel,
+        crateHrids,
+        skillEquipmentMap,
+        targetSkill,
+        gameData,
+        analysisResult,
+        onProgress,
+    }) {
+        if (!analysisResult || this._skillingAborted) return;
+
+        const skills = targetSkill ? [targetSkill] : SKILLING_SKILL_HRIDS;
+        const actionTypes = skills.map((hrid) => hrid.replace('/skills/', '/action_types/'));
+        const candidates = generateSkillingCommunityBuffCandidates(dto.communityBuffLevels, actionTypes);
+        if (!candidates.length) return;
+
+        // The same average the advisor's own baseline is, computed from the same
+        // per-skill results so a delta is a difference rather than a comparison
+        // of two ways of measuring
+        const average = (results, key) => {
+            const active = results.filter((r) => !r.skipped && (!targetSkill || r.skillHrid === targetSkill));
+            if (!active.length) return 0;
+            return active.reduce((sum, r) => sum + (r[key] || 0), 0) / active.length;
+        };
+        const evaluate = (player) =>
+            computeSkillingClearRatesFromEditor(roomLevel, player, crateHrids, gameData, skillEquipmentMap);
+
+        const baselineResults = evaluate(dto);
+        const baselineClearRate = average(baselineResults, 'clearChance');
+        const baselineXpPerRoom = average(baselineResults, 'xpPerRoom');
+
+        if (analysisResult.baseline && !analysisResult.baseline.xpPerRoom) {
+            analysisResult.baseline.xpPerRoom = baselineXpPerRoom;
+        }
+
+        let current = 0;
+        for (const candidate of candidates) {
+            // Yield so a Stop click and the progress paint can land between runs
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            if (this._skillingAborted) break;
+
+            onProgress?.({ current, total: candidates.length, description: candidate.description });
+
+            const modified = JSON.parse(JSON.stringify(dto));
+            modified.communityBuffLevels = { ...(modified.communityBuffLevels || {}) };
+            modified.communityBuffLevels[candidate.buffKey] = candidate.upgradeLevel;
+
+            const results = evaluate(modified);
+            const clearRate = average(results, 'clearChance');
+            const xpPerRoom = average(results, 'xpPerRoom');
+
+            analysisResult.results.push({
+                candidate,
+                // Neither gold nor tokens nor guild credits: donated cowbells,
+                // and the level is the whole server's donations rather than a
+                // purchase, so these rows are read on their delta
+                costType: 'community',
+                cost: null,
+                cowbellCost: candidate.cowbellCost,
+                clearRate,
+                clearRateDelta: clearRate - baselineClearRate,
+                xpPerRoom,
+                xpPerRoomDelta: xpPerRoom - baselineXpPerRoom,
+                metricType: candidate.metric,
+            });
+
+            current++;
+            onProgress?.({ current, total: candidates.length, description: candidate.description });
         }
     }
 
@@ -3760,6 +3935,7 @@ class LabSimUI {
         const tokenResults = results.filter((r) => r.costType === 'token');
         const goldResults = results.filter((r) => r.costType === 'gold');
         const guildResults = results.filter((r) => r.costType === 'guild');
+        const communityResults = results.filter((r) => r.costType === 'community');
         const thStyle =
             'text-align:right; padding:4px; color:#888; border-bottom:1px solid #333; cursor:pointer; user-select:none;';
         const thLeftStyle =
@@ -3851,10 +4027,38 @@ class LabSimUI {
             };
         });
 
+        // A community buff level is not bought by anybody in particular — it is
+        // what the server's donated minutes add up to — so there is no cost
+        // column to rank on and the rows are read on their delta alone. The
+        // cowbells-per-minute the game charges to keep the buff running is the
+        // one real price there is, and it is shown as what it is.
+        const communityRows = communityResults.map((r) => {
+            const clearRate = (r.clearRate || 0) * 100;
+            const deltaVal = (r.clearRateDelta || 0) * 100;
+            const deltaColor = deltaVal > 0 ? '#4caf50' : deltaVal < 0 ? '#f44336' : '#888';
+            const xpDelta = r.xpPerRoomDelta || 0;
+            const isXpRow = r.metricType === 'xpPerRoom';
+
+            return {
+                desc: r.candidate?.description || '',
+                cowbellCost: r.cowbellCost ?? Infinity,
+                cowbellCostStr: r.cowbellCost == null ? '—' : formatWithSeparator(r.cowbellCost) + '/min',
+                clearRate,
+                clearRateStr: clearRate.toFixed(1) + '%',
+                deltaVal,
+                deltaStr: isXpRow ? '—' : (deltaVal >= 0 ? '+' : '') + deltaVal.toFixed(2) + '%',
+                deltaColor: isXpRow ? '#888' : deltaColor,
+                xpDelta,
+                xpDeltaStr: Math.abs(xpDelta) > 1e-9 ? (xpDelta >= 0 ? '+' : '') + xpDelta.toFixed(1) : '—',
+                xpDeltaColor: xpDelta > 0 ? '#4caf50' : '#888',
+            };
+        });
+
         const sortState = {
             token: { key: 'tokensPerPct', dir: 'asc' },
             gold: { key: 'goldPerPct', dir: 'asc' },
             guild: { key: 'goldPerPct', dir: 'asc' },
+            community: { key: 'deltaVal', dir: 'desc' },
         };
 
         const sortRows = (rows, key, dir) => {
@@ -3947,6 +4151,42 @@ class LabSimUI {
             return html;
         };
 
+        const renderCommunityTable = () => {
+            const s = sortState.community;
+            const th = (label, key, align) => {
+                const style = align === 'left' ? thLeftStyle : thStyle;
+                const ind = s.key === key ? arrow(s.dir) : '';
+                return `<th data-sort-key="${key}" data-table="community" style="${style}">${label}${ind}</th>`;
+            };
+
+            let html = `<div style="color:${ACCENT}; font-weight:700; font-size:12px; margin-bottom:4px;">Community Buffs</div>`;
+            html += '<table style="width:100%; border-collapse:collapse; font-size:11px; margin-bottom:4px;">';
+            html += `<thead><tr>
+                ${th('Upgrade', 'desc', 'left')}
+                ${th('Cowbells', 'cowbellCost', 'right')}
+                ${th('Clear Rate', 'clearRate', 'right')}
+                ${th('Delta', 'deltaVal', 'right')}
+                ${th('XP/Room', 'xpDelta', 'right')}
+            </tr></thead><tbody>`;
+
+            for (const row of communityRows) {
+                html += `<tr style="border-bottom:1px solid #1a1a1a;">
+                    <td style="padding:3px 4px; color:#e0e0e0;">${row.desc}</td>
+                    <td style="${tdStyle} color:#ccc;">${row.cowbellCostStr}</td>
+                    <td style="${tdStyle} color:#ccc;">${row.clearRateStr}</td>
+                    <td style="${tdStyle} color:${row.deltaColor}; font-weight:600;">${row.deltaStr}</td>
+                    <td style="${tdStyle} color:${row.xpDeltaColor}; font-weight:600;">${row.xpDeltaStr}</td>
+                </tr>`;
+            }
+            html += '</tbody></table>';
+            html += `<div style="color:#666; font-size:10px; margin-bottom:12px;">
+                A community buff's level is what the whole server's donated minutes add up to, so there is no price
+                for one more level to rank on — the cowbell figure is what the game charges per minute to keep the
+                buff running. A buff already at Lv${MAX_COMMUNITY_BUFF_LEVEL} (max) has no next level and is left out.
+            </div>`;
+            return html;
+        };
+
         const renderGoldTable = () => {
             const s = sortState.gold;
             const th = (label, key, align) => {
@@ -3982,6 +4222,7 @@ class LabSimUI {
             sortRows(tokenRows, sortState.token.key, sortState.token.dir);
             sortRows(goldRows, sortState.gold.key, sortState.gold.dir);
             sortRows(guildRows, sortState.guild.key, sortState.guild.dir);
+            sortRows(communityRows, sortState.community.key, sortState.community.dir);
             const baselineXp = baseline?.xpPerRoom || 0;
             let html = `<div style="color:#888; font-size:11px; margin-bottom:8px;">
                 Baseline Avg Clear: <span style="color:#e0e0e0; font-weight:600;">${((baseline?.clearRate || 0) * 100).toFixed(1)}%</span>
@@ -3989,6 +4230,7 @@ class LabSimUI {
             </div>`;
             if (tokenRows.length > 0) html += renderTokenTable();
             if (guildRows.length > 0) html += renderGuildTable();
+            if (communityRows.length > 0) html += renderCommunityTable();
             if (goldRows.length > 0) html += renderGoldTable();
             container.innerHTML = html;
         };
@@ -4016,9 +4258,9 @@ class LabSimUI {
                     // Gear bought for one skill says which; an enhancement of
                     // something worn everywhere has no one skill to name
                     skill: (r.candidate?.skillKey || '').replace('/skills/', ''),
-                    paidIn: r.costType === 'token' ? 'tokens' : r.costType === 'guild' ? 'credits + tokens' : 'gold',
+                    paidIn: CSV_PAID_IN[r.costType] || 'gold',
                     cost: r.costType === 'token' ? null : (r.cost ?? null),
-                    tokenCost: r.costType === 'gold' ? null : (r.tokenCost ?? null),
+                    tokenCost: r.costType === 'gold' || r.costType === 'community' ? null : (r.tokenCost ?? null),
                     clearRate: r.clearRate ?? null,
                     clearRateDelta: r.clearRateDelta ?? null,
                     perPercent: gain > 0 && paid ? Math.round(paid / gain) : null,

@@ -4,6 +4,7 @@
  * for use with LabyrinthClearRate.getSkillingMetricsFromOverrides().
  */
 
+import dataManager from '../../core/data-manager.js';
 import { parseEquipmentSpeedBonuses, parseEquipmentEfficiencyBonuses } from '../../utils/equipment-parser.js';
 
 const PRODUCTION_SKILLS = [
@@ -16,6 +17,155 @@ const PRODUCTION_SKILLS = [
 ];
 
 const GATHERING_SKILLS = ['/action_types/foraging', '/action_types/milking', '/action_types/woodcutting'];
+
+/** Every action type a labyrinth skilling room can be run in */
+const ALL_SKILLING_ACTION_TYPES = [...PRODUCTION_SKILLS, ...GATHERING_SKILLS, '/action_types/enhancing'];
+
+/**
+ * Highest level a community buff can reach.
+ *
+ * Twenty, which is what the game shows as "Level: 20 (Max)". The combat sim's
+ * own community candidates use a ceiling of 30 for a different question — what
+ * an already-maxed buff is *worth* — and borrowing that number here would offer
+ * a Lv20 → Lv21 that cannot be donated for.
+ */
+export const MAX_COMMUNITY_BUFF_LEVEL = 20;
+
+/**
+ * The community buffs the labyrinth skilling model reads, and what each one is.
+ *
+ * Fallbacks, not the source of truth: `communityBuffTypeDetailMap` in the game
+ * data carries the same numbers and is preferred whenever it has loaded. These
+ * are what keeps the module working before it has, and are the same formulas the
+ * rest of the script uses (`flatBoost + (level − 1) × flatBoostLevelBonus`).
+ *
+ * Combat drop quantity and the Moo Pass are absent on purpose: neither produces
+ * a buff type `applyBuff` maps onto a skilling metric, so a level of either
+ * changes a skilling room by exactly nothing.
+ */
+const COMMUNITY_BUFFS = [
+    {
+        key: 'productionEfficiency',
+        hrid: '/community_buff_types/production_efficiency',
+        name: 'Production Efficiency',
+        typeHrid: '/buff_types/efficiency',
+        flatBoost: 0.14,
+        flatBoostLevelBonus: 0.003,
+        actionTypes: PRODUCTION_SKILLS,
+    },
+    {
+        key: 'enhancingSpeed',
+        hrid: '/community_buff_types/enhancing_speed',
+        name: 'Enhancing Speed',
+        typeHrid: '/buff_types/action_speed',
+        flatBoost: 0.2,
+        flatBoostLevelBonus: 0.005,
+        actionTypes: ['/action_types/enhancing'],
+    },
+    {
+        key: 'gatheringQuantity',
+        hrid: '/community_buff_types/gathering_quantity',
+        name: 'Gathering Quantity',
+        typeHrid: '/buff_types/gathering',
+        flatBoost: 0.2,
+        flatBoostLevelBonus: 0.005,
+        actionTypes: GATHERING_SKILLS,
+    },
+    {
+        key: 'experience',
+        hrid: '/community_buff_types/experience',
+        name: 'Experience',
+        typeHrid: '/buff_types/wisdom',
+        flatBoost: 0.2,
+        flatBoostLevelBonus: 0.005,
+        actionTypes: ALL_SKILLING_ACTION_TYPES,
+    },
+];
+
+/**
+ * Buff types `LabyrinthClearRate.applyBuff` turns into a skilling metric.
+ *
+ * `/buff_types/gathering` is here, and is the one that is not unconditional —
+ * it only lands on the three gathering skills, and is checked separately.
+ */
+const SKILLING_BUFF_TYPES = new Set([
+    '/buff_types/efficiency',
+    '/buff_types/action_speed',
+    '/buff_types/labyrinth_double_progress',
+    '/buff_types/success_rate',
+    '/buff_types/wisdom',
+    '/buff_types/gathering',
+]);
+
+/**
+ * One community buff definition, with whatever the game data says overlaid.
+ *
+ * Reading the detail map rather than trusting the constants above is what keeps
+ * a balance patch from silently leaving this module a patch behind — and it is
+ * where `usableInActionTypeMap` comes from, which is the game's own answer to
+ * "does this buff apply to that skill" and better than any list kept here.
+ *
+ * @param {Object} def - An entry of `COMMUNITY_BUFFS`
+ * @returns {Object} The definition, resolved against game data
+ */
+function resolveCommunityBuff(def) {
+    const detail = dataManager.getInitClientData?.()?.communityBuffTypeDetailMap?.[def.hrid];
+    const buff = detail?.buff;
+    const num = (value, fallback) => (typeof value === 'number' && Number.isFinite(value) ? value : fallback);
+    return {
+        ...def,
+        name: detail?.name || def.name,
+        typeHrid: buff?.typeHrid || def.typeHrid,
+        flatBoost: num(buff?.flatBoost, def.flatBoost),
+        flatBoostLevelBonus: num(buff?.flatBoostLevelBonus, def.flatBoostLevelBonus),
+        ratioBoost: num(buff?.ratioBoost, 0),
+        ratioBoostLevelBonus: num(buff?.ratioBoostLevelBonus, 0),
+        usableInActionTypeMap: detail?.usableInActionTypeMap || null,
+        // Cowbells per minute of uptime, which is what the game charges for a
+        // donation. Not the price of a level — see the candidate builder below.
+        cowbellCost: num(detail?.cowbellCost, null),
+    };
+}
+
+/**
+ * Whether one community buff can change one skilling room's outcome.
+ *
+ * Two questions, both answered from data: does the buff apply to this action
+ * type at all (the game's own `usableInActionTypeMap` when it has loaded), and
+ * is its buff type one the skilling metrics read.
+ *
+ * @param {Object} resolved - From `resolveCommunityBuff`
+ * @param {string} actionTypeHrid - e.g. `/action_types/cooking`
+ * @returns {boolean}
+ */
+function communityBuffMovesSkill(resolved, actionTypeHrid) {
+    const applies = resolved.usableInActionTypeMap
+        ? Boolean(resolved.usableInActionTypeMap[actionTypeHrid])
+        : resolved.actionTypes.includes(actionTypeHrid);
+    if (!applies) return false;
+    if (!SKILLING_BUFF_TYPES.has(resolved.typeHrid)) return false;
+    // Gathering quantity is the labyrinth's double-progress chance for the three
+    // gathering skills and is dropped on the floor for everybody else
+    if (resolved.typeHrid === '/buff_types/gathering') return GATHERING_SKILLS.includes(actionTypeHrid);
+    // Enhancing rooms clear on success rate and speed; the efficiency term never
+    // enters `computeEnhancingClearWithParams`
+    if (resolved.typeHrid === '/buff_types/efficiency' && actionTypeHrid === '/action_types/enhancing') return false;
+    return true;
+}
+
+/**
+ * The value one community buff has at a level.
+ * @param {Object} resolved - From `resolveCommunityBuff`
+ * @param {number} level - Buff level (0 = not running)
+ * @returns {{flatBoost: number, ratioBoost: number}}
+ */
+function communityBuffValue(resolved, level) {
+    if (level <= 0) return { flatBoost: 0, ratioBoost: 0 };
+    return {
+        flatBoost: resolved.flatBoost + (level - 1) * resolved.flatBoostLevelBonus,
+        ratioBoost: resolved.ratioBoost + (level - 1) * resolved.ratioBoostLevelBonus,
+    };
+}
 
 /**
  * Convert editor equipment DTO format to the Map format the equipment parser expects.
@@ -60,6 +210,14 @@ export function buildEquipmentBuffsForSkill(editorEquipment, actionTypeHrid, ite
 
 /**
  * Build community buff array for a specific action type from editor levels.
+ *
+ * The Experience buff used to be missing from here, and only from here: the DTO
+ * has carried its level since the adapter was written, the skilling metrics have
+ * a `/buff_types/wisdom` branch waiting for it, and nothing joined the two. So
+ * every XP-per-room figure the labyrinth skilling tab reported — the baseline it
+ * ranks the Experience token and the Scholar shrine against — was computed as
+ * though the server's biggest, most permanently-running buff were switched off.
+ *
  * @param {Object} communityBuffLevels - { productionEfficiency, enhancingSpeed, gatheringQuantity, experience }
  * @param {string} actionTypeHrid - e.g. "/action_types/woodcutting"
  * @returns {Array} Buff objects
@@ -68,25 +226,76 @@ export function buildCommunityBuffsForSkill(communityBuffLevels, actionTypeHrid)
     const buffs = [];
     if (!communityBuffLevels) return buffs;
 
-    if (PRODUCTION_SKILLS.includes(actionTypeHrid) && communityBuffLevels.productionEfficiency > 0) {
-        const level = communityBuffLevels.productionEfficiency;
-        const value = 0.14 + (level - 1) * 0.003;
-        buffs.push({ typeHrid: '/buff_types/efficiency', flatBoost: value, ratioBoost: 0 });
-    }
+    for (const def of COMMUNITY_BUFFS) {
+        const level = Math.max(0, Math.floor(Number(communityBuffLevels[def.key]) || 0));
+        if (level <= 0) continue;
 
-    if (actionTypeHrid === '/action_types/enhancing' && communityBuffLevels.enhancingSpeed > 0) {
-        const level = communityBuffLevels.enhancingSpeed;
-        const value = 0.2 + (level - 1) * 0.005;
-        buffs.push({ typeHrid: '/buff_types/action_speed', flatBoost: value, ratioBoost: 0 });
-    }
+        const resolved = resolveCommunityBuff(def);
+        if (!communityBuffMovesSkill(resolved, actionTypeHrid)) continue;
 
-    if (GATHERING_SKILLS.includes(actionTypeHrid) && communityBuffLevels.gatheringQuantity > 0) {
-        const level = communityBuffLevels.gatheringQuantity;
-        const value = 0.2 + (level - 1) * 0.005;
-        buffs.push({ typeHrid: '/buff_types/gathering', flatBoost: value, ratioBoost: 0 });
+        const { flatBoost, ratioBoost } = communityBuffValue(resolved, level);
+        if (flatBoost === 0 && ratioBoost === 0) continue;
+        buffs.push({ typeHrid: resolved.typeHrid, flatBoost, ratioBoost });
     }
 
     return buffs;
+}
+
+/**
+ * One-level-up candidates for the community buffs that touch the rooms being run.
+ *
+ * Only buffs that can move the outcome are offered, and only for the skills
+ * actually being simmed: Gathering Quantity is the double-progress chance of a
+ * Foraging room and nothing whatsoever in a Cooking one, so offering it in a
+ * Cooking run would be a simulation spent proving +0.00%.
+ *
+ * A buff already at the cap gets no row. There is no level 21 to donate for, and
+ * a candidate the game cannot sell is not an upgrade — the separate question of
+ * what an already-maxed buff is worth belongs to the combat sim's own community
+ * handling, which asks it by simulating the buff *off*.
+ *
+ * ### On cost
+ *
+ * Left unpriced, exactly as `calculateUpgradeCost` leaves the combat sim's
+ * community candidates, so the two panels rank the same row the same way. It is
+ * not a coy answer: the game data prices a community buff as `cowbellCost`
+ * cowbells *per minute of uptime*, and a buff's level is what the whole server's
+ * donated minutes add up to — there is no "cost of the next level" for one
+ * player to pay. The rate is carried on the candidate so a row can say what
+ * keeping the buff running costs, which is the honest number that does exist.
+ *
+ * @param {Object} communityBuffLevels - From the editor DTO
+ * @param {string[]} actionTypeHrids - The action types being simmed
+ * @returns {Array<Object>} Candidates of type 'community_buff'
+ */
+export function generateSkillingCommunityBuffCandidates(communityBuffLevels, actionTypeHrids = []) {
+    const candidates = [];
+    if (!actionTypeHrids.length) return candidates;
+
+    for (const def of COMMUNITY_BUFFS) {
+        const resolved = resolveCommunityBuff(def);
+        if (!actionTypeHrids.some((actionTypeHrid) => communityBuffMovesSkill(resolved, actionTypeHrid))) continue;
+
+        const currentLevel = Math.max(0, Math.floor(Number(communityBuffLevels?.[def.key]) || 0));
+        if (currentLevel >= MAX_COMMUNITY_BUFF_LEVEL) continue;
+
+        const upgradeLevel = currentLevel + 1;
+        candidates.push({
+            type: 'community_buff',
+            buffKey: def.key,
+            buffHrid: def.hrid,
+            buffTypeHrid: resolved.typeHrid,
+            currentLevel,
+            upgradeLevel,
+            cowbellCost: resolved.cowbellCost,
+            // A wisdom level changes what a cleared room pays, never how often
+            // it clears, so its row is read on XP rather than on clear rate
+            metric: resolved.typeHrid === '/buff_types/wisdom' ? 'xpPerRoom' : 'clearRate',
+            description: `${resolved.name} Lv${currentLevel} → Lv${upgradeLevel}`,
+        });
+    }
+
+    return candidates;
 }
 
 /**

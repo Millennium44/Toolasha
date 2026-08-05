@@ -142,7 +142,13 @@ vi.mock('./combat-sim-ui.js', () => ({
 
 // A labyrinth fight only exists for the panel when a room level resolves and a
 // loadout can be built for it, so both live here and the tests choose which
-// monsters have one
+// monsters have one.
+//
+// The skilling half of the same module is a stand-in of the real arithmetic's
+// *shape* rather than its numbers: a buff array in, one metric per buff type
+// out, and a clear rate and an XP award that each move with exactly one of them.
+// That is enough for the thing worth asserting — that a community buff level
+// reaches the room at all, and lands on the metric it belongs to.
 vi.mock('../combat/labyrinth-clear-rate.js', () => ({
     default: {
         getLabyrinthCombatBuffs: () => [],
@@ -152,6 +158,53 @@ vi.mock('../combat/labyrinth-clear-rate.js', () => ({
         buildLabyrinthPlayerDTO: () => ({ equipment: {}, abilities: [] }),
         getPlayerEffectiveCombatLevel: () => 100,
         estimateCombatXpPerHour: () => 0,
+        getTargetRoomLevel: () => 0,
+        getSkillingMetricsFromOverrides: (_skillId, _actionTypeHrid, overrides) => {
+            const fields = {
+                '/buff_types/efficiency': 'efficiencyBonus',
+                '/buff_types/action_speed': 'actionSpeedBonus',
+                '/buff_types/gathering': 'gatheringBonus',
+                '/buff_types/wisdom': 'experienceBonus',
+            };
+            const metrics = {
+                skillLevelBonus: 0,
+                efficiencyBonus: 0,
+                actionSpeedBonus: 0,
+                successBonus: 0,
+                doubleProgressBonus: 0,
+                gatheringBonus: 0,
+                experienceBonus: 0,
+            };
+            const sources = [
+                overrides?.equipmentBuffs,
+                overrides?.communityBuffs,
+                overrides?.houseBuffs,
+                overrides?.crateBuffs,
+            ];
+            for (const buffs of sources) {
+                for (const buff of buffs || []) {
+                    const field = fields[buff?.typeHrid];
+                    if (field) metrics[field] += (buff.flatBoost || 0) + (buff.ratioBoost || 0);
+                }
+            }
+            return metrics;
+        },
+        computeSkillingClearWithParams: (metrics, baseLevel, roomLevel) => ({
+            clearChance: Math.min(1, 0.5 + metrics.efficiencyBonus + metrics.gatheringBonus),
+            xpPerRoom: roomLevel * 50 * (1 + metrics.experienceBonus),
+            baseLevel,
+            effectiveLevel: baseLevel,
+            successChance: 0.8,
+            attempts: 10,
+        }),
+        computeEnhancingClearWithParams: (metrics, baseLevel, roomLevel) => ({
+            clearChance: Math.min(1, 0.5 + metrics.actionSpeedBonus),
+            xpPerRoom: roomLevel * 50 * (1 + metrics.experienceBonus),
+            baseLevel,
+            effectiveLevel: baseLevel,
+            successChance: 0.8,
+            attempts: 10,
+        }),
     },
 }));
 vi.mock('../combat/loadout-snapshot.js', () => ({ default: { get: () => null, snapshots: {} } }));
@@ -755,5 +808,241 @@ describe('the upgrade table reads like the combat sim’s', () => {
 
         const costCell = container.querySelector('tr[data-gold-row="0"] td:nth-child(2)');
         expect(costCell.getAttribute('style')).toContain('white-space:nowrap');
+    });
+});
+
+describe('a skilling run only weighs what the skill being run can feel', () => {
+    const ITEMS = {
+        '/items/holy_chisel': {
+            name: 'Holy Chisel',
+            equipmentDetail: { type: '/equipment_types/crafting_tool', noncombatStats: { craftingSpeed: 0.3 } },
+        },
+        '/items/holy_pot': {
+            name: 'Holy Pot',
+            equipmentDetail: { type: '/equipment_types/cooking_tool', noncombatStats: { cookingSpeed: 0.3 } },
+        },
+        '/items/philosophers_necklace': {
+            name: "Philosopher's Necklace",
+            equipmentDetail: { type: '/equipment_types/neck', noncombatStats: { skillingEfficiency: 0.02 } },
+        },
+        '/items/combat_necklace': {
+            name: 'Combat Necklace',
+            equipmentDetail: { type: '/equipment_types/neck', combatStats: { stabAccuracy: 0.1 } },
+        },
+    };
+    const gameData = { itemDetailMap: ITEMS };
+    const worn = {
+        '/equipment_types/crafting_tool': { hrid: '/items/holy_chisel', enhancementLevel: 5 },
+        '/equipment_types/cooking_tool': { hrid: '/items/holy_pot', enhancementLevel: 3 },
+        '/equipment_types/neck': { hrid: '/items/combat_necklace', enhancementLevel: 0 },
+    };
+
+    beforeEach(async () => {
+        ui.buildPanel();
+        await settle();
+    });
+
+    afterEach(() => {
+        ui.destroy();
+    });
+
+    test('another skill’s tool is taken out of the kit a single-skill run weighs', () => {
+        // The complaint: a Cooking run spending a room evaluation on "Holy
+        // Chisel +5 → +7", which is a crafting tool and cannot move a cooking
+        // room by any amount
+        const scoped = ui._scopeSkillEquipmentMap({}, { equipment: worn }, '/skills/cooking', gameData);
+
+        expect(scoped['/skills/cooking']['/equipment_types/crafting_tool']).toBeUndefined();
+        expect(scoped['/skills/cooking']['/equipment_types/cooking_tool']).toBeDefined();
+    });
+
+    test('and put back for the skill it belongs to', () => {
+        const scoped = ui._scopeSkillEquipmentMap({}, { equipment: worn }, '/skills/crafting', gameData);
+
+        expect(scoped['/skills/crafting']['/equipment_types/crafting_tool']).toBeDefined();
+        expect(scoped['/skills/crafting']['/equipment_types/cooking_tool']).toBeUndefined();
+    });
+
+    test('a piece with no skilling stats at all is left alone, so a swap into it is still priced', () => {
+        const scoped = ui._scopeSkillEquipmentMap({}, { equipment: worn }, '/skills/cooking', gameData);
+
+        expect(scoped['/skills/cooking']['/equipment_types/neck']?.hrid).toBe('/items/combat_necklace');
+    });
+
+    test('the kit is materialised even where no loadout is assigned, or the base kit leaks back in', () => {
+        // The analysis falls back to the character's base equipment when the map
+        // has no entry for a skill — which is the unscoped kit all over again
+        const scoped = ui._scopeSkillEquipmentMap({}, { equipment: worn }, '/skills/cooking', gameData);
+
+        expect(scoped['/skills/cooking']).toBeDefined();
+    });
+
+    test('every skill keeps its own kit when the run is over all of them', () => {
+        const map = { '/skills/crafting': worn };
+
+        expect(ui._scopeSkillEquipmentMap(map, { equipment: worn }, null, gameData)).toBe(map);
+    });
+});
+
+describe('what one more level of a community buff is worth to a skilling room', () => {
+    const gameData = { itemDetailMap: {}, houseRoomDetailMap: {}, labyrinthCrateDetailMap: {} };
+    const player = () => ({
+        cookingLevel: 100,
+        foragingLevel: 100,
+        equipment: {},
+        houseRooms: {},
+        tokenUpgrades: {},
+        communityBuffLevels: { productionEfficiency: 5, enhancingSpeed: 0, gatheringQuantity: 3, experience: 4 },
+    });
+
+    /** Run the pass for one skill and hand back what it appended. */
+    const run = async (targetSkill, dto = player()) => {
+        const analysisResult = { baseline: { clearRate: 0, xpPerRoom: 0 }, results: [] };
+        await ui._runSkillingCommunityPass({
+            dto,
+            roomLevel: { '/skills/cooking': 100, '/skills/foraging': 100 },
+            crateHrids: [],
+            skillEquipmentMap: {},
+            targetSkill,
+            gameData,
+            analysisResult,
+        });
+        return analysisResult;
+    };
+
+    beforeEach(async () => {
+        ui.buildPanel();
+        await settle();
+        ui._skillingAborted = false;
+    });
+
+    afterEach(() => {
+        ui.destroy();
+    });
+
+    test('the efficiency buff moves a production room’s clear rate', async () => {
+        const { results } = await run('/skills/cooking');
+        const row = results.find((r) => r.candidate.buffKey === 'productionEfficiency');
+
+        expect(row.costType).toBe('community');
+        expect(row.clearRateDelta).toBeGreaterThan(0);
+    });
+
+    test('the Experience buff moves what the room pays rather than how often it clears', async () => {
+        const { results } = await run('/skills/cooking');
+        const row = results.find((r) => r.candidate.buffKey === 'experience');
+
+        expect(row.metricType).toBe('xpPerRoom');
+        expect(row.xpPerRoomDelta).toBeGreaterThan(0);
+        expect(row.clearRateDelta).toBeCloseTo(0, 10);
+    });
+
+    test('and its current level is part of the baseline it is measured from', async () => {
+        // Not a fresh question: the level has been on the DTO all along and was
+        // dropped on the way into the buff array, so the XP baseline every row
+        // is read against was the one with the buff switched off
+        const withBuff = await run('/skills/cooking');
+        const without = await run('/skills/cooking', { ...player(), communityBuffLevels: { experience: 0 } });
+
+        expect(withBuff.baseline.xpPerRoom).toBeGreaterThan(without.baseline.xpPerRoom);
+    });
+
+    test('a Cooking run is never offered the gathering buff', async () => {
+        const { results } = await run('/skills/cooking');
+
+        expect(results.map((r) => r.candidate.buffKey)).not.toContain('gatheringQuantity');
+    });
+
+    test('a Foraging run is, and it moves the room', async () => {
+        const { results } = await run('/skills/foraging');
+        const row = results.find((r) => r.candidate.buffKey === 'gatheringQuantity');
+
+        expect(row.clearRateDelta).toBeGreaterThan(0);
+    });
+
+    test('a buff already at the cap has no next level to donate for', async () => {
+        const maxed = { ...player(), communityBuffLevels: { productionEfficiency: 20, experience: 4 } };
+        const { results } = await run('/skills/cooking', maxed);
+
+        expect(results.map((r) => r.candidate.buffKey)).toEqual(['experience']);
+    });
+
+    test('a Stop click lands between candidates rather than at the end of the run', async () => {
+        ui._skillingAborted = true;
+        const { results } = await run('/skills/cooking');
+
+        expect(results).toEqual([]);
+    });
+});
+
+describe('the skilling upgrade tables give a community buff one of its own', () => {
+    const analysis = () => ({
+        baseline: { clearRate: 0.62, xpPerRoom: 5000 },
+        results: [
+            {
+                candidate: { type: 'community_buff', buffKey: 'experience', description: 'Experience Lv4 → Lv5' },
+                costType: 'community',
+                cost: null,
+                cowbellCost: 20,
+                clearRate: 0.62,
+                clearRateDelta: 0,
+                xpPerRoom: 5125,
+                xpPerRoomDelta: 125,
+                metricType: 'xpPerRoom',
+            },
+            {
+                candidate: { type: 'skilling_gear', description: 'Holy Pot +5 (cooking)', skillKey: '/skills/cooking' },
+                costType: 'gold',
+                cost: 1000,
+                clearRate: 0.65,
+                clearRateDelta: 0.03,
+                metricType: 'clearRate',
+            },
+        ],
+    });
+
+    let container;
+
+    beforeEach(async () => {
+        ui.buildPanel();
+        await settle();
+        container = document.createElement('div');
+        document.body.appendChild(container);
+    });
+
+    afterEach(() => {
+        container.remove();
+        ui.destroy();
+    });
+
+    test('the row is drawn, in a table of its own rather than among the gear', () => {
+        ui._renderSkillingUpgradeResults(analysis(), container);
+
+        expect(container.textContent).toContain('Community Buffs');
+        expect(container.textContent).toContain('Experience Lv4 → Lv5');
+    });
+
+    test('with the XP it buys, since a wisdom level buys no clears', () => {
+        ui._renderSkillingUpgradeResults(analysis(), container);
+
+        expect(container.textContent).toContain('+125.0');
+    });
+
+    test('and the cowbell rate rather than a gold price it has not got', () => {
+        // A community buff level is the whole server's donated minutes; the only
+        // price the game names is the cowbells per minute of uptime
+        ui._renderSkillingUpgradeResults(analysis(), container);
+
+        expect(container.textContent).toContain('20/min');
+        expect(container.textContent).toContain('Lv20 (max)');
+    });
+
+    test('a run with no community rows draws no community table', () => {
+        const result = analysis();
+        result.results = result.results.filter((r) => r.costType !== 'community');
+
+        ui._renderSkillingUpgradeResults(result, container);
+
+        expect(container.textContent).not.toContain('Community Buffs');
     });
 });

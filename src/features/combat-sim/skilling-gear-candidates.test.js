@@ -8,7 +8,15 @@
  */
 
 import { describe, test, expect } from 'vitest';
-import { relevantStats, skillScore, canEquip, bestGearForSkill, NEW_GEAR_LEVEL } from './skilling-gear-candidates.js';
+import {
+    relevantStats,
+    skillScore,
+    canEquip,
+    affectsSkill,
+    scopeEquipmentToSkill,
+    bestGearForSkill,
+    NEW_GEAR_LEVEL,
+} from './skilling-gear-candidates.js';
 
 const gear = (type, stats, over = {}) => ({
     name: over.name,
@@ -27,6 +35,17 @@ const ITEMS = {
     ),
     '/items/generic_cape': gear('/equipment_types/back', { skillingSpeed: 0.05 }, { name: 'Generic Cape' }),
     '/items/sword': gear('/equipment_types/main_hand', {}, { name: 'Sword' }),
+    // A charm whose only stat the room simulation never reads
+    '/items/rare_find_charm': gear(
+        '/equipment_types/charm',
+        { skillingRareFind: 0.3, milkingRareFind: 0.2 },
+        { name: 'Rare Find Charm' }
+    ),
+    '/items/collectors_boots': gear(
+        '/equipment_types/feet',
+        { gatheringQuantity: 0.15 },
+        { name: "Collector's Boots" }
+    ),
     '/items/locked_brush': gear(
         '/equipment_types/milking_tool',
         { milkingSpeed: 0.9 },
@@ -53,14 +72,90 @@ describe('what counts as being for a skill', () => {
         expect(stats.has('skillingEfficiency')).toBe(true);
     });
 
-    test('gathering quantity only where there is gathering', () => {
-        expect(relevantStats('milking').has('gatheringQuantity')).toBe(true);
-        expect(relevantStats('crafting').has('gatheringQuantity')).toBe(false);
+    test('only the stats the room simulation actually reads off a kit', () => {
+        // A kit reaches the labyrinth skilling model as exactly two numbers —
+        // a speed and an efficiency. Rare find, essence find and gathering
+        // quantity worn on gear are read by nobody, so counting them bought a
+        // full room evaluation per piece to prove +0.00%
+        const stats = relevantStats('milking');
+
+        expect([...stats].sort()).toEqual(['milkingEfficiency', 'milkingSpeed', 'skillingEfficiency', 'skillingSpeed']);
+    });
+
+    test('enhancing has a speed stat and no efficiency one, which is the game’s own shape', () => {
+        // `VALID_EFFICIENCY_FIELDS` in the equipment parser has no
+        // `enhancingEfficiency`, and an enhancing room clears on success rate
+        const stats = relevantStats('enhancing');
+
+        expect(stats.has('enhancingSpeed')).toBe(true);
+        expect(stats.has('enhancingEfficiency')).toBe(false);
     });
 
     test('an item with no relevant stat scores nothing', () => {
         expect(skillScore(ITEMS['/items/sword'], relevantStats('milking'))).toBe(0);
         expect(skillScore(ITEMS['/items/crafting_top'], relevantStats('milking'))).toBe(0);
+        expect(skillScore(ITEMS['/items/rare_find_charm'], relevantStats('milking'))).toBe(0);
+        expect(skillScore(ITEMS['/items/collectors_boots'], relevantStats('milking'))).toBe(0);
+    });
+
+    test('and is therefore never offered as a candidate for it', () => {
+        expect(named('milking')).not.toContain('/items/rare_find_charm');
+        expect(named('milking')).not.toContain('/items/collectors_boots');
+    });
+});
+
+describe('what a run of one skill is allowed to weigh', () => {
+    const ITEM_MAP = ITEMS;
+
+    test('another skill’s tool cannot move this skill’s room, so it is not weighed', () => {
+        // The complaint this is about: a Cooking run spending simulations on
+        // "Holy Chisel +5 → +7", which is a crafting tool
+        expect(affectsSkill(ITEMS['/items/celestial_chisel'], 'crafting')).toBe(true);
+        expect(affectsSkill(ITEMS['/items/celestial_chisel'], 'cooking')).toBe(false);
+    });
+
+    test('gear with a generic skilling stat is for everybody, which is what generic means', () => {
+        expect(affectsSkill(ITEMS['/items/generic_cape'], 'cooking')).toBe(true);
+        expect(affectsSkill(ITEMS['/items/generic_cape'], 'enhancing')).toBe(true);
+    });
+
+    test('a scoped kit drops the pieces this skill cannot feel', () => {
+        const worn = {
+            '/equipment_types/crafting_tool': { hrid: '/items/celestial_chisel', enhancementLevel: 5 },
+            '/equipment_types/body': { hrid: '/items/crafting_top', enhancementLevel: 3 },
+            '/equipment_types/back': { hrid: '/items/generic_cape', enhancementLevel: 0 },
+        };
+
+        const scoped = scopeEquipmentToSkill(worn, '/skills/milking', ITEM_MAP);
+
+        expect(Object.keys(scoped)).toEqual(['/equipment_types/back']);
+    });
+
+    test('and keeps them for the skill they belong to', () => {
+        const worn = { '/equipment_types/crafting_tool': { hrid: '/items/celestial_chisel', enhancementLevel: 5 } };
+
+        expect(scopeEquipmentToSkill(worn, '/skills/crafting', ITEM_MAP)).toEqual(worn);
+    });
+
+    test('a piece with no noncombat stats at all stays put', () => {
+        // It generates no enhancement candidate anyway, and it is what a
+        // philosopher's-accessory swap is measured against — dropping it would
+        // turn "trade this for the philosopher's one" into "fill an empty slot"
+        // and price the trade without its sale
+        const worn = { '/equipment_types/main_hand': { hrid: '/items/sword', enhancementLevel: 0 } };
+
+        expect(scopeEquipmentToSkill(worn, '/skills/milking', ITEM_MAP)).toEqual(worn);
+    });
+
+    test('and so does an item the game data has never heard of', () => {
+        const worn = { '/equipment_types/body': { hrid: '/items/mystery', enhancementLevel: 0 } };
+
+        expect(scopeEquipmentToSkill(worn, '/skills/milking', ITEM_MAP)).toEqual(worn);
+    });
+
+    test('nothing worn is nothing scoped, rather than a throw', () => {
+        expect(scopeEquipmentToSkill(undefined, '/skills/milking', ITEM_MAP)).toEqual({});
+        expect(scopeEquipmentToSkill({ '/equipment_types/body': null }, '/skills/milking', ITEM_MAP)).toEqual({});
     });
 });
 
