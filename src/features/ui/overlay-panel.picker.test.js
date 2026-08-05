@@ -1,0 +1,436 @@
+/**
+ * @vitest-environment happy-dom
+ *
+ * The gear popover: getting out of it, and keeping up with what it is showing.
+ *
+ * Two complaints, and they are the same popover. It is a fixed element at popup
+ * z-index anchored to a panel that moves, and it is a *live* control — the
+ * layout it lists can be changed by the lock, by a narrow window, and by the
+ * auto-switch ticking over underneath it.
+ *
+ * So: it must never cover the header that holds the ⚙ that opened it and the ✕
+ * that closes the overlay — that is the whole of "blocks the ability to hide it
+ * again", because there is no other gesture that dismisses it. And what it draws
+ * has to be redrawn when the thing it is drawing changes.
+ *
+ * Geometry is stated rather than laid out: happy-dom measures nothing, and every
+ * rule here is about where a rectangle lands.
+ */
+
+import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
+
+const store = vi.hoisted(() => ({ data: new Map() }));
+
+vi.mock('../../core/config.js', () => ({
+    default: { getSetting: () => true, getSettingValue: () => 'off', Z_HUD: 50, Z_FLOATING_PANEL: 1100, Z_POPUP: 9000 },
+}));
+vi.mock('../../core/storage.js', () => ({
+    default: {
+        getJSON: async (key) => (store.data.has(key) ? JSON.parse(JSON.stringify(store.data.get(key))) : null),
+        setJSON: async (key, value) => {
+            store.data.set(key, JSON.parse(JSON.stringify(value)));
+            return true;
+        },
+    },
+}));
+vi.mock('../../utils/timer-registry.js', () => ({
+    createTimerRegistry: () => ({ registerTimeout: () => {}, registerInterval: () => {}, clearAll: () => {} }),
+}));
+vi.mock('../../utils/panel-z-index.js', () => ({
+    registerFloatingPanel: () => {},
+    unregisterFloatingPanel: () => {},
+    bringPanelToFront: () => {},
+    PANEL_Z_CAP: 1199,
+}));
+vi.mock('../../utils/panel-geometry.js', () => ({
+    restoreGeometry: async () => {},
+    saveGeometry: async () => {},
+    clearGeometry: async () => {},
+    allGeometry: async () => ({}),
+}));
+vi.mock('../../utils/floating-panel.js', () => ({ makeDraggable: () => () => {}, makeResizable: () => () => {} }));
+vi.mock('../../utils/character-key.js', () => ({
+    readScoped: async () => null,
+    writeScoped: async () => {},
+}));
+/** What the delete dialog answers, and whether the popover was up while it asked */
+const dialog = vi.hoisted(() => ({ answer: null, sawPicker: null, seen: () => false }));
+vi.mock('../../utils/choice-dialog.js', () => ({
+    askChoice: async () => {
+        dialog.sawPicker = dialog.seen();
+        return dialog.answer;
+    },
+}));
+
+const { registerRow } = await import('../../utils/overlay-rows.js');
+const overlayPanel = (await import('./overlay-panel.js')).default;
+
+/** The header band, which is the one part of the panel that must stay clickable */
+const HEADER_HEIGHT = 28;
+
+/**
+ * State a rectangle for something happy-dom would measure as nothing.
+ *
+ * @param {HTMLElement} element - What to measure
+ * @param {{left: number, top: number, width: number, height: number}} box - Where it is
+ */
+function rectIs(element, { left, top, width, height }) {
+    element.getBoundingClientRect = () => ({
+        left,
+        top,
+        width,
+        height,
+        right: left + width,
+        bottom: top + height,
+        x: left,
+        y: top,
+        toJSON: () => ({}),
+    });
+}
+
+/**
+ * Put the panel somewhere, with a header of a known height.
+ *
+ * @param {{left: number, top: number, width: number, height: number}} box - Where the panel is
+ */
+function panelAt(box) {
+    rectIs(overlayPanel.panel, box);
+    rectIs(overlayPanel.panel.firstElementChild, {
+        left: box.left,
+        top: box.top,
+        width: box.width,
+        height: HEADER_HEIGHT,
+    });
+}
+
+/**
+ * The pixel value of a CSS length, in the two units this popover is written in.
+ * @param {string} value - A CSS length
+ * @returns {number|null} Pixels, or null when there is no length there
+ */
+function lengthPx(value) {
+    const written = /^(-?\d+(?:\.\d+)?)(px|vh)$/.exec(String(value ?? '').trim());
+    if (!written) return null;
+    return written[2] === 'vh' ? (Number(written[1]) * window.innerHeight) / 100 : Number(written[1]);
+}
+
+/**
+ * Say how tall the popover wants to be, however much room it is given.
+ * @param {number} height - Its natural height
+ */
+function pickerWants(height) {
+    const el = overlayPanel.pickerEl;
+    el.getBoundingClientRect = () => {
+        const left = Number.parseFloat(el.style.left) || 0;
+        const top = Number.parseFloat(el.style.top) || 0;
+        const width = Number.parseFloat(el.style.width) || 320;
+        const cap = lengthPx(el.style.maxHeight);
+        const drawn = cap === null ? height : Math.min(height, cap);
+        return {
+            left,
+            top,
+            width,
+            height: drawn,
+            right: left + width,
+            bottom: top + drawn,
+            x: left,
+            y: top,
+            toJSON: () => ({}),
+        };
+    };
+}
+
+/** Where the popover ended up. @returns {{top: number, bottom: number}} */
+function pickerBand() {
+    const box = overlayPanel.pickerEl.getBoundingClientRect();
+    return { top: box.top, bottom: box.bottom };
+}
+
+/**
+ * Let every promise a click started run out.
+ * @returns {Promise<void>}
+ */
+async function settle() {
+    for (let turn = 0; turn < 10; turn += 1) await Promise.resolve();
+}
+
+/** Open the gear the way a click on it does. */
+function openGear() {
+    overlayPanel.panel.querySelector('button[title^="Choose rows"]').click();
+}
+
+/** The popover's text, whatever it currently holds. @returns {string} */
+function pickerText() {
+    return overlayPanel.pickerEl.textContent;
+}
+
+/** The tile chips as the popover currently draws them. @returns {Object} */
+function chipState() {
+    const state = {};
+    for (const chip of overlayPanel.pickerEl.querySelectorAll('[data-overlay-row-chip]')) {
+        state[chip.dataset.overlayRowChip] = chip.querySelector('input[type="checkbox"]').checked;
+    }
+    return state;
+}
+
+beforeEach(() => {
+    store.data.clear();
+    dialog.answer = null;
+    dialog.sawPicker = null;
+    dialog.seen = () => overlayPanel.isPickerOpen;
+    document.body.replaceChildren();
+    window.innerWidth = 900;
+    window.innerHeight = 800;
+
+    registerRow({ key: 'dps', name: 'DPS', render: (el) => (el.textContent = 'dps') });
+    registerRow({ key: 'luck', name: 'Luck', render: (el) => (el.textContent = 'luck') });
+
+    overlayPanel.settings = {
+        visible: { dps: true, luck: true },
+        order: ['dps', 'luck'],
+        positions: {},
+        sizes: {},
+        zoom: {},
+        locked: true,
+        snapToGrid: true,
+        separators: true,
+        textScale: 100,
+        open: false,
+        docked: false,
+        dockHeightPx: null,
+    };
+    overlayPanel.savedLayouts = [];
+    overlayPanel.undoState = null;
+    overlayPanel.show();
+});
+
+afterEach(() => {
+    overlayPanel.hide();
+});
+
+describe('getting out of the gear popover', () => {
+    test('it never covers the header, even with no room above or below', () => {
+        // A panel nearly as tall as the window: there is nowhere for a popover
+        // of any size to stand clear of it
+        panelAt({ left: 20, top: 40, width: 400, height: 720 });
+        pickerWants(400);
+
+        openGear();
+        overlayPanel._placePicker();
+
+        const band = pickerBand();
+        expect(band.top).toBeGreaterThanOrEqual(40 + HEADER_HEIGHT);
+    });
+
+    test('it never covers the header when the clamp would push it up over the panel', () => {
+        // The band that produced the report: too little room above to fit, and
+        // below, the popover is taller than what is left — so it was clamped up
+        // the window and landed on the panel's own header
+        panelAt({ left: 20, top: 400, width: 400, height: 360 });
+        pickerWants(400);
+
+        openGear();
+        overlayPanel._placePicker();
+
+        const band = pickerBand();
+        const coversHeader = band.top < 400 + HEADER_HEIGHT && band.bottom > 400;
+        expect(coversHeader).toBe(false);
+    });
+
+    test('it still sits above the panel when there is room', () => {
+        panelAt({ left: 20, top: 500, width: 400, height: 200 });
+        pickerWants(300);
+
+        openGear();
+        overlayPanel._placePicker();
+
+        expect(pickerBand().bottom).toBeLessThanOrEqual(500);
+    });
+
+    test('it clears the header even in a window with no room anywhere', () => {
+        window.innerHeight = 220;
+        panelAt({ left: 20, top: 90, width: 400, height: 120 });
+        pickerWants(400);
+
+        openGear();
+        overlayPanel._placePicker();
+
+        expect(pickerBand().top).toBeGreaterThanOrEqual(90 + HEADER_HEIGHT);
+    });
+
+    test('it is held inside the window rather than hanging off the bottom', () => {
+        panelAt({ left: 20, top: 40, width: 400, height: 200 });
+        pickerWants(900);
+
+        openGear();
+        overlayPanel._placePicker();
+
+        expect(pickerBand().bottom).toBeLessThanOrEqual(window.innerHeight);
+    });
+
+    test('Escape closes it', () => {
+        panelAt({ left: 20, top: 100, width: 400, height: 200 });
+        pickerWants(200);
+
+        openGear();
+        expect(overlayPanel.isPickerOpen).toBe(true);
+
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        expect(overlayPanel.isPickerOpen).toBe(false);
+    });
+
+    test('a press outside it closes it', () => {
+        panelAt({ left: 20, top: 100, width: 400, height: 200 });
+        pickerWants(200);
+
+        openGear();
+        const elsewhere = document.createElement('div');
+        document.body.appendChild(elsewhere);
+        elsewhere.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+
+        expect(overlayPanel.isPickerOpen).toBe(false);
+    });
+
+    test('a press inside it leaves it alone', () => {
+        panelAt({ left: 20, top: 100, width: 400, height: 200 });
+        pickerWants(200);
+
+        openGear();
+        overlayPanel.pickerEl
+            .querySelector('[data-overlay-row-chip]')
+            .dispatchEvent(new Event('pointerdown', { bubbles: true }));
+
+        expect(overlayPanel.isPickerOpen).toBe(true);
+    });
+
+    test('a press on the panel it is arranging leaves it alone', () => {
+        panelAt({ left: 20, top: 100, width: 400, height: 200 });
+        pickerWants(200);
+
+        openGear();
+        overlayPanel.canvasEl.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+
+        expect(overlayPanel.isPickerOpen).toBe(true);
+    });
+
+    test('the gear still shuts it, rather than shutting and reopening it', () => {
+        panelAt({ left: 20, top: 100, width: 400, height: 200 });
+        pickerWants(200);
+
+        openGear();
+        expect(overlayPanel.isPickerOpen).toBe(true);
+        openGear();
+        expect(overlayPanel.isPickerOpen).toBe(false);
+    });
+
+    test('the ✕ hides the overlay while the popover is up, and takes it with it', () => {
+        panelAt({ left: 20, top: 100, width: 400, height: 200 });
+        pickerWants(200);
+
+        openGear();
+        overlayPanel.panel.querySelector('button[title="Close"]').click();
+
+        expect(overlayPanel.isOpen).toBe(false);
+        expect(document.querySelector('#toolasha-overlay-panel')).toBe(null);
+        expect(overlayPanel.pickerEl).toBe(null);
+    });
+
+    test('nothing is left listening once the panel is closed', () => {
+        panelAt({ left: 20, top: 100, width: 400, height: 200 });
+        pickerWants(200);
+
+        openGear();
+        overlayPanel.hide();
+
+        // Would throw on a listener still holding a torn-down popover
+        expect(() => {
+            document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+            document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+        }).not.toThrow();
+
+        overlayPanel.show();
+        expect(overlayPanel.isOpen).toBe(true);
+    });
+});
+
+describe('the popover keeps up with what it is showing', () => {
+    test('locking and unlocking redraws its hint', () => {
+        panelAt({ left: 20, top: 100, width: 400, height: 200 });
+        pickerWants(200);
+        openGear();
+
+        expect(pickerText()).toContain('Unlock');
+
+        overlayPanel.panel.querySelector('button[title^="Layout locked"]').click();
+
+        expect(overlayPanel.settings.locked).toBe(false);
+        expect(pickerText()).toContain('Drag a tile to move it');
+    });
+
+    test('flowing into columns says so while the popover is open', () => {
+        overlayPanel.settings.positions = { dps: { x: 0, y: 0 }, luck: { x: 250, y: 0 } };
+        overlayPanel.settings.sizes = { dps: { width: 240, height: 40 }, luck: { width: 240, height: 40 } };
+        panelAt({ left: 20, top: 100, width: 400, height: 200 });
+        pickerWants(200);
+        openGear();
+
+        expect(pickerText()).not.toContain('flowed into columns');
+
+        Object.defineProperty(overlayPanel.scrollEl, 'clientWidth', { value: 360, configurable: true });
+        overlayPanel._renderBody();
+
+        expect(overlayPanel.flowing).toBe(true);
+        expect(pickerText()).toContain('flowed into columns');
+    });
+
+    test('switching layout redraws the tile checkboxes', async () => {
+        overlayPanel.settings.visible = { dps: true, luck: true };
+        await overlayPanel.saveNamedLayout('Both');
+        overlayPanel.settings.visible = { dps: false, luck: true };
+        await overlayPanel.saveNamedLayout('Luck only');
+
+        panelAt({ left: 20, top: 100, width: 400, height: 200 });
+        pickerWants(200);
+        openGear();
+        expect(chipState()).toEqual({ dps: false, luck: true });
+
+        await overlayPanel.applyNamedLayout('Both');
+        expect(chipState()).toEqual({ dps: true, luck: true });
+    });
+
+    test('the delete dialog is asked with the popover out of the way, and the answer redraws it', async () => {
+        await overlayPanel.saveNamedLayout('Dungeon');
+        await overlayPanel.saveNamedLayout('Market run');
+
+        panelAt({ left: 20, top: 100, width: 400, height: 200 });
+        pickerWants(200);
+        openGear();
+        await overlayPanel._refreshLayoutNames();
+
+        dialog.answer = 'Dungeon';
+        overlayPanel.pickerEl.querySelector('button[title="Forget a saved layout"]').click();
+        // The button's handler is asynchronous and `click` does not wait for it
+        await settle();
+        // The popover draws above the dialog's own backdrop, so it has to stand
+        // down or the question is asked underneath it
+        expect(dialog.sawPicker).toBe(false);
+
+        expect(overlayPanel.isPickerOpen).toBe(true);
+        const offered = [...overlayPanel.pickerEl.querySelectorAll('[data-overlay-layout-select] option')].map(
+            (option) => option.textContent
+        );
+        expect(offered).not.toContain('Dungeon');
+        expect(offered).toContain('Market run');
+    });
+
+    test('docking keeps the popover up rather than dropping it on the floor', () => {
+        panelAt({ left: 20, top: 100, width: 400, height: 200 });
+        pickerWants(200);
+        openGear();
+
+        overlayPanel.toggleDock();
+
+        expect(overlayPanel.isPickerOpen).toBe(true);
+        expect(overlayPanel.pickerEl.querySelectorAll('[data-overlay-row-chip]').length).toBe(2);
+    });
+});

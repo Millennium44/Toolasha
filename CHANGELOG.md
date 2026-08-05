@@ -6,6 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The overlay's ⚙ popover no longer traps you, and keeps up with what it shows
+
+- **It can never cover the panel's header again**: the popover used to pick above-or-below and then clamp itself into the window, which on a tall panel — a phone, or a desktop panel dragged low — slid it _up over its own anchor_ until it sat on the header. Since the popover draws above the panel, that put the ⚙ that closes it and the ✕ that closes the overlay both underneath it, with no other way out. It now fits itself to the room instead: whichever side it fits on, else the roomier side with its height capped so it scrolls, and on a panel taller than the window it stands over its own tiles starting _below_ the header.
+- **Escape and a press outside now close it**, the two gestures everybody already tries. A press on the panel itself doesn't — the popover exists to arrange those tiles.
+- **The delete-a-layout dialog is no longer asked underneath it**: the popover stands down for the question and comes back around whatever layouts are left.
+- **It redraws when the layout changes under it**: locking or unlocking now updates its hint instead of going on telling you to do the thing you just did, a window narrowed until the tiles flow into columns says so while the popover is open, and docking from the popover puts it back rather than dropping it on the floor.
+
 ### Trials round three: exact digits, honest captions, and a block that finally sits still
 
 - **Payout figures in full digits**: the payout block now says "2,880" and "1,320 (≈14,652,000g via credit exchange)" instead of "2.9K" and "1.3K (≈14.9Mg)" — the whole point of exact math is the exact digits. Tiles elsewhere keep abbreviating.
