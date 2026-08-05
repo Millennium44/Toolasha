@@ -1321,6 +1321,79 @@ describe('planning against the supplies actually held', () => {
 });
 
 /**
+ * The beacon count belongs to the floor in front of you, not to the account: a
+ * count chosen because one map was worth four beacons used to follow you onto
+ * every floor after it, silently. It now resets to the automatic minimum on
+ * arrival, and there is a button for saying so mid-floor.
+ */
+describe('the beacon count as a per-floor override', () => {
+    /** Just the toolbar pieces the reset touches, without the rest of the panel */
+    function buildToolbar(count) {
+        document.body.innerHTML = '';
+        const input = document.createElement('input');
+        input.className = 'mwi-labyrinth-tile-controls-beacon-count';
+        input.value = String(count);
+        document.body.appendChild(input);
+        const status = document.createElement('span');
+        status.className = 'mwi-labyrinth-tile-controls-status';
+        document.body.appendChild(status);
+        settings.map.set('labyrinthBeaconCount', count);
+        return { input, status };
+    }
+
+    afterEach(() => {
+        // onLabyrinthUpdated arms a couple of repaint timers; nothing in these
+        // tests is about them, and they outlive the DOM they would draw into
+        clearTimeout(labyrinthClearRate.pruneTileTimer);
+        clearTimeout(labyrinthClearRate.autoTileTimer);
+        labyrinthClearRate.pruneTileTimer = null;
+        labyrinthClearRate.autoTileTimer = null;
+        document.body.innerHTML = '';
+        settings.map.clear();
+        labyrinthClearRate.roomData = null;
+        labyrinthClearRate._labyrinth = null;
+    });
+
+    test('the reset button drops a manual count back to the automatic minimum', () => {
+        const { input, status } = buildToolbar(4);
+
+        expect(labyrinthClearRate.resetBeaconCountToAuto(true)).toBe(true);
+
+        expect(input.value).toBe('0');
+        expect(settings.map.get('labyrinthBeaconCount')).toBe(0);
+        expect(status.textContent).toContain('min');
+    });
+
+    test('resetting what is already automatic reports no change', () => {
+        const { input } = buildToolbar(0);
+
+        expect(labyrinthClearRate.resetBeaconCountToAuto()).toBe(false);
+        expect(input.value).toBe('0');
+        expect(settings.map.get('labyrinthBeaconCount')).toBe(0);
+    });
+
+    test('a new floor starts back on the automatic minimum', () => {
+        const { input } = buildToolbar(4);
+        labyrinthClearRate.currentFloor = 3;
+
+        labyrinthClearRate.onLabyrinthUpdated({ labyrinth: { currentFloor: 4, roomData: [[null]] } });
+
+        expect(settings.map.get('labyrinthBeaconCount')).toBe(0);
+        expect(input.value).toBe('0');
+    });
+
+    test('an update from the floor you are on leaves the count alone', () => {
+        const { input } = buildToolbar(4);
+        labyrinthClearRate.currentFloor = 3;
+
+        labyrinthClearRate.onLabyrinthUpdated({ labyrinth: { currentFloor: 3, roomData: [[null]] } });
+
+        expect(settings.map.get('labyrinthBeaconCount')).toBe(4);
+        expect(input.value).toBe('4');
+    });
+});
+
+/**
  * The restock helpers shared by the path and beacon planners: which tier a
  * hint prices, and whether it prices the run in view or the next one.
  *

@@ -225,3 +225,173 @@ describe('computeBeaconPlan route redundancy', () => {
         expect(extra.revealedNew).toBeGreaterThanOrEqual(minimal.revealedNew);
     });
 });
+
+/**
+ * The objective a set count is planned against, from a live run that went
+ * wrong: four beacons were placed on the fattest dark pockets of a floor and
+ * the plan's own caption admitted "a covered path to the exit needs 3". Rooms
+ * revealed is the last thing a placement is judged on, not the first.
+ *
+ * Both fixtures below are floors where the *most-rooms* placement is a real,
+ * findable answer that leaves the way out dark — so a planner that still hands
+ * one back has not been fixed, whatever it says about its intentions.
+ */
+describe('computeBeaconPlan placement objective', () => {
+    const COLS = 9;
+    const N = 81;
+    const idx = (x, y) => y * COLS + x;
+
+    const diamond = (c) => {
+        const out = [];
+        for (let i = 0; i < N; i++) {
+            const d = Math.abs((i % COLS) - (c % COLS)) + Math.abs(Math.floor(i / COLS) - Math.floor(c / COLS));
+            if (d <= 2) out.push(i);
+        }
+        return out;
+    };
+
+    /** What a set of beacon centers would light up on this floor */
+    const coverageOf = (revealed, centers) => {
+        const union = new Set();
+        for (const c of centers) {
+            for (const d of diamond(c)) {
+                if (!revealed[d]) union.add(d);
+            }
+        }
+        return union;
+    };
+
+    /** Whether entrance and exit end up joined through revealed rooms */
+    const covered = (revealed, union) => {
+        const isOpen = (i) => revealed[i] || union.has(i);
+        const seen = new Set([0]);
+        const queue = [0];
+        while (queue.length) {
+            const cur = queue.shift();
+            const x = cur % COLS;
+            const around = [];
+            if (x > 0) around.push(cur - 1);
+            if (x < COLS - 1) around.push(cur + 1);
+            if (cur - COLS >= 0) around.push(cur - COLS);
+            if (cur + COLS < N) around.push(cur + COLS);
+            for (const nb of around) {
+                if (nb === N - 1) return true;
+                if (!seen.has(nb) && isOpen(nb)) {
+                    seen.add(nb);
+                    queue.push(nb);
+                }
+            }
+        }
+        return false;
+    };
+
+    /** The placement the old objective would have picked: most rooms, full search */
+    const mostRooms = (revealed, count) => {
+        let best = null;
+        const walk = (from, chosen) => {
+            if (chosen.length === count) {
+                const union = coverageOf(revealed, chosen);
+                if (!best || union.size > best.rooms) {
+                    const passable = revealed.map((r, i) => r || union.has(i));
+                    best = {
+                        centers: [...chosen],
+                        rooms: union.size,
+                        covered: covered(revealed, union),
+                        routes: countDisjointRoutes(passable, COLS),
+                    };
+                }
+                return;
+            }
+            for (let c = from; c < N; c++) walk(c + 1, [...chosen, c]);
+        };
+        walk(0, []);
+        return best;
+    };
+
+    /** A revealed floor split by one dark column, with a fat dark pocket in each half */
+    const splitFloor = ({ pinch = false } = {}) => {
+        const revealed = new Array(N).fill(true);
+        for (let y = 0; y < 9; y++) revealed[idx(4, y)] = false;
+        // A single revealed room in the wall: the floor is crossable, but every
+        // way out runs through that one room
+        if (pinch) revealed[idx(4, 4)] = true;
+        // Far enough from the wall (three columns) that no one beacon can light
+        // a pocket and breach the wall at the same time
+        for (const y of [0, 1, 2]) for (const x of [7, 8]) revealed[idx(x, y)] = false;
+        for (const y of [6, 7, 8]) for (const x of [0, 1]) revealed[idx(x, y)] = false;
+        return revealed;
+    };
+
+    test('a covered path outranks the pockets that reveal more rooms', () => {
+        const revealed = splitFloor();
+
+        // The floor really does bait a most-rooms planner: the best two-beacon
+        // placement by rooms alone lights both pockets and leaves the wall dark
+        const greedy = mostRooms(revealed, 2);
+        expect(greedy.rooms).toBe(12);
+        expect(greedy.covered).toBe(false);
+
+        const plan = computeBeaconPlan(revealed, COLS, 2);
+        expect(plan.corridorOpen).toBe(true);
+        expect(covered(revealed, plan.covered)).toBe(true);
+        // Rooms were given up for it — which is the whole point of the order
+        expect(plan.revealedNew).toBeLessThan(greedy.rooms);
+        expect(plan.revealedNew).toBeGreaterThan(0);
+    });
+
+    test('one beacon short of the pockets, the manual count answers like the automatic one', () => {
+        const revealed = splitFloor();
+
+        const auto = computeBeaconPlan(revealed, COLS, 0);
+        const manual = computeBeaconPlan(revealed, COLS, 1);
+
+        expect(auto.minNeeded).toBe(1);
+        expect(auto.beacons).toHaveLength(1);
+        // The automatic mode already covered the way out; a manual count of the
+        // same size is the same question and now gets the same answer
+        expect(manual.beacons).toEqual(auto.beacons);
+        expect(manual.corridorOpen).toBe(true);
+    });
+
+    test('four beacons cover the way out first and light the pockets with what is left', () => {
+        const revealed = splitFloor();
+        const plan = computeBeaconPlan(revealed, COLS, 4);
+
+        expect(plan.beacons).toHaveLength(4);
+        expect(plan.corridorOpen).toBe(true);
+        expect(covered(revealed, plan.covered)).toBe(true);
+        // Coverage first does not mean coverage only: the spare beacons still
+        // go to the dark pockets
+        expect(plan.revealedNew).toBeGreaterThanOrEqual(15);
+    });
+
+    test('a second independent route outranks a fatter dark pocket', () => {
+        const revealed = splitFloor({ pinch: true });
+
+        // Already crossable, so every placement clears the first test — and the
+        // most-rooms one leaves the floor hanging on that single pinch room
+        const greedy = mostRooms(revealed, 1);
+        expect(greedy.covered).toBe(true);
+        expect(greedy.routes).toBe(1);
+
+        const plan = computeBeaconPlan(revealed, COLS, 1);
+        expect(plan.routes).toBeGreaterThanOrEqual(2);
+        expect(plan.revealedNew).toBeLessThan(greedy.rooms);
+    });
+
+    test('too few beacons to cover a path still spend themselves getting closer', () => {
+        const cols = 5;
+        const revealed = new Array(25).fill(false);
+        revealed[0] = true; // entrance only: a dark floor needing two beacons
+
+        const plan = computeBeaconPlan(revealed, cols, 1);
+        expect(plan.minNeeded).toBe(2);
+        expect(plan.corridorOpen).toBe(false);
+
+        // The honest answer for a budget that cannot get there is the one that
+        // gets closest: after this beacon, one more would finish the job
+        const after = revealed.slice();
+        for (const c of plan.covered) after[c] = true;
+        expect(computeBeaconPlan(after, cols, 0).minNeeded).toBe(1);
+    });
+});

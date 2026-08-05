@@ -1842,7 +1842,7 @@ export const settingsGroups = {
                 min: 0,
                 max: 20,
                 step: 1,
-                help: 'Beacons the beacon planner places, sited to reveal the most rooms on the way to the exit — 0 instead finds the fewest that cover a revealed path there',
+                help: 'Beacons the beacon planner places on the floor in view, sited to cover a revealed path to the exit first, a second independent route next, and the most rooms with what is left — 0 uses the fewest that cover a path, which every new floor resets to',
             },
             labyrinthSkipEditAutofill: {
                 id: 'labyrinthSkipEditAutofill',
