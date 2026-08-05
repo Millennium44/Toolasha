@@ -90,11 +90,23 @@ async function deriveKey(passphrase, salt, iterations) {
  *   algorithm: string, kdf: string}>} Everything the manifest needs, base64-encoded
  */
 export async function encryptText(plaintext, passphrase) {
+    return encryptBytes(new TextEncoder().encode(plaintext), passphrase);
+}
+
+/**
+ * Encrypt raw bytes — the path a compressed payload takes, since gzip output
+ * is not text. Same envelope as {@link encryptText}.
+ * @param {Uint8Array} bytes - The payload bytes
+ * @param {string} passphrase - The shared secret
+ * @returns {Promise<{ciphertext: string, salt: string, iv: string, iterations: number,
+ *   algorithm: string, kdf: string}>} Everything the manifest needs, base64-encoded
+ */
+export async function encryptBytes(bytes, passphrase) {
     const salt = crypto.getRandomValues(new Uint8Array(SALT_BYTES));
     const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES));
     const key = await deriveKey(passphrase, salt, KDF_ITERATIONS);
 
-    const sealed = await subtle().encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(plaintext));
+    const sealed = await subtle().encrypt({ name: 'AES-GCM', iv }, key, bytes);
 
     return {
         ciphertext: bytesToBase64(new Uint8Array(sealed)),
@@ -118,6 +130,18 @@ export async function encryptText(plaintext, passphrase) {
  * @returns {Promise<string>} The payload JSON
  */
 export async function decryptText(sealed, passphrase) {
+    return new TextDecoder().decode(await decryptBytes(sealed, passphrase));
+}
+
+/**
+ * Decrypt to raw bytes — what a compressed payload needs, since the plaintext
+ * under the seal is gzip, not text. Same failure semantics as
+ * {@link decryptText}.
+ * @param {{ciphertext: string, salt: string, iv: string, iterations: number}} sealed - From the manifest + chunks
+ * @param {string} passphrase - The shared secret
+ * @returns {Promise<Uint8Array>} The payload bytes
+ */
+export async function decryptBytes(sealed, passphrase) {
     const { ciphertext, salt, iv } = sealed || {};
     const iterations = Number(sealed?.iterations);
     if (typeof ciphertext !== 'string' || typeof salt !== 'string' || typeof iv !== 'string' || !(iterations > 0)) {
@@ -136,7 +160,7 @@ export async function decryptText(sealed, passphrase) {
     const key = await deriveKey(passphrase, saltBytes, iterations);
     try {
         const opened = await subtle().decrypt({ name: 'AES-GCM', iv: ivBytes }, key, cipherBytes);
-        return new TextDecoder().decode(opened);
+        return new Uint8Array(opened);
     } catch {
         throw new GistError(
             'passphrase',
@@ -145,4 +169,4 @@ export async function decryptText(sealed, passphrase) {
     }
 }
 
-export default { KDF_ITERATIONS, encryptText, decryptText, bytesToBase64, base64ToBytes };
+export default { KDF_ITERATIONS, encryptText, encryptBytes, decryptText, decryptBytes, bytesToBase64, base64ToBytes };

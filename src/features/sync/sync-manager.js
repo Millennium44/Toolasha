@@ -29,7 +29,8 @@ import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { showToast } from '../../utils/toast.js';
 import { askChoice } from '../../utils/choice-dialog.js';
 import { GistError, findSyncGist, readSyncGist, writeSyncGist, chunkPayload } from './gist-client.js';
-import { encryptText, decryptText } from './sync-crypto.js';
+import { compressionAvailable, gzipText, gunzipToText } from './sync-compress.js';
+import { encryptText, encryptBytes, decryptText, decryptBytes, bytesToBase64, base64ToBytes } from './sync-crypto.js';
 import { buildPayloadJSON, applyPayload, hashPayload } from './sync-payload.js';
 
 const STORE = 'settings';
@@ -139,14 +140,24 @@ class SyncManager {
 
         const gistId = await this._resolveGistId(token);
 
-        // The hash above is always of the plaintext — encryption salts itself
-        // freshly every time, so hashing ciphertext would make every payload
-        // look changed and every silent push upload.
+        // The hash above is always of the plaintext — compression and
+        // encryption both change the bytes without changing the data (and a
+        // fresh salt makes ciphertext different every push), so hashing
+        // anything later in the pipeline would make every payload look changed.
+        //
+        // Pipeline order is gzip first, encrypt second: JSON compresses ~5-10×
+        // and ciphertext does not compress at all. This is what fits the
+        // "everything" scope under the gist ceiling.
         const passphrase = this._passphrase();
-        let body = payload;
+        const compressed = compressionAvailable() ? 'gzip' : null;
+        const bodyBytes = compressed ? await gzipText(payload) : null;
+
+        let body;
         let encrypted = null;
         if (passphrase) {
-            const sealed = await encryptText(payload, passphrase);
+            const sealed = compressed
+                ? await encryptBytes(bodyBytes, passphrase)
+                : await encryptText(payload, passphrase);
             body = sealed.ciphertext;
             encrypted = {
                 v: 1,
@@ -156,6 +167,8 @@ class SyncManager {
                 salt: sealed.salt,
                 iv: sealed.iv,
             };
+        } else {
+            body = compressed ? bytesToBase64(bodyBytes) : payload;
         }
 
         const chunks = chunkPayload(body);
@@ -169,6 +182,7 @@ class SyncManager {
             chunks: chunks.length,
             bytes: payload.length,
             hash,
+            ...(compressed ? { compressed } : {}),
             ...(encrypted ? { encrypted } : {}),
         };
 
@@ -212,6 +226,9 @@ class SyncManager {
         const manifest = remote.manifest;
         let payload = remote.payload;
 
+        // Unwind the push pipeline: decrypt first, then decompress. A manifest
+        // without either flag is a payload from before they existed, and reads
+        // exactly as it always did.
         if (manifest?.encrypted) {
             const passphrase = this._passphrase();
             if (!passphrase) {
@@ -220,7 +237,12 @@ class SyncManager {
                     'This sync gist is encrypted, and no sync passphrase is set on this device.'
                 );
             }
-            payload = await decryptText({ ...manifest.encrypted, ciphertext: payload }, passphrase);
+            const sealed = { ...manifest.encrypted, ciphertext: payload };
+            payload = manifest.compressed
+                ? await gunzipToText(await decryptBytes(sealed, passphrase))
+                : await decryptText(sealed, passphrase);
+        } else if (manifest?.compressed) {
+            payload = await gunzipToText(base64ToBytes(payload));
         }
 
         const remoteAt = manifest?.exportedAt ?? null;

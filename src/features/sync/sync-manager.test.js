@@ -373,17 +373,65 @@ describe('passphrase encryption', () => {
         expect(write.chunks[0]).not.toContain('local');
         expect(write.manifest.hash).toBe(`h:${payload.text}`);
 
-        const { decryptText } = await import('./sync-crypto.js');
-        await expect(
-            decryptText({ ...write.manifest.encrypted, ciphertext: write.chunks[0] }, 'moo moo')
-        ).resolves.toBe(payload.text);
+        // Unwinding the full pipeline — decrypt, then gunzip — returns the payload
+        const { decryptBytes } = await import('./sync-crypto.js');
+        const { gunzipToText } = await import('./sync-compress.js');
+        const opened = await decryptBytes({ ...write.manifest.encrypted, ciphertext: write.chunks[0] }, 'moo moo');
+        expect(write.manifest.compressed).toBe('gzip');
+        await expect(gunzipToText(opened)).resolves.toBe(payload.text);
     });
 
-    test('no passphrase means the gist stays plaintext with no encryption record', async () => {
+    test('no passphrase means no encryption record — the gist is gzip, readable with no secret', async () => {
         const result = await syncManager.push();
         expect(result.ok).toBe(true);
-        expect(gist.writes[0].manifest.encrypted).toBeUndefined();
-        expect(gist.writes[0].chunks[0]).toBe(payload.text);
+
+        const write = gist.writes[0];
+        expect(write.manifest.encrypted).toBeUndefined();
+        expect(write.manifest.compressed).toBe('gzip');
+
+        const { base64ToBytes } = await import('./sync-crypto.js');
+        const { gunzipToText } = await import('./sync-compress.js');
+        await expect(gunzipToText(base64ToBytes(write.chunks[0]))).resolves.toBe(payload.text);
+    });
+
+    test('pulling a compressed unencrypted gist decompresses before applying', async () => {
+        const { gzipText } = await import('./sync-compress.js');
+        const { bytesToBase64 } = await import('./sync-crypto.js');
+        const remote = '{"remote":3}';
+
+        stored.map['toolasha_sync_gistId'] = 'gist-1';
+        gist.read = {
+            manifest: { exportedAt: '2026-08-05T12:00:00Z', chunks: 1, hash: `h:${remote}`, compressed: 'gzip' },
+            payload: bytesToBase64(await gzipText(remote)),
+        };
+
+        const result = await syncManager.pull();
+        expect(result.ok).toBe(true);
+        expect(payload.applied).toBe(remote);
+    });
+
+    test('pulling a compressed and encrypted gist unwinds both layers', async () => {
+        settings.values.sync_passphrase = 'moo moo';
+        const { gzipText } = await import('./sync-compress.js');
+        const { encryptBytes } = await import('./sync-crypto.js');
+        const remote = '{"remote":4}';
+        const sealed = await encryptBytes(await gzipText(remote), 'moo moo');
+
+        stored.map['toolasha_sync_gistId'] = 'gist-1';
+        gist.read = {
+            manifest: {
+                exportedAt: '2026-08-05T12:00:00Z',
+                chunks: 1,
+                hash: `h:${remote}`,
+                compressed: 'gzip',
+                encrypted: { iterations: sealed.iterations, salt: sealed.salt, iv: sealed.iv },
+            },
+            payload: sealed.ciphertext,
+        };
+
+        const result = await syncManager.pull();
+        expect(result.ok).toBe(true);
+        expect(payload.applied).toBe(remote);
     });
 
     test('pulling an encrypted gist decrypts before applying', async () => {
