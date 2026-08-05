@@ -15,6 +15,10 @@ const mocks = vi.hoisted(() => ({
     zones: [],
     saved: [],
     watched: [],
+    /** Ability level goals handed to Equipment Savings */
+    abilityGoals: [],
+    /** Marketplace navigations a row asked for */
+    marketOpened: [],
     store: new Map(),
     /** Whether the page was left with the panel up, and what it recorded since */
     wasOpen: false,
@@ -72,6 +76,18 @@ vi.mock('../inventory/equipment-savings-row.js', () => ({
 
 vi.mock('../inventory/watchlist.js', () => ({
     watchItem: (itemHrid) => mocks.watched.push({ itemHrid }),
+}));
+
+// Ability goals live beside the gear targets in Equipment Savings; this file is
+// about what the row hands over, not about how the goal is stored
+vi.mock('../../utils/equipment-savings.js', () => ({
+    addAbilityGoal: async (goal) => {
+        mocks.abilityGoals.push(goal);
+    },
+}));
+
+vi.mock('../../utils/marketplace-tabs.js', () => ({
+    navigateToMarketplace: (itemHrid, enhancementLevel) => mocks.marketOpened.push({ itemHrid, enhancementLevel }),
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
@@ -204,6 +220,9 @@ const {
     costSourceTagHtml,
     upgradeNoiseFor,
     upgradeRowNotesHtml,
+    visibleAllZonesSkillColumns,
+    scoreAllZoneRows,
+    bestAllZoneRows,
 } = await import('./combat-sim-ui.js');
 
 /** A result row shaped like the upgrade advisor's output. */
@@ -689,12 +708,191 @@ describe('all-zones snapshot', () => {
     });
 });
 
+describe('the all-zones table', () => {
+    /** A table row as `_displayAllZonesResults` builds them. */
+    const zoneRow = (zone, { totalXP = 0, profitDay = 0, tier = 0, ...skills } = {}) => ({
+        zone,
+        tier,
+        encounters: 10,
+        deaths: 0,
+        totalXP,
+        profitDay,
+        stamina: 0,
+        intelligence: 0,
+        attack: 0,
+        melee: 0,
+        defense: 0,
+        ranged: 0,
+        magic: 0,
+        ...skills,
+    });
+
+    describe('columns nobody trains', () => {
+        test('a skill with a rate in one zone keeps its column', () => {
+            const keys = visibleAllZonesSkillColumns([
+                zoneRow('A', { defense: 0 }),
+                zoneRow('B', { defense: 1200 }),
+            ]).map((c) => c.key);
+
+            expect(keys).toEqual(['defense']);
+        });
+
+        test('the six that read zero everywhere are dropped', () => {
+            // The single-style build in the report: only Def carries XP
+            const keys = visibleAllZonesSkillColumns([
+                zoneRow('A', { defense: 900 }),
+                zoneRow('B', { defense: 1200 }),
+            ]).map((c) => c.key);
+
+            expect(keys).toEqual(['defense']);
+            expect(keys).not.toContain('magic');
+        });
+
+        test('a run that trains nothing at all drops every per-skill column', () => {
+            expect(visibleAllZonesSkillColumns([zoneRow('A'), zoneRow('B')])).toEqual([]);
+        });
+
+        test('and no rows is not a crash', () => {
+            expect(visibleAllZonesSkillColumns([])).toEqual([]);
+            expect(visibleAllZonesSkillColumns(null)).toEqual([]);
+        });
+    });
+
+    describe('the Score', () => {
+        test('a zone that wins both metrics scores full marks', () => {
+            const rows = [
+                zoneRow('Best', { totalXP: 1000, profitDay: 5000 }),
+                zoneRow('Mid', { totalXP: 500, profitDay: 2000 }),
+                zoneRow('Worst', { totalXP: 100, profitDay: 100 }),
+            ];
+            scoreAllZoneRows(rows);
+
+            expect(rows[0].score).toBe(100);
+            expect(rows[2].score).toBe(0);
+            expect(rows[1].score).toBeGreaterThan(rows[2].score);
+            expect(rows[1].score).toBeLessThan(rows[0].score);
+        });
+
+        test('winning one metric and losing the other lands in the middle', () => {
+            const rows = [
+                zoneRow('XP zone', { totalXP: 1000, profitDay: 0 }),
+                zoneRow('Gold zone', { totalXP: 0, profitDay: 5000 }),
+            ];
+            scoreAllZoneRows(rows);
+
+            expect(rows[0].score).toBe(50);
+            expect(rows[1].score).toBe(50);
+        });
+
+        test('zones that measure identically cannot be separated by list order', () => {
+            const rows = [
+                zoneRow('First', { totalXP: 500, profitDay: 500 }),
+                zoneRow('Second', { totalXP: 500, profitDay: 500 }),
+            ];
+            scoreAllZoneRows(rows);
+
+            expect(rows[0].score).toBe(rows[1].score);
+        });
+
+        test('a lone zone is the best of what was simulated', () => {
+            const rows = [zoneRow('Only', { totalXP: 5, profitDay: 5 })];
+            expect(scoreAllZoneRows(rows)[0].score).toBe(100);
+        });
+    });
+
+    describe('the two winners', () => {
+        test('are picked per metric, not by one blended ranking', () => {
+            const rows = [
+                zoneRow('XP zone', { totalXP: 1000, profitDay: 10 }),
+                zoneRow('Gold zone', { totalXP: 10, profitDay: 9000 }),
+            ];
+            const best = bestAllZoneRows(rows);
+
+            expect(best.xp.zone).toBe('XP zone');
+            expect(best.profit.zone).toBe('Gold zone');
+        });
+
+        test('nothing is badged when every zone earns the same', () => {
+            const rows = [zoneRow('A', { totalXP: 100, profitDay: 100 }), zoneRow('B', { totalXP: 100, profitDay: 0 })];
+            const best = bestAllZoneRows(rows);
+
+            expect(best.xp).toBeNull();
+            expect(best.profit.zone).toBe('A');
+        });
+
+        test('a single zone is not declared a winner over itself', () => {
+            expect(bestAllZoneRows([zoneRow('Only', { totalXP: 1, profitDay: 1 })])).toEqual({
+                xp: null,
+                profit: null,
+            });
+        });
+    });
+
+    describe('what gets drawn', () => {
+        const HOUR_NS = 3600 * 1e9;
+        const result = (name, { xp = {}, profit = 0, tier = 0 } = {}) => ({
+            zone: { name, difficultyTier: tier, zoneHrid: `/actions/combat/${name}` },
+            simResult: {
+                simulatedTime: HOUR_NS,
+                encounters: 10,
+                deaths: { player1: 0 },
+                experienceGained: { player1: xp },
+            },
+            revenue: { netPerHour: profit, revenuePerHour: profit, costPerHour: 0 },
+        });
+
+        beforeEach(() => {
+            ui.buildPanel();
+            ui._allZonesSortCol = null;
+        });
+
+        afterEach(() => {
+            ui.destroy();
+        });
+
+        test('drops the untrained skill headers and keeps the headline ones', () => {
+            ui._displayAllZonesResults(
+                [result('Fly', { xp: { defense: 900 }, profit: 100 }), result('Jungle', { xp: { defense: 1500 } })],
+                1,
+                {}
+            );
+            const headers = [...ui.panel.querySelectorAll('#mwi-csim-results th')].map((th) => th.dataset.col);
+
+            expect(headers).toContain('defense');
+            expect(headers).toContain('totalXP');
+            expect(headers).toContain('score');
+            expect(headers).not.toContain('magic');
+            expect(headers).not.toContain('stamina');
+        });
+
+        test('names both winners above the table', () => {
+            ui._displayAllZonesResults(
+                [
+                    result('Fly', { xp: { defense: 900 }, profit: 10 }),
+                    result('Jungle', { xp: { defense: 100 }, profit: 5000 }),
+                ],
+                1,
+                {}
+            );
+            const shown = ui.panel.querySelector('#mwi-csim-results').textContent;
+
+            expect(shown).toContain('Best XP');
+            expect(shown).toContain('Best profit');
+            // And the rows themselves carry the badge, so a sort keeps it with them
+            expect(shown).toContain('best XP');
+            expect(shown).toContain('best profit');
+        });
+    });
+});
+
 describe('upgrade row handoff', () => {
     const candidate = (overrides) => ({ candidate: { description: 'Something', ...overrides } });
 
     beforeEach(() => {
         mocks.saved.length = 0;
         mocks.watched.length = 0;
+        mocks.abilityGoals.length = 0;
+        mocks.marketOpened.length = 0;
     });
 
     test('an equipment row buys the upgrade at its enhancement level', () => {
@@ -749,14 +947,105 @@ describe('upgrade row handoff', () => {
         expect(rowClicks).toBe(0);
     });
 
-    test('an ability row offers Watch only', () => {
+    test('an ability row saves as a level goal rather than as a reserved slot', () => {
         const container = document.createElement('div');
         container.innerHTML = upgradeRowActionsHtml(
             candidate({ upgradeHrid: '/abilities/fireball', upgradeLevel: 20, type: 'ability_swap' })
         );
 
+        // Not the gear route: a stack of books fills no equipment slot
         expect(container.querySelector('[data-buy-action="save"]')).toBeNull();
+        expect(container.querySelector('[data-buy-action="save-ability"]')).toBeTruthy();
         expect(container.querySelector('[data-buy-action="watch"]')).toBeTruthy();
+    });
+
+    test('"Save for this" on an ability row records the goal with its book cost', () => {
+        const container = document.createElement('div');
+        container.innerHTML = upgradeRowActionsHtml({
+            candidate: {
+                description: 'Fierce Aura Lv41 → Lv46',
+                upgradeHrid: '/abilities/fierce_aura',
+                upgradeLevel: 46,
+                type: 'ability_level',
+            },
+            cost: 12_400_000,
+        });
+        wireUpgradeRowActions(container);
+
+        container.querySelector('[data-buy-action="save-ability"]').click();
+
+        expect(mocks.abilityGoals).toEqual([
+            {
+                abilityHrid: '/abilities/fierce_aura',
+                targetLevel: 46,
+                cost: 12_400_000,
+                label: 'fierce aura Lv46',
+            },
+        ]);
+        // And never as a gear target, which is a different list
+        expect(mocks.saved).toEqual([]);
+    });
+
+    test('an unpriced ability row saves as unpriced rather than as free', () => {
+        const container = document.createElement('div');
+        container.innerHTML = upgradeRowActionsHtml({
+            candidate: { upgradeHrid: '/abilities/fierce_aura', upgradeLevel: 46, type: 'ability_level' },
+            cost: null,
+        });
+        wireUpgradeRowActions(container);
+
+        container.querySelector('[data-buy-action="save-ability"]').click();
+
+        expect(mocks.abilityGoals[0].cost).toBeNull();
+    });
+
+    test('Market opens the item the row buys, at the level it buys it', () => {
+        const container = document.createElement('div');
+        container.innerHTML = upgradeRowActionsHtml(
+            candidate({ upgradeHrid: '/items/plate', upgradeLevel: 7, type: 'tier' })
+        );
+        const button = container.querySelector('[data-buy-action="market"]');
+
+        expect(button.getAttribute('data-buy-hrid')).toBe('/items/plate');
+        expect(button.getAttribute('data-buy-level')).toBe('7');
+
+        wireUpgradeRowActions(container);
+        button.click();
+
+        expect(mocks.marketOpened).toEqual([{ itemHrid: '/items/plate', enhancementLevel: 7 }]);
+    });
+
+    test('and on an ability row it opens the book, which is the marketable thing', () => {
+        const container = document.createElement('div');
+        container.innerHTML = upgradeRowActionsHtml(
+            candidate({ upgradeHrid: '/abilities/fireball', upgradeLevel: 20, type: 'ability_level' })
+        );
+        wireUpgradeRowActions(container);
+
+        container.querySelector('[data-buy-action="market"]').click();
+
+        expect(mocks.marketOpened).toEqual([{ itemHrid: '/items/fireball', enhancementLevel: 0 }]);
+    });
+
+    test('rows that buy nothing marketable get no Market button at all', () => {
+        // They get no buttons: there is nothing to open, watch or save for
+        expect(upgradeRowActionsHtml(candidate({ type: 'house', upgradeHrid: '/house_rooms/dairy_barn' }))).toBe('');
+        expect(upgradeRowActionsHtml(candidate({ type: 'community_buff', buffKey: 'comExp' }))).toBe('');
+    });
+
+    test('Market does not also unfold the row it sits in', () => {
+        const row = document.createElement('div');
+        let rowClicks = 0;
+        row.addEventListener('click', () => {
+            rowClicks++;
+        });
+        row.innerHTML = upgradeRowActionsHtml(candidate({ upgradeHrid: '/items/plate', type: 'tier' }));
+        wireUpgradeRowActions(row);
+
+        row.querySelector('[data-buy-action="market"]').click();
+
+        expect(mocks.marketOpened).toHaveLength(1);
+        expect(rowClicks).toBe(0);
     });
 });
 
@@ -796,11 +1085,11 @@ describe('the qualifiers a row carries', () => {
         ...over,
     });
 
-    test('a delta inside the error is flagged rather than presented as a finding', () => {
-        expect(upgradeRowNotesHtml(noisy())).toContain('within noise');
-    });
-
-    test('but a real gain on either axis is left alone', () => {
+    test('the collapsed title says nothing about noise — the expanded detail does', () => {
+        // A chip on the row title competed with the row's own name and never
+        // said which figure was inside the error bar; the per-metric annotation
+        // in the detail says exactly that, beside the number it is about
+        expect(upgradeRowNotesHtml(noisy())).not.toContain('within noise');
         expect(upgradeRowNotesHtml(noisy({ significantBy: { dps: true, profit: false } }))).not.toContain(
             'within noise'
         );
@@ -1058,6 +1347,88 @@ describe('clearing the comparison history', () => {
         ui._clearAllHistory();
 
         expect(text()).toContain('Simulation complete.');
+    });
+});
+
+describe('the ⚙ Columns popover', () => {
+    const results = () => ({
+        baseline: BASELINE,
+        results: [
+            row('Cheap ring', { slot: '/equipment_types/ring', cost: 100 }),
+            row('Pricey neck', { slot: '/equipment_types/neck', cost: 1000 }),
+        ],
+        food: null,
+    });
+
+    const menu = () => ui.panel.querySelector('#mwi-csim-upgrade-cols-menu');
+
+    beforeEach(() => {
+        mocks.upgradeResult = { baseline: null, results: [], food: null };
+        mocks.onRun = null;
+        ui.buildPanel();
+        ui._upgradeColumnMenuOpen = false;
+    });
+
+    afterEach(() => {
+        ui._setUpgradeColumnMenuOpen(false);
+        ui.destroy();
+    });
+
+    test('starts closed, and a fresh render leaves it closed', () => {
+        // It was drawn with `display:none` first and `display:flex` later in the
+        // same style attribute, so the later declaration won and the popover
+        // came back up on every sort, tick, replan and analysis
+        ui._renderUpgradeResults(results());
+
+        expect(menu().style.display).toBe('none');
+    });
+
+    test('opens on a click of its own button', () => {
+        ui._renderUpgradeResults(results());
+        ui.panel.querySelector('#mwi-csim-upgrade-cols-btn').click();
+
+        expect(ui._upgradeColumnMenuOpen).toBe(true);
+        expect(menu().style.display).toBe('flex');
+    });
+
+    test('and stays closed once closed, however often the table is rebuilt', () => {
+        ui._renderUpgradeResults(results());
+        const button = ui.panel.querySelector('#mwi-csim-upgrade-cols-btn');
+        button.click();
+        button.click();
+
+        expect(ui._upgradeColumnMenuOpen).toBe(false);
+
+        // Sorting, re-scoring and a second analysis all come back through here
+        ui._renderUpgradeResults(results());
+        ui._renderUpgradeResults(results());
+
+        expect(menu().style.display).toBe('none');
+    });
+
+    test('sorting the table puts it away', () => {
+        ui._renderUpgradeResults(results());
+        ui.panel.querySelector('#mwi-csim-upgrade-cols-btn').click();
+
+        ui.panel.querySelector('[data-sort-key]').click();
+
+        expect(ui._upgradeColumnMenuOpen).toBe(false);
+        expect(menu().style.display).toBe('none');
+    });
+
+    test('a new analysis does not bring it back over the results', async () => {
+        ui._renderUpgradeResults(results());
+        ui.panel.querySelector('#mwi-csim-upgrade-cols-btn').click();
+        expect(ui._upgradeColumnMenuOpen).toBe(true);
+
+        const zone = ui.panel.querySelector('#mwi-csim-zone');
+        zone.innerHTML = '<option value="/zones/a">A</option>';
+        zone.value = '/zones/a';
+        mocks.upgradeResult = results();
+        await ui._onUpgradeAnalyze();
+
+        expect(ui._upgradeColumnMenuOpen).toBe(false);
+        expect(menu().style.display).toBe('none');
     });
 });
 

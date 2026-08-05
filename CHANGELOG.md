@@ -17,6 +17,17 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - **The Task Tokens tile earns its rate line**: `tokens/hr this week` beneath the board value, on wall-clock time between your first and last claim (the tooltip names the sample and the basis; under two claims shows no rate rather than a fake one).
 - **Task statistics gains "Claimed Tasks (last 7 days)"**: tasks, tokens, coins, both hourly rates, the measured span — and reroll spend over the same window tied in for a **Net Task Income** figure, plus your last five completions.
 
+### The combat sim answers back
+
+- **Community upgrades work**: the candidate generator capped community buffs at level 20, and the live buffs sit at or above it — so "Community" alone always evaluated nothing. Ceiling raised to 30, and a buff already at the ceiling now shows what the buff is _worth_ (Lv30 → off) instead of showing nothing. Also fixed: community and drink rows were silently dropped from multi-fight lab analyses by a loadout check that treated them as equipment.
+- **The Columns popover stays closed**: a duplicate `display` declaration meant every re-render (sort, tick, replan, new analysis) rebuilt it open. One declaration now, and a new analysis closes it.
+- **"within noise" leaves the collapsed row title** — the per-metric annotations in the expanded detail are untouched.
+- **Charms are simmable**: the charm slot was skipped entirely because a pure-focus charm read as "no combat stats" (its one stat is a skill hrid, not a number). Charm enhancement levels and next-tier steps now rank like any equipment; changing the focused skill is deliberately not a candidate.
+- **Every buyable row gets a Market button** — equipment at its level, ability rows jump to their book — and ability rows gain "Save for this" straight into eWatch. Lab sim rows inherit all of it.
+- **The all-zones Results table reads better**: per-skill XP columns that are zero everywhere are hidden, numbers right-align with row striping, a sortable Score column rank-blends XP/hr and profit (same scoring philosophy as the Upgrade tab), the best-XP and best-profit zones are badged with a headline line above the table, and Score exports to CSV.
+- **Single-item swap labels carry both sides' levels** ("Old Tunic +4 → Kraken Tunic +7"), matching the lab sim's multi-piece labels; the refined-clamp path rebuilds labels instead of regex-patching them.
+- **House candidates apply correctly everywhere**: the shared candidate applier had no house branch and simulated the unchanged character (a confident +0.00%); the branch exists now.
+
 ### The lab sim grows up
 
 - **Task Fight is gone from the lab sim** — lab targets can never be tasks; the sim now passes a hard "no" and runs recorded with the old flag still say so in their labels rather than passing as ordinary runs.

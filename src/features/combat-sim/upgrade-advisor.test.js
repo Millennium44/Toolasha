@@ -246,11 +246,14 @@ describe('generateCandidates refined-equipment gating', () => {
         const candidates = generateCandidates(buildPlayer('/items/fine_sword', 4), buildGameData(), 'equipment');
 
         // The refined tier upgrade is still suggested, but at +10 (refined items
-        // cannot exist below +10), and its description reflects the clamped level
+        // cannot exist below +10). The clamp is exactly the case where the two
+        // sides of the swap stop sharing a level, so the label must carry both:
+        // one trailing "(+10)" would have quoted the new level for the sword
+        // being handed in as well.
         const refinedTier = candidates.find((c) => c.type === 'tier' && c.upgradeHrid === '/items/regal_sword_refined');
         expect(refinedTier).toBeDefined();
         expect(refinedTier.upgradeLevel).toBe(10);
-        expect(refinedTier.description).toContain('(+10)');
+        expect(refinedTier.description).toBe('Fine Sword +4 → Regal Sword (R) +10');
 
         // The regular enhancement candidate on the current item is still present
         expect(candidates.some((c) => c.type === 'enhancement' && c.upgradeHrid === '/items/fine_sword')).toBe(true);
@@ -289,7 +292,7 @@ describe('generateCandidates refined-equipment gating', () => {
         const refinedCape = candidates.find((c) => c.type === 'tier' && c.upgradeHrid === '/items/grand_cape_refined');
         expect(refinedCape).toBeDefined();
         expect(refinedCape.upgradeLevel).toBe(4);
-        expect(refinedCape.description).toContain('(+4)');
+        expect(refinedCape.description).toBe('Plain Cape +4 → Grand Cape (R) +4');
     });
 
     test('equipped refined capes below +10 use the back breakpoints', () => {
@@ -534,6 +537,121 @@ describe('getMainTrainingSkills', () => {
         expect(getMainTrainingSkills({ equipment: {} }, { itemDetailMap: {}, combatStyleDetailMap: {} })).toEqual([
             'melee',
         ]);
+    });
+});
+
+describe('a swap says what it takes and what it gives, each at its own level', () => {
+    test('a single-slot tier swap writes the level against both pieces', () => {
+        const candidates = generateCandidates(buildPlayer('/items/fine_sword', 10), buildGameData(), 'equipment');
+
+        const tier = candidates.find((c) => c.type === 'tier' && c.upgradeHrid === '/items/regal_sword_refined');
+        expect(tier.description).toBe('Fine Sword +10 → Regal Sword (R) +10');
+    });
+
+    test('and a piece at +0 carries no level at all, rather than "+0"', () => {
+        const candidates = generateCandidates(buildPlayer('/items/fine_sword', 0), buildGameData(), 'equipment');
+
+        const tier = candidates.find((c) => c.type === 'tier' && c.upgradeHrid === '/items/regal_sword_refined');
+        // Clamped to +10 on the way in, which is what the two sides differing looks like
+        expect(tier.description).toBe('Fine Sword → Regal Sword (R) +10');
+    });
+
+    test('a two-piece cross-slot swap labels each piece it hands you', () => {
+        const gameData = buildGameData();
+        gameData.itemDetailMap['/items/great_axe'] = {
+            name: 'Great Axe',
+            itemLevel: 50,
+            equipmentDetail: { type: '/equipment_types/two_hand', combatStats: { smashDamage: 20 } },
+        };
+        gameData.itemDetailMap['/items/hand_axe'] = {
+            name: 'Hand Axe',
+            itemLevel: 60,
+            equipmentDetail: { type: '/equipment_types/main_hand', combatStats: { smashDamage: 12 } },
+        };
+        gameData.itemDetailMap['/items/buckler'] = {
+            name: 'Buckler',
+            itemLevel: 55,
+            equipmentDetail: { type: '/equipment_types/off_hand', combatStats: { armor: 8 } },
+        };
+        const player = {
+            equipment: { '/equipment_types/two_hand': { hrid: '/items/great_axe', enhancementLevel: 5 } },
+        };
+
+        const cross = generateCandidates(player, gameData, 'equipment').find((c) => c.type === 'cross_slot');
+
+        expect(cross).toBeDefined();
+        expect(cross.description).toBe('Great Axe +5 → Hand Axe +5 + Buckler +5');
+    });
+});
+
+describe('the charm slot is in the equipment candidates', () => {
+    const CHARM = '/equipment_types/charm';
+
+    /**
+     * A charm carries only `focusTraining` — a skill hrid, not a ranked stat —
+     * which is exactly the shape that used to be read as "no combat stats" and
+     * skipped, so no charm level or tier ever reached the table.
+     */
+    function charmGameData() {
+        const charm = (name, itemLevel, skill) => ({
+            name,
+            itemLevel,
+            sortIndex: itemLevel,
+            equipmentDetail: { type: CHARM, combatStats: { focusTraining: `/skills/${skill}` } },
+        });
+        return {
+            actionDetailMap: {},
+            itemDetailMap: {
+                '/items/basic_melee_charm': charm('Basic Melee Charm', 10, 'melee'),
+                '/items/expert_melee_charm': charm('Expert Melee Charm', 60, 'melee'),
+                '/items/grand_melee_charm': charm('Grand Melee Charm', 90, 'melee'),
+                '/items/expert_magic_charm': charm('Expert Magic Charm', 60, 'magic'),
+            },
+        };
+    }
+
+    const wearing = (hrid, enhancementLevel = 3) => ({ equipment: { [CHARM]: { hrid, enhancementLevel } } });
+
+    test('the equipped charm gets its next enhancement breakpoint', () => {
+        const candidates = generateCandidates(wearing('/items/expert_melee_charm', 3), charmGameData(), 'equipment');
+
+        const enhancement = candidates.find((c) => c.type === 'enhancement');
+        expect(enhancement).toBeDefined();
+        expect(enhancement.slot).toBe(CHARM);
+        expect(enhancement.upgradeHrid).toBe('/items/expert_melee_charm');
+        expect(enhancement.upgradeLevel).toBeGreaterThan(3);
+    });
+
+    test('and the next charm up, keeping the focus skill it trains', () => {
+        const candidates = generateCandidates(wearing('/items/expert_melee_charm'), charmGameData(), 'equipment');
+
+        const tier = candidates.filter((c) => c.type === 'tier' && c.slot === CHARM);
+        expect(tier.map((c) => c.upgradeHrid)).toEqual(['/items/grand_melee_charm']);
+        // Its enhancement level rides along, like every other tier candidate
+        expect(tier[0].upgradeLevel).toBe(3);
+        expect(tier[0].description).toContain('Grand Melee Charm');
+    });
+
+    test('one step at a time — the top of the family is not offered from the bottom', () => {
+        const candidates = generateCandidates(wearing('/items/basic_melee_charm'), charmGameData(), 'equipment');
+
+        const tier = candidates.filter((c) => c.type === 'tier' && c.slot === CHARM);
+        expect(tier.map((c) => c.upgradeHrid)).toEqual(['/items/expert_melee_charm']);
+    });
+
+    test('the best charm of a family has no tier left to buy', () => {
+        const candidates = generateCandidates(wearing('/items/grand_melee_charm'), charmGameData(), 'equipment');
+
+        expect(candidates.filter((c) => c.type === 'tier' && c.slot === CHARM)).toHaveLength(0);
+        // The enhancement candidate is still there — the charm can still improve
+        expect(candidates.some((c) => c.type === 'enhancement' && c.slot === CHARM)).toBe(true);
+    });
+
+    test('changing which skill the charm trains is never offered as an upgrade', () => {
+        // That is a decision about what to train, not something to rank on gold
+        const candidates = generateCandidates(wearing('/items/expert_melee_charm'), charmGameData(), 'equipment');
+
+        expect(candidates.some((c) => c.upgradeHrid === '/items/expert_magic_charm')).toBe(false);
     });
 });
 
@@ -1067,9 +1185,11 @@ describe('swaps and forced armor sets across a whole labyrinth', () => {
                 r.candidate.description.includes('Royal Fire Robe Bottoms')
         );
         expect(combined).toBeDefined();
+        // Every piece carries its own level on both sides of the arrow, so a
+        // multi-slot swap needs no key to say which level belonged to which item
         expect(combined.candidate.description).toBe(
-            'Blooming Trident + Royal Nature Robe Top + Royal Nature Robe Bottoms → ' +
-                'Blazing Trident + Royal Fire Robe Top + Royal Fire Robe Bottoms (+7)'
+            'Blooming Trident +7 + Royal Nature Robe Top +7 + Royal Nature Robe Bottoms +7 → ' +
+                'Blazing Trident +7 + Royal Fire Robe Top +7 + Royal Fire Robe Bottoms +7'
         );
         // Both loadouts wield the trident, so both rooms are measured — and the
         // aggregate columns are the ones every other row uses
@@ -3152,6 +3272,38 @@ describe('applying one candidate to a player', () => {
         expect(dto.magicLevel).toBe(110);
     });
 
+    test('a house room raises the room, and touches no equipment slot', () => {
+        // Without a branch of its own it fell through to the equipment write at
+        // the bottom, storing the room under a slot named after it: the
+        // character simulated completely unchanged, and every house row came
+        // back a confident +0.00%
+        const dto = applyCandidateToDTO(
+            { ...player(), houseRooms: { '/house_rooms/dairy_barn': 3 } },
+            {
+                type: 'house',
+                slot: 'house|/house_rooms/dairy_barn',
+                roomHrid: '/house_rooms/dairy_barn',
+                currentLevel: 3,
+                upgradeLevel: 4,
+            }
+        );
+
+        expect(dto.houseRooms['/house_rooms/dairy_barn']).toBe(4);
+        expect(Object.keys(dto.equipment)).toEqual(['/equipment_types/head']);
+        expect(dto.equipment['/equipment_types/head']).toEqual({ hrid: '/items/hat', enhancementLevel: 2 });
+    });
+
+    test('a room the character has never built starts from nothing', () => {
+        const dto = applyCandidateToDTO(player(), {
+            type: 'house',
+            roomHrid: '/house_rooms/observatory',
+            currentLevel: 0,
+            upgradeLevel: 1,
+        });
+
+        expect(dto.houseRooms).toEqual({ '/house_rooms/observatory': 1 });
+    });
+
     test('and the player it was given is never touched', () => {
         // A dozen candidates measured against a DTO carrying the last one's
         // change would each be measuring the pile rather than the piece
@@ -3689,8 +3841,56 @@ describe('community buff candidates', () => {
         ]);
     });
 
-    test('nothing past the cap', () => {
-        expect(generateCommunityBuffCandidates({ comExp: 20, comDrop: 20 })).toEqual([]);
+    test('the server sitting at Lv20 is not "no upgrades" — that emptied the whole set', () => {
+        // Both buffs live at or near 20 most of the time, and a cap of 20 meant
+        // an analysis with only Community ticked produced zero candidates and
+        // the equipment-shaped "ensure equipment is configured" message
+        const candidates = generateCommunityBuffCandidates({ comExp: 20, comDrop: 20 });
+
+        expect(candidates).toHaveLength(2);
+        expect(candidates.map((c) => c.upgradeLevel)).toEqual([21, 21]);
+        expect(candidates.every((c) => c.measuresLoss === false)).toBe(true);
+    });
+
+    test('a buff already at the ceiling is measured by turning it off instead', () => {
+        const candidates = generateCommunityBuffCandidates({ comExp: 30, comDrop: 31 });
+
+        expect(candidates).toHaveLength(2);
+        expect(candidates.every((c) => c.measuresLoss)).toBe(true);
+        expect(candidates.every((c) => c.upgradeLevel === 0)).toBe(true);
+        expect(candidates[0].description).toContain('what the buff is worth');
+    });
+
+    test('a run with only Community ticked ranks both buffs', async () => {
+        buildGameDataPayload.mockReturnValue(buildGameData());
+        calculateSimRevenue.mockReturnValue({ netPerHour: 0 });
+        runSimulation.mockResolvedValue({
+            simulatedTime: 3600 * 1e9,
+            encounters: 100,
+            deaths: { player1: 0 },
+            totalDamageDealt: { player1: 1000 },
+            experienceGained: { player1: { attack: 1000 } },
+        });
+
+        const { results } = await runUpgradeAnalysis({
+            playerDTOs: [{ hrid: 'player1', equipment: {}, abilities: [], drinks: [] }],
+            playerIndex: 0,
+            zoneHrid: '/actions/combat/zone',
+            difficultyTier: 0,
+            hours: 1,
+            communityBuffs: { comExp: 20, comDrop: 20 },
+            upgradeModes: ['community_buff'],
+        });
+
+        expect(results.map((r) => r.candidate.buffKey).sort()).toEqual(['comDrop', 'comExp']);
+    });
+
+    test('a community buff is every fight, not a piece of gear a loadout might not wear', () => {
+        // It is an argument to the simulation rather than something on the DTO,
+        // so the equipment test below it answered "this loadout is not wearing
+        // community_buff|comExp" and dropped the row from a multi-fight run
+        expect(candidateAppliesToDTO({ type: 'community_buff', buffKey: 'comExp' }, { equipment: {} })).toBe(true);
+        expect(candidateAppliesToDTO({ type: 'drink', drinkIndex: 0 }, { equipment: {} })).toBe(true);
     });
 
     test('unknown rather than free, so it lands in the unpriced group', () => {

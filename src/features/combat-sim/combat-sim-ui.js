@@ -9,6 +9,8 @@ import marketAPI from '../../api/marketplace.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
 import { watchTarget } from '../inventory/equipment-savings-row.js';
 import { watchItem } from '../inventory/watchlist.js';
+import { addAbilityGoal } from '../../utils/equipment-savings.js';
+import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable } from '../../utils/floating-panel.js';
 import { restoreGeometry, saveGeometry, saveOpenState, reopenIfLeftOpen } from '../../utils/panel-geometry.js';
@@ -258,11 +260,8 @@ const ROW_NOTE_STYLE = 'font-size:9px; margin-left:4px; padding:0 3px; border-ra
 /**
  * The qualifiers a row cannot be read correctly without.
  *
- * Three of them, all previously invisible or buried in a tab tooltip:
+ * Both of them were previously invisible or buried in a tab tooltip:
  *
- * - **within noise** — the row's DPS and profit deltas are both smaller than
- *   the simulation's own sampling error, so the numbers beside it are a sample,
- *   not a finding.
  * - **fresh book** / **from LvN** — which book an ability *swap* was priced
  *   from. An ability you have never read is a book learned and levelled from
  *   zero; one already in your book bag is topped up from the level it is at,
@@ -280,16 +279,11 @@ export function upgradeRowNotesHtml(result) {
     const notes = [];
     const candidate = result?.candidate || {};
 
-    const dps = upgradeNoiseFor(result, 'dps');
-    const profit = upgradeNoiseFor(result, 'profit');
-    if (!dps.significant && !profit.significant && dps.noisePct != null) {
-        notes.push(
-            `<span title="Both the DPS and profit deltas are inside this run's sampling error (±${dps.noisePct.toFixed(2)}% ` +
-                `on DPS at one standard error). Sim for longer before trusting the sign." ` +
-                `style="${ROW_NOTE_STYLE} background:#2a2a1a; color:#c9a227;">within noise</span>`
-        );
-    }
-
+    // No "within noise" chip here. It used to sit in the collapsed row title,
+    // where it competed with the row's own name on every second row and said
+    // nothing about *which* figure was inside the error bar. The per-metric
+    // annotation in the expanded detail says exactly that, beside the number it
+    // is about, and is where the qualification belongs.
     if (candidate.type === 'ability_swap') {
         const detail = result?.costDetail;
         const books = detail?.books;
@@ -442,6 +436,119 @@ export function buildAllZonesSnapshot(zoneResults, options = {}) {
 }
 
 /**
+ * The per-skill XP columns the all-zones table can show, in display order.
+ *
+ * Separate from the headline columns because they are the ones that go missing:
+ * a single-style build earns in two or three of the seven, and the rest are a
+ * column of zeros each.
+ */
+export const ALL_ZONES_SKILL_COLUMNS = [
+    { key: 'stamina', label: 'Stam' },
+    { key: 'intelligence', label: 'Int' },
+    { key: 'attack', label: 'Atk' },
+    { key: 'melee', label: 'Melee' },
+    { key: 'defense', label: 'Def' },
+    { key: 'ranged', label: 'Ranged' },
+    { key: 'magic', label: 'Magic' },
+];
+
+/**
+ * Which per-skill XP columns this run has anything to say about.
+ *
+ * A column whose every row reads 0 is width spent on a fact the reader already
+ * has — the build does not train that skill — and six of them at once is what
+ * pushed the table into a horizontal scroll. Total XP/hr is never dropped: it
+ * is the headline, and a run that earns nothing anywhere should still show a
+ * zero rather than lose the column.
+ *
+ * @param {Array<Object>} rows - Table rows carrying per-skill XP rates
+ * @returns {Array<Object>} The subset of ALL_ZONES_SKILL_COLUMNS worth drawing
+ */
+export function visibleAllZonesSkillColumns(rows) {
+    const list = Array.isArray(rows) ? rows : [];
+    return ALL_ZONES_SKILL_COLUMNS.filter((col) => list.some((row) => Math.abs(Number(row?.[col.key]) || 0) > 0));
+}
+
+/**
+ * The metrics the all-zones Score blends, and which direction is good.
+ *
+ * Deaths are deliberately not among them. They are a constraint rather than a
+ * quantity to trade off — a zone that kills you four times an hour is not
+ * two-thirds of a good zone — so they stay red in their own column where they
+ * cannot be averaged away, and the Score header says so.
+ */
+const ALL_ZONES_SCORE_METRICS = [
+    { key: 'totalXP', label: 'XP/hr' },
+    { key: 'profitDay', label: 'Profit/day' },
+];
+
+/**
+ * Score each zone by how well it places across XP and profit at once.
+ *
+ * The same ordinal idea the Upgrade tab's Score uses — rank within each metric,
+ * then blend — with one deliberate difference: the upgrade ladder awards points
+ * to the top five only, which across sixty-six zones would leave all but five
+ * rows at zero. Here every row gets its position in each ladder as a fraction
+ * (1 for best, 0 for worst), and the Score is the mean of those, out of 100.
+ *
+ * Ties share a position, so two zones that measure identically cannot be
+ * separated by list order. A single row scores 100: with nothing to rank
+ * against, it is trivially the best of what was simulated.
+ *
+ * Mutates and returns the rows, adding `score`.
+ *
+ * @param {Array<Object>} rows - Table rows carrying `totalXP` and `profitDay`
+ * @returns {Array<Object>} The same rows
+ */
+export function scoreAllZoneRows(rows) {
+    const list = Array.isArray(rows) ? rows : [];
+    if (!list.length) return list;
+
+    const fractions = new Map(list.map((row) => [row, []]));
+    for (const metric of ALL_ZONES_SCORE_METRICS) {
+        const values = list.map((row) => (Number.isFinite(row[metric.key]) ? row[metric.key] : 0));
+        // Best first, duplicates collapsed, so equal figures share a position
+        const ladder = [...new Set(values)].sort((a, b) => b - a);
+        if (ladder.length < 2) {
+            for (const row of list) fractions.get(row).push(1);
+            continue;
+        }
+        list.forEach((row, i) => {
+            const place = ladder.indexOf(values[i]);
+            fractions.get(row).push(1 - place / (ladder.length - 1));
+        });
+    }
+
+    for (const row of list) {
+        const parts = fractions.get(row);
+        row.score = Math.round((100 * parts.reduce((sum, value) => sum + value, 0)) / parts.length);
+    }
+    return list;
+}
+
+/**
+ * The two rows worth naming above the table: most XP and most profit.
+ *
+ * Null where there is nothing to pick — no rows, or a run in which every zone
+ * earned exactly the same, where declaring a winner would be an artefact of
+ * list order rather than a finding.
+ *
+ * @param {Array<Object>} rows - Table rows
+ * @returns {{xp: Object|null, profit: Object|null}}
+ */
+export function bestAllZoneRows(rows) {
+    const list = Array.isArray(rows) ? rows : [];
+    const bestBy = (key) => {
+        if (list.length < 2) return null;
+        const values = list.map((row) => (Number.isFinite(row[key]) ? row[key] : 0));
+        const top = Math.max(...values);
+        if (values.every((value) => value === top)) return null;
+        return list[values.indexOf(top)];
+    };
+    return { xp: bestBy('totalXP'), profit: bestBy('profitDay') };
+}
+
+/**
  * Write a snapshot out, immediately.
  *
  * Immediate rather than debounced: a run people wait ten minutes for is exactly
@@ -483,11 +590,14 @@ export async function loadAllZonesSnapshot() {
  * whose candidate names no item at all.
  *
  * Ability rows are a purchase — the books are ordinary marketplace goods — so
- * they can be watched. They cannot be *saved for*, because the savings list is
- * slot-by-slot gear and a stack of books fills no slot.
+ * they can be watched, bought at the market, and saved for. Saving for one is
+ * not the gear list's slot-by-slot reservation, which a stack of books could
+ * never fill; it is an ability *goal*, which Equipment Savings keeps beside the
+ * gear targets. `ability` carries what that goal needs, and `savable` stays
+ * about the slot reservation so nothing downstream conflates the two.
  *
  * @param {Object} result - A row from the upgrade analysis, or a budget pick
- * @returns {Object|null} `{itemHrid, enhancementLevel, name, savable}`, or null
+ * @returns {Object|null} `{itemHrid, enhancementLevel, name, savable, ability}`, or null
  */
 export function upgradeRowPurchase(result) {
     const candidate = result?.candidate;
@@ -509,11 +619,25 @@ export function upgradeRowPurchase(result) {
     const enhancementLevel = isBook ? 0 : Number(candidate.upgradeLevel) || 0;
     const baseName = dataManager.getItemDetails?.(itemHrid)?.name || itemHrid.split('/').pop().replace(/_/g, ' ');
 
+    // The books cost, read off the row the sim just costed rather than guessed
+    // at again here. Null when the row could not be priced, which the goal
+    // stores as unpriced rather than as free.
+    const cost = Number.isFinite(result?.cost) ? result.cost : null;
+    const targetLevel = Math.max(0, Math.floor(Number(candidate.upgradeLevel) || 0));
+
     return {
         itemHrid,
         enhancementLevel,
         name: enhancementLevel > 0 ? `${baseName} +${enhancementLevel}` : baseName,
         savable: !isBook && !isConsumable,
+        ability: isBook
+            ? {
+                  abilityHrid: candidate.upgradeHrid,
+                  targetLevel,
+                  cost,
+                  label: `${baseName} Lv${targetLevel}`,
+              }
+            : null,
     };
 }
 
@@ -523,11 +647,16 @@ const ROW_ACTION_STYLE =
     'padding:0 4px; margin-left:4px; cursor:pointer; font-family:inherit; vertical-align:middle;';
 
 /**
- * The "Save for this" and "Watch" buttons for one upgrade row.
+ * The "Save for this", "Watch" and "Market" buttons for one upgrade row.
  *
- * Returned as markup rather than elements because both tables that want them are
- * built as HTML strings; `wireUpgradeRowActions` gives them their behaviour once
- * the string is in the document.
+ * Returned as markup rather than elements because every table that wants them is
+ * built as an HTML string; `wireUpgradeRowActions` gives them their behaviour
+ * once the string is in the document.
+ *
+ * Both kinds of row can be saved for, by two different routes: gear reserves a
+ * slot in Equipment Savings, an ability book records a level goal. Market opens
+ * whatever the row actually buys — for an ability that is the book, which is an
+ * ordinary marketplace item — so it is offered by anything that buys at all.
  *
  * @param {Object} result - A row from the upgrade analysis, or a budget pick
  * @returns {string} HTML, empty for rows that buy nothing
@@ -537,21 +666,49 @@ export function upgradeRowActionsHtml(result) {
     if (!buy) return '';
 
     const attrs = `data-buy-hrid="${buy.itemHrid}" data-buy-level="${buy.enhancementLevel}"`;
-    const save = buy.savable
-        ? `<button type="button" ${attrs} data-buy-action="save" title="Save for this in Equipment Savings"
-            style="${ROW_ACTION_STYLE}">Save for this</button>`
-        : '';
+    let save = '';
+    if (buy.savable) {
+        save = `<button type="button" ${attrs} data-buy-action="save" title="Save for this in Equipment Savings"
+            style="${ROW_ACTION_STYLE}">Save for this</button>`;
+    } else if (buy.ability) {
+        const cost = buy.ability.cost == null ? '' : String(buy.ability.cost);
+        save = `<button type="button" ${attrs} data-buy-action="save-ability"
+            data-ability-hrid="${buy.ability.abilityHrid}" data-ability-level="${buy.ability.targetLevel}"
+            data-ability-cost="${cost}" data-ability-label="${escapeAttribute(buy.ability.label)}"
+            title="Save towards ${escapeAttribute(buy.ability.label)} in Equipment Savings"
+            style="${ROW_ACTION_STYLE}">Save for this</button>`;
+    }
 
     return `${save}<button type="button" ${attrs} data-buy-action="watch" title="Add to the watchlist"
-        style="${ROW_ACTION_STYLE}">Watch</button>`;
+        style="${ROW_ACTION_STYLE}">Watch</button><button type="button" ${attrs} data-buy-action="market"
+        title="Open this in the marketplace" style="${ROW_ACTION_STYLE}">Market</button>`;
+}
+
+/**
+ * Make a value safe to sit inside a double-quoted HTML attribute.
+ * Item and ability names come from game data, and one apostrophe or quote in a
+ * name would otherwise end the attribute early.
+ * @param {string} value - Raw text
+ * @returns {string} Escaped text
+ */
+function escapeAttribute(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
 }
 
 /**
  * Make the per-row handoff buttons work, wherever they were drawn.
  *
- * The click is stopped from propagating: both tables put these inside a row
+ * The click is stopped from propagating: every table puts these inside a row
  * whose own click opens the detail panel, and saving for a sword should not also
  * unfold the breakdown of it.
+ *
+ * Four handoffs, told apart by `data-buy-action`: `save` reserves a gear slot,
+ * `save-ability` records a book-level goal, `market` opens the item's
+ * marketplace tab, and anything else watches the item.
  *
  * @param {HTMLElement} container - Anything containing rendered rows
  * @param {string} [logPrefix] - Module name for error logs
@@ -567,9 +724,25 @@ export function wireUpgradeRowActions(container, logPrefix = 'CombatSimUI') {
             const label = button.textContent;
 
             try {
-                if (button.getAttribute('data-buy-action') === 'save') {
+                const action = button.getAttribute('data-buy-action');
+                if (action === 'save') {
                     watchTarget(itemHrid, enhancementLevel);
                     button.textContent = 'Saving ✓';
+                } else if (action === 'save-ability') {
+                    // Fire-and-forget: the goal write is asynchronous and the
+                    // button is a handoff, not a form. A failed write logs from
+                    // inside the savings module rather than freezing the row.
+                    const rawCost = button.getAttribute('data-ability-cost');
+                    addAbilityGoal({
+                        abilityHrid: button.getAttribute('data-ability-hrid'),
+                        targetLevel: Number(button.getAttribute('data-ability-level')) || 0,
+                        cost: rawCost === '' || rawCost == null ? null : Number(rawCost),
+                        label: button.getAttribute('data-ability-label') || '',
+                    });
+                    button.textContent = 'Saving ✓';
+                } else if (action === 'market') {
+                    navigateToMarketplace(itemHrid, enhancementLevel);
+                    button.textContent = 'Opened ✓';
                 } else {
                     watchItem(itemHrid);
                     button.textContent = 'Watching ✓';
@@ -740,7 +913,8 @@ const UPGRADE_MODES = [
         label: 'Community',
         defaultOn: false,
         title:
-            'One more level on the community EXP and combat-drop buffs.\n\n' +
+            'One more level on the community EXP and combat-drop buffs — or, for a buff already at the ' +
+            'ceiling, what the whole buff is currently worth to you.\n\n' +
             'Nobody buys these, so they carry no price and land in the "measured, but not priced" box — but ' +
             'the sim can still tell you exactly what a level is worth to you.',
     },
@@ -1671,6 +1845,39 @@ class CombatSimUI {
     }
 
     /**
+     * The one line above the all-zones table naming its two winners.
+     *
+     * The table can be sorted to answer either question, but only one at a time,
+     * and the reader who wants both ends up sorting twice and remembering the
+     * first answer. Saying both up front costs a line.
+     *
+     * @param {{xp: Object|null, profit: Object|null}} best - From `bestAllZoneRows`
+     * @returns {string} HTML, empty when there is no winner to name
+     * @private
+     */
+    _allZonesHeadline(best) {
+        const parts = [];
+        const name = (row) => `${row.zone} T${row.tier}`;
+        if (best.xp) {
+            parts.push(
+                `<span style="color:#8ab4f8;">Best XP</span> <span style="color:#e0e0e0;">${name(best.xp)}</span>` +
+                    ` <span style="color:#888;">${formatKMB(Math.round(best.xp.totalXP))}/hr</span>`
+            );
+        }
+        if (best.profit) {
+            parts.push(
+                `<span style="color:#4caf50;">Best profit</span> <span style="color:#e0e0e0;">${name(best.profit)}</span>` +
+                    ` <span style="color:#888;">${formatKMB(Math.round(best.profit.profitDay))}/day</span>`
+            );
+        }
+        if (!parts.length) return '';
+
+        return `<div style="display:flex; flex-wrap:wrap; gap:6px 18px; font-size:11px; padding:0 0 6px 2px;">
+            ${parts.join('')}
+        </div>`;
+    }
+
+    /**
      * Display all-zones comparison results in a sortable table.
      * @param {Array<Object>} zoneResults - Array of {zone, simResult, revenue}
      * @param {number} hours - Simulation hours
@@ -1683,29 +1890,6 @@ class CombatSimUI {
 
         this._allZonesResults = zoneResults;
         container.style.display = 'block';
-
-        const skillCols = [
-            { key: 'totalXP', label: 'Total XP/hr' },
-            { key: 'profitDay', label: 'Profit/day' },
-            { key: 'stamina', label: 'Stam' },
-            { key: 'intelligence', label: 'Int' },
-            { key: 'attack', label: 'Atk' },
-            { key: 'melee', label: 'Melee' },
-            { key: 'defense', label: 'Def' },
-            { key: 'ranged', label: 'Ranged' },
-            { key: 'magic', label: 'Magic' },
-        ];
-
-        const cols = [
-            { key: 'zone', label: 'Zone' },
-            { key: 'tier', label: 'T' },
-            { key: 'encounters', label: 'Enc/hr' },
-            { key: 'deaths', label: 'Deaths/hr' },
-            ...skillCols,
-            { key: 'revenue', label: 'Rev/hr' },
-            { key: 'expenses', label: 'Cost/hr' },
-            { key: 'profit', label: 'Profit/hr' },
-        ];
 
         // Build row data
         const playerHrid = this._activePlayerTab || 'player1';
@@ -1740,6 +1924,34 @@ class CombatSimUI {
                 };
             });
 
+        // The Score and the two winners are decided over the whole run, before
+        // any sort or column hiding — neither is a property of the current view
+        scoreAllZoneRows(rows);
+        const best = bestAllZoneRows(rows);
+
+        // Six columns of zeros is what a single-style build normally produces,
+        // and it is why the table needed a horizontal scrollbar
+        const cols = [
+            { key: 'zone', label: 'Zone' },
+            { key: 'tier', label: 'T' },
+            { key: 'encounters', label: 'Enc/hr' },
+            { key: 'deaths', label: 'Deaths/hr' },
+            { key: 'totalXP', label: 'Total XP/hr' },
+            { key: 'profitDay', label: 'Profit/day' },
+            {
+                key: 'score',
+                label: 'Score',
+                title:
+                    'How well the zone places on XP/hr and Profit/day at once, out of 100 — the same rank-blend ' +
+                    'the Upgrade tab scores with. Deaths are not scored: they are a constraint, not something to ' +
+                    'trade against gold, so read the red Deaths/hr column alongside this.',
+            },
+            ...visibleAllZonesSkillColumns(rows),
+            { key: 'revenue', label: 'Rev/hr' },
+            { key: 'expenses', label: 'Cost/hr' },
+            { key: 'profit', label: 'Profit/hr' },
+        ];
+
         // Sort
         if (this._allZonesSortCol) {
             const col = this._allZonesSortCol;
@@ -1766,12 +1978,22 @@ class CombatSimUI {
         const headerCells = cols
             .map((col) => {
                 const arrow = this._allZonesSortCol === col.key ? (this._allZonesSortAsc ? ' ▲' : ' ▼') : '';
-                return `<th data-col="${col.key}" style="padding:3px 4px; cursor:pointer; white-space:nowrap; font-size:10px; font-weight:600; color:#888; border-bottom:1px solid #333; user-select:none;">${col.label}${arrow}</th>`;
+                const align = col.key === 'zone' ? 'left' : col.key === 'tier' ? 'center' : 'right';
+                const title = col.title ? ` title="${col.title}"` : '';
+                return (
+                    `<th data-col="${col.key}"${title} style="padding:3px 4px; cursor:pointer; white-space:nowrap; ` +
+                    `font-size:10px; font-weight:600; color:#888; border-bottom:1px solid #333; user-select:none; ` +
+                    `text-align:${align};">${col.label}${arrow}</th>`
+                );
             })
             .join('');
 
+        // Small labels on the two rows worth finding without reading the table
+        const badge = (text, color) =>
+            `<span style="${ROW_NOTE_STYLE} background:rgba(74,158,255,0.12); color:${color};">${text}</span>`;
+
         const bodyRows = rows
-            .map((row) => {
+            .map((row, rowIndex) => {
                 const cells = cols
                     .map((col) => {
                         const val = row[col.key];
@@ -1779,8 +2001,11 @@ class CombatSimUI {
                         let style = 'padding:2px 4px; font-size:10px; white-space:nowrap;';
 
                         if (col.key === 'zone') {
-                            display = val;
-                            style += ' color:#e0e0e0;';
+                            const marks =
+                                (row === best.xp ? badge('best XP', '#8ab4f8') : '') +
+                                (row === best.profit ? badge('best profit', '#4caf50') : '');
+                            display = `${val}${marks}`;
+                            style += ' color:#e0e0e0; text-align:left;';
                         } else if (col.key === 'tier') {
                             display = `T${val}`;
                             style += ' color:#888; text-align:center;';
@@ -1798,7 +2023,9 @@ class CombatSimUI {
                                 style += ' color:#e0e0e0;';
                             }
                         } else {
-                            display = formatKMB(Math.round(val));
+                            // The Score is a placing out of 100, not a quantity
+                            // of anything, so it is never abbreviated
+                            display = col.key === 'score' ? String(val ?? 0) : formatKMB(Math.round(val));
                             style += ' text-align:right; font-variant-numeric:tabular-nums;';
 
                             // Highlight best value per column in green
@@ -1818,13 +2045,22 @@ class CombatSimUI {
                         return `<td style="${style}">${display}</td>`;
                     })
                     .join('');
-                return `<tr style="border-bottom:1px solid #1a1a1a;">${cells}</tr>`;
+                // Striping rather than a rule under every row: sixty-six rows of
+                // borders is a grid, and the eye tracks a band across a wide
+                // table better than it tracks a line under it
+                const stripe = rowIndex % 2 ? ' background:rgba(255,255,255,0.02);' : '';
+                return `<tr style="border-bottom:1px solid #1a1a1a;${stripe}">${cells}</tr>`;
             })
             .join('');
 
+        // Wide enough that the remaining columns are legible, narrow enough that
+        // hiding the untrained skills actually buys back the horizontal scroll
+        const minWidth = Math.max(420, cols.length * 56);
+
         container.innerHTML = `
+            ${this._allZonesHeadline(best)}
             <div style="overflow-x:auto;">
-                <table style="width:100%; border-collapse:collapse; min-width:800px;">
+                <table style="width:100%; border-collapse:collapse; min-width:${minWidth}px;">
                     <thead><tr>${headerCells}</tr></thead>
                     <tbody>${bodyRows}</tbody>
                 </table>
@@ -1838,6 +2074,7 @@ class CombatSimUI {
                 { key: 'tier', label: 'Tier' },
                 { key: 'encounters', label: 'Encounters/hr' },
                 { key: 'deaths', label: 'Deaths/hr' },
+                { key: 'score', label: 'Score' },
                 { key: 'totalXP', label: 'Total XP/hr' },
                 { key: 'stamina', label: 'Stamina XP/hr' },
                 { key: 'intelligence', label: 'Intelligence XP/hr' },
@@ -4891,6 +5128,9 @@ class CombatSimUI {
         const stopBtn = this.panel.querySelector('#mwi-csim-upgrade-stop');
         progressEl.style.display = 'block';
         resultsEl.innerHTML = '';
+        // A new run replaces the table the menu was configuring, so the menu
+        // goes with it rather than reappearing over the results that arrive
+        this._setUpgradeColumnMenuOpen(false);
         runBtn.style.display = 'none';
         stopBtn.style.display = 'inline-block';
         this._upgradeAborted = false;
@@ -5378,7 +5618,12 @@ class CombatSimUI {
     _renderUpgradeColumnMenu() {
         const hidden = this._upgradeHiddenColumns || new Set(DEFAULT_HIDDEN_COLUMNS);
         const scored = new Set(this._upgradeScoreKeys || DEFAULT_SCORE_KEYS);
-        const open = this._upgradeColumnMenuOpen ? '' : 'display:none;';
+        // One `display` declaration, and it is the only one. Prepending
+        // `display:none;` to a style string that went on to say `display:flex`
+        // later lost to the later declaration every time, so the popover was
+        // rebuilt *open* by every sort, every column tick, every budget replan
+        // and every fresh analysis — it read as a menu opening itself.
+        const display = this._upgradeColumnMenuOpen ? 'flex' : 'none';
 
         const optional = this._upgradeColumns().filter((c) => !c.fixed);
         const box = 'display:flex; align-items:center; gap:6px; cursor:pointer; color:#ccc; padding:1px 0;';
@@ -5402,9 +5647,9 @@ class CombatSimUI {
         return `<div style="position:relative; margin-bottom:6px;">
             <button id="mwi-csim-upgrade-cols-btn" style="background:#1a1a2e; color:#ccc; border:1px solid #333;
                 border-radius:3px; padding:2px 8px; font-size:11px; cursor:pointer;">⚙ Columns</button>
-            <div id="mwi-csim-upgrade-cols-menu" style="${open} position:absolute; top:100%; left:0; z-index:5;
+            <div id="mwi-csim-upgrade-cols-menu" style="display:${display}; position:absolute; top:100%; left:0; z-index:5;
                 background:#12121f; border:1px solid #333; border-radius:4px; padding:8px 10px; margin-top:2px;
-                font-size:11px; display:flex; gap:18px; box-shadow:0 4px 12px rgba(0,0,0,0.6);">
+                font-size:11px; gap:18px; box-shadow:0 4px 12px rgba(0,0,0,0.6);">
                 <div>
                     <div style="color:#888; font-weight:600; margin-bottom:4px;">Show</div>
                     ${showList}
@@ -6212,7 +6457,10 @@ class CombatSimUI {
      * dismisses it; closing removes that listener again, so nothing accumulates.
      * The open flag survives re-renders on purpose — toggling a checkbox rebuilds
      * the table underneath and the menu should stay put while you configure —
-     * but sorting closes it, since that is the table talking, not the menu.
+     * but sorting closes it, since that is the table talking, not the menu, and
+     * so does starting a new analysis. Closed is closed: `_renderUpgradeColumnMenu`
+     * writes this flag into a single `display` declaration, which is what stops a
+     * re-render from putting the menu back up on its own.
      *
      * @param {boolean} open - Desired state
      * @private

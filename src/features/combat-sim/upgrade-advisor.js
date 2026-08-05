@@ -16,7 +16,7 @@ import {
 } from './combat-sim-adapter.js';
 import { runSimulation, runLabyrinthSimulation, getMaxWorkers } from './combat-sim-runner.js';
 import { buildBuffDrinkPools, estimateFoodSimCount, runFoodOptimization } from './food-optimizer.js';
-import { generateLabArmorCandidates } from './lab-armor-candidates.js';
+import { generateLabArmorCandidates, labelItemWithLevel } from './lab-armor-candidates.js';
 import { bestGearForSkill } from './skilling-gear-candidates.js';
 import { deriveSeed, randomSeed } from './engine/rng.js';
 import labyrinthClearRate from '../combat/labyrinth-clear-rate.js';
@@ -679,6 +679,101 @@ function hasCombatStats(itemDetails) {
 }
 
 /**
+ * The "what you wear now → what this buys" line for a swap.
+ *
+ * Every piece on both sides carries its own enhancement level. The old shape
+ * put a single `(+7)` at the end, which said one level for the whole change and
+ * silently attributed the worn piece's level to the piece coming in — only ever
+ * correct because a tier swap happens to keep the enhancement. Spelling both
+ * sides out means the label stays true when they differ, which is exactly what
+ * the refined-item clamp makes happen.
+ *
+ * @param {string} fromName - The piece being replaced
+ * @param {number} fromLevel - Its enhancement level
+ * @param {string[]} toNames - The pieces coming in, in display order
+ * @param {number[]} toLevels - Their enhancement levels, in the same order
+ * @returns {string} Description
+ */
+function swapDescription(fromName, fromLevel, toNames, toLevels) {
+    const to = toNames.map((name, index) => labelItemWithLevel(name, toLevels[index] ?? toLevels[0] ?? 0)).join(' + ');
+    return `${labelItemWithLevel(fromName, fromLevel)} → ${to}`;
+}
+
+/**
+ * Rebuild a swap's description from the names it was built with.
+ *
+ * Kept alongside `swapLabel` on the candidate so a later change to the levels —
+ * the refined clamp is the only one — can redraw the line rather than patch the
+ * end of the string it produced. The clamp used to do exactly that, with a
+ * regex for the trailing `(+4)`, which the per-piece shape no longer has.
+ *
+ * @param {Object} candidate - A candidate carrying `swapLabel`
+ * @returns {string} Description
+ */
+function redescribeSwap(candidate) {
+    const levels = candidate.addedSlots
+        ? Object.values(candidate.addedSlots).map((item) => item.enhancementLevel || 0)
+        : [candidate.upgradeLevel];
+    return swapDescription(candidate.swapLabel.from, candidate.currentLevel, candidate.swapLabel.to, levels);
+}
+
+/**
+ * Is this the charm slot's item?
+ *
+ * A charm carries `focusTraining` — the skill hrid that takes 70% of the
+ * combat experience (engine/player.js, engine/sim-result.js) — and often
+ * nothing else. `focusTraining` is a skill hrid rather than a number, so it is
+ * not in COMBAT_STATS and `hasCombatStats` reads a pure-focus charm as inert:
+ * the charm slot was skipped in the equipment loop entirely, and no charm level
+ * or tier ever reached the candidate list. Charms are ordinary marketplace
+ * equipment that enhance and tier up like the rest, so they are let through on
+ * being a charm rather than on carrying a stat the table happens to rank.
+ *
+ * @param {Object} itemDetails - Item detail from itemDetailMap
+ * @returns {boolean}
+ */
+function isCharmItem(itemDetails) {
+    return itemDetails?.equipmentDetail?.type === CHARM_SLOT;
+}
+
+/**
+ * The next charm up from the one worn, staying on the same focus skill.
+ *
+ * Charm families are distinguished by item level rather than by a crafting
+ * chain, so the tier walk the rest of the equipment loop uses finds nothing for
+ * them. "Next" is the lowest item level strictly above the current charm's,
+ * which is one step rather than the whole family — the same single-step rule
+ * every other slot's tier candidate follows.
+ *
+ * Swapping the focus skill is deliberately not a candidate: that is a decision
+ * about which skill to train, not an upgrade, and it would put one row per
+ * combat skill into a table that ranks on gold.
+ *
+ * @param {string} currentHrid - The equipped charm
+ * @param {Object} gameData - Game data payload
+ * @returns {{hrid: string, name: string}|null} The next charm, if there is one
+ */
+function nextCharmTier(currentHrid, gameData) {
+    const current = gameData?.itemDetailMap?.[currentHrid];
+    if (!isCharmItem(current)) return null;
+
+    const focus = current.equipmentDetail.combatStats?.focusTraining;
+    const currentItemLevel = current.itemLevel || 0;
+
+    let best = null;
+    for (const [hrid, detail] of Object.entries(gameData.itemDetailMap || {})) {
+        if (hrid === currentHrid || !isCharmItem(detail)) continue;
+        if ((detail.equipmentDetail.combatStats?.focusTraining || '') !== (focus || '')) continue;
+        const itemLevel = detail.itemLevel || 0;
+        if (itemLevel <= currentItemLevel) continue;
+        if (!best || itemLevel < best.itemLevel) {
+            best = { hrid, name: detail.name || hrid.split('/').pop(), itemLevel };
+        }
+    }
+    return best ? { hrid: best.hrid, name: best.name } : null;
+}
+
+/**
  * Build a map of valid tier upgrades based on crafting/production chains.
  * An item X can upgrade to item Y if Y's crafting action uses X as:
  *   - upgradeItemHrid (direct upgrade chain), OR
@@ -894,7 +989,10 @@ export function generateCandidates(
             // carry ordinary combat stats too, and those do rank. What the row
             // must not do is bank the taskDamage — the caveat set below says so.
             if (skipBackSlot && slot === '/equipment_types/back') continue;
-            if (!hasCombatStats(itemDetails)) continue;
+            // Charms are the exception: what they carry is a focus-training skill
+            // rather than a ranked stat, and gating them on stats hid every charm
+            // level and tier from the table. See `isCharmItem`.
+            if (!hasCombatStats(itemDetails) && !isCharmItem(itemDetails)) continue;
 
             // Enhancement upgrade: next breakpoint
             const nextBP = getNextBreakpoint(currentLevel, slot, currentHrid);
@@ -933,7 +1031,8 @@ export function generateCandidates(
                             currentLevel,
                             upgradeHrid,
                             upgradeLevel: currentLevel,
-                            description: `${currentName} → ${upgradeName} (+${currentLevel})`,
+                            swapLabel: { from: currentName, to: [upgradeName] },
+                            description: swapDescription(currentName, currentLevel, [upgradeName], [currentLevel]),
                             type: 'tier',
                         });
                     }
@@ -975,7 +1074,13 @@ export function generateCandidates(
                                 currentLevel,
                                 upgradeHrid: nextTier.hrid,
                                 upgradeLevel: currentLevel,
-                                description: `${offensiveCurrentName} → ${nextName} (+${currentLevel})`,
+                                swapLabel: { from: offensiveCurrentName, to: [nextName] },
+                                description: swapDescription(
+                                    offensiveCurrentName,
+                                    currentLevel,
+                                    [nextName],
+                                    [currentLevel]
+                                ),
                                 type: 'tier',
                             });
                             offensiveCandidateHrids.add(nextTier.hrid);
@@ -1007,7 +1112,13 @@ export function generateCandidates(
                                     currentLevel,
                                     upgradeHrid: highestNonRefined.hrid,
                                     upgradeLevel: currentLevel,
-                                    description: `${offensiveCurrentName} → ${highestName} (+${currentLevel})`,
+                                    swapLabel: { from: offensiveCurrentName, to: [highestName] },
+                                    description: swapDescription(
+                                        offensiveCurrentName,
+                                        currentLevel,
+                                        [highestName],
+                                        [currentLevel]
+                                    ),
                                     type: 'tier',
                                 });
                                 offensiveCandidateHrids.add(highestNonRefined.hrid);
@@ -1039,11 +1150,39 @@ export function generateCandidates(
                             currentLevel,
                             upgradeHrid,
                             upgradeLevel: currentLevel,
-                            description: `${offensiveCurrentName} → ${upgradeName} (+${currentLevel})`,
+                            swapLabel: { from: offensiveCurrentName, to: [upgradeName] },
+                            description: swapDescription(
+                                offensiveCurrentName,
+                                currentLevel,
+                                [upgradeName],
+                                [currentLevel]
+                            ),
                             type: 'tier',
                         });
                         offensiveCandidateHrids.add(upgradeHrid);
                     }
+                }
+            }
+
+            // A charm's tier is not a crafting chain in the data — the families
+            // are named ("Basic/Expert … Charm") and separated by item level —
+            // so the chain walk above finds nothing to offer. The next charm of
+            // the same focus is added directly, which is the same "next tier"
+            // the Combat Levels charm picker already reasons about.
+            if (isCharmItem(itemDetails)) {
+                const nextCharm = nextCharmTier(currentHrid, gameData);
+                if (nextCharm && !candidates.some((c) => c.slot === slot && c.upgradeHrid === nextCharm.hrid)) {
+                    const currentName = itemDetails?.name || currentHrid.split('/').pop();
+                    candidates.push({
+                        slot,
+                        currentHrid,
+                        currentLevel,
+                        upgradeHrid: nextCharm.hrid,
+                        upgradeLevel: currentLevel,
+                        swapLabel: { from: currentName, to: [nextCharm.name] },
+                        description: swapDescription(currentName, currentLevel, [nextCharm.name], [currentLevel]),
+                        type: 'tier',
+                    });
                 }
             }
         }
@@ -1097,7 +1236,13 @@ export function generateCandidates(
                             },
                             clearedSlots: ['/equipment_types/two_hand'],
                             removedItems: [{ hrid: twoHandEquip.hrid, enhancementLevel: enhLevel }],
-                            description: `${currentName} → ${mainName} + ${ohName} (+${enhLevel})`,
+                            swapLabel: { from: currentName, to: [mainName, ohName] },
+                            description: swapDescription(
+                                currentName,
+                                enhLevel,
+                                [mainName, ohName],
+                                [enhLevel, enhLevel]
+                            ),
                             type: 'cross_slot',
                         });
                     }
@@ -1146,7 +1291,8 @@ export function generateCandidates(
                                 ? [{ hrid: offHandEquip.hrid, enhancementLevel: offHandEquip.enhancementLevel || 0 }]
                                 : []),
                         ],
-                        description: `${currentName} → ${twoHandName} (+${enhLevel})`,
+                        swapLabel: { from: currentName, to: [twoHandName] },
+                        description: swapDescription(currentName, enhLevel, [twoHandName], [enhLevel]),
                         type: 'cross_slot',
                     });
                 }
@@ -1734,11 +1880,21 @@ const COMMUNITY_BUFF_CANDIDATES = [
     { key: 'comDrop', label: 'Community combat drop buff' },
 ];
 
-/** Highest level a community buff reaches */
-const MAX_COMMUNITY_BUFF_LEVEL = 20;
+/**
+ * Highest level a community buff is offered at.
+ *
+ * Was 20, which is where the whole set silently disappeared: the server's
+ * experience and combat-drop buffs sit at or above that most of the time, every
+ * candidate was dropped as "already past the cap", and an analysis with only
+ * Community ticked came back with nothing to show and the equipment-shaped
+ * "ensure equipment is configured" message. 30 is the ceiling the sim editor's
+ * own community-buff inputs use, so the two agree on what a level can be.
+ */
+const MAX_COMMUNITY_BUFF_LEVEL = 30;
 
 /**
- * What one more level of a community buff would be worth.
+ * What a community buff is worth: one more level of it, or — once it is already
+ * at the ceiling — the whole thing.
  *
  * Not a purchase, and the advisor says so by pricing it at unknown rather than
  * free — it lands in the unpriced group, where rows that cannot be ranked on
@@ -1747,22 +1903,31 @@ const MAX_COMMUNITY_BUFF_LEVEL = 20;
  * question "how much is the drop buff actually doing for me" is asked
  * constantly, and answering it costs one sim per level rather than a guess.
  *
+ * A buff at the ceiling has no next level, and returning nothing for it is what
+ * left the set able to produce an empty analysis. It gets the other honest
+ * answer instead: the same buff simulated *off*, so the row reads as what you
+ * would lose rather than as an upgrade you cannot buy.
+ *
  * @param {Object} communityBuffs - `{ mooPass, comExp, comDrop }` as configured
- * @returns {Array<Object>} Candidates of type 'community_buff'
+ * @returns {Array<Object>} Candidates of type 'community_buff', one per buff
  */
 export function generateCommunityBuffCandidates(communityBuffs) {
     const candidates = [];
     for (const { key, label } of COMMUNITY_BUFF_CANDIDATES) {
         const currentLevel = Math.max(0, Math.floor(Number(communityBuffs?.[key]) || 0));
-        const upgradeLevel = currentLevel + 1;
-        if (upgradeLevel > MAX_COMMUNITY_BUFF_LEVEL) continue;
+        const atCeiling = currentLevel >= MAX_COMMUNITY_BUFF_LEVEL;
+        const upgradeLevel = atCeiling ? 0 : currentLevel + 1;
         candidates.push({
             type: 'community_buff',
             slot: `community_buff|${key}`,
             buffKey: key,
             currentLevel,
             upgradeLevel,
-            description: `${label} Lv${currentLevel} → Lv${upgradeLevel}`,
+            // A ceiling row measures a loss, so it must never be read as a gain
+            measuresLoss: atCeiling,
+            description: atCeiling
+                ? `${label} Lv${currentLevel} → off (what the buff is worth)`
+                : `${label} Lv${currentLevel} → Lv${upgradeLevel}`,
         });
     }
     return candidates;
@@ -1938,16 +2103,25 @@ function clampRefinedCandidateToMinLevel(candidate) {
         }
     }
 
-    if (clamped) {
-        // Reflect the clamped level(s) in the display text, e.g. "(+4)" → "(+10)",
-        // or "(+4/+10)" when a cross-slot swap mixes refined and non-refined items
-        const levels = candidate.addedSlots
-            ? Object.values(candidate.addedSlots).map((item) => item.enhancementLevel || 0)
-            : [candidate.upgradeLevel];
-        const unique = [...new Set(levels)];
-        const levelText = unique.length === 1 ? `+${unique[0]}` : levels.map((l) => `+${l}`).join('/');
-        candidate.description = candidate.description.replace(/\(\+\d+\)$/, `(${levelText})`);
+    if (!clamped) return;
+
+    // Redrawn from the names, not patched at the tail. The old version replaced
+    // a trailing "(+4)" with "(+10)" — and with the level now written against
+    // each piece, there is no trailing token to replace, so the label would have
+    // kept quoting the level the clamp had just moved. Anything without the
+    // names to redraw from keeps the tail patch, which is still right for the
+    // shape it was written for.
+    if (candidate.swapLabel) {
+        candidate.description = redescribeSwap(candidate);
+        return;
     }
+
+    const levels = candidate.addedSlots
+        ? Object.values(candidate.addedSlots).map((item) => item.enhancementLevel || 0)
+        : [candidate.upgradeLevel];
+    const unique = [...new Set(levels)];
+    const levelText = unique.length === 1 ? `+${unique[0]}` : levels.map((l) => `+${l}`).join('/');
+    candidate.description = candidate.description.replace(/\(\+\d+\)$/, `(${levelText})`);
 }
 
 /**
@@ -4876,9 +5050,18 @@ export function generateSkillingEquipmentCandidates(editorDTO, gameData, skillEq
 export function candidateAppliesToDTO(candidate, dto, gameData = null) {
     if (!candidate || !dto) return false;
 
-    // The character's own, wherever they are worn: skills, rooms and shrine
-    // levels are not held in a loadout and change every fight at once
-    if (candidate.type === 'combat_level' || candidate.type === 'house' || candidate.type === 'guild_shrine') {
+    // The character's own, wherever they are worn: skills, rooms, shrine levels
+    // and community buffs are not held in a loadout and change every fight at
+    // once. A community buff is not on the loadout at all — it is an argument to
+    // the simulation — so falling through to the equipment test below asked
+    // whether a loadout was wearing `community_buff|comExp` and answered no.
+    if (
+        candidate.type === 'combat_level' ||
+        candidate.type === 'house' ||
+        candidate.type === 'guild_shrine' ||
+        candidate.type === 'community_buff' ||
+        candidate.type === 'drink'
+    ) {
         return true;
     }
 
@@ -5067,6 +5250,17 @@ export function applyCandidateToDTO(playerDTO, candidate) {
 
     if (candidate.type === 'combat_level') {
         dto[candidate.skillKey] = candidate.upgradeLevel;
+        return dto;
+    }
+
+    // A house room, the same way runUpgradeAnalysis applies one inline. Without
+    // this branch a house candidate fell through to the equipment write at the
+    // bottom and stored the room under an equipment slot named after it: the
+    // character was simulated completely unchanged, and every house row came
+    // back a confident +0.00%.
+    if (candidate.type === 'house') {
+        if (!dto.houseRooms) dto.houseRooms = {};
+        dto.houseRooms[candidate.roomHrid] = candidate.upgradeLevel;
         return dto;
     }
 
