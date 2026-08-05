@@ -17,9 +17,12 @@ vi.mock('../../core/config.js', () => ({ default: { getSetting: (key) => setting
 vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: () => () => {} } }));
 vi.mock('../../utils/dom.js', () => ({ addStyles: () => {} }));
 
-const { ANNOUNCE_RE, VALID_NAME_RE, markAsProfileLink, default: chatProfileLinkFeature } = await import(
-    './chat-profile-link.js'
-);
+const {
+    ANNOUNCE_RE,
+    VALID_NAME_RE,
+    markAsProfileLink,
+    default: chatProfileLinkFeature,
+} = await import('./chat-profile-link.js');
 
 const nameIn = (message) => message.match(ANNOUNCE_RE)?.[1] ?? null;
 

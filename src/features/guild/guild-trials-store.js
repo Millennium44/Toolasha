@@ -81,11 +81,81 @@ export function guildTrialsStorageKey(guildName, characterId = null) {
 /**
  * An empty record for a week.
  * @param {number} weekStart - Week start, in ms
- * @returns {{weekStart: number, tiles: Object}} Fresh record
+ * @param {Object} [provenance] - `{guildId, guildName}` the record belongs to
+ * @returns {{weekStart: number, tiles: Object, guildId: string|null, guildName: string|null}} Fresh record
  */
-export function emptyRecord(weekStart) {
-    return { weekStart, tiles: {} };
+export function emptyRecord(weekStart, { guildId = null, guildName = null } = {}) {
+    return { weekStart, tiles: {}, guildId, guildName, history: [] };
 }
+
+/**
+ * Whether a stored record can possibly belong to the guild now on screen.
+ *
+ * The reported failure this exists for: a character switched inside one tab
+ * wrote the previous guild's trial into the shared fallback key, that record was
+ * then adopted onto the *new* guild's own key, and every build since has
+ * faithfully rendered a finished trial from a guild the player had left —
+ * "banked 2,880" against a guild whose own header read 0. Keying the storage
+ * correctly stops it happening again and does nothing at all about the copy
+ * already on disk. Provenance is what lets the code throw that copy away.
+ *
+ * Three answers, and the third is the one that matters. A record that names a
+ * different guild is `'foreign'` and is discarded outright. One that names this
+ * guild is `'own'`. One that names no guild at all was written before this
+ * field existed — `'unknown'`, which is not enough to discard on by itself but
+ * is enough to *believe the game over the record* when the two disagree; see
+ * the lifecycle check in `guild-trials.js`.
+ *
+ * @param {Object|null} record - A stored record
+ * @param {Object} [context] - `{guildId, guildName}` as currently known
+ * @returns {'own'|'foreign'|'unknown'} What the record's provenance says
+ */
+export function recordProvenance(record, { guildId = null, guildName = null } = {}) {
+    const storedId = record?.guildId ?? null;
+    const storedName = record?.guildName ?? null;
+    if (!storedId && !storedName) return 'unknown';
+
+    if (storedId && guildId) return String(storedId) === String(guildId) ? 'own' : 'foreign';
+    if (storedName && guildName) {
+        return String(storedName).toLowerCase() === String(guildName).toLowerCase() ? 'own' : 'foreign';
+    }
+
+    // The record knows which guild it belongs to and the page has not said yet.
+    // Not foreign — that would throw away a correct record on every cold load
+    // before the socket has spoken
+    return 'unknown';
+}
+
+/**
+ * Put this week's tiles away and start the next cycle empty.
+ *
+ * Archived rather than deleted: the figures were real when they were taken, and
+ * a player who wants last cycle's numbers has nowhere else to get them. Bounded
+ * to {@link MAX_ARCHIVED_CYCLES}, oldest dropped first.
+ *
+ * @param {Object} record - The record (not mutated)
+ * @param {string} reason - Why the cycle was closed, for the archive entry
+ * @param {number} [at] - Clock
+ * @returns {Object} The record with its tiles moved into `history`
+ */
+export function archiveCycle(record, reason, at = Date.now()) {
+    const tiles = record?.tiles && typeof record.tiles === 'object' ? record.tiles : {};
+    const history = Array.isArray(record?.history) ? [...record.history] : [];
+
+    if (Object.keys(tiles).length) {
+        history.push({ archivedAt: at, reason, weekStart: record?.weekStart ?? null, tiles });
+    }
+
+    return {
+        ...record,
+        weekStart: record?.weekStart ?? trialWeekStart(at),
+        tiles: {},
+        history: history.slice(-MAX_ARCHIVED_CYCLES),
+    };
+}
+
+/** How many finished cycles are kept beside the live one */
+export const MAX_ARCHIVED_CYCLES = 4;
 
 /**
  * The key a tile's history is stored under.
@@ -188,7 +258,10 @@ export function recordTileSample(record, tile, at) {
         tiers,
     };
 
-    return { weekStart, tiles };
+    // Everything else on the record is carried through: a sample must not strip
+    // the provenance stamp or the archived cycles off it, which is a thing this
+    // returned-a-fresh-object shape did quietly for both
+    return { ...(record || {}), weekStart, tiles };
 }
 
 /**
@@ -224,6 +297,11 @@ export function mergeTrialRecords(base, incoming) {
         return { weekStart: newer.weekStart, tiles: newer.tiles || {} };
     }
 
+    const provenance = {
+        guildId: base.guildId ?? incoming.guildId ?? null,
+        guildName: base.guildName ?? incoming.guildName ?? null,
+        history: [...(base.history || []), ...(incoming.history || [])].slice(-MAX_ARCHIVED_CYCLES),
+    };
     const tiles = { ...(base.tiles || {}) };
     for (const [key, tile] of Object.entries(incoming.tiles || {})) {
         const existing = tiles[key];
@@ -270,7 +348,7 @@ export function mergeTrialRecords(base, incoming) {
         };
     }
 
-    return { weekStart: baseWeek, tiles };
+    return { weekStart: baseWeek, tiles, ...provenance };
 }
 
 /**
@@ -280,16 +358,83 @@ export function mergeTrialRecords(base, incoming) {
  * @param {string|number|null} [characterId] - The viewing character, for the fallback key
  * @returns {Promise<Object>} The record, or a fresh one
  */
-export async function loadTrialRecord(guildName, now = Date.now(), characterId = null) {
+export async function loadTrialRecord(guildName, now = Date.now(), characterId = null, { guildId = null } = {}) {
     const weekStart = trialWeekStart(now);
+    const fresh = () => emptyRecord(weekStart, { guildId, guildName });
+
     try {
         const record = await storage.get(guildTrialsStorageKey(guildName, characterId), STORE_NAME, null);
-        if (!record || typeof record !== 'object' || record.weekStart !== weekStart) return emptyRecord(weekStart);
-        return { weekStart: record.weekStart, tiles: record.tiles || {} };
+        if (!record || typeof record !== 'object') return fresh();
+
+        // A record from a previous week is last week's ladder, not this one's
+        if (record.weekStart !== weekStart) return fresh();
+
+        // A record that names another guild cannot be this guild's, whatever key
+        // it was filed under — which is exactly how the reported one survived
+        if (recordProvenance(record, { guildId, guildName }) === 'foreign') {
+            console.warn('[GuildTrialsStore] Discarding a trial record belonging to another guild');
+            return fresh();
+        }
+
+        return {
+            weekStart: record.weekStart,
+            tiles: record.tiles || {},
+            history: Array.isArray(record.history) ? record.history : [],
+            guildId: record.guildId ?? guildId,
+            guildName: record.guildName ?? guildName,
+        };
     } catch (error) {
         console.error('[GuildTrialsStore] Failed to load trial samples:', error);
-        return emptyRecord(weekStart);
+        return fresh();
     }
+}
+
+/**
+ * Delete the legacy shared record.
+ *
+ * `guildTrials_default` was one bucket for every character in the tab, which is
+ * the bug two of these fixes exist for. Nothing writes to it any more; this
+ * removes what is left so it cannot be adopted onto a guild's key by an older
+ * build's leftovers.
+ *
+ * @returns {Promise<boolean>} True when the key was removed or already absent
+ */
+export async function purgeLegacyTrialRecord() {
+    try {
+        await storage.delete(`${KEY_PREFIX}_default`, STORE_NAME);
+        return true;
+    } catch (error) {
+        console.error('[GuildTrialsStore] Failed to purge the legacy trial record:', error);
+        return false;
+    }
+}
+
+/**
+ * Delete every trial record and session this script has stored.
+ *
+ * The escape hatch. Everything above heals itself on the next render, and this
+ * is here for the case where it does not — one call, no arguments, and the
+ * feature rebuilds from the panel within a sampler tick.
+ *
+ * Only the trial keys: `guildHistory` is shared with the guild XP history, which
+ * is months of data and nothing to do with trials.
+ *
+ * @returns {Promise<{removed: string[]}>} Which keys went
+ */
+export async function clearTrialStorage() {
+    const removed = [];
+    try {
+        const keys = await storage.getAllKeys(STORE_NAME);
+        for (const key of keys || []) {
+            const name = String(key);
+            if (!name.startsWith(KEY_PREFIX) && !name.startsWith('guildTrialSession')) continue;
+            await storage.delete(name, STORE_NAME);
+            removed.push(name);
+        }
+    } catch (error) {
+        console.error('[GuildTrialsStore] Failed to clear trial storage:', error);
+    }
+    return { removed };
 }
 
 /**
@@ -299,9 +444,15 @@ export async function loadTrialRecord(guildName, now = Date.now(), characterId =
  * @param {string|number|null} [characterId] - The viewing character, for the fallback key
  * @returns {Promise<boolean>} True when the write was queued
  */
-export async function saveTrialRecord(guildName, record, characterId = null) {
+export async function saveTrialRecord(guildName, record, characterId = null, { guildId = null } = {}) {
     try {
-        await storage.set(guildTrialsStorageKey(guildName, characterId), record, STORE_NAME);
+        // Stamped on the way out, so the next session can tell whose it is
+        const stamped = {
+            ...record,
+            guildId: record?.guildId ?? guildId ?? null,
+            guildName: record?.guildName ?? guildName ?? null,
+        };
+        await storage.set(guildTrialsStorageKey(guildName, characterId), stamped, STORE_NAME);
         return true;
     } catch (error) {
         console.error('[GuildTrialsStore] Failed to save trial samples:', error);

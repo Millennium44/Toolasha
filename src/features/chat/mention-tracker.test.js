@@ -188,7 +188,9 @@ describe('mention tracker — tabs and badges', () => {
         game.observers['Chat_tabsComponentContainer'](container);
 
         for (let i = 0; i < 105; i++) {
-            game.wsHandlers.chat_message_received(chatMessage({ m: '@Millennium44', chan: '/chat_channel_types/party' }));
+            game.wsHandlers.chat_message_received(
+                chatMessage({ m: '@Millennium44', chan: '/chat_channel_types/party' })
+            );
         }
 
         expect(container.querySelector('.mwi-mention-badge').textContent).toBe('99+');

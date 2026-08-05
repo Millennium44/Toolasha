@@ -20,6 +20,7 @@ import {
     isTrialsSetupTab,
     parsePoints,
     readPersonalStats,
+    readTrialStatus,
     parseSignups,
     isCombatTrialName,
     matchTrialHrid,
@@ -605,6 +606,47 @@ describe('a card that says the trial is over', () => {
             )
         )[0];
         expect(tile.completed).toBe(false);
+    });
+});
+
+describe('readTrialStatus', () => {
+    /**
+     * A tab built from lines of text, one element each.
+     * @param {string[]} lines - What the tab says
+     * @returns {Element} The root
+     */
+    function tab(lines) {
+        document.body.innerHTML = `<div class="GuildPanel_guildPanel__r">${lines
+            .map((line) => `<div>${line}</div>`)
+            .join('')}</div>`;
+        return document.querySelector('[class*="GuildPanel_guildPanel"]');
+    }
+
+    test('a scheduled cycle, with how long until it starts', () => {
+        const status = readTrialStatus(tab(['Skilling Trial', 'Scheduled Wed 04:00 PM 2h 24m']));
+
+        expect(status.phase).toBe('scheduled');
+        expect(status.startsInMs).toBe(2 * 3600_000 + 24 * 60_000);
+    });
+
+    test('a finished cycle', () => {
+        expect(readTrialStatus(tab(['Completed Thu 09:00 AM'])).phase).toBe('completed');
+    });
+
+    test('a running one', () => {
+        expect(readTrialStatus(tab(['In Progress', '42:15 remaining'])).phase).toBe('live');
+    });
+
+    test('prose that happens to contain the word is not a status', () => {
+        const long =
+            'Trials are scheduled once a week and the guild is welcome to sign up for whichever of them ' +
+            'it likes the look of';
+        expect(readTrialStatus(tab([long])).phase).toBeNull();
+    });
+
+    test('nothing to read is no phase rather than a throw', () => {
+        expect(readTrialStatus(null).phase).toBeNull();
+        expect(readTrialStatus(tab(['Alchemy', '18,850 / 65,280'])).phase).toBeNull();
     });
 });
 

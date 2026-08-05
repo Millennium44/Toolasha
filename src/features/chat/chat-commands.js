@@ -21,6 +21,7 @@ import {
 import { moveScopedData, claimLegacyData } from '../../utils/scoped-data-repair.js';
 import { resetAdoptionDecision, requestAdoptionConsent } from '../../utils/adoption-consent.js';
 import { buildTrialExport, downloadTrialExport } from '../guild/guild-trial-recorder.js';
+import { clearTrialStorage } from '../guild/guild-trials-store.js';
 import guildXPTracker from '../guild/guild-xp-tracker.js';
 import { guildTrials } from '../guild/guild-trials.js';
 
@@ -177,6 +178,22 @@ export function exposeShrineDebug() {
             downloadTrialExport(bundle);
             console.log('[Toolasha] Trial data exported', bundle);
             return bundle;
+        };
+        // The escape hatch for a trial record that has gone bad. Everything the
+        // feature stores heals itself on the next render — a record naming
+        // another guild is discarded on load, and one the panel contradicts is
+        // archived — so this exists for the case where it somehow does not.
+        // Only the trial keys go; the guild XP history shares the store and is
+        // months of data with nothing to do with trials.
+        target.Toolasha.debug.clearTrialData = async () => {
+            const { removed } = await clearTrialStorage();
+            console.log(
+                removed.length
+                    ? `[Toolasha] Cleared ${removed.length} trial record(s): ${removed.join(', ')}. ` +
+                          'Open the guild panel and it will rebuild from the page.'
+                    : '[Toolasha] No trial records were stored.'
+            );
+            return removed;
         };
         return true;
     } catch (error) {

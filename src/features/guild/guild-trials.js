@@ -121,6 +121,7 @@ import guildTrialDamage from './guild-trial-damage.js';
 import guildLoadoutCapture from './guild-loadout-capture.js';
 import guildTrialRecorder, { buildTrialExport, downloadTrialExport } from './guild-trial-recorder.js';
 import guildTrialScoreboard from './guild-trial-scoreboard.js';
+import guildTrialAlerts from '../notifications/guild-trial-alerts.js';
 import { describeGuildTokenGold } from './guild-token-value.js';
 import {
     classifyReadings,
@@ -129,12 +130,17 @@ import {
     matchTrialHrid,
     parseClockMs,
     readPersonalStats,
+    readTrialStatus,
     readTrialTiles,
 } from './guild-trials-scrape.js';
 import {
+    archiveCycle,
+    emptyRecord,
     loadTrialRecord,
     mergeTrialRecords,
+    purgeLegacyTrialRecord,
     readPayoutBonuses,
+    recordProvenance,
     recordTileSample,
     saveTrialRecord,
     tileKey,
@@ -476,17 +482,43 @@ export function renderTrialBlock(
     analysis,
     participants,
     breakdown = guildTrialDamage.breakdown(),
-    { participating = null } = {}
+    { participating = null, phase = null } = {}
 ) {
     const unit = analysis.kind === 'combat' ? 'dmg' : 'work';
     const rows = [];
+
+    // A finished cycle has no future to project into. The figures are still
+    // worth showing — they are what happened — but "Tier clears in 11m" from
+    // the last samples of an event that ended is a claim about nobody's trial,
+    // and it is what the panel was still saying hours afterwards.
+    const over = phase === 'completed';
+    const notStarted = phase === 'scheduled';
 
     // A trial this character did not join sends nothing: the In Progress tab
     // carries only their own trials, so no reading for this card will ever
     // arrive. Saying "measuring…" there promises a number that cannot come.
     const notMine = participating === false && !Number.isFinite(analysis.rate);
 
-    if (notMine) {
+    if (notStarted) {
+        rows.push(
+            line(
+                'Trial',
+                'scheduled — nothing running yet',
+                DIM,
+                'The guild panel says the next cycle has not started. Anything measured belongs to the ' +
+                    'previous one and is kept in the record rather than shown as current.'
+            )
+        );
+    } else if (over) {
+        rows.push(
+            line(
+                analysis.kind === 'combat' ? 'Final party DPS' : 'Final fill rate',
+                Number.isFinite(analysis.rate) ? `${num(analysis.rate * 1000)} ${unit}/s` : 'not measured',
+                DIM,
+                'This cycle is over. The figure is the last rate measured while it ran, not a live one.'
+            )
+        );
+    } else if (notMine) {
         rows.push(
             line(
                 'Rate',
@@ -549,7 +581,7 @@ export function renderTrialBlock(
         );
     }
 
-    if (!analysis.pace && !notMine) {
+    if (!analysis.pace && !notMine && !over && !notStarted) {
         // Silently omitting the row was indistinguishable from the feature not
         // having this idea at all — and the no-clock case was the only one that
         // said so. A pace needs four things and going quiet about the other
@@ -581,7 +613,7 @@ export function renderTrialBlock(
         rows.push(line('On pace for', missing.text, DIM, missing.why));
     }
 
-    if (analysis.pace) {
+    if (analysis.pace && !over && !notStarted) {
         const projected = analysis.pace.tiersCleared;
         const finalTier = analysis.pace.finalTier ?? analysis.tier;
         const level = levelFromTier(finalTier);
@@ -867,6 +899,8 @@ class GuildTrials {
         this.awaitingCharacter = false;
         /** Block key → the markup last drawn into it, so an unchanged pass touches nothing */
         this.blockHtml = new Map();
+        /** Where the cycle was last seen to be: scheduled, live or completed */
+        this.phase = null;
     }
 
     async initialize() {
@@ -937,13 +971,18 @@ class GuildTrials {
         // recognised without the tab having been opened this session.
         guildTrialDamage.initialize();
         guildTrialRecorder.initialize(this.guildName);
+        // One bucket for every character in the tab is what poisoned a guild's
+        // record in the first place; nothing writes to it now, so it goes
+        purgeLegacyTrialRecord().catch(() => {});
 
         this.initialized = true;
 
         this.characterId = dataManager.getCurrentCharacterId?.() ?? null;
         this.guildName = this._resolveGuildName();
         guildTrialRecorder.setGuildName(this.guildName);
-        const stored = await loadTrialRecord(this.guildName, Date.now(), this.characterId);
+        const stored = await loadTrialRecord(this.guildName, Date.now(), this.characterId, {
+            guildId: this._guildId(),
+        });
         this.record = mergeTrialRecords(stored, this.record);
         this._publishTrialNames();
 
@@ -1028,6 +1067,8 @@ class GuildTrials {
             guildTrialDamage.reset?.();
             guildTrialRecorder.forget?.();
             guildTrialRecorder.setGuildName?.(null);
+            guildTrialAlerts.reset?.();
+            this.phase = null;
 
             // Re-read for whoever arrives. Not awaited on this path — the
             // character's own id lands on the same message that triggered this
@@ -1047,7 +1088,7 @@ class GuildTrials {
         // guild's. `_adoptGuildName` merges it onto the guild's key later, once
         // a name has arrived that belongs to *this* character.
         guildTrialRecorder.setGuildName(null);
-        const stored = await loadTrialRecord(null, Date.now(), characterId);
+        const stored = await loadTrialRecord(null, Date.now(), characterId, { guildId: this._guildId() });
 
         // Another switch may have happened while the read was in flight
         if (this.characterId !== characterId) return;
@@ -1118,11 +1159,11 @@ class GuildTrials {
 
         this.adopting = true;
         try {
-            const stored = await loadTrialRecord(name, Date.now(), this.characterId);
+            const stored = await loadTrialRecord(name, Date.now(), this.characterId, { guildId: this._guildId() });
             this.record = mergeTrialRecords(stored, this.record);
             this.guildName = name;
             guildTrialRecorder.setGuildName(name);
-            await saveTrialRecord(name, this.record, this.characterId);
+            await saveTrialRecord(name, this.record, this.characterId, { guildId: this._guildId() });
         } catch (error) {
             console.error('[GuildTrials] Moving the record onto the guild key failed:', error);
         } finally {
@@ -1142,7 +1183,9 @@ class GuildTrials {
             const now = Date.now();
             const weekStart = trialWeekStart(now);
             if (!this.record || this.record.weekStart !== weekStart) {
-                this.record = { weekStart, tiles: {} };
+                // A week's roll-over is a different ladder; the record for it
+                // starts empty and stamped with whose it is
+                this.record = emptyRecord(weekStart, { guildId: this._guildId(), guildName: this.guildName });
             }
 
             // Every card on either tab, bar or no bar. A Trials card carries the
@@ -1151,6 +1194,12 @@ class GuildTrials {
             // has something moving on it, and both write the identity of the same
             // trial under the same key.
             const tiles = readTrialTiles(root);
+
+            // Where the cycle is decides what the record below even means. Read
+            // before anything is folded in, because a stale record must not be
+            // sampled into and then archived — the sample would go with it.
+            const status = readTrialStatus(root);
+            this._healStaleRecord(status, tiles, now);
             // The player's own action stats live in the tab's footer rather than
             // on a card, so they are read once and attached to whichever trial
             // is the live one — the only card that can have produced them
@@ -1160,11 +1209,15 @@ class GuildTrials {
                 const withPersonal = tile === live ? { ...tile, personal } : tile;
                 this.record = recordTileSample(this.record, withPersonal, now);
             }
-            if (tiles.length) saveTrialRecord(this.guildName, this.record, this.characterId);
+            if (tiles.length) {
+                saveTrialRecord(this.guildName, this.record, this.characterId, { guildId: this._guildId() });
+            }
 
             // A reading is a trial in progress, which is one of the two things
             // the recorder starts itself on
             if (live) guildTrialRecorder.noteActivity('tab-reading', now);
+
+            this._noteLifecycle(status, tiles, now);
 
             // Which encounters count as a trial fight this week. Pushed rather
             // than pulled so the damage module never imports this one
@@ -1224,6 +1277,7 @@ class GuildTrials {
                 this._placeBlock(root, key, {
                     html: renderTrialBlock(analysis, participants, undefined, {
                         participating: ownParticipation(tile.name),
+                        phase: status?.phase || null,
                     }),
                     // Wide enough that a label and a figure fit on one line, and
                     // capped so it cannot stretch a whole panel — the reported
@@ -1244,6 +1298,90 @@ class GuildTrials {
         } catch (error) {
             console.error('[GuildTrials] Drawing the trial panel failed:', error);
         }
+    }
+
+    /**
+     * Throw away a record the page itself contradicts.
+     *
+     * The reported failure, after the storage keys were fixed: the poisoned copy
+     * was already on disk and under the *new* guild's own key, so nothing about
+     * provenance or keying could reach it. The page could, though — it was
+     * saying "Scheduled", "0 pts" on every card and "1/22 signed up" while the
+     * block above it claimed 2,880 points and five banked tiers.
+     *
+     * That contradiction is the signal. A cycle the game calls **scheduled**, on
+     * a tab whose cards state nothing at all, cannot also be a cycle with tiers
+     * banked in it — so whatever the record holds belongs to a finished cycle
+     * and is archived. The same is done for a record whose provenance names
+     * another guild, which is the case this can catch on its own.
+     *
+     * Deliberately not "delete anything that disagrees": a live trial routinely
+     * has cards showing 0 pts before the first tier clears, which is why the
+     * scheduled phase is required as well.
+     *
+     * @param {Object} status - From `readTrialStatus`
+     * @param {Array<Object>} tiles - This pass's cards
+     * @param {number} now - Clock
+     */
+    _healStaleRecord(status, tiles, now) {
+        if (!this.record) return;
+
+        const held = Object.values(this.record.tiles || {});
+        if (!held.length) return;
+
+        const provenance = recordProvenance(this.record, {
+            guildId: this._guildId(),
+            guildName: this.guildName,
+        });
+        if (provenance === 'foreign') {
+            this.record = archiveCycle(this.record, 'belongs to another guild', now);
+            this.blockHtml.clear();
+            return;
+        }
+
+        // The game says the next cycle has not started; the record says a cycle
+        // is under way. The game is describing what is on screen
+        const scheduled = status?.phase === 'scheduled';
+        const cardsStateNothing =
+            tiles.length > 0 && tiles.every((tile) => !tile.readings.length && !(tile.points > 0));
+        const recordClaimsProgress = held.some(
+            (tile) => tile.samples?.length || tile.tier || Object.keys(tile.pointsByTier || {}).length
+        );
+
+        if (scheduled && cardsStateNothing && recordClaimsProgress) {
+            console.warn('[GuildTrials] Archiving a finished cycle: the panel says the next one is scheduled');
+            this.record = archiveCycle(this.record, 'a new cycle is scheduled', now);
+            this.blockHtml.clear();
+            guildTrialDamage.reset?.();
+            saveTrialRecord(this.guildName, this.record, this.characterId, { guildId: this._guildId() });
+        }
+    }
+
+    /**
+     * Tell the recorder and the alerts where the cycle is.
+     * @param {Object} status - From `readTrialStatus`
+     * @param {Array<Object>} tiles - This pass's cards
+     * @param {number} now - Clock
+     */
+    _noteLifecycle(status, tiles, now) {
+        const phase = status?.phase || null;
+        if (phase && phase !== this.phase) {
+            this.phase = phase;
+            // A scheduled or finished cycle is not a session to keep open
+            if (phase !== 'live') guildTrialRecorder.stop?.(`the trial is ${phase}`, now);
+        }
+
+        guildTrialAlerts.noteTrialStatus?.({
+            phase,
+            startsInMs: status?.startsInMs ?? null,
+            trials: tiles.map((tile) => tile.name),
+            at: now,
+        });
+    }
+
+    /** @returns {string|null} The guild's id, from whichever source has it */
+    _guildId() {
+        return guildXPTracker.getOwnGuildID?.() || dataManager.characterData?.guild?.id || null;
     }
 
     /**
@@ -1536,6 +1674,14 @@ class GuildTrials {
                 else root.insertAdjacentElement('afterbegin', block);
             },
             onBuild: (block) => this._bindControls(block),
+        });
+
+        // Kept while it is on screen: by the time the cycle reads "Completed"
+        // the cards have been zeroed and there would be nothing left to report
+        guildTrialAlerts.notePayout?.({
+            guildPoints: banked.guildPoints,
+            eligibleTokens: projected.eligibleTokens,
+            participantTokens: projected.participantTokens,
         });
 
         return true;
