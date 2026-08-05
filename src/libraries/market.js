@@ -24,6 +24,12 @@ import bulkSellAssistant from '../features/market/bulk-sell-assistant.js';
 import listingMarkers from '../features/market/listing-markers.js';
 import marketplaceBadgeFilter from '../features/market/marketplace-badge-filter.js';
 import marketHistoryPanel from '../features/market/mooket/index.js';
+// The pooled history and the arithmetic over it, shared rather than copied: the
+// goal planner (actions bundle) bounds its gold rates by how fast an item
+// actually sells, and a second copy would mean a second five-minute fetch cache
+// asking the same third-party server the same questions.
+import marketHistoryAPI from '../features/market/mooket/market-history-api.js';
+import * as marketHistoryData from '../features/market/mooket/market-history-data.js';
 import philoCalculator from '../features/market/philo-calculator.js';
 import tradeHistory from '../features/market/trade-history.js';
 import tradeHistoryDisplay from '../features/market/trade-history-display.js';
@@ -88,6 +94,8 @@ toolashaRoot.Market = {
     listingMarkers,
     marketplaceBadgeFilter,
     marketHistoryPanel,
+    marketHistoryAPI,
+    marketHistoryData,
     philoCalculator,
     tradeHistory,
     tradeHistoryDisplay,

@@ -374,8 +374,33 @@ export function alchemyGoldRates({ priceStamp = 0, limit = PLANNER_RATE_LIMIT } 
             if (!perUnit) continue;
 
             const name = entry.name || entry.itemHrid.split('/').pop();
+
+            // What the method has to sell, and what it costs to start one.
+            //
+            // Neither is used here — both are for the goal planner, which bounds
+            // a rate by how fast its output actually trades and refuses to
+            // recommend a method whose inputs cost more than the character has.
+            // They are attached at the point the rate is built because this is
+            // where the calculator's own answer is still in scope; re-deriving
+            // them later would be a second opinion about the same numbers.
+            const sells = (entry.profitData?.dropRevenues || [])
+                .filter((drop) => drop?.itemHrid && Number(drop.dropsPerHour) > 0)
+                .map((drop) => ({
+                    itemHrid: drop.itemHrid,
+                    name: drop.itemName || null,
+                    unitsPerHour: Number(drop.dropsPerHour) || 0,
+                }));
+            // The item itself is already in the bag — that is what the cap below
+            // counts — so starting costs only the catalyst and the drinks
+            const upfrontCost = Math.max(
+                0,
+                (Number(entry.profitData?.costPerAttempt) || 0) - (Number(entry.profitData?.materialCost) || 0)
+            );
+
             rates.push({
                 actionHrid: entry.actionHrid,
+                sells,
+                upfrontCost,
                 label: `${TYPE_LABEL[type]} ${name}`,
                 goldPerHour: entry.profitPerHour,
                 kind: 'alchemy',

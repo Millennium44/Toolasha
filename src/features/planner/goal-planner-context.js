@@ -43,6 +43,7 @@ import { calculateGatheringProfit } from '../actions/gathering-profit.js';
 import { calculateProductionProfit } from '../actions/production-profit.js';
 import { alchemyGoldRates } from '../alchemy/alchemy-rankings.js';
 import { loadCombatRates } from './combat-rates.js';
+import { applyLiquidityLimits } from './market-liquidity.js';
 import { computeBestCraftingPlan } from '../crafting-plan/crafting-plan-calculator.js';
 import {
     calculateEnhancementPath,
@@ -264,6 +265,16 @@ async function measureGoldRates() {
                 goldPerHour: profit.profitPerHour,
                 kind: 'gathering',
                 sustainable: UNBOUNDED,
+                // Gathering consumes nothing, so it needs no capital to start;
+                // what it sells is its own drop table
+                upfrontCost: 0,
+                sells: (profit.baseOutputs || [])
+                    .filter((output) => output?.itemHrid && output.itemsPerHour > 0)
+                    .map((output) => ({
+                        itemHrid: output.itemHrid,
+                        name: output.name || null,
+                        unitsPerHour: output.itemsPerHour,
+                    })),
             });
             byAction.set(hrid, profit.profitPerHour);
         } catch (error) {
@@ -285,6 +296,17 @@ async function measureGoldRates() {
                 goldPerHour: profit.profitPerHour,
                 kind: 'production',
                 sustainable: UNBOUNDED,
+                // One action's materials is what it costs to start crafting
+                upfrontCost: Math.max(0, Number(profit.totalMaterialCost) || 0),
+                sells: profit.itemHrid
+                    ? [
+                          {
+                              itemHrid: profit.itemHrid,
+                              name: profit.itemName || null,
+                              unitsPerHour: Number(profit.totalItemsPerHour) || 0,
+                          },
+                      ]
+                    : [],
             });
             byAction.set(hrid, profit.profitPerHour);
         } catch (error) {
@@ -317,8 +339,27 @@ async function measureGoldRates() {
         notes.push('Combat could not be ranked — see the console.');
     }
 
-    rates.sort((a, b) => b.goldPerHour - a.goldPerHour);
-    return { rates, byAction, notes, combatStatus };
+    // Everything above priced what a method *produces*. This is the last step
+    // between production and coins: somebody has to buy it. A rate whose output
+    // trades once a week cannot be earned at anything like its quoted pace, and
+    // ranking it first is how the planner recommended a method that cannot be run.
+    let liquidity;
+    try {
+        liquidity = await applyLiquidityLimits(rates);
+    } catch (error) {
+        console.error('[GoalPlanner] Bounding rates by market volume failed:', error);
+        liquidity = { rates, measured: false };
+    }
+
+    if (!liquidity.measured) {
+        notes.push(
+            'Market volume is not being checked, so a rate here is what its output is *worth*, not what ' +
+                'you could sell. Turn on pooled market history to bound methods by how fast they actually trade.'
+        );
+    }
+
+    liquidity.rates.sort((a, b) => b.goldPerHour - a.goldPerHour);
+    return { rates: liquidity.rates, byAction, notes, combatStatus };
 }
 
 /**

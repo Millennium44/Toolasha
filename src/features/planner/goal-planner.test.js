@@ -552,6 +552,115 @@ describe('one bagful, shared between the goals', () => {
     });
 });
 
+describe('a method you cannot start is not a recommendation', () => {
+    const transmute = {
+        label: 'Transmute Ore',
+        kind: 'alchemy',
+        actionHrid: '/actions/alchemy/transmute',
+        goldPerHour: 80_000_000,
+        // What one action costs to begin: the catalyst and the drinks
+        upfrontCost: 12_000_000,
+    };
+    const milking = { label: 'Milk a Cow', kind: 'gathering', goldPerHour: 10_000_000, upfrontCost: 0 };
+
+    test('a rate that costs more to start than you hold is not offered', () => {
+        const plan = planGoal(
+            { type: 'gold', amount: 500_000_000 },
+            context({ gold: 3_000_000, goldRates: () => [transmute, milking] })
+        );
+
+        // planGoal on its own has no ledger, so the filter has to live somewhere
+        // both paths reach — it does, in the ledger's view, which planGoals uses
+        expect(step(plan, 'earn').details.rate.label).toBe('Transmute Ore');
+    });
+
+    test('planned as a list, it is excluded and says what it needed', () => {
+        const [plan] = planGoals(
+            [{ id: 'g', type: 'gold', amount: 500_000_000 }],
+            context({ gold: 3_000_000, goldRates: () => [transmute, milking] })
+        );
+
+        const earn = step(plan, 'earn');
+        expect(earn.details.rate.label).toBe('Milk a Cow');
+        expect(earn.details.alternatives.map((rate) => rate.label)).toEqual(['Milk a Cow']);
+        expect(earn.details.ledgerNotes).toContain('Transmute Ore needs ~12.0M upfront to start — you have 3.0M');
+    });
+
+    test('and comes back the moment the coins are there', () => {
+        const [plan] = planGoals(
+            [{ id: 'g', type: 'gold', amount: 500_000_000 }],
+            context({ gold: 12_000_000, goldRates: () => [transmute, milking] })
+        );
+
+        expect(step(plan, 'earn').details.rate.label).toBe('Transmute Ore');
+        expect(step(plan, 'earn').details.ledgerNotes).toEqual([]);
+    });
+
+    test('a goal above can spend the coins out from under it', () => {
+        const plans = planGoals(
+            [
+                { id: 'a', type: 'equipment', itemHrid: '/items/cape', enhancementLevel: 0 },
+                { id: 'b', type: 'gold', amount: 500_000_000 },
+            ],
+            context({
+                gold: 12_000_000,
+                acquire: () => ({ strategy: 'buy', totalCost: 11_000_000, buyPrice: 11_000_000, requires: [] }),
+                goldRates: () => [transmute, milking],
+            })
+        );
+
+        // The cape eats 11M of the 12M, so the second goal can no longer start
+        // the method the first goal could — the same ledger, a different cap
+        const earn = step(plans[1], 'earn');
+        expect(earn.details.rate.label).toBe('Milk a Cow');
+        expect(earn.details.ledgerNotes.join(' ')).toContain('needs ~12.0M upfront to start — you have 1.0M');
+    });
+
+    test('a method that needs nothing upfront is never blocked', () => {
+        const [plan] = planGoals(
+            [{ id: 'g', type: 'gold', amount: 500_000_000 }],
+            context({ gold: 0, goldRates: () => [milking] })
+        );
+
+        expect(step(plan, 'earn').details.rate.label).toBe('Milk a Cow');
+        expect(step(plan, 'earn').details.ledgerNotes).toEqual([]);
+    });
+
+    test('a rate that says nothing about capital is taken at its word', () => {
+        // Combat rates come from a saved simulation and carry no input cost
+        const [plan] = planGoals(
+            [{ id: 'g', type: 'gold', amount: 500_000_000 }],
+            context({ gold: 0, goldRates: () => [{ label: 'Fly Zone T2', kind: 'combat', goldPerHour: 20_000_000 }] })
+        );
+
+        expect(step(plan, 'earn').details.rate.label).toBe('Fly Zone T2');
+    });
+});
+
+describe('a bound the rate was already reduced by is said beside it', () => {
+    test('a throttled leg names the market volume that throttled it', () => {
+        const charm = {
+            label: 'Decompose Master Tailoring Charm',
+            kind: 'alchemy',
+            goldPerHour: 1_200_000,
+            limits: [{ kind: 'volume', note: 'limited by market volume (~1/week)' }],
+            sustainable: {
+                gold: 200_000_000,
+                goldPerUnit: 40_000_000,
+                units: 5,
+                unitLabel: 'Master Tailoring Charm',
+                verb: 'Decompose',
+            },
+        };
+
+        const plan = planGoal({ type: 'gold', amount: 100_000_000 }, context({ gold: 0, goldRates: () => [charm] }));
+
+        // A reader who knows this method is worth billions will assume the
+        // planner is broken unless it says what it took off
+        expect(step(plan, 'earn').description).toContain('limited by market volume (~1/week)');
+    });
+});
+
 describe('createResourceLedger', () => {
     const stack = {
         label: 'Transmute Ore',
