@@ -483,8 +483,18 @@ export function readTrialStatus(root) {
     const none = { phase: null, text: '', startsInMs: null };
     if (!root || typeof root.querySelectorAll !== 'function') return none;
 
+    // The status is a *run* of text, and the game splits it across elements —
+    // "Skilling Trial - In Progress" arrives as separate nodes on the live tab.
+    // Neighbouring runs are therefore considered together as well as alone, so
+    // the words being in two spans does not hide them.
     const lines = textLines(root).slice(0, STATUS_LINE_LIMIT);
-    for (const line of lines) {
+    const candidates = [];
+    for (let index = 0; index < lines.length; index += 1) {
+        candidates.push(lines[index]);
+        if (lines[index + 1]) candidates.push(`${lines[index]} ${lines[index + 1]}`);
+    }
+
+    for (const line of candidates) {
         if (line.length > STATUS_MAX_CHARS) continue;
 
         const phase = /\bscheduled\b/i.test(line)
@@ -503,8 +513,15 @@ export function readTrialStatus(root) {
     return none;
 }
 
-/** How far into the tab a status line can be before it is something else */
-const STATUS_LINE_LIMIT = 12;
+/**
+ * How far into the tab a status line can be before it is something else.
+ *
+ * Raised from a dozen once the live header turned out to be
+ * "Skilling Trial - In Progress  Thu 04:00 PM" — a kind prefix, a status and a
+ * timestamp, spread across several runs, and sitting below whatever the tab
+ * draws above it.
+ */
+const STATUS_LINE_LIMIT = 40;
 
 /** Longer than this and the line is prose, not a status */
 const STATUS_MAX_CHARS = 60;

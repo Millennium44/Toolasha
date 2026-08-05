@@ -1196,12 +1196,43 @@ describe('the panel, end to end', () => {
         expect(document.querySelectorAll('.mwi-trial-info')).toHaveLength(0);
     });
 
-    test('a reading with no live status behind it does not start a recording', () => {
-        // Reported alongside: "Stop recording" was active on a guild whose
-        // weekly trials were not running. A bar on the page is not a trial
+    test('a reading on a tab with no header of its own still arms the recorder', () => {
+        // The live failure: the status header is on the Trials tab and the
+        // readings are on the In Progress one, so requiring both meant
+        // auto-record never armed and the user pressed Record by hand
         const root = buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]);
         root.querySelector('[class*="GuildPanel_eventStatusRow"]')?.remove();
         fire(root);
+
+        expect(game.recorder.activity).toContain('tab-reading');
+    });
+
+    test('the first pool of a live trial is filed under tier one', () => {
+        document.body.innerHTML = '';
+        const root = document.createElement('div');
+        root.className = 'GuildPanel_trialsContent__a';
+        root.innerHTML =
+            '<div class="GuildPanel_eventStatusRow__b">Skilling Trial - In Progress Thu 04:00 PM</div>' +
+            '<div class="GuildPanel_tile__c"><div class="GuildPanel_tileName__d">Foraging</div>' +
+            '<div class="ProgressBar_text__f">876 / 40,800</div></div>';
+        document.body.appendChild(root);
+        fire();
+
+        const tile = guildTrials.record.tiles['skilling::foraging'];
+        expect(tile.tier).toBe(1);
+        expect(tile.tiers).toEqual([{ tier: 1, total: 40_800 }]);
+    });
+
+    test('a panel that says the cycle is over vetoes it', () => {
+        document.body.innerHTML = '';
+        const root = document.createElement('div');
+        root.className = 'GuildPanel_trialsContent__a';
+        root.innerHTML =
+            '<div class="GuildPanel_eventStatusRow__b">Skilling Trial - Completed Thu 09:00 AM</div>' +
+            '<div class="GuildPanel_tile__c"><div class="GuildPanel_tileName__d">Alchemy</div>' +
+            '<div class="ProgressBar_text__f">18,850 / 65,280</div></div>';
+        document.body.appendChild(root);
+        fire();
 
         expect(game.recorder.activity).not.toContain('tab-reading');
     });
@@ -1700,6 +1731,145 @@ describe('the side block’s shape', () => {
     });
 });
 
+describe('the first tier of a running trial', () => {
+    // Live evidence: a trial visibly on its first tier (0 pts everywhere, first
+    // pool 876/40,800) reported "tier not known yet", "On pace for: tier not
+    // known yet" and "Expected: not projectable" for the whole hour. Every
+    // trial starts at tier 1; the In Progress tab simply never says so.
+    const running = (extra = {}) => ({
+        name: 'Foraging',
+        kind: 'skilling',
+        samples: [
+            { t: now, readings: [{ current: 876, max: 40_800 }] },
+            { t: now + 10_000, readings: [{ current: 1756, max: 40_800 }] },
+        ],
+        tiers: [],
+        ...extra,
+    });
+
+    test('a live trial with nothing banked is on tier one', () => {
+        const analysis = analyseTrial(running(), { phase: 'live', timeLeftMs: 40 * 60_000 });
+
+        expect(analysis.tier).toBe(1);
+        expect(analysis.tierKnown).toBe(true);
+        expect(analysis.tierSource).toBe('first-tier-rule');
+        expect(analysis.tiersClearedSoFar).toBe(0);
+    });
+
+    test('and a pace can be walked from the start of it', () => {
+        const analysis = analyseTrial(running({ tiers: [{ tier: 1, total: 40_800 }] }), {
+            phase: 'live',
+            timeLeftMs: 40 * 60_000,
+        });
+
+        expect(analysis.pace).not.toBeNull();
+        const html = renderTrialBlock(analysis, 3, { measured: false, reason: 'none' }, { phase: 'live' });
+        expect(html).not.toContain('tier not known yet');
+        expect(html).not.toContain('tier not seen yet');
+    });
+
+    test('a card that already states points is not assumed to be on tier one', () => {
+        // Joining midway: the trial has banked something and the tier badge is
+        // the only thing that can say which one
+        const analysis = analyseTrial(running({ pointsByTier: { 5: 840 } }), {
+            phase: 'live',
+            timeLeftMs: 40 * 60_000,
+        });
+
+        expect(analysis.tier).toBeNull();
+        expect(analysis.tierKnown).toBe(false);
+    });
+
+    test('a scheduled or unknown phase assumes nothing', () => {
+        expect(analyseTrial(running(), { phase: 'scheduled' }).tier).toBeNull();
+        expect(analyseTrial(running(), {}).tier).toBeNull();
+    });
+
+    test('the card’s own tier always wins over the rule', () => {
+        const analysis = analyseTrial(running({ tier: 6 }), { phase: 'live' });
+        expect(analysis.tier).toBe(6);
+        expect(analysis.tierSource).toBe('card');
+    });
+});
+
+describe('the narrow block beside a card', () => {
+    // The reported screenshot, row for row: labels ellipsized to stubs — "C… |
+    // 0 tiers → T1 (Lv.100)", "Expe… | not projectable", "Ban… | tier not seen
+    // yet" — in the ~250px block that sits beside a 126px card. A label cut to
+    // one letter is worse than a wrapped one.
+    const rowsOf = (html) => html.split('</div>').filter((part) => part.includes('span'));
+
+    test('no label is ever cut off', () => {
+        const analysis = analyseTrial(
+            record({
+                kind: 'skilling',
+                tier: null,
+                samples: [
+                    { t: now, readings: [{ current: 876, max: 40_800 }] },
+                    { t: now + 10_000, readings: [{ current: 1756, max: 40_800 }] },
+                ],
+            }),
+            { phase: 'live', timeLeftMs: 40 * 60_000 }
+        );
+        const html = renderTrialBlock(analysis, 3, { measured: false, reason: 'none' }, { phase: 'live' });
+
+        // Nothing truncates: no ellipsis machinery anywhere in the block
+        expect(html).not.toContain('text-overflow:ellipsis');
+        for (const row of rowsOf(html)) expect(row).not.toMatch(/white-space:nowrap;">[^<]{1,4}…/);
+
+        // And the labels are whole words
+        expect(html).toContain('On pace for');
+        expect(html).toContain('Banked');
+    });
+
+    test('a long value takes the full width with its label above it', () => {
+        // "0 tiers → T1 (Lv.100)" has no business sharing a line with a label in
+        // a block this narrow — it is the row the screenshot showed as "C… | 0
+        // tiers → T1 (Lv.100)"
+        const analysis = analyseTrial(
+            record({
+                kind: 'skilling',
+                tier: 1,
+                tiers: [
+                    { tier: 1, total: 40_800 },
+                    { tier: 2, total: 44_880 },
+                ],
+                samples: [
+                    { t: now, readings: [{ current: 876, max: 40_800 }] },
+                    { t: now + 10_000, readings: [{ current: 1756, max: 40_800 }] },
+                ],
+            }),
+            { phase: 'live', timeLeftMs: 40 * 60_000 }
+        );
+        const html = renderTrialBlock(analysis, 3, { measured: false, reason: 'none' }, { phase: 'live' });
+
+        const pace = html.split('</div>').find((part) => part.includes('→'));
+        expect(pace).toBeTruthy();
+        // Stacked: the value is its own full-width line, not a squeezed column
+        expect(pace).not.toContain('justify-content:space-between');
+        // With the whole label above it
+        expect(html).toContain('>On pace for</div>');
+    });
+
+    test('a short figure still sits beside its label', () => {
+        const analysis = analyseTrial(
+            record({
+                kind: 'skilling',
+                samples: [
+                    { t: now, readings: [{ current: 1000, max: 65_280 }] },
+                    { t: now + 10_000, readings: [{ current: 1880, max: 65_280 }] },
+                ],
+            }),
+            { phase: 'live' }
+        );
+        const html = renderTrialBlock(analysis, 3, { measured: false, reason: 'none' }, { phase: 'live' });
+
+        const rate = html.split('</div>').find((part) => part.includes('Fill rate'));
+        expect(rate).toContain('justify-content:space-between');
+        expect(rate).toContain('\u00a0work/s');
+    });
+});
+
 describe('one row set per phase', () => {
     /** Nothing attributed, which is the usual case for a trial nobody joined */
     const breakdown = { measured: false, reason: 'no trial fight seen yet', players: [] };
@@ -1803,7 +1973,7 @@ describe('one row set per phase', () => {
         // Non-breaking space between the number and its unit, and a value
         // column that does not wrap or shrink
         expect(html).toContain('\u00a0dmg/s');
-        expect(html).toMatch(/white-space:nowrap; *flex-shrink:0;/);
+        expect(html).toMatch(/white-space:nowrap; *flex:0 0 auto;/);
     });
 });
 

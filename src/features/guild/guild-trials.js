@@ -155,6 +155,9 @@ const CSS_CLASS = 'mwi-trial-info';
 /** How often a reading is taken while the tab is open */
 const SAMPLE_MS = 5000;
 
+/** Every trial starts here, which is what makes the first tier knowable */
+const FIRST_TIER = 1;
+
 const ACCENT = '#8fd3ff';
 const DIM = '#9ca3af';
 const GOOD = '#4ade80';
@@ -171,15 +174,31 @@ const WARN = '#f0a830';
  * @param {number} [options.participants] - Signed-up participants, for the next-tier caption
  * @param {number|null} [options.timeLeftMs] - Active time left in the trial
  * @param {number|null} [options.buildersHallBonus] - Builders Hall bonus fraction, for reading the card's points
+ * @param {string|null} [options.phase] - `scheduled`, `live` or `completed`, for the first-tier rule
  * @returns {{kind: string, tier: number|null, level: number|null, tiersClearedSoFar: number,
  *   rate: number|null, rateNote: string|null, remaining: number|null, total: number|null,
  *   etaMs: number|null, growthPerTier: number|null, next: Object|null, pace: Object|null,
  *   samples: number, timeLeftMs: number|null}} Analysis
  */
-export function analyseTrial(record, { participants = 0, timeLeftMs = null, buildersHallBonus = null } = {}) {
+export function analyseTrial(
+    record,
+    { participants = 0, timeLeftMs = null, buildersHallBonus = null, phase = null } = {}
+) {
     const samples = Array.isArray(record?.samples) ? record.samples : [];
     const kind = record?.kind === 'combat' ? 'combat' : 'skilling';
-    const tier = Number.isFinite(record?.tier) ? record.tier : null;
+
+    // A trial starts at tier 1. So a *running* trial that has banked nothing —
+    // no points stated on any card, none filed against a tier — is on its first
+    // tier, and saying "tier not known yet" through the whole of it is a
+    // needless blindness: the pace, the banked count and the forecast all wait
+    // on a badge the In Progress tab never shows.
+    //
+    // Only where the cards state nothing. A player joining midway meets a card
+    // that already says what the trial is worth, and that is the case this must
+    // not guess at — it keeps the old unknown-tier behaviour.
+    const banked = Object.keys(record?.pointsByTier || {}).some((tier) => Number(record.pointsByTier[tier]) > 0);
+    const assumeFirst = phase === 'live' && !Number.isFinite(record?.tier) && !banked && !(record?.points > 0);
+    const tier = Number.isFinite(record?.tier) ? record.tier : assumeFirst ? FIRST_TIER : null;
     const observations = Array.isArray(record?.tiers) ? record.tiers : [];
 
     const history = samples.map((sample) => sample?.readings || []);
@@ -217,6 +236,9 @@ export function analyseTrial(record, { participants = 0, timeLeftMs = null, buil
         kind,
         tier,
         tierKnown,
+        // Where the tier came from, so a caption can say "assumed" rather than
+        // implying the panel stated it
+        tierSource: Number.isFinite(record?.tier) ? 'card' : assumeFirst ? 'first-tier-rule' : null,
         completed,
         // The card's own "840 pts", where it has been seen. It is Guild Points
         // rather than base points — see `trialBankedBasePoints` — so the Builders
@@ -402,15 +424,21 @@ function exact(value) {
 }
 
 /**
- * Longest a value can be before it stops being a value.
+ * Longest a value can be before the row stacks instead of sitting in columns.
  *
- * "106 work/s" is a figure and belongs in a column beside its label. "no data —
- * only trials you join can be measured" is a sentence, and squeezing a sentence
- * into the right-hand column of a 126px-wide card is what produced the reported
- * screenshot: a tall ragged noodle with two words per line and a label column
- * narrow enough to break "needs a second tier" mid-phrase.
+ * "106 work/s" is a figure and belongs in a column beside its label. Anything
+ * much longer is a phrase, and a phrase in the right-hand column of a block
+ * beside a 126px card leaves nothing for the label — which produced two
+ * successive reported screenshots. First a tall ragged noodle with two words per
+ * line; then, after the value was told not to wrap, labels ellipsized past
+ * recognition: `C… | 0 tiers → T1 (Lv.100)`, `Ban… | tier not seen yet`.
+ *
+ * A label cut to one letter is worse than either. So the threshold is low enough
+ * that a phrase gets the full width with its label above it, and the label in
+ * the column form is allowed to *wrap* rather than being cut — these are two-word
+ * labels and two lines of "On pace for" reads perfectly well.
  */
-const VALUE_MAX_CHARS = 22;
+const VALUE_MAX_CHARS = 16;
 
 /**
  * A row of label and value, or a label with a caption under it.
@@ -439,17 +467,15 @@ function line(label, value, color = '#e8ecf5', title = '') {
         );
     }
 
-    // The value never wraps and the label gives way instead. "522 dmg/s" broken
-    // across two lines as "522 dmg/" and "s" was reported twice, and a figure
-    // split from its unit is worse than a truncated label — the label is a word
-    // the reader already knows, and the unit is what makes the number mean
-    // anything
+    // The value never wraps — a figure split from its unit is unreadable — and
+    // the label wraps instead of being cut. Between them that is the whole of
+    // the narrow-block problem: the unit stays with its number, and "On pace
+    // for" becomes two lines rather than "On…".
     return (
         `<div style="display:flex; justify-content:space-between; align-items:baseline; gap:8px;"${tip}>` +
-        `<span style="color:${DIM}; min-width:0; overflow:hidden; text-overflow:ellipsis; ` +
-        `white-space:nowrap;">${label}</span>` +
+        `<span style="color:${DIM}; flex:1 1 auto; min-width:4em; overflow-wrap:anywhere;">${label}</span>` +
         `<span style="color:${color}; font-weight:600; text-align:right; white-space:nowrap; ` +
-        `flex-shrink:0;">${text}</span></div>`
+        `flex:0 0 auto;">${text}</span></div>`
     );
 }
 
@@ -1038,6 +1064,7 @@ class GuildTrials {
         // arms the damage gate from last session's record, so a fight is
         // recognised without the tab having been opened this session.
         guildTrialDamage.initialize();
+        guildTrialAlerts.initialize?.();
         guildTrialRecorder.initialize(this.guildName);
         guildMemberSkills.initialize(this.guildName).catch(() => {});
         // One bucket for every character in the tab is what poisoned a guild's
@@ -1289,17 +1316,39 @@ class GuildTrials {
             const live = tiles.find((tile) => tile.readings.length > 0) || null;
             for (const tile of tiles) {
                 const withPersonal = tile === live ? { ...tile, personal } : tile;
-                this.record = recordTileSample(this.record, withPersonal, now);
+                // A running trial whose cards state nothing is on its first
+                // tier, so its readings belong to T1 rather than to no tier at
+                // all — which is what the growth fit needs them filed under
+                const held = this.record.tiles?.[tileKey(tile)];
+                const firstTier =
+                    status.phase === 'live' &&
+                    !Number.isFinite(withPersonal.tier) &&
+                    !Number.isFinite(held?.tier) &&
+                    !(withPersonal.points > 0) &&
+                    !Object.keys(held?.pointsByTier || {}).length;
+                this.record = recordTileSample(
+                    this.record,
+                    firstTier ? { ...withPersonal, tier: FIRST_TIER } : withPersonal,
+                    now
+                );
             }
             if (tiles.length) {
                 saveTrialRecord(this.guildName, this.record, this.characterId, { guildId: this._guildId() });
             }
 
-            // A reading is only evidence of a *running* trial when the panel
-            // also says one is running. A bar on its own is not: the guild XP
-            // bar reads like one, and a session was found recording on a guild
-            // whose weekly trials were not on
-            if (live && status.phase === 'live') guildTrialRecorder.noteActivity('tab-reading', now);
+            // A live reading on a real trial card is evidence a trial is running,
+            // and the panel is only allowed to *veto* it. Requiring the header to
+            // say "In Progress" as well meant auto-record never armed: the
+            // header is on the Trials tab and the readings are on the In
+            // Progress one, so the two conditions were rarely true at once.
+            //
+            // What made that requirement necessary in the first place — a guild
+            // XP bar read as a trial card on the Overview tab — is closed twice
+            // over now, by `isTrialName` matching a card's whole name and by
+            // `onTrialTab` refusing a tab that is legibly something else.
+            if (live && status.phase !== 'scheduled' && status.phase !== 'completed') {
+                guildTrialRecorder.noteActivity('tab-reading', now);
+            }
 
             this._noteLifecycle(status, tiles, now);
 
@@ -1344,6 +1393,7 @@ class GuildTrials {
                     participants,
                     timeLeftMs,
                     buildersHallBonus: bonuses.buildersHall.bonus,
+                    phase: status?.phase || null,
                 });
 
                 trialsForPayout.push({

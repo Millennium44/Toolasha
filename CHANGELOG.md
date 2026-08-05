@@ -12,6 +12,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - **The count is a per-floor override again**: a number chosen because one map was worth four beacons no longer follows you onto every floor after it. Each new floor starts back on the automatic minimum.
 - **A ⟲ button beside the count** puts it back to the fewest that cover a path, without spinning the field down a step at a time.
 
+### The recorder survives its first real trial day
+
+- **Auto-record actually arms now**: the status header carries the trial kind ("Skilling Trial - In Progress") which the reader didn't recognize — and worse, the header lives on the Trials tab while the readings live on In Progress, so requiring both at once meant auto-record almost never armed. A live reading on a real trial card now arms it; the panel can only veto with an explicit Scheduled/Completed, and silence blocks nothing.
+- **Manual recordings stop only by your hand**: the ten-minute silence rule and the one-hour cap were killing sessions whose player had simply closed the guild panel to go play. Silence is now recorded as a visible gap in the session (`{from, to, ms}`) instead of acted on, with a six-hour backstop; the silence rule for automatic sessions no longer fires while a trial is live. Between the skilling and combat hours, automatic sessions roll over by themselves and manual ones simply span both.
+- **The first tier is tier 1**: a live trial with no points and no badge is on T1 by game rule, so pace and forecast light up from the first minute and pool readings anchor the growth fit; the mid-trial-join case (points already showing) keeps the honest unknown.
+- **The start notification listens to guild chat**: the game's own "guild trials have begun" line fires it even with the guild panel closed, sharing a key with the phase trigger so whichever notices first speaks once.
+- **Labels wrap instead of vanishing**: "C… | 0 tiers → T1" is gone — the ellipsis machinery is removed outright, long values take the full width with their label above, and short figures keep their two-column row.
+
 ### Release plumbing
 
 - **Guild features moved from the ui library to the combat library**: the trials suite had pushed `toolasha-ui.js` past the 3MB bundle ceiling; the guild modules already lean on combat machinery (damage attribution, battle payloads), so they now ship in `toolasha-combat.js` (2.3MB) and `toolasha-ui.js` is back under the limit. No behavior change — the entrypoint wires the same features from their new home.

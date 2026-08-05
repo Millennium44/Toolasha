@@ -57,8 +57,16 @@ vi.mock('./guild-member-skills.js', () => ({
     default: { all: () => ({ ada: { name: 'Ada', skills: { '/skills/alchemy': 90 } } }) },
 }));
 
-const { buildTrialExport, guildTrialRecorder, IDLE_STOP_MS, SNAPSHOT_MS, thinBreakdown, trialSessionStorageKey } =
-    await import('./guild-trial-recorder.js');
+const {
+    buildTrialExport,
+    GAP_AFTER_MS,
+    guildTrialRecorder,
+    IDLE_STOP_MS,
+    MANUAL_MAX_MS,
+    SNAPSHOT_MS,
+    thinBreakdown,
+    trialSessionStorageKey,
+} = await import('./guild-trial-recorder.js');
 
 const now = Date.parse('2026-08-05T15:00:00Z');
 
@@ -215,21 +223,135 @@ describe('not recording when nothing is running', () => {
     });
 });
 
-describe('stopping', () => {
-    test('a trial that goes quiet ends the session, and says that is why', () => {
+describe('a session somebody pressed Record for', () => {
+    // Reported live: a manual recording stopped by itself mid-trial. Readings
+    // only arrive while the guild panel is open, so closing it to go and do
+    // something else starved the recorder and the ten-minute silence rule
+    // killed a session the user had started by hand.
+    test('fifteen minutes of silence during a live trial does not stop it', () => {
         guildTrialRecorder.start('button');
+        guildTrialRecorder.noteLifecycle('live');
+
+        game.breakdown = breakdown({ active: false });
+        vi.setSystemTime(now + 15 * 60_000);
+        vi.advanceTimersByTime(SNAPSHOT_MS);
+
+        expect(guildTrialRecorder.recording).toBe(true);
+    });
+
+    test('nor does a phase reading that is not live', () => {
+        guildTrialRecorder.start('button');
+
+        for (const phase of ['completed', 'scheduled', null]) {
+            guildTrialRecorder.noteLifecycle(phase);
+            vi.advanceTimersByTime(SNAPSHOT_MS);
+            expect(guildTrialRecorder.recording).toBe(true);
+        }
+    });
+
+    test('the silence is written down as a gap rather than acted on', () => {
+        guildTrialRecorder.start('button');
+        guildTrialRecorder.noteLifecycle('live');
+        // Nothing arriving: the panel is shut
+        game.breakdown = breakdown({ active: false });
+
+        vi.setSystemTime(now + 12 * 60_000);
+        vi.advanceTimersByTime(SNAPSHOT_MS);
+
+        const gaps = guildTrialRecorder.session.gaps || [];
+        expect(gaps.length).toBeGreaterThan(0);
+        expect(gaps[0].ms).toBeGreaterThan(GAP_AFTER_MS);
+    });
+
+    test('one silence is one gap, however many ticks it spans', () => {
+        guildTrialRecorder.start('button');
+        guildTrialRecorder.noteLifecycle('live');
+        // Nothing arriving: the panel is shut
+        game.breakdown = breakdown({ active: false });
+
+        for (let step = 1; step <= 4; step += 1) {
+            vi.setSystemTime(now + 10 * 60_000 + step * SNAPSHOT_MS);
+            vi.advanceTimersByTime(SNAPSHOT_MS);
+        }
+
+        expect(guildTrialRecorder.session.gaps).toHaveLength(1);
+    });
+
+    test('a session left open for six hours is still stopped', () => {
+        guildTrialRecorder.start('button');
+        guildTrialRecorder.noteLifecycle('live');
+        // Nothing arriving: the panel is shut
+        game.breakdown = breakdown({ active: false });
+
+        vi.setSystemTime(now + MANUAL_MAX_MS + 60_000);
+        vi.advanceTimersByTime(SNAPSHOT_MS);
+
+        expect(guildTrialRecorder.recording).toBe(false);
+        expect(guildTrialRecorder.session.endedBy).toContain('six hours');
+    });
+});
+
+describe('the two hours of one cycle', () => {
+    test('the combat hour arms itself after the skilling hour ends', () => {
+        // Asked directly: does the user have to stop and start between the two?
+        // No. The lull between them reads as completed, which closes the
+        // skilling session, and the first sign of the combat hour opens a new one
+        guildTrialRecorder.noteActivity('tab-reading');
+        const skilling = guildTrialRecorder.session;
+        expect(guildTrialRecorder.recording).toBe(true);
+
+        guildTrialRecorder.noteLifecycle('completed');
+        expect(guildTrialRecorder.recording).toBe(false);
+
+        // The combat hour starts: a reading, or a fight
+        vi.setSystemTime(now + 10 * 60_000);
+        guildTrialRecorder.noteActivity('tab-reading', now + 10 * 60_000);
+
+        expect(guildTrialRecorder.recording).toBe(true);
+        expect(guildTrialRecorder.session).not.toBe(skilling);
+    });
+
+    test('a stale phase does not stop the new session on the very next tick', () => {
+        // The ping-pong this guards against: start, then the watcher sees a
+        // `completed` nobody has re-read and closes it again immediately
+        guildTrialRecorder.noteLifecycle('completed');
+        guildTrialRecorder.noteActivity('trial-fight');
+        expect(guildTrialRecorder.recording).toBe(true);
+
+        game.breakdown = breakdown({ active: false });
+        vi.advanceTimersByTime(SNAPSHOT_MS);
+
+        expect(guildTrialRecorder.recording).toBe(true);
+    });
+
+    test('a session started by hand spans both hours untouched', () => {
+        guildTrialRecorder.start('button');
+        guildTrialRecorder.noteLifecycle('completed');
+        guildTrialRecorder.noteLifecycle('scheduled');
+        guildTrialRecorder.noteLifecycle('live');
+
+        expect(guildTrialRecorder.recording).toBe(true);
+        expect(guildTrialRecorder.session.startedBy).toBe('button');
+    });
+});
+
+describe('stopping', () => {
+    test('a trial that goes quiet ends the session it armed itself, and says why', () => {
+        guildTrialRecorder.noteActivity('tab-reading');
+        guildTrialRecorder.noteLifecycle('completed');
+        guildTrialRecorder.noteActivity('tab-reading');
+        guildTrialRecorder.phase = 'scheduled';
 
         game.breakdown = breakdown({ active: false });
         vi.setSystemTime(now + IDLE_STOP_MS + SNAPSHOT_MS);
         vi.advanceTimersByTime(SNAPSHOT_MS);
 
         expect(guildTrialRecorder.recording).toBe(false);
-        expect(guildTrialRecorder.session.endedBy).toBe('nothing seen');
         expect(guildTrialRecorder.session.endedAt).toBeGreaterThan(now);
     });
 
-    test('an hour is as long as a trial runs', () => {
-        guildTrialRecorder.start('button');
+    test('an hour is as long as a trial runs, for a session that armed itself', () => {
+        guildTrialRecorder.noteActivity('tab-reading');
 
         // Still active, so it is not the idle rule that fires
         vi.setSystemTime(now + 61 * 60_000);
