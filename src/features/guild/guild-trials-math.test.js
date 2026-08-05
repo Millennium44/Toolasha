@@ -33,7 +33,9 @@ import {
     ratePerMs,
     rescaleForParticipants,
     inferBuildersHallBonus,
+    baseWorkFromObservations,
     interpretCardPoints,
+    tierPoolWork,
     tierFromLevel,
     tierMarginalPoints,
     totalBasePoints,
@@ -300,6 +302,37 @@ describe('tier growth, fitted from observations', () => {
     test('an explicit growth factor overrides the fit', () => {
         const observations = [{ tier: 4, total: 1000 }];
         expect(projectTierTotal({ observations, tier: 5, growthPerTier: 1.5 })).toBeCloseTo(1500, 6);
+    });
+});
+
+describe('the skilling pool ladder', () => {
+    // Watched through three tiers of a live trial with two members signed up:
+    // 40,800 / 44,880 / 48,960. That is 40,000 / 44,000 / 48,000 with the same
+    // 1%-per-participant multiplier the combat side uses, and those are the
+    // first tier's work plus a tenth of it per tier. Linear, not geometric.
+    test('reproduces the live trial exactly, on all three tiers', () => {
+        const baseWork = 40_000;
+        expect(tierPoolWork({ baseWork, tier: 1, participants: 2 })).toBeCloseTo(40_800, 6);
+        expect(tierPoolWork({ baseWork, tier: 2, participants: 2 })).toBeCloseTo(44_880, 6);
+        expect(tierPoolWork({ baseWork, tier: 3, participants: 2 })).toBeCloseTo(48_960, 6);
+    });
+
+    test('one reading anywhere on the ladder gives the first tier', () => {
+        expect(baseWorkFromObservations([{ tier: 3, total: 48_960 }], 2)).toBeCloseTo(40_000, 6);
+        expect(baseWorkFromObservations([{ tier: 1, total: 40_800 }], 2)).toBeCloseTo(40_000, 6);
+    });
+
+    test('nothing observed is nothing derived', () => {
+        expect(baseWorkFromObservations([], 2)).toBeNull();
+        expect(baseWorkFromObservations([{ tier: 0, total: 0 }], 2)).toBeNull();
+        expect(tierPoolWork({ baseWork: 0, tier: 1 })).toBeNull();
+        expect(tierPoolWork({ baseWork: 40_000, tier: 99 })).toBeNull();
+    });
+
+    test('the step is a tenth of the first tier, not a tenth of the last', () => {
+        // Geometric growth would give 40,000 × 1.1² = 48,400 at tier three; the
+        // game gives 48,000, which is the linear rule
+        expect(tierPoolWork({ baseWork: 40_000, tier: 3 })).toBeCloseTo(48_000, 6);
     });
 });
 
@@ -760,6 +793,36 @@ describe('inferBuildersHallBonus', () => {
     test('a ratio beyond twenty levels infers nothing', () => {
         expect(inferBuildersHallBonus([{ type: 'skilling', pointsByTier: { 5: 1200 } }])).toBeNull();
         expect(inferBuildersHallBonus([])).toBeNull();
+    });
+});
+
+describe('a card that states nothing yet', () => {
+    test('zero points is not a figure to disagree with', () => {
+        // Reported live: "Trial Chameleon T1 states 0 pts, which is neither the
+        // running total nor the per-tier step…" — on a combat trial that had not
+        // started. A card reading 0 is a card with nothing to say.
+        const banked = trialBankedBasePoints({
+            type: 'combat',
+            bankedTiers: 0,
+            pointsByTier: { 1: 0 },
+            buildersHallBonus: 0.2,
+        });
+
+        expect(banked.interpretation).toBeNull();
+        expect(banked.quoted).toBeNull();
+        expect(banked.source).toBe('ladder');
+    });
+
+    test('a real figure beside a zero is still read', () => {
+        const banked = trialBankedBasePoints({
+            type: 'skilling',
+            bankedTiers: 6,
+            pointsByTier: { 6: 840, 7: 0 },
+            buildersHallBonus: 0.2,
+        });
+
+        expect(banked.quoted).toEqual({ tier: 6, statedPoints: 840 });
+        expect(banked.guildPoints).toBe(840);
     });
 });
 

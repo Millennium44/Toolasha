@@ -104,6 +104,7 @@ import {
     EXTRA_TIER_POINTS,
     TRIAL_ACTIVE_MS,
     TRIAL_MAX_TIER,
+    baseWorkFromObservations,
     combatDamageRate,
     estimateGrowthPerTier,
     etaMs,
@@ -114,6 +115,8 @@ import {
     projectPace,
     projectTierTotal,
     ratePerMs,
+    participantScale,
+    tierPoolWork,
     trialBankedBasePoints,
     trialWeekStart,
 } from './guild-trials-math.js';
@@ -187,18 +190,32 @@ export function analyseTrial(
     const samples = Array.isArray(record?.samples) ? record.samples : [];
     const kind = record?.kind === 'combat' ? 'combat' : 'skilling';
 
-    // A trial starts at tier 1. So a *running* trial that has banked nothing —
-    // no points stated on any card, none filed against a tier — is on its first
-    // tier, and saying "tier not known yet" through the whole of it is a
-    // needless blindness: the pace, the banked count and the forecast all wait
-    // on a badge the In Progress tab never shows.
+    // What the badge on the card means, which is not what this assumed.
     //
-    // Only where the cards state nothing. A player joining midway meets a card
-    // that already says what the trial is worth, and that is the case this must
-    // not guess at — it keeps the old unknown-tier behaviour.
-    const banked = Object.keys(record?.pointsByTier || {}).some((tier) => Number(record.pointsByTier[tier]) > 0);
-    const assumeFirst = phase === 'live' && !Number.isFinite(record?.tier) && !banked && !(record?.points > 0);
-    const tier = Number.isFinite(record?.tier) ? record.tier : assumeFirst ? FIRST_TIER : null;
+    // Watched through a live trial: after the first tier cleared the card read
+    // "Lv.100, 236 pts, T1", and after the second "Lv.110, 354 pts, T2" — while
+    // the pool on the In Progress tab was plainly the *third* one. So the badge
+    // counts tiers **banked**, and the tier being fought is one past it. The old
+    // rule (badge is the tier in progress, banked is one fewer) was wrong in
+    // both directions at once and produced "Banked 1 tier" under a T2 badge.
+    //
+    // That also settles the completed case the same way, which is what the
+    // points identity already said: a finished card's badge is what it reached.
+    //
+    // Before any badge exists, a running trial is on its first tier and has
+    // banked nothing — every trial starts there. A card already stating points
+    // is a mid-trial join and keeps the unknown-tier behaviour.
+    const badge = Number.isFinite(record?.tier) ? record.tier : null;
+    const statedPoints = Object.keys(record?.pointsByTier || {}).some(
+        (entry) => Number(record.pointsByTier[entry]) > 0
+    );
+    const assumeFirst = phase === 'live' && badge === null && !statedPoints && !(record?.points > 0);
+
+    const completed = Boolean(record?.completed);
+    // The tier being fought, which is what a rate, a pace and a forecast are about
+    const tier = badge !== null ? (completed ? badge : badge + 1) : assumeFirst ? FIRST_TIER : null;
+    // What it has finished, which is what the payout is about
+    const bankedTiers = badge !== null ? badge : assumeFirst ? 0 : 0;
     const observations = Array.isArray(record?.tiers) ? record.tiers : [];
 
     const history = samples.map((sample) => sample?.readings || []);
@@ -213,23 +230,7 @@ export function analyseTrial(
     // reporting it as "0 banked" is what made a live trial's payout read as
     // nothing at all.
     const tierKnown = Number.isFinite(tier);
-
-    // How many tiers the badge on the card stands for, which is not the same
-    // question in the two states a card can be in:
-    //
-    // - **Finished.** The completed Trial Chameleon card read "Lv.120, 960 pts,
-    //   T3", and 960 is the ladder's *three*-tier total with the Builder's Hall
-    //   bonus on it. So on a finished card the badge is the tiers earned, and
-    //   this is exact rather than inferred — the arithmetic checks itself.
-    // - **Running.** The badge is the tier being fought, and the tiers earned
-    //   are one fewer. That is still an inference: a trial starts at tier 1 and
-    //   climbs one at a time, so a card showing T7 has banked six. Nothing has
-    //   confirmed it mid-trial, and the block says "in progress" beside it.
-    //
-    // Guessing the finished rule for a running card would claim a tier the party
-    // is still fighting, which is the direction that overstates a payout.
-    const completed = Boolean(record?.completed);
-    const tiersClearedSoFar = tierKnown ? Math.max(0, completed ? tier : tier - 1) : 0;
+    const tiersClearedSoFar = bankedTiers;
     const pointsByTier = record?.pointsByTier && typeof record.pointsByTier === 'object' ? record.pointsByTier : {};
 
     const base = {
@@ -238,7 +239,7 @@ export function analyseTrial(
         tierKnown,
         // Where the tier came from, so a caption can say "assumed" rather than
         // implying the panel stated it
-        tierSource: Number.isFinite(record?.tier) ? 'card' : assumeFirst ? 'first-tier-rule' : null,
+        tierSource: badge !== null ? 'card' : assumeFirst ? 'first-tier-rule' : null,
         completed,
         // The card's own "840 pts", where it has been seen. It is Guild Points
         // rather than base points — see `trialBankedBasePoints` — so the Builders
@@ -307,7 +308,29 @@ export function analyseTrial(
         rate = ratePerMs(series, direction);
     }
 
-    const next = Number.isFinite(tier) ? nextTierPreview({ observations, currentTier: tier, participants }) : null;
+    // The next tier's size. For a skilling trial the ladder is now derived from
+    // the rule the observed pools reproduce exactly, so a preview no longer
+    // waits for a second tier to be seen
+    const derivedNext =
+        kind === 'skilling' && Number.isFinite(tier)
+            ? tierPoolWork({
+                  baseWork: baseWorkFromObservations(observations, participants),
+                  tier: tier + 1,
+                  participants,
+              })
+            : null;
+    const fitted = Number.isFinite(tier) ? nextTierPreview({ observations, currentTier: tier, participants }) : null;
+    const next =
+        fitted ||
+        (Number.isFinite(derivedNext) && tier + 1 <= TRIAL_MAX_TIER
+            ? {
+                  tier: tier + 1,
+                  level: levelFromTier(tier + 1),
+                  total: derivedNext,
+                  participantPenalty: participantScale(participants) - 1,
+                  growthPerTier: null,
+              }
+            : null);
 
     const pace =
         Number.isFinite(tier) && Number.isFinite(remaining) && Number.isFinite(timeLeftMs)
@@ -441,6 +464,15 @@ function exact(value) {
 const VALUE_MAX_CHARS = 16;
 
 /**
+ * Longest a label can be before its row stacks.
+ *
+ * "Expected" and "On pace for" fit beside a figure; "Next tier work (T3)" does
+ * not, and squeezing it in is what produced a wrapped label with a single
+ * letter on the second line.
+ */
+const LABEL_MAX_CHARS = 12;
+
+/**
  * A row of label and value, or a label with a caption under it.
  *
  * The shape is chosen by the content rather than by the caller, so a row that is
@@ -457,7 +489,11 @@ const VALUE_MAX_CHARS = 16;
 function line(label, value, color = '#e8ecf5', title = '') {
     const tip = title ? ` title="${title.replace(/"/g, '&quot;')}"` : '';
     const text = String(value ?? '');
-    const isSentence = text.length > VALUE_MAX_CHARS;
+    // A label that cannot fit its column stacks too. "Next tier work (T3)" has
+    // no share of a narrow row worth having, and the alternative is what the
+    // screenshots showed: a word broken across lines with an orphan letter
+    // under it — "Expecte / d".
+    const isSentence = text.length > VALUE_MAX_CHARS || String(label ?? '').length > LABEL_MAX_CHARS;
 
     if (isSentence) {
         return (
@@ -473,7 +509,8 @@ function line(label, value, color = '#e8ecf5', title = '') {
     // for" becomes two lines rather than "On…".
     return (
         `<div style="display:flex; justify-content:space-between; align-items:baseline; gap:8px;"${tip}>` +
-        `<span style="color:${DIM}; flex:1 1 auto; min-width:4em; overflow-wrap:anywhere;">${label}</span>` +
+        `<span style="color:${DIM}; flex:1 1 auto; min-width:4em; overflow-wrap:normal; ` +
+        `word-break:normal; hyphens:none;">${label}</span>` +
         `<span style="color:${color}; font-weight:600; text-align:right; white-space:nowrap; ` +
         `flex:0 0 auto;">${text}</span></div>`
     );
@@ -545,9 +582,9 @@ function bankedRow(analysis) {
             ? 'This trial is over, so the tier on the card is the tier it reached — and the points it ' +
                   'states are the ladder’s total for exactly that many tiers, which is what makes this ' +
                   'figure exact rather than inferred.'
-            : 'While a trial runs, the tier on screen is the one being fought, so what is banked is one ' +
-                  'fewer. That is an inference — it holds as long as a trial starts at tier 1 and climbs ' +
-                  'one at a time — and it settles when the card says the trial is complete.'
+            : 'The tier on the card counts what this trial has *finished* — it read T1 after the first ' +
+                  'tier cleared and T2 after the second, while the pool on screen was the next one along. ' +
+                  'So the tier being fought is one past the badge.'
     );
 }
 
@@ -766,7 +803,10 @@ export function renderTrialBlock(
                 `${label} (T${analysis.next.tier})`,
                 num(analysis.next.total),
                 DIM,
-                `Fitted from the tiers seen this week (×${analysis.next.growthPerTier.toFixed(2)} per tier). ` +
+                (analysis.next.growthPerTier
+                    ? `Fitted from the tiers seen this week (×${analysis.next.growthPerTier.toFixed(2)} per tier). `
+                    : 'Derived: each tier adds a tenth of the first tier’s work, which is what the pools ' +
+                      'observed on a live trial do exactly. ') +
                     `${participants} participant${participants === 1 ? '' : 's'} already add ` +
                     `+${Math.round(analysis.next.participantPenalty * 100)}% to it.`
             )
@@ -1320,15 +1360,22 @@ class GuildTrials {
                 // tier, so its readings belong to T1 rather than to no tier at
                 // all — which is what the growth fit needs them filed under
                 const held = this.record.tiles?.[tileKey(tile)];
-                const firstTier =
-                    status.phase === 'live' &&
-                    !Number.isFinite(withPersonal.tier) &&
-                    !Number.isFinite(held?.tier) &&
-                    !(withPersonal.points > 0) &&
-                    !Object.keys(held?.pointsByTier || {}).length;
+                const badge = Number.isFinite(withPersonal.tier) ? withPersonal.tier : held?.tier;
+
+                // Which tier a live reading belongs to. The badge counts tiers
+                // *finished*, so the pool on screen is the next one along; with
+                // no badge yet, a running trial is on its first tier.
+                let readingTier = null;
+                if (status.phase === 'live' && withPersonal.readings.length) {
+                    if (Number.isFinite(badge)) readingTier = badge + 1;
+                    else if (!(withPersonal.points > 0) && !Object.keys(held?.pointsByTier || {}).length) {
+                        readingTier = FIRST_TIER;
+                    }
+                }
+
                 this.record = recordTileSample(
                     this.record,
-                    firstTier ? { ...withPersonal, tier: FIRST_TIER } : withPersonal,
+                    readingTier === null ? withPersonal : { ...withPersonal, readingTier },
                     now
                 );
             }

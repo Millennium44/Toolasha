@@ -205,7 +205,8 @@ describe('analyseTrial', () => {
         expect(analysis.rate).toBeCloseTo(10, 9); // 100,000 damage over 10s
         expect(analysis.remaining).toBe(518_000);
         expect(analysis.etaMs).toBeCloseTo(51_800, 6);
-        expect(analysis.tiersClearedSoFar).toBe(4);
+        // The badge counts what is banked; the tier being fought is one past it
+        expect(analysis.tiersClearedSoFar).toBe(5);
     });
 
     test('a skilling trial reads its fill rate off the rising bar', () => {
@@ -226,7 +227,7 @@ describe('analyseTrial', () => {
         expect(analysis.rate).toBeCloseTo(20, 9); // 400,000 over 20s
         expect(analysis.remaining).toBe(2_600_000);
         expect(analysis.etaMs).toBeCloseTo(130_000, 6);
-        expect(analysis.tiersClearedSoFar).toBe(1);
+        expect(analysis.tiersClearedSoFar).toBe(2);
     });
 
     test('one sample is not a rate', () => {
@@ -260,7 +261,7 @@ describe('analyseTrial', () => {
         );
 
         expect(analysis.rate).toBeCloseTo(1, 9);
-        expect(analysis.pace.clears.map((clear) => clear.tier)).toEqual([5, 6]);
+        expect(analysis.pace.clears.map((clear) => clear.tier)).toEqual([6]);
         expect(analysis.pace.tiersCleared).toBe(6); // four banked plus two projected
         expect(analysis.growthPerTier).toBeCloseTo(1.2, 9);
     });
@@ -277,8 +278,8 @@ describe('analyseTrial', () => {
             { participants: 21, timeLeftMs: 900_000 }
         );
 
-        expect(analysis.next).toMatchObject({ tier: 6, level: 150 });
-        expect(analysis.next.total).toBeCloseTo(720_000, 3);
+        expect(analysis.next).toMatchObject({ tier: 7, level: 160 });
+        expect(analysis.next.total).toBeCloseTo(864_000, 3);
         expect(analysis.next.participantPenalty).toBeCloseTo(0.21, 12);
     });
 
@@ -812,13 +813,11 @@ describe('the panel, end to end', () => {
         const root = buildTab([{ name: 'Trial Chameleon', level: 140, bar: '618,000 / 618,000' }]);
         fire(root);
 
-        // A combat trial on tier 5 has banked four: 400 + 200 × 3 = 1,000 base
-        // points → 500 tokens for every eligible member, 750 for a participant
-        // In full, with separators: this is the figure a player checks against
-        // the guild's own announcement, and "1.0K" cannot be checked
-        expect(text()).toContain('Guild Points banked1,000');
-        expect(text()).toContain('Tokens, every eligible member500');
-        expect(text()).toContain('Tokens, if you took part750');
+        // A card badged T5 has banked five: 400 + 200 × 4 = 1,200 base points
+        // → 600 tokens for every eligible member, 900 for a participant
+        expect(text()).toContain('Guild Points banked1,200');
+        expect(text()).toContain('Tokens, every eligible member600');
+        expect(text()).toContain('Tokens, if you took part900');
     });
 
     test('a token payout carries an approximate gold value when the exchange can be priced', () => {
@@ -842,14 +841,14 @@ describe('the panel, end to end', () => {
 
         fire(buildTab([{ name: 'Trial Chameleon', level: 140, bar: '618,000 / 618,000' }]));
 
-        expect(text()).toContain('Tokens, every eligible member500 (≈1,000,000g');
+        expect(text()).toContain('Tokens, every eligible member600 (≈1,200,000g');
         expect(text()).toContain('via credit exchange');
     });
 
     test('with nothing to price the token payout against, the bare count is all that shows', () => {
         fire(buildTab([{ name: 'Trial Chameleon', level: 140, bar: '618,000 / 618,000' }]));
 
-        expect(text()).toContain('Tokens, every eligible member500');
+        expect(text()).toContain('Tokens, every eligible member600');
         expect(text()).not.toContain('via credit exchange');
     });
 
@@ -1207,6 +1206,24 @@ describe('the panel, end to end', () => {
         expect(game.recorder.activity).toContain('tab-reading');
     });
 
+    test('the live pool files under the tier being fought, not the badge', () => {
+        document.body.innerHTML = '';
+        const root = document.createElement('div');
+        root.className = 'GuildPanel_trialsContent__a';
+        root.innerHTML =
+            '<div class="GuildPanel_eventStatusRow__b">Skilling Trial - In Progress Thu 04:00 PM</div>' +
+            '<div class="GuildPanel_tile__c"><div class="GuildPanel_tileName__d">Foraging</div>' +
+            '<div class="GuildPanel_tileSummary__e">Lv.110</div><div>354 pts</div>' +
+            '<div class="ProgressBar_text__f">24,382 / 48,960</div></div>';
+        document.body.appendChild(root);
+        fire();
+
+        const tile = guildTrials.record.tiles['skilling::foraging'];
+        // Lv.110 badges T2, so 48,960 is T3's pool
+        expect(tile.tier).toBe(2);
+        expect(tile.tiers).toEqual([{ tier: 3, total: 48_960 }]);
+    });
+
     test('the first pool of a live trial is filed under tier one', () => {
         document.body.innerHTML = '';
         const root = document.createElement('div');
@@ -1219,7 +1236,7 @@ describe('the panel, end to end', () => {
         fire();
 
         const tile = guildTrials.record.tiles['skilling::foraging'];
-        expect(tile.tier).toBe(1);
+        // No badge yet, so the reading is the first tier's
         expect(tile.tiers).toEqual([{ tier: 1, total: 40_800 }]);
     });
 
@@ -1584,7 +1601,9 @@ describe('the two trial tabs, as the game draws them', () => {
 
         const analysis = analyseTrial(alchemy, { timeLeftMs: 20 * 60_000 });
         expect(analysis.rate).toBeCloseTo(10_000 / 60_000, 9);
-        expect(analysis.tiersClearedSoFar).toBe(5);
+        // The badge counts what is banked, so a T6 card has six behind it
+        expect(analysis.tiersClearedSoFar).toBe(6);
+        expect(analysis.tier).toBe(7);
     });
 
     test('the countdown is read off either tab, and the footer stats are not clocks', () => {
@@ -1666,17 +1685,20 @@ describe('zero is a claim, and usually the wrong one', () => {
     });
 
     test('the first tier in progress says so rather than reading as a failure', () => {
+        // Pre-badge: a trial on its first tier has banked nothing, and the badge
+        // that would say otherwise has not appeared yet
         const analysis = analyseTrial(
             {
                 name: 'Alchemy',
                 kind: 'skilling',
-                tier: 1,
+                tier: null,
                 samples: [{ t: now, readings: [{ current: 10, max: 100 }] }],
                 tiers: [],
             },
-            { timeLeftMs: 60_000 }
+            { timeLeftMs: 60_000, phase: 'live' }
         );
 
+        expect(analysis.tier).toBe(1);
         expect(renderTrialBlock(analysis, 0)).toContain('nothing yet');
     });
 
@@ -1787,8 +1809,37 @@ describe('the first tier of a running trial', () => {
 
     test('the card’s own tier always wins over the rule', () => {
         const analysis = analyseTrial(running({ tier: 6 }), { phase: 'live' });
-        expect(analysis.tier).toBe(6);
+        // The badge counts banked tiers, so the one being fought is the next
+        expect(analysis.tier).toBe(7);
+        expect(analysis.tiersClearedSoFar).toBe(6);
         expect(analysis.tierSource).toBe('card');
+    });
+});
+
+describe('the badge counts what is banked', () => {
+    // The live sequence that settled it: after the first clear the card read
+    // "Lv.100, 236 pts, T1"; after the second, "Lv.110, 354 pts, T2" — while the
+    // pool on the In Progress tab was visibly the third one. So the badge is
+    // tiers finished and the tier being fought is one past it.
+    test('a T2 badge means two banked and the third in progress', () => {
+        const analysis = analyseTrial(record({ kind: 'skilling', tier: 2 }), { phase: 'live' });
+
+        expect(analysis.tiersClearedSoFar).toBe(2);
+        expect(analysis.tier).toBe(3);
+    });
+
+    test('a finished card is what it reached, with nothing in progress', () => {
+        const analysis = analyseTrial(record({ kind: 'combat', tier: 3, completed: true }), { phase: 'completed' });
+
+        expect(analysis.tiersClearedSoFar).toBe(3);
+        expect(analysis.tier).toBe(3);
+    });
+
+    test('the block says two banked under a T2 badge, not one', () => {
+        const analysis = analyseTrial(record({ kind: 'skilling', tier: 2 }), { phase: 'live' });
+        const html = renderTrialBlock(analysis, 3, { measured: false, reason: 'none' }, { phase: 'live' });
+
+        expect(html).toContain('2 tiers');
     });
 });
 
@@ -1813,8 +1864,11 @@ describe('the narrow block beside a card', () => {
         );
         const html = renderTrialBlock(analysis, 3, { measured: false, reason: 'none' }, { phase: 'live' });
 
-        // Nothing truncates: no ellipsis machinery anywhere in the block
+        // Nothing truncates, and nothing breaks inside a word: "Expecte / d"
+        // with an orphan letter under it was the reported result of the last fix
         expect(html).not.toContain('text-overflow:ellipsis');
+        expect(html).not.toContain('overflow-wrap:anywhere');
+        expect(html).toContain('word-break:normal');
         for (const row of rowsOf(html)) expect(row).not.toMatch(/white-space:nowrap;">[^<]{1,4}…/);
 
         // And the labels are whole words
@@ -2179,8 +2233,8 @@ describe('renderTrialPlayers', () => {
         // Still an inference while the trial runs, and it does not claim the
         // tier the party is currently fighting
         const running = analyseTrial(record({ kind: 'combat', level: 120, tier: 3, completed: false }), {});
-        expect(running.tiersClearedSoFar).toBe(2);
-        expect(renderTrialBlock(running, 3, { measured: false, reason: 'none' })).not.toContain('finished');
+        expect(running.tiersClearedSoFar).toBe(3);
+        expect(renderTrialBlock(running, 3, { measured: false, reason: 'none' })).not.toContain('· finished');
     });
 
     test('a combat block carries the split and a skilling one does not', () => {

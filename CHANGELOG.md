@@ -12,6 +12,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - **The count is a per-floor override again**: a number chosen because one map was worth four beacons no longer follows you onto every floor after it. Each new floor starts back on the automatic minimum.
 - **A ⟲ button beside the count** puts it back to the fewest that cover a path, without spinning the field down a step at a time.
 
+### The badge means banked, and the skilling ladder is a rule now
+
+- **Mid-trial, the stated tier badge counts tiers banked and the fight is on badge + 1** — proven by the live sequence (a T2 badge while the third pool ran). "Banked 1 tier" under a T2 badge now says 2, and live pool readings file under the tier actually being fought — two tiers' pool sizes were quietly filing under one number and corrupting the ladder.
+- **Skilling pool sizes are derived, exact on all three observed tiers**: T_n = base × (1 + 0.1×(n−1)) × (1 + 1% per participant) — linear, not geometric (a ratio fit would have drifted 400 work by T3). One reading anywhere gives the whole ladder; observed readings still win.
+- **The forecast walks the whole hour**: no more "Expected ~T2" while four tiers were on pace — it walks the derived ladder, adds the banked tiers (returning only its own walk was impossible output), and "Next tier work" appears from the first minute.
+- **Labels wrap at spaces only** ("Expecte/d" is gone — `overflow-wrap:anywhere` removed outright), long labels stack above their value.
+- **Cards stating 0 points state nothing**: zero no longer reaches the disagreement warning or the stated-points path.
+
 ### The recorder survives its first real trial day
 
 - **Auto-record actually arms now**: the status header carries the trial kind ("Skilling Trial - In Progress") which the reader didn't recognize — and worse, the header lives on the Trials tab while the readings live on In Progress, so requiring both at once meant auto-record almost never armed. A live reading on a real trial card now arms it; the panel can only veto with an explicit Scheduled/Completed, and silence blocks nothing.

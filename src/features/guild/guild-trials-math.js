@@ -376,9 +376,14 @@ export function trialBankedBasePoints({ type, bankedTiers, pointsByTier = {}, bu
     // The reading is taken from the highest tier the game has quoted, because
     // that is the one most likely to be unambiguous — tier 1 cannot tell the two
     // interpretations apart at all
+    // Zero is not a figure the card is stating; it is a card with nothing to
+    // state yet. A combat trial that has not started reads "0 pts", and letting
+    // that into the comparison put "Trial Chameleon T1 states 0 pts, which is
+    // neither the running total nor the per-tier step" on the screen of every
+    // guild whose combat hour had not begun.
     const quoted = Object.keys(pointsByTier || {})
         .map(Number)
-        .filter((tier) => Number.isFinite(tier) && stated(tier) !== null)
+        .filter((tier) => Number.isFinite(tier) && stated(tier) > 0)
         .sort((a, b) => b - a);
 
     const reading = quoted.length
@@ -449,6 +454,65 @@ export function trialBankedBasePoints({ type, bankedTiers, pointsByTier = {}, bu
         ladder,
         quoted: quotedAt,
     };
+}
+
+/**
+ * How much of the first tier's work each later tier adds.
+ *
+ * Derived, and exact on every observation there is. A live skilling trial was
+ * watched through three tiers with two members signed up, and its pools read
+ * 40,800 / 44,880 / 48,960 — which is 40,000 / 44,000 / 48,000 with the same
+ * 1%-per-participant multiplier the combat side uses, and those are the first
+ * tier's work plus a tenth of it per tier. Linear, not geometric, which is why
+ * fitting a growth *factor* to two tiers was always going to drift.
+ */
+export const SKILLING_TIER_STEP = 0.1;
+
+/**
+ * The work one tier of a skilling trial needs.
+ *
+ * The counterpart of {@link module:./guild-trial-forecast.tierMonsterHp} for the
+ * other half of a trial week, and derived the same way — from observations that
+ * it reproduces exactly rather than from a curve fitted through them. A tier
+ * actually read off the panel still wins; this is what fills in the tiers nobody
+ * has seen yet, which before now was every tier past the second.
+ *
+ * @param {Object} input - Inputs
+ * @param {number} input.baseWork - The first tier's work, before participants
+ * @param {number} input.tier - The tier wanted
+ * @param {number} [input.participants] - Members signed up
+ * @returns {number|null} Work, or null on unusable input
+ */
+export function tierPoolWork({ baseWork, tier, participants = 0 } = {}) {
+    if (!Number.isFinite(baseWork) || baseWork <= 0) return null;
+    if (!Number.isFinite(tier) || tier < 1 || tier > TRIAL_MAX_TIER) return null;
+
+    const byTier = 1 + SKILLING_TIER_STEP * (tier - 1);
+    const byParty = 1 + PARTICIPANT_SCALE_STEP * Math.max(0, Number(participants) || 0);
+    return baseWork * byTier * byParty;
+}
+
+/**
+ * The first tier's work, backed out of any tier that has been observed.
+ *
+ * A trial joined at tier three still knows what tier one needed, because the
+ * step between tiers is known — so one reading anywhere on the ladder gives the
+ * whole of it.
+ *
+ * @param {Array<{tier: number, total: number}>} observations - Pool sizes seen
+ * @param {number} [participants] - Members signed up
+ * @returns {number|null} The first tier's work, or null with nothing to derive from
+ */
+export function baseWorkFromObservations(observations, participants = 0) {
+    const byParty = 1 + PARTICIPANT_SCALE_STEP * Math.max(0, Number(participants) || 0);
+
+    for (const observation of observations || []) {
+        const tier = Number(observation?.tier);
+        const total = Number(observation?.total);
+        if (!Number.isFinite(tier) || tier < 1 || !Number.isFinite(total) || total <= 0) continue;
+        return total / byParty / (1 + SKILLING_TIER_STEP * (tier - 1));
+    }
+    return null;
 }
 
 /**
