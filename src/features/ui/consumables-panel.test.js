@@ -1,0 +1,91 @@
+/** @vitest-environment happy-dom
+ *
+ * Whether the Consumables panel comes back.
+ *
+ * The target duration it measures against lives in `utils/consumable-target.js`
+ * and is tested there, because the overlay tile reads the same setting.
+ */
+
+import { describe, test, expect, beforeEach, vi } from 'vitest';
+
+const store = vi.hoisted(() => ({ data: {} }));
+
+vi.mock('../../core/config.js', () => ({ default: { Z_FLOATING_PANEL: 1100, getSetting: () => true } }));
+vi.mock('../../core/storage.js', () => ({
+    default: {
+        ready: Promise.resolve(true),
+        get: async (key, _name, fallback = null) => store.data[key] ?? fallback,
+        set: async (key, value) => {
+            store.data[key] = value;
+            return true;
+        },
+        delete: async (key) => {
+            delete store.data[key];
+            return true;
+        },
+        getAllKeys: async () => Object.keys(store.data),
+        getJSON: async (key, _name, fallback) => store.data[key] ?? fallback,
+        setJSON: async (key, value) => {
+            store.data[key] = value;
+        },
+    },
+}));
+vi.mock('../../core/data-manager.js', () => ({
+    default: {
+        getItemDetails: () => null,
+        // Per-character keys and the listeners that reload them: the panel's
+        // open state is this character's, not the account's
+        getCurrentCharacterId: () => 'char1',
+        getCurrentCharacterGameMode: () => 'standard',
+        on: () => {},
+        off: () => {},
+    },
+}));
+vi.mock('../../utils/market-data.js', () => ({ getItemPrices: () => ({}) }));
+vi.mock('../../utils/marketplace-tabs.js', () => ({ navigateToMarketplace: () => {} }));
+vi.mock('../../utils/marketplace-autofill.js', () => ({
+    createAutofillManager: () => ({ initialize: () => {}, setQuantity: () => {} }),
+}));
+vi.mock('../../utils/order-book.js', () => ({ estimateFillSeconds: () => null }));
+vi.mock('./consumables-shopping-list.js', () => ({ openShoppingList: () => {} }));
+vi.mock('../combat-stats/combat-stats-data-collector.js', () => ({ default: { getLatestData: () => null } }));
+vi.mock('../combat-stats/combat-stats-calculator.js', () => ({ calculatePlayerStats: () => ({}) }));
+
+const { consumablesPanel } = await import('./consumables-panel.js');
+const { wasOpen } = await import('../../utils/panel-geometry.js');
+
+const settled = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+beforeEach(async () => {
+    store.data = {};
+    consumablesPanel.hide({ remember: false });
+});
+
+describe('whether the panel was open', () => {
+    test('opening it is remembered', async () => {
+        consumablesPanel.show();
+        await settled();
+
+        await expect(wasOpen('consumablesPanel')).resolves.toBe(true);
+    });
+
+    test('and closing it is', async () => {
+        consumablesPanel.show();
+        await settled();
+        consumablesPanel.hide();
+        await settled();
+
+        await expect(wasOpen('consumablesPanel')).resolves.toBe(false);
+    });
+
+    test('going to the marketplace is not closing it', async () => {
+        // The panel gets out of the way so the marketplace is not underneath it.
+        // You went shopping; you did not put the panel away.
+        consumablesPanel.show();
+        await settled();
+        consumablesPanel._openShoppingList([]);
+        await settled();
+
+        await expect(wasOpen('consumablesPanel')).resolves.toBe(true);
+    });
+});

@@ -11,6 +11,7 @@ import * as efficiency from '../utils/efficiency.js';
 import * as profitHelpers from '../utils/profit-helpers.js';
 import * as profitConstants from '../utils/profit-constants.js';
 import * as dom from '../utils/dom.js';
+import * as mobile from '../utils/mobile.js';
 import * as domObserverHelpers from '../utils/dom-observer-helpers.js';
 import * as timerRegistry from '../utils/timer-registry.js';
 import * as bonusRevenueCalculator from '../utils/bonus-revenue-calculator.js';
@@ -37,6 +38,39 @@ import * as pricingHelper from '../utils/pricing-helper.js';
 import * as cleanupRegistry from '../utils/cleanup-registry.js';
 import * as houseCostCalculator from '../utils/house-cost-calculator.js';
 import * as enhancementCalculator from '../utils/enhancement-calculator.js';
+import * as overlayRows from '../utils/overlay-rows.js';
+import * as overlayLayout from '../utils/overlay-layout.js';
+import * as overlayFormat from '../utils/overlay-format.js';
+import * as orderBook from '../utils/order-book.js';
+import * as combatLevel from '../utils/combat-level.js';
+import * as opanelConfig from '../utils/opanel-config.js';
+import * as skillProgress from '../utils/skill-progress.js';
+import * as skillHistory from '../utils/skill-history.js';
+import * as abilityBooks from '../utils/ability-books.js';
+import * as damageAttribution from '../utils/damage-attribution.js';
+import * as panelGeometry from '../utils/panel-geometry.js';
+import * as choiceDialog from '../utils/choice-dialog.js';
+import * as simplePanel from '../utils/simple-panel.js';
+import * as consumableTarget from '../utils/consumable-target.js';
+import * as dropLuck from '../utils/drop-luck.js';
+import * as complexFft from '../utils/complex-fft.js';
+import * as combatDropModel from '../utils/combat-drop-model.js';
+import * as spawnExpectation from '../utils/spawn-expectation.js';
+import * as chestTally from '../utils/chest-tally.js';
+import * as floatingPanel from '../utils/floating-panel.js';
+import * as workerPool from '../utils/worker-pool.js';
+import * as evWorkerManager from '../utils/ev-worker-manager.js';
+import * as enhancementWorkerManager from '../utils/enhancement-worker-manager.js';
+import * as networthWorkerManager from '../utils/networth-worker-manager.js';
+import * as panelZIndex from '../utils/panel-z-index.js';
+import * as performanceMonitor from '../utils/performance-monitor.js';
+import * as gameLookups from '../utils/game-lookups.js';
+import * as itemNavigation from '../utils/item-navigation.js';
+import * as marketplaceTabs from '../utils/marketplace-tabs.js';
+import * as marketplaceAutofill from '../utils/marketplace-autofill.js';
+import * as shoppingList from '../utils/shopping-list.js';
+import * as scrollBuffValues from '../utils/scroll-buff-values.js';
+import * as toast from '../utils/toast.js';
 
 // Export to global namespace
 const toolashaRoot = window.Toolasha || {};
@@ -52,6 +86,7 @@ toolashaRoot.Utils = {
     profitHelpers,
     profitConstants,
     dom,
+    mobile,
     domObserverHelpers,
     timerRegistry,
     bonusRevenueCalculator,
@@ -78,6 +113,39 @@ toolashaRoot.Utils = {
     cleanupRegistry,
     houseCostCalculator,
     enhancementCalculator,
+    overlayRows,
+    overlayLayout,
+    overlayFormat,
+    orderBook,
+    combatLevel,
+    opanelConfig,
+    skillProgress,
+    skillHistory,
+    abilityBooks,
+    damageAttribution,
+    panelGeometry,
+    choiceDialog,
+    simplePanel,
+    consumableTarget,
+    dropLuck,
+    complexFft,
+    combatDropModel,
+    spawnExpectation,
+    chestTally,
+    floatingPanel,
+    workerPool,
+    evWorkerManager,
+    enhancementWorkerManager,
+    networthWorkerManager,
+    panelZIndex,
+    performanceMonitor,
+    gameLookups,
+    itemNavigation,
+    marketplaceTabs,
+    marketplaceAutofill,
+    shoppingList,
+    scrollBuffValues,
+    toast,
 };
 
 console.log('[Toolasha] Utils library loaded');

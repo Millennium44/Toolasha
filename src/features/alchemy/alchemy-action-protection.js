@@ -10,7 +10,9 @@ import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import storage from '../../core/storage.js';
 import actionPanelSort from '../actions/action-panel-sort.js';
+import { getAlchemyCoinCost } from '../../utils/alchemy-fees.js';
 import { formatLargeNumber } from '../../utils/formatters.js';
+import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
 
 const STORAGE_KEY_PREFIX = 'alchemyProtectedCategories';
 const LOCKDOWN_MS = 3000;
@@ -170,12 +172,24 @@ class AlchemyActionProtection {
         });
         btn.addEventListener('click', () => this.openConfigPopup());
 
-        // Pin icon
+        // Pin icon.
+        //
+        // The class must not be `mwi-alchemy-pin`. That name belongs to the pin
+        // buttons alchemy-item-pins puts on the tiles inside the item picker,
+        // and its stylesheet — which is global, in document.head — describes a
+        // 15px badge absolutely positioned at `top: 0; right: 0` of whatever is
+        // positioned above it, painted rgba(10, 14, 22, 0.75) and normally held
+        // at `opacity: 0`. Sharing the name handed this icon all of that: on a
+        // mouse it disappeared, and on a touchscreen — where that stylesheet
+        // flips the opacity back to 1 and the size to 32px — it became a black
+        // square floating over the catalyst slot beside it. alchemy-item-pins'
+        // disable() also removes every `.mwi-alchemy-pin` on the page, which
+        // took this icon with it.
         const pinIcon = document.createElement('div');
-        pinIcon.className = 'mwi-alchemy-pin';
+        pinIcon.className = 'mwi-alchemy-action-pin';
         pinIcon.innerHTML = '\u{1F4CC}';
         pinIcon.style.cssText =
-            'cursor:pointer; font-size:16px; transition:all 0.2s; text-align:center; filter: grayscale(100%) brightness(0.7); display:none;';
+            'position:static; cursor:pointer; font-size:16px; transition:all 0.2s; text-align:center; filter: grayscale(100%) brightness(0.7); display:none;';
         pinIcon.title = 'Pin this action';
 
         const updatePinIcon = () => {
@@ -351,10 +365,7 @@ class AlchemyActionProtection {
         }
         const bulkMultiplier = itemDetails.alchemyDetail?.bulkMultiplier || 1;
 
-        const sellPrice = itemDetails.sellPrice || 0;
-        const level = itemDetails.itemLevel || 1;
-        const coinCost =
-            (alchemyType === 'transmute' ? Math.max(50, Math.floor(sellPrice / 5)) : (10 + level) * 5) * bulkMultiplier;
+        const coinCost = getAlchemyCoinCost(itemDetails, alchemyType);
 
         const inventory = dataManager.getInventory();
         let itemCount = 0;
@@ -472,7 +483,7 @@ class AlchemyActionProtection {
             border: 2px solid #555;
             border-radius: 8px;
             padding: 20px;
-            z-index: 100001;
+            z-index: ${PANEL_Z_CAP + 2};
             min-width: 340px;
             max-width: 500px;
             max-height: 90vh;
@@ -548,7 +559,7 @@ class AlchemyActionProtection {
         // Click outside to close
         const backdrop = document.createElement('div');
         backdrop.id = 'mwi-alchemy-protection-backdrop';
-        backdrop.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; z-index:100000;';
+        backdrop.style.cssText = `position:fixed; top:0; left:0; right:0; bottom:0; z-index:${PANEL_Z_CAP + 1};`;
         backdrop.addEventListener('click', () => this._closeConfigPopup());
 
         document.body.appendChild(backdrop);

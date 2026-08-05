@@ -7,11 +7,17 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
-import storage from '../../core/storage.js';
 import webSocketHook from '../../core/websocket.js';
+import { getSettingDefinition } from '../../core/settings-schema.js';
 import { setReactInputValue } from '../../utils/react-input.js';
 import { findActionInput } from '../../utils/action-panel-helper.js';
 import { calculateTaskProfit, calculateTaskRewardValue } from './task-profit-calculator.js';
+import {
+    isCardInConfirmState,
+    isConfirmPendingFor,
+    armConfirmSettleWatch,
+    onConfirmFlowSettled,
+} from './task-card-state.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
 import { timeReadable, formatPercentage, formatKMB } from '../../utils/formatters.js';
 import { GAME, TOOLASHA } from '../../utils/selectors.js';
@@ -24,6 +30,7 @@ import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { calculateActionStats } from '../../utils/action-calculator.js';
 import { debugEquipmentSpeedBonuses, parseEquipmentSpeedBonuses } from '../../utils/equipment-parser.js';
 import { MIN_ACTION_TIME_SECONDS } from '../../utils/profit-constants.js';
+import { readScoped, writeScoped } from '../../utils/character-key.js';
 import { runSimulation } from '../combat-sim/combat-sim-runner.js';
 import {
     buildAllPlayerDTOs,
@@ -44,6 +51,77 @@ function getLoadoutSnapshot() {
 const REGEX_TASK_PROGRESS = /(\d+)\s*\/\s*(\d+)/;
 const RATING_MODE_TOKENS = 'tokens';
 const RATING_MODE_GOLD = 'gold';
+
+/**
+ * Solo/Zone, per character: which one is right depends on what that character
+ * fights, and the iron cow does not want the market character's answer.
+ */
+const ESTIMATE_MODE_KEY = 'taskEstimateMode';
+
+/**
+ * The rating mode to use when the setting has not been stored yet.
+ * Read from the settings schema so an unset setting behaves exactly as the
+ * settings UI says it will, rather than silently rating in tokens.
+ * @returns {string} Rating mode
+ */
+function getRatingMode() {
+    const schemaDefault = getSettingDefinition('taskEfficiencyRatingMode')?.default || RATING_MODE_GOLD;
+    const mode = config.getSettingValue('taskEfficiencyRatingMode', schemaDefault);
+    return mode === RATING_MODE_TOKENS || mode === RATING_MODE_GOLD ? mode : schemaDefault;
+}
+
+// A median over one or two cards is not a board, so rules built on it stay
+// quiet until enough cards carry a rating for "the board" to mean anything.
+const MIN_RATED_CARDS_FOR_MEDIAN = 3;
+
+/**
+ * Median of a list of numbers.
+ * @param {number[]} values - Values (need not be sorted)
+ * @returns {number|null} Median, or null for an empty list
+ */
+function medianOf(values) {
+    if (!values.length) return null;
+    const sorted = [...values].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+}
+
+/**
+ * Read back the efficiency ratings already rendered on the visible task cards.
+ *
+ * Reading the rendered values rather than recomputing keeps every rule that
+ * compares tasks against each other on exactly the numbers the player can see,
+ * and costs nothing — the ratings are already on the page.
+ *
+ * @param {Iterable<HTMLElement>} cards - Visible task cards
+ * @returns {{ratingMode: string, median: number|null, entries: Map<HTMLElement, {value: number, hours: number|null}>}}
+ */
+function readVisibleTaskRatings(cards) {
+    const ratingMode = getRatingMode();
+    const entries = new Map();
+    const values = [];
+
+    for (const card of cards) {
+        const ratingLine = card.querySelector?.('.mwi-task-profit-rating');
+        if (!ratingLine || ratingLine.dataset.ratingMode !== ratingMode) continue;
+
+        const value = Number.parseFloat(ratingLine.dataset.ratingValue ?? '');
+        if (!Number.isFinite(value)) continue;
+
+        const secondsHost = card.querySelector('[data-completion-seconds]');
+        const seconds = Number.parseFloat(secondsHost?.dataset.completionSeconds ?? '');
+        const hours = Number.isFinite(seconds) && seconds > 0 ? seconds / 3600 : null;
+
+        entries.set(card, { value, hours });
+        values.push(value);
+    }
+
+    return {
+        ratingMode,
+        median: values.length >= MIN_RATED_CARDS_FOR_MEDIAN ? medianOf(values) : null,
+        entries,
+    };
+}
 
 const HOUSE_ROOM_MAP = {
     '/action_types/cheesesmithing': '/house_rooms/forge',
@@ -122,7 +200,11 @@ function calculateTaskEfficiencyRating(profitData, ratingMode) {
     const hours = completionSeconds / 3600;
 
     if (ratingMode === RATING_MODE_GOLD) {
-        if (profitData.rewards?.error || profitData.totalProfit === null || profitData.totalProfit === undefined) {
+        // The rate is over the whole task, so it is the whole task's profit that
+        // divides the whole task's hours — the remaining-only figure the card
+        // headlines would make a half-done task look half as good.
+        const ratedProfit = profitData.fullTotalProfit ?? profitData.totalProfit;
+        if (profitData.rewards?.error || ratedProfit === null || ratedProfit === undefined) {
             return {
                 value: null,
                 unitLabel: 'gold/hr',
@@ -131,7 +213,7 @@ function calculateTaskEfficiencyRating(profitData, ratingMode) {
         }
 
         return {
-            value: profitData.totalProfit / hours,
+            value: ratedProfit / hours,
             unitLabel: 'gold/hr',
             error: null,
         };
@@ -615,6 +697,16 @@ class TaskProfitDisplay {
         for (const taskNode of existingTaskNodes) {
             this._setupTaskNode(taskNode);
         }
+
+        // Nothing above fires when a reroll chooser closes — the game adds an
+        // action row, not a card — so the rows a mid-flow pass declined to
+        // touch are redrawn from here instead
+        this.unregisterHandlers.push(
+            onConfirmFlowSettled(() => {
+                this.updateTaskProfits();
+                this.updateQueuedIndicators();
+            })
+        );
     }
 
     /**
@@ -628,7 +720,14 @@ class TaskProfitDisplay {
 
         // Merge duplicate task Go buttons: sum goalCount - currentCount across all
         // in-progress tasks with the same actionHrid/monsterHrid and overwrite the input
-        const goBtn = taskNode.querySelector('button.Button_success__6d6kU');
+        //
+        // Only ever the card's own Go button. The reroll chooser and the discard
+        // confirmation are drawn in the same slot and can carry the same success
+        // styling, and merging quest counts off the back of a reroll click is
+        // both wrong and confusing.
+        if (isCardInConfirmState(taskNode)) return;
+
+        const goBtn = taskNode.querySelector(GAME.TASK_GO_BUTTON);
         if (goBtn) {
             // Skip if already attached
             if (goBtn.dataset.mwiGoMerge) return;
@@ -638,6 +737,10 @@ class TaskProfitDisplay {
                 'click',
                 () => {
                     if (!config.getSetting('taskGoMerge')) return;
+                    // The button was the Go button when it was wired; if the
+                    // card has since swapped it for a confirm step, this click
+                    // is not a Go and nothing here applies to it
+                    if (isConfirmPendingFor(goBtn)) return;
 
                     // Extract the quest for this task card from the fiber tree
                     const rootEl = document.getElementById('root');
@@ -710,6 +813,17 @@ class TaskProfitDisplay {
 
         const taskNodes = taskListNode.querySelectorAll(GAME.TASK_INFO);
         for (const taskNode of taskNodes) {
+            // The card is mid-flow — the chooser has replaced the row this
+            // reads, so the task key it computes is not the task's, and acting
+            // on it tears the profit rows down and rebuilds them underneath the
+            // player's pending click. The chooser stays open after a reroll, so
+            // the pass is booked to run again when it closes; without that the
+            // rows keep describing the task that was rerolled away.
+            if (isConfirmPendingFor(taskNode)) {
+                armConfirmSettleWatch();
+                continue;
+            }
+
             // Get current task description to detect changes
             const taskData = this.parseTaskData(taskNode);
             if (!taskData) continue;
@@ -1004,7 +1118,10 @@ class TaskProfitDisplay {
      */
     async _loadEstimateMode() {
         try {
-            const mode = await storage.get('taskEstimateMode', 'settings', 'solo');
+            // Back to the default first: this runs again after a character
+            // switch, and the last character's choice is not this one's
+            this._estimateMode = 'solo';
+            const mode = await readScoped(ESTIMATE_MODE_KEY, 'settings', 'solo', { migrate: 'adopt' });
             if (mode === 'solo' || mode === 'zone') this._estimateMode = mode;
         } catch (error) {
             console.error('[TaskProfitDisplay] Failed to load estimate mode:', error);
@@ -1122,7 +1239,7 @@ class TaskProfitDisplay {
             }
             // Remember the choice for future cards and auto-estimates
             this._estimateMode = modeBtn.dataset.mode;
-            storage.set('taskEstimateMode', this._estimateMode, 'settings');
+            writeScoped(ESTIMATE_MODE_KEY, this._estimateMode, 'settings');
         });
 
         container.querySelector('.mwi-combat-est-btn').addEventListener('click', () => {
@@ -1265,6 +1382,13 @@ class TaskProfitDisplay {
                     difficultyTier: 0,
                     hours: SIM_HOURS,
                     communityBuffs: getCommunityBuffs(),
+                    // Solo mode filtered the spawn table down to this card's
+                    // task monster, so every fight in the run is the task
+                    // fight — the one place taskDamage genuinely applies. The
+                    // shared zone-mode sim above stays off: it covers the
+                    // whole spawn table and is reused by every card in the
+                    // zone, so most of its fights are not anyone's task.
+                    isTaskFight: true,
                 });
             }
 
@@ -1447,29 +1571,45 @@ class TaskProfitDisplay {
         const totalKills = taskData.quantity ?? 0;
         const totalTaskSeconds = killsPerHour > 0 ? Math.round((totalKills / killsPerHour) * 3600) : 0;
         if (config.getSetting('taskEfficiencyRating') && totalTaskSeconds > 0) {
-            const ratingMode = config.getSettingValue('taskEfficiencyRatingMode', RATING_MODE_TOKENS);
+            const ratingMode = getRatingMode();
             const totalHours = totalTaskSeconds / 3600;
             const totalDropValueFull = dropEntries.reduce((s, d) => s + d.totalValue * totalHours, 0);
             const totalConsumableCostFull = consumableEntries.reduce((s, c) => s + c.totalCost * totalHours, 0);
             const totalProfitFull = Math.round(totalDropValueFull - totalConsumableCostFull + rewardValue.total);
-            let ratingValue, unitLabel;
+            let ratingValue = null;
+            let unitLabel;
+            // A gold rating built on rewards the market could not price is a
+            // confident wrong number, so say so instead — same warning the
+            // skilling cards show.
+            let ratingError = ratingMode === RATING_MODE_GOLD ? rewardValue.error || null : null;
 
             if (ratingMode === RATING_MODE_GOLD) {
-                ratingValue = totalProfitFull / totalHours;
                 unitLabel = 'gold/hr';
+                if (!ratingError && !Number.isFinite(totalProfitFull)) {
+                    ratingError = 'Missing price data';
+                }
+                if (!ratingError) {
+                    ratingValue = totalProfitFull / totalHours;
+                }
             } else {
-                const tokensReceived = rewardValue.breakdown?.tokensReceived ?? 0;
-                ratingValue = tokensReceived / totalHours;
                 unitLabel = 'tokens/hr';
+                ratingValue = (rewardValue.breakdown?.tokensReceived ?? 0) / totalHours;
             }
 
             const ratingLine = document.createElement('div');
             ratingLine.className = 'mwi-task-profit-rating';
             ratingLine.style.cssText = 'margin-top: 2px; font-size: 0.7rem;';
-            ratingLine.dataset.ratingValue = `${ratingValue}`;
-            ratingLine.dataset.ratingMode = ratingMode;
-            ratingLine.style.color = config.COLOR_ACCENT;
-            ratingLine.textContent = `⚡ ${formatKMB(ratingValue)} ${unitLabel}`;
+
+            if (ratingValue === null) {
+                ratingLine.style.color = config.COLOR_WARNING;
+                ratingLine.title = ratingError || '';
+                ratingLine.textContent = `⚡ -- ⚠ ${unitLabel}`;
+            } else {
+                ratingLine.dataset.ratingValue = `${ratingValue}`;
+                ratingLine.dataset.ratingMode = ratingMode;
+                ratingLine.style.color = config.COLOR_ACCENT;
+                ratingLine.textContent = `⚡ ${formatKMB(ratingValue)} ${unitLabel}`;
+            }
             container.appendChild(ratingLine);
 
             this.updateEfficiencyGradientColors();
@@ -1704,7 +1844,7 @@ class TaskProfitDisplay {
         }
 
         if (config.getSetting('taskEfficiencyRating')) {
-            const ratingMode = config.getSettingValue('taskEfficiencyRatingMode', RATING_MODE_TOKENS);
+            const ratingMode = getRatingMode();
             const ratingData = calculateTaskEfficiencyRating(profitData, ratingMode);
             const ratingLine = document.createElement('div');
             ratingLine.className = 'mwi-task-profit-rating';
@@ -1733,7 +1873,7 @@ class TaskProfitDisplay {
      * Update efficiency rating colors based on relative performance
      */
     updateEfficiencyGradientColors() {
-        const ratingMode = config.getSettingValue('taskEfficiencyRatingMode', RATING_MODE_TOKENS);
+        const ratingMode = getRatingMode();
         const ratingLines = Array.from(document.querySelectorAll('.mwi-task-profit-rating')).filter((line) => {
             return line.dataset.ratingMode === ratingMode && line.dataset.ratingValue;
         });
@@ -2122,6 +2262,21 @@ class TaskProfitDisplay {
             `<div style="font-weight: bold; color: ${totalProfitColor};">Total Profit: ${formatTotalValue(profitData.totalProfit)}</div>`
         );
 
+        // Secondary figure: what the task is worth over spending the same hours
+        // on the best alternative the player has priced. Clearly labelled and
+        // kept below the gross total, which stays the headline.
+        if (profitData.marginalProfit !== null && profitData.marginalProfit !== undefined) {
+            const marginalColor = profitData.marginalProfit >= 0 ? '#4ade80' : config.COLOR_LOSS;
+            const altPerHour = formatKMB(Math.round(profitData.bestAlternativePerHour || 0));
+            lines.push(
+                `<div style="color: ${marginalColor};" title="Total profit minus what the best alternative action you have priced (${altPerHour}/hr) would have earned over the same time">` +
+                    `Marginal (vs best alternative): ${formatTotalValue(profitData.marginalProfit)}</div>`
+            );
+            lines.push(
+                `<div style="color: #888; margin-left: 10px;">Opportunity cost: -${formatKMB(Math.round(profitData.opportunityCost || 0))} @ ${altPerHour}/hr</div>`
+            );
+        }
+
         return lines.join('');
     }
 
@@ -2395,6 +2550,16 @@ class TaskProfitDisplay {
      * @param {string|null} activeActionHrid - The first (active) action HRID
      */
     _updateQueuedIndicatorForCard(taskCard, rootFiber, queuedActionHrids, activeActionHrid) {
+        // Mid-flow the chooser has replaced the Go button the quest is read
+        // from, so this pass would decide the card has no quest and strip the
+        // badge out of the card the player is part-way through using. Booked to
+        // run again once the chooser closes, since it can stay open for as long
+        // as the player keeps rerolling.
+        if (isCardInConfirmState(taskCard)) {
+            armConfirmSettleWatch();
+            return;
+        }
+
         const existingIndicator = taskCard.querySelector('.mwi-task-queued-indicator');
 
         // Extract quest data from React fiber tree
@@ -2421,7 +2586,7 @@ class TaskProfitDisplay {
         // Determine if active (first in queue) or queued
         const isActive = matchActionHrid === activeActionHrid;
         const label = isActive ? '▶ Active' : '⏸ Queued';
-        const color = isActive ? config.COLOR_ACCENT : config.SCRIPT_COLOR_SECONDARY;
+        const color = isActive ? config.COLOR_ACCENT : config.COLOR_TEXT_SECONDARY;
 
         if (existingIndicator) {
             // Update existing indicator's inner badge
@@ -2476,7 +2641,7 @@ class TaskProfitDisplay {
     _getQuestFromFiber(taskCard, rootFiber) {
         if (!rootFiber) return null;
 
-        const goBtn = taskCard.querySelector('button.Button_success__6d6kU');
+        const goBtn = taskCard.querySelector(GAME.TASK_GO_BUTTON);
         if (!goBtn) return null;
 
         function walk(fiber, target) {
@@ -2561,5 +2726,11 @@ class TaskProfitDisplay {
 const taskProfitDisplay = new TaskProfitDisplay();
 taskProfitDisplay.setupSettingListener();
 
-export { calculateTaskCompletionSeconds, calculateTaskEfficiencyRating, getRelativeEfficiencyGradientColor };
+export {
+    calculateTaskCompletionSeconds,
+    calculateTaskEfficiencyRating,
+    getRelativeEfficiencyGradientColor,
+    getRatingMode,
+    readVisibleTaskRatings,
+};
 export default taskProfitDisplay;

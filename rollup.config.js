@@ -14,6 +14,7 @@ const libraryHeaderCore = readFileSync(join(__dirname, 'library-headers/core.txt
 const libraryHeaderUtils = readFileSync(join(__dirname, 'library-headers/utils.txt'), 'utf-8');
 const libraryHeaderMarket = readFileSync(join(__dirname, 'library-headers/market.txt'), 'utf-8');
 const libraryHeaderActions = readFileSync(join(__dirname, 'library-headers/actions.txt'), 'utf-8');
+const libraryHeaderSim = readFileSync(join(__dirname, 'library-headers/sim.txt'), 'utf-8');
 const libraryHeaderCombat = readFileSync(join(__dirname, 'library-headers/combat.txt'), 'utf-8');
 const libraryHeaderUI = readFileSync(join(__dirname, 'library-headers/ui.txt'), 'utf-8');
 const entrypointHeader = readFileSync(join(__dirname, 'library-headers/entrypoint.txt'), 'utf-8');
@@ -65,13 +66,98 @@ const utilsExternalGlobals = new Map([
     [normalize(join(__dirname, 'src/utils/cleanup-registry.js')), 'Toolasha.Utils.cleanupRegistry'],
     [normalize(join(__dirname, 'src/utils/house-cost-calculator.js')), 'Toolasha.Utils.houseCostCalculator'],
     [normalize(join(__dirname, 'src/utils/enhancement-calculator.js')), 'Toolasha.Utils.enhancementCalculator'],
+    // Shared or the overlay's row list is duplicated per bundle and the panel renders nothing
+    // Every src/utils module used by more than one bundle is declared here.
+    // Anything omitted is silently copied into each bundle that imports it,
+    // which is how the combat bundle grew to within 3 KB of its bundle-size ceiling (2.5 MiB in CI — a duplication guard, not a hosting limit).
+    [normalize(join(__dirname, 'src/utils/drop-luck.js')), 'Toolasha.Utils.dropLuck'],
+    [normalize(join(__dirname, 'src/utils/complex-fft.js')), 'Toolasha.Utils.complexFft'],
+    [normalize(join(__dirname, 'src/utils/combat-drop-model.js')), 'Toolasha.Utils.combatDropModel'],
+    [normalize(join(__dirname, 'src/utils/spawn-expectation.js')), 'Toolasha.Utils.spawnExpectation'],
+    [normalize(join(__dirname, 'src/utils/chest-tally.js')), 'Toolasha.Utils.chestTally'],
+    [normalize(join(__dirname, 'src/utils/floating-panel.js')), 'Toolasha.Utils.floatingPanel'],
+    [normalize(join(__dirname, 'src/utils/worker-pool.js')), 'Toolasha.Utils.workerPool'],
+    [normalize(join(__dirname, 'src/utils/ev-worker-manager.js')), 'Toolasha.Utils.evWorkerManager'],
+    [normalize(join(__dirname, 'src/utils/enhancement-worker-manager.js')), 'Toolasha.Utils.enhancementWorkerManager'],
+    [normalize(join(__dirname, 'src/utils/networth-worker-manager.js')), 'Toolasha.Utils.networthWorkerManager'],
+    [normalize(join(__dirname, 'src/utils/panel-z-index.js')), 'Toolasha.Utils.panelZIndex'],
+    [normalize(join(__dirname, 'src/utils/performance-monitor.js')), 'Toolasha.Utils.performanceMonitor'],
+    [normalize(join(__dirname, 'src/utils/game-lookups.js')), 'Toolasha.Utils.gameLookups'],
+    [normalize(join(__dirname, 'src/utils/item-navigation.js')), 'Toolasha.Utils.itemNavigation'],
+    [normalize(join(__dirname, 'src/utils/marketplace-tabs.js')), 'Toolasha.Utils.marketplaceTabs'],
+    [normalize(join(__dirname, 'src/utils/marketplace-autofill.js')), 'Toolasha.Utils.marketplaceAutofill'],
+    // One marketplace tab bar, so one list watching it. The consumables panel is
+    // in the ui bundle and the goal planner is in actions; a copy each meant two
+    // `watchTimer`s tearing down each other's tabs for six seconds after an open.
+    [normalize(join(__dirname, 'src/utils/shopping-list.js')), 'Toolasha.Utils.shoppingList'],
+    [normalize(join(__dirname, 'src/utils/scroll-buff-values.js')), 'Toolasha.Utils.scrollBuffValues'],
+    [normalize(join(__dirname, 'src/utils/overlay-rows.js')), 'Toolasha.Utils.overlayRows'],
+    [normalize(join(__dirname, 'src/utils/overlay-layout.js')), 'Toolasha.Utils.overlayLayout'],
+    [normalize(join(__dirname, 'src/utils/overlay-format.js')), 'Toolasha.Utils.overlayFormat'],
+    [normalize(join(__dirname, 'src/utils/order-book.js')), 'Toolasha.Utils.orderBook'],
+    [normalize(join(__dirname, 'src/utils/combat-level.js')), 'Toolasha.Utils.combatLevel'],
+    [normalize(join(__dirname, 'src/utils/opanel-config.js')), 'Toolasha.Utils.opanelConfig'],
+    [normalize(join(__dirname, 'src/utils/skill-progress.js')), 'Toolasha.Utils.skillProgress'],
+    // A factory rather than a singleton, so sharing it changes nothing about the
+    // measurements — each caller still gets its own history. It is here because
+    // two bundles want it and a second copy is only weight.
+    [normalize(join(__dirname, 'src/utils/skill-history.js')), 'Toolasha.Utils.skillHistory'],
+    [normalize(join(__dirname, 'src/utils/experience-parser.js')), 'Toolasha.Utils.experienceParser'],
+    [normalize(join(__dirname, 'src/utils/ability-books.js')), 'Toolasha.Utils.abilityBooks'],
+    [normalize(join(__dirname, 'src/utils/damage-attribution.js')), 'Toolasha.Utils.damageAttribution'],
+    // Shared above all for its cache: a private copy per bundle means the overlay
+    // and the Treasure panel each hold a stale map of every panel's geometry, and
+    // whichever saves last wipes the other's entry
+    [normalize(join(__dirname, 'src/utils/panel-geometry.js')), 'Toolasha.Utils.panelGeometry'],
+    [normalize(join(__dirname, 'src/utils/choice-dialog.js')), 'Toolasha.Utils.choiceDialog'],
+    // One stack for the whole script: a second copy in another bundle would put
+    // up a second container, and two overlapping stacks in the same corner is
+    // exactly the mess the shared toast replaced
+    [normalize(join(__dirname, 'src/utils/toast.js')), 'Toolasha.Utils.toast'],
+    [normalize(join(__dirname, 'src/utils/simple-panel.js')), 'Toolasha.Utils.simplePanel'],
+    // Holds the chosen target in memory, and the panel that sets it is in a
+    // different bundle from the tile that colours against it. Two copies means
+    // the tile never hears about a change and quietly keeps its own answer.
+    [normalize(join(__dirname, 'src/utils/consumable-target.js')), 'Toolasha.Utils.consumableTarget'],
+]);
+
+// The combat simulator engine, which is its own bundle.
+// About a megabyte of source reached into by four features across three bundles;
+// left inline it was copied into each of them, and both the combat and the UI
+// bundle carried the same `Monster` class while sitting a few kilobytes under
+// the bundle-size ceiling (2.5 MiB in CI — a duplication guard, not a hosting limit).
+const simExternalGlobals = new Map([
+    [normalize(join(__dirname, 'src/features/combat-sim/combat-sim.js')), 'Toolasha.Sim.combatSim'],
+    [normalize(join(__dirname, 'src/features/combat-sim/lab-sim.js')), 'Toolasha.Sim.labSim'],
+    [normalize(join(__dirname, 'src/features/combat-sim/combat-sim-ui.js')), 'Toolasha.Sim.combatSimUI'],
+    [normalize(join(__dirname, 'src/features/combat-sim/combat-sim-adapter.js')), 'Toolasha.Sim.combatSimAdapter'],
+    [normalize(join(__dirname, 'src/features/combat-sim/combat-sim-runner.js')), 'Toolasha.Sim.combatSimRunner'],
+    [normalize(join(__dirname, 'src/features/combat-sim/engine/wilson.js')), 'Toolasha.Sim.wilson'],
+    [normalize(join(__dirname, 'src/features/combat-sim/engine/game-data.js')), 'Toolasha.Sim.gameData'],
+    [normalize(join(__dirname, 'src/features/combat-sim/engine/monster.js')), 'Toolasha.Sim.monster'],
 ]);
 
 // Combat feature modules imported cross-library (by ui)
 // Must be external so they reference the shared Combat.* globals instead of bundling duplicates
 const combatFeatureExternals = new Map([
     // loadout-snapshot is accessed lazily at runtime via window.Toolasha.Combat.loadoutSnapshot
-    // No entries needed here; kept as a hook for future cross-bundle combat singletons
+    // The collector is a stateful singleton fed by the websocket: a second copy in
+    // another bundle would sit there receiving nothing, so it is shared rather
+    // than duplicated. The calculator comes with it because they are read together.
+    [
+        normalize(join(__dirname, 'src/features/combat-stats/combat-stats-data-collector.js')),
+        'Toolasha.Combat.combatStatsDataCollector',
+    ],
+    [
+        normalize(join(__dirname, 'src/features/combat-stats/combat-stats-calculator.js')),
+        'Toolasha.Combat.combatStatsCalculator',
+    ],
+    // Both are stateful singletons fed by the websocket, so a second copy in
+    // another bundle would sit there receiving nothing and report zeroes
+    [normalize(join(__dirname, 'src/features/combat/combat-dps.js')), 'Toolasha.Combat.combatDPS'],
+    [normalize(join(__dirname, 'src/features/combat/combat-drop-luck.js')), 'Toolasha.Combat.combatDropLuck'],
+    [normalize(join(__dirname, 'src/features/combat/damage-tracker.js')), 'Toolasha.Combat.damageTracker'],
+    [normalize(join(__dirname, 'src/features/combat/damage-taken-tracker.js')), 'Toolasha.Combat.damageTakenTracker'],
 ]);
 
 // Market modules imported cross-library (by combat, actions, ui)
@@ -86,12 +172,69 @@ const marketExternalGlobals = new Map([
         normalize(join(__dirname, 'src/features/market/alchemy-profit-calculator.js')),
         'Toolasha.Market.alchemyProfitCalculator',
     ],
+    // Not market features, but they live here because of load order. Both are
+    // pure calculators reached by seven modules across the actions, combat and
+    // ui bundles, and the market bundle already pulls them in through
+    // market-sort and tooltip-prices — so market is the earliest @require that
+    // has them, and the only bundle that can own them without a forward
+    // reference. Left inline they were copied whole into every bundle that
+    // imports them, which is ~29 KB of source each time and the largest single
+    // contributor to the ui bundle sitting over its bundle-size ceiling (2.5 MiB in CI — a duplication guard, not a hosting limit).
+    // The pooled market history: fetched by the mooket panel, read by the goal
+    // planner in the actions bundle to bound a rate by how fast its output sells.
+    // The API is a cache in front of a third-party server, so two copies means
+    // two caches and twice the requests.
+    [
+        normalize(join(__dirname, 'src/features/market/mooket/market-history-api.js')),
+        'Toolasha.Market.marketHistoryAPI',
+    ],
+    [
+        normalize(join(__dirname, 'src/features/market/mooket/market-history-data.js')),
+        'Toolasha.Market.marketHistoryData',
+    ],
+    [normalize(join(__dirname, 'src/features/actions/gathering-profit.js')), 'Toolasha.Market.gatheringProfit'],
+    [normalize(join(__dirname, 'src/features/actions/production-profit.js')), 'Toolasha.Market.productionProfit'],
 ]);
 
 const buildGlobals = (globalsMap) => Object.fromEntries(globalsMap.entries());
 const buildExternal = (globalsMap) => (id) => globalsMap.has(normalizeModuleId(id));
 
 // Custom plugin to import CSS as raw strings
+/**
+ * Embed the current fork-changelog section as a virtual module.
+ *
+ * The what's-new popup wants to show what changed, and CHANGELOG.md is where
+ * that is already written — maintaining a second copy in code would drift by
+ * the second release. The first "## Unreleased" section is what a dev build's
+ * user is actually receiving, so that is the slice that ships, capped so a
+ * long-lived branch cannot balloon the bundle.
+ */
+function changelogPlugin() {
+    const id = 'virtual:fork-changelog';
+    return {
+        name: 'fork-changelog',
+        resolveId(source) {
+            return source === id ? `\0${id}` : null;
+        },
+        load(moduleId) {
+            if (moduleId !== `\0${id}`) return null;
+            let section = '';
+            try {
+                const changelog = readFileSync('CHANGELOG.md', 'utf-8');
+                const start = changelog.search(/^## Unreleased/m);
+                if (start !== -1) {
+                    const rest = changelog.slice(start);
+                    const end = rest.slice(3).search(/^## /m);
+                    section = end === -1 ? rest : rest.slice(0, end + 3);
+                }
+            } catch {
+                section = '';
+            }
+            return `export default ${JSON.stringify(section.slice(0, 20000))};`;
+        },
+    };
+}
+
 function cssRawPlugin() {
     const suffix = '?raw';
     return {
@@ -175,6 +318,16 @@ const isProduction = process.env.BUILD_MODE === 'production';
 const buildTarget = process.env.BUILD_TARGET || 'dev';
 const devOutputFile = buildTarget === 'dev-standalone' ? 'dist/Toolasha-dev.user.js' : 'dist/Toolasha.user.js';
 
+/**
+ * When this build was made.
+ *
+ * The dev script and the published one carry the same @name and the same
+ * @version, so Tampermonkey cannot tell them apart and neither can you — a stale
+ * install looks exactly like a fresh one that is missing a feature. This stamp
+ * is the difference: whatever the console prints is what is actually running.
+ */
+const buildStamp = new Date().toISOString().replace(/\.\d+Z$/, 'Z');
+
 // Development build configuration (single bundle for local testing)
 const devConfig = {
     input: 'src/dev-entrypoint.js',
@@ -183,9 +336,11 @@ const devConfig = {
         format: 'iife',
         name: 'Toolasha',
         banner: userscriptHeader,
+        outro: `console.log('[Toolasha] dev build ${buildStamp}');`,
     },
     plugins: [
         cssRawPlugin(),
+        changelogPlugin(),
         workerBundlePlugin(),
         resolve({
             browser: true,
@@ -238,6 +393,16 @@ const prodLibraries = [
         },
     },
     {
+        key: 'sim',
+        input: 'src/libraries/sim.js',
+        output: {
+            file: 'dist/libraries/toolasha-sim.js',
+            format: 'iife',
+            name: 'ToolashaSim',
+            banner: libraryHeaderSim,
+        },
+    },
+    {
         key: 'combat',
         input: 'src/libraries/combat.js',
         output: {
@@ -283,12 +448,22 @@ const prodConfig = [
         if (key === 'utils') {
             external = buildExternal(coreExternalGlobals);
             globals = sharedCoreGlobals;
-        } else if (key === 'market') {
+        } else if (key === 'sim') {
+            // The engine is self-contained apart from core and utils; it must
+            // NOT treat itself as external or the bundle would be empty
             external = buildExternal(new Map([...coreExternalGlobals, ...utilsExternalGlobals]));
             globals = sharedFeatureGlobals;
+        } else if (key === 'market') {
+            external = buildExternal(new Map([...coreExternalGlobals, ...utilsExternalGlobals, ...simExternalGlobals]));
+            globals = buildGlobals(new Map([...coreExternalGlobals, ...utilsExternalGlobals, ...simExternalGlobals]));
         } else if (key !== 'core') {
-            // actions, combat, ui — need core + utils + market externals
-            const allExternals = new Map([...coreExternalGlobals, ...utilsExternalGlobals, ...marketExternalGlobals]);
+            // actions, combat, ui — need core + utils + sim + market externals
+            const allExternals = new Map([
+                ...coreExternalGlobals,
+                ...utilsExternalGlobals,
+                ...simExternalGlobals,
+                ...marketExternalGlobals,
+            ]);
             // ui and actions also treat combat feature singletons as externals to avoid duplicate instances
             if (key === 'ui' || key === 'actions') {
                 for (const [k, v] of combatFeatureExternals) allExternals.set(k, v);
@@ -306,6 +481,7 @@ const prodConfig = [
             },
             plugins: [
                 cssRawPlugin(),
+                changelogPlugin(),
                 workerBundlePlugin(),
                 resolve({
                     browser: true,

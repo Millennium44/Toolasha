@@ -2,19 +2,25 @@
  * Alchemy Best Items
  * Shows a ranked table of all eligible items by profit/hr or XP/hr
  * for the active alchemy type (Coinify, Decompose, Transmute).
+ *
+ * The ranking itself is not here. Walking `itemDetailMap`, deciding what each
+ * alchemy action applies to and asking the profit calculator about every one of
+ * them is exactly what the goal planner needs too, so it lives in
+ * `alchemy-rankings.js` and this file is the table that draws it. What remains
+ * here is presentation: which tab is open, the filters, the sort, the modal.
  */
 
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
-import alchemyProfitCalculator from '../market/alchemy-profit-calculator.js';
-import { calculateExperienceMultiplier } from '../../utils/experience-parser.js';
 import { formatKMB, formatWithSeparator, formatPercentage } from '../../utils/formatters.js';
-import { getItemPrice } from '../../utils/market-data.js';
 import assetManifest from '../../utils/asset-manifest.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
+import { ALCHEMY_TYPES, rankAlchemyType, getAlchemyBaseXP, calcXpPerAction } from './alchemy-rankings.js';
 
-const ALCHEMY_TYPES = ['coinify', 'decompose', 'transmute'];
+// Re-exported because this module is where both helpers were first written and
+// where other files still import them from.
+export { getAlchemyBaseXP, calcXpPerAction };
 
 const CATALYST_LABELS = {
     '/items/catalyst_of_coinification': 'Coinify',
@@ -22,37 +28,6 @@ const CATALYST_LABELS = {
     '/items/catalyst_of_transmutation': 'Transmute',
     '/items/prime_catalyst': 'Prime',
 };
-
-/**
- * Get base XP for an alchemy action type and item level
- * (mirrors alchemy-profit-display.js getAlchemyBaseXP)
- */
-function getAlchemyBaseXP(actionType, itemLevel) {
-    switch (actionType) {
-        case 'coinify':
-            return itemLevel + 10;
-        case 'decompose':
-            return itemLevel * 1.4 + 14;
-        case 'transmute':
-            return itemLevel * 1.6 + 16;
-        default:
-            return 0;
-    }
-}
-
-/**
- * Calculate expected XP per action for an item
- */
-function calcXpPerAction(actionType, itemLevel, successRate) {
-    const baseXP = getAlchemyBaseXP(actionType, itemLevel);
-    if (baseXP === 0) return 0;
-
-    const xpData = calculateExperienceMultiplier('/skills/alchemy', '/action_types/alchemy');
-    const fullXP = baseXP * xpData.totalMultiplier;
-
-    // Expected value: success gives full XP, failure gives 10%
-    return successRate * fullXP + (1 - successRate) * fullXP * 0.1;
-}
 
 /**
  * Check whether any mutation added nodes that are, contain, or sit under a tablist.
@@ -197,59 +172,16 @@ class AlchemyBestItems {
 
     /**
      * Calculate rankings for a given alchemy type
+     *
+     * Delegated whole to `alchemy-rankings.js` — the table and the goal planner
+     * have to agree about what alchemy pays, and the only way to guarantee that
+     * is for there to be one loop.
+     *
      * @param {string} alchemyType - 'coinify', 'decompose', or 'transmute'
-     * @returns {Array} Sorted array of item results
+     * @returns {Array} Array of item results, in itemDetailMap order
      */
     calculateRankings(alchemyType) {
-        const gameData = dataManager.getInitClientData();
-        if (!gameData?.itemDetailMap) return [];
-
-        const results = [];
-        const calcMethod =
-            alchemyType === 'coinify'
-                ? 'calculateCoinifyProfit'
-                : alchemyType === 'decompose'
-                  ? 'calculateDecomposeProfit'
-                  : 'calculateTransmuteProfit';
-
-        for (const [itemHrid, itemDetails] of Object.entries(gameData.itemDetailMap)) {
-            if (!itemDetails.alchemyDetail) continue;
-
-            // Check eligibility for this alchemy type (match calculator's checks)
-            if (alchemyType === 'coinify' && !itemDetails.alchemyDetail.isCoinifiable) continue;
-            if (alchemyType === 'decompose' && !itemDetails.alchemyDetail.decomposeItems) continue;
-            if (alchemyType === 'transmute' && !itemDetails.alchemyDetail.transmuteDropTable) continue;
-
-            let profitData;
-            try {
-                if (alchemyType === 'transmute') {
-                    profitData = alchemyProfitCalculator[calcMethod](itemHrid);
-                } else {
-                    profitData = alchemyProfitCalculator[calcMethod](itemHrid, 0);
-                }
-            } catch {
-                continue;
-            }
-
-            if (!profitData) continue;
-
-            const itemLevel = itemDetails.itemLevel || 1;
-            const xpPerAction = calcXpPerAction(alchemyType, itemLevel, profitData.successRate);
-            const xpPerHour = profitData.actionsPerHour * xpPerAction;
-
-            results.push({
-                itemHrid,
-                name: itemDetails.name,
-                itemLevel,
-                itemPrice: getItemPrice(itemHrid, { context: 'profit', side: 'buy' }) || 0,
-                profitPerHour: profitData.profitPerHour,
-                xpPerHour,
-                catalyst: profitData.winningCatalystHrid || null,
-                profitData,
-            });
-        }
-
-        return results;
+        return rankAlchemyType(alchemyType);
     }
 
     /**
@@ -542,7 +474,7 @@ class AlchemyBestItems {
         // Update tab styling
         this.modal.querySelectorAll('[data-mwi-type-tab]').forEach((tab) => {
             const isActive = tab.getAttribute('data-mwi-type-tab') === this.currentType;
-            tab.style.background = isActive ? config.SCRIPT_COLOR_PRIMARY : 'transparent';
+            tab.style.background = isActive ? config.COLOR_ACCENT : 'transparent';
         });
 
         // Update sort button styling

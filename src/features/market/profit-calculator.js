@@ -72,9 +72,13 @@ class ProfitCalculator {
     /**
      * Calculate profit for a crafted item
      * @param {string} itemHrid - Item HRID
+     * @param {Object} [options] - Options
+     * @param {string} [options.actionHrid] - The recipe this calculation is about. Pass it whenever
+     *   the caller started from an action rather than from an item: two recipes can yield the same
+     *   output, and without this the answer is about whichever one the lookup happens to pick.
      * @returns {Promise<Object|null>} Profit data or null if not craftable
      */
-    async calculateProfit(itemHrid) {
+    async calculateProfit(itemHrid, { actionHrid } = {}) {
         // Get item details
         const itemDetails = dataManager.getItemDetails(itemHrid);
         if (!itemDetails) {
@@ -82,7 +86,7 @@ class ProfitCalculator {
         }
 
         // Find the action that produces this item
-        const action = this.findProductionAction(itemHrid);
+        const action = this.findProductionAction(itemHrid, { actionHrid });
         if (!action) {
             return null; // Not a craftable item
         }
@@ -253,6 +257,10 @@ class ProfitCalculator {
         return {
             itemName: itemDetails.name,
             itemHrid,
+            // Which recipe this figure is about. Two actions can yield the same item, so a
+            // caller filing the margin against an action needs to know it got the one it meant.
+            actionHrid: action.actionHrid,
+            productionCandidates: action.candidateActionHrids,
             actionTime: effectiveActionTime,
             actionsPerHour,
             itemsPerHour,
@@ -333,28 +341,116 @@ class ProfitCalculator {
     }
 
     /**
-     * Find the action that produces a given item
+     * Find the action that produces a given item.
+     *
+     * Most items have exactly one recipe and this is a lookup. Some have two —
+     * the same output from different inputs — and then "the action that produces
+     * it" is not a well-formed question, so the contract is:
+     *
+     * 1. **The caller says which.** Anything that started from an action (the
+     *    production-profit calculator, the action panel) passes `actionHrid`, and
+     *    that recipe is the answer. This is the case the bug was about: the
+     *    planner files each margin against the action it asked for, and the
+     *    lookup used to hand back the *first* recipe in the map, so one action's
+     *    gold-per-hour could be filed under a different action's hrid.
+     * 2. **Otherwise, the best margin.** A caller that started from an item —
+     *    a marketplace tooltip, the sort — is asking "what is this worth to
+     *    make", and the answer a player cares about is the recipe they would
+     *    actually use. The margin is estimated per action from prices alone
+     *    (output revenue minus inputs), which is enough to rank two recipes and
+     *    costs nothing when there is only one.
+     *
      * @param {string} itemHrid - Item HRID
-     * @returns {Object|null} Action output data or null
+     * @param {Object} [options] - Options
+     * @param {string} [options.actionHrid] - The recipe the calculation is about
+     * @returns {Object|null} Action output data, plus `candidateActionHrids`, or null
      */
-    findProductionAction(itemHrid) {
+    findProductionAction(itemHrid, { actionHrid: wantedActionHrid } = {}) {
         const actionDetailMap = this.getActionDetailMap();
 
-        // Search through all actions for one that produces this item
+        // Search through all actions for ones that produce this item
+        const candidates = [];
         for (const [actionHrid, action] of Object.entries(actionDetailMap)) {
-            if (action.outputItems) {
-                for (const output of action.outputItems) {
-                    if (output.itemHrid === itemHrid) {
-                        return {
-                            actionHrid,
-                            ...output,
-                        };
-                    }
+            if (!action.outputItems) continue;
+            for (const output of action.outputItems) {
+                if (output.itemHrid === itemHrid) {
+                    candidates.push({ actionHrid, action, output });
+                    break;
                 }
             }
         }
 
-        return null;
+        if (candidates.length === 0) {
+            return null;
+        }
+
+        const candidateActionHrids = candidates.map((candidate) => candidate.actionHrid);
+
+        // The caller named the recipe: that is the answer, whatever it is worth.
+        // A name that does not produce this item is ignored rather than obeyed —
+        // returning nothing for an item that is plainly craftable would be worse
+        // than falling back to the ranking.
+        const named = wantedActionHrid && candidates.find((candidate) => candidate.actionHrid === wantedActionHrid);
+        const chosen = named || (candidates.length === 1 ? candidates[0] : this.bestMarginCandidate(candidates));
+
+        return {
+            actionHrid: chosen.actionHrid,
+            ...chosen.output,
+            candidateActionHrids,
+        };
+    }
+
+    /**
+     * Of several recipes for the same item, the one with the widest margin.
+     *
+     * A price-only estimate: what one action's output sells for, less what its
+     * inputs cost. No efficiency, no teas, no bonus drops — those scale both
+     * sides of a comparison between two recipes for the same output, and the
+     * full calculation cannot be used to choose between recipes because it is
+     * the thing being chosen *for*. An unpriceable input makes a recipe look
+     * free, so it loses rather than winning: a cost that cannot be read is not a
+     * cost of zero.
+     *
+     * @param {Array<{actionHrid: string, action: Object, output: Object}>} candidates - Recipes
+     * @returns {Object} The winner; the first candidate on a tie, so the answer is stable
+     */
+    bestMarginCandidate(candidates) {
+        const priceOf = (hrid) => {
+            if (hrid === '/items/coin') return { price: 1, missing: false };
+            const resolved = resolveItemPrice(hrid, { context: 'profit', side: 'buy' });
+            return { price: resolved?.price || 0, missing: Boolean(resolved?.missing) };
+        };
+
+        let best = candidates[0];
+        let bestMargin = -Infinity;
+
+        for (const candidate of candidates) {
+            const { action, output } = candidate;
+            const sold = resolveItemPrice(output.itemHrid, { context: 'profit', side: 'sell' });
+            let margin = (sold?.price || 0) * (output.count || 1);
+            let unpriceable = Boolean(sold?.missing);
+
+            if (action.upgradeItemHrid) {
+                const upgrade = priceOf(action.upgradeItemHrid);
+                margin -= upgrade.price;
+                unpriceable = unpriceable || upgrade.missing;
+            }
+            for (const input of action.inputItems || []) {
+                const cost = priceOf(input.itemHrid);
+                margin -= cost.price * (input.count || 1);
+                unpriceable = unpriceable || cost.missing;
+            }
+
+            // Ranked below every recipe that could be costed, but still ranked,
+            // so an item whose recipes are all unpriceable still resolves to one
+            const score = unpriceable ? -Infinity : margin;
+            if (score > bestMargin) {
+                bestMargin = score;
+                best = candidate;
+            }
+        }
+
+        return best;
     }
 
     /**

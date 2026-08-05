@@ -1,4 +1,7 @@
 import { describe, test, expect, vi } from 'vitest';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import listingMarkers, { markerProblem, markerStateFor } from './listing-markers.js';
 
 const workingMarker = {
@@ -101,5 +104,56 @@ describe('surface context', () => {
     test('a marker written before contexts existed still works', () => {
         const state = markerStateFor({ stateFor: () => ({ glyph: '☆', active: false }) }, {});
         expect(state.glyph).toBe('☆');
+    });
+});
+
+describe('what this repository does not name', () => {
+    /**
+     * Markers exist so a script whose meaning is private can draw in a public
+     * one. That only works in one direction if the public one stays quiet about
+     * it: the registry takes any name a caller likes, so nothing here needs to
+     * know which script is calling, and an example or a comment that names one
+     * ships that name to everybody who reads the built userscript.
+     *
+     * The registration key is the caller's own string and is untouched — this is
+     * about what Toolasha itself says, not about what may be registered.
+     */
+    const here = dirname(fileURLToPath(import.meta.url));
+    const srcRoot = join(here, '..', '..');
+
+    /** Every .js under src/, so a mention cannot move somewhere unscanned */
+    function sources(directory = srcRoot, found = []) {
+        for (const entry of readdirSync(directory, { withFileTypes: true })) {
+            const path = join(directory, entry.name);
+            if (entry.isDirectory()) sources(path, found);
+            else if (entry.name.endsWith('.js') || entry.name.endsWith('.json')) found.push(path);
+        }
+        return found;
+    }
+
+    test('no companion script is named anywhere in src/', () => {
+        const naming = /flip[\s_-]?finder/i;
+        const offenders = sources().filter((path) => naming.test(readFileSync(path, 'utf8')));
+        expect(offenders).toEqual([]);
+    });
+
+    test('the example registration uses a neutral name', () => {
+        const source = readFileSync(join(here, 'listing-markers.js'), 'utf8');
+        expect(source).toContain("register('my-script'");
+        expect(source).not.toMatch(/flip/i);
+    });
+
+    test('the hold-provider example does too', () => {
+        const source = readFileSync(join(here, 'bulk-sell-assistant.js'), 'utf8');
+        expect(source).toContain("'my-script'");
+        expect(source).not.toMatch(/flip/i);
+    });
+
+    test('a marker may still register under any name it likes', () => {
+        // The API is what an installed script already calls; renaming it here
+        // would break the thing this is trying to stay quiet about
+        const remove = listingMarkers.register('anything-at-all', workingMarker);
+        expect(listingMarkers.all().map((m) => m.name)).toContain('anything-at-all');
+        remove();
     });
 });

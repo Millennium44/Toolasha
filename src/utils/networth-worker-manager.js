@@ -4,11 +4,15 @@
  */
 
 import WorkerPool from './worker-pool.js';
+import { BASE_SUCCESS_RATES, BLESSED_TEA_BASE_CHANCE, buildEnhancementMarkov } from './enhancement-calculator.js';
 
 // Worker pool instance
 let workerPool = null;
 
-// Worker script as inline string
+// Worker script as inline string.
+// The Markov chain is not written here: a blob worker cannot import a module, so the real
+// buildEnhancementMarkov is serialised in below and networth costs the same chain the tooltip
+// quotes, clamp and blessed-tea chance included.
 const WORKER_SCRIPT = `
 // Import math.js library for enhancement calculations
 importScripts('https://cdnjs.cloudflare.com/ajax/libs/mathjs/12.4.2/math.js');
@@ -17,7 +21,9 @@ importScripts('https://cdnjs.cloudflare.com/ajax/libs/mathjs/12.4.2/math.js');
 const valuationCache = new Map();
 
 // Enhancement calculation BASE_SUCCESS_RATES
-const BASE_SUCCESS_RATES = [50,45,45,40,40,40,35,35,35,35,30,30,30,30,30,30,30,30,30,30];
+const BASE_SUCCESS_RATES = ${JSON.stringify(BASE_SUCCESS_RATES)};
+const DEFAULT_BLESSED_TEA_CHANCE = ${BLESSED_TEA_BASE_CHANCE};
+const buildEnhancementMarkov = ${buildEnhancementMarkov.toString()};
 
 /**
  * Calculate production cost from crafting/upgrading recipe
@@ -224,7 +230,7 @@ function calculateStrategyRealCost(
     itemHrid,
     actionDetailMap
 ) {
-    const { enhancingLevel, toolBonus, blessedTea = false, guzzlingBonus = 1.0 } = enhancementParams;
+    const { enhancingLevel, toolBonus, blessedTea = false, guzzlingBonus = 1.0, blessedTeaBonus = DEFAULT_BLESSED_TEA_CHANCE } = enhancementParams;
 
     // Calculate success multiplier
     let totalBonus;
@@ -235,31 +241,16 @@ function calculateStrategyRealCost(
         totalBonus = 1 - 0.5 * (1 - enhancingLevel / itemLevel) + toolBonus / 100;
     }
 
-    // Build Markov chain with Blessed Tea support
-    const markov = math.zeros(20, 20);
-
-    for (let i = 0; i < targetLevel; i++) {
-        const baseSuccessRate = BASE_SUCCESS_RATES[i] / 100.0;
-        const successChance = baseSuccessRate * totalBonus;
-        const failureDestination = protectFrom > 0 && i >= protectFrom ? i - 1 : 0;
-
-        if (blessedTea) {
-            // Blessed Tea: 1% base chance to jump +2, scaled by guzzling bonus
-            const skipChance = successChance * 0.01 * guzzlingBonus;
-            const remainingSuccess = successChance * (1 - 0.01 * guzzlingBonus);
-
-            if (i + 2 <= targetLevel) {
-                markov.set([i, i + 2], skipChance);
-            }
-            markov.set([i, i + 1], remainingSuccess);
-            markov.set([i, failureDestination], 1 - successChance);
-        } else {
-            markov.set([i, i + 1], successChance);
-            markov.set([i, failureDestination], 1.0 - successChance);
-        }
-    }
-
-    markov.set([targetLevel, targetLevel], 1.0);
+    // Build Markov chain (shared with the main-thread calculator)
+    const markov = buildEnhancementMarkov(math, {
+        baseSuccessRates: BASE_SUCCESS_RATES,
+        successMultiplier: totalBonus,
+        targetLevel,
+        protectFrom,
+        blessedTea,
+        guzzlingBonus,
+        blessedTeaBonus,
+    });
 
     // Solve for expected attempts and protections
     const Q = markov.subset(math.index(math.range(0, targetLevel), math.range(0, targetLevel)));

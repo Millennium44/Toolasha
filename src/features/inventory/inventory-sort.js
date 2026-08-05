@@ -6,11 +6,11 @@
 import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
 import marketAPI from '../../api/marketplace.js';
-import storage from '../../core/storage.js';
 import { formatKMB } from '../../utils/formatters.js';
 import dataManager from '../../core/data-manager.js';
 import inventoryBadgeManager from './inventory-badge-manager.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
+import { readScoped, writeScoped } from '../../utils/character-key.js';
 
 /**
  * InventorySort class manages inventory sorting and price badges
@@ -179,7 +179,9 @@ class InventorySort {
      */
     async loadSettings() {
         try {
-            const settings = await storage.getJSON('inventorySort', 'settings');
+            // Read on initialize, and initialize runs again after a character
+            // switch, so the key is always the current character's
+            const settings = await readScoped('inventorySort', 'settings', null, { migrate: 'adopt' });
             if (settings && settings.mode) {
                 this.currentMode = settings.mode;
             }
@@ -193,7 +195,7 @@ class InventorySort {
      */
     saveSettings() {
         try {
-            storage.setJSON(
+            writeScoped(
                 'inventorySort',
                 {
                     mode: this.currentMode,

@@ -5,7 +5,7 @@
  */
 
 import enhancementTracker from './enhancement-tracker.js';
-import { SessionState, getSessionDuration } from './enhancement-session.js';
+import { SessionState, getSessionDuration, getCurrentLegCounters } from './enhancement-session.js';
 import dataManager from '../../core/data-manager.js';
 import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
@@ -95,6 +95,7 @@ class EnhancementUI {
 
         // Update UI every second during active sessions
         this.updateInterval = setInterval(() => {
+            if (document.hidden) return;
             const session = this.getCurrentSession();
             if (session && session.state === SessionState.TRACKING) {
                 this.updateUI();
@@ -333,7 +334,8 @@ class EnhancementUI {
             borderRadius: STYLE.borderRadius.medium,
             boxShadow: '0 8px 32px rgba(0, 0, 0, 0.6)',
             overflow: 'hidden',
-            width: '350px',
+            // Clamped so the first open on a phone is not wider than the screen
+            width: 'min(350px, 92vw)',
             minHeight: 'auto',
             background: 'rgba(25, 0, 35, 0.92)',
             backdropFilter: 'blur(12px)',
@@ -551,7 +553,12 @@ class EnhancementUI {
         let offsetX = 0;
         let offsetY = 0;
 
-        const onMouseMove = (event) => {
+        // Pointer events so a finger works too; mousedown never fires on a
+        // touchscreen, and touch-action:none stops the browser claiming the
+        // gesture for scrolling
+        header.style.touchAction = 'none';
+
+        const onPointerMove = (event) => {
             if (this.isDragging) {
                 const newLeft = event.clientX - offsetX;
                 const newTop = event.clientY - offsetY;
@@ -563,15 +570,16 @@ class EnhancementUI {
             }
         };
 
-        const onMouseUp = () => {
+        const onPointerUp = () => {
             this.isDragging = false;
-            document.removeEventListener('mousemove', onMouseMove);
-            document.removeEventListener('mouseup', onMouseUp);
+            document.removeEventListener('pointermove', onPointerMove);
+            document.removeEventListener('pointerup', onPointerUp);
+            document.removeEventListener('pointercancel', onPointerUp);
             this.dragMoveHandler = null;
             this.dragUpHandler = null;
         };
 
-        const onMouseDown = (event) => {
+        const onPointerDown = (event) => {
             bringPanelToFront(this.floatingUI);
             this.isDragging = true;
 
@@ -580,21 +588,22 @@ class EnhancementUI {
             offsetX = event.clientX - rect.left;
             offsetY = event.clientY - rect.top;
 
-            this.dragMoveHandler = onMouseMove;
-            this.dragUpHandler = onMouseUp;
+            this.dragMoveHandler = onPointerMove;
+            this.dragUpHandler = onPointerUp;
 
-            document.addEventListener('mousemove', onMouseMove);
-            document.addEventListener('mouseup', onMouseUp);
+            document.addEventListener('pointermove', onPointerMove);
+            document.addEventListener('pointerup', onPointerUp);
+            document.addEventListener('pointercancel', onPointerUp);
         };
 
         if (this.dragHandle && this.dragMouseDownHandler) {
-            this.dragHandle.removeEventListener('mousedown', this.dragMouseDownHandler);
+            this.dragHandle.removeEventListener('pointerdown', this.dragMouseDownHandler);
         }
 
         this.dragHandle = header;
-        this.dragMouseDownHandler = onMouseDown;
+        this.dragMouseDownHandler = onPointerDown;
 
-        header.addEventListener('mousedown', onMouseDown);
+        header.addEventListener('pointerdown', onPointerDown);
     }
 
     /**
@@ -872,12 +881,16 @@ class EnhancementUI {
             const predictions = session.predictions;
             const expAtt = predictions.expectedAttempts || 0;
             const expProt = predictions.expectedProtections || 0;
-            const actualProt = session.protectionCount || 0;
+
+            // The prediction describes the current leg of the session. After an extension the
+            // running totals still carry the earlier legs, so diff against the snapshot taken
+            // at extend time — otherwise a +10 → +12 extension looks ten times over budget.
+            const leg = getCurrentLegCounters(session);
 
             // Calculate factors (like Ultimate Tracker)
             // Use more precision for small values to avoid showing 0.00x
-            const rawAttFactor = expAtt > 0 ? totalAttempts / expAtt : null;
-            const rawProtFactor = expProt > 0 ? actualProt / expProt : null;
+            const rawAttFactor = expAtt > 0 ? leg.attempts / expAtt : null;
+            const rawProtFactor = expProt > 0 ? leg.protections / expProt : null;
 
             // Format with appropriate precision (more decimals for small values)
             const formatFactor = (val) => {
@@ -912,6 +925,15 @@ class EnhancementUI {
                     <span>Prot Factor:</span>
                     <strong> ${protFactor ? protFactor + 'x' : '—'}</strong>
                 </div>
+            </div>`;
+            }
+
+            // The factors above are only meaningful against a prediction made from this
+            // character's real stats; say so when it was not
+            if (predictions.paramsNote) {
+                html += `
+            <div style="font-size: 11px; margin-top: 2px; opacity: 0.6; color: ${STYLE.colors.textSecondary};">
+                ${predictions.paramsNote}
             </div>`;
             }
         }
@@ -957,10 +979,17 @@ class EnhancementUI {
             return '<div style="text-align: center; padding: 20px; color: ${STYLE.colors.textSecondary};">No attempts recorded yet</div>';
         }
 
+        // Predicted rate per level, so the observed column has something to be read against.
+        // successRates[i] is the chance of going from +i to +i+1, which is how the attempt
+        // rows are keyed.
+        const predictedRates = session.predictions?.successRates || null;
+
         let rows = '';
         for (const level of levels) {
             const levelData = session.attemptsPerLevel[level] || { success: 0, fail: 0, successRate: 0 };
             const rate = formatPercentage(levelData.successRate, 1);
+            const predicted = predictedRates?.[level]?.actualRate;
+            const predictedText = typeof predicted === 'number' ? formatPercentage(predicted / 100, 1) : '—';
             const isCurrent = level === session.currentLevel;
 
             const rowStyle = isCurrent
@@ -978,6 +1007,7 @@ class EnhancementUI {
                     <td style="${compactCellStyle} text-align: right;">${levelData.success}</td>
                     <td style="${compactCellStyle} text-align: right;">${levelData.fail}</td>
                     <td style="${compactCellStyle} text-align: right;">${rate}</td>
+                    <td style="${compactCellStyle} text-align: right; color: ${STYLE.colors.textSecondary};">${predictedText}</td>
                 </tr>
             `;
         }
@@ -990,6 +1020,7 @@ class EnhancementUI {
                         <th style="${compactHeaderStyle}">Success</th>
                         <th style="${compactHeaderStyle}">Fail</th>
                         <th style="${compactHeaderStyle}">%</th>
+                        <th style="${compactHeaderStyle}">Pred %</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -1171,17 +1202,18 @@ class EnhancementUI {
         }
 
         if (this.dragMoveHandler) {
-            document.removeEventListener('mousemove', this.dragMoveHandler);
+            document.removeEventListener('pointermove', this.dragMoveHandler);
             this.dragMoveHandler = null;
         }
 
         if (this.dragUpHandler) {
-            document.removeEventListener('mouseup', this.dragUpHandler);
+            document.removeEventListener('pointerup', this.dragUpHandler);
+            document.removeEventListener('pointercancel', this.dragUpHandler);
             this.dragUpHandler = null;
         }
 
         if (this.dragHandle && this.dragMouseDownHandler) {
-            this.dragHandle.removeEventListener('mousedown', this.dragMouseDownHandler);
+            this.dragHandle.removeEventListener('pointerdown', this.dragMouseDownHandler);
         }
 
         this.dragHandle = null;

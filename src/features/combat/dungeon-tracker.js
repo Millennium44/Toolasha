@@ -8,6 +8,18 @@ import dungeonTrackerStorage from './dungeon-tracker-storage.js';
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
+import { characterKey, readScoped, writeScoped } from '../../utils/character-key.js';
+
+/**
+ * The run currently under way, parked so a refresh mid-dungeon does not lose it.
+ *
+ * Scoped per character and resolved at each read and write — the user switches
+ * characters without reloading, and restoring the market cow's half-finished
+ * Chimerical Den onto the iron cow would invent a run that never happened. The
+ * pre-scoping global value is discarded for the same reason.
+ */
+const IN_PROGRESS_KEY = 'dungeonTracker_inProgressRun';
+const DISCARD_LEGACY = { migrate: 'discard' };
 
 class DungeonTracker {
     constructor() {
@@ -36,6 +48,11 @@ class DungeonTracker {
         // Guard against restoring stale state after a completion
         // Set synchronously in completeDungeon() before async clearInProgressRun()
         this._lastCompletionTime = 0;
+
+        // True only when the run was picked back up from storage rather than started here.
+        // A restored run never saw its own "Key counts" start message, so the next one it
+        // sees is the completion; a run started here has that message still to come.
+        this.restoredMidRun = false;
 
         // Hibernation detection (for UI time label switching)
         this.hibernationDetected = false;
@@ -115,7 +132,44 @@ class DungeonTracker {
             hibernationDetected: this.hibernationDetected,
         };
 
-        return storage.setJSON('dungeonTracker_inProgressRun', stateToSave, 'settings', true);
+        return writeScoped(IN_PROGRESS_KEY, stateToSave, 'settings', true);
+    }
+
+    /**
+     * Guards shared by both restore paths: the mid-dungeon new_battle restore and the
+     * page-load pickup. A saved record survives only when no completion just happened,
+     * it names a battle (and the one being joined, when there is one to match), and it
+     * is recent enough to still describe the run in front of us.
+     * @param {Object|null} saved - Saved in-progress record
+     * @param {number|null} [expectedBattleId] - Battle ID to match, or null to accept the record's own
+     * @returns {boolean} True when the record may be restored
+     */
+    canRestoreRecord(saved, expectedBattleId = null) {
+        if (!saved) {
+            return false;
+        }
+
+        // Reject restore if a completion just happened (IndexedDB clear may still be in-flight)
+        if (Date.now() - this._lastCompletionTime < 5000) {
+            return false;
+        }
+
+        // A record with no battle to tie it to cannot be verified against anything
+        if (saved.battleId === undefined || saved.battleId === null) {
+            return false;
+        }
+
+        // Verify battleId matches (same run)
+        if (expectedBattleId !== null && saved.battleId !== expectedBattleId) {
+            return false;
+        }
+
+        // Check staleness (older than 10 minutes = likely invalid)
+        if (Date.now() - saved.lastUpdateTime > 10 * 60 * 1000) {
+            return false;
+        }
+
+        return true;
     }
 
     /**
@@ -124,20 +178,13 @@ class DungeonTracker {
      * @returns {Promise<boolean>} True if restored successfully
      */
     async restoreInProgressRun(currentBattleId) {
-        const saved = await storage.getJSON('dungeonTracker_inProgressRun', 'settings', null);
+        const saved = await readScoped(IN_PROGRESS_KEY, 'settings', null, DISCARD_LEGACY);
 
         if (!saved) {
             return false; // No saved state
         }
 
-        // Guard: reject restore if a completion just happened (IndexedDB clear may still be in-flight)
-        if (Date.now() - this._lastCompletionTime < 5000) {
-            await this.clearInProgressRun();
-            return false;
-        }
-
-        // Verify battleId matches (same run)
-        if (saved.battleId !== currentBattleId) {
+        if (!this.canRestoreRecord(saved, currentBattleId)) {
             await this.clearInProgressRun();
             return false;
         }
@@ -151,15 +198,9 @@ class DungeonTracker {
             return false;
         }
 
-        // Check staleness (older than 10 minutes = likely invalid)
-        const age = Date.now() - saved.lastUpdateTime;
-        if (age > 10 * 60 * 1000) {
-            await this.clearInProgressRun();
-            return false;
-        }
-
         // Restore state
         this.isTracking = true;
+        this.restoredMidRun = true;
         this.currentBattleId = saved.battleId;
         this.waveTimes = saved.waveTimes || [];
         this.waveStartTime = saved.waveStartTime ? new Date(saved.waveStartTime) : null;
@@ -193,7 +234,7 @@ class DungeonTracker {
      * @returns {Promise<boolean>} Success status
      */
     async clearInProgressRun() {
-        return storage.delete('dungeonTracker_inProgressRun', 'settings');
+        return storage.delete(characterKey(IN_PROGRESS_KEY), 'settings');
     }
 
     /**
@@ -289,12 +330,14 @@ class DungeonTracker {
         }
 
         // Try to restore saved state from IndexedDB
-        const saved = await storage.getJSON('dungeonTracker_inProgressRun', 'settings', null);
+        const saved = await readScoped(IN_PROGRESS_KEY, 'settings', null, DISCARD_LEGACY);
 
         if (saved && saved.dungeonHrid === dungeonAction.actionHrid) {
-            // Apply the same staleness guard as restoreInProgressRun: a record older than
-            // 10 minutes likely belongs to a previous run and would corrupt durations
-            if (Date.now() - saved.lastUpdateTime > 10 * 60 * 1000) {
+            // Apply the same guards as restoreInProgressRun — a completion moments ago, a
+            // record with no battle, or one older than 10 minutes all describe a run that
+            // is not this one, and restoring it would corrupt the duration.
+            // There is no live battleId on page load, so the record's own is accepted.
+            if (!this.canRestoreRecord(saved)) {
                 await this.clearInProgressRun();
                 this.pendingDungeonInfo = {
                     dungeonHrid: dungeonAction.actionHrid,
@@ -305,6 +348,7 @@ class DungeonTracker {
 
             // Restore state immediately so UI appears
             this.isTracking = true;
+            this.restoredMidRun = true;
             this.currentBattleId = saved.battleId;
             this.waveTimes = saved.waveTimes || [];
             this.waveStartTime = saved.waveStartTime ? new Date(saved.waveStartTime) : null;
@@ -315,6 +359,9 @@ class DungeonTracker {
             this.battleStartedTimestamp = saved.battleStartedTimestamp || null;
             this.keyCountMessages = saved.keyCountMessages || [];
 
+            // Restore hibernation detection flag (the run's elapsed time may be wrong)
+            this.hibernationDetected = saved.hibernationDetected || false;
+
             this.currentRun = {
                 dungeonHrid: saved.dungeonHrid,
                 tier: saved.tier,
@@ -323,6 +370,7 @@ class DungeonTracker {
                 maxWaves: saved.maxWaves,
                 wavesCompleted: saved.wavesCompleted,
                 keyCountsMap: saved.keyCountsMap || {},
+                hibernationDetected: saved.hibernationDetected || false,
             };
 
             // Trigger UI update to show immediately
@@ -726,12 +774,6 @@ class DungeonTracker {
         // If we already have a lastKeyCountTimestamp, this is the COMPLETION message
         // (The first message sets both first and last to the same value)
         if (this.lastKeyCountTimestamp !== null && timestamp > this.lastKeyCountTimestamp) {
-            // Check for midnight rollover
-            let duration = timestamp - this.firstKeyCountTimestamp;
-            if (duration < 0) {
-                duration += 24 * 60 * 60 * 1000;
-            }
-
             // Update last timestamp for duration calculation
             this.lastKeyCountTimestamp = timestamp;
 
@@ -748,25 +790,25 @@ class DungeonTracker {
             });
 
             // Complete the dungeon
-            this.completeDungeon();
+            this.completeDungeon({ fromKeyCountMessage: true });
             return;
         }
 
         // First "Key counts" message = dungeon start
         if (this.firstKeyCountTimestamp === null) {
-            // FALLBACK: If we're already tracking and have a currentRun.startTime,
-            // this is probably the COMPLETION message, not the start!
-            // This happens when state was restored but first message wasn't captured.
-            if (this.currentRun && this.currentRun.startTime) {
+            // FALLBACK: a run that never saw its own start message reads this one as the
+            // COMPLETION, using currentRun.startTime as the best estimate of the start.
+            //
+            // That is only true of a run picked back up from storage, or one already part
+            // way through its waves. A run started here has startTime set and no anchor
+            // yet too, and its start message often arrives before the 100 ms chat scan —
+            // reading that as the completion would end the run it was meant to begin.
+            const missedItsOwnStart = this.restoredMidRun || this.currentRun?.wavesCompleted > 0;
+
+            if (this.currentRun && this.currentRun.startTime && missedItsOwnStart) {
                 // Use the currentRun.startTime as the first timestamp (best estimate)
                 this.firstKeyCountTimestamp = this.currentRun.startTime;
                 this.lastKeyCountTimestamp = timestamp; // Current message is completion
-
-                // Check for midnight rollover
-                let duration = timestamp - this.firstKeyCountTimestamp;
-                if (duration < 0) {
-                    duration += 24 * 60 * 60 * 1000;
-                }
 
                 // Update key counts
                 if (this.currentRun) {
@@ -781,7 +823,7 @@ class DungeonTracker {
                 });
 
                 // Complete the dungeon
-                this.completeDungeon();
+                this.completeDungeon({ fromKeyCountMessage: true });
                 return;
             }
 
@@ -813,8 +855,12 @@ class DungeonTracker {
     parseKeyCountsFromMessage(messageText) {
         const keyCountsMap = {};
 
-        // Regex to match [PlayerName - KeyCount] pattern (with optional comma separators)
-        const regex = /\[([^[\]-]+?)\s*-\s*([\d,]+)\]/g;
+        // Regex to match [PlayerName - KeyCount] pattern (with optional comma separators).
+        // The name may itself contain a dash ("[Moo-Deng - 12]"): the count is anchored to
+        // the closing bracket and the name is lazy, so the LAST " - <digits>]" separates
+        // them. Brackets still bound the name, which keeps a display timestamp
+        // ("[08/04 10:00:00 AM]") from being read as a player.
+        const regex = /\[([^[\]]+?)\s*-\s*([\d,]+)\]/g;
         let match;
 
         while ((match = regex.exec(messageText)) !== null) {
@@ -1057,8 +1103,11 @@ class DungeonTracker {
 
     /**
      * Complete the current dungeon run
+     * @param {Object} [options] - Completion options
+     * @param {boolean} [options.fromKeyCountMessage] - True when a completion "Key counts" message
+     *   ended the run, which is the only case where lastKeyCountTimestamp marks the run's END
      */
-    async completeDungeon() {
+    async completeDungeon({ fromKeyCountMessage = false } = {}) {
         if (!this.currentRun || !this.isTracking) {
             return;
         }
@@ -1076,7 +1125,13 @@ class DungeonTracker {
         // Carry the completion timestamp forward as the next run's start anchor.
         // This avoids the scanExistingChatMessages race condition where the scan
         // fires before the live message arrives and grabs an older timestamp instead.
-        this.pendingNextRunFirstKeyCount = lastTimestamp;
+        //
+        // Only a completion "Key counts" message leaves lastKeyCountTimestamp on the run's
+        // END. When the websocket ended the run instead, lastKeyCountTimestamp is still
+        // this run's START anchor, and handing that to the next run would measure the two
+        // of them as one long run.
+        const endedOnItsOwnKeyCount = fromKeyCountMessage && lastTimestamp !== null && lastTimestamp > firstTimestamp;
+        this.pendingNextRunFirstKeyCount = endedOnItsOwnKeyCount ? lastTimestamp : null;
 
         // Clear ALL state immediately - next dungeon can now start without contamination
         this.currentRun = null;
@@ -1086,6 +1141,7 @@ class DungeonTracker {
         this.lastKeyCountTimestamp = null;
         this.keyCountMessages = [];
         this.currentBattleId = null;
+        this.restoredMidRun = false;
 
         // Guard: mark completion time synchronously so restoreInProgressRun() rejects stale reads
         this._lastCompletionTime = Date.now();
@@ -1195,6 +1251,7 @@ class DungeonTracker {
         this.keyCountMessages = [];
         this.battleStartedTimestamp = null;
         this.pendingNextRunFirstKeyCount = null;
+        this.restoredMidRun = false;
 
         // Clear saved state (await to ensure it completes)
         await this.clearInProgressRun();
@@ -1339,6 +1396,7 @@ class DungeonTracker {
         this.keyCountMessages = [];
         this.battleStartedTimestamp = null;
         this.pendingNextRunFirstKeyCount = null;
+        this.restoredMidRun = false;
         this.recentChatMessages = [];
 
         // Reset hibernation detection

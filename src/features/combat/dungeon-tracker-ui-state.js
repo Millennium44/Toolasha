@@ -3,8 +3,22 @@
  * Handles loading, saving, and managing UI state
  */
 
-import storage from '../../core/storage.js';
 import config from '../../core/config.js';
+import { readScoped, writeScoped } from '../../utils/character-key.js';
+
+/**
+ * Where the panel's own preferences live.
+ *
+ * Scoped per character — where the panel sits and what it is filtered to is a
+ * per-character preference — and resolved at each read and write, since the
+ * user switches characters without reloading. The pre-scoping global state is
+ * adopted by the main character once.
+ */
+const UI_STATE_KEY = 'dungeonTracker_uiState';
+
+/** Show only runs this character recorded (the default), or every character's */
+export const CHARACTER_FILTER_MINE = 'mine';
+export const CHARACTER_FILTER_ALL = 'all';
 
 class DungeonTrackerUIState {
     constructor() {
@@ -22,6 +36,13 @@ class DungeonTrackerUIState {
         this.filterDungeon = 'all'; // 'all' or specific dungeon name
         this.filterTeam = 'all'; // 'all' or specific team key
 
+        // Whose runs to show. The run store is deliberately shared across
+        // characters — a team run recorded by two of your own characters is one
+        // run, and deduping it is the point — so the panel filters rather than
+        // the store partitioning. Defaults to this character, which is what
+        // "how am I doing" means when it is asked.
+        this.filterCharacter = CHARACTER_FILTER_MINE;
+
         // Track expanded groups to preserve state across refreshes
         this.expandedGroups = new Set();
     }
@@ -30,7 +51,7 @@ class DungeonTrackerUIState {
      * Load saved state from storage
      */
     async load() {
-        const savedState = await storage.getJSON('dungeonTracker_uiState', 'settings', null);
+        const savedState = await readScoped(UI_STATE_KEY, 'settings', null, { migrate: 'adopt' });
         if (savedState) {
             this.isCollapsed = savedState.isCollapsed || false;
             this.isKeysExpanded = savedState.isKeysExpanded || false;
@@ -41,6 +62,12 @@ class DungeonTrackerUIState {
             this.groupBy = savedState.groupBy || 'team';
             this.filterDungeon = savedState.filterDungeon || 'all';
             this.filterTeam = savedState.filterTeam || 'all';
+            this.filterCharacter =
+                savedState.filterCharacter === CHARACTER_FILTER_ALL ? CHARACTER_FILTER_ALL : CHARACTER_FILTER_MINE;
+        } else {
+            // A character with no saved state is a character the panel has not
+            // been opened on; it should not inherit the last one's selections
+            this.filterCharacter = CHARACTER_FILTER_MINE;
         }
     }
 
@@ -48,8 +75,8 @@ class DungeonTrackerUIState {
      * Save current state to storage
      */
     async save() {
-        await storage.setJSON(
-            'dungeonTracker_uiState',
+        await writeScoped(
+            UI_STATE_KEY,
             {
                 isCollapsed: this.isCollapsed,
                 isKeysExpanded: this.isKeysExpanded,
@@ -58,10 +85,31 @@ class DungeonTrackerUIState {
                 groupBy: this.groupBy,
                 filterDungeon: this.filterDungeon,
                 filterTeam: this.filterTeam,
+                filterCharacter: this.filterCharacter,
             },
             'settings',
             true
         );
+    }
+
+    /**
+     * Whether either run-history filter is currently narrowing the run list.
+     * The filter controls live in a collapsed section, so a session that starts
+     * with a filter still set from last time would otherwise show "No runs match
+     * filters" with nothing on screen explaining why.
+     * @returns {boolean} True if the dungeon or team filter is not 'all'
+     */
+    hasActiveFilters() {
+        return this.filterDungeon !== 'all' || this.filterTeam !== 'all';
+    }
+
+    /**
+     * Clear both run-history filters back to 'all'. Caller is responsible for
+     * persisting (save()) and refreshing any dependent UI.
+     */
+    clearFilters() {
+        this.filterDungeon = 'all';
+        this.filterTeam = 'all';
     }
 
     /**
@@ -81,13 +129,20 @@ class DungeonTrackerUIState {
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
         `;
 
+        // Never wider than the screen: 480px of min-width on a 390px phone
+        // pushed half the tracker permanently off the right edge
+        const minWidth = this.isCollapsed ? 'min(250px, calc(100vw - 20px))' : 'min(480px, calc(100vw - 20px))';
+
         if (this.position) {
-            // Custom position (user dragged it)
+            // Custom position (user dragged it) — clamped back on screen, since
+            // it may have been saved in a wider window than this one
+            const x = Math.max(0, Math.min(this.position.x, window.innerWidth - 60));
+            const y = Math.max(0, Math.min(this.position.y, window.innerHeight - 40));
             container.style.cssText = `
                 ${baseStyle}
-                top: ${this.position.y}px;
-                left: ${this.position.x}px;
-                min-width: ${this.isCollapsed ? '250px' : '480px'};
+                top: ${y}px;
+                left: ${x}px;
+                min-width: ${minWidth};
             `;
         } else if (this.isCollapsed) {
             // Collapsed: top-left (near action time display)
@@ -95,7 +150,7 @@ class DungeonTrackerUIState {
                 ${baseStyle}
                 top: 10px;
                 left: 10px;
-                min-width: 250px;
+                min-width: ${minWidth};
             `;
         } else {
             // Expanded: top-center
@@ -104,7 +159,7 @@ class DungeonTrackerUIState {
                 top: 10px;
                 left: 50%;
                 transform: translateX(-50%);
-                min-width: 480px;
+                min-width: ${minWidth};
             `;
         }
     }

@@ -12,6 +12,7 @@ import { getItemPrices } from '../../utils/market-data.js';
 import { formatKMB, numberFormatter, formatDateTime } from '../../utils/formatters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { MARKET_TAX } from '../../utils/profit-constants.js';
+import { signedPercent } from '../../utils/overlay-format.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
 import lootLogHistory from './loot-log-history.js';
 
@@ -313,6 +314,66 @@ class LootLogStats {
     }
 
     /**
+     * Calculate the expected total value for a completed run of `actionCount` actions,
+     * from the action's drop table odds (drop rate × average count) rather than what was
+     * actually rolled. Mirrors `calculateTotalValue`'s price resolution (coins at face
+     * value, openable containers priced via expected value) so the two totals are directly
+     * comparable — this is only available for actions with a static drop table (gathering);
+     * combat drops come from the monster, not the action, and production has none.
+     * @param {string} actionHrid - Action HRID
+     * @param {number} actionCount - Number of completed actions
+     * @returns {Object|null} { askExpected, bidExpected } or null when unavailable
+     */
+    calculateExpectedRunValue(actionHrid, actionCount) {
+        if (!actionHrid || !actionCount) return null;
+
+        const actionDetails = dataManager.getActionDetails(actionHrid);
+        const dropTable = actionDetails?.dropTable;
+        if (!dropTable || dropTable.length === 0) return null;
+
+        let askExpected = 0;
+        let bidExpected = 0;
+        let hasAnyPrice = false;
+
+        for (const drop of dropTable) {
+            const dropRate = drop.dropRate || 0;
+            const avgCount = ((drop.minCount || 0) + (drop.maxCount || 0)) / 2;
+            if (dropRate <= 0 || avgCount <= 0) continue;
+
+            const expectedCount = dropRate * avgCount * actionCount;
+
+            if (drop.itemHrid === '/items/coin') {
+                askExpected += expectedCount;
+                bidExpected += expectedCount;
+                hasAnyPrice = true;
+                continue;
+            }
+
+            const itemDetails = dataManager.getItemDetails(drop.itemHrid);
+            if (itemDetails?.isOpenable && expectedValueCalculator.isInitialized) {
+                const evData = expectedValueCalculator.calculateExpectedValue(drop.itemHrid);
+                if (evData && evData.expectedValue > 0) {
+                    askExpected += evData.expectedValue * expectedCount;
+                    bidExpected += evData.expectedValue * expectedCount;
+                    hasAnyPrice = true;
+                    continue;
+                }
+            }
+
+            const prices = getItemPrices(drop.itemHrid, 0);
+            if (!prices) continue;
+
+            askExpected += (prices.ask || 0) * expectedCount;
+            bidExpected += (prices.bid || 0) * expectedCount;
+            hasAnyPrice = true;
+        }
+
+        if (!hasAnyPrice) return null;
+
+        return { askExpected, bidExpected };
+    }
+
+    /**
      * Pick a display color for an ask/bid profit pair.
      * @param {number} askProfit
      * @param {number} bidProfit
@@ -419,6 +480,27 @@ class LootLogStats {
             profitLine.style.cssText = `text-align: right; font-weight: bold; color: ${this.getProfitColor(profit.askProfit, profit.bidProfit)};`;
             profitLine.textContent = `Profit: ${formatKMB(profit.askProfit)}/${formatKMB(profit.bidProfit)}`;
             wrapper.appendChild(profitLine);
+        }
+
+        // Actual-vs-expected line — only available for actions with a static drop table
+        // (gathering); combat and production have no comparable per-action baseline here.
+        const expected = this.calculateExpectedRunValue(logData.actionHrid, logData.actionCount);
+        if (expected && (expected.askExpected > 0 || expected.bidExpected > 0)) {
+            const basisExpected = expected.askExpected > 0 ? expected.askExpected : expected.bidExpected;
+            const basisActual = expected.askExpected > 0 ? askTotal : bidTotal;
+            const ratio = signedPercent(((basisActual - basisExpected) / basisExpected) * 100);
+
+            const expectedLine = document.createElement('div');
+            expectedLine.style.cssText = 'text-align: right; font-size: 0.9em; color: #aaa;';
+            expectedLine.textContent = `Expected: ${formatKMB(expected.askExpected)}/${formatKMB(expected.bidExpected)} (`;
+
+            const ratioSpan = document.createElement('span');
+            ratioSpan.style.cssText = `color: ${ratio.color}; font-weight: bold;`;
+            ratioSpan.textContent = `${ratio.text} of expected`;
+            expectedLine.appendChild(ratioSpan);
+            expectedLine.appendChild(document.createTextNode(')'));
+
+            wrapper.appendChild(expectedLine);
         }
 
         // Create details container (hidden by default)
@@ -1074,6 +1156,10 @@ class LootLogStats {
         this.initialized = false;
     }
 }
+
+// Exported for unit testing pure/standalone methods (e.g. calculateExpectedRunValue)
+// without going through the feature registry's initialize() lifecycle.
+export { LootLogStats };
 
 // Export as feature module
 export default {

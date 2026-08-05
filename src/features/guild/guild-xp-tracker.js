@@ -14,6 +14,8 @@ import dataManager from '../../core/data-manager.js';
 import webSocketHook from '../../core/websocket.js';
 import storage from '../../core/storage.js';
 import config from '../../core/config.js';
+import performanceMonitor from '../../utils/performance-monitor.js';
+import { runInBackground } from '../../utils/background-work.js';
 
 const STORE_NAME = 'guildHistory';
 /** The guild leaderboard's own refresh cadence, as the panel states */
@@ -236,6 +238,29 @@ export function calcStats(arr) {
 }
 
 /**
+ * Where an XP total sits on the guild level curve.
+ *
+ * The table is indexed from level 1 at zero XP, so the index of the first
+ * threshold the total has not reached *is* the current level — a guild with 33
+ * XP has crossed index 1 and is level 2, and a guild with none is level 1.
+ *
+ * @param {number} xp - Total guild XP
+ * @returns {{level: number, currentXP: number, nextLevelXP: number|null, xpToNext: number|null}}
+ */
+export function guildLevelFromXP(xp) {
+    const total = Number.isFinite(xp) ? xp : 0;
+    const nextIndex = LEVEL_EXPERIENCE_TABLE.findIndex((threshold) => total < threshold);
+
+    // Past the end of the table there is no next level to work towards
+    if (nextIndex < 0) {
+        return { level: LEVEL_EXPERIENCE_TABLE.length, currentXP: total, nextLevelXP: null, xpToNext: null };
+    }
+
+    const nextLevelXP = LEVEL_EXPERIENCE_TABLE[nextIndex];
+    return { level: nextIndex, currentXP: total, nextLevelXP, xpToNext: nextLevelXP - total };
+}
+
+/**
  * Calculate time to next guild level.
  * @param {number} currentXP - Current guild XP
  * @param {number} xpPerHour - Current XP/hr rate
@@ -296,9 +321,19 @@ class GuildXPTracker {
             webSocketHook.off('guild_trial_signup_updated', this._boundOnTrialSignupUpdated);
         });
 
-        // If character data already loaded, initialize immediately
+        // If character data already loaded, load the history — but not here.
+        //
+        // This reads a guild's whole XP history out of IndexedDB, adds a
+        // reading to every member's series and writes the lot back. Nobody is
+        // looking at any of it yet, and every feature after this one in the
+        // registry was waiting for it: on a large guild it was six seconds of
+        // the page not starting.
+        //
+        // `ready` is what keeps that safe. A guild_updated arriving before the
+        // load finishes would otherwise append to an empty history and then be
+        // overwritten by the load, so the handlers wait on it.
         if (dataManager.characterData) {
-            await this._onCharacterInit(dataManager.characterData);
+            this.ready = runInBackground('guildXPTracker', () => this._onCharacterInit(dataManager.characterData));
         }
 
         this.initialized = true;
@@ -350,6 +385,7 @@ class GuildXPTracker {
         }
 
         // Load persisted histories
+        const endLoad = performanceMonitor.startSpan('bg:guildXPTracker', 'load history');
         this.guildXPHistory = await storage.get(`guildXP_${guildName}`, STORE_NAME, {});
         // Histories recorded before repeats were rejected end in two identical
         // readings, which reads as a rate of zero. Heal them on the way in.
@@ -359,6 +395,7 @@ class GuildXPTracker {
         if (this.ownGuildID) {
             this.memberXPHistory = await storage.get(`memberXP_${this.ownGuildID}`, STORE_NAME, {});
         }
+        endLoad();
 
         const t = data.currentTimestamp ? +new Date(data.currentTimestamp) : Date.now();
 
@@ -376,18 +413,37 @@ class GuildXPTracker {
             pushXP(this.memberXPHistory[charId], { t, xp: guildChar.guildExperience });
         }
 
-        // Persist
-        await storage.set(`guildXP_${guildName}`, this.guildXPHistory, STORE_NAME);
+        // Persist — queued, not awaited. storage.set is debounced and its
+        // promise resolves only when the 3-second timer fires, so awaiting two
+        // of them in series is six seconds of waiting for timers whose entire
+        // purpose is to not write yet. The trace read it as a six-second save;
+        // the actual write is milliseconds, and flushAll on unload covers the
+        // tab closing before the timer lands.
+        const endSave = performanceMonitor.startSpan('bg:guildXPTracker', 'queue save');
+        storage.set(`guildXP_${guildName}`, this.guildXPHistory, STORE_NAME);
         if (this.ownGuildID) {
-            await storage.set(`memberXP_${this.ownGuildID}`, this.memberXPHistory, STORE_NAME);
+            storage.set(`memberXP_${this.ownGuildID}`, this.memberXPHistory, STORE_NAME);
         }
+        endSave();
+    }
+
+    /**
+     * Wait for the history load, where it matters.
+     *
+     * An update that lands mid-load would otherwise write into an empty history
+     * and be overwritten the moment the real one arrives.
+     * @returns {Promise<void>}
+     */
+    async whenReady() {
+        if (this.ready) await this.ready;
     }
 
     /**
      * Handle guild_updated — record guild-level XP.
      * @param {Object} data - guild_updated message
      */
-    _onGuildUpdated(data) {
+    async _onGuildUpdated(data) {
+        await this.whenReady();
         const guild = data.guild;
         if (!guild) return;
 
@@ -411,6 +467,7 @@ class GuildXPTracker {
      * @param {Object} data - guild_characters_updated message
      */
     async _onMembersUpdated(data) {
+        await this.whenReady();
         const guildCharacterMap = data.guildCharacterMap || {};
         const sharableMap = data.guildSharableCharacterMap || {};
         this.rawSharableMap = sharableMap;
@@ -479,7 +536,8 @@ class GuildXPTracker {
      * Handle leaderboard_updated (category: guild) — record XP for all guilds on the guild leaderboard.
      * @param {Object} data - leaderboard_updated message
      */
-    _onLeaderboardUpdated(data) {
+    async _onLeaderboardUpdated(data) {
+        await this.whenReady();
         if (data.leaderboardCategory !== 'guild') return;
 
         const rows = data.leaderboard?.rows;
@@ -667,6 +725,54 @@ class GuildXPTracker {
         const stats = this.getGuildStats(guildName);
         const rate = stats.lastDayXPH > 0 ? stats.lastDayXPH : stats.lastXPH;
         return calcTimeToLevel(currentXP, rate);
+    }
+
+    /**
+     * A member's recorded XP samples.
+     *
+     * Handed out as a copy: these arrays are appended to by the websocket
+     * handlers, and a reader that holds the live array sees it change under it
+     * mid-render.
+     *
+     * @param {string} characterID
+     * @returns {Array<{t: number, xp: number}>} Oldest first; empty when untracked
+     */
+    getMemberSeries(characterID) {
+        return [...(this.memberXPHistory[characterID] || [])];
+    }
+
+    /**
+     * Every tracked member's XP samples, for anything that has to compare them
+     * against each other — a share of the guild's XP is only meaningful beside
+     * everybody else's.
+     * @returns {Object<string, Array<{t: number, xp: number}>>} characterID → samples
+     */
+    getAllMemberSeries() {
+        const out = {};
+        for (const [charId, series] of Object.entries(this.memberXPHistory)) {
+            out[charId] = [...series];
+        }
+        return out;
+    }
+
+    /**
+     * A guild's recorded XP samples.
+     * @param {string} guildName
+     * @returns {Array<{t: number, xp: number}>} Oldest first; empty when untracked
+     */
+    getGuildSeries(guildName) {
+        return [...(this.guildXPHistory[guildName] || [])];
+    }
+
+    /**
+     * Where a guild sits on the level curve, from its latest recorded XP.
+     * @param {string} guildName
+     * @returns {{level: number, currentXP: number, nextLevelXP: number|null, xpToNext: number|null}|null}
+     */
+    getGuildLevelProgress(guildName) {
+        const currentXP = this.getCurrentGuildXP(guildName);
+        if (currentXP === null) return null;
+        return guildLevelFromXP(currentXP);
     }
 
     /**

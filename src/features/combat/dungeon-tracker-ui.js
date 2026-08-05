@@ -10,6 +10,7 @@ import dungeonTrackerUIState from './dungeon-tracker-ui-state.js';
 import DungeonTrackerUIChart from './dungeon-tracker-ui-chart.js';
 import DungeonTrackerUIHistory from './dungeon-tracker-ui-history.js';
 import DungeonTrackerUIInteractions from './dungeon-tracker-ui-interactions.js';
+import { filterRunsForCharacter, currentCharacter } from './dungeon-tracker-storage.js';
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
 import config from '../../core/config.js';
@@ -70,8 +71,10 @@ class DungeonTrackerUI {
                 this.timerRegistry.registerTimeout(annotateTimeout);
             }
 
-            // Check if UI is enabled before updating the panel
-            if (!config.isFeatureEnabled('dungeonTrackerUI')) {
+            // Check if UI is enabled before updating the panel. getSetting, not
+            // isFeatureEnabled: this key is not in the legacy features map, so
+            // isFeatureEnabled fell through to true and the checkbox did nothing
+            if (!config.getSetting('dungeonTrackerUI')) {
                 this.hide();
                 return;
             }
@@ -142,6 +145,15 @@ class DungeonTrackerUI {
                         <span id="mwi-dt-wave-counter" style="font-size: 13px; color: #aaa;">
                             Wave 1/50
                         </span>
+                        <button id="mwi-dt-reset-position-btn" style="
+                            background: none;
+                            border: none;
+                            color: #aaa;
+                            cursor: pointer;
+                            font-size: 13px;
+                            padding: 0 4px;
+                            line-height: 1;
+                        " title="Reset panel position">⌖</button>
                         <button id="mwi-dt-collapse-btn" style="
                             background: none;
                             border: none;
@@ -171,10 +183,23 @@ class DungeonTrackerUI {
                     <span>Runs: <span id="mwi-dt-header-runs" style="color: #fff; font-weight: bold;">0</span></span>
                     <span>|</span>
                     <span>Keys: <span id="mwi-dt-header-keys" style="color: #fff; font-weight: bold;">0</span></span>
+                    <span id="mwi-dt-filter-indicator" style="
+                        display: none;
+                        align-items: center;
+                        gap: 3px;
+                        background: rgba(255, 193, 7, 0.18);
+                        color: #ffc107;
+                        border: 1px solid rgba(255, 193, 7, 0.5);
+                        border-radius: 10px;
+                        padding: 1px 8px;
+                        font-size: 10px;
+                        font-weight: bold;
+                        cursor: pointer;
+                    " title="Run history filters are active — click to clear">&#x1F50D; Filtered</span>
                 </div>
             </div>
 
-            <div id="mwi-dt-content" style="padding: 12px 20px; display: flex; flex-direction: column; gap: 12px;">
+            <div id="mwi-dt-content" style="padding: 12px 20px; display: flex; flex-direction: column; gap: 12px; max-height: calc(100vh - 80px); overflow-y: auto;">
                 <!-- Progress bar -->
                 <div>
                     <div style="background: #333; border-radius: 4px; height: 20px; position: relative; overflow: hidden;">
@@ -275,7 +300,7 @@ class DungeonTrackerUI {
                                 padding: 2px 8px;
                                 border-radius: 3px;
                                 font-weight: bold;
-                            " title="Clear all runs">✕ Clear</button>
+                            " title="Delete all run history">🗑 Clear history</button>
                         </div>
                     </div>
 
@@ -329,6 +354,21 @@ class DungeonTrackerUI {
                                     min-width: 100px;
                                 ">
                                     <option value="all">All Teams</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label style="margin-right: 6px;">Character:</label>
+                                <select id="mwi-dt-filter-character" style="
+                                    background: #333;
+                                    color: #fff;
+                                    border: 1px solid #555;
+                                    border-radius: 3px;
+                                    padding: 2px 4px;
+                                    font-size: 11px;
+                                    min-width: 100px;
+                                ">
+                                    <option value="mine">This character</option>
+                                    <option value="all">All characters</option>
                                 </select>
                             </div>
                         </div>
@@ -492,7 +532,10 @@ class DungeonTrackerUI {
 
         // Get all runs and apply filters (EXACT SAME LOGIC as chart)
         const allRuns = await storage.getJSON('allRuns', 'unifiedRuns', []);
-        runHistory = allRuns;
+        // The run store is shared across characters on purpose (see
+        // dungeon-tracker-storage.js); this is where "how am I doing" narrows
+        // it back to the character asking
+        runHistory = filterRunsForCharacter(allRuns, this.state.filterCharacter, currentCharacter());
 
         // Apply dungeon filter
         if (this.state.filterDungeon !== 'all') {
@@ -579,6 +622,10 @@ class DungeonTrackerUI {
         if (selfKeysElement) {
             selfKeysElement.textContent = selfKeyCount.toString();
         }
+
+        // A collapsed list is invisible; rebuilding its rows every tick is DOM
+        // work nobody sees. The next tick after expanding rebuilds it fresh.
+        if (!this.state.isKeysExpanded) return;
 
         // Update expanded keys list
         const keysList = this.container.querySelector('#mwi-dt-keys-list');
@@ -685,6 +732,7 @@ class DungeonTrackerUI {
 
         // Update every second (light tick only — history/stats refresh on tracker events)
         this.updateInterval = setInterval(() => {
+            if (document.hidden) return;
             const currentRun = dungeonTracker.getCurrentRun();
             if (currentRun) {
                 this.update(currentRun, false);

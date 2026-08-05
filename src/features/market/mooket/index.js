@@ -31,6 +31,7 @@ import { createCleanupRegistry } from '../../../utils/cleanup-registry.js';
 import { createMutationWatcher } from '../../../utils/dom-observer-helpers.js';
 import { formatKMB, formatWithSeparator } from '../../../utils/formatters.js';
 import { navigateToMarketplace } from '../../../utils/marketplace-tabs.js';
+import { hasCoarsePointer } from '../../../utils/mobile.js';
 import marketPriceStore from './market-price-store.js';
 import marketHistoryAPI from './market-history-api.js';
 import { buildHistorySeries, historyLabels, HISTORY_RANGES } from './market-history-data.js';
@@ -43,11 +44,46 @@ import {
     watchedChange,
     normaliseWatchlist,
 } from './market-watchlist.js';
+import { readScoped, writeScoped } from '../../../utils/character-key.js';
 
 const PANEL_ID = 'mwi-market-history-panel';
 const TAB_ID = 'mwi-market-history-tab';
+/** Where the panel is and how it draws — one panel, so one global answer */
 const PREFS_KEY = 'mooketPanelPrefs';
+/**
+ * What this character is watching.
+ *
+ * Split out of the prefs object, because it is the one field in it that is not
+ * about the panel: an iron cow watching its own handful of items had the market
+ * character's list of forty pushed onto it every time either of them saved.
+ */
+const WATCHLIST_BASE = 'mooketWatchlist';
 const POLL_MS = 500;
+
+/**
+ * Lift a pre-split watchlist out of the shared prefs object into its own key.
+ *
+ * Seeding the bare key and letting `readScoped` take it from there hands the
+ * adoption rules — the main character claims it, an iron cow starts clean —
+ * to one implementation instead of a second copy of them here.
+ * @param {Object|null} savedPrefs - The prefs object as read from storage
+ * @returns {Promise<void>}
+ */
+export async function splitLegacyWatchlist(savedPrefs) {
+    if (!savedPrefs || savedPrefs.watchlist === undefined) return;
+
+    try {
+        const alreadySplit = await storage.get(WATCHLIST_BASE, 'settings', null);
+        if (alreadySplit === null) {
+            await storage.setJSON(WATCHLIST_BASE, normaliseWatchlist(savedPrefs.watchlist), 'settings', true);
+        }
+        const remaining = { ...savedPrefs };
+        delete remaining.watchlist;
+        await storage.setJSON(PREFS_KEY, remaining, 'settings', true);
+    } catch (error) {
+        console.error('[MarketHistory] Splitting the panel watchlist out failed:', error);
+    }
+}
 
 /** Series colours, in the order the datasets are built */
 const SERIES = [
@@ -81,15 +117,7 @@ class MarketHistoryPanel {
         if (!config.getSetting('market_pooledHistory')) return;
         this.isInitialized = true;
 
-        try {
-            const saved = await storage.getJSON(PREFS_KEY, 'settings', null);
-            if (saved) {
-                this.prefs = { ...this.prefs, ...saved };
-                this.watchlist = normaliseWatchlist(saved.watchlist);
-            }
-        } catch (error) {
-            console.error('[MarketHistory] Loading panel preferences failed:', error);
-        }
+        await this.loadPrefs();
 
         await marketPriceStore.initialize();
         marketHistoryAPI.connect();
@@ -138,9 +166,37 @@ class MarketHistoryPanel {
         this.isInitialized = false;
     }
 
+    /**
+     * Read the panel's own settings and this character's watched items.
+     *
+     * Separate from `initialize` because it is the whole of what a character
+     * switch has to redo, and because it is the only part of start-up that can
+     * be tested without a canvas.
+     * @returns {Promise<void>}
+     */
+    async loadPrefs() {
+        try {
+            const saved = await storage.getJSON(PREFS_KEY, 'settings', null);
+            if (saved) {
+                this.prefs = { ...this.prefs, ...saved };
+                delete this.prefs.watchlist;
+            }
+            await splitLegacyWatchlist(saved);
+            // Assigned whether or not anything was found: initialize runs again
+            // after a character switch, and the previous character's list must
+            // not survive it
+            this.watchlist = normaliseWatchlist(await readScoped(WATCHLIST_BASE, 'settings', null));
+        } catch (error) {
+            console.error('[MarketHistory] Loading panel preferences failed:', error);
+        }
+    }
+
     async savePrefs() {
         try {
-            await storage.setJSON(PREFS_KEY, { ...this.prefs, watchlist: this.watchlist }, 'settings');
+            const prefs = { ...this.prefs };
+            delete prefs.watchlist;
+            await storage.setJSON(PREFS_KEY, prefs, 'settings');
+            await writeScoped(WATCHLIST_BASE, this.watchlist, 'settings');
         } catch (error) {
             console.error('[MarketHistory] Saving panel preferences failed:', error);
         }
@@ -170,7 +226,11 @@ class MarketHistoryPanel {
             min-width: 260px; min-height: 60px;
         `;
 
-        panel.appendChild(this.buildToolbar());
+        // The toolbar is the one region a finger can drag from: the chip row
+        // has to keep touch scrolling, and the canvas keeps its own gestures
+        const toolbar = this.buildToolbar();
+        toolbar.style.touchAction = 'none';
+        panel.appendChild(toolbar);
 
         this.chipRow = document.createElement('div');
         this.chipRow.style.cssText =
@@ -341,7 +401,9 @@ class MarketHistoryPanel {
      * @param {HTMLElement} panel - The panel
      */
     makeDraggable(panel) {
-        panel.addEventListener('mousedown', (e) => {
+        // Pointer events so a finger works too; mousedown never fires on a
+        // touchscreen
+        panel.addEventListener('pointerdown', (e) => {
             if (this.prefs.locked) return;
             if (e.button !== 0 || e.target.closest('button, select, canvas, input')) return;
             // The browser's own resize handle lives in the bottom-right corner
@@ -359,8 +421,9 @@ class MarketHistoryPanel {
                 panel.style.top = `${Math.min(Math.max(0, move.clientY - grabY), maxTop)}px`;
             };
             const onUp = () => {
-                document.removeEventListener('mousemove', onMove);
-                document.removeEventListener('mouseup', onUp);
+                document.removeEventListener('pointermove', onMove);
+                document.removeEventListener('pointerup', onUp);
+                document.removeEventListener('pointercancel', onUp);
                 const final = panel.getBoundingClientRect();
                 this.prefs.x = final.left;
                 this.prefs.y = final.top;
@@ -369,8 +432,9 @@ class MarketHistoryPanel {
                 this.savePrefs();
             };
 
-            document.addEventListener('mousemove', onMove);
-            document.addEventListener('mouseup', onUp);
+            document.addEventListener('pointermove', onMove);
+            document.addEventListener('pointerup', onUp);
+            document.addEventListener('pointercancel', onUp);
         });
     }
 
@@ -437,9 +501,16 @@ class MarketHistoryPanel {
                 this.savePrefs();
             });
 
+            // Touch gets sized-up controls: 8px arrows are unhittable with a
+            // finger, and right-click-to-remove does not exist there — an
+            // explicit × stands in, since a long-press that silently deletes a
+            // watch would be worse than one extra glyph of clutter
+            const coarse = hasCoarsePointer();
+
             const arrows = document.createElement('span');
-            arrows.style.cssText =
-                'display:flex; flex-direction:column; line-height:0.7; font-size:8px; color:#8fa0c8;';
+            arrows.style.cssText = coarse
+                ? 'display:flex; flex-direction:column; line-height:0.9; font-size:13px; color:#8fa0c8; gap:2px;'
+                : 'display:flex; flex-direction:column; line-height:0.7; font-size:8px; color:#8fa0c8;';
             for (const [glyph, direction] of [
                 ['▲', -1],
                 ['▼', 1],
@@ -447,6 +518,7 @@ class MarketHistoryPanel {
                 const step = document.createElement('span');
                 step.textContent = glyph;
                 step.style.cursor = 'pointer';
+                if (coarse) step.style.padding = '2px 4px';
                 step.addEventListener('click', (e) => {
                     e.stopPropagation();
                     this.watchlist = moveWatched(this.watchlist, entry.key, direction);
@@ -456,6 +528,20 @@ class MarketHistoryPanel {
                 arrows.appendChild(step);
             }
             chip.appendChild(arrows);
+
+            if (coarse) {
+                const remove = document.createElement('span');
+                remove.textContent = '×';
+                remove.title = 'Remove from watchlist';
+                remove.style.cssText = 'cursor:pointer; padding:2px 6px; font-size:14px; line-height:1; color:#c88f8f;';
+                remove.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    this.watchlist = removeWatched(this.watchlist, entry.key);
+                    this.renderChips();
+                    this.savePrefs();
+                });
+                chip.appendChild(remove);
+            }
 
             this.chipRow.appendChild(chip);
         }

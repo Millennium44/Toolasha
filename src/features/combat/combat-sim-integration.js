@@ -6,7 +6,7 @@
  * Automatically fills character/party data from game into simulator
  */
 
-import { constructExportObject } from './combat-sim-export.js';
+import { constructExportObject, checkBridgeStamp, getLastBridgeIssue } from './combat-sim-export.js';
 import config from '../../core/config.js';
 import { setReactInputValue } from '../../utils/react-input.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
@@ -142,8 +142,13 @@ async function importDataToSimulator(button) {
             }, 3000);
             timerRegistry.registerTimeout(resetTimeout);
             console.error('[Toolasha Combat Sim] No export data available');
+            // A bridge ownership mismatch (the GM storage fallback caught data written by a
+            // different character's tab) gets a specific, actionable message; anything else
+            // falls back to the generic "refresh the game page" guidance.
+            const bridgeIssue = getLastBridgeIssue();
             alert(
-                'No character data found. Please:\n1. Refresh the game page\n2. Wait for it to fully load\n3. Try again'
+                bridgeIssue ||
+                    'No character data found. Please:\n1. Refresh the game page\n2. Wait for it to fully load\n3. Try again'
             );
             return;
         }
@@ -589,15 +594,22 @@ async function handleSimResults(resultsPanel) {
 /**
  * Get character data from dataManager (in-memory, always current).
  * Falls back to GM storage when running on the Shykai page (dataManager is empty cross-domain).
+ * The GM fallback is ownership-checked (see checkBridgeStamp in combat-sim-export.js): a value
+ * written by a different character's tab is refused rather than silently used for the calculator.
  * @returns {Object|null}
  */
-function getCharacterDataFromStorage() {
+export function getCharacterDataFromStorage() {
     const data = dataManager.characterData;
     if (data) return data;
     if (typeof GM_getValue !== 'undefined') {
         try {
             const raw = GM_getValue('toolasha_init_character_data', null);
-            if (raw) return JSON.parse(raw);
+            if (raw && checkBridgeStamp('toolasha_init_character_data', 'Character data', { enforceOwner: true })) {
+                return JSON.parse(raw);
+            }
+            if (raw) {
+                console.warn(`[Toolasha Combat Sim Calculator] ${getLastBridgeIssue()}`);
+            }
         } catch {
             /* ignore */
         }
@@ -609,15 +621,20 @@ function getCharacterDataFromStorage() {
 /**
  * Get init_client_data from dataManager (in-memory, always current).
  * Falls back to GM storage when running on the Shykai page (dataManager is empty cross-domain).
+ * Client data is static game reference data shared by every character, so a writer mismatch is
+ * not refused here — only staleness is checked (see checkBridgeStamp in combat-sim-export.js).
  * @returns {Object|null}
  */
-function getClientDataFromStorage() {
+export function getClientDataFromStorage() {
     const data = dataManager.getInitClientData();
     if (data) return data;
     if (typeof GM_getValue !== 'undefined') {
         try {
             const raw = GM_getValue('toolasha_init_client_data', null);
-            if (raw) return JSON.parse(raw);
+            if (raw) {
+                checkBridgeStamp('toolasha_init_client_data', 'Client data', { enforceOwner: false });
+                return JSON.parse(raw);
+            }
         } catch {
             /* ignore */
         }

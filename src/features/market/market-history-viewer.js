@@ -15,7 +15,8 @@ import dataManager from '../../core/data-manager.js';
 import { formatWithSeparator, formatKMB, formatDateTime } from '../../utils/formatters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
-import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
+import { navigateToMarketplace, visibleTabsContainer } from '../../utils/marketplace-tabs.js';
+import { readScoped, writeScoped } from '../../utils/character-key.js';
 import listingMarkers, { markerStateFor } from './listing-markers.js';
 
 /** Rows here are finished trades, not working orders. Markers are told so. */
@@ -38,6 +39,8 @@ class MarketHistoryViewer {
         this.typeFilter = 'all'; // 'all', 'buy', 'sell'
         this.statusFilter = 'all'; // 'all', 'active', 'filled', 'filled_active', 'canceled', 'expired', 'unknown'
         this.useKMBFormat = false; // K/M/B formatting toggle
+        // Base of a per-character key; estimatedListingAge owns the scoping and
+        // the split of the old shared array, so reads go through it
         this.storageKey = 'marketListingTimestamps';
         this.timerRegistry = createTimerRegistry();
 
@@ -110,7 +113,10 @@ class MarketHistoryViewer {
      */
     async loadFilters() {
         try {
-            const savedFilters = await storage.getJSON('marketHistoryFilters', 'settings', null);
+            // Discarded rather than adopted on migration: a filter naming items
+            // and dates is a view of one character's log, and pointing it at
+            // another's shows an empty table with no visible reason
+            const savedFilters = await readScoped('marketHistoryFilters', 'settings', null, { migrate: 'discard' });
             if (savedFilters) {
                 // Convert date strings back to Date objects
                 this.filters.dateFrom = savedFilters.dateFrom ? new Date(savedFilters.dateFrom) : null;
@@ -137,7 +143,7 @@ class MarketHistoryViewer {
                 selectedEnhLevels: this.filters.selectedEnhLevels,
                 selectedTypes: this.filters.selectedTypes,
             };
-            await storage.setJSON('marketHistoryFilters', filtersToSave, 'settings', true);
+            await writeScoped('marketHistoryFilters', filtersToSave, 'settings', true);
         } catch (error) {
             console.error('[MarketHistoryViewer] Failed to save filters:', error);
         }
@@ -149,7 +155,7 @@ class MarketHistoryViewer {
     addMarketplaceTab() {
         const ensureTabExists = () => {
             // Get tabs container
-            const tabsContainer = document.querySelector('.MuiTabs-flexContainer[role="tablist"]');
+            const tabsContainer = visibleTabsContainer();
             if (!tabsContainer) return;
 
             // Verify this is the marketplace tabs (check for Market Listings tab)
@@ -218,7 +224,7 @@ class MarketHistoryViewer {
                 document.body,
                 () => {
                     // Check if marketplace is still active
-                    const tabsContainer = document.querySelector('.MuiTabs-flexContainer[role="tablist"]');
+                    const tabsContainer = visibleTabsContainer();
                     if (!tabsContainer) {
                         // Marketplace closed, clean up tab
                         if (this.marketplaceTab && !document.body.contains(this.marketplaceTab)) {
@@ -257,8 +263,9 @@ class MarketHistoryViewer {
      */
     async loadListings() {
         try {
-            const stored = await storage.getJSON(this.storageKey, 'marketListings', []);
-            // Filter out listings without itemHrid (e.g., seed listings from estimated-listing-age)
+            const stored = await estimatedListingAge.personalListings();
+            // Belt and braces: anchors are split off before this point, but a
+            // row with no item is not a row this table can draw
             this.listings = stored.filter((listing) => listing && listing.itemHrid);
 
             // Migrate old listings without status field
@@ -595,7 +602,11 @@ class MarketHistoryViewer {
      * Create modal structure
      */
     createModal() {
-        // Modal overlay
+        // Modal overlay — full-screen intentional modal, so it sits at config.Z_MODAL
+        // rather than the persistent-floating-panel tier (PANEL_Z_CAP); popouts spawned
+        // from it (import progress, filter dropdowns) sit just above at Z_MODAL + 1/+2,
+        // still comfortably below native browser dialogs (confirm/alert), which are
+        // always topmost regardless of z-index.
         this.modal = document.createElement('div');
         this.modal.className = 'mwi-market-history-modal';
         this.modal.style.cssText = `
@@ -608,20 +619,22 @@ class MarketHistoryViewer {
             display: none;
             justify-content: center;
             align-items: center;
-            z-index: 10000;
+            z-index: ${config.Z_MODAL};
         `;
 
-        // Modal content
+        // Modal content — shared navy/blue-accent chrome (see simple-panel.js)
         const content = document.createElement('div');
         content.className = 'mwi-market-history-content';
         content.style.cssText = `
-            background: #2a2a2a;
+            background: rgba(10, 10, 20, 0.97);
+            border: 1px solid rgba(74, 158, 255, 0.5);
             border-radius: 8px;
             padding: 20px;
             max-width: 95%;
             max-height: 90%;
             overflow: auto;
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+            color: #e8ecf5;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
         `;
 
         // Header
@@ -631,13 +644,15 @@ class MarketHistoryViewer {
             justify-content: space-between;
             align-items: center;
             margin-bottom: 20px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid rgba(74, 158, 255, 0.3);
         `;
 
         const title = document.createElement('h2');
         title.textContent = 'Market History';
         title.style.cssText = `
             margin: 0;
-            color: #fff;
+            color: #8fb4ff;
         `;
 
         const closeBtn = document.createElement('button');
@@ -645,7 +660,7 @@ class MarketHistoryViewer {
         closeBtn.style.cssText = `
             background: none;
             border: none;
-            color: #fff;
+            color: #e8ecf5;
             font-size: 24px;
             cursor: pointer;
             padding: 0;
@@ -1685,22 +1700,26 @@ class MarketHistoryViewer {
                 top: 50%;
                 left: 50%;
                 transform: translate(-50%, -50%);
-                background: #2a2a2a;
+                background: rgba(10, 10, 20, 0.97);
+                border: 1px solid rgba(74, 158, 255, 0.5);
                 padding: 20px;
                 border-radius: 8px;
-                color: #fff;
-                z-index: 10001;
+                color: #e8ecf5;
+                z-index: ${config.Z_MODAL + 1};
                 box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
             `;
             progressMsg.textContent = `Importing ${lines.length - 1} listings from CSV...`;
             document.body.appendChild(progressMsg);
 
             // Load existing listings
-            const existingListings = await storage.getJSON(this.storageKey, 'marketListings', []);
+            const existingListings = await estimatedListingAge.personalListings();
             const existingIds = new Set(existingListings.map((l) => l.id));
 
             let imported = 0;
             let skipped = 0;
+            // Imported rows are exact id↔time pairs too — mirror them into the
+            // shared anchor pool the same way live recording does
+            const newAnchors = [];
 
             // Build item name to HRID map
             const itemNameToHrid = {};
@@ -1796,11 +1815,13 @@ class MarketHistoryViewer {
                 };
 
                 existingListings.push(listing);
+                newAnchors.push({ id: listing.id, timestamp: listing.timestamp });
                 imported++;
             }
 
             // Save to storage
-            await storage.setJSON(this.storageKey, existingListings, 'marketListings', true);
+            await writeScoped(this.storageKey, existingListings, 'marketListings', true);
+            await estimatedListingAge.addAnchors(newAnchors);
 
             // Remove progress message
             document.body.removeChild(progressMsg);
@@ -1917,22 +1938,26 @@ class MarketHistoryViewer {
                 top: 50%;
                 left: 50%;
                 transform: translate(-50%, -50%);
-                background: #2a2a2a;
+                background: rgba(10, 10, 20, 0.97);
+                border: 1px solid rgba(74, 158, 255, 0.5);
                 padding: 20px;
                 border-radius: 8px;
-                color: #fff;
-                z-index: 10001;
+                color: #e8ecf5;
+                z-index: ${config.Z_MODAL + 1};
                 box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
             `;
             progressMsg.textContent = `Importing ${marketList.length} listings...`;
             document.body.appendChild(progressMsg);
 
             // Convert imported format to Toolasha format
-            const existingListings = await storage.getJSON(this.storageKey, 'marketListings', []);
+            const existingListings = await estimatedListingAge.personalListings();
             const existingIds = new Set(existingListings.map((l) => l.id));
 
             let imported = 0;
             let skipped = 0;
+            // Imported rows are exact id↔time pairs too — mirror them into the
+            // shared anchor pool the same way live recording does
+            const newAnchors = [];
 
             for (const etListing of marketList) {
                 // Skip if we already have this listing
@@ -1955,11 +1980,13 @@ class MarketHistoryViewer {
                 };
 
                 existingListings.push(toolashaListing);
+                newAnchors.push({ id: toolashaListing.id, timestamp: toolashaListing.timestamp });
                 imported++;
             }
 
             // Save to storage
-            await storage.setJSON(this.storageKey, existingListings, 'marketListings', true);
+            await writeScoped(this.storageKey, existingListings, 'marketListings', true);
+            await estimatedListingAge.addAnchors(newAnchors);
 
             // Remove progress message
             document.body.removeChild(progressMsg);
@@ -2002,6 +2029,7 @@ class MarketHistoryViewer {
             `⚠️ WARNING: This will permanently delete ALL market history data!\n` +
                 `You are about to delete ${this.listings.length} listings.\n` +
                 `RECOMMENDATION: Export to CSV first using the "Export CSV" button.\n` +
+                `Anonymous age anchors are kept so age estimates stay accurate.\n` +
                 `This action CANNOT be undone!\n` +
                 `Are you absolutely sure you want to continue?`
         );
@@ -2011,8 +2039,18 @@ class MarketHistoryViewer {
         }
 
         try {
+            // "Clear History" only wipes this character's personal listing log —
+            // the item/price/status record of what *you* sold. It deliberately
+            // leaves the anonymous {id, timestamp} anchor mirror in place: those
+            // pairs carry no item, price, or character info, so keeping them isn't
+            // keeping "history", and every other listing's age estimate on this
+            // and every other character depends on that shared pool staying intact.
+            // Backfill it one last time first, in case any of these listings predate
+            // anchor growth and were never mirrored.
+            await estimatedListingAge.addAnchors(this.listings.map((l) => ({ id: l.id, timestamp: l.timestamp })));
+
             // Clear from storage
-            await storage.setJSON(this.storageKey, [], 'marketListings', true);
+            await writeScoped(this.storageKey, [], 'marketListings', true);
 
             // Clear local data
             this.listings = [];
@@ -2180,7 +2218,7 @@ class MarketHistoryViewer {
         popup.style.position = 'fixed';
         popup.style.top = `${buttonRect.bottom + 5}px`;
         popup.style.left = `${buttonRect.left}px`;
-        popup.style.zIndex = '10002';
+        popup.style.zIndex = String(config.Z_MODAL + 2);
 
         document.body.appendChild(popup);
         this.activeFilterPopup = popup;

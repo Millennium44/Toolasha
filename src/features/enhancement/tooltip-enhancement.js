@@ -13,10 +13,25 @@ import { calculateEnhancement } from '../../utils/enhancement-calculator.js';
 import config from '../../core/config.js';
 const toolashaConfig = config;
 import dataManager from '../../core/data-manager.js';
+import { calculateSuccessXP, calculateFailureXP } from './enhancement-xp.js';
+import {
+    buildSourceChipHTML,
+    describeEnhancementSource,
+    getTooltipEnhancementParams,
+    sectionAttributes,
+    toggleProRates,
+    SECTION_ATTR,
+    SOURCE_CHIP_CLASS,
+} from './enhancement-params-source.js';
 import { formatLargeNumber, numberFormatter, formatKMB, isAbbreviationEnabled } from '../../utils/formatters.js';
 import { getItemPrice, getItemPrices } from '../../utils/market-data.js';
 import { parseArtisanBonus, getDrinkConcentration } from '../../utils/tea-parser.js';
+import { parseItemCount } from '../../utils/number-parser.js';
+import { MARKET_TAX } from '../../utils/profit-constants.js';
 import marketAPI from '../../api/marketplace.js';
+
+/** What a mirror plan combines its leaves with */
+const MIRROR_HRID = '/items/philosophers_mirror';
 
 const _costCache = new Map();
 const _chainTimeCache = new Map();
@@ -90,12 +105,16 @@ export function calculateEnhancementPath(itemHrid, currentEnhancementLevel, conf
     const targetCosts = new Array(currentEnhancementLevel + 1);
     const targetTimes = new Array(currentEnhancementLevel + 1);
     const targetAttempts = new Array(currentEnhancementLevel + 1);
+    // Kept alongside the attempts because a mirror plan's protection bill is the sum over the
+    // levels it actually builds, and there is nowhere else that number survives
+    const targetProtections = new Array(currentEnhancementLevel + 1);
     targetCosts[0] = toolashaConfig.isFeatureEnabled('enhanceSim_baseItemCraftingCost')
         ? Math.min(getProductionCost(itemHrid) || Infinity, getItemPrices(itemHrid, 0)?.ask || Infinity) ||
           getRealisticBaseItemPrice(itemHrid)
         : getRealisticBaseItemPrice(itemHrid); // Level 0: base item
     targetTimes[0] = 0; // Level 0: no time needed
     targetAttempts[0] = 0; // Level 0: no attempts needed
+    targetProtections[0] = 0; // Level 0: nothing to protect
 
     for (let level = 1; level <= currentEnhancementLevel; level++) {
         const resultsForLevel = allResults[level - 1];
@@ -108,26 +127,30 @@ export function calculateEnhancementPath(itemHrid, currentEnhancementLevel, conf
         targetCosts[level] = minResult.totalCost;
         targetTimes[level] = minResult.totalTime;
         targetAttempts[level] = minResult.expectedAttempts;
+        targetProtections[level] = minResult.protectionCount || 0;
     }
 
-    const mirrorTargetCosts = targetCosts;
-    const mirrorTargetTimes = targetTimes;
-    const mirrorTargetAttempts = targetAttempts;
+    // Snapshot the pre-mirror numbers before the mirror pass rewrites targetCosts in place.
+    // These arrays used to be aliases of the same array, so the "traditional" cost of a level
+    // silently became its mirror cost the moment the pass touched it.
+    const traditionalCosts = [...targetCosts];
+    const traditionalTimes = [...targetTimes];
+    const traditionalAttempts = [...targetAttempts];
+    const traditionalProtections = [...targetProtections];
 
     // Step 3: Apply Philosopher's Mirror optimization (single pass, in-place)
     // Like Enhancelator lines 456-465
-    const mirrorPrice = getRealisticBaseItemPrice('/items/philosophers_mirror');
-    let mirrorStartLevel = null;
+    const mirrorPrice = getRealisticBaseItemPrice(MIRROR_HRID);
+    const usedMirror = new Array(currentEnhancementLevel + 1).fill(false);
 
     if (mirrorPrice > 0) {
-        for (let level = 3; level <= currentEnhancementLevel; level++) {
+        // +2 is reachable by mirroring a +0 and a +1, so it belongs in the search as well
+        for (let level = 2; level <= currentEnhancementLevel; level++) {
             const traditionalCost = targetCosts[level];
             const mirrorCost = targetCosts[level - 2] + targetCosts[level - 1] + mirrorPrice;
 
             if (mirrorCost < traditionalCost) {
-                if (mirrorStartLevel === null) {
-                    mirrorStartLevel = level;
-                }
+                usedMirror[level] = true;
                 targetCosts[level] = mirrorCost;
             }
         }
@@ -145,22 +168,26 @@ export function calculateEnhancementPath(itemHrid, currentEnhancementLevel, conf
         curr.totalCost < best.totalCost ? curr : best
     );
 
+    // Which levels the finished plan actually mirrors is a question about the path back from
+    // the target, not about the first level where mirroring happened to look cheap. A level
+    // that mirrors but is never reached from the target contributes nothing.
+    const mirrorPlan = expandMirrorPlan(currentEnhancementLevel, usedMirror);
+
     let optimalStrategy;
 
-    if (mirrorStartLevel !== null) {
+    if (mirrorPlan.mirrorCount > 0) {
         // Mirror was used - build mirror-optimized result
         optimalStrategy = buildMirrorOptimizedResult(
             itemHrid,
             currentEnhancementLevel,
-            mirrorStartLevel,
+            mirrorPlan,
+            traditionalCosts,
+            traditionalTimes,
+            traditionalAttempts,
+            traditionalProtections,
             targetCosts,
-            itemHrid,
-            mirrorTargetCosts,
-            mirrorTargetTimes,
-            mirrorTargetAttempts,
             optimalTraditional,
-            mirrorPrice,
-            config
+            mirrorPrice
         );
     } else {
         // No mirror used - return traditional result
@@ -184,6 +211,12 @@ export function calculateEnhancementPath(itemHrid, currentEnhancementLevel, conf
             totalCost: optimalTraditional.totalCost,
             usedMirror: false,
             mirrorStartLevel: null,
+            materialBill: buildMaterialBill({
+                materials: optimalTraditional.materialBreakdown,
+                protectionItemHrid: optimalTraditional.protectionItemHrid,
+                protectionCount: optimalTraditional.protectionCount,
+                protectionUnitPrice: optimalTraditional.protectionAskPrice,
+            }),
         };
     }
 
@@ -201,18 +234,20 @@ export function calculateEnhancementPath(itemHrid, currentEnhancementLevel, conf
             protectFrom: optimalStrategy.protectFrom,
             blessedTea: config.teas.blessed,
             guzzlingBonus: config.guzzlingBonus,
+            blessedTeaBonus: config.blessedTeaBonus,
         });
 
         if (xpCalc && xpCalc.visitCounts && xpCalc.totalTime > 0) {
-            const wisdomDecimal = (config.experienceBonus || 0) / 100;
-            const xpBaseLevel = itemDetails.level || itemDetails.equipmentDetail?.levelRequirements?.[0]?.level || 0;
+            // Same XP formula the tracker and the XPH calculator use. The old inline copy read
+            // itemDetails.level, which enhanceable equipment does not have, so it fell through
+            // to a level-requirement lookup and produced a different number for the same item.
             let totalXP = 0;
             for (let i = 0; i < currentEnhancementLevel; i++) {
                 const visits = xpCalc.visitCounts[i];
+                if (!visits) continue;
                 const successRate = xpCalc.successRates[i].actualRate / 100;
-                const enhMult = i === 0 ? 1.0 : i + 1;
-                const successXP = Math.floor(1.4 * (1 + wisdomDecimal) * enhMult * (10 + xpBaseLevel));
-                const failXP = Math.floor(successXP * 0.1);
+                const successXP = calculateSuccessXP(i, itemHrid);
+                const failXP = calculateFailureXP(i, itemHrid);
                 totalXP += visits * (successRate * successXP + (1 - successRate) * failXP);
             }
             xpPerHour = Math.round((totalXP / xpCalc.totalTime) * 3600);
@@ -230,6 +265,10 @@ export function calculateEnhancementPath(itemHrid, currentEnhancementLevel, conf
         allStrategies: [optimalStrategy], // Only return optimal
         xpPerHour,
         totalExpectedXP,
+        // Carried through so the tooltip can say whose stats these numbers describe: the
+        // character's own, a hand-entered set, or the pro kit
+        enhancementParams: config,
+        paramsNote: describeEnhancementSource(config).detail,
     };
 }
 
@@ -249,9 +288,12 @@ function calculateCostForStrategy(itemHrid, targetLevel, protectFrom, itemLevel,
             protectFrom,
             blessedTea: config.teas.blessed,
             guzzlingBonus: config.guzzlingBonus,
+            blessedTeaBonus: config.blessedTeaBonus,
         };
 
-        // Calculate enhancement statistics
+        // Calculate enhancement statistics. The matrix inversion is the expensive part of a
+        // strategy, and the cost pass needs exactly the same numbers, so it is handed the
+        // result rather than inverting an identical matrix a second time.
         const result = calculateEnhancement(params);
 
         if (!result || typeof result.attempts !== 'number' || typeof result.totalTime !== 'number') {
@@ -260,7 +302,7 @@ function calculateCostForStrategy(itemHrid, targetLevel, protectFrom, itemLevel,
         }
 
         // Calculate costs
-        const costs = calculateTotalCost(itemHrid, targetLevel, protectFrom, config);
+        const costs = calculateTotalCost(itemHrid, targetLevel, protectFrom, config, result);
 
         return {
             expectedAttempts: result.attempts,
@@ -274,74 +316,201 @@ function calculateCostForStrategy(itemHrid, targetLevel, protectFrom, itemLevel,
 }
 
 /**
- * Build mirror-optimized result with Fibonacci quantities
+ * Walk the mirror DP back from the target level to the items the plan actually builds.
+ *
+ * The DP decides mirror-or-not level by level, and those decisions are not necessarily a clean
+ * run: +6 can mirror while +5 does not. Assuming a contiguous block from the first mirrored
+ * level and expanding it with Fibonacci quantities invents items the plan never buys. Walking
+ * the decisions backwards from the target instead yields exactly the leaves it does buy.
+ *
+ * @param {number} targetLevel - Level the plan is building
+ * @param {boolean[]} usedMirror - Per-level mirror decisions from the DP
+ * @returns {{leaves: Array<{level: number, quantity: number}>, mirrorCount: number,
+ *   mirrorStartLevel: number|null}} Leaves are levels bought traditionally, highest first
+ * @private
+ */
+function expandMirrorPlan(targetLevel, usedMirror) {
+    const need = new Array(targetLevel + 1).fill(0);
+    need[targetLevel] = 1;
+
+    let mirrorCount = 0;
+    let mirrorStartLevel = null;
+
+    // High to low: a level is only expanded once every demand for it is known
+    for (let level = targetLevel; level >= 2; level--) {
+        const quantity = need[level];
+        if (!quantity || !usedMirror[level]) continue;
+
+        mirrorCount += quantity;
+        mirrorStartLevel = level; // Lowest mirrored level reached, since we descend
+        need[level - 1] += quantity;
+        need[level - 2] += quantity;
+        need[level] = 0;
+    }
+
+    const leaves = [];
+    for (let level = targetLevel; level >= 0; level--) {
+        if (need[level] > 0) {
+            leaves.push({ level, quantity: need[level] });
+        }
+    }
+
+    return { leaves, mirrorCount, mirrorStartLevel };
+}
+
+/**
+ * What a chosen path expects to consume, item by item.
+ *
+ * The path optimiser has always returned totals — so many coins in materials —
+ * which is enough to compare two strategies and not enough to go and buy them.
+ * This is the same arithmetic said as a list, so anything holding a plan can put
+ * it on the marketplace.
+ *
+ * **Every count is an expectation, not a bill.** Enhancing is a Markov chain:
+ * the attempt counts these quantities are multiplied out from are the *expected*
+ * number of attempts along the path, and a real run will take more or fewer.
+ * Buying exactly this list is buying the mean, which is the right order of
+ * magnitude and the wrong number to be surprised by.
+ *
+ * @param {Object} parts - The pieces of a strategy
+ * @param {Array<Object>} [parts.materials] - `materialBreakdown` rows, already multiplied by attempts
+ * @param {number} [parts.materialMultiplier=1] - Scales the rows, for a plan that runs the
+ *   same per-attempt bill a different number of times (a mirror plan's leaves)
+ * @param {string} [parts.protectionItemHrid] - What the plan protects with
+ * @param {number} [parts.protectionCount=0] - Expected protections consumed
+ * @param {number} [parts.protectionUnitPrice=0] - Price of one
+ * @param {number} [parts.mirrorCount=0] - Philosopher's Mirrors the plan combines
+ * @param {number} [parts.mirrorPrice=0] - Price of one
+ * @param {string} [parts.baseItemHrid] - Base item, for a plan that consumes more than the one
+ *   copy its owner is assumed to be holding
+ * @param {number} [parts.baseCount=0] - How many base copies the plan consumes
+ * @param {number} [parts.baseUnitPrice=0] - Price of one
+ * @returns {Array<{itemHrid: string, name: string, count: number, unitPrice: number,
+ *   totalCost: number, kind: string}>} The bill, materials first; `kind` is one of
+ *   `material`, `protection`, `mirror`, `base`
+ * @private
+ */
+function buildMaterialBill({
+    materials = [],
+    materialMultiplier = 1,
+    protectionItemHrid = null,
+    protectionCount = 0,
+    protectionUnitPrice = 0,
+    mirrorCount = 0,
+    mirrorPrice = 0,
+    baseItemHrid = null,
+    baseCount = 0,
+    baseUnitPrice = 0,
+} = {}) {
+    const gameData = dataManager.getInitClientData();
+    const nameOf = (hrid) => gameData?.itemDetailMap?.[hrid]?.name || hrid;
+
+    const bill = [];
+
+    for (const material of materials || []) {
+        const count = (material.totalQuantity || 0) * materialMultiplier;
+        if (!(count > 0)) continue;
+        bill.push({
+            itemHrid: material.itemHrid,
+            name: material.name || nameOf(material.itemHrid),
+            count,
+            unitPrice: material.unitPrice || 0,
+            totalCost: (material.unitPrice || 0) * count,
+            kind: 'material',
+        });
+    }
+
+    if (protectionItemHrid && protectionCount > 0) {
+        bill.push({
+            itemHrid: protectionItemHrid,
+            name: nameOf(protectionItemHrid),
+            count: protectionCount,
+            unitPrice: protectionUnitPrice,
+            totalCost: protectionUnitPrice * protectionCount,
+            kind: 'protection',
+        });
+    }
+
+    if (mirrorCount > 0) {
+        bill.push({
+            itemHrid: MIRROR_HRID,
+            name: nameOf(MIRROR_HRID),
+            count: mirrorCount,
+            unitPrice: mirrorPrice,
+            totalCost: mirrorPrice * mirrorCount,
+            kind: 'mirror',
+        });
+    }
+
+    if (baseItemHrid && baseCount > 0) {
+        bill.push({
+            itemHrid: baseItemHrid,
+            name: nameOf(baseItemHrid),
+            count: baseCount,
+            unitPrice: baseUnitPrice,
+            totalCost: baseUnitPrice * baseCount,
+            kind: 'base',
+        });
+    }
+
+    return bill;
+}
+
+/**
+ * Build mirror-optimized result from an expanded plan
+ * @param {string} itemHrid - Item being enhanced
+ * @param {number} targetLevel - Target enhancement level
+ * @param {Object} plan - Result of expandMirrorPlan()
+ * @param {number[]} traditionalCosts - Pre-mirror cost per level
+ * @param {number[]} traditionalTimes - Pre-mirror time per level
+ * @param {number[]} traditionalAttempts - Pre-mirror attempts per level
+ * @param {number[]} traditionalProtections - Pre-mirror protections consumed per level
+ * @param {number[]} targetCosts - Post-mirror cost per level
+ * @param {Object} optimalTraditional - Best non-mirror strategy for the target level
+ * @param {number} mirrorPrice - Price of one Philosopher's Mirror
  * @private
  */
 function buildMirrorOptimizedResult(
     itemHrid,
     targetLevel,
-    mirrorStartLevel,
+    plan,
+    traditionalCosts,
+    traditionalTimes,
+    traditionalAttempts,
+    traditionalProtections,
     targetCosts,
-    consumedItemHrid,
-    mirrorTargetCosts,
-    mirrorTargetTimes,
-    mirrorTargetAttempts,
     optimalTraditional,
-    mirrorPrice,
-    _config
+    mirrorPrice
 ) {
-    const gameData = dataManager.getInitClientData();
-    const _itemDetails = gameData.itemDetailMap[itemHrid];
+    const { leaves, mirrorCount, mirrorStartLevel } = plan;
 
-    // Calculate Fibonacci quantities for consumed items
-    const n = targetLevel - mirrorStartLevel;
-    const numLowerTier = fib(n); // Quantity of (mirrorStartLevel - 2) items
-    const numUpperTier = fib(n + 1); // Quantity of (mirrorStartLevel - 1) items
-    const numMirrors = mirrorFib(n); // Quantity of Philosopher's Mirrors
+    // Every leaf is a level the plan buys outright, so it is priced at its traditional cost
+    const consumedItems = leaves.map(({ level, quantity }) => ({
+        level,
+        quantity,
+        costEach: traditionalCosts[level],
+        totalCost: quantity * traditionalCosts[level],
+    }));
 
-    const lowerTierLevel = mirrorStartLevel - 2;
-    const upperTierLevel = mirrorStartLevel - 1;
+    const consumedItemsCost = consumedItems.reduce((sum, item) => sum + item.totalCost, 0);
+    const totalMirrorsCost = mirrorCount * mirrorPrice;
 
-    // Get cost of one item at each level from mirrorTargetCosts (base item for refined items)
-    const costLowerTier = mirrorTargetCosts[lowerTierLevel];
-    const costUpperTier = mirrorTargetCosts[upperTierLevel];
+    // Mirror combinations are instant, so only the leaves cost time and attempts
+    const totalTime = leaves.reduce((sum, { level, quantity }) => sum + quantity * traditionalTimes[level], 0);
+    const totalAttempts = leaves.reduce((sum, { level, quantity }) => sum + quantity * traditionalAttempts[level], 0);
+    const totalProtections = leaves.reduce(
+        (sum, { level, quantity }) => sum + quantity * (traditionalProtections[level] || 0),
+        0
+    );
 
-    // Get time to make one item at each level from mirrorTargetTimes
-    const timeLowerTier = mirrorTargetTimes[lowerTierLevel];
-    const timeUpperTier = mirrorTargetTimes[upperTierLevel];
+    // Every leaf starts from its own base copy — a mirror plan for +10 buys several items and
+    // combines them, which is the fact a totals-only answer hides and a shopping list cannot
+    const totalBaseItems = leaves.reduce((sum, { quantity }) => sum + quantity, 0);
 
-    // Get attempts to make one item at each level from mirrorTargetAttempts
-    const attemptsLowerTier = mirrorTargetAttempts[lowerTierLevel];
-    const attemptsUpperTier = mirrorTargetAttempts[upperTierLevel];
-
-    // Calculate total costs for consumed items and mirrors
-    const totalLowerTierCost = numLowerTier * costLowerTier;
-    const totalUpperTierCost = numUpperTier * costUpperTier;
-    const totalMirrorsCost = numMirrors * mirrorPrice;
-
-    // Calculate total time for mirror strategy
-    // Time = (numLowerTier × time per lower tier) + (numUpperTier × time per upper tier)
-    // Mirror combinations are instant (no additional time)
-    const totalTime = numLowerTier * timeLowerTier + numUpperTier * timeUpperTier;
-
-    // Calculate total attempts for mirror strategy
-    const totalAttempts = numLowerTier * attemptsLowerTier + numUpperTier * attemptsUpperTier;
-
-    // Build consumed items array for display
-    const consumedItems = [
-        {
-            level: lowerTierLevel,
-            quantity: numLowerTier,
-            costEach: costLowerTier,
-            totalCost: totalLowerTierCost,
-        },
-        {
-            level: upperTierLevel,
-            quantity: numUpperTier,
-            costEach: costUpperTier,
-            totalCost: totalUpperTierCost,
-        },
-    ];
+    // The per-attempt material bill is the same at every level, so the target-level strategy's
+    // breakdown (which is already multiplied by *its* attempts) scales to the plan's attempts
+    const materialMultiplier =
+        optimalTraditional.expectedAttempts > 0 ? totalAttempts / optimalTraditional.expectedAttempts : 0;
 
     // For mirror phase: ONLY consumed items + mirrors
     // The consumed item costs from targetCosts already include base/materials/protection
@@ -357,40 +526,91 @@ function buildMirrorOptimizedResult(
         protectionCost: 0, // Not applicable for mirror phase
         protectionItemHrid: null,
         protectionCount: 0,
-        consumedItemsCost: totalLowerTierCost + totalUpperTierCost,
+        consumedItemsCost,
         philosopherMirrorCost: totalMirrorsCost,
         totalCost: targetCosts[targetLevel], // Use recursive formula result for consistency
         mirrorStartLevel: mirrorStartLevel,
         usedMirror: true,
         traditionalCost: optimalTraditional.totalCost,
         consumedItems: consumedItems,
-        mirrorCount: numMirrors,
-        consumedItemHrid: consumedItemHrid,
+        mirrorCount: mirrorCount,
+        consumedItemHrid: itemHrid,
+        materialBill: buildMaterialBill({
+            materials: optimalTraditional.materialBreakdown,
+            materialMultiplier,
+            protectionItemHrid: optimalTraditional.protectionItemHrid || getCheapestProtectionPrice(itemHrid)?.itemHrid,
+            protectionCount: totalProtections,
+            protectionUnitPrice:
+                optimalTraditional.protectionAskPrice || getCheapestProtectionPrice(itemHrid)?.price || 0,
+            mirrorCount,
+            mirrorPrice,
+            baseItemHrid: itemHrid,
+            baseCount: totalBaseItems,
+            baseUnitPrice: traditionalCosts[0],
+        }),
     };
+}
+
+/**
+ * Fixed price for untradeable trainee charms, which have no market listing.
+ */
+const TRAINEE_CHARM_PRICE = 250000;
+
+/**
+ * Price one enhancement material.
+ *
+ * Three callers used to each carry their own copy of these rules — trainee charms are
+ * untradeable and priced flat, coins are worth their face value, and a market quote with one
+ * side missing borrows the side that exists — and they had already drifted apart. This is the
+ * single answer all of them ask.
+ *
+ * @param {string} itemHrid - Material item HRID
+ * @param {'ask'|'bid'} [side='ask'] - Which side of the book to price against
+ * @returns {number} Unit price in coins, or 0 when nothing is known about the item
+ */
+export function getEnhancementMaterialPrice(itemHrid, side = 'ask') {
+    if (!itemHrid) return 0;
+
+    // Untradeable: no market listing exists, so use the fixed value on both sides
+    if (itemHrid.startsWith('/items/trainee_')) {
+        return TRAINEE_CHARM_PRICE;
+    }
+    if (itemHrid === '/items/coin') {
+        return 1;
+    }
+
+    const marketPrice = getItemPrices(itemHrid, 0);
+    if (marketPrice) {
+        let ask = marketPrice.ask;
+        let bid = marketPrice.bid;
+
+        // Match MCS behavior: when only one side is quoted, both sides use it
+        if (ask > 0 && bid < 0) bid = ask;
+        if (bid > 0 && ask < 0) ask = bid;
+
+        const price = side === 'bid' ? bid : ask;
+        if (price > 0) return price;
+    }
+
+    // Fallback: production cost, then NPC sell price
+    const gameData = dataManager.getInitClientData();
+    const materialDetail = gameData?.itemDetailMap?.[itemHrid];
+    return getProductionCost(itemHrid, side) || materialDetail?.sellPrice || 0;
 }
 
 /**
  * Calculate total cost for enhancement path
  * Matches original MWI Tools v25.0 cost calculation
+ * @param {string} itemHrid - Item HRID
+ * @param {number} targetLevel - Target enhancement level
+ * @param {number} protectFrom - Protection threshold
+ * @param {Object} config - Enhancement configuration
+ * @param {Object} pathResult - Markov result for this strategy, already computed by the caller
  * @private
  */
-function calculateTotalCost(itemHrid, targetLevel, protectFrom, config) {
+function calculateTotalCost(itemHrid, targetLevel, protectFrom, config, pathResult) {
     const gameData = dataManager.getInitClientData();
     const itemDetails = gameData.itemDetailMap[itemHrid];
-    const itemLevel = itemDetails.itemLevel || 1;
-
-    // Calculate total attempts for full path (0 to targetLevel)
-    const pathResult = calculateEnhancement({
-        enhancingLevel: config.enhancingLevel,
-        houseLevel: config.houseLevel,
-        toolBonus: config.toolBonus || 0,
-        speedBonus: config.speedBonus || 0,
-        itemLevel,
-        targetLevel,
-        protectFrom,
-        blessedTea: config.teas.blessed,
-        guzzlingBonus: config.guzzlingBonus,
-    });
 
     // Calculate per-action material cost (same for all enhancement levels)
     // enhancementCosts is a flat array of materials needed per attempt
@@ -399,39 +619,8 @@ function calculateTotalCost(itemHrid, targetLevel, protectFrom, config) {
     if (itemDetails.enhancementCosts) {
         for (const material of itemDetails.enhancementCosts) {
             const materialDetail = gameData.itemDetailMap[material.itemHrid];
-            let price;
-            let bidPrice = 0;
-
-            // Special case: Trainee charms have fixed 250k price (untradeable)
-            if (material.itemHrid.startsWith('/items/trainee_')) {
-                price = 250000;
-                bidPrice = 250000;
-            } else if (material.itemHrid === '/items/coin') {
-                price = 1; // Coins have face value of 1
-                bidPrice = 1;
-            } else {
-                const marketPrice = getItemPrices(material.itemHrid, 0);
-                if (marketPrice) {
-                    let ask = marketPrice.ask;
-                    let bid = marketPrice.bid;
-
-                    // Match MCS behavior: if one price is positive and other is negative, use positive for both
-                    if (ask > 0 && bid < 0) {
-                        bid = ask;
-                    }
-                    if (bid > 0 && ask < 0) {
-                        ask = bid;
-                    }
-
-                    // MCS uses just ask for material prices
-                    price = ask;
-                    bidPrice = bid;
-                } else {
-                    // Fallback: production cost, then NPC sell price
-                    price = getProductionCost(material.itemHrid, 'ask') || materialDetail?.sellPrice || 0;
-                    bidPrice = getProductionCost(material.itemHrid, 'bid') || materialDetail?.sellPrice || 0;
-                }
-            }
+            const price = getEnhancementMaterialPrice(material.itemHrid, 'ask');
+            const bidPrice = getEnhancementMaterialPrice(material.itemHrid, 'bid');
             perActionCost += price * material.count;
 
             const totalQuantity = material.count * pathResult.attempts;
@@ -707,30 +896,17 @@ export function getCheapestProtectionPrice(itemHrid) {
 }
 
 /**
- * Fibonacci calculation for item quantities (from Enhancelator)
- * @private
+ * Minimum sell price that covers the total cost plus a target hourly rate for the
+ * time the enhancement takes, optionally grossed up for the marketplace seller tax.
+ * @param {number} totalCost - Total cost to reach the level, on one side (ask or bid)
+ * @param {number} totalTimeSeconds - Total enhancing time, in seconds
+ * @param {number} hourlyRate - Target coins/hour for time spent
+ * @param {boolean} includeTax - Whether to gross up for the marketplace seller tax
+ * @returns {number} Minimum sell price
  */
-function fib(n) {
-    let a = 1,
-        b = 1;
-    for (let i = 2; i <= n; i++) {
-        [a, b] = [b, a + b];
-    }
-    return b;
-}
-
-/**
- * Mirror Fibonacci calculation for mirror quantities (from Enhancelator)
- * @private
- */
-function mirrorFib(n) {
-    if (n === 0) return 1;
-    let a = 1,
-        b = 2;
-    for (let i = 2; i <= n; i++) {
-        [a, b] = [b, a + b + 1];
-    }
-    return b;
+export function calculateMinimumSellPrice(totalCost, totalTimeSeconds, hourlyRate, includeTax) {
+    const breakeven = totalCost + hourlyRate * (totalTimeSeconds / 3600);
+    return includeTax ? breakeven / (1 - MARKET_TAX) : breakeven;
 }
 
 /**
@@ -743,7 +919,8 @@ export function buildEnhancementTooltipHTML(enhancementData) {
         return '';
     }
 
-    const { itemHrid, targetLevel, optimalStrategy, xpPerHour, totalExpectedXP } = enhancementData;
+    const { itemHrid, targetLevel, optimalStrategy, xpPerHour, totalExpectedXP, paramsNote, enhancementParams } =
+        enhancementData;
 
     // Validate required fields
     if (
@@ -756,8 +933,15 @@ export function buildEnhancementTooltipHTML(enhancementData) {
         return '';
     }
 
-    let html = '<div style="border-top: 1px solid rgba(255,255,255,0.2); margin-top: 8px; padding-top: 8px;">';
-    html += '<div style="font-weight: bold; margin-bottom: 4px;">ENHANCEMENT PATH (+0 → +' + targetLevel + ')</div>';
+    let html =
+        `<div ${sectionAttributes('path', itemHrid, targetLevel)} ` +
+        'style="border-top: 1px solid rgba(255,255,255,0.2); margin-top: 8px; padding-top: 8px;">';
+    html +=
+        '<div style="font-weight: bold; margin-bottom: 4px;">ENHANCEMENT PATH (+0 → +' +
+        targetLevel +
+        ')' +
+        buildSourceChipHTML(enhancementParams) +
+        '</div>';
     html += '<div style="font-size: 0.9em; margin-left: 8px;">';
 
     // Optimal strategy
@@ -791,12 +975,14 @@ export function buildEnhancementTooltipHTML(enhancementData) {
     html += '<th style="padding: 2px 4px; text-align: right;">Bid</th>';
     html += '</tr>';
 
+    // Hoisted so both breakdowns populate them and the minimum-sell section below can read them
+    let totalAsk = 0;
+    let totalBid = 0;
+
     // Check if using mirror optimization
     if (optimalStrategy.usedMirror && optimalStrategy.consumedItems && optimalStrategy.consumedItems.length > 0) {
         // Mirror-optimized breakdown
         // Calculate totals for mirror path
-        let totalAsk = 0;
-        let totalBid = 0;
 
         // Consumed items (enhanced items at specific levels)
         const sortedConsumed = [...optimalStrategy.consumedItems]
@@ -868,8 +1054,8 @@ export function buildEnhancementTooltipHTML(enhancementData) {
         // Traditional (non-mirror) breakdown
         // Calculate totals
         let totalCount = 1; // Base item counts as 1
-        let totalAsk = optimalStrategy.baseAskPrice || optimalStrategy.baseCost;
-        let totalBid = optimalStrategy.baseBidPrice || optimalStrategy.baseCost;
+        totalAsk = optimalStrategy.baseAskPrice || optimalStrategy.baseCost;
+        totalBid = optimalStrategy.baseBidPrice || optimalStrategy.baseCost;
 
         const rows = [];
 
@@ -985,10 +1171,132 @@ export function buildEnhancementTooltipHTML(enhancementData) {
         html += '<div>Total XP: ~' + formatLargeNumber(totalExpectedXP) + '</div>';
     }
 
+    // Target hourly rate / minimum sell price — only when a rate is configured.
+    // The rate is a text setting, so it is read with getSettingValue(); getSetting() only
+    // ever answers with a boolean and would silently parse to 0 here.
+    const hourlyRate = parseItemCount(config.getSettingValue('itemTooltip_enhancingHourlyRate', ''), 0);
+    if (hourlyRate > 0) {
+        const includeTax = config.getSetting('itemTooltip_enhancingHourlyRateTax');
+        const minSellAsk = calculateMinimumSellPrice(totalAsk, optimalStrategy.totalTime, hourlyRate, includeTax);
+        const minSellBid = calculateMinimumSellPrice(totalBid, optimalStrategy.totalTime, hourlyRate, includeTax);
+
+        const enhancedPrices = getItemPrices(itemHrid, targetLevel);
+        const priceColor = (price, minimum) =>
+            price > 0 ? (price >= minimum ? config.COLOR_TOOLTIP_PROFIT : config.COLOR_TOOLTIP_LOSS) : '';
+        const askColor = priceColor(enhancedPrices?.ask, minSellAsk);
+        const bidColor = priceColor(enhancedPrices?.bid, minSellBid);
+
+        html += '<div style="margin-top: 4px;">Your rate: ' + formatKMB(hourlyRate) + '/hr</div>';
+        html += '<div>Minimum sell: ';
+        html += `<span${askColor ? ` style="color: ${askColor};"` : ''}>${formatKMB(minSellAsk)}</span>(ask)/`;
+        html += `<span${bidColor ? ` style="color: ${bidColor};"` : ''}>${formatKMB(minSellBid)}</span>(bid)`;
+        html += '</div>';
+    }
+
+    // A quiet note, not a warning: these numbers are only as true as the stats behind them,
+    // and a hand-entered stat is the one place they can quietly stop describing this character
+    if (paramsNote) {
+        html += `<div style="margin-top: 4px; font-size: 0.8em; opacity: 0.6;">${paramsNote}</div>`;
+    }
+
     html += '</div>'; // Close margin-left div
     html += '</div>'; // Close main container
 
     return html;
+}
+
+/**
+ * Redraw every enhancement section currently on screen with whatever source is now active.
+ *
+ * The sections are plain HTML inside a game tooltip, so the cheapest correct refresh is to
+ * rebuild the same section from the same item and level and swap it in. Anything still open
+ * therefore switches the moment the toggle flips, rather than showing the old kit's numbers
+ * under the new kit's label until the next hover.
+ */
+export function rerenderOpenEnhancementSections() {
+    if (typeof document === 'undefined') return;
+
+    for (const section of document.querySelectorAll(`[${SECTION_ATTR}]`)) {
+        try {
+            const itemHrid = section.getAttribute('data-toolasha-enh-item');
+            if (!itemHrid) continue;
+
+            const kind = section.getAttribute(SECTION_ATTR);
+            const params = getTooltipEnhancementParams(itemHrid);
+
+            let html;
+            if (kind === 'milestones') {
+                html = buildEnhancementMilestonesHTML(itemHrid, params);
+            } else {
+                const level = parseInt(section.getAttribute('data-toolasha-enh-level'), 10);
+                const data = level > 0 ? calculateEnhancementPath(itemHrid, level, params) : null;
+                html = data ? buildEnhancementTooltipHTML(data) : '';
+            }
+
+            // An empty rebuild means the new params produced nothing to say; leaving the old
+            // section up would label it with a source that did not produce it, so it goes
+            section.outerHTML = html;
+        } catch (error) {
+            console.error('[Enhancement Tooltip] Failed to redraw section for new stats source:', error);
+        }
+    }
+}
+
+let _sourceToggleHandlers = null;
+
+/**
+ * Make the source chip live: clicking it, or pressing P while a section is on screen, switches
+ * the prediction between the player's own stats and pro rates and redraws what is open.
+ *
+ * The key is what makes the toggle usable on a hover tooltip, which vanishes the moment the
+ * pointer leaves the item it describes — there is no way to walk the cursor over to the chip.
+ * The chip stays clickable for the tooltips that do stay open (item click popups).
+ */
+export function installEnhancementSourceToggle() {
+    if (typeof document === 'undefined' || _sourceToggleHandlers) return;
+
+    const flip = () => {
+        toggleProRates();
+        rerenderOpenEnhancementSections();
+    };
+
+    const onClick = (event) => {
+        const chip = event.target?.closest?.(`.${SOURCE_CHIP_CLASS}`);
+        if (!chip) return;
+        event.preventDefault();
+        event.stopPropagation();
+        flip();
+    };
+
+    const onKeyDown = (event) => {
+        if (event.key?.toLowerCase() !== 'p' || event.ctrlKey || event.altKey || event.metaKey) return;
+
+        // Never steal a keystroke from chat, a price box or any other field being typed into
+        const target = event.target;
+        const tag = target?.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target?.isContentEditable) return;
+
+        // Only meaningful while a prediction is actually on screen to be re-sourced
+        if (!document.querySelector(`[${SECTION_ATTR}]`)) return;
+
+        event.preventDefault();
+        flip();
+    };
+
+    document.addEventListener('click', onClick, true);
+    document.addEventListener('keydown', onKeyDown, true);
+    _sourceToggleHandlers = { onClick, onKeyDown };
+}
+
+/**
+ * Remove the source toggle's listeners.
+ */
+export function uninstallEnhancementSourceToggle() {
+    if (typeof document === 'undefined' || !_sourceToggleHandlers) return;
+
+    document.removeEventListener('click', _sourceToggleHandlers.onClick, true);
+    document.removeEventListener('keydown', _sourceToggleHandlers.onKeyDown, true);
+    _sourceToggleHandlers = null;
 }
 
 const MILESTONE_LEVELS = [5, 7, 10, 12];
@@ -1039,8 +1347,13 @@ export function buildEnhancementMilestonesHTML(itemHrid, enhancementConfig) {
     const thStyle = (align = 'right') =>
         `style="padding: 1px 6px; text-align: ${align}; opacity: 0.6; font-weight: normal;"`;
 
-    let html = '<div style="border-top: 1px solid rgba(255,255,255,0.2); margin-top: 8px; padding-top: 8px;">';
-    html += '<div style="font-weight: bold; margin-bottom: 4px;">Enhancement Milestones</div>';
+    let html =
+        `<div ${sectionAttributes('milestones', itemHrid, 0)} ` +
+        'style="border-top: 1px solid rgba(255,255,255,0.2); margin-top: 8px; padding-top: 8px;">';
+    html +=
+        '<div style="font-weight: bold; margin-bottom: 4px;">Enhancement Milestones' +
+        buildSourceChipHTML(enhancementConfig) +
+        '</div>';
     html += '<table style="font-size: 0.9em; border-collapse: collapse; width: 100%;">';
     html += '<thead><tr>';
     html += `<th ${thStyle('left')}>Level</th>`;
@@ -1061,6 +1374,12 @@ export function buildEnhancementMilestonesHTML(itemHrid, enhancementConfig) {
     }
 
     html += '</tbody></table>';
+
+    const paramsNote = describeEnhancementSource(enhancementConfig).detail;
+    if (paramsNote) {
+        html += `<div style="font-size: 0.8em; opacity: 0.6; margin-top: 2px;">${paramsNote}</div>`;
+    }
+
     html += '</div>';
 
     return html;

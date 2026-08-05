@@ -9,6 +9,10 @@ import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
 import dataManager from '../../core/data-manager.js';
 import actionPanelSort from './action-panel-sort.js';
+// Through the default export rather than as named imports: the combat sim panel
+// is a bundle of its own, and a cross-bundle named import compiles to a property
+// read off a global that carries only that default
+import combatSimUI from '../combat-sim/combat-sim-ui.js';
 import { calculateGatheringProfit } from './gathering-profit.js';
 import { calculateProductionProfit } from './production-profit.js';
 import { calculateExpPerHour } from '../../utils/experience-calculator.js';
@@ -79,6 +83,73 @@ function formatCompact(value) {
         formatted = numberFormatter(value);
     }
     return formatted;
+}
+
+/**
+ * How long ago, in the roughest terms that are still true.
+ * @param {number|null} timestamp - Epoch milliseconds
+ * @param {number} [now] - Epoch milliseconds to measure from
+ * @returns {string} e.g. `3d ago`, or '' when there is no timestamp
+ */
+export function formatAge(timestamp, now = Date.now()) {
+    if (!timestamp) return '';
+    const minutes = Math.max(0, Math.round((now - timestamp) / 60000));
+    if (minutes < 60) return `${minutes}m ago`;
+    const hours = Math.round(minutes / 60);
+    if (hours < 48) return `${hours}h ago`;
+    return `${Math.round(hours / 24)}d ago`;
+}
+
+/**
+ * The last all-zones simulation, as rows this table can rank.
+ *
+ * Combat is the one thing the pinned list could never answer — a zone is not a
+ * pinnable action, so "is fighting worth more than milking right now" had no
+ * page to be asked on. A finished simulation already knows, and this is the
+ * shape it has to be in to sit beside a gathering action.
+ *
+ * Rows carry when they were measured and whether the gear has moved since,
+ * because a profit figure from a loadout you no longer wear is not wrong so much
+ * as about somebody else.
+ *
+ * @param {Object|null} snapshot - From `combatSimUI.loadAllZonesSnapshot`
+ * @param {string|null} currentFingerprint - From `combatSimUI.currentGearFingerprint`
+ * @returns {Array<Object>} Rows in the same shape as a pinned action
+ */
+export function combatZoneRows(snapshot, currentFingerprint) {
+    if (!snapshot || !Array.isArray(snapshot.zones)) return [];
+
+    // Only a mismatch between two known signatures means anything: an unsigned
+    // run, or a character whose gear cannot be read, is not evidence of change
+    const gearChanged = Boolean(
+        snapshot.fingerprint && currentFingerprint && snapshot.fingerprint !== currentFingerprint
+    );
+
+    return snapshot.zones
+        .filter((zone) => zone?.zoneHrid)
+        .map((zone) => {
+            const tier = zone.difficultyTier ?? 0;
+            const zoneName = zone.zoneName || zone.zoneHrid.split('/').pop().replace(/_/g, ' ');
+
+            return {
+                // Namespaced by tier: one zone is several rows, and they must not
+                // collide with each other or with a pinned action's own key
+                actionHrid: `${zone.zoneHrid}|T${tier}`,
+                baseActionHrid: zone.zoneHrid,
+                name: `${zoneName} T${tier}`,
+                skill: 'Combat',
+                type: '/action_types/combat',
+                outputItemHrid: null,
+                // Not a level requirement in the sense the column means — a zone
+                // asks for gear, not a number — so it sorts with the unknowns
+                level: null,
+                profitPerHour: Number.isFinite(zone.profitPerHour) ? zone.profitPerHour : null,
+                expPerHour: Number.isFinite(zone.xpPerHour) ? zone.xpPerHour : null,
+                source: 'combat-sim',
+                simulatedAt: snapshot.savedAt ?? null,
+                gearChanged,
+            };
+        });
 }
 
 class PinnedActionsPage {
@@ -275,11 +346,33 @@ class PinnedActionsPage {
             });
         }
 
+        await this.loadSimulatedCombatZones();
+
         if (!this.itemsSpriteUrl) {
             this.itemsSpriteUrl = await assetManifest.getSpriteUrl('items');
         }
 
         this.renderTable();
+    }
+
+    /**
+     * Add the last all-zones simulation's zones to the list.
+     *
+     * Read from storage rather than from the simulator panel, so the rows are
+     * here on a fresh page load with the panel never opened — which is the only
+     * way this is worth anything, since nobody re-runs a ten-minute simulation
+     * to decide what to do next.
+     */
+    async loadSimulatedCombatZones() {
+        try {
+            const snapshot = await combatSimUI.loadAllZonesSnapshot();
+            if (!snapshot) return;
+
+            const fingerprint = await combatSimUI.currentGearFingerprint();
+            this.allActions.push(...combatZoneRows(snapshot, fingerprint));
+        } catch (error) {
+            console.error('[PinnedActionsPage] Loading simulated combat zones failed:', error);
+        }
     }
 
     /**
@@ -548,9 +641,9 @@ class PinnedActionsPage {
 
             row.innerHTML = `
                 <span style="display: flex; align-items: center; justify-content: center;">${iconHtml}</span>
-                <span style="font-weight: 500; text-align: left;">${action.name}</span>
+                <span style="font-weight: 500; text-align: left;">${action.name}${this.provenanceHtml(action)}</span>
                 <span style="color: #aaa; font-size: 0.9em; text-align: left;">${action.skill}</span>
-                <span style="color: #aaa; text-align: left;">${action.level}</span>
+                <span style="color: #aaa; text-align: left;">${action.level ?? '—'}</span>
                 <span style="text-align: right; color: ${profitColor};">
                     ${profitPrefix}${formatCompact(action.profitPerHour)}
                 </span>
@@ -586,6 +679,32 @@ class PinnedActionsPage {
     }
 
     /**
+     * Where a simulated row's numbers came from, and whether to believe them.
+     *
+     * A pinned action's figures are computed from the market this second; a
+     * combat zone's are from whenever the simulation was run, in whatever was
+     * being worn then. Saying so is the difference between a comparison and a
+     * trap.
+     *
+     * @param {Object} action - A row from `getFilteredSorted`
+     * @returns {string} HTML, empty for rows computed live
+     */
+    provenanceHtml(action) {
+        if (action.source !== 'combat-sim') return '';
+
+        const age = formatAge(action.simulatedAt);
+        const simulated = age
+            ? `<span style="color: #666; font-size: 0.8em; margin-left: 6px;" title="From the last all-zones simulation">sim ${age}</span>`
+            : '';
+        const stale = action.gearChanged
+            ? `<span style="color: #d9a441; font-size: 0.8em; margin-left: 6px;"
+                title="Your equipment has changed since this zone was simulated — re-run the all-zones simulation for current numbers">gear changed since</span>`
+            : '';
+
+        return `${simulated}${stale}`;
+    }
+
+    /**
      * Render the materials tab (per-production-action material breakdown)
      */
     async renderMaterialsTab() {
@@ -600,7 +719,8 @@ class PinnedActionsPage {
         }
 
         const actions = this.getFilteredSorted();
-        const productionActions = actions.filter((a) => !GATHERING_TYPES.includes(a.type));
+        // Simulated combat zones consume no materials and have no recipe to walk
+        const productionActions = actions.filter((a) => !GATHERING_TYPES.includes(a.type) && a.source !== 'combat-sim');
 
         if (productionActions.length === 0) {
             const empty = document.createElement('div');

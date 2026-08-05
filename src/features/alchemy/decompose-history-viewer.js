@@ -7,6 +7,7 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import { decomposeHistoryTracker } from './decompose-history-tracker.js';
+import { getAlchemyCoinCost } from '../../utils/alchemy-fees.js';
 import { getItemPrices } from '../../utils/market-data.js';
 import { formatKMB, formatDateTime } from '../../utils/formatters.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
@@ -463,9 +464,12 @@ class DecomposeHistoryViewer {
             (session.catalystOfDecompositionUsed || 0) * catalystPrice(CATALYST_OF_DECOMPOSITION_HRID) +
             (session.primeCatalystUsed || 0) * catalystPrice(PRIME_CATALYST_HRID);
 
-        // Alchemy coin fee: max(50, vendorPrice / 5) per item, bulkMultiplier items per attempt
-        const sellPrice = itemDetails?.sellPrice || 0;
-        const coinCost = Math.max(50, Math.floor(sellPrice / 5)) * bulkMultiplier * attempts;
+        // Alchemy coin fee. This used to charge max(50, vendorPrice / 5) — the transmute
+        // formula — while every other decompose site charged (10 + itemLevel) × 5. The fee is
+        // absent from game data and unrecorded in session history, so nothing could adjudicate
+        // it; the item-level formula won as the one the rest of the codebase already agreed on.
+        // See utils/alchemy-fees.js.
+        const coinCost = getAlchemyCoinCost(itemDetails, 'decompose') * attempts;
 
         return {
             profit: revenue - inputCost - catalystCost - coinCost,

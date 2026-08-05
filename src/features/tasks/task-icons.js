@@ -166,6 +166,14 @@ class TaskIcons {
                 this.processAllTaskCards();
             }, 250);
             this.timerRegistry.registerTimeout(iconsTimeout);
+
+            // And once more, later, without clearing the markers — so a card
+            // the game had not finished redrawing at 250 ms is picked up rather
+            // than keeping the previous task's picture until something else
+            // happens to rebuild the board. A card whose name has not changed
+            // since the first pass costs nothing here.
+            const settledTimeout = setTimeout(() => this.processAllTaskCards(), 1000);
+            this.timerRegistry.registerTimeout(settledTimeout);
         };
 
         webSocketHook.on('quests_updated', questsHandler);
@@ -214,7 +222,7 @@ class TaskIcons {
      * Show warning notification in Tasks panel title
      */
     showSpriteWarning() {
-        const titleElement = document.querySelector('h1.TasksPanel_title__6_y-9');
+        const titleElement = document.querySelector(GAME.TASKS_PANEL_TITLE);
         if (!titleElement) {
             return;
         }
@@ -274,6 +282,19 @@ class TaskIcons {
         const taskCards = taskList.querySelectorAll(GAME.TASK_CARD);
 
         taskCards.forEach((card) => {
+            // A card mid-flow is left alone by every other injector, because
+            // what they draw sits in the card's own flow and moving it shifts
+            // the button under the player's pending click. The picture does
+            // not: it is one absolutely-positioned, pointer-events:none layer
+            // appended to the card, behind everything, and swapping it moves
+            // nothing and intercepts nothing.
+            //
+            // That exemption is the whole point. The game leaves the reroll
+            // chooser open after a reroll, so the card the player is looking at
+            // while they reroll again is *always* mid-flow — skipping it meant
+            // the name changed to the new task and the picture stayed on the
+            // old one, for as long as they kept going.
+
             // Get current task name
             const nameElement = card.querySelector(GAME.TASK_NAME);
             if (!nameElement) return;

@@ -9,6 +9,7 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
 import { networthFormatter, formatDateTime } from '../../utils/formatters.js';
+import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
 
 const RANGE_MS = {
     '24h': 24 * 60 * 60 * 1000,
@@ -24,6 +25,7 @@ const CATEGORIES = [
     { key: 'listings', label: 'Listings', color: '#8b5cf6' },
     { key: 'house', label: 'House', color: '#f97316' },
     { key: 'abilities', label: 'Abilities', color: '#06b6d4' },
+    { key: 'guildShrines', label: 'Guild Shrines', color: '#ec4899' },
 ];
 
 /** The chart modal's element id, and the control that opens and closes it */
@@ -48,6 +50,7 @@ class NetworthHistoryChart {
             listings: false,
             house: false,
             abilities: false,
+            guildShrines: false,
         };
         this.currentRange = '7d';
         this.currentCustomFrom = null;
@@ -150,7 +153,7 @@ class NetworthHistoryChart {
             border: 2px solid #555;
             border-radius: 8px;
             padding: 20px;
-            z-index: 100000;
+            z-index: ${PANEL_Z_CAP - 2};
             display: flex;
             flex-direction: column;
         `;
@@ -795,6 +798,10 @@ class NetworthHistoryChart {
                 if (!p._raw) return { x: p.x, y: NaN };
                 let val = p._raw[cat.key];
                 if (cat.key === 'inventory') val = (val || 0) - (p._raw.gold || 0);
+                // Older snapshots predate this category (e.g. Guild Shrines was added
+                // later) and simply never wrote the field — NaN renders as a gap
+                // rather than a fabricated zero dip.
+                if (val == null) val = NaN;
                 return { x: p.x, y: val };
             });
             datasets.push({
@@ -1073,18 +1080,20 @@ class NetworthHistoryChart {
             border-radius: 6px;
             padding: 10px 14px;
             max-height: 300px;
-            width: 360px;
+            width: min(360px, 92vw);
             overflow-y: auto;
             font-size: 12px;
             color: #ccc;
-            z-index: 100001;
+            z-index: ${PANEL_Z_CAP - 1};
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
         `;
 
-        // Position below the toggle element
+        // Position below the toggle element, pulled back from the right edge
+        // when the anchor sits closer to it than the popout is wide
         const rect = toggle.getBoundingClientRect();
+        const width = Math.min(360, window.innerWidth * 0.92);
         container.style.top = `${rect.bottom + 4}px`;
-        container.style.left = `${rect.left}px`;
+        container.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - width - 8))}px`;
 
         this.render24hBreakdown(container);
         document.body.appendChild(container);
@@ -1505,6 +1514,13 @@ class NetworthHistoryChart {
         categories.push({ label: 'Listings', value: raw.listings || 0, prev: prevRaw?.listings });
         categories.push({ label: 'House', value: raw.house || 0, prev: prevRaw?.house });
         categories.push({ label: 'Abilities', value: raw.abilities || 0, prev: prevRaw?.abilities });
+        // Older snapshots predate this field — 0 rather than undefined, consistent
+        // with the other categories above, but not backfilled onto prevRaw.
+        categories.push({
+            label: 'Guild Shrines',
+            value: raw.guildShrines || 0,
+            prev: prevRaw?.guildShrines,
+        });
         if (raw.nonExcluded != null && raw.nonExcluded !== raw.total) {
             const excluded = raw.total - raw.nonExcluded;
             const prevExcluded = prevRaw?.nonExcluded != null ? prevRaw.total - prevRaw.nonExcluded : null;
@@ -1576,7 +1592,7 @@ class NetworthHistoryChart {
 
         popup.style.cssText = `
             position: fixed;
-            z-index: 100002;
+            z-index: ${PANEL_Z_CAP};
             background: #1e1e2e;
             border: 1px solid #555;
             border-radius: 6px;

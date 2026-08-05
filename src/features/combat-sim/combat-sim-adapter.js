@@ -12,6 +12,8 @@ import loadoutSnapshot from '../combat/loadout-snapshot.js';
 import config from '../../core/config.js';
 import marketAPI from '../../api/marketplace.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
+import { DUNGEON_CHEST_ENTRY_KEYS, DUNGEON_CHEST_CHEST_KEYS } from '../../utils/dungeon-keys.js';
+import { partyLevelGaps } from '../../utils/dungeon-level-gap.js';
 
 /**
  * Extract all required game data maps from initClientData for the sim engine.
@@ -40,6 +42,115 @@ export function buildGameDataPayload() {
         openableLootDropMap: clientData.openableLootDropMap,
         labyrinthCrateDetailMap: clientData.labyrinthCrateDetailMap,
         levelExperienceTable: clientData.levelExperienceTable,
+    };
+}
+
+/**
+ * Guild shrine buffs — the levels a character buys with guild credits and tokens.
+ *
+ * The server sends the *resolved* buffs it grants (`guildActionTypeBuffsMap`),
+ * not the levels behind them, so asking "what would one more level do" means
+ * rebuilding the buff object by hand. `guildBuffDetailMap` carries everything
+ * needed: the buff's level-1 value and its per-level bonus, in exactly the shape
+ * `Buff` reads (`value = base + (level − 1) × levelBonus`).
+ *
+ * This lives here rather than in the game-data payload because the synthesis
+ * happens on the main thread — a worker is handed the finished buff array and
+ * never needs the level table.
+ * @returns {Object} guildBuffDetailMap, or an empty object before data loads
+ */
+export function getGuildBuffDetailMap() {
+    return dataManager.getInitClientData()?.guildBuffDetailMap || {};
+}
+
+/**
+ * Highest level a shrine buff can be bought to, read from its own cost table.
+ * @param {Object} detail - Entry from guildBuffDetailMap
+ * @returns {number} Max level (0 when the entry carries no costs)
+ */
+export function guildBuffMaxLevel(detail) {
+    const levels = Object.keys(detail?.levelCosts || {})
+        .map(Number)
+        .filter((level) => Number.isFinite(level));
+    return levels.length > 0 ? Math.max(...levels) : 0;
+}
+
+/**
+ * The buff objects a shrine buff grants at a given level.
+ *
+ * Boosts are resolved here rather than left as base + bonus, because the combat
+ * engine adds `flatBoost`/`ratioBoost` straight into its permanent buffs without
+ * consulting a level. The level-bonus fields are zeroed for the same reason: a
+ * reader that *does* apply them (Buff, at level 1) must not double-count.
+ *
+ * @param {Object} detail - Entry from guildBuffDetailMap
+ * @param {number} level - Purchased level (0 or less grants nothing)
+ * @returns {Array<Object>} Buff objects in the shape the server sends
+ */
+export function synthesizeGuildBuffs(detail, level) {
+    if (!detail || !(level > 0)) return [];
+    return (detail.buffs || []).map((buff) => ({
+        uniqueHrid:
+            buff.uniqueHrid ||
+            `/buff_uniques/${String(detail.hrid || '')
+                .split('/')
+                .pop()}`,
+        typeHrid: buff.typeHrid,
+        ratioBoost: (buff.ratioBoost || 0) + (level - 1) * (buff.ratioBoostLevelBonus || 0),
+        ratioBoostLevelBonus: 0,
+        flatBoost: (buff.flatBoost || 0) + (level - 1) * (buff.flatBoostLevelBonus || 0),
+        flatBoostLevelBonus: 0,
+        startTime: '0001-01-01T00:00:00Z',
+        duration: 0,
+    }));
+}
+
+/**
+ * The same buff list with one shrine buff moved to a different level.
+ *
+ * Entries are matched by buff type rather than by unique hrid: the five combat
+ * shrines grant disjoint buff types, and the level a shrine sits at is the only
+ * thing that changes about its contribution. A shrine currently at 0 contributes
+ * nothing to match, so this also covers buying the first level.
+ *
+ * @param {Array<Object>} buffs - Current buff array (not mutated)
+ * @param {Object} detail - Entry from guildBuffDetailMap
+ * @param {number} level - Level to put that shrine buff at
+ * @returns {Array<Object>} New buff array
+ */
+export function applyGuildBuffLevel(buffs, detail, level) {
+    const replaced = new Set((detail?.buffs || []).map((buff) => buff.typeHrid));
+    const kept = (Array.isArray(buffs) ? buffs : []).filter((buff) => !replaced.has(buff?.typeHrid));
+    return [...kept, ...synthesizeGuildBuffs(detail, level)];
+}
+
+/**
+ * The character's purchased level in every guild shrine buff.
+ * @returns {Object} buffHrid → level (0 for anything unpurchased)
+ */
+export function readGuildShrineLevels() {
+    const levels = {};
+    for (const buffHrid of Object.keys(getGuildBuffDetailMap())) {
+        levels[buffHrid] = dataManager.getCharacterGuildBuffLevel?.(buffHrid) || 0;
+    }
+    return levels;
+}
+
+/**
+ * The same levels, with how old the reading is.
+ *
+ * Shrine levels ride on guild traffic that may never arrive in a session, so
+ * data-manager falls back to the last reading it persisted. That is worth
+ * having and worth labelling: `hydrated` says the numbers came from storage
+ * rather than this session, and `capturedAt` is when they were true.
+ *
+ * @returns {{levels: Object, capturedAt: (number|null), hydrated: boolean}} Levels and their provenance
+ */
+export function readGuildShrineSnapshot() {
+    return {
+        levels: readGuildShrineLevels(),
+        capturedAt: dataManager.getGuildShrineCapturedAt?.() ?? null,
+        hydrated: dataManager.isGuildShrineHydrated?.() ?? false,
     };
 }
 
@@ -86,9 +197,11 @@ export function buildPlayerDTO() {
         drinks: [],
         abilities: [],
         houseRooms: {},
-        tokenUpgrades: { speed: 0, efficiency: 0, success: 0, doubleProgress: 0 },
+        tokenUpgrades: { speed: 0, efficiency: 0, success: 0, doubleProgress: 0, experience: 0 },
         communityBuffLevels: { productionEfficiency: 0, enhancingSpeed: 0, gatheringQuantity: 0, experience: 0 },
         guildCombatBuffs: [],
+        achievementCombatBuffs: [],
+        guildShrineLevels: {},
     };
 
     // Extract all skill levels (combat + skilling)
@@ -108,6 +221,7 @@ export function buildPlayerDTO() {
             efficiency: Math.max(0, Math.floor(Number(info.labyrinthSkillingEfficiencyLevel) || 0)),
             success: Math.max(0, Math.floor(Number(info.labyrinthSkillingSuccessLevel) || 0)),
             doubleProgress: Math.max(0, Math.floor(Number(info.labyrinthSkillingDoubleProgressLevel) || 0)),
+            experience: Math.max(0, Math.floor(Number(info.labyrinthExperienceLevel) || 0)),
         };
     }
 
@@ -121,6 +235,17 @@ export function buildPlayerDTO() {
 
     // Extract guild combat buffs (pre-computed server-side per action type)
     dto.guildCombatBuffs = characterData.guildActionTypeBuffsMap?.['/action_types/combat'] || [];
+
+    // The levels behind those buffs, which the buff array itself does not carry.
+    // Editing one re-synthesizes its entries in guildCombatBuffs; the rest of the
+    // array stays exactly as the server sent it.
+    dto.guildShrineLevels = readGuildShrineLevels();
+
+    // Achievement buffs arrive the same shape and from the same kind of source —
+    // completed achievement tiers, pre-computed per action type. They were being
+    // read for every skilling calculation and dropped on the floor for combat.
+    const achievementCombatBuffs = dataManager.getAchievementBuffs('/action_types/combat');
+    dto.achievementCombatBuffs = Array.isArray(achievementCombatBuffs) ? achievementCombatBuffs : [];
 
     // Extract equipped items → keyed by equipment type
     // Prefer the always-current characterEquipment Map (updated on every items_updated WS message)
@@ -206,7 +331,12 @@ export function buildPlayerDTO() {
     }
 
     // Extract equipped abilities → array of { hrid, level, triggers }
-    const equippedAbilities = characterData.combatUnit?.combatAbilities || [];
+    //
+    // Through the data-manager getter, not off characterData directly: that is
+    // the view every ability message is applied to, and reading the raw field
+    // is what left the sim simulating a login-time kit after the labyrinth had
+    // swapped loadouts underneath it.
+    const equippedAbilities = dataManager.getEquippedAbilities?.() || characterData.combatUnit?.combatAbilities || [];
     // Slot 0 = special ability, slots 1-4 = normal abilities
     for (let i = 0; i < 5; i++) {
         dto.abilities.push(null);
@@ -630,25 +760,13 @@ export async function buildAllPlayerDTOs() {
         slotIndex++;
     }
 
-    // Calculate level gap debuff
+    // Calculate level gap debuff. The formula is shared with the live drop model
+    // in utils/dungeon-level-gap.js — kept in one place because the two used to
+    // disagree about the same party, the sim predicting a fraction of the loot
+    // and the panel afterwards calling that same player unlucky for it.
     if (players.length > 1) {
-        let maxCombatLevel = 0;
-        const levels = players.map((p) => {
-            const level = calcCombatLevel(p);
-            maxCombatLevel = Math.max(maxCombatLevel, level);
-            return level;
-        });
-
-        for (let i = 0; i < players.length; i++) {
-            const ratio = maxCombatLevel / levels[i];
-            if (ratio > 1.2) {
-                const maxDebuff = 0.9;
-                const levelPercent = Math.floor((ratio - 1.2) * 100) / 100;
-                players[i].debuffOnLevelGap = -1 * Math.min(maxDebuff, 3 * levelPercent);
-            } else {
-                players[i].debuffOnLevelGap = 0;
-            }
-        }
+        const gaps = partyLevelGaps(players.map((p) => calcCombatLevel(p)));
+        players.forEach((player, index) => (player.debuffOnLevelGap = gaps[index] ?? 0));
     }
 
     // Build playerInfo: hrid → name mapping in player order, for tab rendering
@@ -756,34 +874,20 @@ export function applyLoadoutSnapshotToDTO(dto, snapshotName, gameData) {
 
     const itemDetailMap = gameData.itemDetailMap || {};
     const abilityDetailMap = gameData.abilityDetailMap || {};
+    const characterData = dataManager.characterData;
 
     // Convert equipment: snapshot uses itemHrid, DTO keys by equipmentDetail.type.
-    // When useExactEnhancement=false, the wearable hash may store 0 for enhancement.
-    // Resolve by finding the highest enhancement of each item across all owned inventory,
-    // matching how the game treats "highest owned" loadout mode.
-    const characterData = dataManager.characterData;
-    const maxEnhancementByItem = new Map();
-    for (const item of characterData?.characterItems || []) {
-        if (!item?.itemHrid || !(item.count > 0)) continue;
-        const level = item.enhancementLevel || 0;
-        const existing = maxEnhancementByItem.get(item.itemHrid);
-        if (existing === undefined || level > existing) {
-            maxEnhancementByItem.set(item.itemHrid, level);
-        }
-    }
-
+    // The levels come from resolveEquipment rather than the stored ones — a
+    // loadout in "highest owned" mode wears whatever the best copy is now, and
+    // the stored level is only a reading from when it was last saved.
     const newEquipment = {};
-    for (const equip of snapshot.equipment || []) {
+    for (const equip of loadoutSnapshot.resolveEquipment(snapshot)) {
         const itemDetail = itemDetailMap[equip.itemHrid];
         const equipType = itemDetail?.equipmentDetail?.type;
         if (equipType) {
-            let enhancementLevel = equip.enhancementLevel || 0;
-            if (enhancementLevel === 0) {
-                enhancementLevel = maxEnhancementByItem.get(equip.itemHrid) || 0;
-            }
             newEquipment[equipType] = {
                 hrid: equip.itemHrid,
-                enhancementLevel,
+                enhancementLevel: equip.enhancementLevel,
             };
         }
     }
@@ -954,26 +1058,6 @@ export function calculateExpectedDrops(simResult, gameData, playerHrid = 'player
     return totalDropMap;
 }
 
-// Maps dungeon chest HRIDs to their required entry key HRIDs
-const DUNGEON_ENTRY_KEYS = {
-    '/items/chimerical_chest': '/items/chimerical_entry_key',
-    '/items/sinister_chest': '/items/sinister_entry_key',
-    '/items/enchanted_chest': '/items/enchanted_entry_key',
-    '/items/pirate_chest': '/items/pirate_entry_key',
-};
-
-// Maps dungeon chest HRIDs (regular + refinement) to their chest key HRIDs
-const DUNGEON_CHEST_KEYS = {
-    '/items/chimerical_chest': '/items/chimerical_chest_key',
-    '/items/sinister_chest': '/items/sinister_chest_key',
-    '/items/enchanted_chest': '/items/enchanted_chest_key',
-    '/items/pirate_chest': '/items/pirate_chest_key',
-    '/items/chimerical_refinement_chest': '/items/chimerical_chest_key',
-    '/items/sinister_refinement_chest': '/items/sinister_chest_key',
-    '/items/enchanted_refinement_chest': '/items/enchanted_chest_key',
-    '/items/pirate_refinement_chest': '/items/pirate_chest_key',
-};
-
 /**
  * Calculate dungeon key costs from a drop map.
  * Entry keys (1:1 with regular chests) + chest keys (1:1 with all chests).
@@ -989,7 +1073,7 @@ export function calculateDungeonKeyCosts(dropMap, getBuyPrice) {
 
     // Entry keys: 1 per regular chest
     for (const [chestHrid, count] of dropMap.entries()) {
-        const entryKeyHrid = DUNGEON_ENTRY_KEYS[chestHrid];
+        const entryKeyHrid = DUNGEON_CHEST_ENTRY_KEYS[chestHrid];
         if (entryKeyHrid && count > 0) {
             keyCounts[entryKeyHrid] = (keyCounts[entryKeyHrid] || 0) + count;
         }
@@ -997,7 +1081,7 @@ export function calculateDungeonKeyCosts(dropMap, getBuyPrice) {
 
     // Chest keys: 1 per chest (regular + refinement)
     for (const [chestHrid, count] of dropMap.entries()) {
-        const chestKeyHrid = DUNGEON_CHEST_KEYS[chestHrid];
+        const chestKeyHrid = DUNGEON_CHEST_CHEST_KEYS[chestHrid];
         if (chestKeyHrid && count > 0) {
             keyCounts[chestKeyHrid] = (keyCounts[chestKeyHrid] || 0) + count;
         }

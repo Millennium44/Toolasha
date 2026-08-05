@@ -9,10 +9,11 @@ import domObserver from '../../core/dom-observer.js';
 import dataManager from '../../core/data-manager.js';
 import marketAPI from '../../api/marketplace.js';
 import { calculateMaterialRequirements } from '../../utils/material-calculator.js';
-import { formatKMB, formatWithSeparator } from '../../utils/formatters.js';
+import { formatKMB, formatWithSeparator, parseKMB } from '../../utils/formatters.js';
 import { setReactInputValue } from '../../utils/react-input.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { getActionHridFromName } from '../../utils/game-lookups.js';
+import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
 
 const PRODUCTION_TYPES = [
     '/action_types/brewing',
@@ -23,20 +24,6 @@ const PRODUCTION_TYPES = [
 ];
 
 const UI_ID = 'mwi-budget-calculator';
-
-/**
- * Parse a KMB shorthand string to a number.
- * e.g. "50m" → 50000000, "1.5b" → 1500000000, "100k" → 100000
- * @param {string} str
- * @returns {number} Parsed value, or NaN if invalid
- */
-function parseKMB(str) {
-    const s = str.trim().toLowerCase();
-    const match = s.match(/^(\d+\.?\d*)\s*([kmb]?)$/);
-    if (!match) return NaN;
-    const multipliers = { k: 1e3, m: 1e6, b: 1e9 };
-    return parseFloat(match[1]) * (multipliers[match[2]] || 1);
-}
 
 /**
  * Get action HRID from panel element.
@@ -140,7 +127,7 @@ function showBreakdownModal(budget, result) {
     overlay.style.cssText = `
         position: fixed; inset: 0;
         background: rgba(0,0,0,0.75);
-        z-index: 99999;
+        z-index: ${PANEL_Z_CAP + 1};
         display: flex; align-items: center; justify-content: center;
     `;
 
@@ -359,7 +346,11 @@ class BudgetCalculator {
     _createUI(panel) {
         const wrapper = document.createElement('div');
         wrapper.id = UI_ID;
-        wrapper.style.cssText = 'display:flex; align-items:center; gap:6px; margin: 4px 0 8px 0; padding: 0 0;';
+        wrapper.style.cssText =
+            'display:flex; align-items:center; gap:6px; margin: 4px 0 8px 0; padding: 0 0;' +
+            // The row may not outgrow the column it sits in; the Calculate
+            // button was hanging past the edge of the action panel
+            'box-sizing:border-box; max-width:100%;';
 
         const input = document.createElement('input');
         input.type = 'text';

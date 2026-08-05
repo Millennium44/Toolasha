@@ -78,3 +78,64 @@ describe('SettingsStorage.importSettings known-character matching', () => {
         expect(stored.has('json:script_settingsMap_dave')).toBe(false);
     });
 });
+
+describe('one-time rewrites of superseded schema defaults', () => {
+    const KEY = 'script_settingsMap_alice';
+    const FLAG = `settings_default_rewrites_v1_${KEY}`;
+
+    /** A saved map holding the old defaults, as an existing user's would */
+    const oldDefaults = () => ({
+        labyrinthLiveCombatSim: { id: 'labyrinthLiveCombatSim', type: 'checkbox', isTrue: true },
+        labyrinthPathUnknownMode: { id: 'labyrinthPathUnknownMode', type: 'select', value: 'clearable' },
+    });
+
+    beforeEach(() => {
+        stored.clear();
+        settingsStorage.currentCharacterId = 'alice';
+        settingsStorage.currentCharacterName = 'Alice';
+    });
+
+    test('an existing user sitting on the old defaults is moved to the new ones', async () => {
+        stored.set(`json:${KEY}`, oldDefaults());
+
+        const settings = await settingsStorage.loadSettings();
+
+        expect(settings.labyrinthLiveCombatSim.isTrue).toBe(false);
+        expect(settings.labyrinthPathUnknownMode.value).toBe('shroud');
+        // and it is persisted, not just applied in memory
+        expect(stored.get(`json:${KEY}`).labyrinthLiveCombatSim.isTrue).toBe(false);
+        expect(stored.get(`json:${KEY}`).labyrinthPathUnknownMode.value).toBe('shroud');
+    });
+
+    test('a value that was never the old default is left alone', async () => {
+        stored.set(`json:${KEY}`, {
+            labyrinthLiveCombatSim: { id: 'labyrinthLiveCombatSim', type: 'checkbox', isTrue: false },
+            labyrinthPathUnknownMode: { id: 'labyrinthPathUnknownMode', type: 'select', value: 'avoid' },
+        });
+
+        const settings = await settingsStorage.loadSettings();
+
+        expect(settings.labyrinthPathUnknownMode.value).toBe('avoid');
+    });
+
+    test('re-choosing the old value after the rewrite keeps it — this runs once', async () => {
+        stored.set(`json:${KEY}`, oldDefaults());
+        await settingsStorage.loadSettings();
+        expect(stored.get(FLAG)).toBe(true);
+
+        // The user goes back to the old values on purpose
+        stored.set(`json:${KEY}`, oldDefaults());
+        const settings = await settingsStorage.loadSettings();
+
+        expect(settings.labyrinthLiveCombatSim.isTrue).toBe(true);
+        expect(settings.labyrinthPathUnknownMode.value).toBe('clearable');
+    });
+
+    test('a fresh install gets the new defaults and is flagged, so it is never revisited', async () => {
+        const settings = await settingsStorage.loadSettings();
+
+        expect(settings.labyrinthLiveCombatSim.isTrue).toBe(false);
+        expect(settings.labyrinthPathUnknownMode.value).toBe('shroud');
+        expect(stored.get(FLAG)).toBe(true);
+    });
+});

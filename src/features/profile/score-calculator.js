@@ -6,7 +6,7 @@
  * - Equipment Score: Cost to enhance equipped items
  */
 
-import { calculateAbilityCost } from '../../utils/ability-cost-calculator.js';
+import { explainAbilityCost } from '../../utils/ability-cost-calculator.js';
 import { calculateBattleHousesCost } from '../../utils/house-cost-calculator.js';
 import dataManager from '../../core/data-manager.js';
 import { getEnhancingParams } from '../../utils/enhancement-config.js';
@@ -15,6 +15,7 @@ import config from '../../core/config.js';
 import { calculateEnhancementBatch } from '../../utils/enhancement-worker-manager.js';
 import { getCheapestProtectionPrice, getRealisticBaseItemPrice } from '../enhancement/tooltip-enhancement.js';
 import { getShopCoinCost } from '../../utils/game-lookups.js';
+import { buildGoldPerCredit, priceGuildCreditCosts } from '../../utils/guild-credit-pricing.js';
 
 /**
  * Token-based item data for untradeable back slot items (capes/cloaks/quivers)
@@ -97,8 +98,16 @@ function categorizeEquipmentItem(slot, equipmentDetail) {
 
 /**
  * Calculate combat score from profile data
+ *
+ * Every breakdown row carries `name` and `value` — a label and its score,
+ * already rounded to one decimal — plus the raw `cost` in coins and whatever
+ * identifies the thing: `itemHrid`/`slot`/`enhancementLevel` for equipment,
+ * `hrid`/`itemHrid`/`level` for abilities, `level` for houses, `hrid`/`level`/
+ * `tokens` for shrines. The rounded string is what a display prints; the raw
+ * cost is what anything ordering or summing the rows should use.
+ *
  * @param {Object} profileData - Profile data from game
- * @returns {Promise<Object>} {total, house, ability, equipment, breakdown}
+ * @returns {Promise<Object>} {total, house, ability, equipment, guildShrine, guildShrineKnown, breakdown}
  */
 export async function calculateCombatScore(profileData) {
     try {
@@ -107,6 +116,9 @@ export async function calculateCombatScore(profileData) {
 
         // 2. Calculate Ability Score
         const abilityResult = calculateAbilityScore(profileData);
+
+        // 2b. Guild shrine levels, when the payload carries them
+        const guildShrineResult = calculateGuildShrineScore(profileData);
 
         // 3. Calculate Combat Equipment Score (async - runs first)
         const combatEquipmentResult = await calculateEquipmentScore(profileData, 'combat');
@@ -123,18 +135,33 @@ export async function calculateCombatScore(profileData) {
             house: houseResult.score,
             ability: abilityResult.score,
             equipment: combatEquipmentResult.score,
+            // Its own line, deliberately outside `total`: shrine levels are only
+            // ever known for your own character, so folding them in would make
+            // your score incomparable with everybody else's
+            guildShrine: guildShrineResult.score,
+            guildShrineTokens: guildShrineResult.tokens,
+            // False for every profile that is not your own — the display leaves
+            // the line out rather than printing a zero for what it cannot see
+            guildShrineKnown: guildShrineResult.known,
+            guildShrineCombat: guildShrineResult.combat.score,
+            guildShrineCombatTokens: guildShrineResult.combat.tokens,
             equipmentHidden: profileData.profile?.hideWearableItems || false,
             hasEquipmentData: combatEquipmentResult.hasEquipmentData,
             breakdown: {
                 houses: houseResult.breakdown,
                 abilities: abilityResult.breakdown,
                 equipment: combatEquipmentResult.breakdown,
+                guildShrines: guildShrineResult.breakdown,
+                guildShrinesCombat: guildShrineResult.combat.breakdown,
             },
             // Skiller score (skilling equipment only)
             skillerTotal: skillerTotalScore,
             skillerEquipment: skillerEquipmentResult.score,
+            skillerGuildShrine: guildShrineResult.skilling.score,
+            skillerGuildShrineTokens: guildShrineResult.skilling.tokens,
             skillerBreakdown: {
                 equipment: skillerEquipmentResult.breakdown,
+                guildShrines: guildShrineResult.skilling.breakdown,
             },
         };
     } catch (error) {
@@ -144,12 +171,19 @@ export async function calculateCombatScore(profileData) {
             house: 0,
             ability: 0,
             equipment: 0,
+            guildShrine: 0,
+            guildShrineTokens: 0,
+            guildShrineKnown: false,
+            guildShrineCombat: 0,
+            guildShrineCombatTokens: 0,
             equipmentHidden: false,
             hasEquipmentData: false,
-            breakdown: { houses: [], abilities: [], equipment: [] },
+            breakdown: { houses: [], abilities: [], equipment: [], guildShrines: [], guildShrinesCombat: [] },
             skillerTotal: 0,
             skillerEquipment: 0,
-            skillerBreakdown: { equipment: [] },
+            skillerGuildShrine: 0,
+            skillerGuildShrineTokens: 0,
+            skillerBreakdown: { equipment: [], guildShrines: [] },
         };
     }
 }
@@ -234,10 +268,15 @@ function calculateHouseScore(profileData) {
     // Convert to score (cost / 1 million)
     const score = totalCost / 1_000_000;
 
-    // Format breakdown for display
+    // Format breakdown for display. `name`/`value` are what the profile popup
+    // draws; `cost` and `level` ride alongside so a panel can order the lines by
+    // what they are actually worth rather than by parsing a rounded string back
+    // into a number.
     const formattedBreakdown = breakdown.map((house) => ({
         name: `${house.name} ${house.level}`,
         value: (house.cost / 1_000_000).toFixed(1),
+        cost: house.cost,
+        level: house.level,
     }));
 
     return { score, breakdown: formattedBreakdown };
@@ -258,8 +297,13 @@ function calculateAbilityScore(profileData) {
     for (const ability of equippedAbilities) {
         if (!ability.abilityHrid || ability.level === 0) continue;
 
-        const cost = calculateAbilityCost(ability.abilityHrid, ability.level);
-        totalCost += cost;
+        // A book nobody is selling has no price, and the old calculator called
+        // that zero — which put an unpriceable ability at the *bottom* of a
+        // score it should not have been contributing to silently at all
+        const priced = explainAbilityCost(ability.abilityHrid, ability.level);
+        const cost = priced?.total ?? null;
+        const unpriced = cost === null;
+        if (!unpriced) totalCost += cost;
 
         // Format ability name for display
         const abilityName = ability.abilityHrid
@@ -270,17 +314,133 @@ function calculateAbilityScore(profileData) {
 
         breakdown.push({
             name: `${abilityName} ${ability.level}`,
-            value: (cost / 1_000_000).toFixed(1),
+            value: unpriced ? 'no price' : (cost / 1_000_000).toFixed(1),
+            cost: unpriced ? 0 : cost,
+            unpriced,
+            // How many books it would take, which is the part the market cannot
+            // answer away — worth carrying even when the price is missing
+            books: priced?.books ?? 0,
+            // The book that teaches it, which is both what was priced and the
+            // only icon an ability has
+            hrid: ability.abilityHrid,
+            itemHrid: ability.abilityHrid.replace('/abilities/', '/items/'),
+            level: ability.level,
         });
     }
 
     // Convert to score (cost / 1 million)
     const score = totalCost / 1_000_000;
 
-    // Sort by value descending
-    breakdown.sort((a, b) => parseFloat(b.value) - parseFloat(a.value));
+    // By cost rather than by `value`, which is now a string that is sometimes
+    // 'no price' — and an unpriced row belongs at the bottom, not at NaN
+    breakdown.sort((a, b) => b.cost - a.cost);
 
     return { score, breakdown };
+}
+
+/**
+ * Value of the guild shrine levels a character has bought.
+ *
+ * A shrine level is paid for in guild credits and guild tokens. The credits have
+ * a gold value — the cheapest tradeable items that convert into them, the same
+ * rate the guild exchange table quotes — so the levels bought so far can be
+ * valued the way houses and abilities are. The tokens cannot: nothing converts
+ * into them, so they are returned as a count and left out of the score rather
+ * than given an invented price.
+ *
+ * Only scored when the payload carries the levels. A shared profile does not, and
+ * reading the current character's shrines while showing somebody else's card
+ * would put your guild's investment on their score. `known` says which of those
+ * two happened, so a display can leave the line out entirely rather than print a
+ * zero that reads as "this player has bought nothing".
+ *
+ * The split into combat and skilling follows the game's own `isCombat` flag on
+ * each buff rather than a list of shrine names: Force sells both a combat buff
+ * and a skilling one, and only the flag tells them apart.
+ *
+ * @param {Object} profileData - Profile data
+ * @returns {{known: boolean, score: number, tokens: number, breakdown: Array<Object>,
+ *   combat: {score: number, tokens: number, breakdown: Array<Object>},
+ *   skilling: {score: number, tokens: number, breakdown: Array<Object>}}}
+ */
+function calculateGuildShrineScore(profileData) {
+    const emptyBucket = () => ({ score: 0, tokens: 0, breakdown: [] });
+    const unknown = { known: false, ...emptyBucket(), combat: emptyBucket(), skilling: emptyBucket() };
+
+    const buffMap = profileData?.profile?.characterGuildBuffMap;
+    const gameData = dataManager.getInitClientData();
+    const detailMap = gameData?.guildBuffDetailMap;
+    // An empty map is not a reading: shrine levels ride on guild traffic that
+    // may never arrive, and `{}` is what a character looks like before it does
+    if (!buffMap || Object.keys(buffMap).length === 0 || !detailMap) return unknown;
+
+    // Built once and shared: every level of every shrine prices the same credits
+    const goldPerCredit = buildGoldPerCredit('ask');
+
+    let totalCost = 0;
+    let totalTokens = 0;
+    const breakdown = [];
+    const combat = { cost: 0, tokens: 0, breakdown: [] };
+    const skilling = { cost: 0, tokens: 0, breakdown: [] };
+
+    for (const [buffHrid, entry] of Object.entries(buffMap)) {
+        const level = Math.max(0, Math.floor(Number(entry?.level) || 0));
+        const detail = detailMap[buffHrid];
+        if (!detail || level <= 0) continue;
+
+        let cost = 0;
+        let tokens = 0;
+        for (let step = 1; step <= level; step++) {
+            const levelCost = detail.levelCosts?.[String(step)];
+            if (!levelCost) continue;
+            tokens += Math.max(0, Math.floor(Number(levelCost.guildTokenCost) || 0));
+            // An unpriced credit contributes nothing rather than blocking the
+            // whole score: this is a running total of what was invested, and one
+            // credit type without a conversion should not blank the other four
+            const { lines } = priceGuildCreditCosts(levelCost.creditCosts, { goldPerCredit });
+            for (const line of lines) cost += line.gold || 0;
+        }
+
+        totalCost += cost;
+        totalTokens += tokens;
+
+        const name = (detail.shrineHrid || buffHrid)
+            .split('/')
+            .pop()
+            .split('_')
+            .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+            .join(' ');
+        const row = {
+            name: `${name} ${level}`,
+            value: (cost / 1_000_000).toFixed(1),
+            cost,
+            hrid: buffHrid,
+            level,
+            // Kept per shrine as well as in the totals: a shrine whose gold value
+            // is small may still be where most of the tokens went
+            tokens,
+        };
+        breakdown.push(row);
+
+        const bucket = detail.isCombat ? combat : skilling;
+        bucket.cost += cost;
+        bucket.tokens += tokens;
+        bucket.breakdown.push(row);
+    }
+
+    const byValue = (a, b) => parseFloat(b.value) - parseFloat(a.value);
+    breakdown.sort(byValue);
+    combat.breakdown.sort(byValue);
+    skilling.breakdown.sort(byValue);
+
+    return {
+        known: true,
+        score: totalCost / 1_000_000,
+        tokens: totalTokens,
+        breakdown,
+        combat: { score: combat.cost / 1_000_000, tokens: combat.tokens, breakdown: combat.breakdown },
+        skilling: { score: skilling.cost / 1_000_000, tokens: skilling.tokens, breakdown: skilling.breakdown },
+    };
 }
 
 /**
@@ -361,6 +521,10 @@ async function calculateEquipmentScore(profileData, scoreType = 'combat') {
 
         itemsToProcess.push({
             itemHrid,
+            // Which slot it came out of, carried through so a breakdown can say
+            // where on the character the cost sits — two rings priced the same
+            // are otherwise two identical lines
+            slot,
             enhancementLevel,
             itemDetails,
             itemLevel,
@@ -498,6 +662,10 @@ async function calculateEquipmentScore(profileData, scoreType = 'combat') {
             breakdown.push({
                 name: displayName,
                 value: formattedValue,
+                cost: itemCost,
+                itemHrid: item.itemHrid,
+                slot: item.slot,
+                enhancementLevel: item.enhancementLevel,
             });
         }
     }

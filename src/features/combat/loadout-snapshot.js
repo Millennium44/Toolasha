@@ -63,6 +63,53 @@ function parseWearable(itemLocationHrid, wearableHash) {
 }
 
 /**
+ * The best enhancement level owned of every item, from the inventory.
+ *
+ * Equipped pieces are in `characterItems` alongside the loose ones, so this
+ * covers what is worn as well as what is in the bag — which is what "highest
+ * owned" means to the game.
+ *
+ * @param {Array<Object>} [items] - Defaults to the live inventory
+ * @returns {Map<string, number>} Item hrid → highest enhancement level owned
+ */
+export function highestOwnedEnhancements(items) {
+    const inventory = items || dataManager.characterItems || dataManager.characterData?.characterItems || [];
+    const highest = new Map();
+    for (const item of inventory) {
+        if (!item?.itemHrid || !(item.count > 0)) continue;
+        const level = item.enhancementLevel || 0;
+        if (!highest.has(item.itemHrid) || level > highest.get(item.itemHrid)) {
+            highest.set(item.itemHrid, level);
+        }
+    }
+    return highest;
+}
+
+/**
+ * What one slot of a loadout is really wearing.
+ *
+ * A loadout pinned with "use exact enhancement" wears what it says. Every other
+ * loadout wears the best copy owned, so a stored level is a stale reading of
+ * that rather than a fact — it is the level at the moment the loadout was last
+ * saved, and enhancing the item since does not rewrite it.
+ *
+ * Never lower than what is stored: an inventory that has not arrived yet is an
+ * empty map, and dropping a known +10 to 0 on the strength of it would be worse
+ * than the staleness this is here to fix.
+ *
+ * @param {Object} snapshot - The loadout
+ * @param {Object} equip - One entry of `snapshot.equipment`
+ * @param {Map<string, number>} owned - From `highestOwnedEnhancements`
+ * @returns {number} Enhancement level
+ */
+export function resolveEnhancementLevel(snapshot, equip, owned) {
+    const stored = equip?.enhancementLevel || 0;
+    if (snapshot?.useExactEnhancement) return stored;
+    const highest = owned?.get(equip?.itemHrid);
+    return highest === undefined ? stored : Math.max(stored, highest);
+}
+
+/**
  * Convert a server loadout object into our snapshot format.
  * @param {Object} loadout - A loadout entry from characterLoadoutMap
  * @returns {Object} snapshot
@@ -154,9 +201,11 @@ class LoadoutSnapshot {
         // UI, so storage is always the source of snapshots at startup.
         if (Object.keys(this.snapshots).length === 0) {
             const storageKey = getStorageKey();
-            // NOTE: getCurrentCharacterId() may be null at this point (before init_character_data
-            // arrives), so getStorageKey() may return 'loadout_snapshots_default'. We will reload
-            // from the correct key once character_initialized fires.
+            // NOTE: getCurrentCharacterId() is set by the time this runs, because
+            // features are initialized from inside the character_initialized
+            // handler — so the key here is already character-scoped. The listener
+            // below cannot correct it if it ever were not: that event has already
+            // fired and will only come again on a character switch.
             this.snapshots = (await storage.getJSON(storageKey, 'settings', null)) || {};
 
             // Fallback for Steam users: if storage is also empty, bootstrap from
@@ -298,6 +347,29 @@ class LoadoutSnapshot {
      */
     getAllSnapshots() {
         return Object.values(this.snapshots).sort((a, b) => a.ordinal - b.ordinal);
+    }
+
+    /**
+     * The equipment a loadout would actually put on, at the levels it would
+     * actually wear.
+     *
+     * A snapshot's stored enhancement level is only the truth for a loadout
+     * pinned with "use exact enhancement". The default is the other way round —
+     * the game equips the **highest copy you own** — and the wearable hash the
+     * snapshot is parsed from routinely carries 0, or a level from before the
+     * last enhancement. Reading it literally reports a refined cape at +0 while
+     * the character is wearing it at +10, and every number computed from that
+     * loadout is quietly wrong in the same direction.
+     *
+     * @param {Object} snapshot - From `snapshots` / `getAllSnapshots`
+     * @returns {Array<{itemHrid: string, enhancementLevel: number, itemLocationHrid: string}>}
+     */
+    resolveEquipment(snapshot) {
+        const owned = highestOwnedEnhancements();
+        return (snapshot?.equipment || []).map((equip) => ({
+            ...equip,
+            enhancementLevel: resolveEnhancementLevel(snapshot, equip, owned),
+        }));
     }
 
     /**

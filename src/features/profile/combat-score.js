@@ -12,11 +12,13 @@ import { numberFormatter } from '../../utils/formatters.js';
 import { constructExportObject } from '../combat/combat-sim-export.js';
 import { constructMilkonomyExport } from '../combat/milkonomy-export.js';
 import { handleViewCardClick, handleViewCardFromSnapshot } from './character-card-button.js';
+import { buildScorePanel } from './build-score-panel.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import loadoutSnapshot from '../combat/loadout-snapshot.js';
 import combatSimUI from '../combat-sim/combat-sim-ui.js';
 import { buildPlayerDTOFromProfile } from '../combat-sim/combat-sim-adapter.js';
+import { terminateWorkerPool } from '../../utils/enhancement-worker-manager.js';
 
 /**
  * Escape a string for safe interpolation into innerHTML.
@@ -165,6 +167,69 @@ class CombatScore {
     }
 
     /**
+     * The guild shrine contribution line, or nothing at all.
+     *
+     * Shrine levels are known for exactly one character — yours. Every other
+     * profile the panel opens is a `profile_shared` payload that has never
+     * carried them, so there is no figure to show and a zero would be a lie
+     * about the player rather than about the data. The line is therefore built
+     * only when the score says the levels were actually read, and only when
+     * something was bought: a shrine at level 0 is worth no row.
+     *
+     * Scored the same way House and Ability are — what it cost, in millions of
+     * coins — so the three lines under a score add up in the same units. Guild
+     * tokens have no gold price and never will, so they ride in the tooltip.
+     *
+     * @param {Object} scoreData - Result of `calculateCombatScore`
+     * @param {string} scope - 'combat' or 'skiller'
+     * @returns {string} HTML for the toggle and its breakdown, or ''
+     */
+    buildGuildShrineHTML(scoreData, scope) {
+        if (!scoreData?.guildShrineKnown) return '';
+
+        const isCombat = scope === 'combat';
+        const score = (isCombat ? scoreData.guildShrineCombat : scoreData.skillerGuildShrine) || 0;
+        const tokens = (isCombat ? scoreData.guildShrineCombatTokens : scoreData.skillerGuildShrineTokens) || 0;
+        const breakdown =
+            (isCombat ? scoreData.breakdown?.guildShrinesCombat : scoreData.skillerBreakdown?.guildShrines) || [];
+        if (!(score > 0)) return '';
+
+        const prefix = isCombat ? 'mwi-guild-shrine' : 'mwi-skiller-guild-shrine';
+        const rows = breakdown
+            .map(
+                (item) =>
+                    `<div style="margin-left: 10px; font-size: 0.8rem; color: ${config.COLOR_TEXT_SECONDARY};">${escapeHtml(item.name)}: ${escapeHtml(item.value)}</div>`
+            )
+            .join('');
+
+        return `
+                <div style="cursor: pointer; margin-bottom: 4px;" id="${prefix}-toggle" title="Guild shrine levels bought, priced in guild credits. ${tokens} guild tokens also spent — tokens have no market price, so they are not counted.">
+                    + Guild Shrine: ${numberFormatter(score.toFixed(1))}
+                </div>
+                <div id="${prefix}-breakdown" style="display: none; margin-bottom: 6px;">
+                    ${rows}
+                </div>
+        `;
+    }
+
+    /**
+     * Whether the profile on screen is the character you are playing.
+     *
+     * The id lives in a different place depending on which of the three shapes
+     * the payload arrived in, which is why this is worth having once.
+     *
+     * @param {Object} profileData - Profile data from WebSocket
+     * @returns {boolean} True when this is your own profile
+     */
+    isOwnProfile(profileData) {
+        const profileCharId =
+            profileData?.profile?.sharableCharacter?.id ||
+            profileData?.profile?.characterSkills?.[0]?.characterID ||
+            profileData?.profile?.character?.id;
+        return Boolean(profileCharId) && profileCharId === dataManager.getCurrentCharacterId();
+    }
+
+    /**
      * Show combat score panel next to profile
      * @param {Object} profileData - Profile data
      * @param {Object} scoreData - Calculated score data
@@ -229,6 +294,25 @@ class CombatScore {
             )
             .join('');
 
+        // Guild shrine lines — present only for your own profile, where the
+        // levels are actually known
+        const guildShrineHTML = this.buildGuildShrineHTML(scoreData, 'combat');
+        const skillerGuildShrineHTML = this.buildGuildShrineHTML(scoreData, 'skiller');
+
+        // A way through to the standalone breakdown, on your own profile only.
+        // That panel scores the character you are playing — it cannot show
+        // anybody else's build — so offering it from another player's card would
+        // open a panel about the wrong person.
+        const breakdownLinkHTML = this.isOwnProfile(profileData)
+            ? `<span id="mwi-score-breakdown-link" style="
+                    cursor: pointer;
+                    font-size: 0.75rem;
+                    color: ${config.COLOR_TEXT_SECONDARY};
+                    text-decoration: underline;
+                    margin-right: 6px;
+                " title="Open the Build Score panel: every house, ability, item and shrine the score is made of.">breakdown</span>`
+            : '';
+
         // Build View Card button HTML (only if characterCard setting is enabled)
         const viewCardButtonHTML = config.getSetting('characterCard')
             ? `<div id="mwi-view-card-wrapper" style="position: relative; display: flex; gap: 4px;">
@@ -274,7 +358,8 @@ class CombatScore {
         // Create panel HTML
         panel.innerHTML = `
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                <div style="font-weight: bold; color: ${config.COLOR_ACCENT}; font-size: 0.9rem;">${escapeHtml(playerName)}</div>
+                <div style="font-weight: bold; color: ${config.COLOR_ACCENT}; font-size: 0.9rem; flex: 1;">${escapeHtml(playerName)}</div>
+                ${breakdownLinkHTML}
                 <span id="mwi-score-close-btn" style="
                     cursor: pointer;
                     font-size: 18px;
@@ -307,6 +392,7 @@ class CombatScore {
                 <div id="mwi-equipment-breakdown" style="display: none;">
                     ${equipmentBreakdownHTML}
                 </div>
+                ${guildShrineHTML}
             </div>
 
             <div style="cursor: pointer; font-weight: bold; margin-top: 12px; margin-bottom: 8px; color: ${config.COLOR_PROFIT}; ${!config.getSetting('combatScore') ? 'display: none;' : ''}" id="mwi-skiller-score-toggle">
@@ -319,6 +405,7 @@ class CombatScore {
                 <div id="mwi-skiller-equipment-breakdown" style="display: none;">
                     ${skillerEquipmentBreakdownHTML}
                 </div>
+                ${skillerGuildShrineHTML}
             </div>
 
             <div id="mwi-button-container" style="margin-top: 12px; display: flex; flex-direction: column; gap: 6px;">
@@ -444,6 +531,18 @@ class CombatScore {
             });
         }
 
+        // Breakdown link — present on your own profile only, see showScorePanel
+        const breakdownLink = panel.querySelector('#mwi-score-breakdown-link');
+        if (breakdownLink) {
+            breakdownLink.addEventListener('click', () => buildScorePanel.toggle());
+            breakdownLink.addEventListener('mouseover', () => {
+                breakdownLink.style.color = config.COLOR_TEXT_PRIMARY;
+            });
+            breakdownLink.addEventListener('mouseout', () => {
+                breakdownLink.style.color = config.COLOR_TEXT_SECONDARY;
+            });
+        }
+
         // Toggle main score details
         const toggleBtn = panel.querySelector('#mwi-score-toggle');
         const details = panel.querySelector('#mwi-score-details');
@@ -516,6 +615,22 @@ class CombatScore {
                 skillerEquipmentToggle.textContent =
                     (isCollapsed ? '- ' : '+ ') +
                     `Equipment: ${numberFormatter(scoreData.skillerEquipment.toFixed(1))}`;
+            });
+        }
+
+        // Toggle guild shrine breakdowns — absent on every profile but your own
+        for (const [prefix, score] of [
+            ['mwi-guild-shrine', scoreData.guildShrineCombat],
+            ['mwi-skiller-guild-shrine', scoreData.skillerGuildShrine],
+        ]) {
+            const shrineToggle = panel.querySelector(`#${prefix}-toggle`);
+            const shrineBreakdown = panel.querySelector(`#${prefix}-breakdown`);
+            if (!shrineToggle || !shrineBreakdown) continue;
+            shrineToggle.addEventListener('click', () => {
+                const isCollapsed = shrineBreakdown.style.display === 'none';
+                shrineBreakdown.style.display = isCollapsed ? 'block' : 'none';
+                shrineToggle.textContent =
+                    (isCollapsed ? '- ' : '+ ') + `Guild Shrine: ${numberFormatter((score || 0).toFixed(1))}`;
             });
         }
 
@@ -895,24 +1010,28 @@ class CombatScore {
             });
         }
 
-        // Drag to move
+        // Drag to move — pointer events so a finger works too; mousedown never
+        // fires on a touchscreen
         const header = panel.querySelector('#mwi-abilities-header');
         if (header) {
+            header.style.touchAction = 'none';
             const dragOffset = { x: 0, y: 0 };
             const onMove = (e) => {
                 panel.style.left = e.clientX - dragOffset.x + 'px';
                 panel.style.top = e.clientY - dragOffset.y + 'px';
             };
             const onUp = () => {
-                document.removeEventListener('mousemove', onMove);
-                document.removeEventListener('mouseup', onUp);
+                document.removeEventListener('pointermove', onMove);
+                document.removeEventListener('pointerup', onUp);
+                document.removeEventListener('pointercancel', onUp);
             };
-            header.addEventListener('mousedown', (e) => {
+            header.addEventListener('pointerdown', (e) => {
                 if (e.target.id === 'mwi-abilities-close-btn') return;
                 dragOffset.x = e.clientX - panel.offsetLeft;
                 dragOffset.y = e.clientY - panel.offsetTop;
-                document.addEventListener('mousemove', onMove);
-                document.addEventListener('mouseup', onUp);
+                document.addEventListener('pointermove', onMove);
+                document.addEventListener('pointerup', onUp);
+                document.addEventListener('pointercancel', onUp);
             });
         }
     }
@@ -1058,19 +1177,11 @@ class CombatScore {
             const playerObj = exportData.exportObj;
             const clientObj = dataManager.getInitClientData();
 
-            // Override equipment from snapshot, cross-referencing live data for
-            // accurate enhancement levels (loadouts with useExactEnhancement=false
-            // store 0 for most enhancement levels in the wearable hash)
-            const liveEquipment = dataManager.characterEquipment;
-            playerObj.player.equipment = (snapshot.equipment || []).map((item) => {
-                if (item.enhancementLevel > 0 || !liveEquipment) return item;
-                for (const [, liveItem] of liveEquipment) {
-                    if (liveItem.itemHrid === item.itemHrid) {
-                        return { ...item, enhancementLevel: liveItem.enhancementLevel || 0 };
-                    }
-                }
-                return item;
-            });
+            // Override equipment from snapshot. The levels come from the
+            // loadout's own rule rather than the wearable hash: a loadout in
+            // "highest owned" mode wears the best copy owned now, and the hash
+            // holds whatever it was when the loadout was last saved — usually 0.
+            playerObj.player.equipment = loadoutSnapshot.resolveEquipment(snapshot);
 
             // Override abilities from snapshot
             // Build ability level lookup from all learned abilities (not just currently equipped)
@@ -1413,6 +1524,10 @@ class CombatScore {
             this.currentAbilitiesPanel.remove();
             this.currentAbilitiesPanel = null;
         }
+
+        // The pool recreates itself on the next batch; idle workers should not
+        // outlive the feature that spawned them
+        terminateWorkerPool();
 
         this.isActive = false;
         this.isInitialized = false;

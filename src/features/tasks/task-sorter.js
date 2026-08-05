@@ -9,6 +9,7 @@ import dataManager from '../../core/data-manager.js';
 import taskIcons from './task-icons.js';
 import taskIconFilters from './task-icon-filters.js';
 import taskRerollProtection from './task-reroll-protection.js';
+import { boardHasConfirmingCard, armConfirmSettleWatch, onConfirmFlowSettled } from './task-card-state.js';
 import domObserver from '../../core/dom-observer.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 
@@ -18,6 +19,10 @@ class TaskSorter {
         this.sortButton = null;
         this.unregisterObserver = null;
         this.timerRegistry = createTimerRegistry();
+        this.readClickHandler = null;
+        this.settleObserver = null;
+        /** Set while the settle watch is subscribed to; see `sortTasks` */
+        this.unsubscribeSettle = null;
 
         // Task type ordering (combat tasks go to bottom)
         this.TASK_ORDER = {
@@ -43,8 +48,94 @@ class TaskSorter {
 
         // Use DOM observer to watch for task panel appearing
         this.watchTaskPanel();
+        this.watchReadButton();
+
+        // Only with auto-sort on. Subscribing regardless would re-order the
+        // board behind a player who has never asked for it to be ordered,
+        // seconds after they closed a reroll chooser.
+        if (config.getSetting('taskSorter_autoSort')) {
+            this.unsubscribeSettle = onConfirmFlowSettled(() => this.sortTasks());
+        }
 
         this.initialized = true;
+    }
+
+    /**
+     * Sort again once tasks have been read.
+     *
+     * Reading is the one moment the board is guaranteed to be out of order:
+     * new tasks arrive at the end, however the rest was arranged. Auto-sort on
+     * open does not cover it, because the panel is already open — so somebody
+     * with a sorted board watches it come apart every few hours and has to
+     * press the button again.
+     *
+     * Delegated from the document rather than bound to the button, because the
+     * card holding it is drawn and thrown away by the game each time the unread
+     * count changes, and a listener bound to one instance of it lasts until the
+     * next render.
+     */
+    watchReadButton() {
+        this.readClickHandler = (event) => {
+            if (!config.getSetting('taskSorter_sortAfterRead')) return;
+
+            const button = event.target?.closest?.('button');
+            if (!button || button.textContent.trim() !== 'Read') return;
+            // Matched by its words rather than by a class, which the game
+            // renames on any build
+            if (!button.closest('[class*="TasksPanel_"]')) return;
+
+            this.sortAfterTasksArrive();
+        };
+        // Capture, so it is seen before React tears the card down
+        document.addEventListener('click', this.readClickHandler, true);
+    }
+
+    /**
+     * Sort once the new tasks have finished arriving.
+     *
+     * A fixed delay is a guess about how long the game takes to draw several
+     * cards, and the guess is wrong on a slow machine — which shows as a board
+     * that sorted everything except the tasks that were just read. So it waits
+     * for the list to stop changing instead, and gives up rather than watching
+     * forever.
+     */
+    sortAfterTasksArrive() {
+        this.stopSettleWatch();
+
+        // Sorts what is on the board straight away, so the common case — the
+        // cards are already there — is not held up waiting for a change that
+        // has already happened
+        const now = setTimeout(() => this.sortTasks(), 150);
+        this.timerRegistry.registerTimeout(now);
+
+        const taskList = document.querySelector(GAME.TASK_LIST);
+        if (!taskList) return;
+
+        // Then again as the new tasks land. A single delay is a guess about how
+        // long the game takes to draw several cards, and on a slow machine the
+        // guess fires first — which shows as a board that sorted everything
+        // except the tasks that were just read. Sorting twice costs nothing; the
+        // second pass on an already-sorted board changes nothing.
+        let settleTimeout = null;
+        this.settleObserver = new MutationObserver(() => {
+            clearTimeout(settleTimeout);
+            settleTimeout = setTimeout(() => this.sortTasks(), 250);
+            this.timerRegistry.registerTimeout(settleTimeout);
+        });
+        this.settleObserver.observe(taskList, { childList: true, subtree: true });
+
+        // It stops watching rather than watching forever — every later sort is
+        // the button's job again
+        const giveUp = setTimeout(() => this.stopSettleWatch(), 3000);
+        this.timerRegistry.registerTimeout(giveUp);
+    }
+
+    /** Stop watching the task list for new cards */
+    stopSettleWatch() {
+        if (this.settleObserver) {
+            this.settleObserver.disconnect();
+            this.settleObserver = null;
+        }
     }
 
     /**
@@ -122,7 +213,7 @@ class TaskSorter {
      * Check if task is completed (has Claim Reward button)
      */
     isTaskCompleted(taskCard) {
-        const claimButton = taskCard.querySelector('button.Button_button__1Fe9z.Button_buy__3s24l');
+        const claimButton = taskCard.querySelector(GAME.TASK_CLAIM_BUTTON);
         return claimButton && claimButton.textContent.includes('Claim Reward');
     }
 
@@ -272,6 +363,23 @@ class TaskSorter {
             return;
         }
 
+        // One of the cards is showing a reroll chooser or a discard
+        // confirmation and is waiting on a second click. Re-appending the cards
+        // moves that one out of the DOM and back, which is exactly the click
+        // being pulled out from under the player, so the board is left alone.
+        //
+        // What happens next depends on who asked. Auto-sort is a standing
+        // instruction that the board be in order, and a reroll is the commonest
+        // way it stops being — so with auto-sort on this arms the settle watch
+        // and sorts as soon as no card is mid-flow. Without it, sorting is
+        // something the player does, and re-ordering the board some seconds
+        // after they closed a chooser is not what they pressed anything for:
+        // the board waits for the button.
+        if (boardHasConfirmingCard(taskList)) {
+            if (this.unsubscribeSettle) armConfirmSettleWatch();
+            return;
+        }
+
         // Sort the cards
         const sortMode = config.getSettingValue('taskSorter_sortMode', 'skill');
         if (sortMode === 'time') {
@@ -313,6 +421,15 @@ class TaskSorter {
             this.sortButton.remove();
         }
         this.sortButton = null;
+
+        if (this.readClickHandler) {
+            document.removeEventListener('click', this.readClickHandler, true);
+            this.readClickHandler = null;
+        }
+        this.stopSettleWatch();
+        this.unsubscribeSettle?.();
+        this.unsubscribeSettle = null;
+
         this.timerRegistry.clearAll();
         this.initialized = false;
     }

@@ -20,6 +20,7 @@ import { calculateGatheringProfit } from './gathering-profit.js';
 import profitCalculator from '../market/profit-calculator.js';
 import alchemyProfitCalculator from '../market/alchemy-profit-calculator.js';
 import { calculateActionStats } from '../../utils/action-calculator.js';
+import { getAlchemyCoinCost, getAlchemyTypeFromActionHrid } from '../../utils/alchemy-fees.js';
 import { timeReadable, formatWithSeparator, formatDateTime } from '../../utils/formatters.js';
 import { calculateEfficiencyMultiplier } from '../../utils/efficiency.js';
 import { createCleanupRegistry } from '../../utils/cleanup-registry.js';
@@ -269,6 +270,7 @@ class ActionTimeDisplay {
      * @param {HTMLElement} tooltipContent - The QueuedActions_queuedActionsTooltip container
      */
     injectQueueTimesTooltip(tooltipContent) {
+        if (!config.getSetting('actionQueue')) return;
         try {
             const currentActions = dataManager.getCurrentActions();
             if (!currentActions || currentActions.length === 0) return;
@@ -668,11 +670,20 @@ class ActionTimeDisplay {
             return; // Already created and still in the DOM
         }
         this.displayElement = null;
+        this.profitElement = null;
 
-        const orphan = document.getElementById('mwi-action-time-display');
-        if (orphan) {
-            orphan.remove();
-        }
+        // Remove any orphaned copies of our injected elements before creating fresh ones.
+        // The game can swap out the action-name subtree in a way that drops one of our two
+        // tracked siblings from `this` without removing it from the live DOM (e.g. only the
+        // time-display node gets torn down while the profit node survives elsewhere) — a
+        // plain `this.profitElement = document.createElement(...)` reassignment would then
+        // orphan the old node, leaving two "#mwi-action-profit-display" elements on the page
+        // showing stale-vs-fresh data (same rate, different "remaining", since the queue moved
+        // on between the two renders). Querying by data attribute — rather than
+        // getElementById, which only ever returns the first match — guarantees every stray
+        // duplicate is cleared, keying the idempotent injection so exactly one of each exists.
+        document.querySelectorAll('[data-mwi-action-bar-widget="time"]').forEach((el) => el.remove());
+        document.querySelectorAll('[data-mwi-action-bar-widget="profit"]').forEach((el) => el.remove());
 
         const actionNameContainer = document.querySelector('div[class*="Header_actionName"]');
         if (!actionNameContainer) {
@@ -685,6 +696,7 @@ class ActionTimeDisplay {
         // Create display element
         this.displayElement = document.createElement('div');
         this.displayElement.id = 'mwi-action-time-display';
+        this.displayElement.setAttribute('data-mwi-action-bar-widget', 'time');
         this.displayElement.style.cssText = `
             font-size: 0.9em;
             color: var(--text-color-secondary, ${config.COLOR_TEXT_SECONDARY});
@@ -700,6 +712,7 @@ class ActionTimeDisplay {
         // Create profit element (below time display)
         this.profitElement = document.createElement('div');
         this.profitElement.id = 'mwi-action-profit-display';
+        this.profitElement.setAttribute('data-mwi-action-bar-widget', 'profit');
         this.profitElement.style.cssText = `
             font-size: 0.9em;
             color: var(--text-color-secondary, ${config.COLOR_TEXT_SECONDARY});
@@ -1843,9 +1856,16 @@ class ActionTimeDisplay {
                     limitType = `material:${alchItemHrid}`;
                 }
 
-                if (actionDetails.coinCost && actionDetails.coinCost > 0) {
+                // Alchemy coin fees are not in the game's action data — actionDetails.coinCost
+                // is 0 for every alchemy action, so gold could never be the limiting material.
+                // The formulas live in utils/alchemy-fees.js, shared with every other fee site.
+                const alchemyType = getAlchemyTypeFromActionHrid(actionDetails.hrid);
+                const alchemyCoinCost =
+                    alchemyType && alchemyType !== 'coinify' ? getAlchemyCoinCost(alchItemDetails, alchemyType) : 0;
+
+                if (alchemyCoinCost > 0) {
                     const availableGold = byHrid['/items/coin'] || 0;
-                    const maxFromGold = Math.floor(availableGold / actionDetails.coinCost);
+                    const maxFromGold = Math.floor(availableGold / alchemyCoinCost);
                     if (maxFromGold < minLimit) {
                         minLimit = maxFromGold;
                         limitType = 'gold';
@@ -2043,6 +2063,10 @@ class ActionTimeDisplay {
      * @param {HTMLElement} queueMenu - Queue menu container element
      */
     injectQueueTimes(queueMenu) {
+        // The setting this section is named for; the value rows are created in
+        // here too, so off means the queue is left entirely untouched
+        if (!config.getSetting('actionQueue')) return;
+
         // Track if we need to reconnect observer at the end
         let shouldReconnectObserver = false;
 
@@ -2560,7 +2584,11 @@ class ActionTimeDisplay {
             if (gatheringProfit) {
                 profitData = gatheringProfit;
             } else if (actionDetails.outputItems?.[0]?.itemHrid) {
-                profitData = await profitCalculator.calculateProfit(actionDetails.outputItems[0].itemHrid);
+                // Named, because the panel is showing one action: without it the calculator
+                // could answer about a different recipe that happens to yield the same item
+                profitData = await profitCalculator.calculateProfit(actionDetails.outputItems[0].itemHrid, {
+                    actionHrid: action.actionHrid,
+                });
             }
         }
 
@@ -2672,7 +2700,9 @@ class ActionTimeDisplay {
                 if (gatheringProfit) {
                     profitData = gatheringProfit;
                 } else if (actionDetails.outputItems?.[0]?.itemHrid) {
-                    profitData = await profitCalculator.calculateProfit(actionDetails.outputItems[0].itemHrid);
+                    profitData = await profitCalculator.calculateProfit(actionDetails.outputItems[0].itemHrid, {
+                        actionHrid,
+                    });
                 }
             }
 

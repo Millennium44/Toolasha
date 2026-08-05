@@ -4,6 +4,44 @@
  * Provides debounced writes to reduce I/O operations
  */
 
+/**
+ * Soft per-store key-count budgets.
+ *
+ * Not a limit the database enforces — nothing here refuses a write. It is the
+ * number above which a store has stopped being a rolling window and started
+ * being a leak, which is a thing worth saying in a diagnostic report before the
+ * quota says it for us. Only stores that grow with play are listed; anything
+ * absent is unbudgeted and simply reported without a verdict.
+ *
+ * Three of these budgets were raised when their recorders stopped keeping their
+ * history in one key and started keeping it in one record per time bucket (see
+ * `utils/chunked-history.js`). The key count went up and the bytes written per
+ * event went down by two or three orders of magnitude, which is the trade the
+ * budget is here to permit rather than to flag — a store of many small records
+ * is not the leak this number looks for.
+ */
+const STORE_KEY_BUDGETS = {
+    settings: 500,
+    // Per character: ~25 item-level detail snapshots plus one series record per
+    // calendar month, capped by a year of full retention beneath the thinning
+    networthHistory: 600,
+    // Per character: one record per hour of play, and the log keeps 500 entries,
+    // so a few dozen live records at a time plus the calibration keys
+    lootLogHistory: 500,
+    guildHistory: 80,
+    leaderboardHistory: 80,
+    xpHistory: 200,
+    // Three trackers (transmute, decompose, coinify), one record per day each
+    // has sessions on, per character
+    alchemyHistory: 1500,
+    dungeonRuns: 600,
+    unifiedRuns: 600,
+    teamRuns: 600,
+    combatStats: 200,
+    queueSnapshots: 80,
+    marketListings: 2000,
+};
+
 class Storage {
     constructor() {
         this.db = null;
@@ -11,10 +49,39 @@ class Storage {
         this.dbName = 'ToolashaDB';
         this.dbVersion = 17; // Bumped for leaderboardHistory store
         this.saveDebounceTimers = new Map(); // Per-key debounce timers
-        this.pendingWrites = new Map(); // Per-key pending write data: {value, storeName}
+        this.pendingWrites = new Map(); // Per-key pending write data: {value, storeName, resolvers, generation}
+        this._writeGeneration = new Map(); // Per-key monotonic generation counter, for write ownership
         this.SAVE_DEBOUNCE_DELAY = 3000; // 3 seconds
         this._reconnecting = false; // Guard against concurrent reconnection attempts
         this._dbNulledReason = null; // Track why db was last set to null
+
+        /**
+         * Whether a write has failed for want of space.
+         *
+         * The failure mode this exists to end is silent: a recorder appends to
+         * an array, hands it to `set()`, the transaction aborts on quota, and
+         * the feature goes on believing it is recording. Recorders read this
+         * and stand down instead — see `isQuotaExceeded()`.
+         */
+        this.quotaExceeded = false;
+        this._quotaExceededAt = null;
+        this._quotaFailures = 0;
+        this._lastQuotaTarget = null; // {key, storeName} of the write that failed
+        this._quotaListeners = new Set();
+        this._lastEstimate = null; // Cached navigator.storage.estimate() result
+
+        /**
+         * Resolves once `initialize` has run, either way.
+         *
+         * Anything reading at module scope needs this. Features are initialized
+         * long after the libraries load, so a module-scope read lands before the
+         * database is open, gets the default back, and has no way to know the
+         * difference between "not stored" and "not asked yet" — which is how
+         * every remembered panel quietly forgot itself.
+         */
+        this.ready = new Promise((resolve) => {
+            this._markReady = resolve;
+        });
     }
 
     /**
@@ -25,10 +92,12 @@ class Storage {
         try {
             await this.openDatabase();
             this.available = true;
+            this._markReady(true);
             return true;
         } catch (error) {
             console.error('[Storage] Initialization failed:', error);
             this.available = false;
+            this._markReady(false);
             return false;
         }
     }
@@ -231,28 +300,203 @@ class Storage {
      */
     async _saveToIndexedDB(key, value, storeName) {
         return new Promise((resolve, _reject) => {
+            let settled = false;
+            /**
+             * Resolve once, whichever of request/transaction reports first.
+             * A quota failure fires both `request.onerror` and the transaction's
+             * abort, and a promise that resolves twice hides the second one.
+             * @param {boolean} success - Whether the write landed
+             * @param {*} error - The error to classify, if it did not
+             */
+            const settle = (success, error) => {
+                if (settled) return;
+                settled = true;
+                if (!success && this._isQuotaError(error)) {
+                    this._handleQuotaExceeded(key, storeName, error);
+                }
+                resolve(success);
+            };
+
             try {
                 const transaction = this.db.transaction([storeName], 'readwrite');
                 const store = transaction.objectStore(storeName);
                 const request = store.put(value, key);
 
                 request.onsuccess = () => {
-                    resolve(true);
+                    settle(true, null);
                 };
 
                 request.onerror = () => {
                     console.error(`[Storage] Failed to save key ${key}:`, request.error);
-                    resolve(false);
+                    settle(false, request.error);
+                };
+
+                // A quota failure aborts the whole transaction; without this the
+                // only signal is a request error the browser may not deliver
+                transaction.onabort = () => {
+                    console.error(`[Storage] Save transaction aborted for key ${key}:`, transaction.error);
+                    settle(false, transaction.error);
                 };
             } catch (error) {
                 console.error(`[Storage] Save transaction failed for key ${key}:`, error);
-                resolve(false);
+                settle(false, error);
             }
         });
     }
 
     /**
+     * Whether an error is the browser saying "no room".
+     *
+     * Chromium throws `QuotaExceededError`, Firefox has historically used
+     * `NS_ERROR_DOM_QUOTA_REACHED`, and legacy DOMException code 22 covers the
+     * rest — all three mean the same thing to everything upstream of here.
+     * @param {*} error - Error from a failed request or transaction
+     * @returns {boolean} True when the failure was a space failure
+     * @private
+     */
+    _isQuotaError(error) {
+        if (!error) return false;
+        const name = error.name || '';
+        if (name === 'QuotaExceededError' || name === 'NS_ERROR_DOM_QUOTA_REACHED') return true;
+        if (error.code === 22) return true;
+        return /quota|storage is full|not enough space/i.test(error.message || '');
+    }
+
+    /**
+     * Record that storage is full and tell anyone who asked to be told.
+     * @param {string} key - The key whose write failed
+     * @param {string} storeName - The store it was going to
+     * @param {*} error - The originating error
+     * @private
+     */
+    _handleQuotaExceeded(key, storeName, error) {
+        this._quotaFailures += 1;
+        this._lastQuotaTarget = { key, storeName };
+        const firstTime = !this.quotaExceeded;
+        this.quotaExceeded = true;
+        this._quotaExceededAt = Date.now();
+
+        console.error(`[Storage] Quota exceeded writing ${storeName}:${key} — recording will stand down:`, error);
+
+        // Refresh the numbers so whatever shows this can say how full "full" is
+        this.estimate();
+
+        if (!firstTime) return;
+        for (const listener of this._quotaListeners) {
+            try {
+                listener({ key, storeName, at: this._quotaExceededAt, estimate: this._lastEstimate });
+            } catch (listenerError) {
+                console.error('[Storage] Quota listener failed:', listenerError);
+            }
+        }
+    }
+
+    /**
+     * Whether writes are currently failing for want of space.
+     *
+     * Recorders of bulky history — loot log, networth snapshots, enhancement
+     * sessions — check this before building a payload and skip the work when it
+     * is true, so a full disk costs one failed write rather than one per event.
+     * @returns {boolean} True while storage is known to be full
+     */
+    isQuotaExceeded() {
+        return this.quotaExceeded;
+    }
+
+    /**
+     * Be told, once, the first time a write fails for space.
+     * @param {Function} listener - Called with {key, storeName, at, estimate}
+     * @returns {Function} Unsubscribe
+     */
+    onQuotaExceeded(listener) {
+        if (typeof listener !== 'function') return () => {};
+        this._quotaListeners.add(listener);
+        return () => this._quotaListeners.delete(listener);
+    }
+
+    /**
+     * Forget that storage was full, so recorders resume.
+     *
+     * Called automatically after a successful delete, since deleting is the one
+     * thing that makes the original failure untrue.
+     */
+    clearQuotaState() {
+        this.quotaExceeded = false;
+        this._lastQuotaTarget = null;
+    }
+
+    /**
+     * How much of the origin's storage is used, per the browser.
+     *
+     * `navigator.storage.estimate()` is an estimate in the literal sense —
+     * padded, and quota is what the browser is willing to give rather than what
+     * is free on disk. Good enough to tell "comfortable" from "about to fail",
+     * which is the only distinction anything here draws.
+     * @returns {Promise<{usage: number|null, quota: number|null, percent: number|null, at: number}|null>}
+     *   The estimate, or null where the API is unavailable
+     */
+    async estimate() {
+        try {
+            if (typeof navigator === 'undefined' || !navigator.storage?.estimate) return null;
+            const { usage, quota } = await navigator.storage.estimate();
+            this._lastEstimate = {
+                usage: usage ?? null,
+                quota: quota ?? null,
+                percent: usage != null && quota ? (usage / quota) * 100 : null,
+                at: Date.now(),
+            };
+            return this._lastEstimate;
+        } catch (error) {
+            console.error('[Storage] Storage estimate failed:', error);
+            return null;
+        }
+    }
+
+    /**
+     * The last estimate taken, without taking another.
+     * @returns {Object|null} Cached estimate, or null if none has been taken
+     */
+    lastEstimate() {
+        return this._lastEstimate;
+    }
+
+    /**
+     * Key counts per store, against their soft budgets.
+     *
+     * Counting keys is one `getAllKeys()` per store and never touches a value,
+     * which is why this is affordable at all — a byte-accurate size would mean
+     * reading and serializing the entire database.
+     * @param {Array<string>} [storeNames] - Restrict to these stores; defaults to all
+     * @returns {Promise<Array<{storeName: string, keys: number, budget: number|null, over: boolean}>>}
+     *   One row per store, over-budget rows first
+     */
+    async budgetReport(storeNames) {
+        const names = storeNames ?? (await this.listStores());
+        const rows = [];
+
+        for (const storeName of names) {
+            const keys = await this.getAllKeys(storeName);
+            const budget = STORE_KEY_BUDGETS[storeName] ?? null;
+            rows.push({
+                storeName,
+                keys: keys.length,
+                budget,
+                over: budget !== null && keys.length > budget,
+            });
+        }
+
+        rows.sort((a, b) => Number(b.over) - Number(a.over) || b.keys - a.keys);
+        return rows;
+    }
+
+    /**
      * Internal: Debounced save
+     *
+     * The entry is removed from pendingWrites only after a confirmed success, and
+     * only if no newer write has claimed the slot in the meantime. A failed write —
+     * a dropped connection, an aborted transaction, a full disk — requeues the value
+     * without a timer, so the next flushAll() or the next write to the same key
+     * retries it instead of the value being lost.
      * @private
      */
     _debouncedSave(key, value, storeName) {
@@ -261,7 +505,9 @@ class Storage {
         const existing = this.pendingWrites.get(timerKey);
         const resolvers = existing?.resolvers || [];
 
-        this.pendingWrites.set(timerKey, { value, storeName, resolvers });
+        const generation = (this._writeGeneration.get(timerKey) || 0) + 1;
+        this._writeGeneration.set(timerKey, generation);
+        this.pendingWrites.set(timerKey, { value, storeName, resolvers, generation });
 
         if (this.saveDebounceTimers.has(timerKey)) {
             clearTimeout(this.saveDebounceTimers.get(timerKey));
@@ -271,17 +517,48 @@ class Storage {
             resolvers.push(resolve);
 
             const timer = setTimeout(async () => {
-                const pending = this.pendingWrites.get(timerKey);
-                this.pendingWrites.delete(timerKey);
                 this.saveDebounceTimers.delete(timerKey);
 
-                let success = false;
-                if (pending) {
-                    success = await this._saveToIndexedDB(key, pending.value, pending.storeName);
+                const pending = this.pendingWrites.get(timerKey);
+                if (!pending || pending.generation !== generation) {
+                    // A newer write owns this slot — its timer persists the value and
+                    // resolves every caller coalesced into it, including ours.
+                    return;
                 }
 
-                for (const r of pending?.resolvers || []) {
-                    r(success);
+                // Take ownership: remove from the queue before attempting the save so a
+                // concurrent newer write can claim the slot cleanly.
+                this.pendingWrites.delete(timerKey);
+
+                const success = await this._saveToIndexedDB(key, pending.value, pending.storeName);
+
+                if (!success) {
+                    if (!this.pendingWrites.has(timerKey)) {
+                        // Requeue without a timer so the value survives for the next
+                        // flushAll() or the next debounced write to this key. This is also
+                        // what makes a quota failure recoverable: once space is freed, the
+                        // retry writes the value that would otherwise have been dropped.
+                        //
+                        // The requeued entry carries no resolvers: two dozen callers await
+                        // storage.set(), and holding their promises open until some later
+                        // flush would hang them for the rest of the session. They are told
+                        // the write failed now; the value is retried regardless.
+                        this.pendingWrites.set(timerKey, {
+                            value: pending.value,
+                            storeName: pending.storeName,
+                            resolvers: [],
+                            generation: pending.generation,
+                        });
+                    }
+
+                    for (const r of pending.resolvers) {
+                        r(false);
+                    }
+                    return;
+                }
+
+                for (const r of pending.resolvers) {
+                    r(true);
                 }
             }, this.SAVE_DEBOUNCE_DELAY);
 
@@ -349,6 +626,9 @@ class Storage {
                 const request = store.delete(key);
 
                 request.onsuccess = () => {
+                    // Deleting is the one operation that makes "storage is full"
+                    // untrue, so it is where standing-down recorders are let up
+                    this.clearQuotaState();
                     resolve(true);
                 };
 
@@ -450,6 +730,77 @@ class Storage {
     }
 
     /**
+     * List every object store name currently defined in the database.
+     * @returns {Promise<Array<string>>} Array of store names
+     */
+    async listStores() {
+        if (!this.db) {
+            console.warn('[Storage] Database not available, cannot list stores');
+            return [];
+        }
+
+        return Array.from(this.db.objectStoreNames);
+    }
+
+    /**
+     * Write multiple key/value pairs to a store in a single immediate transaction.
+     *
+     * Bypasses debouncing entirely. Debounced `set()` schedules one timer per key,
+     * so writing hundreds of keys serially through it would mean hundreds of pending
+     * timers (or hundreds of sequential `immediate` writes). This does it in one
+     * readwrite transaction instead — use it for bulk operations like restore/import.
+     * @param {string} storeName - Object store name
+     * @param {Record<string, *>} entries - Map of key → value to write
+     * @returns {Promise<number>} Number of entries successfully written
+     */
+    async putAll(storeName, entries) {
+        if (!this.db) {
+            console.warn(`[Storage] Database not available, cannot bulk write to store: ${storeName}`);
+            return 0;
+        }
+
+        const keys = Object.keys(entries || {});
+        if (keys.length === 0) {
+            return 0;
+        }
+
+        return new Promise((resolve) => {
+            try {
+                const transaction = this.db.transaction([storeName], 'readwrite');
+                const store = transaction.objectStore(storeName);
+                const written = [];
+
+                for (const key of keys) {
+                    const request = store.put(entries[key], key);
+                    request.onsuccess = () => {
+                        written.push(key);
+                    };
+                    request.onerror = () => {
+                        console.error(`[Storage] Failed to bulk-write key ${key} to ${storeName}:`, request.error);
+                        if (this._isQuotaError(request.error)) {
+                            this._handleQuotaExceeded(key, storeName, request.error);
+                        }
+                    };
+                }
+
+                transaction.oncomplete = () => {
+                    resolve(written.length);
+                };
+                transaction.onerror = () => {
+                    console.error(`[Storage] Bulk write transaction failed for store ${storeName}:`, transaction.error);
+                    if (this._isQuotaError(transaction.error)) {
+                        this._handleQuotaExceeded(keys[0], storeName, transaction.error);
+                    }
+                    resolve(written.length);
+                };
+            } catch (error) {
+                console.error(`[Storage] Bulk write transaction failed for store ${storeName}:`, error);
+                resolve(0);
+            }
+        });
+    }
+
+    /**
      * Force immediate save of all pending debounced writes
      */
     async flushAll() {
@@ -461,15 +812,27 @@ class Storage {
         }
         this.saveDebounceTimers.clear();
 
-        // Now execute all pending writes immediately and resolve their Promises
+        // Snapshot the pending writes rather than clearing the map upfront: an entry is
+        // only removed once its write is confirmed, so a failure here leaves the value
+        // queued for the next flush instead of discarding it.
         const writes = Array.from(this.pendingWrites.entries());
-        this.pendingWrites.clear();
 
         for (const [timerKey, pending] of writes) {
+            // Skip if a newer write has already replaced this entry.
+            if (this.pendingWrites.get(timerKey) !== pending) continue;
+
             const colonIndex = timerKey.indexOf(':');
             const key = timerKey.substring(colonIndex + 1);
 
             const success = await this._saveToIndexedDB(key, pending.value, pending.storeName);
+
+            if (success) {
+                // Only remove if no newer write claimed the slot while we were writing.
+                if (this.pendingWrites.get(timerKey) === pending) {
+                    this.pendingWrites.delete(timerKey);
+                }
+            }
+
             for (const r of pending.resolvers || []) {
                 r(success);
             }
@@ -494,6 +857,7 @@ class Storage {
             }
         }
         this.pendingWrites.clear();
+        this._writeGeneration.clear();
     }
 
     /**
@@ -556,10 +920,16 @@ class Storage {
             lastNullReason: this._dbNulledReason,
             pendingWrites: this.pendingWrites.size,
             activeTimers: this.saveDebounceTimers.size,
+            quotaExceeded: this.quotaExceeded,
+            quotaExceededAt: this._quotaExceededAt,
+            quotaFailures: this._quotaFailures,
+            lastQuotaTarget: this._lastQuotaTarget,
+            estimate: this._lastEstimate,
         };
     }
 }
 
 const storage = new Storage();
 
+export { STORE_KEY_BUDGETS };
 export default storage;

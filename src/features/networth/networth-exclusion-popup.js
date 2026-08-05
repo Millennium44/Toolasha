@@ -108,6 +108,13 @@ class NetworthExclusionPopup {
                 name: 'All Ability Books',
                 amount: fa.abilityBooks.totalCost,
             });
+        if (!isExcluded('assetType', 'guildShrines') && (fa?.guildShrines?.totalCost ?? 0) > 0)
+            add({
+                type: 'assetType',
+                value: 'guildShrines',
+                name: 'All Guild Shrines',
+                amount: fa.guildShrines.totalCost,
+            });
 
         // Inventory categories — byCategory already reflects post-exclusion items
         for (const [catName, catData] of Object.entries(ca?.inventory?.byCategory ?? {})) {
@@ -146,6 +153,12 @@ class NetworthExclusionPopup {
         for (const ability of fa?.abilities?.breakdown ?? []) {
             if (!ability.hrid || isExcluded('ability', ability.hrid)) continue;
             add({ type: 'ability', value: ability.hrid, name: ability.name, amount: ability.cost });
+        }
+
+        // Individual guild shrine buffs — breakdown already reflects post-exclusion
+        for (const shrine of fa?.guildShrines?.breakdown ?? []) {
+            if (!shrine.hrid || isExcluded('guildShrine', shrine.hrid)) continue;
+            add({ type: 'guildShrine', value: shrine.hrid, name: shrine.name, amount: shrine.cost });
         }
 
         // Loadout snapshots — only show if not already excluded
@@ -402,6 +415,11 @@ class NetworthExclusionPopup {
                         name: `${i.name}${i.count > 1 ? ` x${i.count}` : ''}`,
                         value: i.value ?? 0,
                     }));
+                case 'guildShrines':
+                    return (fa?.guildShrines?.breakdown ?? []).map((i) => ({
+                        name: i.name,
+                        value: i.cost ?? 0,
+                    }));
             }
         }
 
@@ -584,6 +602,7 @@ class NetworthExclusionPopup {
             houses: 'All Houses',
             abilities: 'All Abilities',
             abilityBooks: 'All Ability Books',
+            guildShrines: 'All Guild Shrines',
         };
         if (exc.type === 'assetType') return ASSET_TYPE_NAMES[exc.value] ?? exc.value;
         if (exc.type === 'loadout') return `Loadout: ${exc.value}`;
@@ -598,6 +617,15 @@ class NetworthExclusionPopup {
         if (exc.type === 'item') return gd.itemDetailMap?.[exc.value]?.name ?? exc.value;
         if (exc.type === 'houseRoom') return gd.houseRoomDetailMap?.[exc.value]?.name ?? exc.value;
         if (exc.type === 'ability') return gd.abilityDetailMap?.[exc.value]?.name ?? exc.value;
+        if (exc.type === 'guildShrine') {
+            // Guild buffs carry no display name of their own, so the hrid tail
+            // is de-slugged the same way the net worth row names them
+            return exc.value
+                .replace('/guild_buffs/', '')
+                .split('_')
+                .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+                .join(' ');
+        }
         return exc.value;
     }
 
@@ -658,7 +686,12 @@ class NetworthExclusionPopup {
     // ─── Drag ────────────────────────────────────────────────────
 
     _setupDragging(header) {
-        header.addEventListener('mousedown', (e) => {
+        // Pointer events so a finger works too; mousedown never fires on a
+        // touchscreen, and touch-action:none stops the browser claiming the
+        // gesture for scrolling
+        header.style.touchAction = 'none';
+
+        header.addEventListener('pointerdown', (e) => {
             if (e.target.tagName === 'BUTTON') return;
             bringPanelToFront(this.container);
             this.isDragging = true;
@@ -688,8 +721,9 @@ class NetworthExclusionPopup {
             header.style.cursor = 'grab';
         };
 
-        document.addEventListener('mousemove', this.dragMoveHandler);
-        document.addEventListener('mouseup', this.dragUpHandler);
+        document.addEventListener('pointermove', this.dragMoveHandler);
+        document.addEventListener('pointerup', this.dragUpHandler);
+        document.addEventListener('pointercancel', this.dragUpHandler);
     }
 
     _setupClickOutside() {
@@ -704,11 +738,12 @@ class NetworthExclusionPopup {
     _teardown() {
         clearTimeout(this.searchTimeout);
         if (this.dragMoveHandler) {
-            document.removeEventListener('mousemove', this.dragMoveHandler);
+            document.removeEventListener('pointermove', this.dragMoveHandler);
             this.dragMoveHandler = null;
         }
         if (this.dragUpHandler) {
-            document.removeEventListener('mouseup', this.dragUpHandler);
+            document.removeEventListener('pointerup', this.dragUpHandler);
+            document.removeEventListener('pointercancel', this.dragUpHandler);
             this.dragUpHandler = null;
         }
         if (this.clickOutsideHandler) {

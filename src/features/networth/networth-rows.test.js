@@ -1,0 +1,159 @@
+/** @vitest-environment happy-dom */
+
+/**
+ * The net worth overlay tiles, and what opens behind them.
+ *
+ * Each of these tiles is one field of the same calculation and one series of the
+ * history chart, so the chart is what the tile summarises. What is worth pinning
+ * down is that double-clicking actually reaches it: `onOpen` is a plain function
+ * on the row definition, and a row registered without one is silently inert —
+ * the panel just stops giving the tile a pointer cursor.
+ */
+
+import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
+
+const game = vi.hoisted(() => ({
+    rows: {},
+    currentData: null,
+    chartToggles: 0,
+    chartRejects: false,
+    bookPanelToggles: 0,
+}));
+
+vi.mock('../../utils/overlay-rows.js', () => ({
+    registerRow: (definition) => {
+        game.rows[definition.key] = definition;
+    },
+}));
+
+vi.mock('./index.js', () => ({
+    default: {
+        get currentData() {
+            return game.currentData;
+        },
+    },
+}));
+
+vi.mock('./networth-history-chart.js', () => ({
+    default: {
+        toggleModal: async () => {
+            game.chartToggles += 1;
+            if (game.chartRejects) throw new Error('storage is asleep');
+        },
+    },
+}));
+
+vi.mock('../abilities/ability-book-panel.js', () => ({
+    abilityBookPanel: {
+        toggle: () => {
+            game.bookPanelToggles += 1;
+        },
+    },
+    abilityPlans: () => [],
+}));
+
+vi.mock('../../utils/ability-books.js', () => ({
+    cheapestNextLevel: () => null,
+}));
+
+await import('./networth-rows.js');
+
+/** The three tiles that are a field of net worth and open its chart */
+const CHART_TILES = ['coins', 'marketListings', 'inventoryValue'];
+
+/**
+ * Draw a tile into a fresh container.
+ * @param {string} key - Row key
+ * @returns {HTMLElement} The container it drew into
+ */
+function draw(key) {
+    const container = document.createElement('div');
+    game.rows[key].render(container);
+    return container;
+}
+
+describe('net worth tiles', () => {
+    beforeEach(() => {
+        game.currentData = null;
+        game.chartToggles = 0;
+        game.chartRejects = false;
+        game.bookPanelToggles = 0;
+    });
+
+    test('every field tile registers', () => {
+        for (const key of CHART_TILES) expect(game.rows[key]).toBeDefined();
+    });
+
+    test('a tile draws nothing at all before net worth has been calculated', () => {
+        for (const key of CHART_TILES) expect(draw(key).textContent).toBe('');
+    });
+
+    test('a tile draws its figure once net worth has published one', () => {
+        game.currentData = {
+            coins: 12_345_678,
+            currentAssets: { listings: { value: 2_000_000 }, inventory: { value: 500_000 } },
+        };
+
+        expect(draw('coins').textContent).toContain('12.35M');
+        expect(draw('marketListings').textContent).toContain('2.00M');
+        expect(draw('inventoryValue').textContent).toContain('500.00K');
+    });
+
+    test('zero coins is a real answer and is drawn; a missing field is not', () => {
+        game.currentData = { coins: 0, currentAssets: {} };
+
+        expect(draw('coins').textContent).toContain('0');
+        expect(draw('marketListings').textContent).toBe('');
+    });
+});
+
+describe('opening the history chart', () => {
+    beforeEach(() => {
+        game.currentData = { coins: 1, currentAssets: { listings: { value: 1 }, inventory: { value: 1 } } };
+        game.chartToggles = 0;
+        game.chartRejects = false;
+    });
+
+    test.each(CHART_TILES)('%s is registered with a way to open the chart', (key) => {
+        expect(typeof game.rows[key].onOpen).toBe('function');
+    });
+
+    test.each(CHART_TILES)('%s opens the history chart when the tile is opened', async (key) => {
+        await game.rows[key].onOpen();
+
+        expect(game.chartToggles).toBe(1);
+    });
+
+    test.each(CHART_TILES)('%s says what a double-click will do', (key) => {
+        expect(draw(key).title).toContain('Double-click for the net worth history chart');
+    });
+
+    test('a chart that fails to open is logged rather than thrown', async () => {
+        game.chartRejects = true;
+        const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+        await expect(game.rows.coins.onOpen()).resolves.toBeUndefined();
+        expect(logged).toHaveBeenCalled();
+
+        logged.mockRestore();
+    });
+
+    test('the tile is only a summary — rendering never opens anything', () => {
+        for (const key of CHART_TILES) draw(key);
+
+        expect(game.chartToggles).toBe(0);
+    });
+});
+
+describe('the skill books tile', () => {
+    afterEach(() => {
+        game.bookPanelToggles = 0;
+    });
+
+    test('still opens the ability book panel, not the chart', () => {
+        game.rows.skillBooks.onOpen();
+
+        expect(game.bookPanelToggles).toBe(1);
+        expect(game.chartToggles).toBe(0);
+    });
+});

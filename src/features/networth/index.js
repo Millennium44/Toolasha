@@ -4,6 +4,8 @@
  */
 
 import config from '../../core/config.js';
+import performanceMonitor from '../../utils/performance-monitor.js';
+import { runInBackground } from '../../utils/background-work.js';
 import connectionState from '../../core/connection-state.js';
 import dataManager from '../../core/data-manager.js';
 import marketAPI from '../../api/marketplace.js';
@@ -12,10 +14,14 @@ import { networthHeaderDisplay, networthInventoryDisplay } from './networth-disp
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { createPauseRegistry } from '../../utils/pause-registry.js';
 import networthCache from './networth-cache.js';
+import { registerRow } from '../../utils/overlay-rows.js';
+import { row, blank, ROW_COLORS } from '../../utils/overlay-format.js';
+import { formatLargeNumber } from '../../utils/formatters.js';
 import networthHistory from './networth-history.js';
 import networthHistoryChart from './networth-history-chart.js';
 import { initExclusions } from './networth-exclusions.js';
 import networthExclusionPopup from './networth-exclusion-popup.js';
+import { terminateItemValueWorkerPool } from '../../utils/networth-worker-manager.js';
 
 class NetworthFeature {
     constructor() {
@@ -41,7 +47,7 @@ class NetworthFeature {
         networthInventoryDisplay.setNetworthFeature(this);
 
         // Initialize exclusions from storage
-        await initExclusions();
+        await performanceMonitor.span('init:networth', 'exclusions', () => initExclusions());
 
         // Initialize header display (always enabled with networth feature)
         if (config.isFeatureEnabled('networth')) {
@@ -65,18 +71,21 @@ class NetworthFeature {
         // Set up event-driven updates instead of polling
         this.setupEventListeners();
 
-        // Initial calculation
-        if (connectionState.isConnected()) {
-            await this.recalculate();
-        }
-
-        // Initialize networth history tracker (hourly snapshots for chart)
-        if (config.getSetting('networth_historyChart')) {
-            networthHistoryChart.setNetworthFeature(this);
-            await networthHistory.initialize(this);
-        }
-
         this.isActive = true;
+
+        // The first calculation prices every item in the inventory and every
+        // saved snapshot in the history — seconds of work, and every feature
+        // after this one in the registry was waiting behind it for a number
+        // nobody has looked at yet. It runs once the page has drawn instead.
+        this.ready = runInBackground('networth', async () => {
+            if (connectionState.isConnected()) {
+                await performanceMonitor.span('bg:networth', 'first calculation', () => this.recalculate());
+            }
+            if (config.getSetting('networth_historyChart')) {
+                networthHistoryChart.setNetworthFeature(this);
+                await performanceMonitor.span('bg:networth', 'history', () => networthHistory.initialize(this));
+            }
+        });
     }
 
     /**
@@ -226,11 +235,56 @@ class NetworthFeature {
         // Clear the enhancement cost cache (character-specific)
         networthCache.clear();
 
+        // The pool recreates itself on the next batch; idle workers should not
+        // outlive the feature that spawned them
+        terminateItemValueWorkerPool();
+
         this.currentData = null;
         this.isActive = false;
     }
 }
 
 const networthFeature = new NetworthFeature();
+
+/**
+ * Open the net worth history chart, or close it if it is already up.
+ *
+ * The tile is one number; the chart is where that number came from and where it
+ * has been. Wrapped rather than handed over directly because opening it loads
+ * saved preferences first, and the overlay calls `onOpen` inside a synchronous
+ * try/catch — a rejection would escape it as an unhandled promise.
+ *
+ * @returns {Promise<void>}
+ */
+async function openHistoryChart() {
+    try {
+        await networthHistoryChart.toggleModal();
+    } catch (error) {
+        console.error('[Networth] Opening the history chart failed:', error);
+    }
+}
+
+// Registered at module scope so the overlay has the row regardless of start-up
+// order. Reads the value the feature last calculated rather than calculating:
+// a full networth pass prices every item you own and runs a worker pool, which
+// is not something a row redrawn every second may do. The figure refreshes when
+// the feature itself recalculates, on item and price changes.
+registerRow({
+    key: 'netWorth',
+    empty: 'No net worth yet',
+    name: 'Net Worth',
+    defaultSize: { width: 180, height: 30 },
+    render: (container) => {
+        const total = networthFeature.currentData?.totalNetworth;
+        if (!(total > 0)) return blank(container);
+
+        row(container, [
+            { text: 'Net Worth', color: ROW_COLORS.dim },
+            { text: formatLargeNumber(Math.round(total)), color: ROW_COLORS.good, bold: true, push: true },
+        ]);
+        container.title = 'Everything you own, priced.\nDouble-click for the net worth history chart.';
+    },
+    onOpen: openHistoryChart,
+});
 
 export default networthFeature;

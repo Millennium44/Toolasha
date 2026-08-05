@@ -11,17 +11,18 @@
  * - Tea: Catalytic Tea provides /buff_types/alchemy_success (5% ratio boost, scales with Drink Concentration)
  * - Catalyst (type-specific): +15% multiplicative, consumed once per successful action
  * - Catalyst (prime): +25% multiplicative, consumed once per successful action
- * - Transmute under-level penalty: perLevel = 0.9 / itemLevel, applied when alchemyLevel < itemLevel
- * - Formula (coinify/decompose): finalRate = min(1, baseRate × (1 + catalystBonus + teaBonus))
- * - Formula (transmute): finalRate = min(1, baseRate × (1 + catalyst + perLevel × (alchemyLvl - itemLvl) + tea))
+ * - Under-level penalty: perLevel = 0.9 / itemLevel, applied when alchemyLevel < itemLevel.
+ *   It keys off the item's level, not the action, so all three types take it.
+ * - Formula: finalRate = min(1, baseRate × (1 + catalyst + perLevel × (alchemyLvl - itemLvl) + tea))
  */
 
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import { getDrinkConcentration } from '../../utils/tea-parser.js';
 import { getItemPrice } from '../../utils/market-data.js';
-import { SECONDS_PER_HOUR } from '../../utils/profit-constants.js';
+import { SECONDS_PER_HOUR, MIN_ACTION_TIME_SECONDS } from '../../utils/profit-constants.js';
 import { getAlchemySuccessBonus } from '../../utils/buff-parser.js';
+import { getAlchemyCoinCost } from '../../utils/alchemy-fees.js';
 import {
     parseEquipmentSpeedBonuses,
     debugEquipmentSpeedBonuses,
@@ -60,21 +61,10 @@ const CATALYST_BONUSES = {
     prime: 0.25, // 25% multiplicative
 };
 
-/**
- * @param {Object} itemDetails - Item details from dataManager
- * @param {'decompose'|'transmute'} alchemyType - Which alchemy action
- * @returns {number} Gold cost per alchemy action (includes bulkMultiplier)
- */
-function calculateAlchemyCoinCost(itemDetails, alchemyType) {
-    const bulkMultiplier = itemDetails.alchemyDetail?.bulkMultiplier || 1;
-    if (alchemyType === 'transmute') {
-        const sellPrice = itemDetails.sellPrice || 0;
-        return Math.max(50, Math.floor(sellPrice / 5)) * bulkMultiplier;
-    }
-    // Decompose / Unrefine
-    const level = itemDetails.itemLevel || 1;
-    return (10 + level) * 5 * bulkMultiplier;
-}
+// Under-level penalty: perLevel = 0.9 / itemLevel per level below the item's level
+const UNDER_LEVEL_PENALTY_NUMERATOR = 0.9;
+
+// The alchemy coin fee lives in utils/alchemy-fees.js — see getAlchemyCoinCost.
 
 /**
  * Calculate alchemy-specific bonus drops (essences + rares) from item level.
@@ -221,6 +211,100 @@ function calculateAlchemyBonusDrops(itemLevel, actionsPerHour, equipment, itemDe
     };
 }
 
+/**
+ * Per-tea action speed contributions from the equipped drinks.
+ * Speed teas expose a `/buff_types/action_speed` buff whose flatBoost is a decimal
+ * (0.06 for +6%) and, like every other tea bonus, scales with Drink Concentration.
+ *
+ * @param {Array} drinkSlots - Active drink slots for the action type
+ * @param {Object} itemDetailMap - Item details from init_client_data
+ * @param {number} drinkConcentration - Drink Concentration as a decimal (0.12 for 12%)
+ * @returns {Array<{name: string, speedBonus: number}>} One entry per tea that grants speed
+ */
+export function parseTeaSpeedDetails(drinkSlots, itemDetailMap, drinkConcentration = 0) {
+    if (!Array.isArray(drinkSlots) || !itemDetailMap) {
+        return [];
+    }
+
+    const details = [];
+
+    for (const drink of drinkSlots) {
+        if (!drink || !drink.itemHrid) continue;
+
+        const itemDetails = itemDetailMap[drink.itemHrid];
+        const buffs = itemDetails?.consumableDetail?.buffs;
+        if (!Array.isArray(buffs)) continue;
+
+        let speedBonus = 0;
+        for (const buff of buffs) {
+            if (buff?.typeHrid !== '/buff_types/action_speed') continue;
+            speedBonus += (buff.flatBoost || 0) * (1 + drinkConcentration);
+        }
+
+        if (speedBonus > 0) {
+            details.push({ name: itemDetails.name, speedBonus });
+        }
+    }
+
+    return details;
+}
+
+/**
+ * Build the action speed breakdown for an alchemy action and fold the tea speed
+ * bonus into the action time.
+ *
+ * calculateActionStats() already divides the base time by the equipment, personal
+ * and guild speed bonuses but ignores drinks. Speed sources stack additively, so
+ * the multiplier it applied is recovered as baseTime / actionTime and the tea
+ * bonus is added to it rather than applied as a second, multiplicative division.
+ *
+ * @param {Object} actionDetails - Action detail object from game data
+ * @param {Object} params
+ * @param {Map} params.equipment - Equipment map from dataManager.getEquipment()
+ * @param {Object} params.itemDetailMap - Item details from init_client_data
+ * @param {Array} params.drinkSlots - Active drink slots for the action type
+ * @param {number} params.drinkConcentration - Drink Concentration as a decimal
+ * @param {number} params.actionTime - Action time in seconds from calculateActionStats()
+ * @returns {{actionTime: number, actionSpeedBreakdown: Object}}
+ */
+function buildActionSpeedStats(
+    actionDetails,
+    { equipment, itemDetailMap, drinkSlots, drinkConcentration, actionTime }
+) {
+    const baseTime = actionDetails.baseTimeCost / 1e9;
+    const equipmentSpeed = parseEquipmentSpeedBonuses(equipment, actionDetails.type, itemDetailMap);
+
+    // Per-item equipment speed breakdown (skill-specific + generic skilling speed)
+    const skillSpecificSpeed = actionDetails.type.replace('/action_types/', '') + 'Speed';
+    const equipmentDetails = debugEquipmentSpeedBonuses(equipment, itemDetailMap)
+        .filter((item) => item.speedType === skillSpecificSpeed || item.speedType === 'skillingSpeed')
+        .map((item) => ({
+            name: item.itemName,
+            enhancementLevel: item.enhancementLevel,
+            speedBonus: item.scaledBonus,
+        }));
+
+    const teaDetails = parseTeaSpeedDetails(drinkSlots, itemDetailMap, drinkConcentration);
+    const teaSpeed = teaDetails.reduce((sum, tea) => sum + tea.speedBonus, 0);
+
+    let adjustedActionTime = actionTime;
+    if (teaSpeed > 0 && actionTime > 0 && baseTime > 0) {
+        const appliedSpeedMultiplier = baseTime / actionTime;
+        adjustedActionTime = Math.max(MIN_ACTION_TIME_SECONDS, baseTime / (appliedSpeedMultiplier + teaSpeed));
+    }
+
+    return {
+        actionTime: adjustedActionTime,
+        actionSpeedBreakdown: {
+            total: equipmentSpeed + teaSpeed,
+            equipment: equipmentSpeed,
+            tea: teaSpeed,
+            equipmentDetails,
+            teaDetails,
+        },
+    };
+}
+
 class AlchemyProfitCalculator {
     constructor() {
         // Cache for item detail map
@@ -237,6 +321,27 @@ class AlchemyProfitCalculator {
             this._itemDetailMap = initData?.itemDetailMap || {};
         }
         return this._itemDetailMap;
+    }
+
+    /**
+     * Under-level success penalty: alchemy punishes working above your level, and the
+     * penalty depends on the item's level, not on which alchemy action you ran. It used
+     * to be applied on the transmute path only, which left coinify and decompose quoting
+     * an under-levelled character the full base rate.
+     *
+     * Formula: `perLevel × (alchemyLevel - itemLevel)` with `perLevel = 0.9 / itemLevel`,
+     * so it is 0 at or above the item's level and never worse than -0.9 (a 90% cut) at
+     * level 1 against a max-level item.
+     *
+     * @param {number} itemLevel - The item's level
+     * @returns {number} Penalty term, <= 0, additive into the success-rate bonus sum
+     */
+    getUnderLevelPenalty(itemLevel) {
+        const level = itemLevel || 1;
+        const skills = dataManager.getSkills();
+        const alchemySkill = skills?.find((s) => s.skillHrid === '/skills/alchemy');
+        const alchemyLevel = alchemySkill?.level || 1;
+        return alchemyLevel < level ? (UNDER_LEVEL_PENALTY_NUMERATOR / level) * (alchemyLevel - level) : 0;
     }
 
     /**
@@ -479,39 +584,23 @@ class AlchemyProfitCalculator {
                 levelRequirementOverride: itemDetails.itemLevel || 1,
             });
 
-            const { actionTime, totalEfficiency, efficiencyBreakdown } = actionStats;
+            const { totalEfficiency, efficiencyBreakdown } = actionStats;
 
             // Get equipment for drink concentration and speed calculation
             const equipment = dataManager.getEquipment();
 
-            // Calculate action speed breakdown with details
-            const _baseTime = actionDetails.baseTimeCost / 1e9;
-            const speedBonus = parseEquipmentSpeedBonuses(equipment, actionDetails.type, gameData.itemDetailMap);
-
-            // Get detailed equipment speed breakdown
-            const allSpeedBonuses = debugEquipmentSpeedBonuses(equipment, gameData.itemDetailMap);
-            const skillName = actionDetails.type.replace('/action_types/', '');
-            const skillSpecificSpeed = skillName + 'Speed';
-            const relevantSpeeds = allSpeedBonuses.filter((item) => {
-                return item.speedType === skillSpecificSpeed || item.speedType === 'skillingSpeed';
-            });
-
-            // TODO: Add tea speed bonuses when tea-parser supports it
-            const teaSpeed = 0;
-            const actionSpeedBreakdown = {
-                total: speedBonus + teaSpeed,
-                equipment: speedBonus,
-                tea: teaSpeed,
-                equipmentDetails: relevantSpeeds.map((item) => ({
-                    name: item.itemName,
-                    enhancementLevel: item.enhancementLevel,
-                    speedBonus: item.scaledBonus,
-                })),
-                teaDetails: [], // TODO: Add when tea speed is supported
-            };
-
             // Get drink concentration separately (not in breakdown from calculateActionStats)
             const drinkConcentration = getDrinkConcentration(equipment, gameData.itemDetailMap);
+            const drinkSlots = dataManager.getActionDrinkSlots('/action_types/alchemy');
+
+            // Action speed breakdown, and the action time with tea speed folded in
+            const { actionTime, actionSpeedBreakdown } = buildActionSpeedStats(actionDetails, {
+                equipment,
+                itemDetailMap: gameData.itemDetailMap,
+                drinkSlots,
+                drinkConcentration,
+                actionTime: actionStats.actionTime,
+            });
 
             // Calculate input cost (material cost)
             const bulkMultiplier = itemDetails.alchemyDetail?.bulkMultiplier || 1;
@@ -545,7 +634,7 @@ class AlchemyProfitCalculator {
 
             // Calculate live tea cost (used for tea combinations)
             const teaCostData = calculateTeaCostsPerHour({
-                drinkSlots: dataManager.getActionDrinkSlots('/action_types/alchemy'),
+                drinkSlots,
                 drinkConcentration,
                 itemDetailMap: gameData.itemDetailMap,
                 getItemPrice: (hrid) => getItemPrice(hrid, { context: 'profit', side: 'buy' }),
@@ -556,6 +645,7 @@ class AlchemyProfitCalculator {
             const combo = _comboFn({
                 actionType: 'coinify',
                 baseSuccessRate: BASE_SUCCESS_RATES.COINIFY,
+                levelPenalty: this.getUnderLevelPenalty(itemLevel),
                 actionsPerHour: actionsPerHourWithEfficiency,
                 efficiencyDecimal,
                 actionTime,
@@ -746,37 +836,21 @@ class AlchemyProfitCalculator {
                 levelRequirementOverride: itemDetails.itemLevel || 1,
             });
 
-            const { actionTime, totalEfficiency, efficiencyBreakdown } = actionStats;
+            const { totalEfficiency, efficiencyBreakdown } = actionStats;
 
             // Get equipment for drink concentration and speed calculation
             const equipment = dataManager.getEquipment();
-
-            // Calculate action speed breakdown with details
-            const _baseTime = actionDetails.baseTimeCost / 1e9;
-            const speedBonus = parseEquipmentSpeedBonuses(equipment, actionDetails.type, gameData.itemDetailMap);
-
-            // Get detailed equipment speed breakdown
-            const allSpeedBonuses = debugEquipmentSpeedBonuses(equipment, gameData.itemDetailMap);
-            const skillName = actionDetails.type.replace('/action_types/', '');
-            const skillSpecificSpeed = skillName + 'Speed';
-            const relevantSpeeds = allSpeedBonuses.filter((item) => {
-                return item.speedType === skillSpecificSpeed || item.speedType === 'skillingSpeed';
-            });
-
-            // TODO: Add tea speed bonuses when tea-parser supports it
-            const teaSpeed = 0;
-            const actionSpeedBreakdown = {
-                total: speedBonus + teaSpeed,
-                equipment: speedBonus,
-                tea: teaSpeed,
-                equipmentDetails: relevantSpeeds.map((item) => ({
-                    name: item.itemName,
-                    enhancementLevel: item.enhancementLevel,
-                    speedBonus: item.scaledBonus,
-                })),
-                teaDetails: [], // TODO: Add when tea speed is supported
-            };
             const drinkConcentration = getDrinkConcentration(equipment, gameData.itemDetailMap);
+            const drinkSlots = dataManager.getActionDrinkSlots('/action_types/alchemy');
+
+            // Action speed breakdown, and the action time with tea speed folded in
+            const { actionTime, actionSpeedBreakdown } = buildActionSpeedStats(actionDetails, {
+                equipment,
+                itemDetailMap: gameData.itemDetailMap,
+                drinkSlots,
+                drinkConcentration,
+                actionTime: actionStats.actionTime,
+            });
 
             // Get input cost (market price of the item being decomposed)
             const inputPrice = getItemPrice(itemHrid, { context: 'profit', side: 'buy', enhancementLevel });
@@ -830,7 +904,7 @@ class AlchemyProfitCalculator {
                 }
             }
 
-            const coinCost = calculateAlchemyCoinCost(itemDetails, 'decompose');
+            const coinCost = getAlchemyCoinCost(itemDetails, 'decompose');
 
             // Calculate per-hour values
             // Convert efficiency from percentage to decimal
@@ -848,7 +922,7 @@ class AlchemyProfitCalculator {
 
             // Calculate live tea cost (used for tea combinations)
             const teaCostData = calculateTeaCostsPerHour({
-                drinkSlots: dataManager.getActionDrinkSlots('/action_types/alchemy'),
+                drinkSlots,
                 drinkConcentration,
                 itemDetailMap: gameData.itemDetailMap,
                 getItemPrice: (hrid) => getItemPrice(hrid, { context: 'profit', side: 'buy' }),
@@ -859,6 +933,7 @@ class AlchemyProfitCalculator {
             const combo = _comboFn({
                 actionType: 'decompose',
                 baseSuccessRate: BASE_SUCCESS_RATES.DECOMPOSE,
+                levelPenalty: this.getUnderLevelPenalty(itemLevel),
                 actionsPerHour: actionsPerHourWithEfficiency,
                 efficiencyDecimal,
                 actionTime,
@@ -1030,13 +1105,8 @@ class AlchemyProfitCalculator {
                 return null; // Cannot transmute
             }
 
-            // Calculate under-level penalty for transmute
-            // Formula: perLevel × (alchemyLevel - itemLevel) where perLevel = 0.9 / itemLevel
             const itemLevel = itemDetails.itemLevel || 1;
-            const skills = dataManager.getSkills();
-            const alchemySkill = skills?.find((s) => s.skillHrid === '/skills/alchemy');
-            const alchemyLevel = alchemySkill?.level || 1;
-            const levelPenalty = alchemyLevel < itemLevel ? (0.9 / itemLevel) * (alchemyLevel - itemLevel) : 0;
+            const levelPenalty = this.getUnderLevelPenalty(itemLevel);
 
             // Get alchemy action details
             const actionDetails = gameData.actionDetailMap['/actions/alchemy/transmute'];
@@ -1058,37 +1128,21 @@ class AlchemyProfitCalculator {
                 levelRequirementOverride: itemDetails.itemLevel || 1,
             });
 
-            const { actionTime, totalEfficiency, efficiencyBreakdown } = actionStats;
+            const { totalEfficiency, efficiencyBreakdown } = actionStats;
 
             // Get equipment for drink concentration and speed calculation
             const equipment = dataManager.getEquipment();
-
-            // Calculate action speed breakdown with details
-            const _baseTime = actionDetails.baseTimeCost / 1e9;
-            const speedBonus = parseEquipmentSpeedBonuses(equipment, actionDetails.type, gameData.itemDetailMap);
-
-            // Get detailed equipment speed breakdown
-            const allSpeedBonuses = debugEquipmentSpeedBonuses(equipment, gameData.itemDetailMap);
-            const skillName = actionDetails.type.replace('/action_types/', '');
-            const skillSpecificSpeed = skillName + 'Speed';
-            const relevantSpeeds = allSpeedBonuses.filter((item) => {
-                return item.speedType === skillSpecificSpeed || item.speedType === 'skillingSpeed';
-            });
-
-            // TODO: Add tea speed bonuses when tea-parser supports it
-            const teaSpeed = 0;
-            const actionSpeedBreakdown = {
-                total: speedBonus + teaSpeed,
-                equipment: speedBonus,
-                tea: teaSpeed,
-                equipmentDetails: relevantSpeeds.map((item) => ({
-                    name: item.itemName,
-                    enhancementLevel: item.enhancementLevel,
-                    speedBonus: item.scaledBonus,
-                })),
-                teaDetails: [], // TODO: Add when tea speed is supported
-            };
             const drinkConcentration = getDrinkConcentration(equipment, gameData.itemDetailMap);
+            const drinkSlots = dataManager.getActionDrinkSlots('/action_types/alchemy');
+
+            // Action speed breakdown, and the action time with tea speed folded in
+            const { actionTime, actionSpeedBreakdown } = buildActionSpeedStats(actionDetails, {
+                equipment,
+                itemDetailMap: gameData.itemDetailMap,
+                drinkSlots,
+                drinkConcentration,
+                actionTime: actionStats.actionTime,
+            });
 
             // Get input cost (market price of the item being transmuted)
             const inputPrice = getItemPrice(itemHrid, { context: 'profit', side: 'buy' });
@@ -1140,7 +1194,7 @@ class AlchemyProfitCalculator {
                 }
             }
 
-            const coinCost = calculateAlchemyCoinCost(itemDetails, 'transmute');
+            const coinCost = getAlchemyCoinCost(itemDetails, 'transmute');
 
             // Gross material cost (before self-return adjustment)
             const grossMaterialCost = inputPrice * bulkMultiplier;
@@ -1160,7 +1214,7 @@ class AlchemyProfitCalculator {
 
             // Calculate live tea cost (used for tea combinations)
             const teaCostData = calculateTeaCostsPerHour({
-                drinkSlots: dataManager.getActionDrinkSlots('/action_types/alchemy'),
+                drinkSlots,
                 drinkConcentration,
                 itemDetailMap: gameData.itemDetailMap,
                 getItemPrice: (hrid) => getItemPrice(hrid, { context: 'profit', side: 'buy' }),

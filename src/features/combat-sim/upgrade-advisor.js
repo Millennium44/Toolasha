@@ -7,10 +7,18 @@
 
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
-import { buildGameDataPayload, calculateSimRevenue } from './combat-sim-adapter.js';
-import { runSimulation, runLabyrinthSimulation } from './combat-sim-runner.js';
-import { estimateFoodSimCount, runFoodOptimization } from './food-optimizer.js';
-import { generateLabArmorCandidates } from './lab-armor-candidates.js';
+import {
+    buildGameDataPayload,
+    calculateSimRevenue,
+    getGuildBuffDetailMap,
+    guildBuffMaxLevel,
+    applyGuildBuffLevel,
+} from './combat-sim-adapter.js';
+import { runSimulation, runLabyrinthSimulation, getMaxWorkers } from './combat-sim-runner.js';
+import { buildBuffDrinkPools, estimateFoodSimCount, runFoodOptimization } from './food-optimizer.js';
+import { generateLabArmorCandidates, labelItemWithLevel } from './lab-armor-candidates.js';
+import { buildGuidePlan } from './build-guide.js';
+import { bestGearForSkill } from './skilling-gear-candidates.js';
 import { deriveSeed, randomSeed } from './engine/rng.js';
 import labyrinthClearRate from '../combat/labyrinth-clear-rate.js';
 import { resolveItemPrice } from '../../utils/profit-helpers.js';
@@ -18,8 +26,10 @@ import { getItemPrices } from '../../utils/market-data.js';
 import { calculateEnhancement } from '../../utils/enhancement-calculator.js';
 import { getEnhancingParams, getAutoDetectedParams } from '../../utils/enhancement-config.js';
 import { getCheapestProtectionPrice, getProductionCost } from '../enhancement/tooltip-enhancement.js';
-import { calculateAbilityLevelUpCost } from '../../utils/ability-cost-calculator.js';
+import { explainAbilityLevelUpCost } from '../../utils/ability-cost-calculator.js';
 import { buildOverridesForSkill } from './skilling-sim-helpers.js';
+import { priceGuildCreditCosts } from '../../utils/guild-credit-pricing.js';
+import { describeGuildTokenGold, explainGuildTokenValue } from '../guild/guild-token-value.js';
 
 /** Enhancement breakpoints by slot type */
 const BREAKPOINTS_DEFAULT = [7, 10, 12, 13, 14, 15, 16, 17, 18, 19, 20];
@@ -34,9 +44,23 @@ const PHILO_START_LEVEL = 5;
 const PHILO_HRID_PREFIX = '/items/philosophers_';
 
 const CHARM_SLOT = '/equipment_types/charm';
+const TRINKET_SLOT = '/equipment_types/trinket';
+const MAIN_HAND_SLOT = '/equipment_types/main_hand';
+const OFF_HAND_SLOT = '/equipment_types/off_hand';
+const TWO_HAND_SLOT = '/equipment_types/two_hand';
 
 /** Highest level a house room can reach */
-const MAX_HOUSE_LEVEL = 8;
+export const MAX_HOUSE_LEVEL = 8;
+
+/**
+ * Highest level any guild shrine buff reaches, for the input that asks for one.
+ *
+ * The real ceiling is per buff and comes from the game's own cost table —
+ * `guildBuffMaxLevel` reads it, and the generator clamps every target down to
+ * it. This is only what a number box should refuse to go above, so it is the
+ * highest of them rather than any one buff's.
+ */
+export const MAX_GUILD_SHRINE_LEVEL = 20;
 
 /**
  * Seed for one analysis run, or null to leave every sim on independent randomness.
@@ -266,12 +290,18 @@ function addPhiloAccessoryCandidates(playerDTO, gameData, candidates) {
 
 /**
  * Get the player's primary combat style from their weapon.
+ *
+ * Both weapon slots, because a two-handed weapon leaves `main_hand` empty — and
+ * reading only the main hand made every bow, staff, bulwark and trident come
+ * back 'unknown', which `isAbilityCompatible` reads as "offer universal
+ * abilities only". Two-handed builds were silently getting no elemental or
+ * ranged swap candidates at all.
  * @param {Object} playerDTO
  * @param {Object} gameData
  * @returns {string} e.g., 'slash', 'stab', 'smash', 'ranged', 'magic'
  */
 function getPlayerCombatStyle(playerDTO, gameData) {
-    const weapon = playerDTO.equipment['/equipment_types/main_hand'];
+    const weapon = playerDTO.equipment?.[MAIN_HAND_SLOT] || playerDTO.equipment?.[TWO_HAND_SLOT];
     if (!weapon) return 'unknown';
     const weaponDetails = gameData.itemDetailMap[weapon.hrid];
     const stats = weaponDetails?.equipmentDetail?.combatStats;
@@ -444,7 +474,11 @@ function calculateEnhancementCost(itemHrid, startLevel, targetLevel, gameData, o
         for (const protectFrom of protectOptions) {
             try {
                 const result = calculateEnhancement({
+                    // Every input comes from the player's own detected stats via
+                    // getEnhancingParams — the observatory level and the blessed tea's real
+                    // double-jump chance included, so the quote is their run, not a stock one
                     enhancingLevel: enhancingParams.enhancingLevel,
+                    houseLevel: enhancingParams.houseLevel,
                     toolBonus: enhancingParams.toolBonus,
                     speedBonus: enhancingParams.speedBonus || 0,
                     itemLevel,
@@ -452,6 +486,7 @@ function calculateEnhancementCost(itemHrid, startLevel, targetLevel, gameData, o
                     protectFrom,
                     blessedTea: enhancingParams.teas?.blessed || false,
                     guzzlingBonus: enhancingParams.guzzlingBonus || 1.0,
+                    blessedTeaBonus: enhancingParams.blessedTeaBonus,
                 });
 
                 const materialCost = perAttemptCost * result.attempts;
@@ -498,30 +533,42 @@ function getItemRole(combatStats) {
     }
 
     // Check for primary offensive stats (exclude defensiveDamage — it's a tank stat)
-    const melee = (combatStats.stabDamage || 0) + (combatStats.slashDamage || 0) + (combatStats.smashDamage || 0);
+    const stab = combatStats.stabDamage || 0;
+    const slash = combatStats.slashDamage || 0;
+    const smash = combatStats.smashDamage || 0;
     const ranged = combatStats.rangedDamage || 0;
     const magic = combatStats.magicDamage || 0;
+    const melee = stab + slash + smash;
 
-    // If item has offensive damage stats, classify by highest
+    // If item has offensive damage stats, classify by highest.
+    // Melee is subdivided by damage style so stab/slash/smash weapons form separate tier groups —
+    // one combined 'melee' group let sortIndex ordering offer a spear user a slash sword as the
+    // "next tier".
     if (melee > 0 || ranged > 0 || magic > 0) {
         if (ranged >= melee && ranged >= magic) return 'ranged';
         if (magic >= melee && magic >= ranged) return 'magic';
-        return 'melee';
+        if (stab >= slash && stab >= smash) return 'melee_stab';
+        if (slash >= stab && slash >= smash) return 'melee_slash';
+        return 'melee_smash';
     }
 
     // Items with only defensiveDamage and no offensive damage are tanks
     if (combatStats.defensiveDamage > 0) return 'defensive';
 
     // Check accuracy as secondary signal
-    const meleeAcc =
-        (combatStats.stabAccuracy || 0) + (combatStats.slashAccuracy || 0) + (combatStats.smashAccuracy || 0);
+    const stabAcc = combatStats.stabAccuracy || 0;
+    const slashAcc = combatStats.slashAccuracy || 0;
+    const smashAcc = combatStats.smashAccuracy || 0;
+    const meleeAcc = stabAcc + slashAcc + smashAcc;
     const rangedAcc = combatStats.rangedAccuracy || 0;
     const magicAcc = combatStats.magicAccuracy || 0;
 
     if (meleeAcc > 0 || rangedAcc > 0 || magicAcc > 0) {
         if (rangedAcc >= meleeAcc && rangedAcc >= magicAcc) return 'ranged';
         if (magicAcc >= meleeAcc && magicAcc >= rangedAcc) return 'magic';
-        return 'melee';
+        if (stabAcc >= slashAcc && stabAcc >= smashAcc) return 'melee_stab';
+        if (slashAcc >= stabAcc && slashAcc >= smashAcc) return 'melee_slash';
+        return 'melee_smash';
     }
 
     // Defensive/utility gear — armor, evasion, HP
@@ -649,6 +696,101 @@ function hasCombatStats(itemDetails) {
 }
 
 /**
+ * The "what you wear now → what this buys" line for a swap.
+ *
+ * Every piece on both sides carries its own enhancement level. The old shape
+ * put a single `(+7)` at the end, which said one level for the whole change and
+ * silently attributed the worn piece's level to the piece coming in — only ever
+ * correct because a tier swap happens to keep the enhancement. Spelling both
+ * sides out means the label stays true when they differ, which is exactly what
+ * the refined-item clamp makes happen.
+ *
+ * @param {string} fromName - The piece being replaced
+ * @param {number} fromLevel - Its enhancement level
+ * @param {string[]} toNames - The pieces coming in, in display order
+ * @param {number[]} toLevels - Their enhancement levels, in the same order
+ * @returns {string} Description
+ */
+function swapDescription(fromName, fromLevel, toNames, toLevels) {
+    const to = toNames.map((name, index) => labelItemWithLevel(name, toLevels[index] ?? toLevels[0] ?? 0)).join(' + ');
+    return `${labelItemWithLevel(fromName, fromLevel)} → ${to}`;
+}
+
+/**
+ * Rebuild a swap's description from the names it was built with.
+ *
+ * Kept alongside `swapLabel` on the candidate so a later change to the levels —
+ * the refined clamp is the only one — can redraw the line rather than patch the
+ * end of the string it produced. The clamp used to do exactly that, with a
+ * regex for the trailing `(+4)`, which the per-piece shape no longer has.
+ *
+ * @param {Object} candidate - A candidate carrying `swapLabel`
+ * @returns {string} Description
+ */
+function redescribeSwap(candidate) {
+    const levels = candidate.addedSlots
+        ? Object.values(candidate.addedSlots).map((item) => item.enhancementLevel || 0)
+        : [candidate.upgradeLevel];
+    return swapDescription(candidate.swapLabel.from, candidate.currentLevel, candidate.swapLabel.to, levels);
+}
+
+/**
+ * Is this the charm slot's item?
+ *
+ * A charm carries `focusTraining` — the skill hrid that takes 70% of the
+ * combat experience (engine/player.js, engine/sim-result.js) — and often
+ * nothing else. `focusTraining` is a skill hrid rather than a number, so it is
+ * not in COMBAT_STATS and `hasCombatStats` reads a pure-focus charm as inert:
+ * the charm slot was skipped in the equipment loop entirely, and no charm level
+ * or tier ever reached the candidate list. Charms are ordinary marketplace
+ * equipment that enhance and tier up like the rest, so they are let through on
+ * being a charm rather than on carrying a stat the table happens to rank.
+ *
+ * @param {Object} itemDetails - Item detail from itemDetailMap
+ * @returns {boolean}
+ */
+function isCharmItem(itemDetails) {
+    return itemDetails?.equipmentDetail?.type === CHARM_SLOT;
+}
+
+/**
+ * The next charm up from the one worn, staying on the same focus skill.
+ *
+ * Charm families are distinguished by item level rather than by a crafting
+ * chain, so the tier walk the rest of the equipment loop uses finds nothing for
+ * them. "Next" is the lowest item level strictly above the current charm's,
+ * which is one step rather than the whole family — the same single-step rule
+ * every other slot's tier candidate follows.
+ *
+ * Swapping the focus skill is deliberately not a candidate: that is a decision
+ * about which skill to train, not an upgrade, and it would put one row per
+ * combat skill into a table that ranks on gold.
+ *
+ * @param {string} currentHrid - The equipped charm
+ * @param {Object} gameData - Game data payload
+ * @returns {{hrid: string, name: string}|null} The next charm, if there is one
+ */
+function nextCharmTier(currentHrid, gameData) {
+    const current = gameData?.itemDetailMap?.[currentHrid];
+    if (!isCharmItem(current)) return null;
+
+    const focus = current.equipmentDetail.combatStats?.focusTraining;
+    const currentItemLevel = current.itemLevel || 0;
+
+    let best = null;
+    for (const [hrid, detail] of Object.entries(gameData.itemDetailMap || {})) {
+        if (hrid === currentHrid || !isCharmItem(detail)) continue;
+        if ((detail.equipmentDetail.combatStats?.focusTraining || '') !== (focus || '')) continue;
+        const itemLevel = detail.itemLevel || 0;
+        if (itemLevel <= currentItemLevel) continue;
+        if (!best || itemLevel < best.itemLevel) {
+            best = { hrid, name: detail.name || hrid.split('/').pop(), itemLevel };
+        }
+    }
+    return best ? { hrid: best.hrid, name: best.name } : null;
+}
+
+/**
  * Build a map of valid tier upgrades based on crafting/production chains.
  * An item X can upgrade to item Y if Y's crafting action uses X as:
  *   - upgradeItemHrid (direct upgrade chain), OR
@@ -715,21 +857,46 @@ function getItemDamageStyle(combatStats) {
 }
 
 /**
+ * Which attack styles an item's offensive stats are for.
+ *
+ * An off-hand carrying melee accuracy is a melee off-hand, whatever else it
+ * gives — pairing it with a crossbow offers a bow user a shield whose entire
+ * offensive contribution is dead weight.
+ *
+ * @param {Object} stats - `equipmentDetail.combatStats`
+ * @returns {Set<string>} Any of `magic`, `ranged`, `melee`; empty when the piece
+ *   is purely defensive and so fits any style
+ */
+function offensiveStyles(stats = {}) {
+    const styles = new Set();
+    if ((stats.magicDamage || 0) > 0 || (stats.magicAccuracy || 0) > 0) styles.add('magic');
+    if ((stats.rangedDamage || 0) > 0 || (stats.rangedAccuracy || 0) > 0) styles.add('ranged');
+    const meleeDamage = (stats.stabDamage || 0) + (stats.slashDamage || 0) + (stats.smashDamage || 0);
+    const meleeAccuracy = (stats.stabAccuracy || 0) + (stats.slashAccuracy || 0) + (stats.smashAccuracy || 0);
+    if (meleeDamage > 0 || meleeAccuracy > 0) styles.add('melee');
+    return styles;
+}
+
+/**
  * Find candidate off-hand items for a given combat style and level range.
  * Returns up to two options (deduped):
  *  - Style-matched: highest-itemLevel off-hand whose offensive stats match the
  *    weapon's damage style (e.g. Manticore Shield for ranged).
- *  - Highest-itemLevel: the strongest off-hand by item level overall, regardless
- *    of style fit (e.g. Knight's Aegis for any cross-slot upgrade).
+ *  - Highest-itemLevel: the strongest off-hand by item level among those that
+ *    fit the style — either matching it or carrying no offensive stats at all.
+ *
+ * That second one used to be the strongest off-hand *overall*, which paired a
+ * ranged main hand with a melee shield and offered it as an upgrade. An
+ * off-hand built for another style is not a better off-hand, whatever its item
+ * level says; a purely defensive one is still fair game for anybody.
+ *
  * @param {Object} gameData - Game data
  * @param {string} damageStyle - Primary damage style of the weapon
  * @param {number} maxItemLevel - Maximum item level to consider
  * @returns {Array<{hrid: string, itemLevel: number}>}
  */
 function findBestOffHand(gameData, damageStyle, maxItemLevel) {
-    const isMagic = damageStyle === 'magic';
-    const isRanged = damageStyle === 'ranged';
-    const isMelee = damageStyle === 'slash' || damageStyle === 'stab' || damageStyle === 'smash';
+    const family = damageStyle === 'magic' ? 'magic' : damageStyle === 'ranged' ? 'ranged' : 'melee';
 
     let styleMatched = null; // highest-itemLevel off-hand with style-matched stats
     let highest = null; // highest-itemLevel off-hand overall (with magic-exclusion for non-magic)
@@ -741,36 +908,20 @@ function findBestOffHand(gameData, damageStyle, maxItemLevel) {
         if ((item.itemLevel || 0) > maxItemLevel) continue;
 
         const level = item.itemLevel || 0;
-        const stats = eq.combatStats || {};
-        const hasMagicStats = (stats.magicDamage || 0) > 0 || (stats.magicAccuracy || 0) > 0;
+        const styles = offensiveStyles(eq.combatStats);
 
-        // Build "highest overall" candidate (mirrors original behavior)
-        if (isMagic) {
-            if (!highest) {
-                highest = { hrid: itemHrid, itemLevel: level, isMagic: hasMagicStats };
-            } else if (hasMagicStats && !highest.isMagic) {
-                highest = { hrid: itemHrid, itemLevel: level, isMagic: true };
-            } else if (hasMagicStats === highest.isMagic && level > highest.itemLevel) {
-                highest = { hrid: itemHrid, itemLevel: level, isMagic: hasMagicStats };
-            }
-        } else if (!hasMagicStats && (!highest || level > highest.itemLevel)) {
-            // For non-magic, exclude off-hands with magic stats from "highest"
+        // An off-hand whose offensive stats are for another style is not an
+        // upgrade for this weapon at any item level; one with none at all is
+        // pure defence and fits anybody
+        if ([...styles].some((style) => style !== family)) continue;
+
+        if (!highest || level > highest.itemLevel) {
             highest = { hrid: itemHrid, itemLevel: level };
         }
 
-        // Build "style-matched" candidate — highest itemLevel among off-hands whose
-        // offensive stats match the weapon's damage style.
-        let styleMatch = false;
-        if (isMagic) {
-            styleMatch = hasMagicStats;
-        } else if (isRanged) {
-            styleMatch = (stats.rangedDamage || 0) > 0 || (stats.rangedAccuracy || 0) > 0;
-        } else if (isMelee) {
-            const meleeDmg = (stats.stabDamage || 0) + (stats.slashDamage || 0) + (stats.smashDamage || 0);
-            const meleeAcc = (stats.stabAccuracy || 0) + (stats.slashAccuracy || 0) + (stats.smashAccuracy || 0);
-            styleMatch = meleeDmg > 0 || meleeAcc > 0;
-        }
-        if (styleMatch && (!styleMatched || level > styleMatched.itemLevel)) {
+        // Style-matched: the highest one that actually contributes to this
+        // weapon's damage, rather than merely not clashing with it
+        if (styles.has(family) && (!styleMatched || level > styleMatched.itemLevel)) {
             styleMatched = { hrid: itemHrid, itemLevel: level };
         }
     }
@@ -784,12 +935,148 @@ function findBestOffHand(gameData, damageStyle, maxItemLevel) {
 }
 
 /**
+ * How much taskDamage the item(s) a candidate equips would carry.
+ *
+ * Read off the item rather than measured by simulation on purpose: the sims
+ * that rank candidates are generic zone fights, run with the engine's task
+ * bonus switched off, so a task badge measures there as exactly what it is off
+ * task — inert. This number exists only so the row can name the conditional
+ * gain it is *not* counting.
+ *
+ * @param {Object} candidate - An upgrade candidate
+ * @param {Object} gameData - Game data from buildGameDataPayload()
+ * @returns {number} Base taskDamage ratio across the equipped items, 0 if none
+ */
+function candidateTaskDamage(candidate, gameData) {
+    const items = [];
+    if (candidate?.upgradeHrid) items.push(candidate.upgradeHrid);
+    if (candidate?.addedSlots) {
+        for (const item of Object.values(candidate.addedSlots)) {
+            if (item?.hrid) items.push(item.hrid);
+        }
+    }
+
+    let total = 0;
+    for (const hrid of items) {
+        total += gameData?.itemDetailMap?.[hrid]?.equipmentDetail?.combatStats?.taskDamage || 0;
+    }
+    return total;
+}
+
+/**
+ * The slot a fill candidate should land in on this particular ability bar.
+ *
+ * The special slot holds exactly one thing and is the same slot on every
+ * loadout, so a special-slot fill is slot 0 or nowhere. Anything else takes the
+ * first free slot past it, which differs from bar to bar — hence resolving it
+ * against the bar in hand rather than trusting the index the candidate was born
+ * with.
+ *
+ * @param {Array} abilities - A loadout's ability bar
+ * @param {string} slot - The candidate's slot, e.g. `ability_3`
+ * @returns {number} The slot index, or -1 when this bar has nothing free
+ */
+function freeAbilitySlot(abilities, slot) {
+    if (slot === 'ability_0') return abilities.length > 0 && !abilities[0] ? 0 : -1;
+    return abilities.findIndex((ability, index) => index > 0 && !ability);
+}
+
+/**
+ * Whether the guide would let one ability replace another.
+ *
+ * Two rules, and they are the whole of what "based on the build guide" means
+ * for a swap:
+ *
+ * - An ability the guide does **not** ask for is fair game to replace. That is
+ *   the point — the off-guide ability in slot 4 is what a spear build wants
+ *   Puncture in.
+ * - An ability the guide **does** ask for is left alone, unless the newcomer is
+ *   its OR-alternative. This is what keeps `Critical Aura → Fierce Aura` and
+ *   `Shield Bash → Retribution` on the table while stopping the generator
+ *   proposing that a spear build drop the Frenzy the guide just asked it to
+ *   run in favour of Puncture.
+ *
+ * Group membership is always read from the archetype's *whole* set, never from
+ * the signature-only subset — otherwise signature-only mode would treat every
+ * non-signature guide ability as off-guide and offer to replace it.
+ *
+ * @param {Object} guide - From `buildGuidePlan`
+ * @param {string} currentHrid - The equipped ability that would be displaced
+ * @param {string} incomingHrid - The ability being offered
+ * @returns {boolean}
+ */
+function guideSwapAllowed(guide, currentHrid, incomingHrid) {
+    const currentGroup = guide.memberOf.get(currentHrid);
+    if (currentGroup === undefined) return true;
+    return guide.memberOf.get(incomingHrid) === currentGroup;
+}
+
+/**
+ * Guide abilities for the slots a loadout has left empty.
+ *
+ * An empty slot is the commonest reason a build is missing its aura, and the
+ * slot loop above skips empty slots entirely — it is built around replacing one
+ * ability with another. This fills them instead: each guide ability the loadout
+ * is not already casting goes into the first slot that can hold it, once, at
+ * the level of the book you already own (Lv1 when you own none, which is what
+ * buying the book would get you).
+ *
+ * Only on the guide path. Doing it for the fallback path would offer every
+ * ability in the game for every empty slot.
+ *
+ * @param {Object} playerDTO - Player DTO with abilities
+ * @param {Object} gameData - Game data payload
+ * @param {Object} guide - From `buildGuidePlan`
+ * @param {string} playerStyle - From `getPlayerCombatStyle`
+ * @param {Array} candidates - Candidate list (mutated)
+ */
+function addGuideEmptySlotCandidates(playerDTO, gameData, guide, playerStyle, candidates) {
+    const abilities = playerDTO.abilities || [];
+    const equipped = new Set(abilities.filter((a) => a).map((a) => a.hrid));
+    const specialSlotFree = abilities.length > 0 && !abilities[0];
+    const firstFreeNormal = abilities.findIndex((ability, index) => index > 0 && !ability);
+
+    for (const abHrid of guide.offers) {
+        const abDetail = gameData.abilityDetailMap?.[abHrid];
+        if (!abDetail || equipped.has(abHrid)) continue;
+        const slotIdx = abDetail.isSpecialAbility ? (specialSlotFree ? 0 : -1) : firstFreeNormal;
+        if (slotIdx < 0) continue;
+        if (!isAbilityCompatible(getAbilityCombatStyle(abDetail), playerStyle)) continue;
+
+        const level = Math.max(1, ownedAbility(abHrid)?.level || 0);
+        const swapName = abDetail.name || abHrid.split('/').pop();
+        candidates.push({
+            slot: `ability_${slotIdx}`,
+            // No `replacesHrid`: this one is about filling a slot rather than
+            // displacing an ability. `fillsFreeSlot` says so out loud, because
+            // the slot number on it belongs to the loadout it was generated
+            // from — pooled across a labyrinth it would otherwise be written
+            // over whatever another loadout keeps in that slot.
+            fillsFreeSlot: true,
+            currentHrid: abHrid,
+            currentLevel: 0,
+            upgradeHrid: abHrid,
+            upgradeLevel: level,
+            description: `Empty slot → ${swapName} (Lv${level})`,
+            type: 'ability_swap',
+        });
+    }
+}
+
+/**
  * Generate upgrade candidates for a player's equipment and/or abilities.
  * @param {Object} playerDTO - Player DTO with equipment
  * @param {Object} gameData - Game data from buildGameDataPayload()
  * @param {string} [mode='equipment'] - 'equipment' or 'abilities'
  * @param {number} [abilityTargetLevel=0] - Target level or increment for ability upgrades
  * @param {string} [abilityLevelType='increment'] - 'increment' (add N levels) or 'target' (absolute level)
+ * @param {Object} [communityBuffs=null] - Configured community buffs, for the 'community_buff' set
+ * @param {number} [guildShrineTargetLevel=0] - Absolute shrine buff level to buy up to; 0 means one level up
+ * @param {Object} [options] - `{ signatureSwapsOnly, houseWinRateOnly, communityBuffTargetLevel,
+ *   guildShrineTargets }`. `houseWinRateOnly` narrows the house set to rooms that can move a
+ *   fight's outcome, for an analysis ranked on win rate alone; `communityBuffTargetLevel` buys
+ *   several buff levels at once; `guildShrineTargets` is a per-shrine target map that takes
+ *   precedence over `guildShrineTargetLevel`, skipping any shrine it does not name.
  * @returns {Array} Candidates: [{slot, currentHrid, currentLevel, upgradeHrid, upgradeLevel, description, type}]
  */
 export function generateCandidates(
@@ -802,7 +1089,10 @@ export function generateCandidates(
     combatLevelTargets = null,
     abilityTargets = null,
     houseTargetLevel = 0,
-    houseTargets = null
+    houseTargets = null,
+    communityBuffs = null,
+    guildShrineTargetLevel = 0,
+    options = {}
 ) {
     const candidates = [];
 
@@ -817,10 +1107,15 @@ export function generateCandidates(
             const currentLevel = equip.enhancementLevel || 0;
             const itemDetails = gameData.itemDetailMap[currentHrid];
 
-            // Skip trinkets and items with no combat stats (tools, etc.)
-            if (slot === '/equipment_types/trinket') continue;
+            // Trinkets are kept in the table even though these rankings run off
+            // task, where a pure task trinket measures as inert: a trinket can
+            // carry ordinary combat stats too, and those do rank. What the row
+            // must not do is bank the taskDamage — the caveat set below says so.
             if (skipBackSlot && slot === '/equipment_types/back') continue;
-            if (!hasCombatStats(itemDetails)) continue;
+            // Charms are the exception: what they carry is a focus-training skill
+            // rather than a ranked stat, and gating them on stats hid every charm
+            // level and tier from the table. See `isCharmItem`.
+            if (!hasCombatStats(itemDetails) && !isCharmItem(itemDetails)) continue;
 
             // Enhancement upgrade: next breakpoint
             const nextBP = getNextBreakpoint(currentLevel, slot, currentHrid);
@@ -859,7 +1154,8 @@ export function generateCandidates(
                             currentLevel,
                             upgradeHrid,
                             upgradeLevel: currentLevel,
-                            description: `${currentName} → ${upgradeName} (+${currentLevel})`,
+                            swapLabel: { from: currentName, to: [upgradeName] },
+                            description: swapDescription(currentName, currentLevel, [upgradeName], [currentLevel]),
                             type: 'tier',
                         });
                     }
@@ -901,7 +1197,13 @@ export function generateCandidates(
                                 currentLevel,
                                 upgradeHrid: nextTier.hrid,
                                 upgradeLevel: currentLevel,
-                                description: `${offensiveCurrentName} → ${nextName} (+${currentLevel})`,
+                                swapLabel: { from: offensiveCurrentName, to: [nextName] },
+                                description: swapDescription(
+                                    offensiveCurrentName,
+                                    currentLevel,
+                                    [nextName],
+                                    [currentLevel]
+                                ),
                                 type: 'tier',
                             });
                             offensiveCandidateHrids.add(nextTier.hrid);
@@ -933,7 +1235,13 @@ export function generateCandidates(
                                     currentLevel,
                                     upgradeHrid: highestNonRefined.hrid,
                                     upgradeLevel: currentLevel,
-                                    description: `${offensiveCurrentName} → ${highestName} (+${currentLevel})`,
+                                    swapLabel: { from: offensiveCurrentName, to: [highestName] },
+                                    description: swapDescription(
+                                        offensiveCurrentName,
+                                        currentLevel,
+                                        [highestName],
+                                        [currentLevel]
+                                    ),
                                     type: 'tier',
                                 });
                                 offensiveCandidateHrids.add(highestNonRefined.hrid);
@@ -965,11 +1273,39 @@ export function generateCandidates(
                             currentLevel,
                             upgradeHrid,
                             upgradeLevel: currentLevel,
-                            description: `${offensiveCurrentName} → ${upgradeName} (+${currentLevel})`,
+                            swapLabel: { from: offensiveCurrentName, to: [upgradeName] },
+                            description: swapDescription(
+                                offensiveCurrentName,
+                                currentLevel,
+                                [upgradeName],
+                                [currentLevel]
+                            ),
                             type: 'tier',
                         });
                         offensiveCandidateHrids.add(upgradeHrid);
                     }
+                }
+            }
+
+            // A charm's tier is not a crafting chain in the data — the families
+            // are named ("Basic/Expert … Charm") and separated by item level —
+            // so the chain walk above finds nothing to offer. The next charm of
+            // the same focus is added directly, which is the same "next tier"
+            // the Combat Levels charm picker already reasons about.
+            if (isCharmItem(itemDetails)) {
+                const nextCharm = nextCharmTier(currentHrid, gameData);
+                if (nextCharm && !candidates.some((c) => c.slot === slot && c.upgradeHrid === nextCharm.hrid)) {
+                    const currentName = itemDetails?.name || currentHrid.split('/').pop();
+                    candidates.push({
+                        slot,
+                        currentHrid,
+                        currentLevel,
+                        upgradeHrid: nextCharm.hrid,
+                        upgradeLevel: currentLevel,
+                        swapLabel: { from: currentName, to: [nextCharm.name] },
+                        description: swapDescription(currentName, currentLevel, [nextCharm.name], [currentLevel]),
+                        type: 'tier',
+                    });
                 }
             }
         }
@@ -1023,7 +1359,13 @@ export function generateCandidates(
                             },
                             clearedSlots: ['/equipment_types/two_hand'],
                             removedItems: [{ hrid: twoHandEquip.hrid, enhancementLevel: enhLevel }],
-                            description: `${currentName} → ${mainName} + ${ohName} (+${enhLevel})`,
+                            swapLabel: { from: currentName, to: [mainName, ohName] },
+                            description: swapDescription(
+                                currentName,
+                                enhLevel,
+                                [mainName, ohName],
+                                [enhLevel, enhLevel]
+                            ),
                             type: 'cross_slot',
                         });
                     }
@@ -1072,7 +1414,8 @@ export function generateCandidates(
                                 ? [{ hrid: offHandEquip.hrid, enhancementLevel: offHandEquip.enhancementLevel || 0 }]
                                 : []),
                         ],
-                        description: `${currentName} → ${twoHandName} (+${enhLevel})`,
+                        swapLabel: { from: currentName, to: [twoHandName] },
+                        description: swapDescription(currentName, enhLevel, [twoHandName], [enhLevel]),
                         type: 'cross_slot',
                     });
                 }
@@ -1083,6 +1426,15 @@ export function generateCandidates(
     } else if (mode === 'ability_level' || mode === 'ability_swap') {
         const playerStyle = getPlayerCombatStyle(playerDTO, gameData);
         const equippedAbilityHrids = new Set(playerDTO.abilities.filter((a) => a).map((a) => a.hrid));
+        // What the community build guide says this loadout should be casting.
+        // Null when the archetype cannot be read off the weapon, or when the
+        // guide's abilities are not in this game data at all — either way the
+        // loop below falls back to offering every style-compatible ability,
+        // which is the behaviour this set has always had.
+        const guide =
+            mode === 'ability_swap'
+                ? buildGuidePlan(playerDTO, gameData, { signatureOnly: Boolean(options.signatureSwapsOnly) })
+                : null;
         const abilityTargetsMap =
             abilityTargets && typeof abilityTargets === 'object' && Object.keys(abilityTargets).length > 0
                 ? abilityTargets
@@ -1125,12 +1477,18 @@ export function generateCandidates(
                     });
                 }
             } else {
-                // Swap candidates: other compatible abilities not already equipped
-                for (const [abHrid, abDetail] of Object.entries(gameData.abilityDetailMap)) {
+                // Swap candidates: other compatible abilities not already equipped.
+                // With a guide, "other" is the archetype's own ability set rather
+                // than every ability in the game — see `guideSwapAllowed`.
+                const offered = guide ? guide.offers : Object.keys(gameData.abilityDetailMap);
+                for (const abHrid of offered) {
+                    const abDetail = gameData.abilityDetailMap[abHrid];
+                    if (!abDetail) continue;
                     if (equippedAbilityHrids.has(abHrid)) continue;
                     if (abDetail.isSpecialAbility && slotIdx !== 0) continue;
                     if (!abDetail.isSpecialAbility && slotIdx === 0) continue;
                     if (abHrid === '/abilities/promote') continue;
+                    if (guide && !guideSwapAllowed(guide, ability.hrid, abHrid)) continue;
 
                     const abStyle = getAbilityCombatStyle(abDetail);
                     if (!isAbilityCompatible(abStyle, playerStyle)) continue;
@@ -1142,12 +1500,21 @@ export function generateCandidates(
                         currentLevel: ability.level,
                         upgradeHrid: abHrid,
                         upgradeLevel: ability.level,
+                        // The ability this swap is *about*, said out loud rather
+                        // than left to the slot index. Across several loadouts
+                        // the same ability sits in different slots, and a swap
+                        // is only a swap in the loadouts that cast the thing it
+                        // takes out — `candidateAppliesToDTO` reads this, and
+                        // `applyCandidateToDTO` puts the newcomer where it was.
+                        replacesHrid: ability.hrid,
                         description: `${abilityName} → ${swapName} (Lv${ability.level})`,
                         type: 'ability_swap',
                     });
                 }
             }
         }
+
+        if (guide) addGuideEmptySlotCandidates(playerDTO, gameData, guide, playerStyle, candidates);
     }
 
     if (mode === 'combat_level') {
@@ -1178,7 +1545,47 @@ export function generateCandidates(
     }
 
     if (mode === 'house') {
-        candidates.push(...generateHouseCandidates(playerDTO, gameData, houseTargetLevel, houseTargets));
+        candidates.push(
+            ...generateHouseCandidates(playerDTO, gameData, houseTargetLevel, houseTargets, {
+                winRateOnly: Boolean(options?.houseWinRateOnly),
+            })
+        );
+    }
+
+    if (mode === 'guild_shrine') {
+        candidates.push(
+            ...generateGuildShrineCandidates(playerDTO, {
+                combat: true,
+                targetLevel: guildShrineTargetLevel,
+                perBuffTargets: options?.guildShrineTargets || null,
+            })
+        );
+    }
+
+    if (mode === 'drink') {
+        candidates.push(...generateDrinkCandidates(playerDTO, gameData));
+    }
+
+    if (mode === 'community_buff') {
+        candidates.push(...generateCommunityBuffCandidates(communityBuffs, options?.communityBuffTargetLevel));
+    }
+
+    // taskDamage pays only while the monster in front of you is your combat
+    // task, and an advisor ranking is a generic zone fight — so every sim below
+    // runs with isTaskFight off and the ranked delta on a task badge is its
+    // off-task delta, which for a pure task trinket is nothing. Ranking them
+    // with the bonus on is what floated Expert Task Badge to the top of the
+    // table on damage it would only deal while on task. The gain that does
+    // exist is real but conditional, so it goes on the row as a caveat rather
+    // than into the number the table sorts by.
+    for (const candidate of candidates) {
+        const taskDamage = candidateTaskDamage(candidate, gameData);
+        if (candidate.slot !== TRINKET_SLOT && !taskDamage) continue;
+        const amount = taskDamage ? `+${(taskDamage * 100).toFixed(1)}% task damage` : 'Task damage';
+        candidate.caveat =
+            `${amount} is not in the ranked delta: these sims are generic zone fights, where the stat pays ` +
+            'nothing. It applies only while the monster is your active combat task — sim from that task card ' +
+            '(or tick Task Fight in the combat sim panel) to see the on-task number.';
     }
 
     candidates.forEach(clampRefinedCandidateToMinLevel);
@@ -1249,6 +1656,80 @@ export function houseRoomAffectsCombat(roomDetail) {
 }
 
 /**
+ * Buff types a fight *reaches the end of* regardless of.
+ *
+ * `COMBAT_BUFF_TYPES` is the list of things the combat engine reads, which is
+ * the right question for the combat sim's Upgrade tab — it reports profit and
+ * XP per hour, so a rare-find room and a wisdom room both move a column there.
+ * It is the wrong question for the labyrinth, which ranks on one number: the
+ * share of attempts that end in a clear. Nothing on this list can change whether
+ * a fight is won. Wisdom changes what the win is worth in experience; rare find
+ * and the two combat drop buffs change what it pays out; the skilling types are
+ * carried by every skilling room and are inert in a fight to begin with.
+ *
+ * Every house room in the game carries a *global* wisdom and rare-find buff —
+ * that is what the game gives you for building any room at all — so admitting a
+ * room on either of them admits all seventeen. That is how a Dairy Barn and a
+ * Mystical Study ended up in a labyrinth combat table, each with a delta that
+ * was the baseline's sampling noise wearing a room's name.
+ */
+const WIN_RATE_INERT_BUFF_TYPES = new Set([
+    '/buff_types/wisdom',
+    '/buff_types/rare_find',
+    '/buff_types/combat_drop_rate',
+    '/buff_types/combat_drop_quantity',
+    '/buff_types/efficiency',
+    '/buff_types/action_speed',
+    '/buff_types/gathering',
+    '/buff_types/essence_find',
+    '/buff_types/success_rate',
+    '/buff_types/labyrinth_double_progress',
+]);
+
+/**
+ * Can one more level of this house room change how often a labyrinth fight is
+ * won?
+ *
+ * Stricter than `houseRoomAffectsCombat` on purpose, and only in one direction:
+ * a buff whose type is on the inert list above is not evidence of anything,
+ * however the room or the buff is tagged. Everything else keeps the same three
+ * signals — a known combat buff type, or an unknown type the game itself says is
+ * usable in combat, which is what keeps a buff type added next patch from being
+ * silently dropped.
+ *
+ * The rooms this excludes are the ten skilling rooms, whose only combat-facing
+ * buffs are the global wisdom and rare find every room grants, plus any combat
+ * room whose own buff is experience rather than a fighting stat. What it keeps
+ * is every room granting damage, armor, accuracy, evasion, attack or cast speed,
+ * crit, amplify, resistance, thorns, regen, life steal, tenacity, retaliation,
+ * healing amplify or threat.
+ *
+ * @param {Object} roomDetail - Entry from houseRoomDetailMap
+ * @returns {boolean}
+ */
+export function houseRoomMovesWinRate(roomDetail) {
+    const buffs = [...(roomDetail?.actionBuffs || []), ...(roomDetail?.globalBuffs || [])];
+    const roomTagged = Boolean(roomDetail?.usableInActionTypeMap?.[COMBAT_ACTION_TYPE]);
+
+    return buffs.some((buff) => {
+        const typeHrid = buff?.typeHrid;
+        if (!typeHrid) return false;
+        if (WIN_RATE_INERT_BUFF_TYPES.has(typeHrid)) return false;
+        if (COMBAT_BUFF_TYPES.has(typeHrid)) return true;
+        return roomTagged || Boolean(buff?.usableInActionTypeMap?.[COMBAT_ACTION_TYPE]);
+    });
+}
+
+/**
+ * The room test one analysis should use.
+ * @param {boolean} winRateOnly - Whether the caller ranks on win rate alone
+ * @returns {Function} A predicate over a `houseRoomDetailMap` entry
+ */
+function houseRoomPredicate(winRateOnly) {
+    return winRateOnly ? houseRoomMovesWinRate : houseRoomAffectsCombat;
+}
+
+/**
  * Canonical key for what a candidate actually equips, used to deduplicate.
  *
  * Keyed on the full slot assignment rather than one representative slot: a
@@ -1268,7 +1749,14 @@ export function candidateAssignmentKey(candidate) {
         const cleared = [...(candidate.clearedSlots || [])].sort().join(',');
         return `equip:${added}!${cleared}`;
     }
-    if (candidate.type === 'combat_level' || candidate.type === 'house' || candidate.slot?.startsWith('ability_')) {
+    if (
+        candidate.type === 'combat_level' ||
+        candidate.type === 'house' ||
+        candidate.type === 'guild_shrine' ||
+        candidate.type === 'community_buff' ||
+        candidate.type === 'drink' ||
+        candidate.slot?.startsWith('ability_')
+    ) {
         return `${candidate.type}:${candidate.slot}=${candidate.upgradeHrid || ''}@${candidate.upgradeLevel}`;
     }
     return `equip:${candidate.slot}=${candidate.upgradeHrid}@${candidate.upgradeLevel}!`;
@@ -1279,10 +1767,12 @@ export function candidateAssignmentKey(candidate) {
  * instead of reading as "no upgrades available".
  * @param {Object} playerDTO - Player DTO
  * @param {Object} gameData - Game data payload
+ * @param {Object} [options] - `{ winRateOnly }`, the labyrinth's stricter room test
  * @returns {{rooms: number, withBuffs: number, combatRelevant: number, belowCap: number}}
  */
-export function describeHouseScan(playerDTO, gameData) {
+export function describeHouseScan(playerDTO, gameData, options = {}) {
     const roomMap = gameData?.houseRoomDetailMap || {};
+    const isRelevant = houseRoomPredicate(options?.winRateOnly);
     let withBuffs = 0;
     let combatRelevant = 0;
     let belowCap = 0;
@@ -1290,7 +1780,7 @@ export function describeHouseScan(playerDTO, gameData) {
     for (const [roomHrid, roomDetail] of Object.entries(roomMap)) {
         const buffs = [...(roomDetail?.actionBuffs || []), ...(roomDetail?.globalBuffs || [])];
         if (buffs.length > 0) withBuffs++;
-        if (!houseRoomAffectsCombat(roomDetail)) continue;
+        if (!isRelevant(roomDetail)) continue;
         combatRelevant++;
         const level = Math.max(0, Math.floor(Number(playerDTO?.houseRooms?.[roomHrid]) || 0));
         if (level < MAX_HOUSE_LEVEL) belowCap++;
@@ -1306,18 +1796,20 @@ export function describeHouseScan(playerDTO, gameData) {
  * @param {number} [targetLevel] - Level to sim every room at; 0/unset means one level up
  * @param {Object|null} [perRoomTargets] - roomHrid → target level; takes precedence
  *   over targetLevel, and a room absent from it is skipped (blank means skip)
+ * @param {Object} [options] - `{ winRateOnly }`; see `houseRoomMovesWinRate`
  * @returns {Array<Object>} Candidates of type 'house'
  */
-export function generateHouseCandidates(playerDTO, gameData, targetLevel = 0, perRoomTargets = null) {
+export function generateHouseCandidates(playerDTO, gameData, targetLevel = 0, perRoomTargets = null, options = {}) {
     const roomMap = gameData?.houseRoomDetailMap;
     if (!roomMap) return [];
 
     const target = Math.min(MAX_HOUSE_LEVEL, Math.max(0, Math.floor(Number(targetLevel) || 0)));
     const explicit = perRoomTargets && typeof perRoomTargets === 'object' ? perRoomTargets : null;
+    const isRelevant = houseRoomPredicate(options?.winRateOnly);
 
     const candidates = [];
     for (const [roomHrid, roomDetail] of Object.entries(roomMap)) {
-        if (!houseRoomAffectsCombat(roomDetail)) continue;
+        if (!isRelevant(roomDetail)) continue;
 
         const currentLevel = Math.max(0, Math.floor(Number(playerDTO.houseRooms?.[roomHrid]) || 0));
         if (currentLevel >= MAX_HOUSE_LEVEL) continue;
@@ -1337,12 +1829,476 @@ export function generateHouseCandidates(playerDTO, gameData, targetLevel = 0, pe
             type: 'house',
             slot: `house|${roomHrid}`,
             roomHrid,
+            roomName,
             currentLevel,
             upgradeLevel,
+            levelsBought: upgradeLevel - currentLevel,
             description: `${roomName} Lv${currentLevel} → Lv${upgradeLevel}`,
         });
     }
     return candidates;
+}
+
+/**
+ * Buff types the skilling clear-rate metrics can actually measure a change in.
+ * A shrine granting only rare-find has a real effect on a run and no effect on
+ * any number this analysis reports, so offering it would be offering a row that
+ * can only ever read 0.00%.
+ */
+const SKILLING_METRIC_BUFF_TYPES = new Set([
+    '/buff_types/efficiency',
+    '/buff_types/action_speed',
+    '/buff_types/wisdom',
+]);
+
+/**
+ * Display name for a shrine, from its hrid.
+ * @param {string} shrineHrid - e.g. '/guild_shrines/force'
+ * @returns {string} e.g. 'Force'
+ */
+function shrineName(shrineHrid) {
+    const slug =
+        String(shrineHrid || '')
+            .split('/')
+            .pop() || 'guild';
+    return slug
+        .split('_')
+        .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+        .join(' ');
+}
+
+/**
+ * Cumulative price of stepping a shrine buff from one level to another.
+ *
+ * A shrine level is not bought in one transaction the way a chestpiece is — a
+ * jump from 3 to 6 is three separate purchases, and the row is only honest if it
+ * carries all three. Credits of the same kind are folded into one line so the
+ * cost detail reads as a shopping list rather than a per-level ledger, and
+ * tokens are summed alongside them without ever being priced.
+ *
+ * A level with no entry in the cost table contributes nothing rather than
+ * aborting the total: the table is the game's own, and a hole in it means an
+ * unbuyable level, which `guildBuffMaxLevel` has already cut the target down to.
+ *
+ * @param {Object} detail - Entry from guildBuffDetailMap
+ * @param {number} fromLevel - Level the character is at now (exclusive)
+ * @param {number} toLevel - Level being bought up to (inclusive)
+ * @returns {{guildTokenCost: number, creditCosts: Array<{itemHrid: string, count: number}>}}
+ */
+function sumGuildShrineLevelCosts(detail, fromLevel, toLevel) {
+    let guildTokenCost = 0;
+    const creditTotals = new Map();
+
+    for (let level = fromLevel + 1; level <= toLevel; level++) {
+        const levelCost = detail?.levelCosts?.[String(level)] || {};
+        guildTokenCost += Math.max(0, Math.floor(Number(levelCost.guildTokenCost) || 0));
+        for (const entry of levelCost.creditCosts || []) {
+            const count = Number(entry?.count) || 0;
+            if (!entry?.itemHrid || count <= 0) continue;
+            creditTotals.set(entry.itemHrid, (creditTotals.get(entry.itemHrid) || 0) + count);
+        }
+    }
+
+    return {
+        guildTokenCost,
+        creditCosts: [...creditTotals.entries()].map(([itemHrid, count]) => ({ itemHrid, count })),
+    };
+}
+
+/**
+ * Generate level-up candidates for the guild shrine buffs.
+ *
+ * ## What the shrine level does and does not gate
+ *
+ * Two levels are in play and they are not the same number. The character buys
+ * levels in a *buff*, and those are the levels these candidates step. The guild
+ * builds levels in the *shrine*, and that caps how far members can buy. So a
+ * candidate above the shrine's own level is still a real, correctly priced
+ * purchase — it simply cannot be made until the guild upgrades the building,
+ * which is not a cost this row can put a number on. Those rows are generated
+ * anyway and carry `needsShrineLevel` so the detail can say so, rather than being
+ * hidden as if the upgrade did not exist.
+ *
+ * A shrine level of 0 means no guild building data reached the client at all,
+ * which is not the same as "the shrine is not built" — `shrineLevelKnown` keeps
+ * those apart so nothing claims a cap that was never read.
+ *
+ * ## Target levels
+ *
+ * `targetLevel` is an absolute level, matching the House Lv control rather than
+ * the ability +Levels one, because a shrine buff is a building level and reads
+ * naturally as "get me to 6". Left at 0 every buff steps one level, which is
+ * what every caller did before the option existed. A buff already at or past the
+ * target is skipped rather than offered as a no-op, and a target above what the
+ * cost table holds is clamped to the top of it — so one number can be typed once
+ * and applied to five shrines sitting at five different levels.
+ *
+ * A `perBuffTargets` map takes precedence over the single number, on the same
+ * terms the House grid set: a shrine absent from it — the input left blank — is
+ * deliberately skipped rather than falling back to one level up, because a grid
+ * of boxes is a list of what to buy and an empty box means "not this one".
+ *
+ * Cost is cumulative over every level crossed; the benefit is measured at the
+ * target, because that is the loadout the sim runs.
+ *
+ * @param {Object} playerDTO - Player DTO carrying `guildShrineLevels`
+ * @param {Object} [options]
+ * @param {boolean} [options.combat=true] - Combat shrines when true, skilling when false
+ * @param {number} [options.targetLevel=0] - Absolute level to buy up to; 0/unset means one level up
+ * @param {Object|null} [options.perBuffTargets=null] - buffHrid → target level; takes precedence
+ *   over targetLevel, and a buff absent from it is skipped
+ * @returns {Array<Object>} Candidates of type 'guild_shrine'
+ */
+export function generateGuildShrineCandidates(
+    playerDTO,
+    { combat = true, targetLevel = 0, perBuffTargets = null } = {}
+) {
+    const detailMap = getGuildBuffDetailMap();
+    const levels = playerDTO?.guildShrineLevels;
+    // No level map means this DTO is somebody whose guild we know nothing about
+    // (an imported player, a party member read off a profile) — not a guildless
+    // character, so guessing zero would invent an upgrade path for them
+    if (!levels || Object.keys(detailMap).length === 0) return [];
+
+    const target = Math.max(0, Math.floor(Number(targetLevel) || 0));
+    const explicit = perBuffTargets && typeof perBuffTargets === 'object' ? perBuffTargets : null;
+
+    const candidates = [];
+    for (const [buffHrid, detail] of Object.entries(detailMap)) {
+        if (Boolean(detail.isCombat) !== combat) continue;
+        if (!combat && !(detail.buffs || []).some((buff) => SKILLING_METRIC_BUFF_TYPES.has(buff?.typeHrid))) continue;
+
+        const maxLevel = guildBuffMaxLevel(detail);
+        const currentLevel = Math.max(0, Math.floor(Number(levels[buffHrid]) || 0));
+        const wanted = explicit ? Math.floor(Number(explicit[buffHrid]) || 0) : target > 0 ? target : currentLevel + 1;
+        const upgradeLevel = Math.min(maxLevel, wanted);
+        if (maxLevel <= 0 || upgradeLevel <= currentLevel) continue;
+
+        const { guildTokenCost, creditCosts } = sumGuildShrineLevelCosts(detail, currentLevel, upgradeLevel);
+        const shrineLevel = Math.max(
+            0,
+            Math.floor(Number(dataManager.getGuildBuildingLevel?.(detail.shrineHrid)) || 0)
+        );
+        const label = shrineName(detail.shrineHrid);
+
+        candidates.push({
+            type: 'guild_shrine',
+            slot: `guild_shrine|${buffHrid}`,
+            buffHrid,
+            shrineHrid: detail.shrineHrid,
+            isCombat: Boolean(detail.isCombat),
+            currentLevel,
+            upgradeLevel,
+            levelsBought: upgradeLevel - currentLevel,
+            maxLevel,
+            buffTypes: (detail.buffs || []).map((buff) => buff?.typeHrid).filter(Boolean),
+            guildTokenCost,
+            creditCosts,
+            shrineLevel,
+            shrineLevelKnown: shrineLevel > 0,
+            needsShrineLevel: shrineLevel > 0 && upgradeLevel > shrineLevel ? upgradeLevel : null,
+            description: `${label} Shrine Lv${currentLevel} → Lv${upgradeLevel}`,
+        });
+    }
+    return candidates;
+}
+
+/** Drink slots a combat loadout has */
+const DRINK_SLOTS = 3;
+
+/**
+ * Buff drinks worth simulating: a tier up in each family you already run, and
+ * the best of each family you run none of.
+ *
+ * The advisor could weigh a chestpiece against an ability against a house room
+ * and had nothing at all to say about the three coffee slots, which for most
+ * characters are a larger and far cheaper lever than any of them. The food
+ * optimizer does not cover this: it walks tiers *within an occupied slot* on a
+ * survival criterion, and a coffee neither restores anything nor occupies a
+ * food slot.
+ *
+ * Two shapes of candidate, and no more:
+ *   - **A tier up** in a family already equipped, which competes with nothing.
+ *   - **The best drink of a family you are not running**, into a free slot.
+ * Every intermediate tier of a family you do not run is deliberately left out —
+ * it would trade sims for rows nobody would buy, and the top tier answers the
+ * question ("is this buff worth a slot") that the lower ones only blur.
+ *
+ * Cost is zero rather than a price: a coffee is drunk continuously, and the
+ * sim's own consumable accounting already subtracts its hourly spend from
+ * Profit/hr. Charging it again as an outlay would count it twice.
+ *
+ * @param {Object} playerDTO - Player DTO carrying `drinks`
+ * @param {Object} gameData - Game data payload
+ * @returns {Array<Object>} Candidates of type 'drink'
+ */
+export function generateDrinkCandidates(playerDTO, gameData) {
+    const pools = buildBuffDrinkPools(gameData);
+    if (pools.size === 0) return [];
+
+    const drinks = Array.isArray(playerDTO?.drinks) ? playerDTO.drinks : [];
+    const familyOf = (hrid) => {
+        for (const [family, pool] of pools) {
+            if (pool.some((entry) => entry.hrid === hrid)) return family;
+        }
+        return null;
+    };
+
+    const equipped = new Map(); // family → { index, entry }
+    let freeSlot = -1;
+    for (let index = 0; index < DRINK_SLOTS; index++) {
+        const worn = drinks[index];
+        if (!worn?.hrid) {
+            if (freeSlot === -1) freeSlot = index;
+            continue;
+        }
+        const family = familyOf(worn.hrid);
+        if (!family) continue;
+        equipped.set(family, { index, entry: pools.get(family).find((e) => e.hrid === worn.hrid) });
+    }
+
+    const candidates = [];
+    const combatRelevant = (entry) => entry.buffTypes.some((type) => COMBAT_BUFF_TYPES.has(type));
+
+    for (const [family, pool] of pools) {
+        const usable = pool.filter(combatRelevant);
+        if (usable.length === 0) continue;
+
+        const worn = equipped.get(family);
+        if (worn?.entry) {
+            const better = usable.filter((entry) => entry.itemLevel > worn.entry.itemLevel);
+            if (better.length === 0) continue;
+            const next = better[0];
+            candidates.push({
+                type: 'drink',
+                slot: `drink_${worn.index}`,
+                drinkIndex: worn.index,
+                currentHrid: worn.entry.hrid,
+                upgradeHrid: next.hrid,
+                upgradeLevel: 0,
+                triggers: next.triggers,
+                buffFamily: family,
+                description: `${worn.entry.name} → ${next.name}`,
+            });
+            continue;
+        }
+
+        // Not running this family at all: only worth a row if there is a slot
+        // free to run it in, and only the best of it
+        if (freeSlot === -1) continue;
+        const best = usable[usable.length - 1];
+        candidates.push({
+            type: 'drink',
+            slot: `drink_${freeSlot}`,
+            drinkIndex: freeSlot,
+            currentHrid: null,
+            upgradeHrid: best.hrid,
+            upgradeLevel: 0,
+            triggers: best.triggers,
+            buffFamily: family,
+            description: `Add ${best.name}`,
+        });
+    }
+
+    return candidates;
+}
+
+/**
+ * Put a drink candidate into its slot, in place.
+ * @param {Object} dto - Player DTO (mutated)
+ * @param {Object} candidate - Candidate of type 'drink'
+ */
+function applyDrinkToDTO(dto, candidate) {
+    if (!Array.isArray(dto.drinks)) dto.drinks = [];
+    while (dto.drinks.length < DRINK_SLOTS) dto.drinks.push(null);
+    dto.drinks[candidate.drinkIndex] = { hrid: candidate.upgradeHrid, triggers: candidate.triggers || null };
+}
+
+/** Community buffs the combat sim reads, with what one more level is worth */
+const COMMUNITY_BUFF_CANDIDATES = [
+    { key: 'comExp', label: 'Community EXP buff' },
+    { key: 'comDrop', label: 'Community combat drop buff' },
+];
+
+/** The game's own hrid for each, for reading the cowbell rate off the detail map */
+const COMMUNITY_BUFF_HRIDS = {
+    comExp: '/community_buff_types/experience',
+    comDrop: '/community_buff_types/combat_drop_quantity',
+};
+
+/**
+ * Highest level a community buff is offered at.
+ *
+ * 20, which is what the game says: a maxed buff reads "Level: 20 (Max)". It was
+ * briefly raised to 30 on the theory that a live server sitting at the cap was
+ * what emptied the Community set — but the cap was never the problem, the
+ * missing at-ceiling case was. A capped buff has no next level, and returning
+ * nothing for it left an analysis with only Community ticked showing nothing at
+ * all; it now gets the other honest answer, the same buff simulated *off*. With
+ * the ceiling back at its real value that at-ceiling row is the normal case on
+ * a live server, and it is what makes the set worth ticking.
+ *
+ * The sim editor's community-buff inputs clamp to the same number, so the two
+ * agree on what a level can be — an input that accepts 30 sims a state the game
+ * cannot reach.
+ */
+const MAX_COMMUNITY_BUFF_LEVEL = 20;
+
+/**
+ * What a community buff is worth: one more level of it, or — once it is already
+ * at the ceiling — the whole thing.
+ *
+ * Not a purchase, and the advisor says so by pricing it at unknown rather than
+ * free — it lands in the unpriced group, where rows that cannot be ranked on
+ * gold are visible and clearly separate from the ones that can. It is still
+ * worth simulating: the levels are already editable in the sim's own DTO, the
+ * question "how much is the drop buff actually doing for me" is asked
+ * constantly, and answering it costs one sim per level rather than a guess.
+ *
+ * A buff at the ceiling has no next level, and returning nothing for it is what
+ * left the set able to produce an empty analysis. It gets the other honest
+ * answer instead: the same buff simulated *off*, so the row reads as what you
+ * would lose rather than as an upgrade you cannot buy. On a live server, where
+ * the buffs usually sit at Lv20 (Max), that is the row you get.
+ *
+ * A target level asks for several levels at once — "what would Lv3 → Lv8 be
+ * worth" — which is one simulation instead of five and the question a player
+ * with a donation plan is actually asking. It changes nothing about the cost,
+ * which is not a per-level price to begin with (see `calculateUpgradeCost`): a
+ * community buff's level is what the server's donated minutes add up to, and the
+ * only real figure is the cowbells per minute it charges to keep running. A
+ * target at or below the current level falls back to one level up rather than
+ * generating nothing, and the ceiling row is untouched — there is no multi-level
+ * version of "turn the buff off".
+ *
+ * @param {Object} communityBuffs - `{ mooPass, comExp, comDrop }` as configured
+ * @param {number} [targetLevel=0] - Absolute level to buy up to; 0 means one level up
+ * @returns {Array<Object>} Candidates of type 'community_buff', one per buff
+ */
+export function generateCommunityBuffCandidates(communityBuffs, targetLevel = 0) {
+    const target = Math.min(MAX_COMMUNITY_BUFF_LEVEL, Math.max(0, Math.floor(Number(targetLevel) || 0)));
+    const candidates = [];
+    for (const { key, label } of COMMUNITY_BUFF_CANDIDATES) {
+        const currentLevel = Math.max(0, Math.floor(Number(communityBuffs?.[key]) || 0));
+        const atCeiling = currentLevel >= MAX_COMMUNITY_BUFF_LEVEL;
+        const stepped = target > currentLevel ? target : currentLevel + 1;
+        const upgradeLevel = atCeiling ? 0 : Math.min(MAX_COMMUNITY_BUFF_LEVEL, stepped);
+        candidates.push({
+            type: 'community_buff',
+            slot: `community_buff|${key}`,
+            buffKey: key,
+            currentLevel,
+            upgradeLevel,
+            levelsBought: atCeiling ? 0 : upgradeLevel - currentLevel,
+            // A ceiling row measures a loss, so it must never be read as a gain
+            measuresLoss: atCeiling,
+            description: atCeiling
+                ? `${label} Lv${currentLevel} → off (what the buff is worth)`
+                : `${label} Lv${currentLevel} → Lv${upgradeLevel}`,
+        });
+    }
+    return candidates;
+}
+
+/**
+ * The community-buff configuration a candidate should be simulated under.
+ * Every other candidate type simulates under exactly what was configured.
+ * @param {Object} communityBuffs - As configured
+ * @param {Object} candidate - The candidate being evaluated
+ * @returns {Object} Community buffs for this run
+ */
+function applyCommunityBuffCandidate(communityBuffs, candidate) {
+    if (candidate?.type !== 'community_buff') return communityBuffs;
+    return { ...communityBuffs, [candidate.buffKey]: candidate.upgradeLevel };
+}
+
+/**
+ * Put a shrine candidate's level onto a DTO, in place.
+ *
+ * Both the level map and the resolved combat buff array are written: the map is
+ * what the editor and the skilling metrics read, the array is what the combat
+ * engine reads, and leaving either behind would sim the old shrine level.
+ * @param {Object} dto - Player DTO (mutated)
+ * @param {Object} candidate - Candidate of type 'guild_shrine'
+ */
+function applyGuildShrineToDTO(dto, candidate) {
+    if (!dto.guildShrineLevels) dto.guildShrineLevels = {};
+    dto.guildShrineLevels[candidate.buffHrid] = candidate.upgradeLevel;
+
+    const detail = getGuildBuffDetailMap()[candidate.buffHrid];
+    if (detail?.isCombat) {
+        dto.guildCombatBuffs = applyGuildBuffLevel(dto.guildCombatBuffs, detail, candidate.upgradeLevel);
+    }
+}
+
+/**
+ * Itemised cost of a shrine level: credits and tokens, both at their gold value.
+ *
+ * Both halves are now priced. Credits are the cheapest tradeable items that
+ * convert into them; tokens are those credits again, one exchange further back —
+ * the guild shop trades tokens for credits, so a token is worth what the credits
+ * it buys are worth (`guild-token-value.js`). The row is therefore ranked on the
+ * **sum**, which is what the level actually costs, rather than on the credit half
+ * with the tokens quietly treated as free.
+ *
+ * The two halves stay separately reported. `creditGold` is the credit-only total
+ * the display has always shown, `tokenGold` is what the tokens were valued at,
+ * and `tokenNote` says the valuation is a derived one — a chain of two
+ * conversions, not a price anybody quoted. When no exchange rate and no credit
+ * price can be found, `tokenGold` is null and the total falls back to the credit
+ * half alone, exactly as before.
+ *
+ * @param {Object} candidate - Candidate of type 'guild_shrine'
+ * @returns {Object} Same shape as `explainUpgradeCost`, plus `guild`
+ */
+function explainGuildShrineCost(candidate) {
+    const { lines, total, unpriced } = priceGuildCreditCosts(candidate.creditCosts);
+
+    const tokens = candidate.guildTokenCost || 0;
+    const tokenValue = explainGuildTokenValue('ask');
+    const tokenGold = describeGuildTokenGold(tokens, 'ask', { valuation: tokenValue });
+    // An unpriced credit already made the total unknown; adding a token value to
+    // null would turn "we do not know" into a confident understatement
+    const net = total === null ? null : total + (tokenGold?.gold || 0);
+
+    return {
+        guild: {
+            tokens,
+            credits: lines,
+            creditGold: total,
+            tokenGold: tokenGold?.gold ?? null,
+            goldPerToken: tokenValue.gold,
+            tokenSource: tokenValue.source,
+            tokenAssumed: tokenValue.assumed,
+            tokenNote: tokenGold ? formatTokenNote(tokens, tokenGold) : null,
+            rankedNote:
+                tokenGold === null
+                    ? 'Ranked on the credit half only — no guild shop exchange rate is known for tokens.'
+                    : 'Ranked on credits plus tokens, the tokens priced through the guild shop exchange.',
+            shrineLevel: candidate.shrineLevel,
+            shrineLevelKnown: candidate.shrineLevelKnown,
+            needsShrineLevel: candidate.needsShrineLevel,
+            shrineName: shrineName(candidate.shrineHrid),
+        },
+        buys: [],
+        credits: [],
+        gross: net,
+        credit: 0,
+        net,
+        unpriced,
+        creditApplied: false,
+        source: 'guild',
+    };
+}
+
+/**
+ * How a row says what its tokens were valued at.
+ * @param {number} tokens - Token count
+ * @param {{text: string}} tokenGold - From `describeGuildTokenGold`
+ * @returns {string} Caption, e.g. "40 tokens ≈4.0K g via credit exchange"
+ */
+function formatTokenNote(tokens, tokenGold) {
+    return `${tokens.toLocaleString()} token${tokens === 1 ? '' : 's'} ${tokenGold.text}`;
 }
 
 /**
@@ -1374,6 +2330,54 @@ function calculateHouseUpgradeCost(candidate, gameData) {
         }
     }
     return total > 0 ? total : null;
+}
+
+/**
+ * What a house upgrade actually buys, itemised.
+ *
+ * A house level is not one purchase, it is a shopping list — coins the game
+ * takes directly plus a handful of tradeable materials — and a multi-level jump
+ * is several of those lists added together. Counts are summed across every level
+ * in the jump so the answer is "how many do I need", not "how many per level",
+ * and coins are left out because nobody buys coins on the marketplace.
+ *
+ * Sorted by what each line comes to at its buy price, biggest first, so the
+ * caller can offer the one purchase that dominates the bill and name the rest.
+ * A material with no known price still appears, with a null `total`, sorted last
+ * — its count is real even when its price is not.
+ *
+ * @param {Object} candidate - Candidate of type 'house'
+ * @param {Object} gameData - Game data payload
+ * @returns {Array<{itemHrid: string, name: string, count: number, unitPrice: number|null, total: number|null}>}
+ */
+export function houseUpgradeMaterials(candidate, gameData) {
+    const costsMap = gameData?.houseRoomDetailMap?.[candidate?.roomHrid]?.upgradeCostsMap;
+    if (!costsMap) return [];
+
+    const counts = new Map();
+    for (let level = (candidate.currentLevel || 0) + 1; level <= (candidate.upgradeLevel || 0); level++) {
+        const costs = costsMap[level] ?? costsMap[String(level)];
+        if (!Array.isArray(costs)) continue;
+        for (const entry of costs) {
+            const count = Number(entry?.count) || 0;
+            if (!entry?.itemHrid || count <= 0 || entry.itemHrid === '/items/coin') continue;
+            counts.set(entry.itemHrid, (counts.get(entry.itemHrid) || 0) + count);
+        }
+    }
+
+    const lines = [...counts.entries()].map(([itemHrid, count]) => {
+        const { price } = resolveItemPrice(itemHrid, { side: 'buy' });
+        const unitPrice = price > 0 ? price : null;
+        return {
+            itemHrid,
+            name: gameData?.itemDetailMap?.[itemHrid]?.name || itemHrid.split('/').pop().replace(/_/g, ' '),
+            count,
+            unitPrice,
+            total: unitPrice === null ? null : unitPrice * count,
+        };
+    });
+
+    return lines.sort((a, b) => (b.total ?? -1) - (a.total ?? -1));
 }
 
 /**
@@ -1414,25 +2418,45 @@ function clampRefinedCandidateToMinLevel(candidate) {
         }
     }
 
-    if (clamped) {
-        // Reflect the clamped level(s) in the display text, e.g. "(+4)" → "(+10)",
-        // or "(+4/+10)" when a cross-slot swap mixes refined and non-refined items
-        const levels = candidate.addedSlots
-            ? Object.values(candidate.addedSlots).map((item) => item.enhancementLevel || 0)
-            : [candidate.upgradeLevel];
-        const unique = [...new Set(levels)];
-        const levelText = unique.length === 1 ? `+${unique[0]}` : levels.map((l) => `+${l}`).join('/');
-        candidate.description = candidate.description.replace(/\(\+\d+\)$/, `(${levelText})`);
+    if (!clamped) return;
+
+    // Redrawn from the names, not patched at the tail. The old version replaced
+    // a trailing "(+4)" with "(+10)" — and with the level now written against
+    // each piece, there is no trailing token to replace, so the label would have
+    // kept quoting the level the clamp had just moved. Anything without the
+    // names to redraw from keeps the tail patch, which is still right for the
+    // shape it was written for.
+    if (candidate.swapLabel) {
+        candidate.description = redescribeSwap(candidate);
+        return;
     }
+
+    const levels = candidate.addedSlots
+        ? Object.values(candidate.addedSlots).map((item) => item.enhancementLevel || 0)
+        : [candidate.upgradeLevel];
+    const unique = [...new Set(levels)];
+    const levelText = unique.length === 1 ? `+${unique[0]}` : levels.map((l) => `+${l}`).join('/');
+    candidate.description = candidate.description.replace(/\(\+\d+\)$/, `(${levelText})`);
 }
 
 /**
- * Calculate the total gold cost for a candidate upgrade.
+ * Calculate the total net gold cost for a candidate upgrade.
  * Uses market prices as primary source (buy upgraded - sell current).
  * Falls back to enhancement cost estimate if market data unavailable.
+ *
+ * The figure is allowed to come out **negative**, and used to be floored at
+ * zero. The floor was not a safety net: it turned every swap whose resale
+ * covers its purchase into a free upgrade, and a free upgrade divides into an
+ * infinitely good value on every ladder in the table. A swap that pays for
+ * itself is a real and rather good thing, and saying so by its true size —
+ * "this hands you 40M back" — ranks it above everything without pretending its
+ * value per improvement is unbounded. `computeGoldPerImprovement` is where that
+ * ordering is made explicit.
+ *
  * @param {Object} candidate - Candidate from generateCandidates()
  * @param {Object} gameData - Game data
- * @returns {number} Total gold cost
+ * @returns {number|null} Net gold cost, negative when the resale exceeds the
+ *   purchase, or null when some part of it has no known price
  */
 export function calculateUpgradeCost(candidate, gameData) {
     // Combat skill levels cost XP and time, not gold
@@ -1440,47 +2464,47 @@ export function calculateUpgradeCost(candidate, gameData) {
         return null;
     }
 
+    // A drink is not bought once, it is drunk forever. Its price per hour is
+    // already subtracted from Profit/hr by the sim's own consumable accounting,
+    // so charging it again as an outlay would count it twice.
+    if (candidate.type === 'drink') {
+        return 0;
+    }
+
+    // Nobody buys a community buff level; it is what the community happens to
+    // have running. Unknown rather than free, so it lands in the unpriced group
+    // instead of topping a value ladder it does not belong on.
+    if (candidate.type === 'community_buff') {
+        return null;
+    }
+
     if (candidate.type === 'house') {
         return calculateHouseUpgradeCost(candidate, gameData);
     }
 
-    if (candidate.type === 'ability_level') {
-        const levelXpTable = gameData.levelExperienceTable || [];
-        const currentXp = levelXpTable[candidate.currentLevel] || 0;
-        return calculateAbilityLevelUpCost(
-            candidate.currentHrid,
-            candidate.currentLevel,
-            currentXp,
-            candidate.upgradeLevel
-        );
+    // Credits *and* tokens: the credits at the cheapest items that convert into
+    // them, the tokens at the credits the guild shop exchange trades them for.
+    // A token with no known exchange rate still counts for nothing
+    if (candidate.type === 'guild_shrine') {
+        return explainGuildShrineCost(candidate).net;
     }
 
-    if (candidate.type === 'ability_swap') {
-        return calculateAbilityLevelUpCost(candidate.upgradeHrid, 0, 0, candidate.upgradeLevel);
+    // Books, at the market price of the book — and null rather than 0 when there
+    // is no listing, so an ability nobody is selling is not ranked as free
+    if (ABILITY_CANDIDATE_TYPES.has(candidate.type)) {
+        return explainAbilityCandidateCost(candidate, gameData).net;
     }
 
     if (candidate.type === 'cross_slot') {
         let buyCost = 0;
         for (const [slot, item] of Object.entries(candidate.addedSlots)) {
-            const price = resolveUpgradeBuyPrice(item.hrid, item.enhancementLevel, slot, gameData);
+            const { price } = resolveUpgradeBuyPrice(item.hrid, item.enhancementLevel, slot, gameData);
             if (price === null) {
                 return null; // Unknown acquisition cost — don't rank as free
             }
             buyCost += price;
         }
-        // Credit resale of every item the swap removes (e.g. both main and off hand
-        // when moving to a two-hander), not just the primary current item.
-        const removedItems = candidate.removedItems || [
-            { hrid: candidate.currentHrid, enhancementLevel: candidate.currentLevel },
-        ];
-        let sellCredit = 0;
-        for (const removed of removedItems) {
-            sellCredit += resolveItemPrice(removed.hrid, {
-                side: 'sell',
-                enhancementLevel: removed.enhancementLevel,
-            }).price;
-        }
-        return Math.max(0, buyCost - sellCredit);
+        return buyCost - resaleCredit(candidate);
     }
 
     if (candidate.type === 'enhancement') {
@@ -1490,7 +2514,7 @@ export function calculateUpgradeCost(candidate, gameData) {
         const currentMarket = getItemPrices(candidate.currentHrid, candidate.currentLevel);
 
         if (upgradedMarket?.ask > 0 && currentMarket?.bid > 0) {
-            return Math.max(0, upgradedMarket.ask - currentMarket.bid);
+            return upgradedMarket.ask - currentMarket.bid;
         }
 
         // Fallback: enhancement cost estimate with protection
@@ -1504,29 +2528,108 @@ export function calculateUpgradeCost(candidate, gameData) {
     }
 
     // Tier upgrade: buy new item at target enhancement - sell current item
-    const buyPrice = resolveUpgradeBuyPrice(candidate.upgradeHrid, candidate.upgradeLevel, candidate.slot, gameData);
+    const { price: buyPrice } = resolveUpgradeBuyPrice(
+        candidate.upgradeHrid,
+        candidate.upgradeLevel,
+        candidate.slot,
+        gameData
+    );
     if (buyPrice === null) {
         return null; // Unknown acquisition cost — don't rank as free
     }
-    const sellPrice = resolveItemPrice(candidate.currentHrid, {
-        side: 'sell',
-        enhancementLevel: candidate.currentLevel,
-    }).price;
 
-    return Math.max(0, buyPrice - sellPrice);
+    return buyPrice - resaleCredit(candidate);
+}
+
+/**
+ * The gear a candidate is allowed to sell, and what it fetches.
+ *
+ * `removedItems` is the authority when a candidate carries one — it is how a
+ * multi-slot swap says it empties two slots, and how a swap that *keeps* what it
+ * replaces says so, by carrying an empty list alongside `keptItems`. Only when
+ * there is no list at all does the primary item stand in for it, which is the
+ * ordinary one-for-one trade.
+ *
+ * Shared by the cross-slot and tier branches so the two cannot drift: they used
+ * to answer the keep-the-old-piece question differently, and a candidate whose
+ * price depends on which branch costed it is a candidate nobody can check.
+ *
+ * @param {Object} candidate - Upgrade candidate
+ * @returns {number} Total resale credit, 0 when nothing is being sold
+ */
+function resaleCredit(candidate) {
+    const removed =
+        candidate.removedItems ||
+        (candidate.currentHrid ? [{ hrid: candidate.currentHrid, enhancementLevel: candidate.currentLevel }] : []);
+
+    let credit = 0;
+    for (const item of removed) {
+        if (!item?.hrid) continue;
+        credit += resolveItemPrice(item.hrid, { side: 'sell', enhancementLevel: item.enhancementLevel || 0 }).price;
+    }
+    return credit;
+}
+
+/**
+ * Where a priced figure came from.
+ *
+ * Three different things end up in the same Cost column, and they are not the
+ * same kind of number. A market delta is what the order book says today; a
+ * simulated enhance path is an expectation over a random process nobody has
+ * run yet; a production cost is what the materials would come to if you made
+ * the thing yourself. Ranking them against each other is still the right thing
+ * to do — they are all gold — but a reader who cannot tell which is which
+ * cannot tell how much to trust a row, so every priced row carries its basis.
+ */
+export const COST_SOURCES = {
+    market: { label: 'mkt', title: 'Market listings on both sides — what the order book says today.' },
+    sim: {
+        label: 'sim',
+        title:
+            'No listing at this enhancement level, so the price is the base item plus a simulated ' +
+            'enhancement path — an expected cost over a random process, not a quote.',
+    },
+    craft: {
+        label: 'craft',
+        title: 'No market listing, so the price is what the materials to make it come to.',
+    },
+    books: { label: 'books', title: 'Ability books at their market price.' },
+    guild: { label: 'guild', title: 'Guild credits at the gold value of the cheapest items that make them.' },
+    ongoing: {
+        label: 'per-hr',
+        title: 'No purchase price — this is an ongoing per-hour spend, already netted out of Profit/hr.',
+    },
+};
+
+/** Cost bases in descending order of how much a reader should trust them */
+const COST_SOURCE_RANK = ['market', 'books', 'guild', 'craft', 'sim', 'ongoing'];
+
+/**
+ * The weakest basis among several, since a total is only as solid as its
+ * shakiest part.
+ * @param {Array<string|null>} sources - Per-item bases
+ * @returns {string|null} The least trustworthy one present
+ */
+function weakestCostSource(sources) {
+    let worst = null;
+    for (const source of sources) {
+        if (!source) continue;
+        if (worst === null || COST_SOURCE_RANK.indexOf(source) > COST_SOURCE_RANK.indexOf(worst)) worst = source;
+    }
+    return worst;
 }
 
 /**
  * Resolve the buy price of an item at a given enhancement level.
  * When no price exists at that level (common for refined gear, which rarely
  * has listings above +0), fall back to the base item price plus the expected
- * enhancement cost to reach the level. Returns null when no price is known
- * at all so callers can surface "unknown" instead of a free upgrade.
+ * enhancement cost to reach the level. Returns a null price when nothing is
+ * known at all so callers can surface "unknown" instead of a free upgrade.
  * @param {string} itemHrid - Item HRID
  * @param {number} enhancementLevel - Target enhancement level
  * @param {string} slot - Equipment slot HRID (for enhancement cost params)
  * @param {Object} gameData - Game data payload
- * @returns {number|null} Buy price in gold, or null when unknown
+ * @returns {{price: number|null, source: string|null}} Buy price in gold and its basis
  */
 function resolveUpgradeBuyPrice(itemHrid, enhancementLevel, slot, gameData) {
     if (enhancementLevel > 0) {
@@ -1536,7 +2639,7 @@ function resolveUpgradeBuyPrice(itemHrid, enhancementLevel, slot, gameData) {
         // would price a +10 item as a +0 craft.
         const market = getItemPrices(itemHrid, enhancementLevel);
         if (market?.ask > 0) {
-            return market.ask;
+            return { price: market.ask, source: 'market' };
         }
 
         // No listing at the target level: base item price + enhancement cost
@@ -1545,14 +2648,18 @@ function resolveUpgradeBuyPrice(itemHrid, enhancementLevel, slot, gameData) {
         // Unknown enhancement cost must stay unknown — pricing the item as a
         // bare +0 craft would understate an enhanced buy by the whole enhance path
         if (enhanceCost == null) {
-            return null;
+            return { price: null, source: null };
         }
         const total = Math.max(0, basePrice) + Math.max(0, enhanceCost);
-        return total > 0 ? total : null;
+        return total > 0 ? { price: total, source: 'sim' } : { price: null, source: null };
     }
 
     const direct = resolveItemPrice(itemHrid, { side: 'buy', enhancementLevel: 0 }).price;
-    return direct > 0 ? direct : null;
+    if (!(direct > 0)) return { price: null, source: null };
+    // A listing beats the production-cost fallback inside resolveItemPrice, so
+    // an ask at +0 is the market speaking and anything else is a craft estimate
+    const listed = getItemPrices(itemHrid, 0);
+    return { price: direct, source: listed?.ask > 0 ? 'market' : 'craft' };
 }
 
 /**
@@ -1572,6 +2679,100 @@ export function resolveCandidateModes(upgradeModes, upgradeMode) {
     return upgradeMode ? [upgradeMode] : ['equipment'];
 }
 
+/** Candidate types paid for in ability books rather than at the equipment market */
+const ABILITY_CANDIDATE_TYPES = new Set(['ability_level', 'ability_swap']);
+
+/**
+ * The book you already have of an ability, if you have one.
+ *
+ * `characterAbilities` is every book the character has read, equipped or not,
+ * with the level and the experience on it — which is the same list the sim
+ * itself runs abilities at, so a swap costed from it is costed from the levels
+ * the sim is about to simulate. The equipped list (`combatUnit.combatAbilities`)
+ * would not do: the whole point of a swap candidate is an ability that is *not*
+ * equipped, and the one you have sat in the book bag is exactly the case.
+ *
+ * @param {string} abilityHrid - The ability being swapped in
+ * @returns {{level: number, experience: number}|null} Null when it is unlearned
+ */
+function ownedAbility(abilityHrid) {
+    const owned = (dataManager.characterData?.characterAbilities || []).find(
+        (entry) => entry?.abilityHrid === abilityHrid
+    );
+    if (!owned) return null;
+
+    return { level: Math.floor(Number(owned.level) || 0), experience: Number(owned.experience) || 0 };
+}
+
+/**
+ * Itemised cost for an ability candidate: the books, and nothing coming back.
+ *
+ * Two things the equipment breakdown gets wrong about an ability. It prices the
+ * upgrade as a market listing for the ability at its level — which does not
+ * exist, so a perfectly ordinary "Fireball 48 → 53" reads as "no price found" —
+ * and it credits the resale of the level you are leaving, which cannot happen:
+ * an ability is not an item and cannot be sold back.
+ *
+ * A swap is priced from wherever the book you would swap in actually is. Pricing
+ * every swap from zero was right for an ability you have never read and badly
+ * wrong for one sitting at Lv40 in the book bag — it quoted the whole path
+ * again, which put swaps you could make this afternoon below upgrades costing
+ * ten times as much. Fresh-book pricing is now what it says it is: the cost of
+ * an ability you do not own.
+ *
+ * @param {Object} candidate - Candidate of type `ability_level` or `ability_swap`
+ * @param {Object} gameData - Game data payload
+ * @returns {Object} Same shape as `explainUpgradeCost`, plus `books`
+ */
+function explainAbilityCandidateCost(candidate, gameData) {
+    const swap = candidate.type === 'ability_swap';
+    const hrid = swap ? candidate.upgradeHrid : candidate.currentHrid || candidate.upgradeHrid;
+    const owned = swap ? ownedAbility(hrid) : null;
+
+    // A level-up starts from where the equipped ability is; a swap starts from
+    // where the book you own is, and from nothing when you own none
+    const fromLevel = swap ? owned?.level || 0 : candidate.currentLevel || 0;
+    const levelFloorXp = (gameData?.levelExperienceTable || [])[fromLevel] || 0;
+    // The experience on an owned book is a position within the level, not the
+    // floor of it — the books already read count towards the next one
+    const currentXp = swap ? owned?.experience || levelFloorXp : levelFloorXp;
+
+    const priced = explainAbilityLevelUpCost(hrid, fromLevel, currentXp, candidate.upgradeLevel || 0);
+    // A book already at or past the target buys nothing rather than a negative
+    // number of books, which is what the level arithmetic hands back for it.
+    // Zero books is free whether or not the market lists the book, so this is
+    // decided on the count and not on the price — reading it off the price left
+    // an unlisted book you already own showing as unpriceable
+    const nothingToBuy = (priced.books ?? 0) <= 0;
+    const books = nothingToBuy ? { ...priced, books: 0, total: 0 } : priced;
+
+    return {
+        books,
+        // The one free row that is genuinely free: an ability sitting in the book
+        // bag at the level the row wants, which costs nothing because it is not a
+        // purchase at all — it is a slot that is empty. Without saying so the row
+        // shows a bare 0 and the `from LvN` chip explains a cost never paid.
+        ownedNotSlotted: swap && Boolean(owned) && nothingToBuy,
+        // A swap of an ability you do not own prices a book learned and levelled
+        // from nothing. That is the single biggest thing about such a row and it
+        // used to live only in a tab tooltip, where a row claiming a 900M cost
+        // gave no hint that the 900M assumes you own none of it
+        freshBook: swap && !owned,
+        // What an owned swap was costed from, so the row can say so rather than
+        // leaving a suspiciously cheap swap unexplained
+        ownedFromLevel: swap && owned ? fromLevel : null,
+        buys: [],
+        // Never anything here: levels spent on an ability stay spent
+        credits: [],
+        gross: books.total,
+        credit: 0,
+        net: books.total,
+        unpriced: books.total === null ? [books.bookName] : [],
+        creditApplied: false,
+        source: 'books',
+    };
+}
+
 /**
  * Itemised cost for a candidate: what gets bought, at what price, and what the
  * gear it replaces would fetch. Purely for display — the ranking still uses
@@ -1579,27 +2780,66 @@ export function resolveCandidateModes(upgradeModes, upgradeMode) {
  * price instead of leaving the reader guessing.
  * @param {Object} candidate - Upgrade candidate
  * @param {Object} gameData - Game data payload
- * @returns {Object} { buys, credits, gross, credit, net, unpriced }
+ * @returns {Object} { buys, credits, gross, credit, net, unpriced, source }
  */
 export function explainUpgradeCost(candidate, gameData) {
+    if (ABILITY_CANDIDATE_TYPES.has(candidate.type)) return explainAbilityCandidateCost(candidate, gameData);
+    if (candidate.type === 'guild_shrine') return explainGuildShrineCost(candidate);
+    if (candidate.type === 'drink') {
+        return {
+            buys: [],
+            credits: [],
+            gross: 0,
+            credit: 0,
+            net: 0,
+            unpriced: [],
+            creditApplied: false,
+            source: 'ongoing',
+        };
+    }
+    if (candidate.type === 'house') {
+        // Coins at face value plus materials at their buy price — a build cost,
+        // not a listing for the room
+        const total = calculateHouseUpgradeCost(candidate, gameData);
+        return {
+            buys: [],
+            credits: [],
+            gross: total,
+            credit: 0,
+            net: total,
+            unpriced: [],
+            creditApplied: false,
+            source: total == null ? null : 'craft',
+        };
+    }
+
     const nameOf = (hrid) => gameData?.itemDetailMap?.[hrid]?.name || hrid?.split('/').pop().replace(/_/g, ' ') || '?';
 
     const buys = [];
     if (candidate.addedSlots) {
         for (const [slot, item] of Object.entries(candidate.addedSlots)) {
+            const { price, source } = resolveUpgradeBuyPrice(item.hrid, item.enhancementLevel || 0, slot, gameData);
             buys.push({
                 hrid: item.hrid,
                 name: nameOf(item.hrid),
                 enhancementLevel: item.enhancementLevel || 0,
-                price: resolveUpgradeBuyPrice(item.hrid, item.enhancementLevel || 0, slot, gameData),
+                price,
+                source,
             });
         }
     } else if (candidate.upgradeHrid) {
+        const { price, source } = resolveUpgradeBuyPrice(
+            candidate.upgradeHrid,
+            candidate.upgradeLevel || 0,
+            candidate.slot,
+            gameData
+        );
         buys.push({
             hrid: candidate.upgradeHrid,
             name: nameOf(candidate.upgradeHrid),
             enhancementLevel: candidate.upgradeLevel || 0,
-            price: resolveUpgradeBuyPrice(candidate.upgradeHrid, candidate.upgradeLevel || 0, candidate.slot, gameData),
+            price,
+            source,
         });
     }
 
@@ -1617,15 +2857,28 @@ export function explainUpgradeCost(candidate, gameData) {
     const gross = unpriced.length > 0 ? null : buys.reduce((sum, buy) => sum + buy.price, 0);
     const credit = credits.reduce((sum, entry) => sum + entry.price, 0);
 
+    // An enhancement candidate buys nothing new: it is a market delta between
+    // two levels of one item where both are listed, and the enhance path
+    // otherwise. Nothing above sees that, so name it here
+    let source = weakestCostSource(buys.map((buy) => buy.source));
+    if (candidate.type === 'enhancement') {
+        const upgraded = getItemPrices(candidate.currentHrid, candidate.upgradeLevel);
+        const current = getItemPrices(candidate.currentHrid, candidate.currentLevel);
+        source = upgraded?.ask > 0 && current?.bid > 0 ? 'market' : 'sim';
+    }
+
     return {
         buys,
         credits,
         gross,
         credit,
-        net: gross === null ? null : Math.max(0, gross - credit),
+        // Not floored at zero: see calculateUpgradeCost. A swap whose resale
+        // beats its purchase hands gold back, and the breakdown says so
+        net: gross === null ? null : gross - credit,
         unpriced,
         // Set by the lab analysis when replaced gear is kept rather than sold
         creditApplied: credits.length > 0,
+        source: unpriced.length > 0 ? null : source,
     };
 }
 
@@ -1633,7 +2886,7 @@ export function explainUpgradeCost(candidate, gameData) {
  * Run the full upgrade analysis: baseline sim + one sim per candidate.
  * @param {Object} params - { playerDTOs, playerIndex, zoneHrid, difficultyTier, hours, communityBuffs, upgradeModes,
  *   upgradeMode, abilityLevelType, abilityTargetLevel, skipBackSlot, combatLevelTargets, charmTier,
- *   houseTargetLevel, houseTargets, optimizeFood }
+ *   houseTargetLevel, houseTargets, guildShrineTargetLevel, optimizeFood, signatureSwapsOnly }
  * @param {Function} onProgress - Called with { current, total, description }
  * @param {Object} [options] - { abortSignal: () => boolean }
  * @returns {Promise<Object>} { baseline, results: [{candidate, cost, metrics, deltas, goldPer}], food }
@@ -1656,7 +2909,11 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
         charmTier,
         houseTargetLevel = 0,
         houseTargets = null,
+        guildShrineTargetLevel = 0,
+        communityBuffTargetLevel = 0,
         optimizeFood = false,
+        signatureSwapsOnly = false,
+        extraCandidates = [],
     } = params;
     const { abortSignal } = options;
     const gameData = buildGameDataPayload();
@@ -1682,13 +2939,36 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
             combatLevelTargets,
             abilityTargets,
             houseTargetLevel,
-            houseTargets
+            houseTargets,
+            communityBuffs,
+            guildShrineTargetLevel,
+            { signatureSwapsOnly, communityBuffTargetLevel }
         )
     );
-    const candidatesWithCost = candidates.map((c) => ({
-        ...c,
-        cost: calculateUpgradeCost(c, gameData),
-    }));
+    // Candidates the caller asked for by name, alongside whatever the mode
+    // generated. This is how one specific thing — "what would the Critical Aura
+    // do for me" — gets ranked against the upgrades you were already weighing,
+    // rather than becoming a change applied to all of them.
+    const already = new Set(candidates.map(candidateAssignmentKey));
+    for (const candidate of extraCandidates) {
+        const key = candidateAssignmentKey(candidate);
+        if (already.has(key)) continue;
+        already.add(key);
+        candidates.push(candidate);
+    }
+
+    const candidatesWithCost = candidates.map((c) => {
+        // The breakdown already knows which side of the market — or which
+        // estimate — each figure came from. Reading it here is what lets a row
+        // say so, rather than three different kinds of number sharing a column
+        let costDetail = null;
+        try {
+            costDetail = explainUpgradeCost(c, gameData);
+        } catch (error) {
+            console.error('[UpgradeAdvisor] Reading the cost basis failed:', error);
+        }
+        return { ...c, cost: calculateUpgradeCost(c, gameData), costSource: costDetail?.source ?? null, costDetail };
+    });
 
     const combatLevelCount = candidatesWithCost.filter((c) => c.type === 'combat_level').length;
     const foodSimCount = optimizeFood ? estimateFoodSimCount(gameData, playerDTO.food) : 0;
@@ -1698,9 +2978,21 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
 
     // Run baseline sim
     onProgress?.({ current: 0, total, description: 'Running baseline...' });
+    // One worker, like every candidate below. The shared seed only cancels
+    // sampling noise while both runs draw the same stream in the same order,
+    // and the chunking decides the streams: a baseline split four ways is four
+    // streams, a candidate unsplit is one, and the two are independent samples
+    // however carefully the seed is shared. That mismatch put an identical
+    // phantom delta on every combat-inert candidate — a skilling house room
+    // "improving" DPS by 0.06%.
+    // isTaskFight stays off for the baseline and for every candidate below. A
+    // ranking is a generic zone fight, and switching the task bonus on would
+    // credit task gear with damage it only deals while that monster is your
+    // task — see the caveat attached in generateCandidates().
     const baselineResult = await runSimulation(
-        { gameData, playerDTOs, zoneHrid, difficultyTier, hours, communityBuffs, seed: simSeed },
-        null
+        { gameData, playerDTOs, zoneHrid, difficultyTier, hours, communityBuffs, seed: simSeed, isTaskFight: false },
+        null,
+        { workers: 1 }
     );
     current++;
 
@@ -1711,12 +3003,23 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
     // Calculate baseline metrics
     const baselineMetrics = computeMetrics(baselineResult, gameData, playerHrid, hours);
 
-    // Run sim for each candidate
-    const results = [];
-    for (const candidate of candidatesWithCost) {
-        if (abortSignal?.()) break;
+    // Run sim for each candidate: one worker each, several candidates at a time.
+    //
+    // The other way round — one candidate at a time with its hours split across
+    // the workers — sounds equivalent, since either way the same total hours get
+    // simulated on the same cores. It is not. Splitting means every candidate
+    // pays the worker startup and the game-data clone once per chunk instead of
+    // once, and it cannot start the next candidate until its own slowest chunk
+    // lands. Measured on four workers: 3.3× slower for a 100-hour candidate,
+    // 1.14× slower even at five seconds of work apiece, and never faster.
+    //
+    // Fanning out is still right for a *single* run, where there is no queue to
+    // fill — a lone 600-hour sim is about twice as quick split four ways.
+    const lanes = Math.max(1, Math.min(analysisConcurrency(), candidatesWithCost.length));
+    const progress = { current };
 
-        onProgress?.({ current, total, description: `Simulating: ${candidate.description}` });
+    const evaluateCandidate = async (candidate) => {
+        if (abortSignal?.()) return null;
 
         // Clone playerDTOs and apply candidate upgrade
         const modifiedDTOs = JSON.parse(JSON.stringify(playerDTOs));
@@ -1747,6 +3050,15 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
             // House room level (a room at level 0 isn't in the map yet)
             if (!modifiedDTOs[playerIndex].houseRooms) modifiedDTOs[playerIndex].houseRooms = {};
             modifiedDTOs[playerIndex].houseRooms[candidate.roomHrid] = candidate.upgradeLevel;
+        } else if (candidate.type === 'guild_shrine') {
+            // One more level in a guild shrine buff, rebuilt at its new value
+            applyGuildShrineToDTO(modifiedDTOs[playerIndex], candidate);
+        } else if (candidate.type === 'drink') {
+            // A coffee into its slot, with the item's own default triggers —
+            // the same thing the game hands you when you equip one
+            applyDrinkToDTO(modifiedDTOs[playerIndex], candidate);
+        } else if (candidate.type === 'community_buff') {
+            // Nothing on the DTO: community buffs are an argument to the sim
         } else if (candidate.type === 'cross_slot') {
             // Weapon-configuration swap (two_hand ↔ main_hand + off_hand):
             // clear the replaced slots and equip every added item
@@ -1765,33 +3077,75 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
         }
 
         const simResult = await runSimulation(
-            { gameData, playerDTOs: modifiedDTOs, zoneHrid, difficultyTier, hours, communityBuffs, seed: simSeed },
-            null
+            {
+                gameData,
+                playerDTOs: modifiedDTOs,
+                zoneHrid,
+                difficultyTier,
+                hours,
+                communityBuffs: applyCommunityBuffCandidate(communityBuffs, candidate),
+                seed: simSeed,
+                isTaskFight: false,
+            },
+            null,
+            // One worker each: the queue is what keeps the cores busy here.
+            // Preempting would have each candidate cancel the one before it.
+            { preempt: false, workers: 1 }
         );
 
-        if (abortSignal?.()) break;
+        if (abortSignal?.()) return null;
 
         const metrics = computeMetrics(simResult, gameData, playerHrid, hours);
         const deltas = computeDeltas(baselineMetrics, metrics);
         const goldPer = computeGoldPerImprovement(candidate.cost, deltas);
 
         const economics = computeEconomics(candidate.cost, baselineMetrics, metrics);
+        const noise = rateDeltaNoisePct(baselineResult, simResult, playerHrid);
+        const significantBy = significantDeltas(deltas, noise);
 
-        const row = { candidate, cost: candidate.cost, metrics, deltas, goldPer, economics };
+        const row = {
+            candidate,
+            cost: candidate.cost,
+            costSource: candidate.costSource ?? null,
+            costDetail: candidate.costDetail ?? null,
+            metrics,
+            deltas,
+            goldPer,
+            economics,
+            noise,
+            significantBy,
+            // The single flag `planWithinBudget` reads. A row is worth planning
+            // around if any of the three axes a budget can shop for cleared its
+            // error bar; the planner narrows this to the axis actually chosen
+            significant: Boolean(significantBy.dps || significantBy.profit || significantBy.xp),
+        };
         if (candidate.type === 'combat_level') {
             // Leveling posture: XP rates with the matching charm for this skill
             // equipped (current levels), since that's what you'd wear to grind it
-            onProgress?.({ current, total, description: `XP rate: ${candidate.description}` });
+            onProgress?.({ current: progress.current, total, description: `XP rate: ${candidate.description}` });
             const xpDTOs = JSON.parse(JSON.stringify(playerDTOs));
             const currentCharm = xpDTOs[playerIndex].equipment[CHARM_SLOT] || null;
             const matchingCharm = findMatchingCharmForSkill(currentCharm, candidate.skillKey, gameData, charmTier);
             xpDTOs[playerIndex].equipment[CHARM_SLOT] = matchingCharm;
             const xpSimResult = await runSimulation(
                 { gameData, playerDTOs: xpDTOs, zoneHrid, difficultyTier, hours, communityBuffs, seed: simSeed },
-                null
+                null,
+                { preempt: false, workers: 1 }
             );
-            current++;
-            row.levelTimeHours = estimateCombatLevelTime(candidate, xpSimResult, gameData, playerHrid);
+            progress.current++;
+            // How much faster the whole zone goes once the levels are in. The
+            // candidate's own sim already ran at the boosted levels and the
+            // baseline at the current ones, so the ratio of their XP rates is
+            // free, and it is what lets the estimate stop pretending the grind
+            // ends at the speed it started
+            row.levelXpSpeedup = xpRateSpeedup(baselineResult, simResult, playerHrid);
+            row.levelTimeHours = estimateCombatLevelTime(
+                candidate,
+                xpSimResult,
+                gameData,
+                playerHrid,
+                row.levelXpSpeedup
+            );
             row.levelingCharmName = matchingCharm
                 ? gameData.itemDetailMap[matchingCharm.hrid]?.name || 'matching charm'
                 : 'no charm';
@@ -1828,15 +3182,15 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
                     ),
                 });
             }
-            if (abortSignal?.()) {
-                results.push(row);
-                break;
-            }
         }
-        results.push(row);
-        current++;
-        onProgress?.({ current, total, description: candidate.description });
-    }
+        progress.current++;
+        onProgress?.({ current: progress.current, total, description: candidate.description });
+        return row;
+    };
+
+    onProgress?.({ current: progress.current, total, description: `Simulating ${candidatesWithCost.length} upgrades` });
+    const results = (await mapConcurrent(candidatesWithCost, evaluateCandidate, lanes)).filter(Boolean);
+    current = progress.current;
 
     // Score only what can actually be bought — combat levels have no gold cost,
     // so ranking them alongside gear would seed the ladders with non-purchases
@@ -1887,21 +3241,64 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
 }
 
 /**
- * Estimate hours of grinding (at the baseline sim's per-skill XP rates) needed
- * to raise a combat skill from its current level to the candidate's boosted
- * level. Infinity when the current setup earns no XP in that skill.
+ * How much faster the character earns XP once a candidate's levels are in.
+ *
+ * Total XP per hour in the boosted run against the same figure in the baseline.
+ * Total rather than the one skill's, because the skill being levelled is the
+ * one thing a focus charm redistributes — the honest signal for "the zone dies
+ * faster now" is everything the character earned.
+ *
+ * @param {Object} baselineResult - Baseline SimResult
+ * @param {Object} upgradedResult - SimResult at the boosted levels
+ * @param {string} playerHrid - Whose experience to read
+ * @returns {number} Ratio ≥ 1 in the normal case, 1 when it cannot be read
+ */
+function xpRateSpeedup(baselineResult, upgradedResult, playerHrid) {
+    const rate = (result) => {
+        const simHours = (result?.simulatedTime || 0) / (3600 * 1e9);
+        if (!(simHours > 0)) return 0;
+        const xp = result?.experienceGained?.[playerHrid] || {};
+        return Object.values(xp).reduce((sum, value) => sum + (value || 0), 0) / simHours;
+    };
+    const before = rate(baselineResult);
+    const after = rate(upgradedResult);
+    if (!(before > 0) || !(after > 0)) return 1;
+    return after / before;
+}
+
+/**
+ * Estimate hours of grinding needed to raise a combat skill from its current
+ * level to the candidate's boosted level.
+ *
+ * Integrated level by level rather than divided once. Dividing the whole XP gap
+ * by today's rate answers "how long at the speed I go now", but the levels
+ * being bought are exactly what makes the character faster — the last level of
+ * the span is earned at the end rate, not the start rate — so a one-shot
+ * division overstates every span long enough to matter, and overstates the
+ * longest ones worst. The rate is walked linearly from the measured start rate
+ * to `speedup ×` that, and each level's own XP gap is charged at the rate in
+ * force while it is being earned.
+ *
+ * Linear in level is an approximation and a mild one: the real curve is a
+ * function of accuracy and damage against a fixed monster, and over the five to
+ * twenty levels these candidates span, its shape matters far less than not
+ * pretending the rate is constant.
+ *
+ * Infinity when the current setup earns no XP in that skill.
+ *
  * @param {Object} candidate - combat_level candidate
- * @param {Object} baselineResult - Baseline sim result
+ * @param {Object} baselineResult - Sim result in the leveling posture
  * @param {Object} gameData - Game data (levelExperienceTable)
  * @param {string} playerHrid - Player HRID in the sim result
+ * @param {number} [speedup=1] - XP-rate multiplier once the levels are in
  * @returns {number} Hours needed, or Infinity
  */
-function estimateCombatLevelTime(candidate, baselineResult, gameData, playerHrid) {
+function estimateCombatLevelTime(candidate, baselineResult, gameData, playerHrid, speedup = 1) {
     const levelXpTable = gameData.levelExperienceTable || [];
     const skillName = candidate.skillKey.replace('Level', '');
     const simHours = (baselineResult.simulatedTime || 0) / (3600 * 1e9) || 1;
-    const xpPerHour = (baselineResult.experienceGained?.[playerHrid]?.[skillName] || 0) / simHours;
-    if (!(xpPerHour > 0)) return Infinity;
+    const startRate = (baselineResult.experienceGained?.[playerHrid]?.[skillName] || 0) / simHours;
+    if (!(startRate > 0)) return Infinity;
 
     const targetXp = levelXpTable[candidate.upgradeLevel];
     if (!Number.isFinite(targetXp)) return Infinity;
@@ -1913,8 +3310,26 @@ function estimateCombatLevelTime(candidate, baselineResult, gameData, playerHrid
     if (liveSkill && liveSkill.level === candidate.currentLevel && Number.isFinite(liveSkill.experience)) {
         currentXp = liveSkill.experience;
     }
+    if (targetXp <= currentXp) return 0;
 
-    return Math.max(0, targetXp - currentXp) / xpPerHour;
+    const span = candidate.upgradeLevel - candidate.currentLevel;
+    const growth = Number.isFinite(speedup) && speedup > 0 ? speedup : 1;
+    if (!(span > 0) || growth === 1) return (targetXp - currentXp) / startRate;
+
+    let hours = 0;
+    let xpSoFar = currentXp;
+    for (let level = candidate.currentLevel; level < candidate.upgradeLevel; level++) {
+        const levelEndXp = Number.isFinite(levelXpTable[level + 1]) ? levelXpTable[level + 1] : targetXp;
+        const gap = Math.max(0, Math.min(levelEndXp, targetXp) - xpSoFar);
+        if (gap <= 0) continue;
+        // Rate at the midpoint of the level being earned, so the first level is
+        // charged at very nearly the measured rate and the last at very nearly
+        // the boosted one, rather than a whole level of either being lost
+        const progress = (level - candidate.currentLevel + 0.5) / span;
+        hours += gap / (startRate * (1 + (growth - 1) * progress));
+        xpSoFar += gap;
+    }
+    return hours;
 }
 
 /**
@@ -1957,6 +3372,67 @@ function computeDeltas(baseline, upgraded) {
     };
 }
 
+/**
+ * How much of a combat row's percentage delta could be the sample.
+ *
+ * The labyrinth side of the advisor has had this since `attemptsNoise`: a win
+ * rate measured over finite trials carries an error, and a delta between two of
+ * them carries both. The combat side had nothing, so `significant` was never
+ * set on a combat row, the budget planner's noise skip never fired, and a 0.3%
+ * DPS "gain" measured over ninety encounters was presented exactly like a 12%
+ * one measured over nine thousand.
+ *
+ * Every metric here is a total divided by hours, and the total is a sum over
+ * encounters — so the count of encounters is the sample size, and the relative
+ * error of the rate goes as 1/√n. Taking the per-encounter coefficient of
+ * variation as 1 is a deliberate round number: the true figure varies by metric
+ * and by zone, it is not in the SimResult, and being roughly right about the
+ * order of magnitude is the whole job. Deaths are counted rather than summed,
+ * so they get the Poisson √d instead, which at two deaths a run is enormous —
+ * correctly, since two deaths is not a measurement of anything.
+ *
+ * Baseline and candidate are added in quadrature. Like `attemptsNoise` this
+ * overstates: the runs share a seed, so their errors are correlated and partly
+ * cancel out of the difference. Overstating costs an honest row its colour;
+ * understating recommends a purchase that did nothing.
+ *
+ * @param {Object} baselineResult - Baseline SimResult
+ * @param {Object} upgradedResult - Candidate SimResult
+ * @param {string} playerHrid - Whose deaths are being counted
+ * @returns {Object} One standard error per metric, as a percentage of the metric
+ */
+export function rateDeltaNoisePct(baselineResult, upgradedResult, playerHrid) {
+    const encounters = (result) => Math.max(1, Number(result?.encounters) || 0);
+    const deaths = (result) => Math.max(1, Number(result?.deaths?.[playerHrid]) || 0);
+
+    const quadrature = (a, b) => Math.sqrt(1 / a + 1 / b) * 100;
+    const perEncounter = quadrature(encounters(baselineResult), encounters(upgradedResult));
+    const perDeath = quadrature(deaths(baselineResult), deaths(upgradedResult));
+
+    return {
+        dps: perEncounter,
+        xp: perEncounter,
+        profit: perEncounter,
+        encounters: perEncounter,
+        deaths: perDeath,
+    };
+}
+
+/**
+ * Which of a row's deltas cleared their own error bar.
+ * @param {Object} deltas - Percentage deltas from `computeDeltas`
+ * @param {Object} noise - Percentage standard errors from `rateDeltaNoisePct`
+ * @returns {Object} Per-metric booleans
+ */
+export function significantDeltas(deltas, noise) {
+    const verdict = {};
+    for (const key of Object.keys(deltas || {})) {
+        const error = noise?.[key];
+        verdict[key] = Number.isFinite(error) ? Math.abs(deltas[key]) > SIGNIFICANCE_Z * error : true;
+    }
+    return verdict;
+}
+
 /** Improvement step the gold-per figures are quoted against, in percent. */
 export const GOLD_PER_STEP_PCT = 0.01;
 
@@ -1974,15 +3450,25 @@ function computeGoldPerImprovement(cost, deltas) {
     // dividing by pctDelta / 0.01
     const steps = (pctDelta) => Math.abs(pctDelta) / GOLD_PER_STEP_PCT;
 
+    // Gold per improvement is cost ÷ improvement, and at or below zero cost the
+    // division stops meaning anything: zero divided by any gain is zero, so
+    // every free upgrade ties at the top however small its gain, and a negative
+    // cost divided by a tiny gain runs off to minus infinity, so the *worst*
+    // paying-for-itself swap outranks the best one. Below zero the figure is
+    // therefore the net gold itself — what the swap actually hands back — which
+    // keeps every one of them above every purchase while ordering them among
+    // themselves by size rather than by how nearly their gain vanished.
+    const atOrBelowFree = (pctDelta) => (safeCost <= 0 && pctDelta !== 0 ? safeCost : null);
+
     const goldPer = (pctDelta) => {
         if (pctDelta <= 0) return Infinity;
-        return safeCost / steps(pctDelta);
+        return atOrBelowFree(pctDelta) ?? safeCost / steps(pctDelta);
     };
 
     // For deaths, fewer is better — use negative delta (reduction)
     const goldPerReduction = (pctDelta) => {
         if (pctDelta >= 0) return Infinity; // Deaths didn't decrease
-        return safeCost / steps(pctDelta);
+        return atOrBelowFree(pctDelta) ?? safeCost / steps(pctDelta);
     };
 
     return {
@@ -2264,10 +3750,18 @@ const LABYRINTH_SKILLS = [
 
 /**
  * Generate labyrinth buff upgrade candidates from characterInfo.
+ *
+ * `levels` overrides where a current level is read from, for a panel that is
+ * simulating token levels other than the ones the character owns: a row reading
+ * "Damage Lv3 → Lv4" beside sims run at Damage 8 would be pricing a purchase
+ * that has already been assumed. Absent, this reads the live character, which
+ * is what every caller did before the Lab Sim could set them.
+ *
+ * @param {Object} [levels] - buffKey → level to step from; defaults to characterInfo
  * @returns {Array} Buff candidates with type 'labyrinth_buff'
  */
-export function generateLabyrinthBuffCandidates() {
-    const info = dataManager.characterData?.characterInfo;
+export function generateLabyrinthBuffCandidates(levels = null) {
+    const info = levels && typeof levels === 'object' ? levels : dataManager.characterData?.characterInfo;
     if (!info) return [];
 
     const candidates = [];
@@ -2358,6 +3852,12 @@ function explainLabCandidateCost(candidate, gameData) {
  * @param {Array} [params.labyrinthCombatBuffs] - Combat buffs from labyrinth upgrades
  * @param {string} params.upgradeMode - 'equipment', 'ability_level', or 'ability_swap'
  * @param {number} [params.abilityTargetLevel] - Target ability level
+ * @param {boolean} [params.signatureSwapsOnly] - Restrict ability swaps to the build guide's
+ *   aura options and the archetype's signature ability
+ * @param {number} [params.guildShrineTargetLevel] - One level for every shrine buff
+ * @param {Object} [params.guildShrineTargets] - buffHrid → target level; takes precedence
+ * @param {Object} [params.tokenLevels] - buffKey → level the token rows step up from,
+ *   matching whatever `labyrinthCombatBuffs` was built out of
  * @param {Function} onProgress - Called with { current, total, description }
  * @param {Object} [options] - { abortSignal: () => boolean }
  * @returns {Promise<Object>} { baseline, results: [{candidate, costType, ...}] }
@@ -2378,6 +3878,13 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
         skipBackSlot,
         combatLevelTargets,
         abilityTargets,
+        signatureSwapsOnly = false,
+        houseTargetLevel = 0,
+        houseTargets = null,
+        guildShrineTargetLevel = 0,
+        guildShrineTargets = null,
+        tokenLevels = null,
+        extraCandidates = [],
     } = params;
     const { abortSignal } = options;
     const gameData = buildGameDataPayload();
@@ -2403,7 +3910,15 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
             abilityLevelType,
             skipBackSlot,
             combatLevelTargets,
-            abilityTargets
+            abilityTargets,
+            houseTargetLevel,
+            houseTargets,
+            null,
+            guildShrineTargetLevel,
+            // This table ranks win rate and Gold/1% and nothing else, so a room
+            // whose only combat-facing buffs are the global wisdom and rare find
+            // every room grants has nothing it could move here
+            { signatureSwapsOnly, houseWinRateOnly: true, guildShrineTargets }
         )
     );
 
@@ -2429,16 +3944,39 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
         }
     }
 
-    const candidatesWithCost = candidates.map((c) => ({
-        ...c,
-        cost: calculateUpgradeCost(c, gameData),
-    }));
+    // Candidates the caller asked for by name, alongside whatever the mode
+    // generated. This is how one specific thing — "what would the Critical Aura
+    // do for me" — gets ranked against the upgrades you were already weighing,
+    // rather than becoming a change applied to all of them.
+    const already = new Set(candidates.map(candidateAssignmentKey));
+    for (const candidate of extraCandidates) {
+        const key = candidateAssignmentKey(candidate);
+        if (already.has(key)) continue;
+        already.add(key);
+        candidates.push(candidate);
+    }
 
-    // Generate buff candidates (skilling buffs handled in skilling tab, experience excluded — no combat impact)
-    const buffCandidates = generateLabyrinthBuffCandidates();
+    // A community buff is not on the character and cannot be installed onto one:
+    // it is an argument to the simulation. It also cannot change whether a fight
+    // is won — the two a combat fight reads move experience and loot — so it is
+    // held out of the win-rate ranking entirely rather than being run through it
+    // and reported at whatever the sampling noise came to. What it *can* move is
+    // measured in its own pass below.
+    const communityCandidates = candidates.filter((c) => c.type === 'community_buff' && !c.measuresLoss);
+    const candidatesWithCost = candidates
+        .filter((c) => c.type !== 'community_buff')
+        .map((c) => ({
+            ...c,
+            cost: calculateUpgradeCost(c, gameData),
+        }));
+
+    // Generate buff candidates. Skilling buffs are handled in the skilling tab;
+    // the Experience token is ranked in neither tab — it moves XP/room, not
+    // clear rate, and this analysis has no XP metric to rank it by.
+    const buffCandidates = generateLabyrinthBuffCandidates(tokenLevels);
     const combatBuffCandidates = buffCandidates.filter((c) => c.category === 'combat');
 
-    const total = candidatesWithCost.length + combatBuffCandidates.length + 1;
+    const total = candidatesWithCost.length + combatBuffCandidates.length + communityCandidates.length + 1;
     let current = 0;
 
     // Run baseline labyrinth sim
@@ -2465,55 +4003,21 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
     const baselineAttempts = baselineResult.labyAttemptCount || 1;
     const baselineEncounters = baselineResult.encounters || 0;
     const baselineWinRate = baselineEncounters / baselineAttempts;
+    const baselineXpPerAttempt = simExperiencePerAttempt(baselineResult);
 
     onProgress?.({ current, total, description: `Baseline: ${(baselineWinRate * 100).toFixed(1)}%` });
 
     const results = [];
+    const progress = { current };
 
-    // ── Equipment / ability sims ──
-    for (const candidate of candidatesWithCost) {
-        if (abortSignal?.()) break;
-
-        onProgress?.({ current, total, description: `Simulating: ${candidate.description}` });
-
-        const modifiedDTO = JSON.parse(JSON.stringify(playerDTOs[playerIndex]));
-
-        if (candidate.slot.startsWith('ability_')) {
-            const slotIdx = parseInt(candidate.slot.split('_')[1]);
-            const existingAbility = modifiedDTO.abilities[slotIdx];
-            if (existingAbility?.hrid === candidate.upgradeHrid) {
-                // Keep configured triggers when leveling the equipped ability
-                modifiedDTO.abilities[slotIdx] = {
-                    ...existingAbility,
-                    level: candidate.upgradeLevel,
-                };
-            } else {
-                modifiedDTO.abilities[slotIdx] = {
-                    hrid: candidate.upgradeHrid,
-                    level: candidate.upgradeLevel,
-                    triggers: null,
-                };
-            }
-        } else if (candidate.type === 'combat_level') {
-            // Combat skill level boost (simulated charm)
-            modifiedDTO[candidate.skillKey] = candidate.upgradeLevel;
-        } else if (candidate.type === 'cross_slot') {
-            for (const slot of candidate.clearedSlots) {
-                modifiedDTO.equipment[slot] = null;
-            }
-            for (const [slot, item] of Object.entries(candidate.addedSlots)) {
-                modifiedDTO.equipment[slot] = item;
-            }
-        } else {
-            modifiedDTO.equipment[candidate.slot] = {
-                hrid: candidate.upgradeHrid,
-                enhancementLevel: candidate.upgradeLevel,
-            };
-        }
-
+    // Every candidate is one worker against the same baseline with the same
+    // seed and the same trial count, so they are independent runs that were
+    // being done one at a time
+    const runCandidate = async (candidate, playerDTO, buffs, describe) => {
+        if (abortSignal?.()) return null;
         const simResult = await runLabyrinthSimulation({
             gameData,
-            playerDTOs: [modifiedDTO],
+            playerDTOs: [playerDTO],
             zoneHrid,
             monsterHrid,
             roomLevel,
@@ -2521,15 +4025,31 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
             hours: pairedHours,
             precision: pairedRule,
             communityBuffs,
-            labyrinthCombatBuffs,
+            labyrinthCombatBuffs: buffs,
             seed: simSeed,
         });
-
-        if (abortSignal?.()) break;
-
+        if (abortSignal?.()) return null;
+        progress.current++;
+        onProgress?.({ current: progress.current, total, description: describe });
         const attempts = simResult.labyAttemptCount || 1;
-        const encounters = simResult.encounters || 0;
-        const winRate = encounters / attempts;
+        return (simResult.encounters || 0) / attempts;
+    };
+
+    // ── Equipment / ability sims ──
+    onProgress?.({ current: progress.current, total, description: `Simulating ${candidatesWithCost.length} upgrades` });
+    const equipmentRates = await mapConcurrent(candidatesWithCost, (candidate) =>
+        runCandidate(
+            candidate,
+            applyCandidateToDTO(playerDTOs[playerIndex], candidate),
+            labyrinthCombatBuffs,
+            candidate.description
+        )
+    );
+
+    for (let i = 0; i < candidatesWithCost.length; i++) {
+        const candidate = candidatesWithCost[i];
+        const winRate = equipmentRates[i];
+        if (winRate === null || winRate === undefined) continue;
         const winRateDelta = winRate - baselineWinRate;
 
         results.push({
@@ -2543,36 +4063,22 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
                 winRateDelta > 0 && candidate.cost != null ? candidate.cost / (winRateDelta * 100) : Infinity,
             metricType: 'winRate',
         });
-        current++;
-        onProgress?.({ current, total, description: candidate.description });
     }
 
     // ── Combat buff sims ──
-    for (const buffCandidate of combatBuffCandidates) {
-        if (abortSignal?.()) break;
+    const buffRates = await mapConcurrent(combatBuffCandidates, (buffCandidate) =>
+        runCandidate(
+            buffCandidate,
+            playerDTOs[playerIndex],
+            buildModifiedCombatBuffs(labyrinthCombatBuffs, buffCandidate),
+            buffCandidate.description
+        )
+    );
 
-        onProgress?.({ current, total, description: `Simulating: ${buffCandidate.description}` });
-
-        const modifiedBuffs = buildModifiedCombatBuffs(labyrinthCombatBuffs, buffCandidate);
-        const simResult = await runLabyrinthSimulation({
-            gameData,
-            playerDTOs: [playerDTOs[playerIndex]],
-            zoneHrid,
-            monsterHrid,
-            roomLevel,
-            crates,
-            hours: pairedHours,
-            precision: pairedRule,
-            communityBuffs,
-            labyrinthCombatBuffs: modifiedBuffs,
-            seed: simSeed,
-        });
-
-        if (abortSignal?.()) break;
-
-        const attempts = simResult.labyAttemptCount || 1;
-        const encounters = simResult.encounters || 0;
-        const winRate = encounters / attempts;
+    for (let i = 0; i < combatBuffCandidates.length; i++) {
+        const buffCandidate = combatBuffCandidates[i];
+        const winRate = buffRates[i];
+        if (winRate === null || winRate === undefined) continue;
         const winRateDelta = winRate - baselineWinRate;
 
         results.push({
@@ -2583,13 +4089,61 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
             winRateDelta,
             metricType: 'winRate',
         });
-        current++;
-        onProgress?.({ current, total, description: buffCandidate.description });
     }
 
-    // Sort: token results first, then gold; within each group by best delta descending
+    // ── Community buff sims ──
+    //
+    // Ranked on experience per attempt, and on nothing else. The Experience buff
+    // changes what a win is worth; the Combat Drop buff changes what it pays out
+    // and this table does not price drops, so it is dropped rather than given a
+    // row whose only column would be blank. The win-rate columns stay at the
+    // baseline for the same reason the skilling tab leaves them there for the
+    // Experience token: the room is cleared exactly as often as before.
+    for (const candidate of communityCandidates) {
+        if (abortSignal?.()) break;
+        if (!communityBuffMovesCombatXp(candidate)) continue;
+
+        onProgress?.({ current: progress.current, total, description: candidate.description });
+        const simResult = await runLabyrinthSimulation({
+            gameData,
+            playerDTOs: [playerDTOs[playerIndex]],
+            zoneHrid,
+            monsterHrid,
+            roomLevel,
+            crates,
+            hours: pairedHours,
+            precision: pairedRule,
+            communityBuffs: applyCommunityBuffCandidate(communityBuffs, candidate),
+            labyrinthCombatBuffs,
+            seed: simSeed,
+        });
+        if (abortSignal?.()) break;
+        progress.current++;
+        onProgress?.({ current: progress.current, total, description: candidate.description });
+
+        const xpPerAttempt = simExperiencePerAttempt(simResult);
+        results.push({
+            candidate,
+            costType: 'community',
+            cowbellCost: communityBuffCowbellCost(candidate),
+            // Left exactly where the baseline was, so the row cannot be misread
+            // as an upgrade to the fight itself
+            winRate: baselineWinRate,
+            winRateDelta: 0,
+            xpPerRoom: xpPerAttempt,
+            xpPerRoomDelta: xpPerAttempt - baselineXpPerAttempt,
+            metricType: 'xpPerRoom',
+        });
+    }
+
+    // Sort: token results first, then community, then gold; within each group by
+    // best delta descending
+    const labCostOrder = { token: 0, community: 1, gold: 2 };
     results.sort((a, b) => {
-        if (a.costType !== b.costType) return a.costType === 'token' ? -1 : 1;
+        if (a.costType !== b.costType) return (labCostOrder[a.costType] ?? 3) - (labCostOrder[b.costType] ?? 3);
+        if (a.metricType === 'xpPerRoom' && b.metricType === 'xpPerRoom') {
+            return (b.xpPerRoomDelta ?? 0) - (a.xpPerRoomDelta ?? 0);
+        }
         const aDelta = a.winRateDelta ?? a.clearRateDelta ?? 0;
         const bDelta = b.winRateDelta ?? b.clearRateDelta ?? 0;
         return bDelta - aDelta;
@@ -2600,17 +4154,650 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
             winRate: baselineWinRate,
             encounters: baselineEncounters,
             attempts: baselineAttempts,
+            xpPerRoom: baselineXpPerAttempt,
         },
         results,
     };
 }
 
+/**
+ * Combat experience one labyrinth attempt paid out, across every skill.
+ *
+ * Summed rather than reported per skill: a community experience buff is a flat
+ * multiplier on all of them, so the split says nothing the total does not, and a
+ * single number is what a column can hold. Per *attempt* rather than per win —
+ * an attempt is what the labyrinth charges you for, and what every other figure
+ * in this analysis is denominated in.
+ *
+ * @param {Object} simResult - From `runLabyrinthSimulation`
+ * @returns {number} Experience per attempt, 0 when the run recorded none
+ */
+function simExperiencePerAttempt(simResult) {
+    const gained = simResult?.experienceGained;
+    if (!gained) return 0;
+
+    let total = 0;
+    for (const perSkill of Object.values(gained)) {
+        for (const amount of Object.values(perSkill || {})) {
+            if (Number.isFinite(amount)) total += amount;
+        }
+    }
+    return total / (simResult.labyAttemptCount || 1);
+}
+
+/** Community buffs whose effect a combat sim reports in experience */
+const COMBAT_XP_COMMUNITY_BUFFS = new Set(['comExp']);
+
+/**
+ * Can this community buff move a number the labyrinth combat table shows?
+ *
+ * Only the experience one. The combat drop buff is real and does nothing this
+ * table reports — there is no priced-loot column here — so it is left out
+ * instead of being given a row of dashes.
+ *
+ * @param {Object} candidate - Candidate of type 'community_buff'
+ * @returns {boolean}
+ */
+function communityBuffMovesCombatXp(candidate) {
+    return COMBAT_XP_COMMUNITY_BUFFS.has(candidate?.buffKey);
+}
+
+/**
+ * What the game charges per minute to keep a community buff running.
+ *
+ * The one real price a community buff has — a *level* has no price, since it is
+ * what the whole server's donated minutes add up to. Read from the game's own
+ * detail map, null when it has not loaded, which the row draws as a dash rather
+ * than as free.
+ *
+ * @param {Object} candidate - Candidate of type 'community_buff'
+ * @returns {number|null} Cowbells per minute
+ */
+function communityBuffCowbellCost(candidate) {
+    const hrid = COMMUNITY_BUFF_HRIDS[candidate?.buffKey];
+    const cost = dataManager.getInitClientData?.()?.communityBuffTypeDetailMap?.[hrid]?.cowbellCost;
+    return Number.isFinite(cost) ? cost : null;
+}
+
 /** Win-rate floor for expected-attempts math so 0% fights stay finite (= 1000 tries) */
 const ATTEMPT_WIN_RATE_FLOOR = 0.001;
+
+/** How many standard errors a gain has to clear before it is called a gain */
+const SIGNIFICANCE_Z = 1.96;
+
+/**
+ * The sampling error on "attempts saved across the run".
+ *
+ * Every win rate here is a proportion measured over a finite number of simulated
+ * attempts, so every one carries an error — and the table's headline figure is a
+ * sum of ten of them, put through 1/p, which magnifies the error badly at low
+ * win rates. Without this, a run of luck on one 30% room reads as a 1.6B item
+ * being worth buying.
+ *
+ * Per fight the standard error of the rate is the binomial √(p(1−p)/n), and
+ * 1/p turns that into se/p² (the derivative of 1/p). Baseline and candidate are
+ * added in quadrature, which is conservative: they share a seed, so their errors
+ * are correlated and partly cancel. Overstating the noise costs a few honest
+ * rows their colour; understating it recommends purchases that did nothing.
+ *
+ * @param {Array<Object>} appliedFights - The candidate's fights, applied ones only
+ * @param {Array<Object>} baselineFights - The baseline, index-aligned by monster
+ * @returns {number} One standard error of the attempts delta
+ */
+export function attemptsNoise(appliedFights, baselineFights = []) {
+    const byMonster = new Map(
+        (baselineFights || []).map((fight) => [`${fight.monsterHrid}@${fight.roomLevel}`, fight])
+    );
+
+    let variance = 0;
+    for (const fight of appliedFights || []) {
+        const base = byMonster.get(`${fight.monsterHrid}@${fight.roomLevel}`);
+        for (const side of [fight, base]) {
+            if (!side) continue;
+            const trials = Math.max(1, Number(side.trials) || 0);
+            const rate = Math.max(ATTEMPT_WIN_RATE_FLOOR, Math.min(1, Number(side.winRate) || 0));
+            // d(1/p)/dp = −1/p², so the error on the tries figure is se/p²
+            const standardError = Math.sqrt((rate * (1 - rate)) / trials);
+            variance += (standardError / (rate * rate)) ** 2;
+        }
+    }
+    return Math.sqrt(variance);
+}
+
+/**
+ * The piece a candidate would displace in one particular loadout.
+ *
+ * One purchase serves every loadout, and with tier upgrades applying wherever
+ * they would help, "what it replaces" is a different answer per room. The row's
+ * own description can only name one of them.
+ *
+ * @param {Object} candidate - The upgrade
+ * @param {Object} dto - The loadout
+ * @param {Object} [gameData] - For the item's name
+ * @returns {string} Display name, or '' where it displaces nothing
+ */
+export function replacedIn(candidate, dto, gameData) {
+    const slots = candidate.addedSlots ? Object.keys(candidate.addedSlots) : [candidate.slot];
+    const names = [];
+    for (const slot of slots) {
+        const worn = dto?.equipment?.[slot];
+        if (!worn?.hrid || worn.hrid === candidate.upgradeHrid) continue;
+        const detail = gameData?.itemDetailMap?.[worn.hrid];
+        const name = detail?.name || worn.hrid.split('/').pop().replace(/_/g, ' ');
+        names.push(worn.enhancementLevel ? `${name} +${worn.enhancementLevel}` : name);
+    }
+    return names.join(' + ');
+}
+
+/**
+ * Every group an upgrade belongs to.
+ *
+ * Some pairs are genuinely alternatives: two targets for one ability, or two
+ * levels of one combat skill, where the higher already contains the lower.
+ * Buying both spends the second one's price for nothing.
+ *
+ * Equipment slots are *not* in that category, which is the whole point of a
+ * labyrinth run — a second chestpiece is wasteful only if it serves the same
+ * rooms as the first. Where it serves rooms the first cannot reach, it is a
+ * second purchase doing a second job, and the plan treats it that way.
+ *
+ * An ability swap is the one upgrade that cannot say what it conflicts with in a
+ * single string, because it has two ends and each of them is a way to waste
+ * money:
+ *
+ * - Two swaps *into the same equipped ability* ("Smack → Quick Strike" and
+ *   "Smack → Poke") are two ways to spend one slot. Keyed on the newcomer alone,
+ *   they look unrelated and the plan buys both books to read one.
+ * - The same newcomer *offered for two slots* ("Smack → Fireball" and "Poke →
+ *   Fireball", or a free-slot fill that also appears as a displacement) is one
+ *   book. Keyed on the replaced ability alone, they look unrelated and the plan
+ *   buys the stack twice.
+ *
+ * So an ability carries a key for each end, and anything sharing *either* is a
+ * conflict. This also catches levelling an ability the same plan wants to
+ * replace: the level candidate's key is the ability, and so is the swap's
+ * outgoing key.
+ *
+ * @param {Object} candidate - The upgrade
+ * @returns {Array<string>} Keys; candidates sharing any one of them conflict
+ */
+export function conflictKeys(candidate) {
+    if (candidate.type === 'combat_level') return [`skill:${candidate.skillKey}`];
+    if (candidate.type === 'house') return [`house:${candidate.slot}`];
+    if (candidate.type === 'guild_shrine') return [`guild:${candidate.buffHrid}`];
+    if (candidate.type === 'community_buff') return [`community:${candidate.buffKey}`];
+    // Two coffees of one buff family cannot both be up, whichever slots they
+    // would sit in — the game's own conflict rule, keyed the same way
+    if (candidate.type === 'drink') return [`drink:${candidate.buffFamily}`];
+    if (candidate.slot?.startsWith('ability_')) {
+        const keys = [`ability:${candidate.upgradeHrid}`];
+        // `replacesHrid` is absent on a free-slot fill, which displaces nothing
+        // and so has only the one end
+        if (candidate.replacesHrid && candidate.replacesHrid !== candidate.upgradeHrid) {
+            keys.push(`ability:${candidate.replacesHrid}`);
+        }
+        return keys;
+    }
+
+    const slots = candidate.addedSlots
+        ? [...Object.keys(candidate.addedSlots), ...(candidate.clearedSlots || [])]
+        : [candidate.slot];
+    // A two-hander and a main-hand+off-hand pair are competing for the same
+    // hands even though they name different slots
+    const hands = ['/equipment_types/two_hand', '/equipment_types/main_hand', '/equipment_types/off_hand'];
+    if (slots.some((slot) => hands.includes(slot))) return ['slot:weapon'];
+    return [`slot:${[...new Set(slots)].sort().join('+')}`];
+}
+
+/**
+ * The group an upgrade is filed under, for the places that need one name for it
+ * — grouping picks per loadout, and tracking what a slot has already gained.
+ *
+ * Use `conflictKeys` for the question "may these two both be bought": an ability
+ * swap has two ends and this reports only the first.
+ *
+ * @param {Object} candidate - The upgrade
+ * @returns {string} Key that candidates in the same group share
+ */
+export function conflictKey(candidate) {
+    return conflictKeys(candidate)[0];
+}
+
+/**
+ * Whether a group admits exactly one purchase, whatever the rooms say.
+ *
+ * A skill level, an ability level and a house room are one number the character
+ * carries everywhere. There is no second copy to wear in another room, so the
+ * higher target simply contains the lower and buying both is buying one twice.
+ *
+ * @param {Object} candidate - The upgrade
+ * @returns {boolean}
+ */
+function isExclusive(candidate) {
+    return (
+        candidate.type === 'combat_level' ||
+        candidate.type === 'house' ||
+        candidate.type === 'guild_shrine' ||
+        candidate.type === 'community_buff' ||
+        candidate.type === 'drink' ||
+        Boolean(candidate.slot?.startsWith('ability_'))
+    );
+}
+
+/**
+ * The best set of upgrades a budget will buy.
+ *
+ * ## Why not simply the top few by value
+ *
+ * A labyrinth run is ten fights in ten loadouts, and a purchase only helps the
+ * rooms it reaches. Ranking by total value and allowing one item per slot
+ * answers a question about a single fight; the question here is which purchases
+ * cover the most rooms most effectively, and the answer can be **two
+ * chestpieces** — one for the melee loadouts, one for the casters. What it must
+ * never be is two chestpieces for the same rooms, where the second is gold spent
+ * on a piece that never gets worn.
+ *
+ * So each candidate is valued at what it adds *beyond what is already bought*.
+ * Within a slot a room wears whichever picked piece is best for it, so a second
+ * piece is worth exactly the rooms it improves on the first — nothing more.
+ * Across slots the gains are taken as adding up, which is the assumption the
+ * combination check exists to test.
+ *
+ * Greedy rather than an exact optimum, deliberately: the values are simulated
+ * estimates with real error bars, an optimum computed from them is false
+ * precision, and a list whose order can be read off the table is worth more than
+ * one that is a percent better and inexplicable.
+ *
+ * @param {Array<Object>} results - Ranked analysis results
+ * @param {number} budget - Coins available
+ * @param {Object} [options] - `{ baselineFights, includeUnmeasured }`
+ * @returns {{picks: Array<Object>, totalCost: number, attemptsSaved: number,
+ *   skipped: Array<{result: Object, reason: string}>, budget: number}}
+ */
+export function planWithinBudget(results, budget, { baselineFights = [], includeUnmeasured = false } = {}) {
+    const baseTries = baselineFights.map((fight) => expectedFightAttempts(fight.winRate || 0));
+
+    /** What one candidate saves in each fight, in expected attempts */
+    const savingsOf = (result) => {
+        if (!baseTries.length || !result.fights?.length) {
+            // No per-fight detail to work from — value it at the run total, which
+            // is what a plan without a baseline can honestly say
+            return [Math.max(0, -result.attemptsDelta)];
+        }
+        return result.fights.map((fight, index) =>
+            fight.applied === false
+                ? 0
+                : Math.max(0, (baseTries[index] ?? 0) - expectedFightAttempts(fight.winRate || 0))
+        );
+    };
+
+    const eligible = [];
+    const skipped = [];
+    for (const result of results || []) {
+        // A budget is in coins, so a row without a price cannot be planned
+        // around. A *negative* one can: a swap whose resale beats its purchase
+        // hands money back into the budget, and used to be discarded here
+        // alongside the unpriceable ones
+        if (!Number.isFinite(result.cost)) continue;
+        if (!(result.attemptsDelta < 0)) continue;
+        if (!includeUnmeasured && result.significant === false) {
+            skipped.push({ result, reason: 'within the noise of the simulation' });
+            continue;
+        }
+        // `keys` is every group it conflicts with; `key` is the one it is filed
+        // under for marginal-value bookkeeping (see `conflictKeys`)
+        const keys = conflictKeys(result.candidate);
+        eligible.push({ result, savings: savingsOf(result), key: keys[0], keys });
+    }
+
+    const picks = [];
+    const taken = new Set();
+    // The best saving reached so far in each group, per fight. A room wears one
+    // piece per slot, so this is what a further piece has to beat to be worth
+    // anything there.
+    const bestBySlot = new Map();
+    let spent = 0;
+
+    const marginalOf = (entry) => {
+        const standing = bestBySlot.get(entry.key);
+        if (!standing) return entry.savings.reduce((sum, saving) => sum + saving, 0);
+        let marginal = 0;
+        for (let i = 0; i < entry.savings.length; i++) {
+            marginal += Math.max(standing[i] || 0, entry.savings[i]) - (standing[i] || 0);
+        }
+        return marginal;
+    };
+
+    const remaining = [...eligible];
+    while (remaining.length) {
+        let best = null;
+        for (const entry of remaining) {
+            // Sharing *any* key is a conflict: one ability swap rules out both
+            // the other swaps into the slot it empties and the other offers of
+            // the book it buys
+            if (isExclusive(entry.result.candidate) && entry.keys.some((key) => taken.has(key))) continue;
+            if (spent + entry.result.cost > budget) continue;
+            const marginal = marginalOf(entry);
+            if (marginal <= 0) continue;
+            const cost = entry.result.cost;
+            // Gain per coin is meaningless at or below zero cost — everything
+            // free ties at infinity and a refund divided by a small gain is
+            // *more* negative the worse the row is. So the free-and-refunding
+            // rows are taken first, biggest refund first, and only then does
+            // the ratio decide among things that actually cost money
+            const value = cost > 0 ? marginal / cost : Infinity;
+            const contender = { entry, marginal, value, cost, free: cost <= 0 };
+            if (!best) {
+                best = contender;
+            } else if (contender.free !== best.free) {
+                if (contender.free) best = contender;
+            } else if (contender.free) {
+                if (contender.cost < best.cost || (contender.cost === best.cost && marginal > best.marginal)) {
+                    best = contender;
+                }
+            } else if (value > best.value) {
+                best = contender;
+            }
+        }
+        if (!best) break;
+
+        const { entry, marginal } = best;
+        remaining.splice(remaining.indexOf(entry), 1);
+        for (const key of entry.keys) taken.add(key);
+        spent += entry.result.cost;
+        picks.push({
+            ...entry.result,
+            marginalAttemptsSaved: marginal,
+            rooms: entry.savings.filter((saving) => saving > 0).length,
+        });
+
+        const standing = bestBySlot.get(entry.key) || entry.savings.map(() => 0);
+        bestBySlot.set(
+            entry.key,
+            standing.map((saving, index) => Math.max(saving, entry.savings[index]))
+        );
+
+        // A piece nobody would now wear is gold spent on nothing: if an earlier
+        // pick in this group has been beaten in every room it covered, take it
+        // back out and give the budget back
+        for (let i = picks.length - 2; i >= 0; i--) {
+            const older = picks[i];
+            if (conflictKey(older.candidate) !== entry.key) continue;
+            const olderSavings = savingsOf(older);
+            if (olderSavings.every((saving, index) => saving <= (entry.savings[index] ?? 0) + 1e-9)) {
+                spent -= older.cost;
+                picks.splice(i, 1);
+                skipped.push({ result: older, reason: 'a later pick covers every room it did' });
+            }
+        }
+    }
+
+    for (const entry of remaining) {
+        let reason;
+        if (isExclusive(entry.result.candidate) && entry.keys.some((key) => taken.has(key))) {
+            // Otherwise this reads as "worthless", when it may well be the
+            // second-best swap into a slot the plan has already filled
+            reason = 'a pick already uses what this needs';
+        } else if (spent + entry.result.cost > budget) {
+            reason = 'over budget';
+        } else {
+            reason = 'adds nothing the picks do not already cover';
+        }
+        skipped.push({ result: entry.result, reason });
+    }
+
+    // What the set saves across the run, if gains in different slots add up
+    let attemptsSaved = 0;
+    for (const savings of bestBySlot.values()) {
+        for (const saving of savings) attemptsSaved += saving;
+    }
+
+    return { picks, totalCost: spent, attemptsSaved, skipped, budget };
+}
+
+/**
+ * Run a job per item, several at a time.
+ *
+ * A labyrinth fight is its own worker with its own seed and its own trial count,
+ * so ten fights are ten independent runs that were being done one after another
+ * on a machine with eight cores idle. Bounded rather than all at once: each
+ * worker gets its own copy of the game data, and a fleet of them competing for
+ * one core apiece is slower than a queue.
+ *
+ * Results come back in the order the items were given, whatever order they
+ * finished in — every figure downstream is indexed by fight.
+ *
+ * @param {Array} items - What to run
+ * @param {Function} run - `(item, index) => Promise`
+ * @param {number} [limit] - How many at once
+ * @returns {Promise<Array>} Results, in input order
+ */
+async function mapConcurrent(items, run, limit = analysisConcurrency()) {
+    const results = new Array(items.length);
+    const width = Math.max(1, Math.min(limit, items.length));
+    let next = 0;
+    let failure = null;
+
+    const lane = async () => {
+        while (failure === null) {
+            const index = next++;
+            if (index >= items.length) return;
+            try {
+                results[index] = await run(items[index], index);
+            } catch (error) {
+                // Stop handing out work. Without this the other lanes keep
+                // starting simulations for a run whose result has already been
+                // thrown away — a failed analysis would go on spawning workers
+                // for every fight it had left.
+                failure = error;
+            }
+        }
+    };
+
+    await Promise.all(Array.from({ length: width }, lane));
+    if (failure) throw failure;
+    return results;
+}
+
+/**
+ * How many simulations an analysis may have in flight at once.
+ *
+ * Capped, not simply "as many as there are cores". Each simulation is a Worker
+ * that receives its own structured clone of the whole game data — every item,
+ * ability, monster and action in the game — so the fleet costs memory in
+ * proportion to its width. And the tab it is competing with is the game itself:
+ * an analysis that takes every core makes the thing you are playing stutter,
+ * which is a poor trade for a run finishing sooner.
+ *
+ * The tile badges and the skip-level searches also run labyrinth sims in the
+ * background without asking anyone, so this is a budget for one analysis rather
+ * than for the page.
+ *
+ * @returns {number} Simulations at once
+ */
+function analysisConcurrency() {
+    const budget = getMaxWorkers();
+    if (config.getSetting('combatSim_uncapThreads')) return Math.max(1, budget);
+    return Math.max(1, Math.min(budget, ANALYSIS_MAX_CONCURRENCY));
+}
+
+/** Ceiling on simultaneous sims per analysis, whatever the thread setting says */
+const ANALYSIS_MAX_CONCURRENCY = 6;
 
 /** Expected labyrinth attempts to clear one fight (retry until win) */
 function expectedFightAttempts(winRate) {
     return 1 / Math.max(winRate, ATTEMPT_WIN_RATE_FLOOR);
+}
+
+/** Weapon slots, for spotting a forced-armor candidate that also changes weapon */
+const WEAPON_SLOTS = new Set([MAIN_HAND_SLOT, OFF_HAND_SLOT, TWO_HAND_SLOT]);
+
+/**
+ * What two candidates have to share before the all-fights pool treats them as
+ * one purchase.
+ *
+ * `candidateAssignmentKey` is the general answer and is used for everything
+ * else, but it keys an ability on the slot number it sat in and the level it was
+ * generated at — and a swap pooled across a labyrinth is neither. "Replace Smack
+ * with Quick Strike" is one decision whether Smack is in slot 2 of one loadout at
+ * level 30 and slot 4 of another at level 12; keying on the slot would rank the
+ * same decision twice, at twice the simulation cost, and split its rooms between
+ * the two rows.
+ *
+ * @param {Object} candidate - Any upgrade candidate
+ * @returns {string} Pool key
+ */
+function allFightsPoolKey(candidate) {
+    if (candidate.type === 'ability_swap' && candidate.replacesHrid) {
+        return `ability_swap:${candidate.replacesHrid}->${candidate.upgradeHrid}`;
+    }
+    // Filling a free slot is one decision too — "start casting Fireball" — and
+    // the slot it lands in is whichever one each loadout has going spare
+    if (candidate.type === 'ability_swap' && candidate.fillsFreeSlot) {
+        return `ability_fill:${candidate.upgradeHrid}`;
+    }
+    return candidateAssignmentKey(candidate);
+}
+
+/**
+ * Which build guide each distinct loadout in a run was read as playing.
+ *
+ * Ability Swaps asks a much smaller question when it can name the archetype —
+ * the archetype's own ability set instead of every ability in the game — and
+ * silently falls back to the wide search when it cannot. Pooling then merges
+ * everything into one table, so the finished results carry no trace of which
+ * loadouts got which question. That is exactly the thing a reader needs to know
+ * before trusting a short swap list, and it costs one guide lookup per loadout
+ * to say.
+ *
+ * One entry per distinct loadout name, in the order the fights name them, so a
+ * ten-room run with three loadouts produces three lines rather than ten.
+ *
+ * @param {Array<Object>} fights - `[{ dto, loadoutName }]`
+ * @param {Object} gameData - Game data payload
+ * @param {boolean} signatureOnly - Whether the run restricted swaps to aura + signature
+ * @returns {Array<{loadoutName: string, archetype: string|null, label: string|null}>}
+ */
+function summariseArchetypes(fights, gameData, signatureOnly) {
+    const seen = new Map();
+    for (const fight of fights || []) {
+        const loadoutName = fight?.loadoutName || 'Loadout';
+        if (seen.has(loadoutName)) continue;
+        let plan = null;
+        try {
+            plan = buildGuidePlan(fight.dto, gameData, { signatureOnly });
+        } catch (error) {
+            // A guide that cannot be read is the same answer as no archetype,
+            // and is never worth failing a whole analysis over
+            console.error('[UpgradeAdvisor] Archetype lookup failed for', loadoutName, error);
+        }
+        seen.set(loadoutName, {
+            loadoutName,
+            archetype: plan?.archetype ?? null,
+            label: plan?.label ?? null,
+        });
+    }
+    return [...seen.values()];
+}
+
+/**
+ * A swap candidate as the whole-run table should carry it.
+ *
+ * The generated description ends in the level it was generated at — "Smack →
+ * Quick Strike (Lv30)" — which is a promise the multi-fight run does not keep:
+ * the newcomer is simmed at whatever level the loadout it lands in holds the
+ * replaced ability at, which is the point of the rule and different in every
+ * room. So the level comes off the description and goes into a caveat that also
+ * says what the cost was priced from.
+ *
+ * @param {Object} candidate - An `ability_swap` candidate from `generateCandidates`
+ * @param {Object} gameData - For ability names
+ * @returns {Object} A copy fit for pooling
+ */
+function pooledSwapCandidate(candidate, gameData) {
+    const nameOf = (hrid) =>
+        gameData?.abilityDetailMap?.[hrid]?.name ||
+        String(hrid || '')
+            .split('/')
+            .pop()
+            .replace(/_/g, ' ');
+    // A fill displaces nothing, so there is no "X → Y" to draw and its own
+    // description already says what it is
+    if (candidate.fillsFreeSlot) {
+        return {
+            ...candidate,
+            description: `Free slot → ${nameOf(candidate.upgradeHrid)}`,
+            caveat:
+                'Weighed in every loadout with a slot free for it, at the level of the book you own. The cost is ' +
+                'for taking that book to the level shown.',
+        };
+    }
+    return {
+        ...candidate,
+        description: `${nameOf(candidate.replacesHrid || candidate.currentHrid)} → ${nameOf(candidate.upgradeHrid)}`,
+        caveat:
+            'Weighed in every loadout that casts the ability it replaces, each at the level that loadout holds it ' +
+            'at, with default triggers. The cost is for the highest of those levels.',
+    };
+}
+
+/**
+ * A forced labyrinth armor candidate as a whole-run candidate.
+ *
+ * Two things are added to it. The keep-gear rule, which is the same one the
+ * single-fight analysis applies: these swaps are usually an added purchase
+ * rather than a trade-in, because the labyrinth wants every element available,
+ * so the replaced pieces are recorded as kept and their resale is not credited
+ * against the price. And, when the candidate carries a weapon, the weapon the
+ * loadout it came from was holding — which is what stops the set being installed
+ * in a loadout that fights with something else entirely.
+ *
+ * @param {Object} candidate - From `generateLabArmorCandidates`
+ * @param {Object} dto - The loadout it was generated for
+ * @param {boolean} keepReplaced - The `labSim_keepReplacedGear` setting
+ * @returns {Object} A copy fit for pooling
+ */
+function labArmorForLoadout(candidate, dto, keepReplaced) {
+    const pooled = { ...candidate };
+    if (keepReplaced) {
+        pooled.keptItems = pooled.removedItems;
+        pooled.removedItems = [];
+    }
+    const weaponSlot = Object.keys(pooled.addedSlots || {}).find((slot) => WEAPON_SLOTS.has(slot));
+    if (weaponSlot) {
+        pooled.labArmorWeapon = { slot: weaponSlot, hrid: dto?.equipment?.[weaponSlot]?.hrid || null };
+    }
+    return pooled;
+}
+
+/**
+ * Sims a whole-run analysis will plan before it starts trading trial length for
+ * coverage.
+ *
+ * Ability swaps put this analysis in a different size class: one candidate per
+ * style-compatible ability per slot, pooled across a labyrinth's worth of
+ * loadouts. The wrong way to handle that is to sim a sample of the fights, which
+ * would leave rows whose headline number — attempts to clear *every* fight —
+ * silently referred to some other, smaller labyrinth. So every fight a candidate
+ * is about is always simulated, and what gives instead is how long each
+ * simulation runs. A shorter run is a noisier win rate, and the noise is already
+ * measured, carried on the row and used to grey out gains it swallows.
+ */
+export const ALL_FIGHTS_SIM_BUDGET = 500;
+
+/** However large the run, no fight is simmed on less than this share of the asked-for hours */
+export const MIN_TRIAL_FRACTION = 0.25;
+
+/**
+ * How long each simulation in a whole-run analysis gets.
+ *
+ * @param {number} sims - Simulations the run has planned
+ * @param {number} hours - Hours per fight the player asked for
+ * @returns {{scale: number, hours: number, reduced: boolean}}
+ */
+export function labAllFightsTrialBudget(sims, hours) {
+    const scale = sims > ALL_FIGHTS_SIM_BUDGET ? Math.max(MIN_TRIAL_FRACTION, ALL_FIGHTS_SIM_BUDGET / sims) : 1;
+    return { scale, hours: hours * scale, reduced: scale < 1 };
 }
 
 /**
@@ -2625,12 +4812,44 @@ function expectedFightAttempts(winRate) {
  * Candidates are the union of style-relevant skills across all fight loadouts
  * (loadouts can differ in style, e.g. a ranged loadout for one monster and a
  * melee loadout for another), so a skill shows if any assigned loadout trains it.
- * @param {Object} params - { fights, crates, hours, communityBuffs, labyrinthCombatBuffs, abilityTargetLevel, combatLevelTargets }
+ *
+ * Each is then measured only against the fights it is actually about — see
+ * `candidateAppliesToDTO`. A combat level is every fight; a piece of gear is the
+ * fights whose loadout wears what it replaces, and the rest keep their baseline
+ * untouched rather than being simulated wearing something they would never wear.
+ *
+ * Two candidate sets need more than the generator gives them, and get it here:
+ * the forced labyrinth armor sets — the Anchorbound plate, the elemental robes,
+ * and the combined weapon-and-robes swaps that read as one row — which the tier
+ * progression can never reach and which are priced without crediting the resale
+ * of what they replace; and ability swaps, pooled by the ability they replace
+ * rather than by the slot it sat in. Both are per loadout, since which set or
+ * which swap a room wants depends on what that room's loadout is holding.
+ *
+ * Labyrinth token buffs are the third set that needs handling of its own, and
+ * for a different reason: a token buff is not on the character at all. It is an
+ * argument to the simulation — an entry in `labyrinthCombatBuffs` — so
+ * `applyCandidateToDTO` has nothing to write and the shared pooling path would
+ * have simulated the unchanged loadout for every one of them. That, rather than
+ * anything about scope, is what kept them to the Configure fight. They are what
+ * the whole-run question suits best: a token level is bought once and paid for
+ * in every room, so it is simulated against every fight and aggregated exactly
+ * like a combat level, and ranked in its own currency rather than against gold.
+ *
+ * The size that comes with all that is paid for in trial length rather than in
+ * coverage — see `labAllFightsTrialBudget`. A fight a candidate touches is
+ * always simulated.
+ *
+ * @param {Object} params - { fights, crates, hours, communityBuffs, labyrinthCombatBuffs, abilityTargetLevel,
+ *   combatLevelTargets, signatureSwapsOnly, houseTargetLevel, houseTargets, guildShrineTargetLevel,
+ *   guildShrineTargets, tokenLevels }
  *   where fights = [{ monsterHrid, monsterName, roomLevel, dto, loadoutName }]
- * @param {Function} onProgress - Called with { current, total, description }
+ * @param {Function} onProgress - Called with { current, total, description }, and
+ *   once before anything runs with a `plan` of what the run comes to
  * @param {Object} [options] - { abortSignal: () => boolean }
  * @returns {Promise<Object>} { baseline: { fights, runClearChance, expectedAttempts },
- *   results: [{candidate, fights, runClearChance, runClearDelta, expectedAttempts, attemptsDelta, avgWinDelta}] }
+ *   results: [{candidate, fights, costDetail, runClearChance, runClearDelta, expectedAttempts,
+ *   attemptsDelta, avgWinDelta}], budget }
  */
 export async function runLabyrinthAllFightsAnalysis(params, onProgress, options = {}) {
     const {
@@ -2641,6 +4860,15 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
         labyrinthCombatBuffs = [],
         abilityTargetLevel,
         combatLevelTargets,
+        abilityTargets,
+        modes = ['combat_level'],
+        signatureSwapsOnly = false,
+        houseTargetLevel = 0,
+        houseTargets = null,
+        guildShrineTargetLevel = 0,
+        guildShrineTargets = null,
+        tokenLevels = null,
+        extraCandidates = [],
     } = params;
     const { abortSignal } = options;
     const gameData = buildGameDataPayload();
@@ -2649,28 +4877,142 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
     const zoneHrid =
         Object.keys(gameData.actionDetailMap).find((k) => k.includes('/actions/combat/')) || '/actions/combat/fly';
 
-    // Union of combat-level candidates across the fight loadouts
+    // The union of candidates across every fight's loadout.
+    //
+    // Union rather than per-fight, because the question is what to buy — one
+    // thing, once, that has to serve every room. A candidate generated from the
+    // Cyclops loadout is still worth simming against the Mimic, and the two
+    // loadouts usually differ in only a slot or two.
+    //
+    // Keyed by what the candidate actually changes rather than by skill, since
+    // combat levels are one per skill but equipment is many per slot.
     const candidatesByKey = new Map();
+    /**
+     * Add one candidate to the pool, or reconcile it with the one already there.
+     * @param {Object} candidate - From a generator
+     */
+    const pool = (candidate) => {
+        const key = allFightsPoolKey(candidate);
+        const existing = candidatesByKey.get(key);
+        if (!existing) {
+            candidatesByKey.set(key, candidate);
+            return;
+        }
+        // The same swap out of two loadouts that hold the replaced ability at
+        // different levels. The books are bought once, to the highest of them —
+        // costing it from whichever loadout happened to be generated first
+        // would undercount the purchase for every other room.
+        if (candidate.type === 'ability_swap' && (candidate.upgradeLevel || 0) > (existing.upgradeLevel || 0)) {
+            candidatesByKey.set(key, candidate);
+        }
+    };
+
+    const keepReplacedGear = config.getSettingValue('labSim_keepReplacedGear', true);
+    const inventory = dataManager.getInventory();
+
     for (const fight of fights) {
-        const fightCandidates = generateCandidates(
-            fight.dto,
-            gameData,
-            'combat_level',
-            abilityTargetLevel,
-            'increment',
-            false,
-            combatLevelTargets
-        );
-        for (const candidate of fightCandidates) {
-            if (!candidatesByKey.has(candidate.skillKey)) {
-                candidatesByKey.set(candidate.skillKey, candidate);
+        for (const mode of modes) {
+            const fightCandidates = generateCandidates(
+                fight.dto,
+                gameData,
+                mode,
+                abilityTargetLevel,
+                'increment',
+                false,
+                combatLevelTargets,
+                abilityTargets,
+                houseTargetLevel,
+                houseTargets,
+                null,
+                guildShrineTargetLevel,
+                // Every row in this table is ranked on attempts to clear, so a
+                // house room that can only move XP or loot is a row that can
+                // only report the sims' own noise
+                { signatureSwapsOnly, houseWinRateOnly: true, guildShrineTargets }
+            );
+            for (const candidate of fightCandidates) {
+                pool(candidate.type === 'ability_swap' ? pooledSwapCandidate(candidate, gameData) : candidate);
+            }
+        }
+        // The labyrinth lives or dies on body and legs, and the tier progression
+        // only ever steps one rung from what is worn — so the Anchorbound plate,
+        // the elemental sets and the two-piece combinations of them are forced in
+        // here exactly as they are for a single fight. Per loadout, because which
+        // set a loadout wants depends on the element it casts.
+        if (modes.includes('equipment')) {
+            for (const candidate of generateLabArmorCandidates(fight.dto, gameData, inventory)) {
+                pool(labArmorForLoadout(candidate, fight.dto, keepReplacedGear));
             }
         }
     }
-    const candidates = [...candidatesByKey.values()];
+    for (const candidate of extraCandidates) {
+        const key = allFightsPoolKey(candidate);
+        if (!candidatesByKey.has(key)) candidatesByKey.set(key, candidate);
+    }
+    // Which archetype each loadout resolved to, for the panel to say out loud.
+    // The guide narrows a loadout's swaps from every ability in the game to the
+    // archetype's own set, and a loadout whose weapon does not name one falls
+    // back to the wide search — a difference of thousands of simulations and of
+    // what the table can be trusted to have looked at. After pooling, nothing in
+    // the results says which loadout went which way.
+    const archetypes = modes.includes('ability_swap') ? summariseArchetypes(fights, gameData, signatureSwapsOnly) : [];
+    // Which fights each candidate is actually about. A combat level is every
+    // fight; a piece of gear is only the fights whose loadout wears the piece it
+    // replaces — installing a melee sword into a magic loadout measures a
+    // costume change, not an upgrade, and drags the aggregate with it.
+    const candidates = [...candidatesByKey.values()]
+        .map((candidate) => ({
+            ...candidate,
+            cost: candidate.cost ?? calculateUpgradeCost(candidate, gameData),
+            appliesTo: fights.map((fight) => candidateAppliesToDTO(candidate, fight.dto, gameData)),
+        }))
+        .filter((candidate) => candidate.appliesTo.some(Boolean));
 
-    const total = fights.length * (candidates.length + 1);
-    let current = 0;
+    // Labyrinth token buffs. Character-wide and not held in a loadout at all —
+    // they are an argument to the simulation rather than a change to the DTO —
+    // so they are pooled once rather than per fight, and every fight is one of
+    // the fights they are about. Only the combat half: the skilling and
+    // experience tokens move numbers this table does not have a column for.
+    const tokenCandidates = modes.includes('labyrinth_buff')
+        ? generateLabyrinthBuffCandidates(tokenLevels)
+              .filter((candidate) => candidate.category === 'combat')
+              .map((candidate) => ({ ...candidate, cost: null, appliesTo: fights.map(() => true) }))
+        : [];
+
+    // Only the fights a candidate touches are simulated; the rest keep their
+    // baseline, which is both the truth and a great deal less work
+    const simsPerCandidate = [...candidates, ...tokenCandidates].reduce(
+        (sum, c) => sum + c.appliesTo.filter(Boolean).length,
+        0
+    );
+    const total = fights.length + simsPerCandidate;
+    // What a big run gives up. Never a fight — every fight a candidate is about
+    // is simulated, or its row would be answering a different question from the
+    // one its column headings ask — but each simulation may be shorter.
+    const budget = labAllFightsTrialBudget(total, hours);
+    const simHours = budget.hours;
+    // An object rather than a counter variable: the fight passes run
+    // concurrently and close over it, and a plain `let` shared by closures
+    // inside a loop is exactly the shape lint is right to be suspicious of
+    const progress = { current: 0 };
+
+    // Said before any of it runs, and said as a count rather than a promise:
+    // this is the one moment where a run that is going to take a long time can
+    // still be stopped by somebody who did not mean to ask for it.
+    onProgress?.({
+        current: 0,
+        total,
+        description: `${candidates.length + tokenCandidates.length} upgrades × ${fights.length} fights = ${total} sims`,
+        plan: {
+            candidates: candidates.length + tokenCandidates.length,
+            fights: fights.length,
+            sims: total,
+            hours: simHours,
+            requestedHours: hours,
+            trialScale: budget.scale,
+            reduced: budget.reduced,
+        },
+    });
 
     // Per-fight seeds derived from one analysis seed: fight N is simmed with the
     // same random draws in the baseline pass and in every candidate pass, so a
@@ -2681,7 +5023,7 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
     // A fight's baseline pass sets the fight count every candidate pass for
     // that fight must match, so each comparison stays paired
     const pairedRules = new Map();
-    const simFightWinRate = async (fight, dtoOverride, seed, fightIndex) => {
+    const simFightWinRate = async (fight, dtoOverride, seed, fightIndex, buffsOverride = null) => {
         const rule = pairedRules.get(fightIndex) || null;
         const simResult = await runLabyrinthSimulation({
             gameData,
@@ -2690,15 +5032,18 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
             monsterHrid: fight.monsterHrid,
             roomLevel: fight.roomLevel,
             crates,
-            hours: rule ? hours * PAIRED_TIME_HEADROOM : hours,
+            hours: rule ? simHours * PAIRED_TIME_HEADROOM : simHours,
             precision: rule,
             communityBuffs,
-            labyrinthCombatBuffs,
+            // A token buff is not on the loadout, so it arrives here rather than
+            // through the DTO — the one candidate set that changes the run
+            // without changing the character
+            labyrinthCombatBuffs: buffsOverride || labyrinthCombatBuffs,
             seed,
         });
         const attempts = simResult.labyAttemptCount || 1;
         if (!rule) pairedRules.set(fightIndex, pairedTrialRule(simResult));
-        return (simResult.encounters || 0) / attempts;
+        return { winRate: (simResult.encounters || 0) / attempts, trials: attempts };
     };
 
     const fightMeta = (fight) => ({
@@ -2708,62 +5053,260 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
         loadoutName: fight.loadoutName,
     });
 
-    // Baseline pass: every fight with its current levels
-    const baselineFights = [];
-    for (let i = 0; i < fights.length; i++) {
-        const fight = fights[i];
-        if (abortSignal?.()) return { baseline: null, results: [] };
-        onProgress?.({ current, total, description: `Baseline: ${fight.monsterName}` });
-        const winRate = await simFightWinRate(fight, null, fightSeed(i), i);
-        baselineFights.push({ ...fightMeta(fight), winRate });
-        current++;
-    }
+    // Baseline pass: every fight with its current levels. Fights are independent
+    // — their own worker, their own seed — so they run several at a time.
+    if (abortSignal?.()) return { baseline: null, results: [] };
+    onProgress?.({ current: progress.current, total, description: `Baseline: ${fights.length} fights` });
+    const baselineFights = await mapConcurrent(fights, async (fight, i) => {
+        if (abortSignal?.()) return { ...fightMeta(fight), winRate: 0, trials: 1 };
+        const { winRate, trials } = await simFightWinRate(fight, null, fightSeed(i), i);
+        progress.current++;
+        onProgress?.({ current: progress.current, total, description: `Baseline: ${fight.monsterName}` });
+        return { ...fightMeta(fight), winRate, trials };
+    });
+    if (abortSignal?.()) return { baseline: null, results: [] };
     const baselineRunClear = baselineFights.reduce((product, f) => product * f.winRate, 1);
     const baselineAttempts = baselineFights.reduce((sum, f) => sum + expectedFightAttempts(f.winRate), 0);
 
-    // One pass per combat-level candidate across every fight
+    // One pass per candidate, over the fights that candidate is about
     const results = [];
-    for (const candidate of candidates) {
-        const fightResults = [];
+    for (const candidate of [...candidates, ...tokenCandidates]) {
+        const isToken = candidate.type === 'labyrinth_buff';
+        // Built once per candidate rather than once per fight: the buff array is
+        // the same in every room, and rebuilding it per fight would deep-copy
+        // the whole thing a labyrinth's worth of times
+        const tokenBuffs = isToken ? buildModifiedCombatBuffs(labyrinthCombatBuffs, candidate) : null;
         let aborted = false;
-        for (let i = 0; i < fights.length; i++) {
+        const fightResults = await mapConcurrent(fights, async (fight, i) => {
             if (abortSignal?.()) {
                 aborted = true;
-                break;
+                return { ...fightMeta(fight), winRate: baselineFights[i].winRate, winRateDelta: 0, applied: false };
             }
-            onProgress?.({ current, total, description: `${candidate.description}: ${fights[i].monsterName}` });
-            const boostedDTO = JSON.parse(JSON.stringify(fights[i].dto));
-            boostedDTO[candidate.skillKey] = candidate.upgradeLevel;
-            const winRate = await simFightWinRate(fights[i], boostedDTO, fightSeed(i), i);
-            fightResults.push({
-                ...fightMeta(fights[i]),
-                winRate,
-                winRateDelta: winRate - baselineFights[i].winRate,
+            // A fight this upgrade does not reach keeps its baseline exactly —
+            // no sim, because there is nothing to find out
+            if (!candidate.appliesTo[i]) {
+                return {
+                    ...fightMeta(fight),
+                    winRate: baselineFights[i].winRate,
+                    winRateDelta: 0,
+                    applied: false,
+                };
+            }
+            const boostedDTO = isToken ? null : applyCandidateToDTO(fight.dto, candidate);
+            const { winRate, trials } = await simFightWinRate(fight, boostedDTO, fightSeed(i), i, tokenBuffs);
+            progress.current++;
+            onProgress?.({
+                current: progress.current,
+                total,
+                description: `${candidate.description}: ${fight.monsterName}`,
             });
-            current++;
-        }
+            return {
+                ...fightMeta(fight),
+                winRate,
+                trials,
+                winRateDelta: winRate - baselineFights[i].winRate,
+                applied: true,
+                // What it goes in place of *here* — with one purchase serving
+                // several loadouts, that is not the same piece in every room
+                replaced: isToken ? null : replacedIn(candidate, fight.dto, gameData),
+            };
+        });
         if (aborted) break;
 
+        const applied = fightResults.filter((f) => f.applied);
         const runClearChance = fightResults.reduce((product, f) => product * f.winRate, 1);
         const expectedAttempts = fightResults.reduce((sum, f) => sum + expectedFightAttempts(f.winRate), 0);
-        const avgWinDelta = fightResults.reduce((sum, f) => sum + f.winRateDelta, 0) / (fightResults.length || 1);
+        const attemptsDeltaNoise = attemptsNoise(applied, baselineFights);
+        // Averaged over the rooms it reaches rather than every room: a weapon
+        // that only goes in two of eight loadouts is not a quarter as good at
+        // its job, and dividing by eight would say it was
+        const avgWinDelta = applied.reduce((sum, f) => sum + f.winRateDelta, 0) / (applied.length || 1);
+        const attemptsDelta = expectedAttempts - baselineAttempts;
+        const cost = candidate.cost;
+        // Attempts saved across a whole run, per billion coins. The figure the
+        // question actually asks: a cheap thing that helps a little can beat an
+        // expensive thing that helps a lot, and a ranking by raw gain never
+        // says so. Candidates with no gold price — a combat level costs
+        // experience — get null rather than a zero that would sort them last.
+        const attemptsSaved = -attemptsDelta;
+        const perGold = cost > 0 ? (attemptsSaved / cost) * 1e6 : null;
+
         results.push({
             candidate,
             fights: fightResults,
+            // What the row is paid in, which is what decides the section it is
+            // drawn in and the columns that section carries
+            costType: isToken ? 'token' : 'gold',
+            tokenCost: isToken ? candidate.tokenCost : null,
+            // Attempts saved across the run per hundred guild tokens. The token
+            // half of `attemptsSavedPerMillion`, in the only currency these rows
+            // can be compared in — a token buff has no gold price at all.
+            attemptsSavedPerHundredTokens:
+                isToken && candidate.tokenCost > 0 ? (attemptsSaved / candidate.tokenCost) * 100 : null,
+            // Only where there is something in the breakdown a price alone does
+            // not say — the forced armor sets, whose replaced pieces are kept
+            // rather than sold, so the row's coin figure is deliberately gross.
+            // Pricing every row would put a market lookup per piece behind a
+            // table that can run to hundreds of rows.
+            costDetail: candidate.keptItems?.length ? explainLabCandidateCost(candidate, gameData) : null,
+            appliedFights: applied.length,
             runClearChance,
             runClearDelta: runClearChance - baselineRunClear,
             expectedAttempts,
-            attemptsDelta: expectedAttempts - baselineAttempts,
+            attemptsDelta,
+            attemptsDeltaNoise,
+            // A gain smaller than the sampling error of the sims it came from is
+            // not a gain that has been measured, whatever the number says
+            significant: Math.abs(attemptsDelta) > SIGNIFICANCE_Z * attemptsDeltaNoise,
             avgWinDelta,
+            cost,
+            attemptsSavedPerMillion: perGold,
         });
     }
 
-    // Biggest attempts reduction (most negative delta) first
-    results.sort((a, b) => a.attemptsDelta - b.attemptsDelta);
+    // Best value first where there is a price, then the priceless ones by raw
+    // gain — a combat level and a helmet cannot be ranked against each other in
+    // coins, and pretending otherwise would bury one of them
+    results.sort((a, b) => {
+        const priced = (result) => (result.attemptsSavedPerMillion === null ? 1 : 0);
+        return (
+            priced(a) - priced(b) ||
+            (b.attemptsSavedPerMillion ?? 0) - (a.attemptsSavedPerMillion ?? 0) ||
+            a.attemptsDelta - b.attemptsDelta
+        );
+    });
 
     return {
         baseline: { fights: baselineFights, runClearChance: baselineRunClear, expectedAttempts: baselineAttempts },
         results,
+        // What the run cost and what it gave up to fit — read by the panel for
+        // its status line, so a table drawn from shortened sims says so
+        budget: {
+            candidates: candidates.length,
+            fights: fights.length,
+            sims: total,
+            hours: simHours,
+            requestedHours: hours,
+            trialScale: budget.scale,
+            reduced: budget.reduced,
+        },
+        // Which build guide each loadout was read as playing — see
+        // `summariseArchetypes`. Empty when swaps were not part of the run.
+        archetypes,
+        // Handed back so a combination check re-runs against the same random
+        // draws and the same trial counts, rather than against a fresh sample
+        pairing: { seed: simSeed, rules: [...pairedRules.entries()] },
+        context: { fights, crates, hours: simHours, communityBuffs, labyrinthCombatBuffs },
+    };
+}
+
+/**
+ * What a set of upgrades is worth bought *together*.
+ *
+ * Every row in the table was measured on its own against the same baseline, and
+ * that is the right way to rank them — but it is the wrong way to add them up.
+ * Two upgrades that both rescue the same failing room each get credited with
+ * rescuing it, and the sum promises a saving neither the pair nor anything else
+ * will deliver. The overlap can only be found by running them together.
+ *
+ * The same seed and the same trial counts as the analysis it came from, so the
+ * combined figure is comparable with the individual ones rather than being a
+ * fresh sample that differs for its own reasons.
+ *
+ * @param {Object} params - `{ picks, baseline, pairing, context }` from an
+ *   all-fights analysis, where `picks` are the results to install together
+ * @param {Function} onProgress - Called with { current, total, description }
+ * @param {Object} [options] - { abortSignal }
+ * @returns {Promise<Object>} `{ fights, expectedAttempts, attemptsDelta,
+ *   summedDelta, overlap }` — overlap is how much of the promised saving the
+ *   upgrades take from each other
+ */
+export async function runLabyrinthCombinationCheck(params, onProgress, options = {}) {
+    const { picks, baseline, pairing, context } = params;
+    const { abortSignal } = options;
+    const gameData = buildGameDataPayload();
+    if (!gameData) throw new Error('No game data available');
+    if (!picks?.length || !baseline?.fights?.length) throw new Error('Nothing to check');
+
+    const { fights, crates, hours, communityBuffs, labyrinthCombatBuffs = [] } = context || {};
+    const zoneHrid =
+        Object.keys(gameData.actionDetailMap).find((k) => k.includes('/actions/combat/')) || '/actions/combat/fly';
+    const rules = new Map(pairing?.rules || []);
+    const total = fights.length;
+    let current = 0;
+
+    const fightResults = [];
+    for (let i = 0; i < fights.length; i++) {
+        if (abortSignal?.()) return null;
+        const fight = fights[i];
+        onProgress?.({ current, total, description: `Together: ${fight.monsterName}` });
+
+        // Every pick that belongs in this loadout goes on at once — that is the
+        // whole question. Two picks for the same slot are not both worn: the
+        // room wears whichever of them is better *here*, which is exactly how
+        // the plan valued the second one.
+        const bySlot = new Map();
+        for (const pick of picks) {
+            if (!candidateAppliesToDTO(pick.candidate, fight.dto, gameData)) continue;
+            const key = conflictKey(pick.candidate);
+            const standing = bySlot.get(key);
+            const gain = pick.fights?.[i]?.winRateDelta ?? 0;
+            if (!standing || gain > standing.gain) bySlot.set(key, { pick, gain });
+        }
+
+        let dto = fight.dto;
+        const installed = [];
+        for (const { pick } of bySlot.values()) {
+            // Re-checked against the loadout as it now stands: a swap can fill a
+            // hand that was empty when the picks were chosen
+            if (!candidateAppliesToDTO(pick.candidate, dto, gameData)) continue;
+            dto = applyCandidateToDTO(dto, pick.candidate);
+            installed.push(pick.candidate.description);
+        }
+
+        const rule = rules.get(i) || null;
+        const simResult = await runLabyrinthSimulation({
+            gameData,
+            playerDTOs: [dto],
+            zoneHrid,
+            monsterHrid: fight.monsterHrid,
+            roomLevel: fight.roomLevel,
+            crates,
+            hours: rule ? hours * PAIRED_TIME_HEADROOM : hours,
+            precision: rule,
+            communityBuffs,
+            labyrinthCombatBuffs,
+            seed: deriveSeed(pairing?.seed ?? null, i),
+        });
+        const attempts = simResult.labyAttemptCount || 1;
+        const winRate = (simResult.encounters || 0) / attempts;
+
+        fightResults.push({
+            monsterHrid: fight.monsterHrid,
+            monsterName: fight.monsterName,
+            roomLevel: fight.roomLevel,
+            loadoutName: fight.loadoutName,
+            winRate,
+            trials: attempts,
+            winRateDelta: winRate - (baseline.fights[i]?.winRate ?? 0),
+            installed,
+        });
+        current++;
+    }
+
+    const expectedAttempts = fightResults.reduce((sum, f) => sum + expectedFightAttempts(f.winRate), 0);
+    const attemptsDelta = expectedAttempts - baseline.expectedAttempts;
+    const summedDelta = picks.reduce((sum, pick) => sum + pick.attemptsDelta, 0);
+
+    return {
+        fights: fightResults,
+        expectedAttempts,
+        attemptsDelta,
+        summedDelta,
+        // Positive means the set delivers less than the parts promised, which is
+        // the usual direction: two fixes for one room cannot both be the fix
+        overlap: attemptsDelta - summedDelta,
+        noise: attemptsNoise(fightResults, baseline.fights),
     };
 }
 
@@ -2781,6 +5324,29 @@ const SKILLING_DTO_KEYS = {
     '/skills/alchemy': 'alchemyLevel',
     '/skills/enhancing': 'enhancingLevel',
 };
+
+/**
+ * Overrides for one skill, including the guild shrine levels the editor is set to.
+ *
+ * `getSkillingMetricsFromOverrides` otherwise reads the character's live guild
+ * buffs straight off the data manager, which is right until the editor is asking
+ * "what if this shrine were a level higher" — then the live read would quietly
+ * hold every candidate at the current level. Passing the levels rather than
+ * finished buffs lets it keep the server's own numbers for every shrine that has
+ * not been touched.
+ *
+ * @param {Object} editorState - `{ equipment, houseRooms, tokenUpgrades, communityBuffLevels }`
+ * @param {Object} editorDTO - The editor's player, for its shrine levels
+ * @param {string} actionTypeHrid - e.g. '/action_types/woodcutting'
+ * @param {string[]} crateHrids - Selected crate HRIDs
+ * @param {Object} gameData - From buildGameDataPayload()
+ * @returns {Object} Overrides for getSkillingMetricsFromOverrides()
+ */
+function skillingOverrides(editorState, editorDTO, actionTypeHrid, crateHrids, gameData) {
+    const overrides = { ...buildOverridesForSkill(editorState, actionTypeHrid, crateHrids, gameData) };
+    if (editorDTO?.guildShrineLevels) overrides.guildShrineLevels = editorDTO.guildShrineLevels;
+    return overrides;
+}
 
 /**
  * Compute per-skill clear results from editor state.
@@ -2832,7 +5398,7 @@ export function computeSkillingClearRatesFromEditor(
             communityBuffLevels: editorDTO.communityBuffLevels,
         };
 
-        const overrides = buildOverridesForSkill(editorState, actionTypeHrid, crateHrids, gameData);
+        const overrides = skillingOverrides(editorState, editorDTO, actionTypeHrid, crateHrids, gameData);
         const metrics = labyrinthClearRate.getSkillingMetricsFromOverrides(skillId, actionTypeHrid, overrides);
 
         let result;
@@ -2900,7 +5466,7 @@ function computeAverageSkillingClearRateFromEditor(roomLevel, editorDTO, crateHr
             communityBuffLevels: editorDTO.communityBuffLevels,
         };
 
-        const overrides = buildOverridesForSkill(editorState, actionTypeHrid, crateHrids, gameData);
+        const overrides = skillingOverrides(editorState, editorDTO, actionTypeHrid, crateHrids, gameData);
         const metrics = labyrinthClearRate.getSkillingMetricsFromOverrides(skillId, actionTypeHrid, overrides);
 
         if (metricOverride) {
@@ -2930,17 +5496,80 @@ function computeAverageSkillingClearRateFromEditor(roomLevel, editorDTO, crateHr
 }
 
 /**
+ * Average XP a cleared skilling room awards, across the rooms being run.
+ *
+ * Enhancing rooms used to be skipped here, because
+ * `computeEnhancingClearWithParams` reported no `xpPerRoom` and averaging a
+ * zero in would have understated every other room. It reports one now, so the
+ * skip has become the bug it was guarding against: an enhancing room in the run
+ * contributed nothing to the XP metric, and the Experience token and shrine
+ * rows — which are ranked on exactly this number — were valued as though a
+ * tenth of the run awarded no experience.
+ * @param {number|Object} roomLevel - One level, or a per-skill map
+ * @param {Object} editorDTO - Player DTO from editor
+ * @param {string[]} crateHrids - Selected crate HRIDs
+ * @param {Object} gameData - From buildGameDataPayload()
+ * @param {Object} [options] - { skillEquipmentMap, targetSkill }
+ * @returns {number} Average XP per room (0 when no room qualifies)
+ */
+function computeAverageSkillingXpPerRoomFromEditor(roomLevel, editorDTO, crateHrids, gameData, options = {}) {
+    const { skillEquipmentMap = {}, targetSkill = null } = options;
+
+    let total = 0;
+    let count = 0;
+
+    const skillsToEval = targetSkill ? [targetSkill] : LABYRINTH_SKILLS;
+
+    for (const skillHrid of skillsToEval) {
+        const skillRoomLevel = resolveSkillRoomLevel(roomLevel, skillHrid);
+        if (skillRoomLevel <= 0) continue;
+
+        const skillId = skillHrid.replace('/skills/', '');
+        const actionTypeHrid = `/action_types/${skillId}`;
+        const dtoKey = SKILLING_DTO_KEYS[skillHrid];
+        const baseLevel = editorDTO[dtoKey] || 1;
+
+        const editorState = {
+            equipment: skillEquipmentMap[skillHrid] || editorDTO.equipment,
+            houseRooms: editorDTO.houseRooms,
+            tokenUpgrades: editorDTO.tokenUpgrades,
+            communityBuffLevels: editorDTO.communityBuffLevels,
+        };
+
+        const overrides = skillingOverrides(editorState, editorDTO, actionTypeHrid, crateHrids, gameData);
+        const metrics = labyrinthClearRate.getSkillingMetricsFromOverrides(skillId, actionTypeHrid, overrides);
+        // Enhancing clears on its own model, and now reports XP from it
+        const result =
+            skillHrid === '/skills/enhancing'
+                ? labyrinthClearRate.computeEnhancingClearWithParams(metrics, baseLevel, skillRoomLevel)
+                : labyrinthClearRate.computeSkillingClearWithParams(metrics, baseLevel, skillRoomLevel);
+
+        total += result.xpPerRoom || 0;
+        count++;
+    }
+
+    return count > 0 ? total / count : 0;
+}
+
+/**
  * Generate labyrinth buff candidates from editor token upgrade levels.
- * @param {Object} tokenUpgrades - { speed, efficiency, success, doubleProgress }
+ *
+ * The Experience token comes along despite not being category 'skilling'. It
+ * buys no clear rate at all — every other row here is ranked by that — so it
+ * used to fall out of both filters and never appear anywhere, which read as
+ * "not worth buying" rather than "measured against the wrong yardstick". Its
+ * rows are scored on XP per room instead.
+ * @param {Object} tokenUpgrades - { speed, efficiency, success, doubleProgress, experience }
  * @returns {Array} Buff candidates with type 'labyrinth_buff'
  */
-function generateLabyrinthBuffCandidatesFromEditor(tokenUpgrades) {
-    const skillingDefs = LABYRINTH_BUFF_DEFS.filter((d) => d.category === 'skilling');
+export function generateLabyrinthBuffCandidatesFromEditor(tokenUpgrades) {
+    const skillingDefs = LABYRINTH_BUFF_DEFS.filter((d) => d.category === 'skilling' || d.category === 'experience');
     const editorKeyMap = {
         labyrinthSkillActionSpeedLevel: 'speed',
         labyrinthSkillingEfficiencyLevel: 'efficiency',
         labyrinthSkillingSuccessLevel: 'success',
         labyrinthSkillingDoubleProgressLevel: 'doubleProgress',
+        labyrinthExperienceLevel: 'experience',
     };
 
     const candidates = [];
@@ -2971,9 +5600,16 @@ function generateLabyrinthBuffCandidatesFromEditor(tokenUpgrades) {
  * skill's room (its loadout override, or the base equipment) is considered.
  * @param {Object} editorDTO - Player DTO from editor
  * @param {Object} gameData - From buildGameDataPayload()
+ * Every candidate carries a `costDetail` beside its `cost`, so a Skilling row can
+ * be expanded into what it is actually buying the way a combat row can. Without
+ * it the Gear Upgrades table had a Cost column and no way to ask what the number
+ * was made of — including the rows where the answer is "nothing, the market has
+ * no listing" and the rows priced as the new piece alone because the combat gear
+ * they replace is kept.
+ *
  * @param {Object} [skillEquipmentMap] - Per-skill equipment overrides
  * @param {string|null} [targetSkill] - Skill HRID to restrict candidates to
- * @returns {Array} Enhancement candidates with gold cost
+ * @returns {Array} Enhancement candidates with gold cost and `costDetail`
  */
 export function generateSkillingEquipmentCandidates(editorDTO, gameData, skillEquipmentMap = {}, targetSkill = null) {
     const itemDetailMap = gameData.itemDetailMap || {};
@@ -3019,6 +5655,7 @@ export function generateSkillingEquipmentCandidates(editorDTO, gameData, skillEq
                 type: 'enhancement',
             };
             candidate.cost = calculateUpgradeCost(candidate, gameData);
+            candidate.costDetail = explainLabCandidateCost(candidate, gameData);
             candidates.push(candidate);
         }
 
@@ -3031,11 +5668,359 @@ export function generateSkillingEquipmentCandidates(editorDTO, gameData, skillEq
             if (seen.has(dedupKey)) continue;
             seen.add(dedupKey);
             candidate.cost = calculateUpgradeCost(candidate, gameData);
+            candidate.costDetail = explainLabCandidateCost(candidate, gameData);
+            candidates.push(candidate);
+        }
+    }
+
+    // Gear you are not wearing — the celestial tool and the skill's outfit,
+    // which the loop above can never reach because it only ever enhances what is
+    // already on. Each one belongs to one skill and is applied to that skill
+    // alone: a Milking outfit does nothing in a Crafting room, and a candidate
+    // with no skill on it would be applied to every room and appear to help.
+    // Every labyrinth skill, not just the ones with a loadout assigned: a skill
+    // with no loadout of its own still runs a room, in the base kit, and is
+    // exactly the skill most likely to be missing its tool
+    const levels = new Map((dataManager.getSkills?.() || []).map((skill) => [skill.skillHrid, skill.level]));
+    for (const skill of targetSkill ? [targetSkill] : LABYRINTH_SKILLS) {
+        const forSkill = bestGearForSkill({
+            skill,
+            equipment: skillEquipmentMap[skill] || editorDTO.equipment || {},
+            itemDetailMap,
+            levels,
+        });
+        for (const candidate of forSkill) {
+            const dedupKey = `gear:${skill}:${candidate.slot}:${candidate.upgradeHrid}`;
+            if (seen.has(dedupKey)) continue;
+            seen.add(dedupKey);
+            candidate.cost = calculateUpgradeCost(candidate, gameData);
+            // `explainLabCandidateCost` rather than `explainUpgradeCost`: a
+            // skilling piece replacing combat armour records the armour as kept,
+            // and the kept-gear note is the whole explanation for a cost that
+            // looks too high
+            candidate.costDetail = explainLabCandidateCost(candidate, gameData);
             candidates.push(candidate);
         }
     }
 
     return candidates;
+}
+
+/**
+ * Whether an upgrade is even about this loadout.
+ *
+ * The all-fights analysis pools candidates from every fight and then measures
+ * each against every fight, which is right for a combat level — one number the
+ * whole character carries — and wrong for a piece of gear. A sword upgrade
+ * generated from the melee loadout, installed into the magic loadout, replaces
+ * the staff with a sword: not an upgrade, a costume change, and it comes back as
+ * a large negative that drags the aggregate for every room the buyer would never
+ * have applied it to.
+ *
+ * The honest answer for a room the piece does not belong to is that nothing
+ * happens there, which is also the cheap one — no simulation is needed to work
+ * out that a fight is unchanged.
+ *
+ * @param {Object} candidate - From `generateCandidates`
+ * @param {Object} dto - The loadout a fight is assigned
+ * @returns {boolean} Whether applying it to this loadout means anything
+ */
+export function candidateAppliesToDTO(candidate, dto, gameData = null) {
+    if (!candidate || !dto) return false;
+
+    // The character's own, wherever they are worn: skills, rooms, shrine levels
+    // and community buffs are not held in a loadout and change every fight at
+    // once. A community buff is not on the loadout at all — it is an argument to
+    // the simulation — so falling through to the equipment test below asked
+    // whether a loadout was wearing `community_buff|comExp` and answered no.
+    if (
+        candidate.type === 'combat_level' ||
+        candidate.type === 'house' ||
+        candidate.type === 'guild_shrine' ||
+        candidate.type === 'community_buff' ||
+        candidate.type === 'drink'
+    ) {
+        return true;
+    }
+
+    if (candidate.slot?.startsWith('ability_')) {
+        const abilities = dto.abilities || [];
+        if (candidate.type === 'ability_level') {
+            // Only where it is actually cast — levelling an ability this
+            // loadout does not slot changes nothing about the fight
+            return abilities.some(
+                (ability) => ability?.hrid === candidate.upgradeHrid && (ability.level || 0) < candidate.upgradeLevel
+            );
+        }
+        // A swap that names the ability it replaces is only about the loadouts
+        // that cast it. This is what keeps a multi-fight swap run finite and
+        // honest at the same time: "Smack → Quick Strike" measured against a
+        // loadout that has never slotted Smack is measuring a different change
+        // from the one the row describes, and the row would carry the average of
+        // the two. It is also most of the arithmetic — a swap generated from one
+        // room's loadout reaches the handful of rooms sharing that ability
+        // rather than every room in the labyrinth.
+        if (candidate.replacesHrid) {
+            if (abilities.some((ability) => ability?.hrid === candidate.upgradeHrid)) return false;
+            return abilities.some((ability) => ability?.hrid === candidate.replacesHrid);
+        }
+        // A swap that fills a free slot rather than replacing anything. The slot
+        // number on it belongs to the loadout it was generated from, so what is
+        // asked here is whether *this* loadout has one going spare — a loadout
+        // with a full bar would have the newcomer written over an ability it
+        // chose on purpose, which is a different change from the one the row
+        // names.
+        if (candidate.fillsFreeSlot) {
+            if (abilities.some((ability) => ability?.hrid === candidate.upgradeHrid)) return false;
+            return freeAbilitySlot(abilities, candidate.slot) >= 0;
+        }
+        // A hand-built swap that names no such ability — a row about filling a
+        // slot rather than replacing one thing with another — brings its own, so
+        // it applies unless this loadout is already running it at least that high
+        const slotIdx = parseInt(candidate.slot.split('_')[1]);
+        const existing = abilities[slotIdx];
+        return !(existing?.hrid === candidate.upgradeHrid && (existing.level || 0) >= candidate.upgradeLevel);
+    }
+
+    const equipment = dto.equipment || {};
+
+    // The forced labyrinth armor sets are one purchase every loadout can wear,
+    // so unlike a tier candidate they are not tied to the piece they displaced
+    // in the room they were generated for — a Royal Fire set bought for the
+    // Mimic is worn in every room whose loadout would rather have it. What it
+    // replaces is answered per room by `replacedIn`.
+    if (candidate.labArmor) {
+        // Except when the set comes with a weapon: that variant exists to fix
+        // one loadout's unused element, and installing it in a loadout swinging
+        // something else is the costume change all over again. Each loadout with
+        // the same problem generates its own, so nothing is lost by being strict.
+        const weapon = candidate.labArmorWeapon;
+        if (weapon && (equipment[weapon.slot]?.hrid || null) !== weapon.hrid) return false;
+        return !Object.entries(candidate.addedSlots || {}).every(
+            ([slot, piece]) =>
+                equipment[slot]?.hrid === piece.hrid &&
+                (equipment[slot]?.enhancementLevel || 0) >= (piece.enhancementLevel || 0)
+        );
+    }
+
+    if (candidate.type === 'cross_slot') {
+        const removed = candidate.removedItems || (candidate.currentHrid ? [{ hrid: candidate.currentHrid }] : []);
+        // A swap that empties nothing is filling empty slots, so it only
+        // applies where they are in fact empty
+        if (!removed.length) return Object.keys(candidate.addedSlots || {}).every((slot) => !equipment[slot]);
+        return removed.every((item) => Object.values(equipment).some((worn) => worn?.hrid === item.hrid));
+    }
+
+    const worn = equipment[candidate.slot];
+    // A bare slot is only bare in the loadouts where it is bare
+    if (!candidate.currentHrid) return !worn?.hrid;
+
+    // Enhancing is about one particular item: it helps the loadouts wearing
+    // *that* item and nobody else, and not once it is already at the target
+    if (candidate.upgradeHrid === candidate.currentHrid) {
+        if (worn?.hrid !== candidate.currentHrid) return false;
+        return (worn.enhancementLevel || 0) < (candidate.upgradeLevel || 0);
+    }
+
+    return tierAppliesToWorn(candidate, worn, equipment, gameData);
+}
+
+/**
+ * Whether buying this piece would improve the slot a loadout has filled.
+ *
+ * A tier upgrade is one purchase that every loadout can share, and matching on
+ * the exact item it replaces was too narrow: a candidate generated from the
+ * loadout wearing a Fine Sword was credited for that room alone, while the
+ * loadout wearing a Cursed Sword — which the same purchase would also improve —
+ * was recorded as untouched. One price, a fraction of the benefit.
+ *
+ * So the question is not "is this the item I named" but "would this item be an
+ * upgrade here": same slot, not a style the loadout does not fight in, and not a
+ * step down in tier.
+ *
+ * @param {Object} candidate - A tier candidate
+ * @param {Object|null} worn - What the loadout has in that slot
+ * @param {Object|null} gameData - For item levels and styles; without it this
+ *   falls back to the exact-item rule rather than guessing
+ * @returns {boolean}
+ */
+function tierAppliesToWorn(candidate, worn, equipment, gameData) {
+    // An empty hand is not a free slot when the other one holds a two-hander:
+    // installing a sword beside a bow builds a kit the game would never let you
+    // wear. Trading between the two is a cross-slot swap, which has its own
+    // candidates and prices the trade properly.
+    const twoHand = equipment?.['/equipment_types/two_hand'];
+    const oneHand = equipment?.['/equipment_types/main_hand'];
+    if (twoHand?.hrid && (candidate.slot === MAIN_HAND_SLOT || candidate.slot === OFF_HAND_SLOT)) return false;
+    if (oneHand?.hrid && candidate.slot === TWO_HAND_SLOT) return false;
+
+    // Nothing there is improved by anything
+    if (!worn?.hrid) return true;
+    // Already the piece being bought: only the enhancement could differ
+    if (worn.hrid === candidate.upgradeHrid) {
+        return (worn.enhancementLevel || 0) < (candidate.upgradeLevel || 0);
+    }
+
+    const details = gameData?.itemDetailMap;
+    const upgrade = details?.[candidate.upgradeHrid];
+    const current = details?.[worn.hrid];
+    if (!upgrade || !current) return worn.hrid === candidate.currentHrid;
+
+    // A lower-tier piece is not an upgrade for this room even though it is for
+    // the room the candidate came from
+    if ((upgrade.itemLevel || 0) < (current.itemLevel || 0)) return false;
+
+    const upgradeStats = upgrade.equipmentDetail?.combatStats;
+    const currentStats = current.equipmentDetail?.combatStats;
+    const upgradeStyle = getItemDamageStyle(upgradeStats);
+    const currentStyle = getItemDamageStyle(currentStats);
+    // Armour and jewellery have no style of their own, and swapping one in is
+    // fair game for any loadout; two *weapons* of different styles are not
+    // substitutes, whatever their item levels say
+    if (upgradeStyle !== 'unknown' && currentStyle !== 'unknown' && upgradeStyle !== currentStyle) return false;
+
+    // Nor is a damage piece a substitute for a defensive one — the loadout was
+    // built around what it is wearing
+    const upgradeRole = getItemRole(upgradeStats);
+    const currentRole = getItemRole(currentStats);
+    if (upgradeRole !== 'unknown' && currentRole !== 'unknown' && upgradeRole !== currentRole) return false;
+
+    return true;
+}
+
+/**
+ * The same player, with one candidate applied.
+ *
+ * A deep copy, always: the caller's DTO is the character the panel is showing
+ * and a dozen candidates measured against a DTO that kept the last one's change
+ * would each be measuring the pile rather than the piece.
+ *
+ * Shared by the single-fight and all-fights analyses so a candidate means the
+ * same thing in both. They diverged once, and a candidate that applies one way
+ * in one view and another way in the other is worse than a candidate that does
+ * not work at all — only one of those is visible.
+ *
+ * @param {Object} playerDTO - The player to change
+ * @param {Object} candidate - From `generateCandidates`
+ * @returns {Object} A new DTO
+ */
+export function applyCandidateToDTO(playerDTO, candidate) {
+    const dto = JSON.parse(JSON.stringify(playerDTO));
+
+    if (candidate.slot?.startsWith('ability_')) {
+        // Levelling an ability follows the ability, not the slot number it
+        // happened to sit in on the loadout the candidate came from — another
+        // loadout can cast the same ability from a different slot, and writing
+        // to the index would overwrite whatever that one keeps there
+        // A swap follows the ability it replaces for the same reason, and takes
+        // that loadout's level for it: the whole rule for a swap is that the
+        // newcomer is tried at the level of the one it displaces, and the level
+        // the candidate was born with belongs to the loadout it was born from.
+        const follows =
+            candidate.type === 'ability_level'
+                ? candidate.upgradeHrid
+                : candidate.type === 'ability_swap'
+                  ? candidate.replacesHrid
+                  : null;
+        const byName = follows ? (dto.abilities || []).findIndex((ability) => ability?.hrid === follows) : -1;
+        // A fill goes into whichever slot *this* loadout has spare, for the same
+        // reason: the index it was generated with belongs to another bar
+        const fillIdx = candidate.fillsFreeSlot ? freeAbilitySlot(dto.abilities || [], candidate.slot) : -1;
+        const slotIdx = byName >= 0 ? byName : fillIdx >= 0 ? fillIdx : parseInt(candidate.slot.split('_')[1]);
+        const existing = dto.abilities[slotIdx];
+        const swapLevel =
+            candidate.type === 'ability_swap' && byName >= 0 ? (existing?.level ?? candidate.upgradeLevel) : null;
+        dto.abilities[slotIdx] =
+            existing?.hrid === candidate.upgradeHrid
+                ? // Keep configured triggers when levelling the equipped ability
+                  { ...existing, level: candidate.upgradeLevel }
+                : { hrid: candidate.upgradeHrid, level: swapLevel ?? candidate.upgradeLevel, triggers: null };
+        return dto;
+    }
+
+    if (candidate.type === 'combat_level') {
+        dto[candidate.skillKey] = candidate.upgradeLevel;
+        return dto;
+    }
+
+    // A house room, the same way runUpgradeAnalysis applies one inline. Without
+    // this branch a house candidate fell through to the equipment write at the
+    // bottom and stored the room under an equipment slot named after it: the
+    // character was simulated completely unchanged, and every house row came
+    // back a confident +0.00%.
+    if (candidate.type === 'house') {
+        if (!dto.houseRooms) dto.houseRooms = {};
+        dto.houseRooms[candidate.roomHrid] = candidate.upgradeLevel;
+        return dto;
+    }
+
+    if (candidate.type === 'guild_shrine') {
+        applyGuildShrineToDTO(dto, candidate);
+        return dto;
+    }
+
+    if (candidate.type === 'drink') {
+        applyDrinkToDTO(dto, candidate);
+        return dto;
+    }
+
+    // A community buff is not on the character at all — it is an argument to
+    // the simulation — so there is nothing here to change
+    if (candidate.type === 'community_buff') {
+        return dto;
+    }
+
+    if (candidate.type === 'cross_slot') {
+        for (const slot of candidate.clearedSlots) dto.equipment[slot] = null;
+        for (const [slot, item] of Object.entries(candidate.addedSlots)) dto.equipment[slot] = item;
+        return dto;
+    }
+
+    dto.equipment[candidate.slot] = { hrid: candidate.upgradeHrid, enhancementLevel: candidate.upgradeLevel };
+    return dto;
+}
+
+/**
+ * Put one candidate's item into the equipment it applies to.
+ *
+ * A candidate carrying a `skillKey` belongs to that skill and goes into that
+ * skill's equipment only — a Milking outfit put into every skill's kit would
+ * report a gain in rooms it cannot affect. One without a key is an enhancement
+ * of gear already worn, which is the same piece wherever it appears, so it is
+ * applied everywhere it is found.
+ *
+ * @param {Object} candidate - The upgrade
+ * @param {Object} payload - `{hrid, enhancementLevel}` to install
+ * @param {Object} dto - The editor's own player
+ * @param {Object} equipMap - Per-skill equipment overrides
+ * @param {string|null} targetSkill - The skill being analysed, when only one is
+ */
+export function applyToEquipment(candidate, payload, dto, equipMap, targetSkill) {
+    const { skillKey, slot, currentHrid, currentLevel = 0 } = candidate;
+
+    if (skillKey) {
+        // A skill with no loadout of its own runs in the character's base kit,
+        // and writing the piece there would put a Milking outfit into every
+        // other skill that shares it. It gets a kit of its own instead, copied
+        // from the one it was running, so the change lands on that skill alone.
+        if (!equipMap[skillKey]) equipMap[skillKey] = { ...(dto.equipment || {}) };
+        equipMap[skillKey][slot] = payload;
+        return;
+    }
+
+    // The same item, at the same enhancement — enhancing the sword you own
+    // upgrades it in every kit it is worn in, but a second copy of it worn a few
+    // levels higher elsewhere is a different item and would be dragged *down* to
+    // this candidate's target by an hrid-only match
+    const isTheSameItem = (worn) => worn?.hrid === currentHrid && (worn.enhancementLevel || 0) === currentLevel;
+
+    if (isTheSameItem(dto.equipment?.[slot])) dto.equipment[slot] = payload;
+    for (const [skill, skillEquip] of Object.entries(equipMap)) {
+        // In single-skill mode the other skills' kits are not being simulated;
+        // rewriting them is invisible work at best and confusing at worst
+        if (targetSkill && skill !== targetSkill) continue;
+        if (isTheSameItem(skillEquip?.[slot])) skillEquip[slot] = payload;
+    }
 }
 
 /**
@@ -3058,12 +6043,16 @@ export async function runSkillingUpgradeAnalysis(params, onProgress, options = {
     const tokenUpgrades = editorDTO.tokenUpgrades || {};
     const buffCandidates = generateLabyrinthBuffCandidatesFromEditor(tokenUpgrades);
     const equipCandidates = generateSkillingEquipmentCandidates(editorDTO, gameData, skillEquipmentMap, targetSkill);
+    const guildCandidates = generateGuildShrineCandidates(editorDTO, { combat: false }).map((candidate) => ({
+        ...candidate,
+        cost: calculateUpgradeCost(candidate, gameData),
+    }));
     const clearRateOpts = { skillEquipmentMap, targetSkill };
 
     // Yield so Stop clicks and progress paints can land between the heavy sync chunks
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    const total = buffCandidates.length + equipCandidates.length + 1;
+    const total = buffCandidates.length + equipCandidates.length + guildCandidates.length + 1;
     let current = 0;
 
     onProgress?.({ current: 0, total, description: 'Computing baseline...' });
@@ -3080,6 +6069,16 @@ export async function runSkillingUpgradeAnalysis(params, onProgress, options = {
 
     onProgress?.({ current, total, description: `Baseline: ${(baselineClearRate * 100).toFixed(1)}%` });
 
+    // Only paid for when something is ranked on it — the Experience token and the
+    // Scholar shrine are the candidates that are, and both are often absent
+    const scholarBuff = '/buff_types/wisdom';
+    const hasXpCandidate =
+        buffCandidates.some((c) => c.category === 'experience') ||
+        guildCandidates.some((c) => c.buffTypes?.includes(scholarBuff));
+    const baselineXpPerRoom = hasXpCandidate
+        ? computeAverageSkillingXpPerRoomFromEditor(roomLevel, editorDTO, crateHrids, gameData, clearRateOpts)
+        : 0;
+
     const results = [];
 
     for (const buffCandidate of buffCandidates) {
@@ -3090,6 +6089,34 @@ export async function runSkillingUpgradeAnalysis(params, onProgress, options = {
 
         const modifiedDTO = JSON.parse(JSON.stringify(editorDTO));
         modifiedDTO.tokenUpgrades[buffCandidate.editorKey] = buffCandidate.currentLevel + 1;
+
+        if (buffCandidate.category === 'experience') {
+            const modifiedXpPerRoom = computeAverageSkillingXpPerRoomFromEditor(
+                roomLevel,
+                modifiedDTO,
+                crateHrids,
+                gameData,
+                clearRateOpts
+            );
+            const xpPerRoomDelta = modifiedXpPerRoom - baselineXpPerRoom;
+
+            results.push({
+                candidate: buffCandidate,
+                costType: 'token',
+                tokenCost: buffCandidate.tokenCost,
+                // The room is cleared exactly as often as before; only what it
+                // pays out changes, so the clear-rate columns stay at baseline
+                clearRate: baselineClearRate,
+                clearRateDelta: 0,
+                xpPerRoom: modifiedXpPerRoom,
+                xpPerRoomDelta,
+                tokensPerXp: xpPerRoomDelta > 0 ? buffCandidate.tokenCost / xpPerRoomDelta : Infinity,
+                metricType: 'xpPerRoom',
+            });
+            current++;
+            onProgress?.({ current, total, description: buffCandidate.description });
+            continue;
+        }
 
         const modifiedClearRate = computeAverageSkillingClearRateFromEditor(
             roomLevel,
@@ -3112,6 +6139,51 @@ export async function runSkillingUpgradeAnalysis(params, onProgress, options = {
         onProgress?.({ current, total, description: buffCandidate.description });
     }
 
+    // Guild shrines are paid for in credits *and* tokens, which is neither of the
+    // two cost types the tables above use, so they keep their own — and a shrine
+    // can move clear rate and XP at once, so both are measured for every one
+    for (const candidate of guildCandidates) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        if (abortSignal?.()) break;
+
+        onProgress?.({ current, total, description: `Evaluating: ${candidate.description}` });
+
+        const modifiedDTO = JSON.parse(JSON.stringify(editorDTO));
+        applyGuildShrineToDTO(modifiedDTO, candidate);
+
+        const modifiedClearRate = computeAverageSkillingClearRateFromEditor(
+            roomLevel,
+            modifiedDTO,
+            crateHrids,
+            gameData,
+            clearRateOpts
+        );
+        const clearRateDelta = modifiedClearRate - baselineClearRate;
+
+        const movesXp = candidate.buffTypes?.includes(scholarBuff);
+        const modifiedXpPerRoom = movesXp
+            ? computeAverageSkillingXpPerRoomFromEditor(roomLevel, modifiedDTO, crateHrids, gameData, clearRateOpts)
+            : baselineXpPerRoom;
+        const xpPerRoomDelta = modifiedXpPerRoom - baselineXpPerRoom;
+
+        results.push({
+            candidate,
+            costType: 'guild',
+            cost: candidate.cost,
+            tokenCost: candidate.guildTokenCost,
+            costDetail: explainUpgradeCost(candidate, gameData),
+            clearRate: modifiedClearRate,
+            clearRateDelta,
+            goldPerClearRate:
+                clearRateDelta > 0 && candidate.cost != null ? candidate.cost / (clearRateDelta * 100) : Infinity,
+            xpPerRoom: modifiedXpPerRoom,
+            xpPerRoomDelta,
+            metricType: movesXp && clearRateDelta <= 1e-12 ? 'xpPerRoom' : 'clearRate',
+        });
+        current++;
+        onProgress?.({ current, total, description: candidate.description });
+    }
+
     for (const candidate of equipCandidates) {
         await new Promise((resolve) => setTimeout(resolve, 0));
         if (abortSignal?.()) break;
@@ -3122,25 +6194,11 @@ export async function runSkillingUpgradeAnalysis(params, onProgress, options = {
         const modifiedSkillEquipMap = JSON.parse(JSON.stringify(skillEquipmentMap));
         const upgradePayload = { hrid: candidate.upgradeHrid, enhancementLevel: candidate.upgradeLevel };
 
-        if (modifiedDTO.equipment?.[candidate.slot]?.hrid === candidate.currentHrid) {
-            modifiedDTO.equipment[candidate.slot] = upgradePayload;
-        }
-        for (const skillEquip of Object.values(modifiedSkillEquipMap)) {
-            if (skillEquip?.[candidate.slot]?.hrid === candidate.currentHrid) {
-                skillEquip[candidate.slot] = upgradePayload;
-            }
-        }
+        applyToEquipment(candidate, upgradePayload, modifiedDTO, modifiedSkillEquipMap, targetSkill);
 
         const evaluate = (evalCandidate, dto, equipMap) => {
             const payload = { hrid: evalCandidate.upgradeHrid, enhancementLevel: evalCandidate.upgradeLevel };
-            if (dto.equipment?.[evalCandidate.slot]?.hrid === evalCandidate.currentHrid) {
-                dto.equipment[evalCandidate.slot] = payload;
-            }
-            for (const skillEquip of Object.values(equipMap)) {
-                if (skillEquip?.[evalCandidate.slot]?.hrid === evalCandidate.currentHrid) {
-                    skillEquip[evalCandidate.slot] = payload;
-                }
-            }
+            applyToEquipment(evalCandidate, payload, dto, equipMap, targetSkill);
             return computeAverageSkillingClearRateFromEditor(roomLevel, dto, crateHrids, gameData, {
                 skillEquipmentMap: equipMap,
                 targetSkill,
@@ -3174,6 +6232,9 @@ export async function runSkillingUpgradeAnalysis(params, onProgress, options = {
                 description: evalCandidate.description.replace(/\+\d+$/, `+${nextLevel}`),
             };
             bumped.cost = calculateUpgradeCost(bumped, gameData);
+            // Re-explained at the level it was bumped to, or the expansion would
+            // itemise a purchase the row is no longer quoting
+            bumped.costDetail = explainLabCandidateCost(bumped, gameData);
             const freshDTO = JSON.parse(JSON.stringify(editorDTO));
             const freshEquipMap = JSON.parse(JSON.stringify(skillEquipmentMap));
             modifiedClearRate = evaluate(bumped, freshDTO, freshEquipMap);
@@ -3185,6 +6246,7 @@ export async function runSkillingUpgradeAnalysis(params, onProgress, options = {
             candidate: evalCandidate,
             costType: 'gold',
             cost: evalCandidate.cost,
+            costDetail: evalCandidate.costDetail ?? null,
             clearRate: modifiedClearRate,
             clearRateDelta,
             // Unknown cost (null) must rank as Infinity, never as free
@@ -3198,13 +6260,15 @@ export async function runSkillingUpgradeAnalysis(params, onProgress, options = {
         onProgress?.({ current, total, description: evalCandidate.description });
     }
 
+    // Tokens first, then shrines, then gold; within each group by best delta
+    const costOrder = { token: 0, guild: 1, gold: 2 };
     results.sort((a, b) => {
-        if (a.costType !== b.costType) return a.costType === 'token' ? -1 : 1;
+        if (a.costType !== b.costType) return (costOrder[a.costType] ?? 3) - (costOrder[b.costType] ?? 3);
         return (b.clearRateDelta ?? 0) - (a.clearRateDelta ?? 0);
     });
 
     return {
-        baseline: { clearRate: baselineClearRate },
+        baseline: { clearRate: baselineClearRate, xpPerRoom: baselineXpPerRoom },
         results,
     };
 }
@@ -3215,6 +6279,10 @@ export default {
     runUpgradeAnalysis,
     runLabyrinthUpgradeAnalysis,
     generateLabyrinthBuffCandidates,
+    generateLabyrinthBuffCandidatesFromEditor,
+    generateGuildShrineCandidates,
+    generateDrinkCandidates,
+    generateCommunityBuffCandidates,
     getEquipmentTierProgression,
     computeSkillingClearRatesFromEditor,
     generateSkillingEquipmentCandidates,

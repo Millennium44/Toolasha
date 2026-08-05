@@ -13,6 +13,9 @@ import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import storage from '../../core/storage.js';
 import webSocketHook from '../../core/websocket.js';
+import { isCardInConfirmState, armConfirmSettleWatch, onConfirmFlowSettled } from './task-card-state.js';
+import { findRerollOptions } from './task-reroll-options.js';
+import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
 
 const STORAGE_KEY_PREFIX = 'taskProtectedHrids';
 
@@ -34,6 +37,8 @@ class TaskRerollProtection {
         this.cowbellThreshold = 32;
         this.unregisterHandlers = [];
         this.confirmTimers = new WeakMap(); // taskCard → timeout ID
+        this._documentInterceptorAttached = false;
+        this._interceptHandler = null;
     }
 
     async initialize() {
@@ -82,6 +87,11 @@ class TaskRerollProtection {
         );
         this.unregisterHandlers.push(unregisterPanel);
 
+        // A closing reroll chooser adds an action row, not a card, so no
+        // observer above sees it — this is what repaints the cards the pass
+        // above declined to touch
+        this.unregisterHandlers.push(onConfirmFlowSettled(() => this._processAllCards()));
+
         // Process existing cards
         this._processAllCards();
     }
@@ -128,6 +138,22 @@ class TaskRerollProtection {
      * @private
      */
     _processTaskCard(taskCard) {
+        // Wire the interception first: it is once-only, document-level, and has
+        // to be in place before the card can be interacted with at all
+        if (!taskCard.dataset.mwiRerollProtection) {
+            taskCard.dataset.mwiRerollProtection = '1';
+            this._wireRerollInterception(taskCard);
+        }
+
+        // Repainting a card that is showing the reroll chooser or the discard
+        // confirmation changes it under the player's pending click. The chooser
+        // survives the reroll, so the repaint is booked for when it closes —
+        // the highlight otherwise still describes the rerolled-away task.
+        if (isCardInConfirmState(taskCard)) {
+            armConfirmSettleWatch();
+            return;
+        }
+
         // Get quest data via fiber traversal
         const quest = this._getQuestFromCard(taskCard);
         const hrid = quest?.actionHrid || quest?.monsterHrid || '';
@@ -156,13 +182,15 @@ class TaskRerollProtection {
         } else {
             taskCard.style.removeProperty('box-shadow');
         }
-        taskCard.style.removeProperty('outline');
-        taskCard.style.removeProperty('outline-offset');
 
-        // Wire reroll button interception (only once per card)
-        if (!taskCard.dataset.mwiRerollProtection) {
-            taskCard.dataset.mwiRerollProtection = '1';
-            this._wireRerollInterception(taskCard);
+        // The outline is how this feature used to draw its highlight, cleared
+        // here so an upgrade does not leave one behind. It is also how
+        // task-auto-reroll draws its "worth rerolling" border, so clearing it
+        // unconditionally makes the two features fight over the same card every
+        // pass — which the player sees as the card flickering.
+        if (!taskCard.querySelector('.mwi-autoreroll-badge')) {
+            taskCard.style.removeProperty('outline');
+            taskCard.style.removeProperty('outline-offset');
         }
     }
 
@@ -242,93 +270,115 @@ class TaskRerollProtection {
 
     /**
      * Wire click interception on reroll buttons within a task card.
-     * Blocks all button clicks except Go (success) and Claim (buy) on protected tasks.
-     * Uses document-level capturing to intercept before React's delegated event system.
+     *
+     * The one place Toolasha cancels a click the game was meant to receive, so
+     * it is kept to exactly the two clicks it is for: rerolling a task the
+     * player asked to protect, and paying over the configured cost cap.
+     * Everything else on the card — Back, the trash can, Confirm Discard, Go
+     * and Claim — goes straight through untouched.
+     *
      * @param {HTMLElement} taskCard
      * @private
      */
     _wireRerollInterception(_taskCard) {
         // Only wire the document-level interceptor once
-        if (!this._documentInterceptorAttached) {
-            this._documentInterceptorAttached = true;
+        if (this._documentInterceptorAttached) return;
+        this._documentInterceptorAttached = true;
 
-            document.addEventListener(
-                'click',
-                (e) => {
-                    if (!config.getSetting('taskRerollProtection')) return;
+        this._interceptHandler = (e) => this._onDocumentClick(e);
+        // Capturing phase — runs before React's delegation on root
+        document.addEventListener('click', this._interceptHandler, true);
+    }
 
-                    const btn = e.target.closest('button');
-                    if (!btn) return;
+    /**
+     * Decide whether one click is a protected reroll, and block it if so.
+     * @param {MouseEvent} e
+     * @private
+     */
+    _onDocumentClick(e) {
+        if (!config.getSetting('taskRerollProtection')) return;
 
-                    // Allow Go buttons and Claim buttons through
-                    if (btn.classList.contains('Button_success__6d6kU')) return;
-                    if (btn.classList.contains('Button_buy__3s24l')) return;
+        const btn = e.target?.closest?.('button');
+        if (!btn) return;
 
-                    // Only intercept actual reroll actions (Pay / Free Reroll), not the initial "Reroll" expand button
-                    const btnText = btn.textContent?.trim() || '';
-                    const isPayButton = btnText.startsWith('Pay');
-                    const isFreeReroll = btnText.toLowerCase().includes('free');
-                    if (!isPayButton && !isFreeReroll) return;
+        // Find the parent task card
+        const card = btn.closest('[class*="RandomTask_randomTask"]');
+        if (!card) return;
 
-                    // Find the parent task card
-                    const card = btn.closest('[class*="RandomTask_randomTask"]');
-                    if (!card) return;
+        // A reroll is the only thing this feature has any business stopping.
+        // The initial "Reroll" button (which only opens the chooser), "Back",
+        // the trash can, "Confirm Discard", "Go" and "Claim Reward" are all
+        // somebody else's click, and the shared reader knows all of them.
+        //
+        // It used to be read off the label: a paid reroll was a button whose
+        // text began with "Pay". The chooser does not always word it that way —
+        // the paid options can be an icon and a number — and under that reading
+        // the only reroll this feature could still see was the free one. Cap
+        // protection has therefore been guarding nothing at all, and a protected
+        // task could be rerolled with coins without a word.
+        const option = findRerollOptions(card).find((entry) => entry.button === btn);
+        if (!option) return;
 
-                    // Check if this task is protected
-                    const quest = this._getQuestFromCard(card);
-                    const hrid = quest?.actionHrid || quest?.monsterHrid || '';
-                    const isPerTaskProtected = hrid && this.protectedHrids.has(hrid);
+        const isFreeReroll = option.kind === 'free';
 
-                    // Check cap protection (320K gold / 32 cowbells)
-                    const isCapProtected = this.capProtectionEnabled && this._isRerollAtCap(btnText);
+        // Check if this task is protected
+        const quest = this._getQuestFromCard(card);
+        const hrid = quest?.actionHrid || quest?.monsterHrid || '';
+        const isPerTaskProtected = Boolean(hrid && this.protectedHrids.has(hrid));
 
-                    if (!isPerTaskProtected && !isCapProtected) return;
+        // Cap protection (320K gold / 32 cowbells) is about not overspending,
+        // and the MooPass free reroll costs nothing — there is no spend for it
+        // to protect. Catching it anyway is what left a player pressing the free
+        // reroll over and over with the click going nowhere and no cost in
+        // sight to explain why. Per-task protection still covers it: that is a
+        // choice about the task, and a free reroll destroys the task just the
+        // same.
+        const isCapProtected = this.capProtectionEnabled && !isFreeReroll && this._isRerollAtCap(option);
 
-                    const warningMsg = isPerTaskProtected
-                        ? 'Protected task! Unlocks in 3s...'
-                        : 'Reroll at cap! Unlocks in 3s...';
+        if (!isPerTaskProtected && !isCapProtected) return;
 
-                    // Phase 2: confirmation window is open — allow the reroll through
-                    if (card.dataset.mwiRerollConfirmed === '1') {
-                        card.dataset.mwiRerollConfirmed = '';
-                        this._clearWarning(card);
-                        return;
-                    }
-
-                    // Always block during any protection state (lockdown or waiting for confirm)
-                    e.preventDefault();
-                    e.stopPropagation();
-                    e.stopImmediatePropagation();
-
-                    // Phase 1: lockdown active — absorb click silently
-                    if (card.dataset.mwiRerollLocked === '1') return;
-
-                    // Initial click — start 3s lockdown
-                    card.dataset.mwiRerollLocked = '1';
-                    this._showWarning(card, warningMsg);
-
-                    // Clear any existing timers for this card
-                    const existingTimer = this.confirmTimers.get(card);
-                    if (existingTimer) clearTimeout(existingTimer);
-
-                    // After 3s lockdown → open confirmation window
-                    const lockdownTimer = setTimeout(() => {
-                        card.dataset.mwiRerollLocked = '';
-                        card.dataset.mwiRerollConfirmed = '1';
-                        this._showWarning(card, 'Click reroll now to confirm.');
-
-                        // Auto-clear confirmation after another 3s
-                        const confirmTimer = setTimeout(() => {
-                            card.dataset.mwiRerollConfirmed = '';
-                            this._clearWarning(card);
-                        }, 3000);
-                        this.confirmTimers.set(card, confirmTimer);
-                    }, 3000);
-                    this.confirmTimers.set(card, lockdownTimer);
-                },
-                true // Capturing phase — runs before React's delegation on root
-            );
+        // Phase 2: confirmation window is open — allow the reroll through
+        if (card.dataset.mwiRerollConfirmed === '1') {
+            card.dataset.mwiRerollConfirmed = '';
+            this._clearWarning(card);
+            return;
         }
+
+        // Block during any protection state (lockdown or waiting for confirm).
+        // stopPropagation in the capture phase already keeps this from reaching
+        // React on the root; stopImmediatePropagation would additionally kill
+        // every other document-capture listener in the script, which is not
+        // this feature's to take.
+        e.preventDefault();
+        e.stopPropagation();
+
+        // Phase 1: lockdown active — absorb click silently
+        if (card.dataset.mwiRerollLocked === '1') return;
+
+        const warningMsg = isPerTaskProtected ? 'Protected task! Unlocks in 3s...' : 'Reroll at cap! Unlocks in 3s...';
+
+        // Initial click — start 3s lockdown
+        card.dataset.mwiRerollLocked = '1';
+        this._showWarning(card, warningMsg);
+
+        // Clear any existing timers for this card
+        const existingTimer = this.confirmTimers.get(card);
+        if (existingTimer) clearTimeout(existingTimer);
+
+        // After 3s lockdown → open confirmation window
+        const lockdownTimer = setTimeout(() => {
+            card.dataset.mwiRerollLocked = '';
+            card.dataset.mwiRerollConfirmed = '1';
+            this._showWarning(card, 'Click reroll now to confirm.');
+
+            // Auto-clear confirmation after another 3s
+            const confirmTimer = setTimeout(() => {
+                card.dataset.mwiRerollConfirmed = '';
+                this._clearWarning(card);
+            }, 3000);
+            this.confirmTimers.set(card, confirmTimer);
+        }, 3000);
+        this.confirmTimers.set(card, lockdownTimer);
     }
 
     /**
@@ -443,19 +493,21 @@ class TaskRerollProtection {
     }
 
     /**
-     * Returns true if the reroll button text represents a cost meeting the configured threshold.
-     * Coin costs are always >= 10000 (formatted with K); cowbell costs are <= 32.
-     * @param {string} btnText
+     * Is this reroll option at or over its category's configured threshold?
+     *
+     * The currency comes from the option rather than from the size of its
+     * number — a 32-cowbell reroll and a 32-coin one are not the same reroll,
+     * and guessing from magnitude alone is how the free reroll's "(2)" once got
+     * measured against the cowbell cap.
+     *
+     * @param {{kind: string, cost: number|null}} option - A reroll option
      * @returns {boolean}
      * @private
      */
-    _isRerollAtCap(btnText) {
-        const match = btnText.match(/([\d,]+)(K?)/);
-        if (!match) return false;
-        const raw = parseInt(match[1].replace(/,/g, ''), 10);
-        const cost = match[2] === 'K' ? raw * 1000 : raw;
-        if (cost >= 1000) return cost >= this.coinThreshold;
-        return cost >= this.cowbellThreshold;
+    _isRerollAtCap(option) {
+        if (!option || option.cost === null || option.cost === undefined) return false;
+        if (option.kind === 'cowbell') return option.cost >= this.cowbellThreshold;
+        return option.cost >= this.coinThreshold;
     }
 
     /**
@@ -538,7 +590,7 @@ class TaskRerollProtection {
             top: 50%;
             left: 50%;
             transform: translate(-50%, -50%);
-            z-index: 99999;
+            z-index: ${PANEL_Z_CAP + 2};
             background: rgba(10, 10, 20, 0.97);
             border: 2px solid rgba(74, 158, 255, 0.5);
             border-radius: 10px;
@@ -762,7 +814,7 @@ class TaskRerollProtection {
 
         // Click outside to close
         const backdrop = document.createElement('div');
-        backdrop.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; z-index:99998;';
+        backdrop.style.cssText = `position:fixed; top:0; left:0; right:0; bottom:0; z-index:${PANEL_Z_CAP + 1};`;
         backdrop.addEventListener('click', () => {
             popup.remove();
             backdrop.remove();
@@ -782,9 +834,22 @@ class TaskRerollProtection {
         }
         this.unregisterHandlers = [];
 
+        // The click interceptor outlives everything else unless it is taken off
+        // here: it is bound to the document, not to a card, so a feature that
+        // has been switched off (or a character switch that re-initialises)
+        // would otherwise leave a listener behind still cancelling rerolls
+        if (this._interceptHandler) {
+            document.removeEventListener('click', this._interceptHandler, true);
+            this._interceptHandler = null;
+        }
+        this._documentInterceptorAttached = false;
+
         // Remove all visual changes
         const cards = document.querySelectorAll('[class*="RandomTask_randomTask"]');
         for (const card of cards) {
+            delete card.dataset.mwiRerollProtection;
+            delete card.dataset.mwiRerollLocked;
+            delete card.dataset.mwiRerollConfirmed;
             card.style.removeProperty('outline');
             card.style.removeProperty('outline-offset');
             card.style.removeProperty('box-shadow');

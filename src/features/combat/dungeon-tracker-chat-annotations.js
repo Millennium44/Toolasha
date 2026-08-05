@@ -222,7 +222,12 @@ class DungeonTrackerChatAnnotations {
      * Called on page load and when needed
      */
     async annotateAllMessages() {
-        if (!this.enabled || !config.isFeatureEnabled('dungeonTracker')) {
+        // Its own checkbox as well as the tracker's: annotations read the
+        // tracker's data, but the setting named for them has to gate them
+        if (!this.enabled || !config.getSetting('dungeonTrackerChatAnnotations')) {
+            return;
+        }
+        if (!config.isFeatureEnabled('dungeonTracker')) {
             return;
         }
 

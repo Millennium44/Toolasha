@@ -105,6 +105,28 @@ export function timeReadable(sec) {
 }
 
 /**
+ * Read a KMB shorthand back into a number.
+ *
+ * The inverse of the formatters above, for the places where a person types an
+ * amount: `50m`, `1.5b`, `100k`, `500,000,000`. Separators are stripped rather
+ * than rejected — a figure copied out of the game or off a spreadsheet arrives
+ * with them, and refusing it teaches people to distrust the field.
+ *
+ * @param {string} text - What was typed
+ * @returns {number} The value, or NaN when it is not an amount
+ */
+export function parseKMB(text) {
+    const cleaned = String(text ?? '')
+        .trim()
+        .toLowerCase()
+        .replace(/[,_\s]/g, '');
+    const match = cleaned.match(/^(\d+\.?\d*)([kmb]?)$/);
+    if (!match) return NaN;
+    const multipliers = { k: 1e3, m: 1e6, b: 1e9 };
+    return parseFloat(match[1]) * (multipliers[match[2]] || 1);
+}
+
+/**
  * Format a number with thousand separators based on locale
  * @param {number} num - The number to format
  * @returns {string} Formatted number with separators
@@ -135,7 +157,11 @@ export function formatKMB(num, decimals = 1) {
     const absNum = Math.abs(num);
     const sign = num < 0 ? '-' : '';
 
-    if (absNum >= 1e9) {
+    if (absNum >= 1e15) {
+        return sign + (absNum / 1e15).toFixed(decimals) + 'Q';
+    } else if (absNum >= 1e12) {
+        return sign + (absNum / 1e12).toFixed(decimals) + 'T';
+    } else if (absNum >= 1e9) {
         return sign + (absNum / 1e9).toFixed(decimals) + 'B';
     } else if (absNum >= 1e6) {
         return sign + (absNum / 1e6).toFixed(decimals) + 'M';

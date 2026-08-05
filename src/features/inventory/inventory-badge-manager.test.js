@@ -1,0 +1,133 @@
+/** @vitest-environment happy-dom */
+/**
+ * Inventory Badge Manager — the name→HRID reverse lookup (including the
+ * ★ ↔ (R) refined-item aliasing) and the crafting-cost fallback used when an
+ * item has no market data. Badge rendering/provider orchestration is DOM
+ * glue and not exercised here, except `itemHasBadges`, which is a one-line
+ * DOM query worth pinning against real elements.
+ */
+
+import { describe, test, expect, beforeEach, vi } from 'vitest';
+
+const mocks = vi.hoisted(() => ({ initData: null, prices: {} }));
+
+vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: () => () => {} } }));
+vi.mock('../../core/config.js', () => ({
+    default: { getSetting: () => false, getSettingValue: (key, fallback) => fallback, isFeatureEnabled: () => false },
+}));
+vi.mock('../../api/marketplace.js', () => ({ default: { getPricesBatch: () => new Map(), getPrice: () => null } }));
+vi.mock('../../core/data-manager.js', () => ({
+    default: { getInitClientData: () => mocks.initData, getInventory: () => [] },
+}));
+vi.mock('../enhancement/tooltip-enhancement.js', () => ({ calculateEnhancementPath: () => null }));
+vi.mock('../../utils/enhancement-config.js', () => ({ getEnhancingParams: () => ({}) }));
+vi.mock('../networth/networth-cache.js', () => ({ default: { get: () => null, set: () => {} } }));
+vi.mock('../market/expected-value-calculator.js', () => ({ default: { isInitialized: false } }));
+vi.mock('../../utils/market-data.js', () => ({ getItemPrice: (hrid) => mocks.prices[hrid] ?? null }));
+vi.mock('../../utils/number-parser.js', () => ({ parseItemCount: (text) => parseInt(text, 10) || 0 }));
+vi.mock('../../utils/dungeon-keys.js', () => ({ DUNGEON_CHEST_CHEST_KEYS: {} }));
+vi.mock('../../utils/dom-observer-helpers.js', () => ({ createMutationWatcher: () => () => {} }));
+
+const { default: inventoryBadgeManager } = await import('./inventory-badge-manager.js');
+
+beforeEach(() => {
+    mocks.initData = { itemDetailMap: {} };
+    mocks.prices = {};
+    inventoryBadgeManager.nameToHridMap = null;
+});
+
+describe('buildNameToHridMap / findItemHrid', () => {
+    test('finds an item by its exact display name', () => {
+        const gameData = { itemDetailMap: { '/items/cheese': { name: 'Cheese' } } };
+        expect(inventoryBadgeManager.findItemHrid('Cheese', gameData)).toBe('/items/cheese');
+    });
+
+    test('a (R) refined name also resolves via the ★ alias, and vice versa', () => {
+        const gameData = {
+            itemDetailMap: {
+                '/items/cheese_refined': { name: 'Cheese (R)' },
+            },
+        };
+        expect(inventoryBadgeManager.findItemHrid('Cheese ★', gameData)).toBe('/items/cheese_refined');
+        expect(inventoryBadgeManager.findItemHrid('Cheese (R)', gameData)).toBe('/items/cheese_refined');
+    });
+
+    test('a ★ name in game data aliases back to (R)', () => {
+        const gameData = { itemDetailMap: { '/items/gem_refined': { name: 'Gem ★' } } };
+        expect(inventoryBadgeManager.findItemHrid('Gem (R)', gameData)).toBe('/items/gem_refined');
+    });
+
+    test('an unknown name returns null rather than throwing', () => {
+        expect(inventoryBadgeManager.findItemHrid('Nonexistent Item', { itemDetailMap: {} })).toBeNull();
+    });
+
+    test('the map is built once and reused on subsequent lookups', () => {
+        const gameData = { itemDetailMap: { '/items/a': { name: 'A' } } };
+        inventoryBadgeManager.findItemHrid('A', gameData);
+        expect(inventoryBadgeManager.nameToHridMap.size).toBeGreaterThan(0);
+
+        // Even with different (now-irrelevant) game data, the cached map still answers
+        inventoryBadgeManager.findItemHrid('A', { itemDetailMap: {} });
+        expect(inventoryBadgeManager.findItemHrid('A', { itemDetailMap: {} })).toBe('/items/a');
+    });
+
+    test('missing itemDetailMap does not throw and leaves the map empty', () => {
+        inventoryBadgeManager.buildNameToHridMap(null);
+        expect(inventoryBadgeManager.nameToHridMap.size).toBe(0);
+    });
+});
+
+describe('calculateCraftingCost', () => {
+    test('sums input costs at ask price, applies the 0.9x artisan reduction, adds upgrade cost, divides by output count', () => {
+        mocks.initData = {
+            actionDetailMap: {
+                '/actions/craft/thing': {
+                    upgradeItemHrid: '/items/rune',
+                    inputItems: [{ itemHrid: '/items/wood', count: 4 }],
+                    outputItems: [{ itemHrid: '/items/thing', count: 2 }],
+                },
+            },
+        };
+        mocks.prices = { '/items/wood': 10, '/items/rune': 100 };
+
+        const cost = inventoryBadgeManager.calculateCraftingCost('/items/thing');
+        // (4*10*0.9 + 100) / 2 = 68
+        expect(cost).toBe(68);
+    });
+
+    test('an item with no producing action returns 0', () => {
+        mocks.initData = { actionDetailMap: {} };
+        expect(inventoryBadgeManager.calculateCraftingCost('/items/nothing')).toBe(0);
+    });
+
+    test('missing game data returns 0 rather than throwing', () => {
+        mocks.initData = null;
+        expect(inventoryBadgeManager.calculateCraftingCost('/items/anything')).toBe(0);
+    });
+});
+
+describe('itemHasBadges', () => {
+    test('detects a bid price badge', () => {
+        const el = document.createElement('div');
+        el.innerHTML = '<div class="mwi-badge-price-bid"></div>';
+        expect(inventoryBadgeManager.itemHasBadges(el)).toBe(true);
+    });
+
+    test('detects an ask price badge', () => {
+        const el = document.createElement('div');
+        el.innerHTML = '<div class="mwi-badge-price-ask"></div>';
+        expect(inventoryBadgeManager.itemHasBadges(el)).toBe(true);
+    });
+
+    test('detects a stack price badge', () => {
+        const el = document.createElement('div');
+        el.innerHTML = '<div class="mwi-stack-price"></div>';
+        expect(inventoryBadgeManager.itemHasBadges(el)).toBe(true);
+    });
+
+    test('an element with none of the badge classes reports false', () => {
+        const el = document.createElement('div');
+        el.innerHTML = '<div class="something-else"></div>';
+        expect(inventoryBadgeManager.itemHasBadges(el)).toBe(false);
+    });
+});

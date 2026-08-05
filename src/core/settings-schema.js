@@ -23,6 +23,38 @@ export const settingsGroups = {
         title: 'General Settings',
         icon: '⚙️',
         settings: {
+            whatsNew_showPopup: {
+                id: 'whatsNew_showPopup',
+                label: "Show what's new after an update",
+                type: 'checkbox',
+                default: true,
+                help:
+                    'Once per new version, shows what changed and lists any new settings with live switches — ' +
+                    'so an update never quietly rearranges things.',
+            },
+            whatsNew_newDefaultsOff: {
+                id: 'whatsNew_newDefaultsOff',
+                label: 'New settings start turned off',
+                type: 'checkbox',
+                default: false,
+                help:
+                    'When an update introduces a new on-by-default switch, keep it off until you turn it on ' +
+                    'yourself. Numbers and dropdowns keep their defaults — only behaviour switches are held back.',
+            },
+            mobileMode: {
+                id: 'mobileMode',
+                label: 'Mobile mode',
+                type: 'select',
+                default: 'auto',
+                options: [
+                    { value: 'auto', label: 'Auto-detect' },
+                    { value: 'on', label: 'On' },
+                    { value: 'off', label: 'Off' },
+                ],
+                help:
+                    'Adjusts for touch screens: bigger resize grips, panels sized to the viewport. Auto-detect keys ' +
+                    'on whether the primary pointer is a finger, which a touchscreen laptop can override here.',
+            },
             chatCommands: {
                 id: 'chatCommands',
                 label: 'Enable chat commands (/item, /wiki, /market)',
@@ -42,7 +74,7 @@ export const settingsGroups = {
                 label: 'Chat: Clickable names in announcements',
                 type: 'checkbox',
                 default: true,
-                help: 'Makes the player name in system announcements (e.g. "Az0r has reached level 150 Magic!") clickable — clicking it fills "/profile name" into the chat input.',
+                help: 'Makes the player name in system announcements (e.g. "PlayerName has reached level 150 Magic!" or "PlayerName has joined the guild!") clickable — clicking it fills "/profile name" into the chat input.',
             },
             chat_popOut: {
                 id: 'chat_popOut',
@@ -237,17 +269,12 @@ export const settingsGroups = {
         title: 'Action Panel',
         icon: '📄',
         settings: {
-            actionPanel_totalTime: {
-                id: 'actionPanel_totalTime',
-                label: 'Action panel: Total time, times to reach target level, exp/hour',
-                type: 'checkbox',
-                default: true,
-            },
             actionPanel_totalTime_quickInputs: {
                 id: 'actionPanel_totalTime_quickInputs',
                 label: 'Action panel: Quick input buttons (hours, count presets, Max)',
                 type: 'checkbox',
                 default: true,
+                requiresRefresh: true,
             },
             actionPanel_quickInputs_countPresets: {
                 id: 'actionPanel_quickInputs_countPresets',
@@ -307,6 +334,7 @@ export const settingsGroups = {
                 label: 'Action panel: Show total required and missing materials',
                 type: 'checkbox',
                 default: true,
+                requiresRefresh: true,
                 help: 'Displays total materials needed and shortfall when entering quantity',
             },
             actionPanel_enhanceMatLimitProtections: {
@@ -415,6 +443,13 @@ export const settingsGroups = {
         title: 'Missing Materials & Crafting Plan',
         icon: '🛒',
         settings: {
+            actionPanelLayout: {
+                id: 'actionPanelLayout',
+                label: 'Keep the action panel on screen',
+                type: 'checkbox',
+                default: true,
+                help: 'Stops the action detail panel growing past the window: it scrolls instead, and the Queue and Start buttons stay pinned to the bottom rather than falling off it. Also tightens the spacing of the added sections.',
+            },
             actions_missingMaterialsButton: {
                 id: 'actions_missingMaterialsButton',
                 label: 'Show "Missing Mats Marketplace" button on production panels',
@@ -503,6 +538,69 @@ export const settingsGroups = {
         title: 'Loot Log',
         icon: '📦',
         settings: {
+            treasureTracker_popup: {
+                id: 'treasureTracker_popup',
+                label: "Treasure Tracker: Pop up what an opening paid, beside the game's loot dialog",
+                type: 'checkbox',
+                default: true,
+                help: "The game's Opened Loot dialog says what you got; this says whether it was good, item by item, against what the drop table owed",
+            },
+            treasureTracker: {
+                id: 'treasureTracker',
+                label: 'Treasure Tracker: Record chest openings and compare against expected value',
+                type: 'checkbox',
+                default: true,
+                help: 'Tracks what every chest you open actually paid out against what its drop table says it owes. Open the panel from the Treasure button on the settings page',
+            },
+            watchlist: {
+                id: 'watchlist',
+                label: "Watchlist: Track chosen items, a zone's drops, or a chest's contents",
+                type: 'checkbox',
+                default: true,
+                help: 'A list of items with what you hold and what it is worth. Tick a combat zone to add everything it drops, or a chest to add everything it contains. Tracked items get a dot in the inventory, and anything the vendor pays more for than the market is flagged. Open it from the Watchlist overlay row',
+            },
+            watchlist_menuButton: {
+                id: 'watchlist_menuButton',
+                label: 'Watchlist: Add a Track button to the item menu in your inventory',
+                type: 'checkbox',
+                default: false,
+                help: 'Puts a Track / Untrack button beside Sell when you click an inventory item. Off by default because it changes a menu you use for other things — the Watchlist panel has the same switch',
+            },
+            watchlist_inventoryDots: {
+                id: 'watchlist_inventoryDots',
+                label: 'Watchlist: Dot tracked items in the inventory',
+                type: 'checkbox',
+                default: true,
+                help: 'Puts a small dot in the corner of every inventory tile holding a tracked item. The point of a watchlist is knowing what is on it while you are looking at your inventory rather than while you are looking at the list — but it is one more mark on a busy grid, so it can be turned off. The Watchlist panel has the same switch',
+            },
+            equipmentSavings_menuButton: {
+                id: 'equipmentSavings_menuButton',
+                label: 'Equipment Savings: Add a Save for button to the item menu',
+                type: 'checkbox',
+                default: false,
+                help: 'Puts a Save for / Stop saving button beside Sell when you click a piece of equipment, which is how a target gets onto the Equipment Savings list. Off by default because it changes a menu you use for other things',
+            },
+            combatText_floating: {
+                id: 'combatText_floating',
+                label: 'Floating Combat Text: Damage numbers over the units taking them',
+                type: 'checkbox',
+                default: false,
+                help: 'A health bar tells you the state, not the event — "did that hit for 400 or 4,000" is a question a number answers and a bar does not',
+            },
+            combatText_scrolling: {
+                id: 'combatText_scrolling',
+                label: 'Scrolling Combat Text: Keep a log of recent hits',
+                type: 'checkbox',
+                default: false,
+                help: 'Adds a Combat Log overlay row with the last few hits, for anything that went past too fast to read',
+            },
+            manaTracker: {
+                id: 'manaTracker',
+                label: 'Mana Tracker: Count what your abilities cost per fight',
+                type: 'checkbox',
+                default: true,
+                help: 'Mana is the constraint nobody watches — it shows up only as the moment an ability does not fire. Adds a Mana/fight overlay row',
+            },
             lootLogStats: {
                 id: 'lootLogStats',
                 label: 'Loot Log Statistics',
@@ -641,6 +739,27 @@ export const settingsGroups = {
                 default: true,
                 help: 'Shows the optimal enhancement path cost breakdown when hovering over enhanced (+1 to +20) items',
             },
+            itemTooltip_enhancementProRates: {
+                id: 'itemTooltip_enhancementProRates',
+                label: 'Quote enhancement predictions at pro rates instead of your stats',
+                type: 'checkbox',
+                default: false,
+                help: 'Prices the enhancement path and milestones as a top-end enhancer (level 140, Observatory 8, ultra + blessed tea, +13 Celestial enhancer, +10 gear) instead of your own gear and level. Also toggled from the "Yours / Pro" chip on the tooltip section header, or by pressing P while the tooltip is open.',
+            },
+            itemTooltip_enhancingHourlyRate: {
+                id: 'itemTooltip_enhancingHourlyRate',
+                label: 'Target hourly rate for enhancing (e.g. 50m)',
+                type: 'text',
+                default: '',
+                help: 'Adds a minimum sell price to the enhancement tooltip that covers total cost plus this rate for time spent. Leave blank to disable.',
+            },
+            itemTooltip_enhancingHourlyRateTax: {
+                id: 'itemTooltip_enhancingHourlyRateTax',
+                label: 'Include marketplace tax in minimum sell price',
+                type: 'checkbox',
+                default: false,
+                help: 'Accounts for the 2% marketplace seller tax so listing at minimum sell still nets your target rate after tax',
+            },
             itemTooltip_pinTop: {
                 id: 'itemTooltip_pinTop',
                 label: 'Pin tooltips to top-center of screen',
@@ -681,13 +800,6 @@ export const settingsGroups = {
                 label: 'Show enhancement simulator calculations',
                 type: 'checkbox',
                 default: true,
-            },
-            enhanceSim_showConsumedItemsDetail: {
-                id: 'enhanceSim_showConsumedItemsDetail',
-                label: 'Enhancement tooltips: Show detailed breakdown for consumed items',
-                type: 'checkbox',
-                default: false,
-                help: "When enabled, shows base/materials/protection breakdown for each consumed item in Philosopher's Mirror calculations",
             },
             enhanceSim_baseItemCraftingCost: {
                 id: 'enhanceSim_baseItemCraftingCost',
@@ -1129,10 +1241,10 @@ export const settingsGroups = {
                 id: 'market_listingPricePrecision',
                 label: 'Market: Listing price decimal precision',
                 type: 'number',
-                default: 2,
+                default: 1,
                 min: 0,
                 max: 4,
-                help: 'Number of decimal places to show for listing prices',
+                help: 'Decimal places for the abbreviated Top Order and Total prices on My Listings (e.g. 1.2M vs 1.23M)',
             },
             market_showListingAge: {
                 id: 'market_showListingAge',
@@ -1294,17 +1406,17 @@ export const settingsGroups = {
         settings: {
             networth: {
                 id: 'networth',
-                label: 'Top right: Show gold count',
+                label: 'Net worth tracking (and gold count in the header)',
                 type: 'checkbox',
                 default: true,
-                help: 'Displays your current gold count next to Total Level in the page header',
+                help: 'Master switch for the net worth calculator. Displays your current gold count next to Total Level in the page header; the inventory breakdown, history chart, and overlay rows below all need this on to have data',
             },
             invWorth: {
                 id: 'invWorth',
                 label: 'Below inventory: Show net worth breakdown',
                 type: 'checkbox',
                 default: true,
-                help: 'Shows total net worth with a per-category breakdown (equipment, inventory, listings, houses, abilities) below the inventory panel',
+                help: 'Shows total net worth with a per-category breakdown (equipment, inventory, listings, houses, abilities) below the inventory panel. Requires net worth tracking to be enabled above',
             },
             invSort: {
                 id: 'invSort',
@@ -1519,6 +1631,7 @@ export const settingsGroups = {
                 label: 'Left sidebar: Show remaining XP to next level',
                 type: 'checkbox',
                 default: true,
+                requiresRefresh: true,
                 help: 'Displays how much XP needed to reach the next level under skill progress bars',
             },
             skillRemainingXP_blackBorder: {
@@ -1534,6 +1647,14 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
             },
+            drinkTimer: {
+                id: 'drinkTimer',
+                label: 'Drink timer: Show remaining drink supply time in skill panels',
+                type: 'checkbox',
+                default: true,
+                requiresRefresh: true,
+                help: 'Shows how long your drink stock lasts and whether it covers the queued actions. This switch existed internally but was never in the settings panel, so the feature could not be turned off.',
+            },
             drinkTimer_warningThreshold: {
                 id: 'drinkTimer_warningThreshold',
                 label: 'Drink timer: warning threshold (hours)',
@@ -1546,6 +1667,7 @@ export const settingsGroups = {
                 label: 'Skilling Simulator/Optimizer: Enable Optimizer tab in character panel',
                 type: 'checkbox',
                 default: true,
+                requiresRefresh: true,
             },
         },
     },
@@ -1554,6 +1676,43 @@ export const settingsGroups = {
         title: 'Combat Features',
         icon: '⚔️',
         settings: {
+            damageTracker: {
+                id: 'damageTracker',
+                label: 'Damage Tracker: Attribute damage per player and per ability',
+                type: 'checkbox',
+                default: true,
+                help: 'The game attributes nothing, so the caster is worked out from whose mana fell each tick. Feeds the Damage panel behind the DPS tile',
+            },
+            damageTakenTracker: {
+                id: 'damageTakenTracker',
+                label: 'Damage Taken Tracker: What is hitting you, and for how much',
+                type: 'checkbox',
+                default: true,
+                help: 'Damage taken against health regenerated, broken out per monster and per wave with hit ranges. Feeds the Deaths panel behind the deaths/hr tile',
+            },
+            combatRecorder_autoStart: {
+                id: 'combatRecorder_autoStart',
+                label: 'Auto-record combat on load',
+                type: 'checkbox',
+                default: false,
+                help: 'Starts the combat recorder the moment the page loads and writes the file out on its own, then switches itself back off. The Record button in the Damage panel cannot capture the first seconds of a session, which is exactly when a reload lands mid-fight and the client never sees what it is fighting. Turn it on again for each recording you want',
+            },
+            combatRecorder_autoStartSeconds: {
+                id: 'combatRecorder_autoStartSeconds',
+                label: 'Auto-record length (seconds)',
+                type: 'number',
+                default: 60,
+                min: 10,
+                max: 600,
+                help: 'How long the automatic recording runs before it saves itself',
+            },
+            replayCheck: {
+                id: 'replayCheck',
+                label: 'Sim Accuracy: Replay recorded fights against the simulator',
+                type: 'checkbox',
+                default: true,
+                help: 'Derives damage dealt, damage taken and fight length from a recorded fight, runs the simulator for the same zone, and reports the deviation with a sampling-noise margin. Feeds the Sim Accuracy overlay row and the panel behind it',
+            },
             combatScore: {
                 id: 'combatScore',
                 label: 'Profile panel: Show gear score',
@@ -1641,7 +1800,7 @@ export const settingsGroups = {
                 min: 0.1,
                 max: 10,
                 step: 0.5,
-                help: 'How tightly a room clear chance is pinned down before its sim stops, in percentage points either side. A settled room reaches it in a few hundred fights and a close one needs thousands, so the work goes where the answer is still in doubt (lower = more accurate, slower)',
+                help: "A room's sim keeps fighting until its clear chance is pinned to within this many percentage points either side — the 95% confidence interval has to fit inside ±this before the run is allowed to stop. A settled room gets there in a few hundred fights and a close one needs thousands, so the work goes where the answer is still in doubt (lower = tighter interval, more fights, slower)",
             },
             labyrinthRecommendSimHours: {
                 id: 'labyrinthRecommendSimHours',
@@ -1667,7 +1826,7 @@ export const settingsGroups = {
                 id: 'labyrinthPathUnknownMode',
                 label: 'Labyrinth: Path treats unrevealed rooms as',
                 type: 'select',
-                default: 'clearable',
+                default: 'shroud',
                 options: [
                     { value: 'clearable', label: 'Clearable (optimistic)' },
                     { value: 'shroud', label: 'Needing a shroud (pessimistic)' },
@@ -1683,7 +1842,7 @@ export const settingsGroups = {
                 min: 0,
                 max: 20,
                 step: 1,
-                help: 'Beacons the beacon planner places, sited to reveal the most rooms on the way to the exit — 0 instead finds the fewest that cover a revealed path there',
+                help: 'Beacons the beacon planner places on the floor in view, sited to cover a revealed path to the exit first, a second independent route next, and the most rooms with what is left — 0 uses the fewest that cover a path, which every new floor resets to',
             },
             labyrinthSkipEditAutofill: {
                 id: 'labyrinthSkipEditAutofill',
@@ -1703,7 +1862,7 @@ export const settingsGroups = {
                 id: 'labyrinthLiveCombatSim',
                 label: 'Labyrinth: Replay the live fight for a better clear chance',
                 type: 'checkbox',
-                default: true,
+                default: false,
                 help: 'Replays the fight in progress hundreds of times from its current health and remaining time, instead of extrapolating from how fast health is being lost. Slower but far more accurate, since it runs the real combat engine',
             },
             labyrinthRoomLogs: {
@@ -1742,6 +1901,38 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'Displays encounters/hour, revenue, experience rates when returning from combat',
+            },
+            combatDropLuck: {
+                id: 'combatDropLuck',
+                label: 'Combat Drop Luck: Show how lucky a session was on return',
+                type: 'checkbox',
+                default: true,
+                help: "Puts the session's drop value in the distribution of everything those battles could have paid, as a percentile. Skips dungeons, which pay from a reward table rather than per monster",
+            },
+            combatDps: {
+                id: 'combatDps',
+                label: 'Combat DPS: Measure damage per second during a run',
+                type: 'checkbox',
+                default: true,
+                help: "Infers damage from health lost between combat ticks, since the game sends no damage figure. Overkill is not counted, and in a party it is the whole party's damage — nothing on the wire says who struck",
+            },
+            portraitDps: {
+                id: 'portraitDps',
+                label: 'Portrait DPS: Show each character’s damage on their battle portrait',
+                type: 'checkbox',
+                default: false,
+                help: "Draws the run's DPS and total damage over each character in the battle panel, matched by name. Off by default because the portraits are already busy with health and mana",
+            },
+            portraitDpsPosition: {
+                id: 'portraitDpsPosition',
+                label: 'Portrait DPS: Where to put it',
+                type: 'select',
+                default: 'above',
+                options: [
+                    { value: 'above', label: 'Above the portrait' },
+                    { value: 'below', label: 'Below the portrait' },
+                ],
+                help: 'Above sits over the name; below sits under the ability bar',
             },
             combatSim: {
                 id: 'combatSim',
@@ -1827,7 +2018,17 @@ export const settingsGroups = {
                 default: 0,
                 min: 0,
                 max: 32,
-                help: 'Maximum Web Worker threads for simulations (0 = auto, uses all available cores)',
+                help: 'Maximum Web Worker threads for simulations (0 = auto: 4, or fewer on a smaller machine)',
+            },
+            combatSim_uncapThreads: {
+                id: 'combatSim_uncapThreads',
+                label: 'Combat Simulator: Ignore the thread caps',
+                type: 'checkbox',
+                default: false,
+                help:
+                    'Max threads is normally clamped to your core count, and an analysis runs at most 6 simulations ' +
+                    'at once — each one holds its own copy of the game data, and the tab running the game needs a ' +
+                    'core too. Turn this on to take the number above literally.',
             },
             labSim_keepReplacedGear: {
                 id: 'labSim_keepReplacedGear',
@@ -1960,6 +2161,7 @@ export const settingsGroups = {
                 label: 'Track task reroll costs',
                 type: 'checkbox',
                 default: true,
+                requiresRefresh: true,
                 help: 'Tracks how much gold/cowbells spent rerolling each task (EXPERIMENTAL - may cause UI freezing)',
             },
             taskMapIndex: {
@@ -1982,12 +2184,27 @@ export const settingsGroups = {
                 default: false,
                 help: 'Shows which dungeons contain the monster (requires Task Icons enabled)',
             },
+            taskSorter: {
+                id: 'taskSorter',
+                label: 'Task sorter: Sort tasks by skill type',
+                type: 'checkbox',
+                default: true,
+                requiresRefresh: true,
+                help: 'Adds the sort button and sorting machinery to the task panel. This switch existed internally but was never in the settings panel, so the feature could not be turned off.',
+            },
             taskSorter_autoSort: {
                 id: 'taskSorter_autoSort',
                 label: 'Automatically sort tasks when opening task panel',
                 type: 'checkbox',
                 default: false,
                 help: 'Automatically sorts tasks by skill type when you open the task panel',
+            },
+            taskSorter_sortAfterRead: {
+                id: 'taskSorter_sortAfterRead',
+                label: 'Sort tasks after reading new ones',
+                type: 'checkbox',
+                default: false,
+                help: 'Sorts the board again once you press Read, since new tasks always arrive at the end',
             },
             taskSorter_hideButton: {
                 id: 'taskSorter_hideButton',
@@ -2057,6 +2274,17 @@ export const settingsGroups = {
                 default: true,
                 help: 'Highlights tasks you want to reroll with a red border and reminder badge. Configure per-character via the target icon in the task panel.',
             },
+            taskBulkReroll: {
+                id: 'taskBulkReroll',
+                label: 'Task bulk reroll stepper',
+                type: 'checkbox',
+                default: false,
+                help:
+                    'Adds a stepper button to the task panel header that performs one reroll (or one discard, once a ' +
+                    'task is at its reroll limit) per click, always previewing the next action on its label. It spends ' +
+                    'real rerolls — coins first, then cowbells — and respects reroll protection and your configured ' +
+                    'cost limits. Protected and completed tasks are left alone.',
+            },
         },
     },
 
@@ -2064,6 +2292,70 @@ export const settingsGroups = {
         title: 'UI & Appearance',
         icon: '🎨',
         settings: {
+            accountView: {
+                id: 'accountView',
+                label: 'Account view: All characters on one screen',
+                type: 'checkbox',
+                default: true,
+                help:
+                    'A single panel covering the whole account rather than the character you happen to be logged in ' +
+                    'as: combined networth with each character’s share of it, per-character status (what each one is ' +
+                    'doing, how long is left, whether anything is idle). Reads the data each character has already ' +
+                    'recorded, so a character shows up once it has been played with Toolasha running.',
+            },
+            overlayPanel: {
+                id: 'overlayPanel',
+                label: 'Overlay Panel: One floating panel other features add a row to',
+                type: 'checkbox',
+                default: true,
+                help: 'A configurable overlay. Open it from the Overlay tab beside Inventory, then use the gear to choose which rows show and in what order. Rows appear as features gain them. Its ⇲ button docks it below the character tabs, where it takes its own space instead of covering the game',
+            },
+            overlayTabButton: {
+                id: 'overlayTabButton',
+                label: 'Overlay tab button',
+                type: 'checkbox',
+                default: true,
+                help: 'Adds an Overlay switch to the character tabs, beside Inventory and before Optimizer, so the overlay can be shown and hidden without opening settings. Needs the Overlay Panel above',
+            },
+            commandPalette: {
+                id: 'commandPalette',
+                label: 'Command palette (Ctrl+K)',
+                type: 'checkbox',
+                default: true,
+                requiresRefresh: true,
+                help: 'Ctrl+K (or Cmd+K) opens a search box listing every panel, every overlay row, every saved overlay layout and every setting by name — arrow keys and Enter to choose, Escape to dismiss. Ignored while you are typing in chat or any other input',
+            },
+            goalPlanner: {
+                id: 'goalPlanner',
+                label: 'Goal Planner: Ordered steps, cost and time to reach a goal',
+                type: 'checkbox',
+                default: true,
+                requiresRefresh: true,
+                help:
+                    'A floating panel (Ctrl+K → Goal Planner) that turns a goal — 500M coins, Sinister Cape +10, ' +
+                    'Enhancing 110, Observatory 8 — into the ordered steps to get there, each with its own cost and ' +
+                    'time. Composes the calculators the rest of the script already uses: buy-versus-craft, the ' +
+                    'enhancement path optimiser on your own stats, profit and experience per hour, house upgrade ' +
+                    'costs. Press Refresh to re-price against the current market; steps you have since satisfied ' +
+                    'come back struck through rather than disappearing',
+            },
+            ironCowFarm: {
+                // Display name is "Iron Bell Farming"; the setting id is kept as
+                // ironCowFarm since settings persist by id and renaming it would
+                // drop an existing user's saved preference.
+                id: 'ironCowFarm',
+                label: 'Iron Bell Farming: The cowbell-farming plan, and what it earns',
+                type: 'checkbox',
+                default: true,
+                requiresRefresh: true,
+                help:
+                    'A floating panel (Ctrl+K → Iron Bell Farming) holding the standard iron-cow route to farming gold ' +
+                    'for cowbells — the skills to level, the jewelry to craft, then the endless Star Fruit → ' +
+                    'decompose → coinify loop — with each stage ticking itself off against your own levels, gear ' +
+                    'and house. Costs the loop from your actual rates through the gathering and alchemy ' +
+                    'calculators, and converts it to bells per hour, per day and per week at the current cowbell ' +
+                    'price. All its gold is coinify output, never a market sale, because an iron cow cannot sell',
+            },
             draggableModals: {
                 id: 'draggableModals',
                 label: 'Draggable modals',
@@ -2235,6 +2527,17 @@ export const settingsGroups = {
                 max: 100,
                 help: 'Height of the inventory/equipment panel beside the fight, as a percentage of the window. Set it taller to see more inventory at once, shorter to give the fight room. 0 leaves the height the game picks',
             },
+            welcomeBackValue: {
+                id: 'welcomeBackValue',
+                label: 'Welcome Back modal: What the time offline was worth',
+                type: 'checkbox',
+                default: true,
+                help:
+                    'Adds one line to the game’s Welcome Back modal valuing what you gained and what got consumed ' +
+                    'while you were away — net coins, coins per hour offline and XP per hour — priced at market ' +
+                    'using the pricing mode from the Market settings. Items with no market price are left out of ' +
+                    'the total and counted instead, and the line is not drawn at all if nothing could be priced.',
+            },
         },
     },
 
@@ -2280,6 +2583,45 @@ export const settingsGroups = {
                     { key: '{name}', label: 'Player Name', description: 'The name of the unsigned guild member' },
                 ],
             },
+            guildTrialsInfo: {
+                id: 'guildTrialsInfo',
+                label: 'Guild Trials: Show rates, pace and payout on the In Progress tab',
+                type: 'checkbox',
+                default: true,
+                help:
+                    'Measures the pool fill rate or party DPS off the trial cards and adds the ETA to clear the ' +
+                    'current tier, how many tiers the hour is on pace for, the next tier’s projected size, and the ' +
+                    'Guild Points and token payout the week’s tiers are worth.',
+            },
+            guildTrialAutoRecord: {
+                id: 'guildTrialAutoRecord',
+                label: 'Guild Trials: Record a trial automatically when one starts',
+                type: 'checkbox',
+                default: true,
+                help:
+                    'Starts a recording session by itself when a trial fight is seen or the In Progress tab ' +
+                    'shows a live reading, so the whole hour is captured without having to press anything. ' +
+                    'The Record button on the trials block starts and stops one by hand either way.',
+            },
+            guildTrialsBuildersHallBonus: {
+                id: 'guildTrialsBuildersHallBonus',
+                label: 'Guild Trials: Builders Hall bonus override (%)',
+                type: 'number',
+                default: 0,
+                help:
+                    'Guild Points are Base × (1 + Builders Hall bonus). Leave at 0 to read it from the game once ' +
+                    'the guild Buildings tab has been opened; set it here if your guild knows the number and the ' +
+                    'game does not expose it.',
+            },
+            guildTrialsTreasuryBonus: {
+                id: 'guildTrialsTreasuryBonus',
+                label: 'Guild Trials: Treasury bonus override (%)',
+                type: 'number',
+                default: 0,
+                help:
+                    'Token payouts are 0.5 × TotalBasePoints × (1 + Treasury bonus). Leave at 0 to read it from ' +
+                    'the game once the guild Buildings tab has been opened.',
+            },
             guildMembersActivityTab: {
                 id: 'guildMembersActivityTab',
                 label: 'Guild Members: Show Activity column on',
@@ -2320,6 +2662,23 @@ export const settingsGroups = {
                 default: true,
                 help: 'Shows 24-hour average XP/hr tracked by Toolasha (Contributions tab).',
             },
+            guildTokenCreditRate: {
+                id: 'guildTokenCreditRate',
+                label: 'Guild Shop: Guild credits received per guild token',
+                type: 'number',
+                default: 1,
+                min: 0,
+                help:
+                    'Guild tokens are never listed on the market, so they are priced through the Guild Shop ' +
+                    'exchange instead: credits per token × the gold value of a credit, taking whichever credit ' +
+                    'colour yields the most gold. This number is now the last resort. Opening a Guild Shop ' +
+                    'exchange dialog with a Guild Token selected reads that colour’s real rate off the screen ' +
+                    'and remembers it, and client data wins over even that — so in normal play the live rate is ' +
+                    'what gets used and this setting is never consulted. It only stands in before any dialog ' +
+                    'has been opened, and every figure derived from it is labelled “assumed rate”. Run ' +
+                    'Toolasha.debug.tokenExchange() in the console to see every colour’s rate and which one was ' +
+                    'picked. Set to 0 to leave tokens unpriced, as they were before.',
+            },
             guildCreditValue: {
                 id: 'guildCreditValue',
                 label: 'Guild Shop: Show gold cost per credit table',
@@ -2340,6 +2699,27 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'Adds a shrine upgrade planner to the guild credit exchange panel, showing total credit and token costs to upgrade from your current level to a target level.',
+            },
+            guildRoster: {
+                id: 'guildRoster',
+                label: 'Guild Roster: Contribution shares and gone-quiet flags',
+                type: 'checkbox',
+                default: true,
+                help: 'Adds a Guild Roster overlay tile and panel showing each member’s share of the XP actually observed over 7 and 30 days, who has gone quiet against their own weekly rate, and a guild level projection. Uses the XP the Guild XP Tracker has already recorded.',
+            },
+        },
+    },
+
+    insights: {
+        title: 'Insights',
+        icon: '🔍',
+        settings: {
+            insights_calibration: {
+                id: 'insights_calibration',
+                label: 'Prediction Calibration: Check profit forecasts against finished runs',
+                type: 'checkbox',
+                default: true,
+                help: 'Records what the profit calculators predicted for an action beside what the loot log says the run actually paid, and flags skills where the forecast is persistently off. Adds a Prediction Calibration overlay tile and panel.',
             },
         },
     },
@@ -2382,12 +2762,151 @@ export const settingsGroups = {
         title: 'Notifications',
         icon: '🔔',
         settings: {
-            notifiEmptyAction: {
-                id: 'notifiEmptyAction',
-                label: 'Browser notification when action queue is empty',
+            notifications_browserEnabled: {
+                id: 'notifications_browserEnabled',
+                label: 'Allow desktop notifications',
                 type: 'checkbox',
                 default: false,
-                help: 'Only works when the game page is open',
+                help: 'Master switch for the desktop-notification channel. Ticking this asks the browser for permission — the ask happens here rather than at page load, because a prompt nobody expects is usually dismissed and a dismissed prompt is remembered. With this off, or permission refused, notifications still arrive as an in-page toast when the tab is visible and as a ❗ on the tab title when it is not.',
+            },
+            notifiEmptyAction: {
+                id: 'notifiEmptyAction',
+                label: 'Notify when the current character queue is empty',
+                type: 'checkbox',
+                default: false,
+                help: 'Keys on the action queue going from having actions to having none, as reported by the game over the websocket. Covers only the character you are logged in as, and only while the game page is open.',
+            },
+            notifications_consumableLow: {
+                id: 'notifications_consumableLow',
+                label: 'Notify when drinks are running low',
+                type: 'checkbox',
+                default: false,
+                help: 'Fires when the soonest drink to run out falls below the "Drink timer: warning threshold (hours)" setting — the same crossing that turns the drink timer amber. Once per crossing, and it re-arms when you restock above the threshold. Requires the Drink Timer feature, and reads the drink slots of the skill you are currently performing plus any skill panel you have open.',
+            },
+            notifications_marketListingFilled: {
+                id: 'notifications_marketListingFilled',
+                label: 'Notify when a market listing finishes',
+                type: 'checkbox',
+                default: false,
+                help: 'Keys on the count of finished listings going up — an order that filled completely, or a cancelled one holding a refund. An order still partly filling is not counted, because collecting it achieves nothing. Same rule as the Marketplace badge filter, and works whether or not that filter is on.',
+            },
+            notifications_otherCharacterIdle: {
+                id: 'notifications_otherCharacterIdle',
+                label: 'Notify when another character has run out of queue',
+                type: 'checkbox',
+                default: false,
+                help: 'Projected, not observed. Each other character queue is captured when you switch away from it, and this fires once that much time has elapsed — it cannot see a character while you are not logged into it, so anything queued there from elsewhere is invisible to it. Characters with an unbounded action queued are skipped, and a character is announced again only after you next switch away from it.',
+            },
+            notifications_labyrinthRunFinished: {
+                id: 'notifications_labyrinthRunFinished',
+                label: 'Notify when a labyrinth run finishes',
+                type: 'checkbox',
+                default: false,
+                help: 'Keys on the run going from active to not active, as the server reports it — so it covers every ending: cleared out, ended on a lost fight, or exited on purpose. It does not say which, because the payload does not: there is no outcome or reason field on a labyrinth message, so the alert reports the deepest floor the run reached and leaves it at that. Once per run.',
+            },
+            notifications_combatDeath: {
+                id: 'notifications_combatDeath',
+                label: 'Notify when you die in combat',
+                type: 'checkbox',
+                default: false,
+                help: 'Keys on the server’s own death count for your character going up between battles — your deaths only, not the party’s. One message per cooldown rather than one per death, so a zone that is killing you repeatedly says so once and the total in the message tells you how bad it got. Deaths that happened before you switched this on are not announced.',
+            },
+            notifications_enhancementTarget: {
+                id: 'notifications_enhancementTarget',
+                label: 'Notify when an item reaches its enhancement target',
+                type: 'checkbox',
+                default: false,
+                help: 'Reads the “enhance until +N” you set in the game’s own enhancing panel, and the level the item is at after each attempt — so it works whether or not the Enhancement Tracker is on. Nothing is announced when no target is set, since there is no ending to announce. Once per item and target, re-arming when that item is seen below the target again.',
+            },
+            notifications_trialStarting: {
+                id: 'notifications_trialStarting',
+                label: 'Notify when a guild trial is about to start',
+                type: 'checkbox',
+                default: false,
+                help: 'The guild panel states the next trial’s schedule (“Scheduled Wed 04:00 PM 2h 24m”). This announces it once the countdown is inside the lead time below, and again the moment the trial actually starts. The countdown is only read while the guild panel is open — no socket message carries a trial schedule.',
+            },
+            notifications_trialStartLeadMinutes: {
+                id: 'notifications_trialStartLeadMinutes',
+                label: 'Guild trial warning lead time (minutes)',
+                type: 'number',
+                default: 10,
+                min: 1,
+                max: 120,
+                help: 'How long before a scheduled guild trial to announce it.',
+            },
+            notifications_trialResults: {
+                id: 'notifications_trialResults',
+                label: 'Notify when a guild trial finishes, with what it paid',
+                type: 'checkbox',
+                default: false,
+                help: 'Announces the Guild Points banked and the token payout — every eligible member’s share and a participant’s — as soon as the guild panel reports the cycle complete.',
+            },
+            notifications_taskSlotsFull: {
+                id: 'notifications_taskSlotsFull',
+                label: 'Notify before your task slots fill up',
+                type: 'checkbox',
+                default: false,
+                help: 'A task that arrives with no free slot is simply not given — there is no queue behind the board. This projects when the last free slot fills, from the server’s own slot cap, task cooldown and last-task time, so it works with the task panel closed. It is a projection, not an observation: it assumes the cadence holds and that nothing frees a slot in the meantime, and it can only be as fresh as the last message the game sent this tab. Completing, claiming or discarding a task moves the deadline and re-arms the warning. A board that is already full says so once.',
+            },
+            notifications_taskSlotsLeadHours: {
+                id: 'notifications_taskSlotsLeadHours',
+                label: 'Task slots warning lead time (hours)',
+                type: 'number',
+                default: 8,
+                min: 1,
+                max: 48,
+                help: 'How long before the last free task slot fills to warn you — enough notice to claim or clear something. Default: 8.',
+            },
+            notifications_communityBuffExpiring: {
+                id: 'notifications_communityBuffExpiring',
+                label: 'Notify before a community buff expires',
+                type: 'checkbox',
+                default: false,
+                help: 'Reads the expiry the server sends with each community buff, so the warning is timed off the real end of the buff rather than a countdown read from the screen. Fires once per expiry; a donation that extends a buff pushes the expiry out and arms the warning again for the new one. Use the per-buff switches below to pick which ones you care about.',
+            },
+            notifications_communityBuffLeadMinutes: {
+                id: 'notifications_communityBuffLeadMinutes',
+                label: 'Community buff warning: minutes ahead',
+                type: 'number',
+                default: 15,
+                min: 5,
+                max: 120,
+                help: 'How many minutes before a community buff’s actual expiry to warn you — enough notice to get to the Cowbell Store and donate. Default: 15.',
+            },
+            notifications_communityBuff_experience: {
+                id: 'notifications_communityBuff_experience',
+                label: 'Community buff: Experience',
+                type: 'checkbox',
+                default: true,
+                help: 'Include the Experience community buff in the expiry warning. Only has an effect while "Notify before a community buff expires" is on.',
+            },
+            notifications_communityBuff_gatheringQuantity: {
+                id: 'notifications_communityBuff_gatheringQuantity',
+                label: 'Community buff: Gathering Quantity',
+                type: 'checkbox',
+                default: true,
+                help: 'Include the Gathering Quantity community buff in the expiry warning. Only has an effect while "Notify before a community buff expires" is on.',
+            },
+            notifications_communityBuff_productionEfficiency: {
+                id: 'notifications_communityBuff_productionEfficiency',
+                label: 'Community buff: Production Efficiency',
+                type: 'checkbox',
+                default: true,
+                help: 'Include the Production Efficiency community buff in the expiry warning. Only has an effect while "Notify before a community buff expires" is on.',
+            },
+            notifications_communityBuff_enhancingSpeed: {
+                id: 'notifications_communityBuff_enhancingSpeed',
+                label: 'Community buff: Enhancing Speed',
+                type: 'checkbox',
+                default: true,
+                help: 'Include the Enhancing Speed community buff in the expiry warning. Only has an effect while "Notify before a community buff expires" is on.',
+            },
+            notifications_communityBuff_combatDropQuantity: {
+                id: 'notifications_communityBuff_combatDropQuantity',
+                label: 'Community buff: Combat Drop Quantity',
+                type: 'checkbox',
+                default: true,
+                help: 'Include the Combat Drop Quantity community buff in the expiry warning. Only has an effect while "Notify before a community buff expires" is on.',
             },
         },
     },
@@ -2623,6 +3142,75 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'Displays your collection count on skilling actions (open Collections once to populate counts)',
+            },
+        },
+    },
+
+    sync: {
+        title: 'Cross-Device Sync',
+        icon: '☁️',
+        settings: {
+            sync_enabled: {
+                id: 'sync_enabled',
+                label: 'Enable cross-device sync (GitHub gist)',
+                type: 'checkbox',
+                default: false,
+                help:
+                    'Carries your Toolasha data between browsers through one private GitHub gist that you own. ' +
+                    'Nothing goes to any server of ours, and nothing is sent until you press Push or turn on ' +
+                    'automatic sync below.',
+            },
+            sync_token: {
+                id: 'sync_token',
+                label: 'GitHub personal access token',
+                type: 'password',
+                default: '',
+                placeholder: 'ghp_… or github_pat_…',
+                help:
+                    'Needs the "gist" scope and nothing else — a classic token with only that box ticked, or a ' +
+                    'fine-grained token with Gists set to read and write. SECURITY: the token is stored in this ' +
+                    "browser's local database in plain text, exactly like every other setting, and any script or " +
+                    'extension that can read this page can read it. Use a token that can only touch gists, and revoke ' +
+                    'it at github.com/settings/tokens if you stop using sync. It is never written into the synced ' +
+                    'payload, so pulling on another device will not plant it there.',
+            },
+            sync_passphrase: {
+                id: 'sync_passphrase',
+                label: 'Sync passphrase (optional encryption)',
+                type: 'password',
+                default: '',
+                placeholder: 'Leave empty to sync unencrypted',
+                help:
+                    'When set, the gist holds AES-256 ciphertext instead of readable JSON, so the data is useless to ' +
+                    'anyone who gets the gist URL, the token, or your GitHub account. Enter the SAME passphrase on ' +
+                    'every device that shares the gist; there is no recovery — a forgotten passphrase means pushing ' +
+                    'fresh from a device that still has the data. Like the token, the passphrase is stored in this ' +
+                    "browser's local database in plain text, so it hides the gist from GitHub-side readers, not from " +
+                    'extensions that can already read this page. It is never uploaded.',
+            },
+            sync_scope: {
+                id: 'sync_scope',
+                label: 'What to sync',
+                type: 'select',
+                default: 'settings',
+                options: [
+                    { value: 'settings', label: 'Settings only' },
+                    { value: 'everything', label: 'Everything (settings + all tracked history)' },
+                ],
+                help:
+                    'Settings only is small and fast. Everything also carries dungeon runs, XP history, loot logs and ' +
+                    'the rest — the same contents as "Back Up Everything" — which on a played-in account can be many ' +
+                    'megabytes and is split across several files inside the gist.',
+            },
+            sync_auto: {
+                id: 'sync_auto',
+                label: 'Sync automatically',
+                type: 'checkbox',
+                default: false,
+                help:
+                    'Pulls once shortly after the page loads if the gist is newer than what this device last synced, ' +
+                    'and pushes every 15 minutes if anything changed. When both sides have changed you are asked ' +
+                    'which one wins rather than the older copy being overwritten quietly.',
             },
         },
     },

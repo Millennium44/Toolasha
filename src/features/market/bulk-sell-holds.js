@@ -3,7 +3,7 @@
  *
  * A claim on inventory that keeps items out of the bulk sell queue.
  *
- * Deliberately ignorant of why anything is held. A flip waiting to be relisted,
+ * Deliberately ignorant of why anything is held. Stock waiting to be relisted,
  * a crafting reserve, something promised to a guildmate — the assistant only
  * needs the keys, so no reason has to be modelled here, and a caller with a
  * reason of its own need not live in this repository to use it.

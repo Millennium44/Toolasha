@@ -5,28 +5,9 @@
 
 import marketAPI from '../../api/marketplace.js';
 import dataManager from '../../core/data-manager.js';
-import config from '../../core/config.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
-
-// Maps regular dungeon chest HRIDs to their required entry key HRIDs (1:1 relationship)
-const DUNGEON_CHEST_KEYS = {
-    '/items/chimerical_chest': '/items/chimerical_entry_key',
-    '/items/sinister_chest': '/items/sinister_entry_key',
-    '/items/enchanted_chest': '/items/enchanted_entry_key',
-    '/items/pirate_chest': '/items/pirate_entry_key',
-};
-
-// Maps dungeon chest HRIDs (regular and refinement) to their required chest key HRIDs (1:1 relationship)
-export const DUNGEON_CHEST_CHEST_KEYS = {
-    '/items/chimerical_chest': '/items/chimerical_chest_key',
-    '/items/sinister_chest': '/items/sinister_chest_key',
-    '/items/enchanted_chest': '/items/enchanted_chest_key',
-    '/items/pirate_chest': '/items/pirate_chest_key',
-    '/items/chimerical_refinement_chest': '/items/chimerical_chest_key',
-    '/items/sinister_refinement_chest': '/items/sinister_chest_key',
-    '/items/enchanted_refinement_chest': '/items/enchanted_chest_key',
-    '/items/pirate_refinement_chest': '/items/pirate_chest_key',
-};
+import { DUNGEON_CHEST_ENTRY_KEYS, DUNGEON_CHEST_CHEST_KEYS } from '../../utils/dungeon-keys.js';
+import { describeKeyCost, getKeyPricingMode } from '../../utils/key-cost.js';
 
 /**
  * Calculate total income from loot
@@ -93,7 +74,7 @@ export function calculateIncomeBreakdown(lootMap) {
             continue;
         }
 
-        if (DUNGEON_CHEST_KEYS[loot.itemHrid]) {
+        if (DUNGEON_CHEST_ENTRY_KEYS[loot.itemHrid]) {
             isDungeonRun = true;
         }
 
@@ -117,48 +98,60 @@ export function calculateIncomeBreakdown(lootMap) {
 }
 
 /**
- * Calculate entry key costs from dungeon chests dropped
- * Each regular dungeon chest in the loot map represents one entry key consumed
+ * Calculate entry and chest key costs from dungeon chests dropped
+ *
+ * Each regular dungeon chest in the loot map represents one entry key consumed,
+ * and every chest (regular or refinement) represents one chest key.
+ *
+ * A key is costed at whichever of buying and crafting it is cheaper — see
+ * `src/utils/key-cost.js`. The alternative and the crafting time ride along in
+ * the breakdown so the display can show the choice rather than hide it. A key
+ * that is neither on the market nor craftable is skipped, as before: an unknown
+ * cost is not a zero one, and pretending otherwise would inflate profit.
+ *
  * @param {Object} lootMap - totalLootMap from player data
  * @param {number} durationSeconds - Combat duration in seconds (for daily rate)
- * @returns {Object} { ask: number, bid: number, dailyCost: number, breakdown: Array }
+ * @returns {Object} { ask, bid, dailyCost, breakdown, pricingMode }
  */
 export function calculateKeyCosts(lootMap, durationSeconds) {
     let totalCost = 0;
     const breakdown = [];
+    const keyPricingSetting = getKeyPricingMode();
 
     if (!lootMap) {
-        return { ask: 0, bid: 0, dailyCost: 0, breakdown: [] };
+        return { ask: 0, bid: 0, dailyCost: 0, breakdown: [], pricingMode: keyPricingSetting };
     }
 
-    const keyPricingSetting = config.getSettingValue('profitCalc_keyPricingMode') || 'ask';
+    // Shared across every key in the run: dungeon key recipes lean on the same
+    // materials, and costing them one key at a time re-derives the same tree.
+    const memo = new Map();
+    const actionStats = new Map();
+    const costOf = (keyHrid) => describeKeyCost(keyHrid, { mode: keyPricingSetting, memo, actionStats });
 
-    for (const loot of Object.values(lootMap)) {
-        const keyHrid = DUNGEON_CHEST_KEYS[loot.itemHrid];
-        if (!keyHrid) continue;
+    const addRow = (keyHrid, count) => {
+        const keyCost = costOf(keyHrid);
+        if (keyCost.unitCost === null) return;
 
-        const chestCount = loot.count;
-        const keyPrices = marketAPI.getPrice(keyHrid);
-        if (!keyPrices) continue;
-
-        const keyPrice = keyPrices[keyPricingSetting] ?? keyPrices.ask;
-        const itemCost = keyPrice * chestCount;
-
+        const itemCost = keyCost.unitCost * count;
         totalCost += itemCost;
 
-        const keyDetails = dataManager.getItemDetails(keyHrid);
-        const keyName = keyDetails?.name || keyHrid;
-
-        const consumedPerDay = durationSeconds > 0 ? Math.ceil((chestCount / durationSeconds) * 86400) : 0;
+        const consumedPerDay = durationSeconds > 0 ? Math.ceil((count / durationSeconds) * 86400) : 0;
 
         breakdown.push({
             itemHrid: keyHrid,
-            itemName: keyName,
-            count: chestCount,
+            itemName: keyCost.itemName,
+            count,
             consumedPerDay,
-            pricePerItem: keyPrice,
+            pricePerItem: keyCost.unitCost,
             totalCost: itemCost,
+            keyCost,
         });
+    };
+
+    for (const loot of Object.values(lootMap)) {
+        const keyHrid = DUNGEON_CHEST_ENTRY_KEYS[loot.itemHrid];
+        if (!keyHrid) continue;
+        addRow(keyHrid, loot.count);
     }
 
     // Second pass: aggregate chest key costs (regular + refinement chests share the same key)
@@ -170,31 +163,12 @@ export function calculateKeyCosts(lootMap, durationSeconds) {
     }
 
     for (const [keyHrid, count] of Object.entries(chestKeyCounts)) {
-        const keyPrices = marketAPI.getPrice(keyHrid);
-        if (!keyPrices) continue;
-
-        const keyPrice = keyPrices[keyPricingSetting] ?? keyPrices.ask;
-        const itemCost = keyPrice * count;
-
-        totalCost += itemCost;
-
-        const keyDetails = dataManager.getItemDetails(keyHrid);
-        const keyName = keyDetails?.name || keyHrid;
-        const consumedPerDay = durationSeconds > 0 ? Math.ceil((count / durationSeconds) * 86400) : 0;
-
-        breakdown.push({
-            itemHrid: keyHrid,
-            itemName: keyName,
-            count,
-            consumedPerDay,
-            pricePerItem: keyPrice,
-            totalCost: itemCost,
-        });
+        addRow(keyHrid, count);
     }
 
     const finalDailyCost = durationSeconds > 0 ? calculateDailyRate(totalCost, durationSeconds) : 0;
 
-    return { ask: totalCost, bid: totalCost, dailyCost: finalDailyCost, breakdown };
+    return { ask: totalCost, bid: totalCost, dailyCost: finalDailyCost, breakdown, pricingMode: keyPricingSetting };
 }
 
 /**
@@ -372,6 +346,7 @@ export function calculatePlayerStats(playerData, durationSeconds = null) {
     const keyCosts = { ask: keyData.ask, bid: keyData.bid };
     const dailyKeyCosts = keyData.dailyCost;
     const keyBreakdown = keyData.breakdown;
+    const keyPricingMode = keyData.pricingMode;
 
     // Calculate daily profit (income minus consumables and key costs)
     const dailyProfitAsk = dailyIncomeAsk - dailyConsumableCosts - dailyKeyCosts;
@@ -405,6 +380,7 @@ export function calculatePlayerStats(playerData, durationSeconds = null) {
         keyCosts,
         dailyKeyCosts,
         keyBreakdown,
+        keyPricingMode,
         dailyProfit: {
             ask: dailyProfitAsk,
             bid: dailyProfitBid,

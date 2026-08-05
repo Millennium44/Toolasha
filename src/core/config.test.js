@@ -88,3 +88,69 @@ describe('Config.setSetting', () => {
         expect(cb).toHaveBeenCalledWith('optimistic');
     });
 });
+
+/**
+ * Colors are interpolated straight into inline styles, so a name Config does not
+ * define does not throw — it renders `color: undefined` and the browser drops the
+ * declaration. The only way to catch that is to check the names.
+ */
+describe('Config — color constants', () => {
+    const CSS_COLOR = /^(#[0-9a-f]{3,8}|rgba?\(.+\)|hsla?\(.+\)|[a-z]+)$/i;
+
+    const colorMembers = [
+        'COLOR_PROFIT',
+        'COLOR_LOSS',
+        'COLOR_WARNING',
+        'COLOR_INFO',
+        'COLOR_ESSENCE',
+        'COLOR_TEXT_PRIMARY',
+        'COLOR_TEXT_SECONDARY',
+        'COLOR_BORDER',
+        'COLOR_GOLD',
+        'COLOR_ACCENT',
+        'SCRIPT_COLOR_MAIN',
+        'SCRIPT_COLOR_TOOLTIP',
+        'SCRIPT_COLOR_ALERT',
+    ];
+
+    for (const member of colorMembers) {
+        test(`${member} is a usable CSS color`, () => {
+            expect(CSS_COLOR.test(String(config[member]).trim())).toBe(true);
+        });
+    }
+
+    test('SCRIPT_COLOR_PRIMARY and SCRIPT_COLOR_SECONDARY are not defined', () => {
+        expect(config.SCRIPT_COLOR_PRIMARY).toBeUndefined();
+        expect(config.SCRIPT_COLOR_SECONDARY).toBeUndefined();
+    });
+
+    test('and nothing under src/ reads them', async () => {
+        // A per-object assertion cannot catch a caller reintroducing the name,
+        // which is exactly how the six broken call sites survived.
+        const { readdirSync, readFileSync, statSync } = await import('fs');
+        const { join, resolve, dirname } = await import('path');
+        const { fileURLToPath } = await import('url');
+
+        const srcDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+        const files = [];
+        const walk = (dir) => {
+            for (const entry of readdirSync(dir)) {
+                if (entry === 'node_modules') continue;
+                const full = join(dir, entry);
+                if (statSync(full).isDirectory()) walk(full);
+                else if (entry.endsWith('.js') && !entry.endsWith('.test.js')) files.push(full);
+            }
+        };
+        walk(srcDir);
+
+        const violations = [];
+        for (const file of files) {
+            const content = readFileSync(file, 'utf8');
+            for (const name of ['config.SCRIPT_COLOR_PRIMARY', 'config.SCRIPT_COLOR_SECONDARY']) {
+                if (content.includes(name)) violations.push(`${file}: ${name}`);
+            }
+        }
+
+        expect(violations).toEqual([]);
+    });
+});
