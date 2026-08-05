@@ -55,6 +55,7 @@ const {
     findBuildingHrid,
     guildTrialsStorageKey,
     loadTrialRecord,
+    mergeTrialRecords,
     probeBuildingDetailMap,
     readBuildingBonus,
     readPayoutBonuses,
@@ -420,5 +421,85 @@ describe('the building level cap', () => {
             detailMap: { '/guild_buildings/treasury': { bonusPerLevel: 0.01 } },
         });
         expect(bonus).toMatchObject({ level: 20, bonus: 0.2, source: 'client' });
+    });
+});
+
+describe('merging two records for one guild', () => {
+    /**
+     * A record holding one skilling tile with the given sample times.
+     * @param {number} weekStart - Which week it belongs to
+     * @param {number[]} times - Sample timestamps
+     * @param {Object} [extra] - Fields to override on the tile
+     * @returns {Object} A record
+     */
+    function record(weekStart, times, extra = {}) {
+        return {
+            weekStart,
+            tiles: {
+                'skilling::milking': {
+                    name: 'Trial Milking',
+                    kind: 'skilling',
+                    level: 110,
+                    tier: 2,
+                    samples: times.map((t) => ({ t, readings: [{ current: t % 1000, max: 4000 }] })),
+                    tiers: [{ tier: 2, total: 4000 }],
+                    ...extra,
+                },
+            },
+        };
+    }
+
+    test('unions the samples, in order, without duplicating the shared one', () => {
+        // The two records are two views of one series: this session's, written
+        // under `default` before the guild name arrived, and the last session's,
+        // written under the name
+        const merged = mergeTrialRecords(record(thisWeek, [10, 20]), record(thisWeek, [20, 30]));
+
+        expect(merged.tiles['skilling::milking'].samples.map((sample) => sample.t)).toEqual([10, 20, 30]);
+    });
+
+    test('a tile only one of them has is kept', () => {
+        const stored = record(thisWeek, [10]);
+        const held = record(thisWeek, [20]);
+        held.tiles['combat::badger'] = { name: 'Trial Badger', kind: 'combat', samples: [{ t: 5, readings: [] }] };
+
+        expect(Object.keys(mergeTrialRecords(stored, held)).length).toBe(2);
+        expect(Object.keys(mergeTrialRecords(stored, held).tiles).sort()).toEqual([
+            'combat::badger',
+            'skilling::milking',
+        ]);
+    });
+
+    test('the tier from whichever record saw the trial most recently wins', () => {
+        const older = record(thisWeek, [10], { tier: 2, level: 110 });
+        const newer = record(thisWeek, [90], { tier: 5, level: 140 });
+
+        expect(mergeTrialRecords(older, newer).tiles['skilling::milking'].tier).toBe(5);
+        expect(mergeTrialRecords(newer, older).tiles['skilling::milking'].tier).toBe(5);
+    });
+
+    test('last week is not spliced onto this week', () => {
+        // A different ladder entirely: merging them would fit a growth curve
+        // across two of them
+        const lastWeek = record(thisWeek - 7 * 24 * 3600_000, [10]);
+        const merged = mergeTrialRecords(lastWeek, record(thisWeek, [20]));
+
+        expect(merged.weekStart).toBe(thisWeek);
+        expect(merged.tiles['skilling::milking'].samples.map((sample) => sample.t)).toEqual([20]);
+    });
+
+    test('the sample cap still holds after a merge', () => {
+        const many = (from) => Array.from({ length: MAX_SAMPLES }, (unused, index) => from + index);
+        const merged = mergeTrialRecords(record(thisWeek, many(0)), record(thisWeek, many(MAX_SAMPLES)));
+
+        expect(merged.tiles['skilling::milking'].samples).toHaveLength(MAX_SAMPLES);
+        // The newest are the ones kept
+        expect(merged.tiles['skilling::milking'].samples[0].t).toBe(MAX_SAMPLES);
+    });
+
+    test('nothing on one side is the other side, unchanged', () => {
+        const held = record(thisWeek, [10]);
+        expect(mergeTrialRecords(null, held).tiles).toEqual(held.tiles);
+        expect(mergeTrialRecords(held, null).tiles).toEqual(held.tiles);
     });
 });

@@ -76,6 +76,45 @@ export const WEEKLY_RESET_UTC_DAY = 5;
 export const COMBAT_ENCOUNTERS = ['badger', 'chameleon', 'jellyfish', 'hedgehog', 'swarm'];
 
 /**
+ * The skills a skilling trial can be run in, lowercased.
+ *
+ * A closed list, and that is what makes it useful: the guild panel's cards are
+ * found by *shape* rather than by class name, so something has to say that a
+ * card reading "Guild Experience 4,120 / 20,000" is not a trial. A name is the
+ * only part of a card that is not a number, and every trial's name is either one
+ * of these or one of {@link COMBAT_ENCOUNTERS}.
+ */
+export const TRIAL_SKILLS = [
+    'milking',
+    'foraging',
+    'woodcutting',
+    'cheesesmithing',
+    'crafting',
+    'tailoring',
+    'cooking',
+    'brewing',
+    'alchemy',
+    'enhancing',
+];
+
+/**
+ * Whether a card's name is a trial's name.
+ *
+ * Substring rather than equality: the game writes combat trials as "Trial
+ * Chameleon" and skilling trials as bare "Milking" on the Trials tab and
+ * "Alchemy" on the In Progress tab, and a card may carry a level or a tier badge
+ * on the same line.
+ *
+ * @param {string} name - A card's name
+ * @returns {boolean} True when it names a trial
+ */
+export function isTrialName(name) {
+    const lowered = String(name || '').toLowerCase();
+    if (!lowered) return false;
+    return [...COMBAT_ENCOUNTERS, ...TRIAL_SKILLS].some((trial) => lowered.includes(trial));
+}
+
+/**
  * Which tier a trial level belongs to.
  * @param {number} level - Trial level, e.g. 140
  * @returns {number|null} 1-based tier, or null below the first tier

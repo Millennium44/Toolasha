@@ -12,6 +12,7 @@ import { describe, test, expect } from 'vitest';
 import {
     COMBAT_ENCOUNTERS,
     ELIGIBLE_TOKEN_SHARE,
+    isTrialName,
     PARTICIPANT_BONUS_SHARE,
     TRIAL_ACTIVE_MS,
     TRIAL_MAX_LEVEL,
@@ -532,5 +533,24 @@ describe('the trial week', () => {
 
     test('no start time is no answer', () => {
         expect(trialTimeLeftMs(null, Date.now())).toBeNull();
+    });
+});
+
+describe('isTrialName', () => {
+    test('the five encounters and the ten skills a trial can run in', () => {
+        expect(isTrialName('Trial Chameleon')).toBe(true);
+        expect(isTrialName('Milking')).toBe(true);
+        expect(isTrialName('Alchemy')).toBe(true);
+        expect(isTrialName('Enhancing')).toBe(true);
+    });
+
+    test('nothing else on the guild page is a trial', () => {
+        // This is the one filter standing between the card reader and the rest
+        // of the panel, now that cards are found by shape rather than by class
+        expect(isTrialName('Treasury')).toBe(false);
+        expect(isTrialName('Builders Hall')).toBe(false);
+        expect(isTrialName('Guild Experience')).toBe(false);
+        expect(isTrialName('MillenniumTest')).toBe(false);
+        expect(isTrialName('')).toBe(false);
     });
 });

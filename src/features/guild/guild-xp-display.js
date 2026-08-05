@@ -10,6 +10,7 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import { markAsProfileLink } from '../chat/chat-profile-link.js';
 import { guildXPTracker } from './guild-xp-tracker.js';
+import { findTrialsRoot } from './guild-trials-scrape.js';
 import { formatDateTime } from '../../utils/formatters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { fNum, rankBadge, addColumn, makeColumnSortable } from '../../utils/table-columns.js';
@@ -209,8 +210,19 @@ class GuildXPDisplay {
         );
         this.unregisterObservers.push(unregLeaderboard);
 
-        const unregTrials = domObserver.onClass('GuildXPDisplay-Trials', 'GuildPanel_trialsContent', (el) =>
-            this._renderTrialSignups(el)
+        // The trials tab's own container class has never been verified against a
+        // live client, and hanging the whole injection off it means one wrong
+        // guess takes the block off the screen with nothing logged — which is
+        // what happened to `guild-trials.js`. `GuildPanel_tileSummary` is
+        // verified and every trial card carries one, so a card appearing is the
+        // signal, and `findTrialsRoot` works out what to draw into.
+        const unregTrials = domObserver.onClass(
+            'GuildXPDisplay-Trials',
+            ['GuildPanel_trialsContent', 'GuildPanel_trialsTab', 'GuildPanel_tileSummary'],
+            () => {
+                const root = findTrialsRoot();
+                if (root) this._renderTrialSignups(root);
+            }
         );
         this.unregisterObservers.push(unregTrials);
 
@@ -218,7 +230,7 @@ class GuildXPDisplay {
         this._boundRefreshOverview = () => this._refreshOverviewIfVisible();
         this._boundRefreshMembers = () => this._refreshMembersIfVisible();
         this._boundRefreshTrials = () => {
-            const el = document.querySelector('[class*="GuildPanel_trialsContent"]');
+            const el = findTrialsRoot();
             if (el) this._renderTrialSignups(el);
         };
         this._boundRefreshLeaderboard = (data) => {
@@ -777,9 +789,6 @@ class GuildXPDisplay {
         unsignedSkilling.sort((a, b) => a.localeCompare(b));
         unsignedCombat.sort((a, b) => a.localeCompare(b));
 
-        const statusRow = trialsContentEl.querySelector('[class*="GuildPanel_eventStatusRow"]');
-        if (!statusRow) return;
-
         const wrapper = document.createElement('div');
         wrapper.className = 'mwi-trial-signups';
         wrapper.style.cssText = `
@@ -807,7 +816,17 @@ class GuildXPDisplay {
 
         wrapper.innerHTML = makeList('Skilling', unsignedSkilling) + makeList('Combat', unsignedCombat);
 
-        statusRow.insertAdjacentElement('afterend', wrapper);
+        // The status row is a place to put this, not a condition for having it.
+        // Requiring it meant an unverified class name could withhold the whole
+        // block — the list of who has not signed up does not depend on the game
+        // drawing a status line above it, and the tab's first card is a
+        // perfectly good anchor when there is none.
+        const statusRow = trialsContentEl.querySelector('[class*="GuildPanel_eventStatusRow"]');
+        const firstCard = trialsContentEl.querySelector('[class*="GuildPanel_tileSummary"]');
+        const anchor = firstCard?.closest('[class*="GuildPanel_tile"]:not([class*="GuildPanel_tileSummary"])');
+        if (statusRow) statusRow.insertAdjacentElement('afterend', wrapper);
+        else if (anchor) anchor.insertAdjacentElement('beforebegin', wrapper);
+        else trialsContentEl.insertAdjacentElement('afterbegin', wrapper);
 
         wrapper.querySelectorAll('.mwi-trial-name').forEach((el) => {
             el.addEventListener('click', () => {
@@ -979,3 +998,7 @@ export default {
     initialize: () => guildXPDisplay.initialize(),
     cleanup: () => guildXPDisplay.disable(),
 };
+
+// Named alongside the default the same way `guild-trials.js` exports its
+// singleton, so the tab injections can be driven directly in tests
+export { guildXPDisplay };

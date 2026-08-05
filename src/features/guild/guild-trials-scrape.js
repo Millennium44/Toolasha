@@ -1,5 +1,32 @@
 /**
- * Reading the guild "In Progress" tab.
+ * Reading the guild trial tabs.
+ *
+ * ## There are two of them, and they hold different halves of the answer
+ *
+ * Confirmed from a live client, which is what this file spent its first two
+ * revisions guessing at. The guild page's nav is Overview, Members,
+ * Applications, **Trials**, **In Progress**, Buildings, Shop, Icons — and the
+ * two trial tabs are not two views of one thing:
+ *
+ * - **Trials** is the setup tab. Its cards carry the trial's name and level
+ *   ("Milking Lv.130"), what clearing it is worth ("600 pts"), how many members
+ *   have signed up ("1/28 signed up"), and a countdown ("20m 53s"). There is no
+ *   progress bar anywhere on it.
+ * - **In Progress** is the live tab. Its card carries the reading everything
+ *   here exists to measure — "Alchemy 18,850 / 65,280" — beside the members
+ *   working on it, and a footer with the trial's own clock ("Time: 20m 37s").
+ *   It carries no level and no tier.
+ *
+ * So neither tab is sufficient. The rate comes from In Progress, the tier and
+ * the participant count come from Trials, and they are joined by the one thing
+ * both cards carry: the trial's name. Sampling either tab writes into the same
+ * record under the same key, and a card with nothing moving on it updates the
+ * trial's identity without pushing a reading — see `recordTileSample`.
+ *
+ * The cost of getting this wrong was two revisions of a feature that recorded
+ * nothing: the first required a container class the game does not use, and the
+ * second required every card to carry a progress bar, which is true of exactly
+ * one of the two tabs.
  *
  * The trial state a member can see is on the screen, and — as far as anything
  * this script can observe — only on the screen. The socket carries who signed up
@@ -28,13 +55,16 @@
  * and the overlay tile that reads from them are all dark at once, silently,
  * with no error anywhere: the observer simply never fires and the interval's
  * `querySelector` simply never matches. Which is what was reported during a live
- * trial. So the container is now *found* rather than named: {@link findTrialsRoot}
- * prefers the class if it exists and otherwise falls back to the guild panel
- * itself, and {@link readTrialTiles} is safe to point at a whole panel because a
- * tile only counts as a trial when its level lands on the trial ladder — a guild
- * building's "Lv. 10 / 20" is below the first tier's level 100 and drops out,
- * which is the same discriminator `guild-credit-value.js` already uses to decide
- * which tile summaries get a tier badge.
+ * trial. So the container is now *found* rather than named ({@link findTrialsRoot}),
+ * and a card is found by its contents rather than by its container.
+ *
+ * What keeps that from reading the rest of the guild page as trials is the one
+ * part of a card that is not a number: `isTrialName` knows the five encounters
+ * and the ten skills a trial can be run in, and a card whose name is not one of
+ * them is not a trial — not a building, not a guild XP bar, not a member row.
+ * That is a stronger filter than the level ladder it replaces, and unlike the
+ * ladder it survives a card that carries no level at all, which is every card on
+ * the In Progress tab.
  *
  * That last one matters: the observed combat card shows both a small falling
  * number over a large one (boss health) and a large rising number over a round
@@ -45,7 +75,7 @@
  * drawing.
  */
 
-import { COMBAT_ENCOUNTERS, tierFromLevel } from './guild-trials-math.js';
+import { COMBAT_ENCOUNTERS, isTrialName, tierFromLevel } from './guild-trials-math.js';
 
 /** Suffix multipliers on abbreviated numbers the game renders in bars */
 const SUFFIXES = { k: 1e3, m: 1e6, b: 1e9, t: 1e12 };
@@ -95,6 +125,47 @@ export function parseBarReadings(text) {
     return readings;
 }
 
+/** A line saying how many members have signed up, either way round */
+const SIGNUP_PATTERN = /signed\s*up/i;
+
+/**
+ * How many members have signed up for a trial, from its card.
+ *
+ * The Trials tab writes it both ways round — "1/28 signed up" under a skilling
+ * card and "Signed Up 3/56" under a combat one — so the ratio is looked for in a
+ * line that says what it is rather than at a fixed position.
+ *
+ * This matters twice over. It is a better participant count than the socket's,
+ * because it is the number the game itself is showing; and a ratio that is *not*
+ * recognised as a sign-up count is a catastrophe rather than a gap, since
+ * "1 / 28" has exactly the shape of a progress bar and would be sampled as one.
+ *
+ * @param {string} text - A card line
+ * @returns {{signed: number, total: number}|null} The count, or null when the line is not one
+ */
+export function parseSignups(text) {
+    if (typeof text !== 'string' || !SIGNUP_PATTERN.test(text)) return null;
+
+    const match = text.match(/(\d[\d,]*)\s*\/\s*(\d[\d,]*)/);
+    if (!match) return null;
+
+    const signed = Number(match[1].replace(/,/g, ''));
+    const total = Number(match[2].replace(/,/g, ''));
+    return Number.isFinite(signed) && Number.isFinite(total) ? { signed, total } : null;
+}
+
+/**
+ * What a trial's card says clearing it is worth, from its "600 pts".
+ * @param {string} text - A card line
+ * @returns {number|null} Points, or null when the line does not carry any
+ */
+export function parsePoints(text) {
+    const match = typeof text === 'string' ? text.match(/(\d[\d,]*)\s*(?:pts?|points?)\b/i) : null;
+    if (!match) return null;
+    const points = Number(match[1].replace(/,/g, ''));
+    return Number.isFinite(points) ? points : null;
+}
+
 /**
  * The trial level a tile is showing, from its `Lv.<n>` summary.
  * @param {string} text - Tile text
@@ -121,6 +192,96 @@ export function parseClockMs(text) {
     const seconds = Number(match[3]);
     if (![hours, minutes, seconds].every(Number.isFinite)) return null;
     return ((hours * 60 + minutes) * 60 + seconds) * 1000;
+}
+
+/**
+ * A duration written in words — `42m 15s`, `1h 3m`, `58 sec`.
+ *
+ * The clock is only ever *seen* as `mm:ss` on the observed tab, but the game
+ * writes durations both ways in different places and the whole point of this
+ * search is that the named row it used to read may not exist. A second spelling
+ * costs one regex and removes one more single point of failure.
+ *
+ * @param {string} text - Text to scan
+ * @returns {number|null} Milliseconds, or null when no unit-marked duration is in it
+ */
+export function parseWordyDurationMs(text) {
+    if (typeof text !== 'string') return null;
+
+    const units = { h: 3600_000, m: 60_000, s: 1000 };
+    const pattern = /(\d+)\s*(h(?:ours?|rs?)?|m(?:in(?:ute)?s?)?|s(?:ec(?:ond)?s?)?)\b/gi;
+
+    let total = null;
+    let match = pattern.exec(text);
+    while (match) {
+        const unit = units[match[2][0].toLowerCase()];
+        if (unit) total = (total ?? 0) + Number(match[1]) * unit;
+        match = pattern.exec(text);
+    }
+    return total;
+}
+
+/**
+ * The trial countdown, found anywhere on the tab.
+ *
+ * `GuildPanel_eventStatusRow` is as unverified as the tab container was, and it
+ * is the *only* thing that ever produced a time left — so when it is missing,
+ * `projectPace` never runs and "On pace for" silently never appears, which is
+ * the same class of invisible failure as the tab itself. This looks for the
+ * clock instead of being told where it is.
+ *
+ * Both live tabs carry one: "20m 53s" on each Trials card, and "Time: 20m 37s"
+ * in the In Progress footer. Both are written in units rather than as a colon
+ * clock, which is fortunate, because the page also carries text that a colon
+ * clock reader would swallow whole — see the guards.
+ *
+ * What keeps it from reading a countdown out of something that is not one, which
+ * matters because the root may be a whole guild panel:
+ *
+ * - **Per element, never the welded `textContent`.** Joining siblings invents
+ *   digit runs that were never on screen, the same way it invents levels.
+ * - **Nothing containing a `/`.** A trial's bar reads `582,115 / 600,000`, and
+ *   `15 / 60` would otherwise parse as fifteen minutes.
+ * - **No times of day.** The Trials tab's header reads "Skilling Trial - In
+ *   Progress Thu 09:00 AM". As a colon clock that is nine minutes, it sits in a
+ *   line saying "in progress", and it would have won — a confident, wrong
+ *   deadline. A weekday or an am/pm anywhere in the line disqualifies it.
+ * - **No decimals or percentages.** The In Progress footer reads "Work Time
+ *   3.14s, Success Rate 60.8%". A countdown is never written with a decimal
+ *   point, and "Work Time" is exactly the sort of line a label test would like.
+ * - **Plausible as a trial clock or not at all.** A trial runs an hour, so
+ *   anything above that or at zero is something else. Rejected rather than
+ *   clamped: clamping an hour and a half down to an hour would turn a wrong
+ *   reading into a confident one.
+ *
+ * Candidates are then ranked rather than taken first-come: a duration written in
+ * units beats a colon clock, since only the latter is ambiguous with a time of
+ * day, and a line that says what it is ("remaining", "Time:") beats a bare one.
+ *
+ * @param {Element} root - The trials root, from {@link findTrialsRoot}
+ * @param {number} maxMs - Longest a trial can run; anything longer is not this clock
+ * @returns {number|null} Milliseconds left, or null when no clock is on the page
+ */
+export function findTrialClockMs(root, maxMs) {
+    if (!root || typeof root.querySelectorAll !== 'function') return null;
+
+    const plausible = (value) => Number.isFinite(value) && value > 0 && value <= maxMs;
+    const labelled = /remain|left|ends?\b|until|time/i;
+    const notAClock = /\d+\.\d|%|\b(?:am|pm)\b|\b(?:mon|tue|wed|thu|fri|sat|sun)/i;
+
+    // [labelled units, bare units, labelled colon, bare colon]
+    const ranked = [null, null, null, null];
+    for (const line of textLines(root)) {
+        if (line.includes('/') || notAClock.test(line)) continue;
+
+        const wordy = parseWordyDurationMs(line);
+        const value = plausible(wordy) ? wordy : parseClockMs(line);
+        if (!plausible(value)) continue;
+
+        const rank = (plausible(wordy) ? 0 : 2) + (labelled.test(line) ? 0 : 1);
+        if (ranked[rank] === null) ranked[rank] = value;
+    }
+    return ranked.find((value) => value !== null) ?? null;
 }
 
 /**
@@ -169,22 +330,34 @@ export function matchTrialHrid(name, hrids) {
  * overview `GuildPanel_overviewTab`, so `trialsTab` is at least as likely as the
  * `trialsContent` this was written against.
  */
-const TRIALS_ROOT_CLASSES = ['GuildPanel_trialsContent', 'GuildPanel_trialsTab'];
+const TRIALS_ROOT_CLASSES = [
+    'GuildPanel_trialsContent',
+    'GuildPanel_trialsTab',
+    'GuildPanel_inProgressTab',
+    'GuildPanel_inProgressContent',
+];
 
 /**
- * Where to look for trial tiles.
+ * Where to look for trial cards.
  *
  * The named container when the game has one, and the guild panel as a whole when
- * it does not. Falling back to the panel is safe because {@link readTrialTiles}
- * only accepts tiles whose level is on the trial ladder, and it is what stops
- * one unverified class name from taking the entire feature offline.
+ * it does not — which is the case that actually happens, since none of the four
+ * names above has ever been seen on a live client. What makes the fallback safe
+ * is not the container but the filter: {@link readTrialTiles} only accepts a card
+ * whose name is a trial's.
+ *
+ * The guild panel is only handed back when something trial-shaped is on it, so
+ * the Members tab is not scraped every five seconds for nothing. Two shapes
+ * qualify, because the two tabs look nothing alike: a tile summary, which the
+ * Trials tab's cards carry, or an `n / m` reading, which is all the In Progress
+ * tab's card has.
  *
  * `querySelector` returns the first match in document order, and an ancestor
  * always precedes its descendants — so the guild-panel fallback is the outermost
  * `GuildPanel_*` element rather than whichever small child happens to match.
  *
  * @param {Document|Element} [scope] - Where to look
- * @returns {Element|null} The narrowest container known to hold the tiles, or null
+ * @returns {Element|null} The narrowest container known to hold the cards, or null
  */
 export function findTrialsRoot(scope = typeof document === 'undefined' ? null : document) {
     if (!scope || typeof scope.querySelector !== 'function') return null;
@@ -193,66 +366,139 @@ export function findTrialsRoot(scope = typeof document === 'undefined' ? null : 
         const named = scope.querySelector(`[class*="${className}"]`);
         if (named) return named;
     }
-    // No tiles anywhere means the guild panel is on another tab, and handing
-    // back the panel would only make the caller scrape it for nothing
-    if (!scope.querySelector('[class*="GuildPanel_tileSummary"]')) return null;
-    return scope.querySelector('[class*="GuildPanel"]');
+
+    const panel = scope.querySelector('[class*="GuildPanel"]');
+    if (!panel) return null;
+
+    // A cheap existence probe, and the one place the welded `textContent` is the
+    // right thing to read: whether *some* reading is on the panel does not
+    // depend on which element holds it, and the cards themselves are read line
+    // by line further down
+    const hasSummary = Boolean(panel.querySelector('[class*="GuildPanel_tileSummary"]'));
+    const hasReading = /\d[\d,.]*\s*\/\s*\d/.test(panel.textContent || '');
+    return hasSummary || hasReading ? panel : null;
+}
+
+/** How far to climb from a reading before giving up on finding its card */
+const CARD_CLIMB_LIMIT = 6;
+
+/**
+ * An element's own text, without its children's.
+ *
+ * The difference is the whole reason cards can be found at all: `textContent`
+ * welds a card's runs into one string that parses as numbers nobody displayed,
+ * while own text says what *this* element is showing — which is what makes it an
+ * anchor or not.
+ *
+ * @param {Element} el - The element
+ * @returns {string} Its own text, trimmed
+ */
+function ownText(el) {
+    let text = '';
+    for (const child of el?.childNodes || []) {
+        if (child.nodeType === 3) text += child.textContent || '';
+    }
+    return text.trim();
 }
 
 /**
- * The tiles on the In Progress tab.
+ * The card an element belongs to.
  *
- * A tile is an element containing a `GuildPanel_tileSummary`; the outermost such
- * element wins, so a summary nested two levels deep still yields one tile rather
- * than two. Tiles without a level are dropped — a card with no `Lv.` on it is
- * not a trial — and so are tiles whose level is below the first tier's, which is
- * what keeps a guild building's "Lv. 10 / 20" out when the root being scraped is
- * a whole guild panel rather than the trials tab.
+ * By class where the game offers one, and otherwise by climbing until the
+ * subtree holds a name as well as the number that was climbed from. Trial cards
+ * on the In Progress tab carry no class this file can name and no level, so
+ * "the smallest ancestor that has both a name and a reading" is what a card
+ * *is* there — and it is the definition that survives a redesign, since it
+ * describes the card rather than its markup.
  *
- * @param {Element} root - The `GuildPanel_trialsContent` element, or any ancestor
- * @returns {Array<{element: Element, name: string, level: number, tier: number|null,
- *   kind: 'combat'|'skilling', readings: Array<{current: number, max: number}>}>} Tiles, in document order
+ * @param {Element} start - The element the number was found on
+ * @param {Element} root - Never climb past this
+ * @returns {Element} The card, or the starting element when nothing better is found
+ */
+function cardFor(start, root) {
+    const named = start.closest?.('[class*="GuildPanel_tile"]:not([class*="GuildPanel_tileSummary"])');
+    if (named) return named;
+
+    let node = start;
+    for (let step = 0; step < CARD_CLIMB_LIMIT; step += 1) {
+        if (textLines(node).some((line) => isTrialName(line))) return node;
+        if (!node.parentElement || node === root) break;
+        node = node.parentElement;
+    }
+    return start;
+}
+
+/**
+ * The trial cards on either trial tab.
+ *
+ * Cards are found by what they contain rather than by what they are called: a
+ * tile summary (the Trials tab's setup cards) or a progress reading (the In
+ * Progress tab's live card). Everything after that is per-card text, and
+ * everything a card does not carry comes back null rather than being guessed —
+ * a Trials card has a level and no reading, the In Progress card has a reading
+ * and no level, and the record joins them by name.
+ *
+ * The filter that makes this safe against a whole-panel root is the name: a card
+ * whose name is not a trial's is dropped, which excludes guild buildings, member
+ * rows and the guild's own XP bar without needing to know what any of them look
+ * like.
+ *
+ * @param {Element} root - The trials root, from {@link findTrialsRoot}
+ * @returns {Array<{element: Element, name: string, level: number|null, tier: number|null,
+ *   kind: 'combat'|'skilling', readings: Array<{current: number, max: number}>,
+ *   signups: {signed: number, total: number}|null, points: number|null}>} Cards, in document order
  */
 export function readTrialTiles(root) {
     if (!root || typeof root.querySelectorAll !== 'function') return [];
 
-    const summaries = Array.from(root.querySelectorAll('[class*="GuildPanel_tileSummary"]'));
+    // What a card is anchored by: the level line that the Trials tab's cards
+    // carry, or the reading that is all the In Progress tab's card has. Own text
+    // rather than `textContent`, so an anchor is the element that actually holds
+    // the run — and so that a level line this script has appended a tier badge
+    // to is still found.
+    const anchors = [...root.querySelectorAll('*')].filter((el) => {
+        // Never this script's own output: the per-card block is appended to the
+        // card it describes, so a careless anchor list reads it straight back
+        if (el.closest?.('[class*="mwi-"]')) return false;
+        if (typeof el.className === 'string' && el.className.includes('GuildPanel_tileSummary')) return true;
+
+        const own = ownText(el);
+        return parseTrialLevel(own) !== null || parseBarReadings(own).length > 0;
+    });
+
     const tiles = [];
     const seen = new Set();
 
-    for (const summary of summaries) {
-        // Climb to the card the summary belongs to. The `:not` matters: the
-        // summary's own class starts `GuildPanel_tileSummary`, so a bare
-        // `[class*="GuildPanel_tile"]` matches the summary itself and every card
-        // collapses to its level line.
-        const tile =
-            summary.closest('[class*="GuildPanel_tile"]:not([class*="GuildPanel_tileSummary"])') ||
-            summary.parentElement ||
-            summary;
+    for (const anchor of anchors) {
+        const tile = cardFor(anchor, root);
         if (seen.has(tile)) continue;
         seen.add(tile);
-
-        const lines = textLines(tile);
 
         // Per element, never off the whole card. `textContent` welds siblings
         // together with no separator: a card holding "Lv.110" beside a bar
         // holding "1.2M / 4M" reads as `Lv.1101.2M / 4M`, which parses as level
         // 1,101 and a current of 1,101,200,000. Both wrong, neither obviously so.
+        const lines = textLines(tile);
+        const name = readTileName(tile, anchor, lines);
+        // The one filter standing between this and the rest of the guild page
+        if (!isTrialName(name)) continue;
+
         const level = lines.map(parseTrialLevel).find((candidate) => candidate !== null) ?? null;
-        if (level === null) continue;
+        const signups = lines.map(parseSignups).find((candidate) => candidate !== null) ?? null;
 
-        // Below the trial ladder is a guild building, not a trial
-        const tier = tierFromLevel(level);
-        if (tier === null) continue;
-
-        const name = readTileName(tile, summary, lines);
         tiles.push({
             element: tile,
             name,
             level,
-            tier,
+            tier: level === null ? null : tierFromLevel(level),
             kind: isCombatTrialName(name) ? 'combat' : 'skilling',
-            readings: lines.flatMap(parseBarReadings),
+            // Sign-up counts are excluded rather than filtered afterwards:
+            // "1/28 signed up" has precisely the shape of a progress bar, and a
+            // trial sampled against a sign-up ratio would report a pool that
+            // fills and empties as members join
+            readings: lines.filter((line) => !SIGNUP_PATTERN.test(line)).flatMap(parseBarReadings),
+            signups,
+            points: lines.map(parsePoints).find((candidate) => candidate !== null) ?? null,
         });
     }
 
@@ -260,24 +506,44 @@ export function readTrialTiles(root) {
 }
 
 /**
- * A card's text, one entry per element that actually holds text.
+ * A card's text, one entry per run the game rendered.
  *
- * The leaves are what the game rendered as separate runs; joining them, which is
- * what `textContent` does, invents numbers that were never on the screen. A card
- * whose whole content is one text node still yields one line, so the caller does
- * not need a special case for it.
+ * Text *nodes* rather than leaf elements, which is a correction rather than a
+ * refinement: this script appends a `T<n>` tier badge inside the very element
+ * that carries "Lv.130" (`guild-credit-value.js`), and a leaf-element walk skips
+ * any element that has acquired a child — so the level line disappeared from
+ * every card the moment the badge was added to it, and the tier could not be
+ * read from a card this script had itself annotated. Walking text nodes keeps
+ * the two runs apart *and* keeps them both.
+ *
+ * Joining them, which is what `textContent` does, is the other failure: a card
+ * holding "Lv.110" beside a bar holding "1.2M / 4M" reads as `Lv.1101.2M / 4M`.
+ *
+ * Anything this script injected is skipped. A card's own block is appended to
+ * the card, so without that the panel would read its own output back — "Next
+ * tier work (T5)" is not something the game said.
  *
  * @param {Element} tile - The tile
- * @returns {string[]} Trimmed, non-empty texts, in document order
+ * @returns {string[]} Trimmed, non-empty runs of text, in document order
  */
 export function textLines(tile) {
-    const nodes = [tile, ...Array.from(tile.querySelectorAll?.('*') || [])];
     const lines = [];
-    for (const node of nodes) {
-        if (node.childElementCount > 0) continue;
-        const text = (node.textContent || '').trim();
-        if (text) lines.push(text);
-    }
+    if (!tile || typeof tile !== 'object') return lines;
+
+    const ours = (node) => typeof node.className === 'string' && node.className.includes('mwi-');
+    const walk = (node) => {
+        for (const child of node.childNodes || []) {
+            // 3 is a text node, 1 an element; anything else (comments) is not text
+            if (child.nodeType === 3) {
+                const text = (child.textContent || '').trim();
+                if (text) lines.push(text);
+            } else if (child.nodeType === 1 && !ours(child)) {
+                walk(child);
+            }
+        }
+    };
+
+    walk(tile);
     return lines;
 }
 

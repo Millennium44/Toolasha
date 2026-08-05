@@ -222,7 +222,7 @@ function panelCommands() {
             name: 'Guild Trials',
             // Not a panel: the figures are drawn into the game's guild page, and
             // this is the only signpost to them there is
-            hint: 'Trial pace and payout, on the guild page',
+            hint: 'Trial pace and payout, on the guild In Progress tab',
             run: () => openGuildTrials(),
         },
         { name: 'Settings', hint: "Toolasha's settings tab", run: () => openSettings() },
@@ -329,8 +329,9 @@ const TRIAL_BLOCK_SELECTOR = '.mwi-trial-info';
  * projection are drawn into the game's own guild page, under the trial cards —
  * which is a perfectly good place for them and a completely undiscoverable one,
  * since nothing anywhere says they exist. Hence this entry: it walks the same
- * path a player would (guild page, Trials tab) and then lights up the block, so
- * one keystroke both answers "where is it" and proves it is there.
+ * path a player would (guild page, In Progress tab — not the Trials tab beside
+ * it, which is the sign-up sheet) and then lights up the block, so one keystroke
+ * both answers "where is it" and proves it is there.
  *
  * The blocks only exist while the game is showing trial cards, and readings are
  * only taken while that tab is open — so when nothing has been drawn, this says
@@ -353,18 +354,23 @@ export async function openGuildTrials() {
             return false;
         }
 
-        // Whatever the tab strip calls its tabs, the one wanted is the one that
-        // reads as the trials tab; the game has called it both "Trials" and
-        // "In Progress" in different places
-        const tabs = panel.querySelectorAll('[class*="TabsComponent_tab"]');
-        const trialsTab = [...tabs].find((tab) => /trial|in progress/i.test((tab.textContent || '').trim()));
+        // The guild page has *both* a "Trials" tab and an "In Progress" tab, and
+        // they are not the same thing: Trials is the setup sheet — tiers, points,
+        // who signed up — and In Progress is where the pool bar and the pace are.
+        // Somebody asking the palette for the trial figures wants the live one,
+        // so In Progress is preferred and Trials is only the fallback.
+        const tabs = [...panel.querySelectorAll('[class*="TabsComponent_tab"]')];
+        const named = (pattern) => tabs.find((tab) => pattern.test((tab.textContent || '').trim()));
+        const trialsTab = named(/in\s*progress/i) || named(/trial/i);
         trialsTab?.click();
 
         const block = await waitFor(TRIAL_BLOCK_SELECTOR);
         if (!block) {
-            showToast('No trial figures yet — they are drawn under the trial cards while this tab is open.', {
-                kind: 'info',
-            });
+            showToast(
+                'No trial figures yet — they are drawn under the cards on the In Progress tab while a trial ' +
+                    'is running. The Trials tab beside it has the tiers and sign-ups.',
+                { kind: 'info' }
+            );
             return false;
         }
 

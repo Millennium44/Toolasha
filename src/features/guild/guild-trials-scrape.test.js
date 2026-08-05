@@ -15,16 +15,23 @@ import { describe, test, expect } from 'vitest';
 
 import {
     classifyReadings,
+    findTrialClockMs,
     findTrialsRoot,
+    parsePoints,
+    parseSignups,
     isCombatTrialName,
     matchTrialHrid,
     parseAmount,
     parseBarReadings,
     parseClockMs,
     parseTrialLevel,
+    parseWordyDurationMs,
     readTrialTiles,
     textLines,
 } from './guild-trials-scrape.js';
+
+/** An hour, which is how long a trial runs */
+const HOUR_MS = 60 * 60 * 1000;
 
 describe('parseAmount', () => {
     test('plain and comma-grouped numbers', () => {
@@ -344,5 +351,184 @@ describe('classifyReadings', () => {
     test('nothing to classify', () => {
         expect(classifyReadings([], 'combat')).toEqual({ bossIndex: null, poolIndex: null });
         expect(classifyReadings(undefined, 'skilling')).toEqual({ bossIndex: null, poolIndex: null });
+    });
+});
+
+describe('parseWordyDurationMs', () => {
+    test('reads the units the game writes durations in', () => {
+        expect(parseWordyDurationMs('42m 15s')).toBe(42 * 60_000 + 15_000);
+        expect(parseWordyDurationMs('1h 3m')).toBe(3600_000 + 180_000);
+        expect(parseWordyDurationMs('58 sec')).toBe(58_000);
+        expect(parseWordyDurationMs('2 hours 30 minutes')).toBe(9000_000);
+    });
+
+    test('a number with no unit on it is not a duration', () => {
+        expect(parseWordyDurationMs('618000')).toBeNull();
+        expect(parseWordyDurationMs('Trial Chameleon')).toBeNull();
+        expect(parseWordyDurationMs(null)).toBeNull();
+    });
+});
+
+describe('findTrialClockMs', () => {
+    /**
+     * A tab built from lines of text, one element each.
+     * @param {string[]} lines - What the tab says
+     * @returns {Element} The root
+     */
+    function tab(lines) {
+        document.body.innerHTML = '';
+        const root = document.createElement('div');
+        root.className = 'GuildPanel_trialsContent__a';
+        for (const text of lines) {
+            const el = document.createElement('div');
+            el.textContent = text;
+            root.appendChild(el);
+        }
+        document.body.appendChild(root);
+        return root;
+    }
+
+    test('finds the countdown without being told which element holds it', () => {
+        // `GuildPanel_eventStatusRow` is as unverified as the tab container was,
+        // and it was the only thing that ever produced a time left
+        expect(findTrialClockMs(tab(['Trial Chameleon', '42:15 remaining']), HOUR_MS)).toBe(42 * 60_000 + 15_000);
+    });
+
+    test('reads a countdown written in words too', () => {
+        expect(findTrialClockMs(tab(['Ends in 12m 30s']), HOUR_MS)).toBe(12 * 60_000 + 30_000);
+    });
+
+    test('a progress bar is not a clock', () => {
+        // `15 / 60` would otherwise read as fifteen minutes, and a pace fitted to
+        // an invented deadline is worse than no pace at all
+        expect(findTrialClockMs(tab(['582,115 / 600,000', '15 / 60']), HOUR_MS)).toBeNull();
+    });
+
+    test('anything longer than a trial is something else, and is rejected rather than clamped', () => {
+        // Clamping 1:30:00 down to an hour would turn a wrong reading into a
+        // confident one
+        expect(findTrialClockMs(tab(['1:30:00']), HOUR_MS)).toBeNull();
+        expect(findTrialClockMs(tab(['0:00']), HOUR_MS)).toBeNull();
+    });
+
+    test('a labelled line wins over a bare number that happens to parse', () => {
+        expect(findTrialClockMs(tab(['3:20', 'Time remaining 12:00']), HOUR_MS)).toBe(12 * 60_000);
+    });
+
+    test('a bare plausible clock is still taken when nothing is labelled', () => {
+        expect(findTrialClockMs(tab(['3:20']), HOUR_MS)).toBe(200_000);
+    });
+
+    test('no clock anywhere is null, not a guess', () => {
+        expect(findTrialClockMs(tab(['Trial Chameleon', 'Lv.140']), HOUR_MS)).toBeNull();
+        expect(findTrialClockMs(null, HOUR_MS)).toBeNull();
+    });
+});
+
+describe('the cards on the two live tabs', () => {
+    /**
+     * A Trials-tab setup card, as the live client draws one.
+     * @param {string} html - The card's inner markup
+     * @returns {Element} A guild panel holding it
+     */
+    function panelWith(html) {
+        document.body.innerHTML = `<div class="GuildPanel_guildPanel__r">${html}</div>`;
+        return document.querySelector('[class*="GuildPanel_guildPanel"]');
+    }
+
+    test('a Trials card gives level, tier, points and sign-ups, and no readings', () => {
+        const root = panelWith(
+            '<div class="GuildPanel_tile__a">' +
+                '<div class="GuildPanel_tileName__n">Milking</div>' +
+                '<div class="GuildPanel_tileSummary__s">Lv.130</div>' +
+                '<div>600 pts</div><div>1/28 signed up</div><div>20m 53s</div></div>'
+        );
+
+        expect(readTrialTiles(root)[0]).toMatchObject({
+            name: 'Milking',
+            level: 130,
+            tier: 4,
+            kind: 'skilling',
+            points: 600,
+            signups: { signed: 1, total: 28 },
+            readings: [],
+        });
+    });
+
+    test('an In Progress card gives the reading, with no level anywhere on it', () => {
+        const root = panelWith('<div class="GuildPanel_card__a"><div>Alchemy</div><div>18,850 / 65,280</div></div>');
+        const cards = readTrialTiles(root);
+
+        expect(cards).toHaveLength(1);
+        expect(cards[0]).toMatchObject({ name: 'Alchemy', level: null, tier: null, kind: 'skilling' });
+        expect(cards[0].readings).toEqual([{ current: 18_850, max: 65_280 }]);
+    });
+
+    test('a card whose name is not a trial is not a card', () => {
+        // Guild buildings, member rows and the guild's own XP bar all live on
+        // the same panel, and the fallback root is the whole panel
+        const root = panelWith(
+            '<div class="GuildPanel_tile__a"><div>Treasury</div><div>Lv. 10 / 20</div></div>' +
+                '<div class="GuildPanel_tile__b"><div>Guild Experience</div><div>4,120 / 20,000</div></div>'
+        );
+
+        expect(readTrialTiles(root)).toEqual([]);
+    });
+
+    test('a combat trial on the In Progress tab is still classed as combat', () => {
+        const root = panelWith(
+            '<div class="GuildPanel_card__a"><div>Trial Chameleon</div><div>30,857 / 618,000</div></div>'
+        );
+        expect(readTrialTiles(root)[0].kind).toBe('combat');
+    });
+
+    test("this script's own block is not read back as game text", () => {
+        const root = panelWith(
+            '<div class="GuildPanel_tile__a"><div>Alchemy</div><div>18,850 / 65,280</div>' +
+                '<div class="mwi-trial-info"><div>Next tier work (T7)</div><div>1 / 2</div></div></div>'
+        );
+
+        expect(readTrialTiles(root)[0].readings).toEqual([{ current: 18_850, max: 65_280 }]);
+    });
+
+    test('the same trial on both tabs is one card each, keyed by the same name', () => {
+        const trials = readTrialTiles(
+            panelWith('<div class="GuildPanel_tile__a"><div>Alchemy</div><div>Lv.150</div></div>')
+        )[0];
+        const live = readTrialTiles(
+            panelWith('<div class="GuildPanel_card__a"><div>Alchemy</div><div>18,850 / 65,280</div></div>')
+        )[0];
+
+        expect(trials.name).toBe(live.name);
+        expect(trials.tier).toBe(6);
+        expect(live.readings).toHaveLength(1);
+    });
+});
+
+describe('parseSignups', () => {
+    test('reads the count whichever way round the card writes it', () => {
+        expect(parseSignups('1/28 signed up')).toEqual({ signed: 1, total: 28 });
+        expect(parseSignups('Signed Up 3/56')).toEqual({ signed: 3, total: 56 });
+        expect(parseSignups('0/28 signed up')).toEqual({ signed: 0, total: 28 });
+    });
+
+    test('a ratio that does not say it is a sign-up count is not one', () => {
+        // Which is the whole point: this exists so a sign-up ratio is never
+        // sampled as a pool reading, and a pool reading is never read as sign-ups
+        expect(parseSignups('18,850 / 65,280')).toBeNull();
+        expect(parseSignups('signed up')).toBeNull();
+    });
+});
+
+describe('parsePoints', () => {
+    test('reads what a tier is worth off the card', () => {
+        expect(parsePoints('600 pts')).toBe(600);
+        expect(parsePoints('0 pts')).toBe(0);
+        expect(parsePoints('1,200 points')).toBe(1200);
+    });
+
+    test('a number with no points on it is not a points figure', () => {
+        expect(parsePoints('Lv.130')).toBeNull();
+        expect(parsePoints('20m 53s')).toBeNull();
     });
 });

@@ -384,7 +384,7 @@ describe('switching a tile on by hand', () => {
      */
     async function openWithOffRow(rows) {
         game.rows = rows || [
-            row('guildTrialsPace', { name: 'Guild Trials', empty: 'Open the guild Trials tab once' }),
+            row('guildTrialsPace', { name: 'Guild Trials', empty: 'Open the guild In Progress tab' }),
             row('coins', { name: 'Coins', text: '1,024' }),
         ];
         saved.read = {
@@ -423,7 +423,7 @@ describe('switching a tile on by hand', () => {
         const content = tiles().get('guildTrialsPace')._content.textContent;
         expect(content).toContain('Guild Trials');
         expect(content).toContain('waiting for data');
-        expect(content).toContain('Open the guild Trials tab once');
+        expect(content).toContain('Open the guild In Progress tab');
     });
 
     test('and keeps saying it, refresh after refresh, until there is data', async () => {
@@ -472,7 +472,7 @@ describe('switching a tile on by hand', () => {
 
     test('a tile nobody touched is still hidden, which is the point of the policy', async () => {
         await openWithOffRow([
-            row('guildTrialsPace', { name: 'Guild Trials', empty: 'Open the guild Trials tab once' }),
+            row('guildTrialsPace', { name: 'Guild Trials', empty: 'Open the guild In Progress tab' }),
             row('dps', { name: 'DPS', empty: 'No damage tracked yet' }),
             row('coins', { name: 'Coins', text: '1,024' }),
         ]);
