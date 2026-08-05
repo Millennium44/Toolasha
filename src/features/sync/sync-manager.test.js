@@ -129,6 +129,7 @@ describe('push', () => {
 
     test('adopts a gist the account already has instead of making a second', async () => {
         gist.found = 'existing';
+        stored.map.toolasha_sync_lastSyncedAt = '2026-08-01T00:00:00Z';
         await syncManager.push();
         expect(gist.writes[0].id).toBe('existing');
     });
@@ -149,8 +150,32 @@ describe('push', () => {
     test('tells the writer how many chunks to clean up', async () => {
         stored.map.toolasha_sync_chunkCount = 4;
         stored.map.toolasha_sync_gistId = 'abc';
+        stored.map.toolasha_sync_lastSyncedAt = '2026-08-01T00:00:00Z';
         await syncManager.push();
         expect(gist.writes[0].previous).toBe(4);
+    });
+
+    test('a device that never synced must confirm before overwriting an existing gist', async () => {
+        stored.map.toolasha_sync_gistId = 'rich-gist';
+        dialog.answer = null;
+
+        const result = await syncManager.push();
+        expect(result).toEqual({ ok: true, skipped: true, reason: 'cancelled' });
+        expect(dialog.calls).toBe(1);
+        expect(gist.writes).toHaveLength(0);
+    });
+
+    test('confirming the overwrite pushes; a silent push never even asks', async () => {
+        stored.map.toolasha_sync_gistId = 'rich-gist';
+
+        const silent = await syncManager.push({ silent: true });
+        expect(silent).toEqual({ ok: true, skipped: true, reason: 'never-synced' });
+        expect(dialog.calls).toBe(0);
+
+        dialog.answer = 'push';
+        const result = await syncManager.push();
+        expect(result.ok).toBe(true);
+        expect(gist.writes).toHaveLength(1);
     });
 
     test('a rate limit is a warning toast, not a thrown error', async () => {

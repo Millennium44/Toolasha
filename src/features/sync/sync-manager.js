@@ -140,6 +140,26 @@ class SyncManager {
 
         const gistId = await this._resolveGistId(token);
 
+        // A device that has never exchanged with the gist has no idea what it
+        // would be overwriting — a fresh phone pushing before its first pull
+        // would replace a year of data with an empty database. Ask, with the
+        // right answer suggested; the interval never asks, it just declines.
+        if (gistId && !(await storage.get(KEY_LAST_SYNCED_AT, STORE, null))) {
+            if (silent) return { ok: true, skipped: true, reason: 'never-synced' };
+            const answer = await askChoice({
+                title: 'Overwrite the gist?',
+                message:
+                    'This device has never synced with the gist already on this account. Pushing replaces ' +
+                    "everything in the gist with this device's data. If this device is the new or empty one, " +
+                    'Pull first instead.',
+                choices: [
+                    { value: 'push', label: 'Push and overwrite the gist', tone: 'danger' },
+                    { value: null, label: 'Cancel' },
+                ],
+            });
+            if (answer !== 'push') return { ok: true, skipped: true, reason: 'cancelled' };
+        }
+
         // The hash above is always of the plaintext — compression and
         // encryption both change the bytes without changing the data (and a
         // fresh salt makes ciphertext different every push), so hashing
