@@ -9,7 +9,7 @@ import marketAPI from '../../api/marketplace.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
 import { watchTarget } from '../inventory/equipment-savings-row.js';
 import { watchItem } from '../inventory/watchlist.js';
-import { addAbilityGoal } from '../../utils/equipment-savings.js';
+import { addAbilityGoal, addHouseGoal } from '../../utils/equipment-savings.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { createAutofillManager } from '../../utils/marketplace-autofill.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
@@ -36,6 +36,7 @@ import {
     runUpgradeAnalysis,
     getStyleExcludedSkills,
     houseRoomAffectsCombat,
+    houseUpgradeMaterials,
     assignRankScores,
     planWithinBudget,
     explainUpgradeCost,
@@ -215,15 +216,77 @@ export function scoreGradientColor(place) {
  * @returns {Map<Object, number>} Row → 1-based place
  */
 export function scorePlaces(rows) {
-    const ladder = [...new Set((rows || []).map((r) => r?.score).filter((s) => Number.isFinite(s) && s > 0))].sort(
-        (a, b) => b - a
+    // A zero is the absence of a ranking rather than the bottom of one, so it is
+    // filtered out before the ladder is built — which is the one thing that
+    // makes the Score ladder different from a metric's
+    return metricPlaces(rows, (row) => (Number.isFinite(row?.score) && row.score > 0 ? row.score : null), false);
+}
+
+/**
+ * Where each row places within one column, ties sharing a place.
+ *
+ * The same ladder the Score column has always used, asked of any column. Two
+ * things it has to get right and a per-column version can get wrong. Direction:
+ * a Gold/0.01% column and a Repay time are cheaper-is-better, so first place is
+ * the *lowest* number, while an ROI is the other way up — reading the direction
+ * off the metric rather than assuming one is what keeps the greenest cell from
+ * being the worst row in the column. And absence: a row whose value is `—`
+ * never places, in either direction, because there is nothing to place.
+ *
+ * Built from the values rather than from the table order, so sorting on another
+ * column does not repaint anything.
+ *
+ * @param {Array<Object>} rows - The rows being drawn
+ * @param {Function} valueOf - (row) => number|null|undefined
+ * @param {boolean} lowerIsBetter - Whether first place is the smallest value
+ * @returns {Map<Object, number>} Row → 1-based place
+ */
+export function metricPlaces(rows, valueOf, lowerIsBetter) {
+    const read = (row) => {
+        const value = valueOf(row);
+        return Number.isFinite(value) ? value : null;
+    };
+
+    const ladder = [...new Set((rows || []).map(read).filter((v) => v !== null))].sort((a, b) =>
+        lowerIsBetter ? a - b : b - a
     );
+
     const places = new Map();
     for (const row of rows || []) {
-        const index = ladder.indexOf(row?.score);
+        const value = read(row);
+        if (value === null) continue;
+        const index = ladder.indexOf(value);
         if (index >= 0) places.set(row, index + 1);
     }
     return places;
+}
+
+/**
+ * The gradient ladder for every column the colouring covers, keyed by column.
+ *
+ * The Score plus every metric the Score is currently built from — which is the
+ * point of the change that introduced it. Colouring only the total said which
+ * rows were good all round and nothing about what any of them was good *at*; a
+ * ladder per column says "this one is the cheapest DPS, that one the cheapest
+ * EXP" at a glance, and the Score column still says who wins on aggregate.
+ *
+ * Only the metrics actually counting toward the Score get one. A column excluded
+ * in ⚙ Columns is a column the reader has said not to weigh, and colouring it
+ * would go on recommending it.
+ *
+ * @param {Array<Object>} rows - The rows about to be drawn
+ * @param {Set<string>|Array<string>} scoredKeys - `SCORE_METRICS` keys that count
+ * @returns {Map<string, Map<Object, number>>} Column key → row → place
+ */
+export function gradientLadders(rows, scoredKeys) {
+    const scored = scoredKeys instanceof Set ? scoredKeys : new Set(scoredKeys || []);
+    const ladders = new Map([['score', scorePlaces(rows)]]);
+
+    for (const metric of SCORE_METRICS) {
+        if (!scored.has(metric.key)) continue;
+        ladders.set(metric.key, metricPlaces(rows, metric.value, metric.lowerIsBetter));
+    }
+    return ladders;
 }
 
 /**
@@ -769,9 +832,17 @@ export async function loadAllZonesSnapshot() {
 /**
  * What an upgrade row would have you buy, if anything.
  *
- * Three kinds of row are not a purchase and get nothing: combat levels are paid
- * for in experience, house rooms in materials at your own house, and anything
- * whose candidate names no item at all.
+ * Two kinds of row are not a purchase and get nothing: combat levels are paid
+ * for in experience, and anything whose candidate names no item at all.
+ *
+ * A house room is a third case rather than a fourth non-case. It buys no single
+ * item — a level is a shopping list of materials, and a multi-level jump is
+ * several of those lists — so it carries `house` instead of an item to reserve:
+ * a room-level *goal*, which Equipment Savings keeps beside the gear and ability
+ * targets, and a `materials` list. The Market button is offered for the one
+ * material the bill is mostly made of, with the rest named in its tooltip, so
+ * nobody clicks it believing one tab covers the room. A level whose materials
+ * are all coin has no marketable line and gets no Market button.
  *
  * Ability rows are a purchase — the books are ordinary marketplace goods — so
  * they can be watched, bought at the market, and saved for. Saving for one is
@@ -795,7 +866,8 @@ export function upgradeRowPurchase(result) {
     if (!candidate) return null;
 
     const type = candidate.type || 'equipment';
-    if (type === 'combat_level' || type === 'house' || type === 'community_buff') return null;
+    if (type === 'combat_level' || type === 'community_buff') return null;
+    if (type === 'house') return houseRowPurchase(candidate, result);
 
     const isBook = ABILITY_CANDIDATE_TYPES.has(type);
     // A coffee is a consumable, so it can be watched but never saved for — the
@@ -831,6 +903,80 @@ export function upgradeRowPurchase(result) {
               }
             : null,
     };
+}
+
+/**
+ * A house row, as a handoff.
+ *
+ * The goal is the room and the level it is being taken to — one target per room,
+ * so re-adding replaces rather than stacks — priced at whatever the row was
+ * costed at, null when it could not be priced.
+ *
+ * The Market side is the honest part. A house level buys materials, and the
+ * marketplace opens one item at a time, so what is offered is the biggest line
+ * on the bill with its full count armed in the buy box, and the tooltip names
+ * the rest. Where the level is coins and nothing tradeable, there is nothing to
+ * open and `itemHrid` is null, which the markup reads as "no Market button".
+ *
+ * @param {Object} candidate - A `house` candidate
+ * @param {Object} result - The row it came from, for the costed price
+ * @returns {Object|null} The same shape as a gear purchase, plus `house`
+ */
+function houseRowPurchase(candidate, result) {
+    const roomName = candidate.roomName || candidate.roomHrid?.split('/').pop().replace(/_/g, ' ') || 'House room';
+    const targetLevel = Math.max(0, Math.floor(Number(candidate.upgradeLevel) || 0));
+    const cost = Number.isFinite(result?.cost) ? result.cost : null;
+
+    let materials = [];
+    try {
+        materials = houseUpgradeMaterials(candidate, buildGameDataPayload() || {});
+    } catch (error) {
+        console.error('[CombatSimUI] Reading a house room’s materials failed:', error);
+    }
+
+    const biggest = materials[0] || null;
+    return {
+        itemHrid: biggest?.itemHrid || null,
+        enhancementLevel: 0,
+        name: `${roomName} Lv${targetLevel}`,
+        quantity: biggest?.count || 1,
+        // Nothing to reserve in the gear list: a room is not a slot
+        savable: false,
+        ability: null,
+        house: {
+            houseRoomHrid: candidate.roomHrid,
+            targetLevel,
+            cost,
+            label: `${roomName} Lv${targetLevel}`,
+        },
+        materials,
+    };
+}
+
+/**
+ * What the Market button on a house row should say it does.
+ *
+ * Explicit about its own limits: one click is one material, and a room level
+ * usually wants three or four. Naming the others with their counts is what stops
+ * "Opened ✓" from reading as "shopping done".
+ *
+ * @param {Object} buy - From `houseRowPurchase`
+ * @returns {string} Tooltip text
+ */
+function houseMarketTitle(buy) {
+    const [first, ...rest] = buy.materials || [];
+    if (!first) return 'Open this in the marketplace';
+
+    const head =
+        `Opens ${first.name} with ${first.count.toLocaleString()} ready in the buy box — the largest single ` +
+        `line on this room’s bill.`;
+    if (!rest.length) return `${head} It is the only material this level needs.`;
+
+    return (
+        `${head} One click covers that one only; the level also needs ` +
+        rest.map((line) => `${line.count.toLocaleString()}× ${line.name}`).join(', ') +
+        '.'
+    );
 }
 
 /**
@@ -904,8 +1050,24 @@ export function upgradeRowActionsHtml(result) {
     if (!buy) return '';
 
     const attrs =
-        `data-buy-hrid="${buy.itemHrid}" data-buy-level="${buy.enhancementLevel}" ` +
+        `data-buy-hrid="${buy.itemHrid || ''}" data-buy-level="${buy.enhancementLevel}" ` +
         `data-buy-quantity="${buy.quantity}"`;
+
+    // A house room reserves nothing and watches nothing — there is no one item
+    // to watch — so it gets its own pair: the room-level goal, and the market
+    // handoff for the material the bill is mostly made of
+    if (buy.house) {
+        const cost = buy.house.cost == null ? '' : String(buy.house.cost);
+        const saveHouse = `<button type="button" data-buy-action="save-house"
+            data-house-hrid="${buy.house.houseRoomHrid}" data-house-level="${buy.house.targetLevel}"
+            data-house-cost="${cost}" data-house-label="${escapeAttribute(buy.house.label)}"
+            title="Save towards ${escapeAttribute(buy.house.label)} in Equipment Savings"
+            style="${ROW_ACTION_STYLE}">Save for this</button>`;
+        if (!buy.itemHrid) return saveHouse;
+        return `${saveHouse}<button type="button" ${attrs} data-buy-action="market"
+            title="${escapeAttribute(houseMarketTitle(buy))}" style="${ROW_ACTION_STYLE}">Market</button>`;
+    }
+
     let save = '';
     if (buy.savable) {
         save = `<button type="button" ${attrs} data-buy-action="save" title="Save for this in Equipment Savings"
@@ -951,10 +1113,10 @@ function escapeAttribute(value) {
  * whose own click opens the detail panel, and saving for a sword should not also
  * unfold the breakdown of it.
  *
- * Four handoffs, told apart by `data-buy-action`: `save` reserves a gear slot,
- * `save-ability` records a book-level goal, `market` opens the item's
- * marketplace tab with the row's quantity waiting in the buy box, and anything
- * else watches the item.
+ * Five handoffs, told apart by `data-buy-action`: `save` reserves a gear slot,
+ * `save-ability` records a book-level goal, `save-house` records a room-level
+ * goal, `market` opens the item's marketplace tab with the row's quantity
+ * waiting in the buy box, and anything else watches the item.
  *
  * @param {HTMLElement} container - Anything containing rendered rows
  * @param {string} [logPrefix] - Module name for error logs
@@ -984,6 +1146,17 @@ export function wireUpgradeRowActions(container, logPrefix = 'CombatSimUI') {
                         targetLevel: Number(button.getAttribute('data-ability-level')) || 0,
                         cost: rawCost === '' || rawCost == null ? null : Number(rawCost),
                         label: button.getAttribute('data-ability-label') || '',
+                    });
+                    button.textContent = 'Saving ✓';
+                } else if (action === 'save-house') {
+                    // Same fire-and-forget as the ability goal: the write is
+                    // asynchronous, the button is a handoff rather than a form
+                    const rawCost = button.getAttribute('data-house-cost');
+                    addHouseGoal({
+                        houseRoomHrid: button.getAttribute('data-house-hrid'),
+                        targetLevel: Number(button.getAttribute('data-house-level')) || 0,
+                        cost: rawCost === '' || rawCost == null ? null : Number(rawCost),
+                        label: button.getAttribute('data-house-label') || '',
                     });
                     button.textContent = 'Saving ✓';
                 } else if (action === 'market') {
@@ -1111,6 +1284,14 @@ const MODE_OPTIONS = {
             <input id="mwi-csim-shrine-target-level" type="number" min="1" max="100" placeholder="+1" style="
                 width:48px; text-align:center; ${CHIP_INPUT_STYLE}"
                 title="Target level to buy every combat shrine buff up to. Cost is every level from where the buff is now to this one; the improvement is measured at this one. Leave blank to evaluate one level up.">
+        </span>`,
+    community_buff: `
+        <span id="mwi-csim-community-group" data-mode-options="community_buff" style="display:none; align-items:center; gap:4px;">
+            <span style="color:#2a2a4a;">|</span>
+            <label style="color:#888; font-size:12px;">Lv</label>
+            <input id="mwi-csim-community-target-level" type="number" min="1" max="20" placeholder="+1" style="
+                width:48px; text-align:center; ${CHIP_INPUT_STYLE}"
+                title="Level to sim each community buff at, rather than one level up — Lv3 → Lv8 in one row. Capped at 20, which the game calls max. It changes nothing about the cost: a community buff's level is what the whole server's donated minutes add up to, so there is no per-level price either way. A buff already at 20 still measures what the whole buff is worth, by simulating it off.">
         </span>`,
 };
 
@@ -5569,6 +5750,14 @@ class CombatSimUI {
             const guildShrineTargetLevel = upgradeModes.includes('guild_shrine')
                 ? Math.max(0, parseInt(this.panel.querySelector('#mwi-csim-shrine-target-level')?.value) || 0)
                 : 0;
+            // Blank means one level up here too — and a level is not a purchase
+            // either way, so this only changes what gets simulated
+            const communityBuffTargetLevel = upgradeModes.includes('community_buff')
+                ? Math.min(
+                      20,
+                      Math.max(0, parseInt(this.panel.querySelector('#mwi-csim-community-target-level')?.value) || 0)
+                  )
+                : 0;
             const combatLevelTargets = upgradeModes.includes('combat_level') ? this._getCombatLevelTargets() : null;
             const abilityTargets = upgradeModes.includes('ability_level')
                 ? this._getAbilityTargets('#mwi-csim-ability-targets')
@@ -5595,6 +5784,7 @@ class CombatSimUI {
                     houseTargetLevel,
                     houseTargets,
                     guildShrineTargetLevel,
+                    communityBuffTargetLevel,
                     signatureSwapsOnly,
                 },
                 ({ current, total, description }) => {
@@ -6094,12 +6284,15 @@ class CombatSimUI {
                         <span>Places</span>
                         <select id="mwi-csim-score-depth" style="${selectStyle}">${depthOptions}</select>
                     </label>
-                    <label style="${box}" title="Colour the nine best Scores green through amber to red, so the
-                        shortlist can be found without reading the numbers. Rows below ninth stay uncoloured —
-                        the position in the table already says they placed lower.">
+                    <label style="${box}" title="Colour the nine best values in Score and in every column that
+                        counts toward it — green through amber to red — so you can see at a glance which row is
+                        the cheapest DPS, which the cheapest EXP, and which wins on aggregate. Each column is
+                        ranked on its own values and in its own direction: cheapest first for the Gold/0.01%
+                        columns and Repay, highest first for ROI. A row with no value in a column never places
+                        there, and rows below ninth stay uncoloured — their position already says so.">
                         <input type="checkbox" id="mwi-csim-score-gradient"
                             ${this._upgradeScoreGradient ? 'checked' : ''}>
-                        Colour the top ${SCORE_GRADIENT_PLACES}
+                        Colour the top ${SCORE_GRADIENT_PLACES} in each scored column
                     </label>
                 </div>
             </div>
@@ -6122,9 +6315,9 @@ class CombatSimUI {
         const hidden = this._upgradeHiddenColumns || new Set(DEFAULT_HIDDEN_COLUMNS);
         const scored = new Set(this._upgradeScoreKeys || DEFAULT_SCORE_KEYS);
         const depthKey = this._upgradeScoreDepth || DEFAULT_SCORE_DEPTH;
-        // Only paid for when the gradient is on: the ladder is a sort over every
-        // row, and the popover is where a reader says they want it
-        const gradientPlaces = this._upgradeScoreGradient ? scorePlaces(rows) : null;
+        // Only paid for when the gradient is on: each ladder is a sort over
+        // every row, and the popover is where a reader says they want them
+        const gradientPlaces = this._upgradeScoreGradient ? gradientLadders(rows, scored) : null;
 
         // At or below zero cost the figure stops being a rate and becomes the
         // net gold itself (see computeGoldPerImprovement), so it is drawn as
@@ -6327,15 +6520,29 @@ class CombatSimUI {
                     'narrowly scores the same as winning it outright. Use ⚙ Columns to choose what counts, ' +
                     'how deep the placings go, and whether to colour them.',
                 value: (r) => r.score ?? 0,
-                render: (r, v) => {
-                    if (!v) return '—';
-                    const color = gradientPlaces && scoreGradientColor(gradientPlaces.get(r));
-                    return color ? `<span style="color:${color};">${v}</span>` : String(v);
-                },
+                render: (r, v) => (v ? String(v) : '—'),
             },
         ];
 
-        return defs.map((c) => ({ ...c, visible: c.fixed || !hidden.has(c.key) }));
+        // The colour goes on afterwards rather than inside each column's own
+        // renderer: a column should say how to draw its number, not how to draw
+        // a ranking of it, and wrapping keeps the special cases the renderers
+        // already carry — a "free", a "pays for itself" — with their own colour
+        // intact, since an inner span wins over the one put round it.
+        return defs.map((column) => {
+            const ladder = gradientPlaces?.get(column.key);
+            const withGradient = ladder
+                ? {
+                      ...column,
+                      render: (r, v) => {
+                          const drawn = column.render(r, v);
+                          const color = scoreGradientColor(ladder.get(r));
+                          return color ? `<span style="color:${color};">${drawn}</span>` : drawn;
+                      },
+                  }
+                : column;
+            return { ...withGradient, visible: column.fixed || !hidden.has(column.key) };
+        });
     }
 
     /**

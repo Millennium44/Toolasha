@@ -274,6 +274,8 @@ const {
     scoreDepthLabel,
     scoreGradientColor,
     scorePlaces,
+    metricPlaces,
+    gradientLadders,
     SCORE_DEPTHS,
     DEFAULT_SCORE_DEPTH,
     SCORE_GRADIENT_PLACES,
@@ -1232,10 +1234,31 @@ describe('upgrade row handoff', () => {
         expect(buy).toMatchObject({ itemHrid: '/items/fireball', enhancementLevel: 0, savable: false });
     });
 
-    test('combat levels and house rooms buy nothing', () => {
+    test('combat levels and community buffs buy nothing', () => {
         expect(upgradeRowPurchase(candidate({ type: 'combat_level', slot: 'attack' }))).toBeNull();
-        expect(upgradeRowPurchase(candidate({ type: 'house', upgradeHrid: '/house_rooms/dairy_barn' }))).toBeNull();
+        expect(upgradeRowPurchase(candidate({ type: 'community_buff', buffKey: 'comExp' }))).toBeNull();
         expect(upgradeRowPurchase(null)).toBeNull();
+    });
+
+    test('a house room buys a room-level goal rather than an item', () => {
+        const buy = upgradeRowPurchase({
+            cost: 4_000_000,
+            candidate: {
+                type: 'house',
+                roomHrid: '/house_rooms/dojo',
+                roomName: 'Dojo',
+                currentLevel: 2,
+                upgradeLevel: 5,
+            },
+        });
+
+        expect(buy.savable).toBe(false);
+        expect(buy.house).toEqual({
+            houseRoomHrid: '/house_rooms/dojo',
+            targetLevel: 5,
+            cost: 4_000_000,
+            label: 'Dojo Lv5',
+        });
     });
 
     test('a row that buys nothing draws no buttons', () => {
@@ -1353,8 +1376,20 @@ describe('upgrade row handoff', () => {
 
     test('rows that buy nothing marketable get no Market button at all', () => {
         // They get no buttons: there is nothing to open, watch or save for
-        expect(upgradeRowActionsHtml(candidate({ type: 'house', upgradeHrid: '/house_rooms/dairy_barn' }))).toBe('');
+        expect(upgradeRowActionsHtml(candidate({ type: 'combat_level' }))).toBe('');
         expect(upgradeRowActionsHtml(candidate({ type: 'community_buff', buffKey: 'comExp' }))).toBe('');
+    });
+
+    test('a house row saves for the room, and never offers a watch on an item it does not buy', () => {
+        const html = upgradeRowActionsHtml({
+            cost: 1_000_000,
+            candidate: { type: 'house', roomHrid: '/house_rooms/dojo', roomName: 'Dojo', upgradeLevel: 3 },
+        });
+
+        expect(html).toContain('data-buy-action="save-house"');
+        expect(html).toContain('data-house-hrid="/house_rooms/dojo"');
+        expect(html).toContain('data-house-level="3"');
+        expect(html).not.toContain('data-buy-action="watch"');
     });
 
     test('the books an ability row needs are read off the price it was costed at', () => {
@@ -1952,6 +1987,60 @@ describe('how deep the Score pays out', () => {
         expect(places.get(rows[2])).toBe(2);
         expect(places.has(rows[3])).toBe(false);
     });
+
+    test('a cheaper-is-better column puts the smallest number first', () => {
+        const rows = [{ v: 900 }, { v: 100 }, { v: 400 }];
+        const places = metricPlaces(rows, (r) => r.v, true);
+
+        expect(places.get(rows[1])).toBe(1);
+        expect(places.get(rows[2])).toBe(2);
+        expect(places.get(rows[0])).toBe(3);
+    });
+
+    test('and a higher-is-better one puts the largest first — the direction is per column', () => {
+        const rows = [{ v: 900 }, { v: 100 }, { v: 400 }];
+        const places = metricPlaces(rows, (r) => r.v, false);
+
+        expect(places.get(rows[0])).toBe(1);
+        expect(places.get(rows[2])).toBe(2);
+        expect(places.get(rows[1])).toBe(3);
+    });
+
+    test('a row with no value in a column never places there, whichever way round it is', () => {
+        const rows = [{ v: 5 }, { v: null }, { v: Infinity }, {}];
+
+        for (const lowerIsBetter of [true, false]) {
+            const places = metricPlaces(rows, (r) => r.v, lowerIsBetter);
+            expect(places.get(rows[0])).toBe(1);
+            expect(places.has(rows[1])).toBe(false);
+            expect(places.has(rows[2])).toBe(false);
+            expect(places.has(rows[3])).toBe(false);
+        }
+    });
+
+    test('a ladder is built per scored column, plus the Score itself', () => {
+        const rows = [
+            { score: 8, goldPer: { dps: 100, xp: 900 }, economics: { repayHours: 3 } },
+            { score: 4, goldPer: { dps: 900, xp: 100 }, economics: { repayHours: 1 } },
+        ];
+        const ladders = gradientLadders(rows, ['dps', 'xp', 'repay']);
+
+        expect([...ladders.keys()].sort()).toEqual(['dps', 'repay', 'score', 'xp']);
+        // Cheapest DPS is the first row, cheapest EXP the second — which is
+        // exactly what colouring the total alone could never show
+        expect(ladders.get('dps').get(rows[0])).toBe(1);
+        expect(ladders.get('xp').get(rows[1])).toBe(1);
+        expect(ladders.get('repay').get(rows[1])).toBe(1);
+        expect(ladders.get('score').get(rows[0])).toBe(1);
+    });
+
+    test('a column the reader has excluded from the Score is not coloured either', () => {
+        const rows = [{ score: 8, goldPer: { dps: 100, xp: 900 } }];
+        const ladders = gradientLadders(rows, ['dps']);
+
+        expect(ladders.has('dps')).toBe(true);
+        expect(ladders.has('xp')).toBe(false);
+    });
 });
 
 describe('the Score column in the table', () => {
@@ -1997,6 +2086,16 @@ describe('the Score column in the table', () => {
         ui._renderUpgradeResults(results());
 
         expect(html()).toContain('rgb(76, 175, 80)');
+    });
+
+    test('and every scored column is coloured on its own ranking, not just the total', () => {
+        ui._upgradeScoreGradient = true;
+        ui._renderUpgradeResults(results());
+
+        // One green cell per scored column plus the Score itself, rather than
+        // the single one the Score-only gradient drew
+        const greens = html().match(/rgb\(76, 175, 80\)/g) || [];
+        expect(greens.length).toBeGreaterThan(1);
     });
 
     test('the popover carries both settings and they survive a round trip through storage', async () => {

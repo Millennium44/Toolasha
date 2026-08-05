@@ -28,6 +28,9 @@ import {
     generateCandidates,
     generateHouseCandidates,
     describeHouseScan,
+    houseRoomMovesWinRate,
+    MAX_HOUSE_LEVEL,
+    MAX_GUILD_SHRINE_LEVEL,
 } from './upgrade-advisor.js';
 import {
     LabComparisonStore,
@@ -145,6 +148,46 @@ const SKILLING_SKILL_HRIDS = [
     '/skills/enhancing',
 ];
 
+/**
+ * The house-room option every labyrinth analysis passes.
+ *
+ * This tab ranks one number — the share of attempts that end in a clear — so the
+ * rooms it can weigh are the rooms whose buffs can change a fight's outcome.
+ * Every house room grants a global experience and rare-find buff for existing at
+ * all, and admitting a room on those put all ten skilling rooms in a combat
+ * table with nothing but the baseline's sampling noise to report.
+ */
+const HOUSE_WIN_RATE_ONLY = { winRateOnly: true };
+
+/**
+ * What to call an item, falling back to a readable form of its own hrid.
+ * @param {string} hrid - Item hrid
+ * @returns {string} Display name
+ */
+function itemName(hrid) {
+    return (
+        dataManager.getItemDetails?.(hrid)?.name ||
+        String(hrid || '')
+            .split('/')
+            .pop()
+            .replace(/_/g, ' ')
+    );
+}
+
+/**
+ * Make text safe to sit inside a double-quoted HTML attribute.
+ * Item names come from game data, and one apostrophe would end the attribute.
+ * @param {string} value - Raw text
+ * @returns {string} Escaped text
+ */
+function escapeHtmlAttribute(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+}
+
 const ACCENT = '#4a9eff';
 const ACCENT_BORDER = 'rgba(74, 158, 255, 0.5)';
 const ACCENT_BG = 'rgba(74, 158, 255, 0.12)';
@@ -191,6 +234,28 @@ const LAB_MODE_OPTIONS = {
         <span id="mwi-labsim-combat-group" data-lab-mode-options="combat_level" style="display:none; align-items:center; gap:4px;">
             <span style="color:#2a2a4a;">|</span>
             <button id="mwi-labsim-combat-targets-toggle" title="Set a desired target level per skill instead of a uniform boost" style="${CHIP_BUTTON_STYLE}">Targets</button>
+        </span>`,
+    house: `
+        <span id="mwi-labsim-house-group" data-lab-mode-options="house" style="display:none; align-items:center; gap:4px;">
+            <span style="color:#2a2a4a;">|</span>
+            <input id="mwi-labsim-house-target-level" type="number" min="1" max="${MAX_HOUSE_LEVEL}" placeholder="Lv" style="
+                width:48px; text-align:center; ${CHIP_INPUT_STYLE}"
+                title="Buy every room up to this level in one row — Lv2 → Lv5 is costed at levels 3, 4 and 5 together. Blank means one level up. Capped at ${MAX_HOUSE_LEVEL}.">
+            <button id="mwi-labsim-house-targets-toggle" title="Set a target level per room instead of one number for all of them" style="${CHIP_BUTTON_STYLE}">Targets</button>
+        </span>`,
+    guild_shrine: `
+        <span id="mwi-labsim-shrine-group" data-lab-mode-options="guild_shrine" style="display:none; align-items:center; gap:4px;">
+            <span style="color:#2a2a4a;">|</span>
+            <input id="mwi-labsim-shrine-target-level" type="number" min="1" max="${MAX_GUILD_SHRINE_LEVEL}" placeholder="Lv" style="
+                width:48px; text-align:center; ${CHIP_INPUT_STYLE}"
+                title="Buy every shrine buff up to this level in one row, costed at every level in between. Blank means one level up. Capped at each buff's own maximum.">
+        </span>`,
+    community_buff: `
+        <span id="mwi-labsim-community-group" data-lab-mode-options="community_buff" style="display:none; align-items:center; gap:4px;">
+            <span style="color:#2a2a4a;">|</span>
+            <input id="mwi-labsim-community-target-level" type="number" min="1" max="${MAX_COMMUNITY_BUFF_LEVEL}" placeholder="Lv" style="
+                width:48px; text-align:center; ${CHIP_INPUT_STYLE}"
+                title="Sim the buff at this level rather than one level up — Lv3 → Lv8 in one row. Capped at ${MAX_COMMUNITY_BUFF_LEVEL}, which is what the game calls max. The cowbell figure is per minute of uptime either way; a level has no price of its own.">
         </span>`,
 };
 
@@ -750,6 +815,13 @@ class LabSimUI {
                 )
                 .join('');
 
+        // Per-room house target levels (hidden until toggled; built from the
+        // rooms that can move a win rate when it is opened)
+        const labHouseTargets = document.createElement('div');
+        labHouseTargets.id = 'mwi-labsim-house-targets';
+        labHouseTargets.style.cssText =
+            'display:none; padding:4px 14px 8px; flex-shrink:0; gap:8px 14px; flex-wrap:wrap; align-items:center;';
+
         const upgradeProgress = document.createElement('div');
         upgradeProgress.id = 'mwi-labsim-upgrade-progress';
         upgradeProgress.style.cssText = 'display:none; padding:6px 14px; flex-shrink:0;';
@@ -771,6 +843,7 @@ class LabSimUI {
         upgradeContent.appendChild(labTargetList);
         upgradeContent.appendChild(labAbilityTargets);
         upgradeContent.appendChild(labCombatTargets);
+        upgradeContent.appendChild(labHouseTargets);
         upgradeContent.appendChild(upgradeProgress);
         upgradeContent.appendChild(upgradeResults);
 
@@ -815,6 +888,11 @@ class LabSimUI {
                 <option value="/skills/alchemy">Alchemy</option>
                 <option value="/skills/enhancing">Enhancing</option>
             </select>
+            <label style="color:#888; font-size:12px;">Community Lv</label>
+            <input id="mwi-labsim-skilling-community-level" type="number" min="1" max="${MAX_COMMUNITY_BUFF_LEVEL}"
+                placeholder="Lv" title="Sim each community buff at this level rather than one level up — Lv3 → Lv8 in one row. Capped at ${MAX_COMMUNITY_BUFF_LEVEL}, which the game calls max. The cowbell figure is per minute of uptime either way; a level has no price of its own." style="
+                width:52px; text-align:center; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
+                border-radius:4px; padding:4px 6px; font-size:11px; font-family:inherit;">
             <button id="mwi-labsim-skilling-calc" style="
                 margin-left: auto;
                 background: ${ACCENT_BTN_BG};
@@ -1059,6 +1137,12 @@ class LabSimUI {
             if (opening) {
                 this._prefillLabCombatTargets();
             }
+        });
+        this.panel.querySelector('#mwi-labsim-house-targets-toggle')?.addEventListener('click', () => {
+            const grid = this.panel.querySelector('#mwi-labsim-house-targets');
+            const opening = grid.style.display === 'none';
+            grid.style.display = opening ? 'flex' : 'none';
+            if (opening) this._buildLabHouseTargets();
         });
         this.panel.querySelector('#mwi-labsim-upgrade-stop').addEventListener('click', () => {
             this._upgradeAborted = true;
@@ -1379,7 +1463,12 @@ class LabSimUI {
             const state = availability[key] || { enabled: true, reason: '' };
             box.disabled = !state.enabled;
             const label = this.panel.querySelector(`[data-lab-mode-label="${key}"]`);
-            if (label && state.reason) label.title = state.reason;
+            // Restored rather than left behind when the reason no longer
+            // applies: a set refused for one scope kept explaining itself in
+            // every other scope, where the explanation was untrue
+            if (label) {
+                label.title = state.reason || LAB_UPGRADE_DIMENSIONS.find((d) => d.key === key)?.title || '';
+            }
         });
 
         const dimensions = new Set(this._getUpgradeDimensions());
@@ -2154,6 +2243,11 @@ class LabSimUI {
         const abilityTargets = selectedDimensions.has('ability_level')
             ? this._getAbilityTargets('#mwi-labsim-ability-targets')
             : null;
+        // Blank boxes mean "one level up", which is what every generator does
+        // with a zero, so an unopened option costs nothing to read
+        const houseTargetLevel = selectedDimensions.has('house') ? this._getHouseTargetLevel() : 0;
+        const houseTargets = selectedDimensions.has('house') ? this._getHouseTargets() : null;
+        const guildShrineTargetLevel = selectedDimensions.has('guild_shrine') ? this._getShrineTargetLevel() : 0;
 
         if (plan.dropped.length) {
             this._setStatus(
@@ -2228,6 +2322,9 @@ class LabSimUI {
                         abilityTargets,
                         modes: plan.modes,
                         signatureSwapsOnly: this._getSignatureSwapsOnly(),
+                        houseTargetLevel,
+                        houseTargets,
+                        guildShrineTargetLevel,
                     },
                     ({ current, total, description, plan: runPlan }) => {
                         if (this._upgradeAborted) return;
@@ -2279,6 +2376,9 @@ class LabSimUI {
                     // anything else it is handed beside whatever that mode
                     // generated — which is how a multi-set selection lands in
                     // one table, against one baseline, at one shared seed
+                    houseTargetLevel,
+                    houseTargets,
+                    guildShrineTargetLevel,
                     extraCandidates: this._extraDimensionCandidates(
                         plan.extraModes,
                         playerDTOs[playerIndex],
@@ -2289,6 +2389,11 @@ class LabSimUI {
                             combatLevelTargets,
                             abilityTargets,
                             signatureSwapsOnly: this._getSignatureSwapsOnly(),
+                            houseTargetLevel,
+                            houseTargets,
+                            guildShrineTargetLevel,
+                            communityBuffs,
+                            communityBuffTargetLevel: this._getCommunityTargetLevel(),
                         }
                     ),
                 },
@@ -2345,12 +2450,14 @@ class LabSimUI {
             combatLevelTargets,
             abilityTargets,
             signatureSwapsOnly = false,
+            houseTargetLevel = 0,
+            houseTargets = null,
+            guildShrineTargetLevel = 0,
+            communityBuffs = null,
+            communityBuffTargetLevel = 0,
         } = options;
         try {
             return modes.flatMap((mode) =>
-                // The four zeros and nulls are the house and shrine arguments
-                // this call has no use for; the generator's options object is
-                // the last positional and has to be reached past them
                 generateCandidates(
                     playerDTO,
                     gameData,
@@ -2360,11 +2467,11 @@ class LabSimUI {
                     false,
                     combatLevelTargets,
                     abilityTargets,
-                    0,
-                    null,
-                    null,
-                    0,
-                    { signatureSwapsOnly }
+                    houseTargetLevel,
+                    houseTargets,
+                    communityBuffs,
+                    guildShrineTargetLevel,
+                    { signatureSwapsOnly, houseWinRateOnly: true, communityBuffTargetLevel }
                 )
             );
         } catch (error) {
@@ -2466,15 +2573,133 @@ class LabSimUI {
     _describeHouseScan(playerDTO, gameData) {
         try {
             if (!playerDTO || !gameData) return '';
-            if (generateHouseCandidates(playerDTO, gameData).length) return '';
-            const scan = describeHouseScan(playerDTO, gameData);
+            if (generateHouseCandidates(playerDTO, gameData, 0, null, HOUSE_WIN_RATE_ONLY).length) return '';
+            const scan = describeHouseScan(playerDTO, gameData, HOUSE_WIN_RATE_ONLY);
             return scan.combatRelevant
                 ? `all ${scan.combatRelevant} combat house rooms are already maxed`
-                : 'no combat-relevant house rooms found';
+                : 'no house rooms whose buffs can move a win rate';
         } catch (error) {
             console.error('[LabSimUI] House room scan failed:', error);
             return '';
         }
+    }
+
+    /**
+     * Build the per-room target inputs, prefilled from the uniform Lv box.
+     *
+     * Only the rooms this tab can rank: the labyrinth reads one number off a
+     * simulation and a room that cannot move it has no target worth setting.
+     * Levels come from the edited loadout where there is one, so a room raised
+     * in the Player Setup editor is offered from where the editor put it.
+     * @private
+     */
+    _buildLabHouseTargets() {
+        const grid = this.panel?.querySelector('#mwi-labsim-house-targets');
+        if (!grid) return;
+
+        const gameData = buildGameDataPayload();
+        const roomMap = gameData?.houseRoomDetailMap || {};
+        const playerIndex = parseInt(this.panel.querySelector('#mwi-labsim-upgrade-player')?.value) || 0;
+        const editedDTOs = this._editor?.getEditedDTOs();
+        const dto = editedDTOs ? Object.values(editedDTOs)[playerIndex] : null;
+        const uniform = Math.min(MAX_HOUSE_LEVEL, Math.max(0, parseInt(this._getHouseTargetLevelInput()) || 0));
+
+        const rooms = Object.entries(roomMap)
+            .filter(([, detail]) => houseRoomMovesWinRate(detail))
+            .map(([hrid, detail]) => ({
+                hrid,
+                name: detail.name || hrid.split('/').pop().replace(/_/g, ' '),
+                level: Math.max(0, Math.floor(Number(dto?.houseRooms?.[hrid]) || 0)),
+            }))
+            .sort((a, b) => a.name.localeCompare(b.name));
+
+        if (!rooms.length) {
+            grid.innerHTML =
+                '<span style="color:#666; font-size:11px;">No house room in this game data carries a buff that could ' +
+                'move a labyrinth win rate.</span>';
+            return;
+        }
+
+        grid.innerHTML =
+            '<span style="color:#666; font-size:11px; flex-basis:100%;"><b>House</b> target levels (blank or ≤ ' +
+            'current level skips the room; used instead of the Lv box while open):</span>' +
+            rooms
+                .map(
+                    (room) => `
+                <span style="display:inline-flex; align-items:center; gap:4px;">
+                    <label style="color:#888; font-size:11px;">${room.name} (${room.level})</label>
+                    <input type="number" min="1" max="${MAX_HOUSE_LEVEL}" data-lab-house-target="${room.hrid}"
+                        value="${room.level >= MAX_HOUSE_LEVEL ? '' : Math.min(MAX_HOUSE_LEVEL, Math.max(uniform, room.level + 1))}"
+                        ${room.level >= MAX_HOUSE_LEVEL ? 'disabled title="Already at max level"' : ''} style="
+                        width:48px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
+                        border-radius:3px; padding:2px 4px; font-size:11px; text-align:center;">
+                </span>`
+                )
+                .join('');
+    }
+
+    /**
+     * The community buff level the Skilling tab should sim at, 0 when the box is
+     * empty (one level up).
+     * @returns {number}
+     * @private
+     */
+    _getSkillingCommunityTargetLevel() {
+        const value = parseInt(this.panel?.querySelector('#mwi-labsim-skilling-community-level')?.value, 10);
+        return Number.isFinite(value) && value > 0 ? Math.min(MAX_COMMUNITY_BUFF_LEVEL, value) : 0;
+    }
+
+    /** @returns {string} Whatever the uniform house Lv box holds @private */
+    _getHouseTargetLevelInput() {
+        return this.panel?.querySelector('#mwi-labsim-house-target-level')?.value || '';
+    }
+
+    /**
+     * The uniform house target level, 0 when the box is empty (one level up).
+     * @returns {number}
+     * @private
+     */
+    _getHouseTargetLevel() {
+        const value = parseInt(this._getHouseTargetLevelInput(), 10);
+        return Number.isFinite(value) && value > 0 ? Math.min(MAX_HOUSE_LEVEL, value) : 0;
+    }
+
+    /**
+     * Per-room house target levels, or null when the grid is closed.
+     * @returns {Object|null} roomHrid → target level
+     * @private
+     */
+    _getHouseTargets() {
+        const grid = this.panel?.querySelector('#mwi-labsim-house-targets');
+        if (!grid || grid.style.display === 'none') return null;
+        const targets = {};
+        grid.querySelectorAll('[data-lab-house-target]').forEach((input) => {
+            const value = parseInt(input.value, 10);
+            if (Number.isFinite(value) && value > 0) {
+                targets[input.dataset.labHouseTarget] = Math.min(MAX_HOUSE_LEVEL, value);
+            }
+        });
+        return Object.keys(targets).length > 0 ? targets : null;
+    }
+
+    /**
+     * The shrine level to buy up to, 0 when the box is empty (one level up).
+     * @returns {number}
+     * @private
+     */
+    _getShrineTargetLevel() {
+        const value = parseInt(this.panel?.querySelector('#mwi-labsim-shrine-target-level')?.value, 10);
+        return Number.isFinite(value) && value > 0 ? Math.min(MAX_GUILD_SHRINE_LEVEL, value) : 0;
+    }
+
+    /**
+     * The community buff level to sim at, 0 when the box is empty (one level up).
+     * @returns {number}
+     * @private
+     */
+    _getCommunityTargetLevel() {
+        const value = parseInt(this.panel?.querySelector('#mwi-labsim-community-target-level')?.value, 10);
+        return Number.isFinite(value) && value > 0 ? Math.min(MAX_COMMUNITY_BUFF_LEVEL, value) : 0;
     }
 
     /**
@@ -2870,6 +3095,12 @@ class LabSimUI {
         this._allFightsResult = analysisResult;
         this._allFightsContainer = container;
 
+        // Two currencies, two sections — the same split the Configure fight's
+        // table makes. A token buff has no coin price at all, so it cannot share
+        // a Cost column, a Per 1M column or the budget planner with the gear.
+        const tokenResults = results.filter((r) => r.costType === 'token');
+        const goldResults = results.filter((r) => r.costType !== 'token');
+
         const pct = (v) => `${(v * 100).toFixed(1)}%`;
         const deltaPct = (v) => `${v >= 0 ? '+' : ''}${(v * 100).toFixed(2)}%`;
         const deltaColor = (v) => (v > 0.0001 ? '#4caf50' : v < -0.0001 ? '#f44336' : '#888');
@@ -2894,6 +3125,7 @@ class LabSimUI {
             'padding:4px 6px; border-bottom:1px solid #1a1a2e; white-space:normal; ' +
             'overflow-wrap:anywhere; line-height:1.4;';
         const bestDelta = Math.min(...results.map((r) => r.attemptsDelta));
+        const sharedStyles = { thStyle, tdStyle, tdNameStyle, fmtAttempts, fmtAttemptsDelta, attemptsDeltaColor };
 
         // What each column sorts by, and which way round is "good" — clicking
         // Cost wants the cheapest first, clicking Avg ΔWin the biggest gain
@@ -2907,7 +3139,7 @@ class LabSimUI {
             avgWinDelta: { get: (r) => r.avgWinDelta, dir: 'desc' },
         };
         const sort = this._allFightsSort;
-        const sorted = results.slice();
+        const sorted = goldResults.slice();
         if (sort && SORTS[sort.key]) {
             const { get } = SORTS[sort.key];
             const sign = sort.dir === 'asc' ? 1 : -1;
@@ -2927,7 +3159,7 @@ class LabSimUI {
             `<th data-af-sort="${key}" style="${thStyle} cursor:pointer; user-select:none;" title="${title}">` +
             `${label}${arrow(key)}</th>`;
 
-        let html = this._renderBudgetPlan(results, baseline);
+        let html = this._renderBudgetPlan(goldResults, baseline);
         html += `
             <div style="margin-bottom:8px; font-size:12px; color:#888;">
                 Baseline: <span style="color:#e0e0e0; font-weight:700;">${fmtAttempts(baseline.expectedAttempts)}</span>
@@ -3006,6 +3238,7 @@ class LabSimUI {
         });
 
         html += '</tbody></table>';
+        html += this._renderAllFightsTokenSection(tokenResults, sharedStyles);
         container.innerHTML = html;
 
         this._addCsvExport(container, 'labsim-all-fights', () => ({
@@ -3020,10 +3253,12 @@ class LabSimUI {
                 { key: 'roomsApplied', label: 'Rooms reached' },
                 { key: 'roomsTotal', label: 'Rooms total' },
                 { key: 'avgWinDelta', label: 'Avg win rate change' },
+                { key: 'tokenCost', label: 'Token cost' },
             ],
             // Raw numbers rather than the formatted cells: a spreadsheet cannot
-            // sort "1.2B" or sum "+0.32%"
-            rows: sorted.map((r) => ({
+            // sort "1.2B" or sum "+0.32%". Both sections, since a spreadsheet
+            // has no trouble holding two currencies in two columns.
+            rows: [...sorted, ...tokenResults].map((r) => ({
                 upgrade: r.candidate?.description || '',
                 cost: r.cost ?? null,
                 perMillion: r.attemptsSavedPerMillion ?? null,
@@ -3034,6 +3269,7 @@ class LabSimUI {
                 roomsApplied: r.appliedFights ?? r.fights.length,
                 roomsTotal: r.fights.length,
                 avgWinDelta: r.avgWinDelta,
+                tokenCost: r.tokenCost ?? null,
             })),
         }));
 
@@ -3045,8 +3281,18 @@ class LabSimUI {
                 }
             });
         });
+        container.querySelectorAll('[data-allfights-token-row]').forEach((row) => {
+            row.addEventListener('click', () => {
+                const detail = container.querySelector(
+                    `[data-allfights-token-detail="${row.dataset.allfightsTokenRow}"]`
+                );
+                if (detail) {
+                    detail.style.display = detail.style.display === 'none' ? 'table-row' : 'none';
+                }
+            });
+        });
 
-        this._wireBudgetPlan(container, results, baseline);
+        this._wireBudgetPlan(container, goldResults, baseline);
 
         container.querySelectorAll('[data-af-sort]').forEach((header) => {
             header.addEventListener('click', () => {
@@ -3070,6 +3316,80 @@ class LabSimUI {
                     : '.') +
                 (this._houseScanNote ? ` House rooms: ${this._houseScanNote}.` : '')
         );
+    }
+
+    /**
+     * The labyrinth token buffs, as their own section of a whole-run table.
+     *
+     * A section rather than more rows in the gear table, for the reason the
+     * Configure fight has always split them: the two are paid for in different
+     * currencies. A token buff has no coin price, so it cannot share a Cost
+     * column, it cannot be ranked on attempts-per-million, and it cannot be
+     * planned around by a budget in gold. What it can be ranked on is its own
+     * currency, which is what the last column does.
+     *
+     * Unsorted by the table's own header clicks: those belong to the gear table
+     * above, and four rows sorted by the analysis's own best-first order need no
+     * affordance of their own.
+     *
+     * @param {Array<Object>} tokenResults - Rows with `costType === 'token'`
+     * @param {Object} styles - The shared cell styles and formatters
+     * @returns {string} HTML, empty when the run ranked no token buffs
+     * @private
+     */
+    _renderAllFightsTokenSection(tokenResults, styles) {
+        if (!tokenResults?.length) return '';
+        const { thStyle, tdStyle, tdNameStyle, fmtAttempts, fmtAttemptsDelta, attemptsDeltaColor } = styles;
+        const deltaPct = (v) => `${v >= 0 ? '+' : ''}${(v * 100).toFixed(2)}%`;
+        const perTokens = (v) =>
+            v === null ? '—' : v >= 1 ? v.toFixed(2) : v >= 0.01 ? v.toFixed(3) : v.toPrecision(2);
+
+        let html = `<div style="color:${ACCENT}; font-weight:700; font-size:12px; margin:14px 0 4px;">Labyrinth Token Buffs</div>
+            <div style="color:#666; font-size:10px; margin-bottom:4px;">Bought once with labyrinth tokens and paid
+                for in every room, so each is simulated against every fight and aggregated exactly like a combat
+                level. Ranked in tokens rather than coins, and left out of the budget plan above, which is a plan
+                in gold.</div>
+            <table style="width:100%; border-collapse:collapse; font-size:11px;">
+            <thead><tr>
+                <th style="${thStyle}">Upgrade</th>
+                <th style="${thStyle}" title="Labyrinth tokens for this level">Tokens</th>
+                <th style="${thStyle}" title="Attempts saved across a whole run per 100 tokens spent — the value figure, in the currency these are actually bought with">Per 100</th>
+                <th style="${thStyle}" title="Expected combat attempts to clear every fight once (retrying failed rooms)">Attempts</th>
+                <th style="${thStyle}" title="Change in expected attempts vs baseline — negative is better. The ± is one standard error of the simulation.">ΔAttempts</th>
+                <th style="${thStyle}" title="Average win rate change across every fight — a token level reaches all of them">Avg ΔWin</th>
+            </tr></thead><tbody>`;
+
+        tokenResults.forEach((r, i) => {
+            const measured = r.significant !== false;
+            const noise =
+                r.attemptsDeltaNoise > 0 ? ` <span style="color:#555;">±${r.attemptsDeltaNoise.toFixed(1)}</span>` : '';
+            html += `<tr style="cursor:pointer; color:#e0e0e0;" data-allfights-token-row="${i}">
+                <td style="${tdNameStyle}${measured ? '' : ' opacity:0.55;'}">${r.candidate.description}</td>
+                <td style="${tdStyle} color:#aaa;">${formatWithSeparator(r.tokenCost || 0)}</td>
+                <td style="${tdStyle} color:${measured && r.attemptsSavedPerHundredTokens > 0 ? '#4caf50' : '#888'}; font-weight:600;">${perTokens(r.attemptsSavedPerHundredTokens ?? null)}</td>
+                <td style="${tdStyle}">${fmtAttempts(r.expectedAttempts)}</td>
+                <td style="${tdStyle} color:${measured ? attemptsDeltaColor(r.attemptsDelta) : '#666'};"
+                    title="${measured ? '' : 'Smaller than the simulation’s own error — not a measured gain'}">${fmtAttemptsDelta(r.attemptsDelta)}${noise}</td>
+                <td style="${tdStyle} color:${r.avgWinDelta > 0.0001 ? '#4caf50' : r.avgWinDelta < -0.0001 ? '#f44336' : '#888'};">${deltaPct(r.avgWinDelta)}</td>
+            </tr>`;
+
+            const fightRows = r.fights
+                .map(
+                    (fight) => `<div style="display:flex; justify-content:space-between; gap:10px; padding:2px 0;">
+                        <span style="color:#aaa;">${fight.monsterName}
+                            <span style="color:#666;">(Lv ${fight.roomLevel}, "${fight.loadoutName}")</span></span>
+                        <span style="white-space:nowrap; color:#888;">${(fight.winRate * 100).toFixed(1)}%
+                            <span style="color:${fight.winRateDelta > 0.0001 ? '#4caf50' : fight.winRateDelta < -0.0001 ? '#f44336' : '#888'};">(${deltaPct(fight.winRateDelta || 0)})</span></span>
+                    </div>`
+                )
+                .join('');
+            html += `<tr data-allfights-token-detail="${i}" style="display:none;">
+                <td colspan="6" style="padding:6px 12px; background:#0d0d1a; border-bottom:1px solid #222; font-size:11px;">
+                    ${fightRows}</td>
+            </tr>`;
+        });
+
+        return html + '</tbody></table>';
     }
 
     /**
@@ -3124,6 +3444,7 @@ class LabSimUI {
 
         const tokenResults = results.filter((r) => r.costType === 'token');
         const goldResults = results.filter((r) => r.costType === 'gold');
+        const communityResults = results.filter((r) => r.costType === 'community');
         const thStyle =
             'text-align:right; padding:4px; color:#888; border-bottom:1px solid #333; cursor:pointer; user-select:none;';
         const thLeftStyle =
@@ -3198,8 +3519,30 @@ class LabSimUI {
             };
         });
 
+        // Neither community buff a combat fight reads can change whether it is
+        // won, so the clear-chance columns stay at the baseline and the row is
+        // read on what it does move: experience per attempt. The same treatment
+        // the Skilling tab gives the Experience token, for the same reason.
+        const communityRows = communityResults.map((r) => {
+            const xpDelta = r.xpPerRoomDelta || 0;
+            return {
+                desc: r.candidate?.description || '',
+                cowbellCost: r.cowbellCost ?? Infinity,
+                cowbellCostStr: r.cowbellCost == null ? '\u2014' : formatWithSeparator(r.cowbellCost) + '/min',
+                xpPerRoom: r.xpPerRoom || 0,
+                xpPerRoomStr: (r.xpPerRoom || 0).toFixed(1),
+                xpDelta,
+                xpDeltaStr: Math.abs(xpDelta) > 1e-9 ? (xpDelta >= 0 ? '+' : '') + xpDelta.toFixed(1) : '\u2014',
+                xpDeltaColor: xpDelta > 0 ? '#4caf50' : '#888',
+            };
+        });
+
         // Sort state
-        const sortState = { token: { key: 'tokensPerPct', dir: 'asc' }, gold: { key: 'goldPerPct', dir: 'asc' } };
+        const sortState = {
+            token: { key: 'tokensPerPct', dir: 'asc' },
+            gold: { key: 'goldPerPct', dir: 'asc' },
+            community: { key: 'xpDelta', dir: 'desc' },
+        };
 
         const sortRows = (rows, key, dir) => {
             rows.sort((a, b) => {
@@ -3279,11 +3622,54 @@ class LabSimUI {
             return html;
         };
 
+        const renderCommunityTable = () => {
+            const s = sortState.community;
+            const th = (label, key, align) => {
+                const style = align === 'left' ? thLeftStyle : thStyle;
+                const ind = s.key === key ? arrow(s.dir) : '';
+                return `<th data-sort-key="${key}" data-table="community" style="${style}">${label}${ind}</th>`;
+            };
+
+            let html = `<div style="color:${ACCENT}; font-weight:700; font-size:12px; margin-bottom:4px;">Community Buffs</div>`;
+            html += '<table style="width:100%; border-collapse:collapse; font-size:11px; margin-bottom:4px;">';
+            html += `<thead><tr>
+                ${th('Upgrade', 'desc', 'left')}
+                ${th('Cowbells', 'cowbellCost', 'right')}
+                ${th('Win Rate', 'winRate', 'right')}
+                ${th('Delta', 'deltaVal', 'right')}
+                ${th('XP/Attempt', 'xpPerRoom', 'right')}
+                ${th('ΔXP', 'xpDelta', 'right')}
+            </tr></thead><tbody>`;
+
+            for (const row of communityRows) {
+                html += `<tr style="border-bottom:1px solid #1a1a1a;">
+                    <td style="${tdNameStyle}">${row.desc}</td>
+                    <td style="${tdStyle} color:#ccc;">${row.cowbellCostStr}</td>
+                    <td style="${tdStyle} color:#666;">\u2014</td>
+                    <td style="${tdStyle} color:#666;">\u2014</td>
+                    <td style="${tdStyle} color:#ccc;">${row.xpPerRoomStr}</td>
+                    <td style="${tdStyle} color:${row.xpDeltaColor}; font-weight:600;">${row.xpDeltaStr}</td>
+                </tr>`;
+            }
+            html += '</tbody></table>';
+            html += `<div style="color:#666; font-size:10px; margin-bottom:12px;">
+                A community buff's level is what the whole server's donated minutes add up to, so there is no price
+                for one more level to rank on — the cowbell figure is what the game charges per minute to keep the
+                buff running. Neither of these can change whether a fight is won, so the win-rate columns are left
+                blank rather than filled in with the simulation's own noise; they are read on experience instead.
+                The Combat Drop buff is left out entirely — it moves what a win pays out, and this table does not
+                price drops. Capped at Lv${MAX_COMMUNITY_BUFF_LEVEL} (max).
+            </div>`;
+            return html;
+        };
+
         const renderAll = () => {
             sortRows(tokenRows, sortState.token.key, sortState.token.dir);
             sortRows(goldRows, sortState.gold.key, sortState.gold.dir);
+            sortRows(communityRows, sortState.community.key, sortState.community.dir);
             let html = '';
             if (tokenResults.length > 0) html += renderTokenTable();
+            if (communityResults.length > 0) html += renderCommunityTable();
             if (goldResults.length > 0) html += renderGoldTable();
             container.innerHTML = html;
             // Re-wired on every render: a sort rebuilds the table, and buttons
@@ -3310,7 +3696,7 @@ class LabSimUI {
                 const gain = (delta || 0) * 100;
                 return {
                     upgrade: r.candidate?.description || '',
-                    paidIn: r.costType === 'token' ? 'tokens' : 'gold',
+                    paidIn: CSV_PAID_IN[r.costType] || 'gold',
                     cost: r.costType === 'gold' ? (r.cost ?? null) : null,
                     // Shrine rows are paid in gold *and* guild tokens; the token
                     // half rides on the candidate rather than the result row
@@ -3949,7 +4335,11 @@ class LabSimUI {
 
         const skills = targetSkill ? [targetSkill] : SKILLING_SKILL_HRIDS;
         const actionTypes = skills.map((hrid) => hrid.replace('/skills/', '/action_types/'));
-        const candidates = generateSkillingCommunityBuffCandidates(dto.communityBuffLevels, actionTypes);
+        const candidates = generateSkillingCommunityBuffCandidates(
+            dto.communityBuffLevels,
+            actionTypes,
+            this._getSkillingCommunityTargetLevel()
+        );
         if (!candidates.length) return;
 
         // The same average the advisor's own baseline is, computed from the same
@@ -4027,6 +4417,13 @@ class LabSimUI {
         const thLeftStyle =
             'text-align:left; padding:4px; color:#888; border-bottom:1px solid #333; cursor:pointer; user-select:none;';
         const tdStyle = 'padding:3px 4px; text-align:right;';
+        // The same division the combat Upgrade tab makes: numbers right-aligned
+        // and never wrapped, only the name column reflowing. A gear row's label
+        // — "Maelstrom Plate Body ★ → Lumberjack's Top +5 (woodcutting)" — is
+        // long enough to push every measured column off the panel on one line.
+        const tdNameStyle =
+            'padding:3px 4px; color:#e0e0e0; text-align:left; white-space:normal; ' +
+            'overflow-wrap:anywhere; line-height:1.4;';
 
         const tokenRows = tokenResults.map((r) => {
             const clearRate = (r.clearRate || 0) * 100;
@@ -4065,6 +4462,11 @@ class LabSimUI {
             const deltaColor = deltaVal > 0 ? '#4caf50' : deltaVal < 0 ? '#f44336' : '#888';
             const cost = r.cost || 0;
             const goldPerPct = deltaVal > 0 && cost ? Math.round(cost / deltaVal) : Infinity;
+            // A skilling piece replacing combat armour is priced at the piece
+            // alone — the plate goes back in the loadout, not on the market — and
+            // a row whose cost is suspiciously *high* has to say why, the same
+            // way the labyrinth's forced armor swaps do
+            const kept = r.candidate?.keptItems || [];
 
             return {
                 desc: r.candidate?.description || '',
@@ -4077,6 +4479,20 @@ class LabSimUI {
                 deltaColor,
                 goldPerPct,
                 goldPerPctStr: deltaVal > 0 && cost ? formatWithSeparator(goldPerPct) : '\u2014',
+                // Whatever handoff buttons the shared builder emits — the same
+                // ones the combat Upgrade tab's gear rows carry, since a
+                // skilling tool is bought in exactly the same marketplace
+                actions: combatSimUI.upgradeRowActionsHtml(r),
+                keptNote: kept.length
+                    ? `Costed as the new piece alone. ${kept
+                          .map(
+                              (item) =>
+                                  itemName(item.hrid) + (item.enhancementLevel ? ` +${item.enhancementLevel}` : '')
+                          )
+                          .join(
+                              ', '
+                          )} is combat gear you keep in a loadout, so its resale is deliberately not credited — selling it to fund skilling gear is not a trade anybody makes.`
+                    : '',
             };
         });
 
@@ -4180,7 +4596,7 @@ class LabSimUI {
 
             for (const row of tokenRows) {
                 html += `<tr style="border-bottom:1px solid #1a1a1a;">
-                    <td style="padding:3px 4px; color:#e0e0e0;">${row.desc}</td>
+                    <td style="${tdNameStyle}">${row.desc}</td>
                     <td style="${tdStyle} color:#ccc;">${row.tokenCost || '\u2014'}</td>
                     <td style="${tdStyle} color:#ccc;">${row.clearRateStr}</td>
                     <td style="${tdStyle} color:${row.deltaColor}; font-weight:600;">${row.deltaStr}</td>
@@ -4216,7 +4632,7 @@ class LabSimUI {
             for (const row of guildRows) {
                 const note = row.shrineNote ? ` title="${row.shrineNote}"` : '';
                 html += `<tr style="border-bottom:1px solid #1a1a1a;"${note}>
-                    <td style="padding:3px 4px; color:#e0e0e0;">${row.desc}${row.shrineNote ? ' <span style="color:#ff9800;">*</span>' : ''}</td>
+                    <td style="${tdNameStyle}">${row.desc}${row.shrineNote ? ' <span style="color:#ff9800;">*</span>' : ''}</td>
                     <td style="${tdStyle} color:#ccc;">${row.costStr}</td>
                     <td style="${tdStyle} color:#ccc;">${row.tokenCostStr}</td>
                     <td style="${tdStyle} color:#ccc;">${row.clearRateStr}</td>
@@ -4257,7 +4673,7 @@ class LabSimUI {
 
             for (const row of communityRows) {
                 html += `<tr style="border-bottom:1px solid #1a1a1a;">
-                    <td style="padding:3px 4px; color:#e0e0e0;">${row.desc}</td>
+                    <td style="${tdNameStyle}">${row.desc}</td>
                     <td style="${tdStyle} color:#ccc;">${row.cowbellCostStr}</td>
                     <td style="${tdStyle} color:#ccc;">${row.clearRateStr}</td>
                     <td style="${tdStyle} color:${row.deltaColor}; font-weight:600;">${row.deltaStr}</td>
@@ -4292,8 +4708,9 @@ class LabSimUI {
             </tr></thead><tbody>`;
 
             for (const row of goldRows) {
-                html += `<tr style="border-bottom:1px solid #1a1a1a;">
-                    <td style="padding:3px 4px; color:#e0e0e0;">${row.desc}</td>
+                const note = row.keptNote ? ` title="${escapeHtmlAttribute(row.keptNote)}"` : '';
+                html += `<tr style="border-bottom:1px solid #1a1a1a;"${note}>
+                    <td style="${tdNameStyle}">${row.desc}${row.actions}${row.keptNote ? ' <span style="color:#ff9800;">*</span>' : ''}</td>
                     <td style="${tdStyle} color:#ccc;">${row.costStr}</td>
                     <td style="${tdStyle} color:#ccc;">${row.clearRateStr}</td>
                     <td style="${tdStyle} color:${row.deltaColor}; font-weight:600;">${row.deltaStr}</td>
@@ -4301,6 +4718,12 @@ class LabSimUI {
                 </tr>`;
             }
             html += '</tbody></table>';
+            if (goldRows.some((row) => row.keptNote)) {
+                html += `<div style="color:#666; font-size:10px; margin-top:4px;">
+                    <span style="color:#ff9800;">*</span> priced as the new piece alone: the combat gear it goes in
+                    place of is kept for its loadout, so its resale is not credited against the purchase.
+                </div>`;
+            }
             return html;
         };
 
@@ -4319,6 +4742,9 @@ class LabSimUI {
             if (communityRows.length > 0) html += renderCommunityTable();
             if (goldRows.length > 0) html += renderGoldTable();
             container.innerHTML = html;
+            // Re-wired on every render: a sort rebuilds the tables, and buttons
+            // wired to the elements it threw away do nothing at all
+            combatSimUI.wireUpgradeRowActions(container, 'LabSimUI');
         };
 
         renderAll();

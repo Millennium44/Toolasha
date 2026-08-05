@@ -79,6 +79,9 @@ vi.mock('./upgrade-advisor.js', () => ({
     },
     generateHouseCandidates: () => advisor.houseCandidates.map((c) => ({ ...c })),
     describeHouseScan: () => advisor.scan,
+    houseRoomMovesWinRate: () => true,
+    MAX_HOUSE_LEVEL: 8,
+    MAX_GUILD_SHRINE_LEVEL: 20,
 }));
 
 const { default: ui } = await import('./lab-sim-ui.js');
@@ -179,11 +182,11 @@ describe('when there is nothing to weigh', () => {
         expect(ui._describeHouseScan(player(), gameData)).toMatch(/all 11 combat house rooms are already maxed/);
     });
 
-    test('and a game with no combat-relevant rooms is a different answer', () => {
+    test('and a game with no rooms that could move a win rate is a different answer', () => {
         advisor.houseCandidates = [];
         advisor.scan = { rooms: 20, withBuffs: 18, combatRelevant: 0, belowCap: 0 };
 
-        expect(ui._describeHouseScan(player(), gameData)).toMatch(/no combat-relevant house rooms/);
+        expect(ui._describeHouseScan(player(), gameData)).toMatch(/no house rooms whose buffs can move a win rate/);
     });
 
     test('and no game data at all is not an answer worth printing', () => {

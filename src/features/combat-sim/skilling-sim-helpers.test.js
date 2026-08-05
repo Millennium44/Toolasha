@@ -255,3 +255,48 @@ describe('the equipment side, which the community buffs sit beside', () => {
         expect(buffs).toEqual([]);
     });
 });
+
+/**
+ * Several community buff levels at once.
+ *
+ * "Gathering Quantity Lv3 → Lv8" is one row and one clear-rate evaluation
+ * instead of five, which is the question a player with a donation plan is
+ * actually asking. It changes nothing about the cost, because a community buff
+ * has no per-level cost to change.
+ */
+describe('a community buff target level in the skilling tab', () => {
+    const GATHERING = ['/action_types/foraging'];
+
+    test('the row spans from where the buff is to where it was asked for', () => {
+        const [candidate] = generateSkillingCommunityBuffCandidates({ gatheringQuantity: 3 }, GATHERING, 8).filter(
+            (c) => c.buffKey === 'gatheringQuantity'
+        );
+
+        expect(candidate).toMatchObject({ currentLevel: 3, upgradeLevel: 8, levelsBought: 5 });
+        expect(candidate.description).toContain('Lv3 → Lv8');
+    });
+
+    test('a target at or below where it already is falls back to one level up', () => {
+        const [candidate] = generateSkillingCommunityBuffCandidates({ gatheringQuantity: 9 }, GATHERING, 4).filter(
+            (c) => c.buffKey === 'gatheringQuantity'
+        );
+
+        expect(candidate.upgradeLevel).toBe(10);
+    });
+
+    test('and the ceiling holds, whatever was typed', () => {
+        const [candidate] = generateSkillingCommunityBuffCandidates({ gatheringQuantity: 3 }, GATHERING, 99).filter(
+            (c) => c.buffKey === 'gatheringQuantity'
+        );
+
+        expect(candidate.upgradeLevel).toBe(MAX_COMMUNITY_BUFF_LEVEL);
+    });
+
+    test('no target at all is the one-level-up it has always been', () => {
+        const [candidate] = generateSkillingCommunityBuffCandidates({ gatheringQuantity: 3 }, GATHERING).filter(
+            (c) => c.buffKey === 'gatheringQuantity'
+        );
+
+        expect(candidate.upgradeLevel).toBe(4);
+    });
+});

@@ -405,6 +405,8 @@ describe('the Upgrade tab asks two questions instead of one', () => {
             'ability_level',
             'ability_swap',
             'house',
+            'labyrinth_buff',
+            'community_buff',
             'combat_level',
             'guild_shrine',
         ]);
@@ -413,7 +415,9 @@ describe('the Upgrade tab asks two questions instead of one', () => {
     test('several sets can be checked at once', () => {
         check('ability_level', true);
         check('guild_shrine', true);
-        expect(ui._getUpgradeDimensions()).toEqual(['equipment', 'ability_level', 'guild_shrine']);
+        // Token Buffs opens checked, so it is in every selection that has not
+        // been asked to leave it out
+        expect(ui._getUpgradeDimensions()).toEqual(['equipment', 'ability_level', 'labyrinth_buff', 'guild_shrine']);
     });
 
     test('the target scope is its own control, with all targets among the options', () => {
@@ -462,6 +466,7 @@ describe('the Upgrade tab asks two questions instead of one', () => {
 
     test('scope and sets are independent — the old exclusive "— All Fights" modes are gone', () => {
         check('equipment', true);
+        check('labyrinth_buff', false);
         check('guild_shrine', true);
         setScope('all');
 
@@ -493,6 +498,7 @@ describe('the Upgrade tab asks two questions instead of one', () => {
 
     test('and they reach the multi-fight analysis instead of being dropped from the plan', () => {
         check('ability_swap', true);
+        check('labyrinth_buff', false);
         setScope('all');
 
         expect(ui._planFromControls()).toMatchObject({
@@ -635,10 +641,38 @@ describe('the Upgrade tab asks two questions instead of one', () => {
 
     test('and a whole-run selection carries them into the analysis rather than dropping them', () => {
         check('equipment', false);
+        check('labyrinth_buff', false);
         check('house', true);
         setScope('all');
 
         expect(ui._planFromControls()).toMatchObject({ kind: 'allFights', modes: ['house'], dropped: [] });
+    });
+
+    test('token buffs ride into a whole run beside them, out of the same checkbox row', () => {
+        check('equipment', false);
+        check('house', true);
+        setScope('all');
+
+        expect(ui._planFromControls()).toMatchObject({
+            kind: 'allFights',
+            modes: ['house', 'labyrinth_buff'],
+            dropped: [],
+        });
+    });
+
+    test('community buffs are the one set a whole run refuses, and the label says why', () => {
+        setScope('all');
+        expect(box('community_buff').disabled).toBe(true);
+        expect(ui.panel.querySelector('[data-lab-mode-label="community_buff"]').title).toMatch(/expected attempts/);
+        expect(ui.panel.querySelector('[data-lab-mode-chip="community_buff"]').style.opacity).toBe('0.45');
+
+        // …and the refusal does not follow the set back to the scope where it
+        // is offered
+        setScope('current');
+        expect(box('community_buff').disabled).toBe(false);
+        expect(ui.panel.querySelector('[data-lab-mode-label="community_buff"]').title).toMatch(
+            /^The server-wide community buffs/
+        );
     });
 });
 
@@ -742,6 +776,45 @@ describe('a house room level reaches the character the simulation is handed', ()
         expect(raised).toHaveLength(2);
         const levels = sim.calls.filter((call) => call.playerDTOs[0].houseRooms[DAIRY] === 5).map((c) => c.roomLevel);
         expect(levels.sort()).toEqual([130, 150]);
+    });
+
+    test('a skilling room stays out even when it carries the global buffs every room grants', async () => {
+        // The real game gives every room a global wisdom and rare-find buff, and
+        // both are buff types the combat engine reads — which is how the ten
+        // skilling rooms ended up in a table that ranks nothing but win rate
+        game.houseRoomDetailMap['/house_rooms/brewery'] = {
+            name: 'Brewery',
+            globalBuffs: [{ typeHrid: '/buff_types/wisdom' }, { typeHrid: '/buff_types/rare_find' }],
+            actionBuffs: [{ typeHrid: '/buff_types/efficiency' }],
+        };
+        checkOnlyHouse();
+
+        await ui._onUpgradeAnalyze();
+
+        expect(JSON.stringify(houseRoomsSimmed())).not.toContain('brewery');
+    });
+
+    test('the Lv box buys several levels in one row instead of stepping one at a time', async () => {
+        checkOnlyHouse();
+        ui.panel.querySelector('#mwi-labsim-house-target-level').value = '7';
+
+        await ui._onUpgradeAnalyze();
+
+        expect(houseRoomsSimmed()).toContainEqual({ [DAIRY]: 7, [GARDEN]: 2 });
+        expect(houseRoomsSimmed()).toContainEqual({ [DAIRY]: 4, [GARDEN]: 7 });
+    });
+
+    test('and the per-room Targets grid only offers the rooms this table can rank', () => {
+        game.houseRoomDetailMap['/house_rooms/brewery'] = {
+            name: 'Brewery',
+            globalBuffs: [{ typeHrid: '/buff_types/wisdom' }],
+        };
+        ui._buildLabHouseTargets();
+
+        const offered = [...ui.panel.querySelectorAll('[data-lab-house-target]')].map(
+            (input) => input.dataset.labHouseTarget
+        );
+        expect(offered.sort()).toEqual([DAIRY, GARDEN]);
     });
 
     test('a house with every combat room maxed says so rather than reading as no upgrades', async () => {

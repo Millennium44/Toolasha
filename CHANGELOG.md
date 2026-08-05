@@ -6,6 +6,16 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The lab sims what can actually win
+
+- **Skilling rooms leave the lab combat list**: every house room grants global experience+rare-find just for existing, which the old filter read as "affects combat" — so all seventeen rooms qualified and Mystical Study's +1.02% was sampling noise wearing a room's name. The lab now only offers rooms whose buffs can change a fight's outcome; the combat sim's own tab keeps the wider set (its profit/XP columns make those rooms legitimate there).
+- **Token buffs rank in whole-run scope** — their own "Labyrinth Token Buffs" section with per-fight breakdowns; the blocker was that a token buff is an argument to the sim, not a change to the character, so the pooled path needed a buff override. The "Configure fight only" tooltip claim is gone.
+- **Your combat gear is never sold for skilling gear**: the -410M "cost" credited the Maelstrom plate's resale; combat-only pieces displaced by skilling gear are now kept (star marker, hover note, footnote) with no setting — loadouts mean you keep both, and there's no judgement call to toggle. Same-purpose swaps unchanged.
+- **Target levels everywhere**: houses (lab gains the Lv box + per-room Targets grid the combat sim had), guild shrines (summed credits+tokens), and community buffs (all three surfaces), each capped at its real max.
+- **Community buffs in lab combat** (Configure fight): ranked on XP per attempt with win-rate columns honestly blank; Combat Drop excluded because the lab table prices no drops — the footnote says so.
+- **House rows get "Save for this"** (feeding the new house goals) **and "Market"** — one click opens the dominant-cost material with the full count armed, the tooltip naming the rest.
+- **The gradient colors every scored column** in its own direction (cheapest-first for Gold/0.01% and Repay), missing values never place, and the skilling tables pick up the combat side's wrapping and row actions.
+
 ### Task cards catch up after a reroll
 
 - **The stale picture and the stuck free reroll were one bug**: the game leaves the reroll chooser open after rerolling, and Toolasha's "never touch a mid-flow card" rule had no way back — every redraw pass skipped the card and nothing re-ran when the chooser closed, so the picture, profit rows, spend line and highlights all stayed on the old task. There's now a settle watch: any skipped card arms a poll that redraws everything the moment the chooser closes, and the task icon (a click-proof background layer) updates even mid-flow, while you're looking at it.

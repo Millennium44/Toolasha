@@ -15,6 +15,7 @@ import {
     affectsSkill,
     scopeEquipmentToSkill,
     bestGearForSkill,
+    isCombatOnlyItem,
     NEW_GEAR_LEVEL,
 } from './skilling-gear-candidates.js';
 
@@ -289,5 +290,68 @@ describe('the shape the analysis expects', () => {
     test('nothing in the game data is nothing offered, rather than a throw', () => {
         expect(bestGearForSkill({ skill: 'milking', itemDetailMap: {} })).toEqual([]);
         expect(bestGearForSkill({ skill: 'milking' })).toEqual([]);
+    });
+});
+
+/**
+ * Combat gear is not sold to buy skilling gear.
+ *
+ * The Skilling tab offered "Maelstrom Plate Body ★ → Lumberjack's Top +5" at a
+ * cost of −410,000,000, because the swap credited the resale of the plate. The
+ * plate is not for sale: it goes back on the moment the woodcutting stops, and
+ * a loadout holds both. The negative cost then divided into a Gold/1% that
+ * ranked a woodcutting shirt above every real upgrade in the table.
+ */
+describe('what a skilling swap is allowed to sell', () => {
+    const COMBAT_PLATE = {
+        name: 'Maelstrom Plate Body',
+        equipmentDetail: { type: '/equipment_types/body', combatStats: { armor: 40 }, noncombatStats: {} },
+    };
+    const HYBRID_NECKLACE = {
+        name: "Philosopher's Necklace",
+        equipmentDetail: {
+            type: '/equipment_types/neck',
+            combatStats: { armor: 2 },
+            noncombatStats: { skillingEfficiency: 0.05 },
+        },
+    };
+
+    test('a piece with combat stats and no noncombat ones is combat gear', () => {
+        expect(isCombatOnlyItem(COMBAT_PLATE)).toBe(true);
+    });
+
+    test('a piece carrying both is not — it is worn for the skilling half too', () => {
+        expect(isCombatOnlyItem(HYBRID_NECKLACE)).toBe(false);
+    });
+
+    test('and a piece with neither is not combat gear, which is a different claim', () => {
+        expect(isCombatOnlyItem({ equipmentDetail: { type: '/equipment_types/body' } })).toBe(false);
+        expect(isCombatOnlyItem(null)).toBe(false);
+    });
+
+    test('swapping combat armour out records it as kept, so nothing credits its resale', () => {
+        const [candidate] = bestGearForSkill({
+            skill: '/skills/milking',
+            equipment: { '/equipment_types/body': { hrid: '/items/maelstrom_plate_body', enhancementLevel: 8 } },
+            itemDetailMap: { ...ITEMS, '/items/maelstrom_plate_body': COMBAT_PLATE },
+            levels: LEVELS,
+        }).filter((c) => c.slot === '/equipment_types/body');
+
+        expect(candidate.keptItems).toEqual([{ hrid: '/items/maelstrom_plate_body', enhancementLevel: 8 }]);
+        // The empty list is the claim: "this swap removes nothing that is sold"
+        expect(candidate.removedItems).toEqual([]);
+    });
+
+    test('a skilling piece replacing another skilling piece is still a straight trade', () => {
+        const [candidate] = bestGearForSkill({
+            skill: '/skills/milking',
+            equipment: { '/equipment_types/milking_tool': { hrid: '/items/basic_brush', enhancementLevel: 3 } },
+            itemDetailMap: ITEMS,
+            levels: LEVELS,
+        }).filter((c) => c.slot === '/equipment_types/milking_tool');
+
+        expect(candidate.keptItems).toBeUndefined();
+        expect(candidate.removedItems).toBeUndefined();
+        expect(candidate.currentHrid).toBe('/items/basic_brush');
     });
 });

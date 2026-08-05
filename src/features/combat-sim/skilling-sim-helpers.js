@@ -264,13 +264,24 @@ export function buildCommunityBuffsForSkill(communityBuffLevels, actionTypeHrid)
  * player to pay. The rate is carried on the candidate so a row can say what
  * keeping the buff running costs, which is the honest number that does exist.
  *
+ * ### On a target level
+ *
+ * A target buys several levels in one row — "Gathering Quantity Lv3 → Lv8" — and
+ * one simulation instead of five. It changes nothing about the cost, because
+ * there was never a per-level cost to change: the cowbell figure is per minute
+ * of uptime either way. A target at or below where the buff already sits falls
+ * back to one level up rather than generating nothing.
+ *
  * @param {Object} communityBuffLevels - From the editor DTO
  * @param {string[]} actionTypeHrids - The action types being simmed
+ * @param {number} [targetLevel=0] - Absolute level to sim at; 0 means one level up
  * @returns {Array<Object>} Candidates of type 'community_buff'
  */
-export function generateSkillingCommunityBuffCandidates(communityBuffLevels, actionTypeHrids = []) {
+export function generateSkillingCommunityBuffCandidates(communityBuffLevels, actionTypeHrids = [], targetLevel = 0) {
     const candidates = [];
     if (!actionTypeHrids.length) return candidates;
+
+    const target = Math.min(MAX_COMMUNITY_BUFF_LEVEL, Math.max(0, Math.floor(Number(targetLevel) || 0)));
 
     for (const def of COMMUNITY_BUFFS) {
         const resolved = resolveCommunityBuff(def);
@@ -279,7 +290,7 @@ export function generateSkillingCommunityBuffCandidates(communityBuffLevels, act
         const currentLevel = Math.max(0, Math.floor(Number(communityBuffLevels?.[def.key]) || 0));
         if (currentLevel >= MAX_COMMUNITY_BUFF_LEVEL) continue;
 
-        const upgradeLevel = currentLevel + 1;
+        const upgradeLevel = Math.min(MAX_COMMUNITY_BUFF_LEVEL, target > currentLevel ? target : currentLevel + 1);
         candidates.push({
             type: 'community_buff',
             buffKey: def.key,
@@ -287,6 +298,7 @@ export function generateSkillingCommunityBuffCandidates(communityBuffLevels, act
             buffTypeHrid: resolved.typeHrid,
             currentLevel,
             upgradeLevel,
+            levelsBought: upgradeLevel - currentLevel,
             cowbellCost: resolved.cowbellCost,
             // A wisdom level changes what a cleared room pays, never how often
             // it clears, so its row is read on XP rather than on clear rate
