@@ -17,6 +17,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - **The Task Tokens tile earns its rate line**: `tokens/hr this week` beneath the board value, on wall-clock time between your first and last claim (the tooltip names the sample and the basis; under two claims shows no rate rather than a fake one).
 - **Task statistics gains "Claimed Tasks (last 7 days)"**: tasks, tokens, coins, both hourly rates, the measured span — and reroll spend over the same window tied in for a **Net Task Income** figure, plus your last five completions.
 
+### The sim comes home
+
+- **The community buff cap is 20 after all** — the earlier raise to 30 was a misdiagnosis (the real fix was the at-cap "what the buff is worth" row, which stays). The advisor, the sim editor's inputs, and the tooltip all agree on Lv20 now.
+- **Reset to Me / Reset to Party**: after importing other players, one click restores your own live character, or your current party — party members' loadouts come from their shared profiles (real plumbing, not guesses), and anyone whose card you've never opened is named in an amber note telling you to open it once and reset again. "Reset to Party" greys out when you're not in one. Zone/tier/hours stay put. The lab sim shares the editor, so it gets both buttons too.
+
 ### The combat sim answers back
 
 - **Community upgrades work**: the candidate generator capped community buffs at level 20, and the live buffs sit at or above it — so "Community" alone always evaluated nothing. Ceiling raised to 30, and a buff already at the ceiling now shows what the buff is _worth_ (Lv30 → off) instead of showing nothing. Also fixed: community and drink rows were silently dropped from multi-fight lab analyses by a loadout check that treated them as equipment.

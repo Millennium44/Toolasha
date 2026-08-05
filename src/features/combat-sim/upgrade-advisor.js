@@ -1883,14 +1883,20 @@ const COMMUNITY_BUFF_CANDIDATES = [
 /**
  * Highest level a community buff is offered at.
  *
- * Was 20, which is where the whole set silently disappeared: the server's
- * experience and combat-drop buffs sit at or above that most of the time, every
- * candidate was dropped as "already past the cap", and an analysis with only
- * Community ticked came back with nothing to show and the equipment-shaped
- * "ensure equipment is configured" message. 30 is the ceiling the sim editor's
- * own community-buff inputs use, so the two agree on what a level can be.
+ * 20, which is what the game says: a maxed buff reads "Level: 20 (Max)". It was
+ * briefly raised to 30 on the theory that a live server sitting at the cap was
+ * what emptied the Community set — but the cap was never the problem, the
+ * missing at-ceiling case was. A capped buff has no next level, and returning
+ * nothing for it left an analysis with only Community ticked showing nothing at
+ * all; it now gets the other honest answer, the same buff simulated *off*. With
+ * the ceiling back at its real value that at-ceiling row is the normal case on
+ * a live server, and it is what makes the set worth ticking.
+ *
+ * The sim editor's community-buff inputs clamp to the same number, so the two
+ * agree on what a level can be — an input that accepts 30 sims a state the game
+ * cannot reach.
  */
-const MAX_COMMUNITY_BUFF_LEVEL = 30;
+const MAX_COMMUNITY_BUFF_LEVEL = 20;
 
 /**
  * What a community buff is worth: one more level of it, or — once it is already
@@ -1906,7 +1912,8 @@ const MAX_COMMUNITY_BUFF_LEVEL = 30;
  * A buff at the ceiling has no next level, and returning nothing for it is what
  * left the set able to produce an empty analysis. It gets the other honest
  * answer instead: the same buff simulated *off*, so the row reads as what you
- * would lose rather than as an upgrade you cannot buy.
+ * would lose rather than as an upgrade you cannot buy. On a live server, where
+ * the buffs usually sit at Lv20 (Max), that is the row you get.
  *
  * @param {Object} communityBuffs - `{ mooPass, comExp, comDrop }` as configured
  * @returns {Array<Object>} Candidates of type 'community_buff', one per buff
