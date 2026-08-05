@@ -18,13 +18,38 @@
  *
  * It sits before Optimizer, which is also injected — and injected later than
  * this on a slow load, so its position is re-checked rather than set once.
+ *
+ * ## Why there is a second one on a phone
+ *
+ * That strip is the character column's, and on a desktop the character column is
+ * always on screen — whatever else you are doing, the tabs are there and so is
+ * this switch. On a phone the game shows one panel at a time, so the column and
+ * its tab strip are simply not in the document while you are looking at the
+ * marketplace, the map, or a fight. The switch is injected into a strip that does
+ * not exist, which is why the overlay could only be opened from the inventory
+ * screen: not a bug in the button, but the button having nowhere to be.
+ *
+ * So in mobile mode there is also a launcher — a small round button fixed to the
+ * window rather than to any of the game's own furniture, which is the only thing
+ * that survives the game swapping its whole screen out. It can be dragged, and
+ * where it is dragged to is remembered, because a fixed spot that happens to sit
+ * on top of a control on one phone is a launcher that has to be worked around
+ * forever. Desktop is untouched: no mobile mode, no launcher.
  */
 
 import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
 import overlayPanel, { VISIBILITY_EVENT } from './overlay-panel.js';
+import { restoreGeometry, saveGeometry } from '../../utils/panel-geometry.js';
+import { isMobileMode } from '../../utils/mobile.js';
 
 const BUTTON_ID = 'toolasha-overlay-tab';
+const LAUNCHER_ID = 'toolasha-overlay-launcher';
+/** Where the launcher was dragged to, shared by every character */
+const LAUNCHER_KEY = 'overlayLauncher';
+const LAUNCHER_SIZE = 40;
+/** Past this a press was a drag rather than a tap, and must not also toggle */
+const DRAG_SLOP = 6;
 
 /** The tab this one wants to sit in front of */
 const SITS_BEFORE = 'Optimizer';
@@ -32,6 +57,9 @@ const SITS_BEFORE = 'Optimizer';
 class OverlayTabButton {
     constructor() {
         this.button = null;
+        /** The round button on a phone, which no game screen can take away */
+        this.launcher = null;
+        this.detachLauncher = null;
         this.unregister = null;
         this.initialized = false;
         // The panel can also be closed by its own ✕, and the switch has to
@@ -46,9 +74,15 @@ class OverlayTabButton {
 
         // The strip is rebuilt whenever the column changes what it shows, so
         // this watches rather than injecting once
-        this.unregister = domObserver.onClass('OverlayTabButton', 'MuiTabs-flexContainer', () => this.ensureButton());
+        this.unregister = domObserver.onClass('OverlayTabButton', 'MuiTabs-flexContainer', () => {
+            this.ensureButton();
+            // Cheap, and the one thing that puts the launcher back if the game
+            // ever replaces the body it is attached to
+            this.ensureLauncher();
+        });
         document.addEventListener(VISIBILITY_EVENT, this.onVisibility);
         this.ensureButton();
+        this.ensureLauncher();
     }
 
     cleanup() {
@@ -57,6 +91,10 @@ class OverlayTabButton {
         document.removeEventListener(VISIBILITY_EVENT, this.onVisibility);
         this.button?.remove();
         this.button = null;
+        this.detachLauncher?.();
+        this.detachLauncher = null;
+        this.launcher?.remove();
+        this.launcher = null;
         this.initialized = false;
     }
 
@@ -127,6 +165,164 @@ class OverlayTabButton {
     }
 
     /**
+     * The launcher, on a phone, and nothing at all otherwise.
+     *
+     * Attached to the body rather than to anything of the game's, because the
+     * whole point of it is to outlive the screen you are on. Idempotent, so the
+     * observer that puts the tab switch back can call it too.
+     */
+    ensureLauncher() {
+        if (!isMobileMode()) {
+            this.detachLauncher?.();
+            this.detachLauncher = null;
+            this.launcher?.remove();
+            this.launcher = null;
+            return;
+        }
+        if (this.launcher && document.body?.contains(this.launcher)) {
+            this.sync();
+            return;
+        }
+        if (!document.body) return;
+
+        this.detachLauncher?.();
+        this.launcher?.remove();
+
+        const button = document.createElement('button');
+        button.id = LAUNCHER_ID;
+        button.type = 'button';
+        button.textContent = '⧉';
+        button.title = 'Show or hide the Toolasha overlay. Drag to move this button.';
+        button.setAttribute('aria-label', 'Toolasha overlay');
+        Object.assign(button.style, {
+            position: 'fixed',
+            // Above the game's own interface rather than under it, unlike the
+            // overlay itself: a readout the game may cover is a fair trade, a
+            // switch the game may cover is a switch that cannot be pressed
+            zIndex: String(config.Z_FLOATING_PANEL),
+            right: '8px',
+            bottom: '96px',
+            width: `${LAUNCHER_SIZE}px`,
+            height: `${LAUNCHER_SIZE}px`,
+            borderRadius: '50%',
+            border: '1px solid rgba(120, 160, 255, 0.45)',
+            background: 'rgba(8, 10, 20, 0.85)',
+            color: '#e8ecf5',
+            fontSize: '18px',
+            lineHeight: '1',
+            padding: '0',
+            cursor: 'pointer',
+            boxShadow: '0 2px 10px rgba(0, 0, 0, 0.5)',
+            // A finger dragging this must not scroll the game behind it
+            touchAction: 'none',
+        });
+
+        document.body.appendChild(button);
+        this.launcher = button;
+        this.detachLauncher = this.makeLauncherDraggable(button);
+        this.sync();
+
+        // Where it was left, if it was ever moved. Asynchronous, so it opens at
+        // the default corner and settles a frame later rather than waiting on a
+        // database before there is any way to open the overlay at all
+        restoreGeometry(button, LAUNCHER_KEY, { width: LAUNCHER_SIZE, height: LAUNCHER_SIZE }).catch((error) => {
+            console.error('[OverlayTabButton] Restoring the launcher position failed:', error);
+        });
+    }
+
+    /**
+     * Let the launcher be moved, and remember where to.
+     *
+     * A fixed corner is a guess about a screen this code has never seen, and on
+     * the phone where the guess is wrong the launcher covers a control for good.
+     * Dragging is the cheap way out of having to be right.
+     *
+     * The slop is what keeps it a button: a tap on a touchscreen always moves a
+     * pixel or two, so a press that never travels past {@link DRAG_SLOP} is
+     * still a tap and still toggles the overlay.
+     *
+     * @param {HTMLElement} button - The launcher
+     * @returns {Function} Detach
+     */
+    makeLauncherDraggable(button) {
+        let pointer = null;
+        let startX = 0;
+        let startY = 0;
+        let originX = 0;
+        let originY = 0;
+        let moved = false;
+
+        const onMove = (event) => {
+            if (pointer === null || event.pointerId !== pointer) return;
+
+            const dx = event.clientX - startX;
+            const dy = event.clientY - startY;
+            if (!moved && Math.abs(dx) < DRAG_SLOP && Math.abs(dy) < DRAG_SLOP) return;
+            moved = true;
+
+            const most = {
+                x: Math.max(0, window.innerWidth - LAUNCHER_SIZE),
+                y: Math.max(0, window.innerHeight - LAUNCHER_SIZE),
+            };
+            button.style.left = `${Math.min(Math.max(0, originX + dx), most.x)}px`;
+            button.style.top = `${Math.min(Math.max(0, originY + dy), most.y)}px`;
+            button.style.right = 'auto';
+            button.style.bottom = 'auto';
+        };
+
+        const onUp = () => {
+            if (pointer === null) return;
+            pointer = null;
+            document.removeEventListener('pointermove', onMove);
+            document.removeEventListener('pointerup', onUp);
+            document.removeEventListener('pointercancel', onUp);
+            if (!moved) return;
+
+            saveGeometry(LAUNCHER_KEY, {
+                left: Number.parseFloat(button.style.left),
+                top: Number.parseFloat(button.style.top),
+            });
+        };
+
+        const onDown = (event) => {
+            if (event.button !== 0) return;
+            pointer = event.pointerId;
+            moved = false;
+            startX = event.clientX;
+            startY = event.clientY;
+            const box = button.getBoundingClientRect();
+            originX = box.left;
+            originY = box.top;
+            document.addEventListener('pointermove', onMove);
+            document.addEventListener('pointerup', onUp);
+            document.addEventListener('pointercancel', onUp);
+        };
+
+        const onClick = (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            // The click that ends a drag is not a press of the button
+            if (moved) {
+                moved = false;
+                return;
+            }
+            overlayPanel.toggle();
+            this.sync();
+        };
+
+        button.addEventListener('pointerdown', onDown);
+        button.addEventListener('click', onClick);
+
+        return () => {
+            button.removeEventListener('pointerdown', onDown);
+            button.removeEventListener('click', onClick);
+            document.removeEventListener('pointermove', onMove);
+            document.removeEventListener('pointerup', onUp);
+            document.removeEventListener('pointercancel', onUp);
+        };
+    }
+
+    /**
      * The tab to copy the game's current look from.
      *
      * Cloned from a real tab rather than styled to match one, so it stays right
@@ -194,10 +390,11 @@ class OverlayTabButton {
         if (optimizer && optimizer.previousElementSibling !== this.button) list.insertBefore(this.button, optimizer);
     }
 
-    /** Dim it when the overlay is down, so the button says which state it is in */
+    /** Dim them when the overlay is down, so each says which state it is in */
     sync() {
-        if (!this.button) return;
-        this.button.style.opacity = overlayPanel.panel ? '1' : '0.6';
+        const open = overlayPanel.panel ? '1' : '0.6';
+        if (this.button) this.button.style.opacity = open;
+        if (this.launcher) this.launcher.style.opacity = open;
     }
 }
 

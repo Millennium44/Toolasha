@@ -12,8 +12,29 @@
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
-vi.mock('../../core/config.js', () => ({ default: { getSetting: () => true } }));
+vi.mock('../../core/config.js', () => ({ default: { getSetting: () => true, Z_FLOATING_PANEL: 1100 } }));
 vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: () => () => {} } }));
+
+/** Whether the script is acting like a phone, decided per test */
+const device = vi.hoisted(() => ({ mobile: false }));
+vi.mock('../../utils/mobile.js', () => ({
+    isMobileMode: () => device.mobile,
+    hasCoarsePointer: () => device.mobile,
+}));
+
+/** Where the launcher was left, and what it wrote when it was dragged */
+const geometry = vi.hoisted(() => ({ saved: {}, written: null }));
+vi.mock('../../utils/panel-geometry.js', () => ({
+    restoreGeometry: async (element, key) => {
+        const spot = geometry.saved[key];
+        if (!spot) return;
+        element.style.left = `${spot.left}px`;
+        element.style.top = `${spot.top}px`;
+    },
+    saveGeometry: async (key, value) => {
+        geometry.written = { key, value };
+    },
+}));
 
 const panel = vi.hoisted(() => ({ open: false, toggles: 0 }));
 
@@ -58,9 +79,37 @@ function theButton() {
     return document.getElementById('toolasha-overlay-tab');
 }
 
+/** @returns {HTMLElement|null} */
+function theLauncher() {
+    return document.getElementById('toolasha-overlay-launcher');
+}
+
+/**
+ * A pointer gesture on the launcher, from one point to another.
+ * @param {HTMLElement} element - What is being pressed
+ * @param {number[]} from - `[x, y]` where the finger went down
+ * @param {number[]} to - `[x, y]` where it came up
+ */
+function press(element, from, to) {
+    const at = (type, [x, y], target) =>
+        target.dispatchEvent(
+            new window.PointerEvent(type, { clientX: x, clientY: y, button: 0, pointerId: 1, bubbles: true })
+        );
+
+    at('pointerdown', from, element);
+    at('pointermove', to, document);
+    at('pointerup', to, document);
+    element.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+}
+
 beforeEach(() => {
     panel.open = false;
     panel.toggles = 0;
+    device.mobile = false;
+    geometry.saved = {};
+    geometry.written = null;
+    window.innerWidth = 400;
+    window.innerHeight = 800;
 });
 
 afterEach(() => {
@@ -251,5 +300,154 @@ describe('working as a switch', () => {
 
         expect(theButton()).toBeNull();
         expect(() => document.dispatchEvent(new CustomEvent('toolasha:overlay-visibility'))).not.toThrow();
+    });
+});
+
+describe('opening the overlay from anywhere on a phone', () => {
+    test('with no character column on screen there is still a way in', () => {
+        // The bug, exactly: the game shows one panel at a time on a phone, so
+        // the strip this switch lives in is not in the document while you are
+        // fighting or trading — and the overlay could only be opened from the
+        // inventory screen
+        device.mobile = true;
+        overlayTabButton.initialize();
+
+        expect(theButton()).toBeNull();
+        expect(theLauncher()).toBeTruthy();
+    });
+
+    test('it is fixed to the window rather than to any screen of the game', () => {
+        device.mobile = true;
+        overlayTabButton.initialize();
+
+        expect(theLauncher().style.position).toBe('fixed');
+        expect(theLauncher().parentElement).toBe(document.body);
+    });
+
+    test('it survives the screen the game was showing being thrown away', () => {
+        device.mobile = true;
+        buildTabs();
+        overlayTabButton.initialize();
+
+        // Which is what changing screens looks like on a phone
+        document.querySelector('[role="tablist"]').remove();
+        overlayTabButton.ensureButton();
+
+        expect(theLauncher()).toBeTruthy();
+    });
+
+    test('tapping it opens the overlay, and tapping again closes it', () => {
+        device.mobile = true;
+        overlayTabButton.initialize();
+
+        theLauncher().click();
+        expect(panel.open).toBe(true);
+
+        theLauncher().click();
+        expect(panel.open).toBe(false);
+    });
+
+    test('it dims with the panel, like the tab switch does', () => {
+        device.mobile = true;
+        overlayTabButton.initialize();
+        expect(Number(theLauncher().style.opacity)).toBeLessThan(1);
+
+        theLauncher().click();
+        expect(Number(theLauncher().style.opacity)).toBe(1);
+    });
+
+    test('a desktop never gets one', () => {
+        device.mobile = false;
+        buildTabs();
+        overlayTabButton.initialize();
+
+        expect(theButton()).toBeTruthy();
+        expect(theLauncher()).toBeNull();
+    });
+
+    test('turning mobile mode off takes it away again', () => {
+        device.mobile = true;
+        overlayTabButton.initialize();
+        expect(theLauncher()).toBeTruthy();
+
+        device.mobile = false;
+        overlayTabButton.ensureLauncher();
+
+        expect(theLauncher()).toBeNull();
+    });
+
+    test('running twice leaves one launcher', () => {
+        device.mobile = true;
+        overlayTabButton.initialize();
+        overlayTabButton.ensureLauncher();
+
+        expect(document.querySelectorAll('#toolasha-overlay-launcher').length).toBe(1);
+    });
+
+    test('cleanup takes it away', () => {
+        device.mobile = true;
+        overlayTabButton.initialize();
+        overlayTabButton.cleanup();
+
+        expect(theLauncher()).toBeNull();
+    });
+});
+
+describe('moving the launcher out of the way', () => {
+    test('dragging it moves it and remembers where to', () => {
+        // A fixed corner is a guess about a screen this has never seen, and on
+        // the phone where the guess is wrong it covers a control for good
+        device.mobile = true;
+        overlayTabButton.initialize();
+
+        // happy-dom measures every box at the origin, so the launcher starts at
+        // 0,0 here and where it lands is the distance the finger travelled
+        press(theLauncher(), [100, 100], [250, 400]);
+
+        expect(theLauncher().style.left).toBe('150px');
+        expect(theLauncher().style.top).toBe('300px');
+        expect(geometry.written.key).toBe('overlayLauncher');
+        expect(geometry.written.value).toEqual({ left: 150, top: 300 });
+    });
+
+    test('a drag does not also toggle the overlay', () => {
+        device.mobile = true;
+        overlayTabButton.initialize();
+
+        press(theLauncher(), [300, 700], [120, 300]);
+
+        expect(panel.toggles).toBe(0);
+    });
+
+    test('a tap that wanders a pixel is still a tap', () => {
+        // Every press on a touchscreen moves a little, and a switch that needs a
+        // perfectly still finger is a switch that appears not to work
+        device.mobile = true;
+        overlayTabButton.initialize();
+
+        press(theLauncher(), [300, 700], [302, 701]);
+
+        expect(panel.toggles).toBe(1);
+        expect(geometry.written).toBeNull();
+    });
+
+    test('it cannot be dragged off the screen', () => {
+        device.mobile = true;
+        overlayTabButton.initialize();
+
+        press(theLauncher(), [300, 700], [9000, 9000]);
+
+        expect(Number.parseFloat(theLauncher().style.left)).toBeLessThanOrEqual(400);
+        expect(Number.parseFloat(theLauncher().style.top)).toBeLessThanOrEqual(800);
+    });
+
+    test('it opens where it was last left', async () => {
+        device.mobile = true;
+        geometry.saved.overlayLauncher = { left: 30, top: 200 };
+        overlayTabButton.initialize();
+        await Promise.resolve();
+
+        expect(theLauncher().style.left).toBe('30px');
+        expect(theLauncher().style.top).toBe('200px');
     });
 });
