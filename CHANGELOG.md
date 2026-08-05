@@ -17,6 +17,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - **The Task Tokens tile earns its rate line**: `tokens/hr this week` beneath the board value, on wall-clock time between your first and last claim (the tooltip names the sample and the basis; under two claims shows no rate rather than a fake one).
 - **Task statistics gains "Claimed Tasks (last 7 days)"**: tasks, tokens, coins, both hourly rates, the measured span — and reroll spend over the same window tied in for a **Net Task Income** figure, plus your last five completions.
 
+### The gist can keep a secret
+
+- **Optional sync passphrase** (Settings → Cross-Device Sync): when set, the sync gist holds AES-256-GCM ciphertext instead of readable JSON — useless to anyone holding the gist URL, the token, or the GitHub account. Same passphrase on every device; a wrong or missing one is a clean, named error with the fix in the toast, never garbage fed to the importer. No passphrase = exactly the old behaviour, and old unencrypted gists still pull fine. The passphrase is stored locally like the token (the help text says precisely what that means) and is never uploaded.
+
 ### Console-dump fixes
 
 - **The Shrine Upgrade Planner stays in its box**: the exchange modal doesn't grow for injected content, so the expanded planner now scrolls within a bounded area (like the ranking table above it) instead of rendering past the modal's bottom edge.

@@ -29,6 +29,7 @@ import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { showToast } from '../../utils/toast.js';
 import { askChoice } from '../../utils/choice-dialog.js';
 import { GistError, findSyncGist, readSyncGist, writeSyncGist, chunkPayload } from './gist-client.js';
+import { encryptText, decryptText } from './sync-crypto.js';
 import { buildPayloadJSON, applyPayload, hashPayload } from './sync-payload.js';
 
 const STORE = 'settings';
@@ -137,7 +138,27 @@ class SyncManager {
         }
 
         const gistId = await this._resolveGistId(token);
-        const chunks = chunkPayload(payload);
+
+        // The hash above is always of the plaintext — encryption salts itself
+        // freshly every time, so hashing ciphertext would make every payload
+        // look changed and every silent push upload.
+        const passphrase = this._passphrase();
+        let body = payload;
+        let encrypted = null;
+        if (passphrase) {
+            const sealed = await encryptText(payload, passphrase);
+            body = sealed.ciphertext;
+            encrypted = {
+                v: 1,
+                algorithm: sealed.algorithm,
+                kdf: sealed.kdf,
+                iterations: sealed.iterations,
+                salt: sealed.salt,
+                iv: sealed.iv,
+            };
+        }
+
+        const chunks = chunkPayload(body);
         const previousChunks = Number(await storage.get(KEY_CHUNK_COUNT, STORE, 0)) || 0;
 
         const exportedAt = new Date().toISOString();
@@ -148,6 +169,7 @@ class SyncManager {
             chunks: chunks.length,
             bytes: payload.length,
             hash,
+            ...(encrypted ? { encrypted } : {}),
         };
 
         const written = await writeSyncGist(token, gistId, manifest, chunks, previousChunks);
@@ -186,7 +208,21 @@ class SyncManager {
             return { ok: true, skipped: true, reason: 'no-gist' };
         }
 
-        const { manifest, payload } = await readSyncGist(token, gistId);
+        const remote = await readSyncGist(token, gistId);
+        const manifest = remote.manifest;
+        let payload = remote.payload;
+
+        if (manifest?.encrypted) {
+            const passphrase = this._passphrase();
+            if (!passphrase) {
+                throw new GistError(
+                    'passphrase',
+                    'This sync gist is encrypted, and no sync passphrase is set on this device.'
+                );
+            }
+            payload = await decryptText({ ...manifest.encrypted, ciphertext: payload }, passphrase);
+        }
+
         const remoteAt = manifest?.exportedAt ?? null;
         const lastSyncedAt = await storage.get(KEY_LAST_SYNCED_AT, STORE, null);
 
@@ -263,6 +299,17 @@ class SyncManager {
      */
     _token() {
         const raw = config.getSetting('sync_token', '');
+        return typeof raw === 'string' ? raw.trim() : '';
+    }
+
+    /**
+     * The sync passphrase, trimmed. Empty means "sync in the clear", which is
+     * what every gist written before this setting existed is.
+     * @returns {string} Passphrase, or empty string
+     * @private
+     */
+    _passphrase() {
+        const raw = config.getSetting('sync_passphrase', '');
         return typeof raw === 'string' ? raw.trim() : '';
     }
 
@@ -393,6 +440,7 @@ const REMEDIES = {
     auth: 'Check the token in Settings → Cross-Device Sync — it needs the "gist" scope.',
     'not-found': 'This device has forgotten that gist; press Push to make a new one.',
     'too-large': 'Set Sync scope to "Settings only" in Settings → Cross-Device Sync.',
+    passphrase: 'Enter the same sync passphrase in Settings → Cross-Device Sync on every device that shares the gist.',
     parse: 'Push from a device whose data is good to replace what is in the gist.',
     http: 'Try again shortly; githubstatus.com says whether GitHub itself is unwell.',
 };

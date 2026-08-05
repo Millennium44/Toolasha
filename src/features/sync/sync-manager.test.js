@@ -359,3 +359,91 @@ describe('describeStatus', () => {
         expect(await syncManager.describeStatus()).toMatch(/^Last synced /);
     });
 });
+
+describe('passphrase encryption', () => {
+    test('a set passphrase uploads ciphertext with the encryption record in the manifest', async () => {
+        settings.values.sync_passphrase = 'moo moo';
+
+        const result = await syncManager.push();
+        expect(result.ok).toBe(true);
+
+        const write = gist.writes[0];
+        expect(write.manifest.encrypted).toMatchObject({ algorithm: 'AES-256-GCM', kdf: 'PBKDF2-SHA-256' });
+        // The chunk is ciphertext, not the payload; the hash is still the plaintext's
+        expect(write.chunks[0]).not.toContain('local');
+        expect(write.manifest.hash).toBe(`h:${payload.text}`);
+
+        const { decryptText } = await import('./sync-crypto.js');
+        await expect(
+            decryptText({ ...write.manifest.encrypted, ciphertext: write.chunks[0] }, 'moo moo')
+        ).resolves.toBe(payload.text);
+    });
+
+    test('no passphrase means the gist stays plaintext with no encryption record', async () => {
+        const result = await syncManager.push();
+        expect(result.ok).toBe(true);
+        expect(gist.writes[0].manifest.encrypted).toBeUndefined();
+        expect(gist.writes[0].chunks[0]).toBe(payload.text);
+    });
+
+    test('pulling an encrypted gist decrypts before applying', async () => {
+        settings.values.sync_passphrase = 'moo moo';
+        const { encryptText } = await import('./sync-crypto.js');
+        const remote = '{"remote":2}';
+        const sealed = await encryptText(remote, 'moo moo');
+
+        stored.map['toolasha_sync_gistId'] = 'gist-1';
+        gist.read = {
+            manifest: {
+                exportedAt: '2026-08-05T12:00:00Z',
+                chunks: 1,
+                hash: `h:${remote}`,
+                encrypted: { iterations: sealed.iterations, salt: sealed.salt, iv: sealed.iv },
+            },
+            payload: sealed.ciphertext,
+        };
+
+        const result = await syncManager.pull();
+        expect(result.ok).toBe(true);
+        expect(payload.applied).toBe(remote);
+    });
+
+    test('pulling an encrypted gist without a passphrase fails with the passphrase remedy', async () => {
+        stored.map['toolasha_sync_gistId'] = 'gist-1';
+        gist.read = {
+            manifest: {
+                exportedAt: '2026-08-05T12:00:00Z',
+                chunks: 1,
+                encrypted: { iterations: 1, salt: 'a', iv: 'b' },
+            },
+            payload: 'zzz',
+        };
+
+        const result = await syncManager.pull();
+        expect(result.ok).toBe(false);
+        expect(result.reason).toBe('passphrase');
+        expect(toasts.at(-1).message).toContain('passphrase');
+        expect(payload.applied).toBeUndefined();
+    });
+
+    test('a wrong passphrase on pull fails cleanly and applies nothing', async () => {
+        settings.values.sync_passphrase = 'wrong one';
+        const { encryptText } = await import('./sync-crypto.js');
+        const sealed = await encryptText('{"remote":2}', 'right one');
+
+        stored.map['toolasha_sync_gistId'] = 'gist-1';
+        gist.read = {
+            manifest: {
+                exportedAt: '2026-08-05T12:00:00Z',
+                chunks: 1,
+                encrypted: { iterations: sealed.iterations, salt: sealed.salt, iv: sealed.iv },
+            },
+            payload: sealed.ciphertext,
+        };
+
+        const result = await syncManager.pull();
+        expect(result.ok).toBe(false);
+        expect(result.reason).toBe('passphrase');
+        expect(payload.applied).toBeUndefined();
+    });
+});

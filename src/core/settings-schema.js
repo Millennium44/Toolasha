@@ -3060,6 +3060,20 @@ export const settingsGroups = {
                     'it at github.com/settings/tokens if you stop using sync. It is never written into the synced ' +
                     'payload, so pulling on another device will not plant it there.',
             },
+            sync_passphrase: {
+                id: 'sync_passphrase',
+                label: 'Sync passphrase (optional encryption)',
+                type: 'password',
+                default: '',
+                placeholder: 'Leave empty to sync unencrypted',
+                help:
+                    'When set, the gist holds AES-256 ciphertext instead of readable JSON, so the data is useless to ' +
+                    'anyone who gets the gist URL, the token, or your GitHub account. Enter the SAME passphrase on ' +
+                    'every device that shares the gist; there is no recovery — a forgotten passphrase means pushing ' +
+                    'fresh from a device that still has the data. Like the token, the passphrase is stored in this ' +
+                    "browser's local database in plain text, so it hides the gist from GitHub-side readers, not from " +
+                    'extensions that can already read this page. It is never uploaded.',
+            },
             sync_scope: {
                 id: 'sync_scope',
                 label: 'What to sync',
