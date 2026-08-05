@@ -182,27 +182,8 @@ export function makeResizable(panel, { minWidth = 200, minHeight = 80, onResize 
     };
 }
 
-/**
- * Nudge a panel back into view.
- *
- * A panel remembers where it was left, and the window it was left in may have
- * been wider. Without this a panel saved off the right edge is unreachable and
- * looks like a feature that stopped working.
- *
- * @param {{left: string, top: string}} position - A saved position
- * @param {{width: number, height: number}} size - The panel's own size
- * @param {{width: number, height: number}} viewport - The window
- * @returns {{left: number, top: number}} A position at least partly on screen
- */
-export function clampToViewport(position, size, viewport) {
-    const left = parseFloat(position?.left);
-    const top = parseFloat(position?.top);
-    if (!Number.isFinite(left) || !Number.isFinite(top)) return null;
-
-    // A strip of the panel is enough to grab it by and drag it back
-    const margin = 40;
-    return {
-        left: Math.min(Math.max(left, margin - size.width), viewport.width - margin),
-        top: Math.min(Math.max(top, 0), viewport.height - margin),
-    };
-}
+// A `clampToViewport` lived here and had no callers. Panels are clamped by
+// `panel-geometry.js` on restore and by the overlay's own `_clampToViewport`,
+// both of which keep the whole panel on screen; this one kept a 40px strip of
+// it, on the reasoning that a strip is enough to grab and drag back. Nothing
+// agreed, so it was two rules and one of them was never applied.

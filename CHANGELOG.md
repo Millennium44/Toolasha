@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Nine small debts paid
+
+- **The lab supplies planner believes the server**: a just-ended run no longer reads as active off a stale grid — the game's own isActive flag wins, with the grid test kept only as fallback.
+- **One house cost basis**: build costs price at the ask everywhere now (they were quoted at the midpoint in the Houses panel but at ask in the advisor and eWatch — same room, two figures). Houses-panel costs, networth's house valuation and the combat score's house cost all move up by the half-spread to the honest buy-side number.
+- **Auto-sort keeps its promise**: with auto-sort on, the task board re-sorts itself when a reroll chooser closes; without it, nothing reorders under you.
+- **Autogrid can't overlap tiles anymore** — advances round up to the grid in both axes (the vertical had the same bug).
+- **The treasure chest popup's ✕ got the same pinned treatment as the main header**, one shared item-hash parser replaces two copies, one shared room→skill map replaces two copies, a drift test pins the notification permission keys to the schema, and a dead contradicted clamp was deleted.
+
 ### The goal planner stops promising billions
 
 - **A rate is only a rate while its inputs last**: every gold method now carries a sustainable cap — alchemy is capped at your own stock (decomposing one crossbow is a +851M _one-off_, not "437.9B/hr"), and the plan spends methods greedily: windfall first, then the next honest rate for the remainder, shown as indented sub-steps with their own durations. A method you can't run for an hour is never described per-hour; a target no method can cover says so instead of inventing a duration.

@@ -103,6 +103,26 @@ describe('reading the stock a run is carrying', () => {
         expect(isLabyrinthRunActive(null)).toBe(false);
     });
 
+    test('the server saying the run is over beats a grid still in hand', () => {
+        // The moment the bug lived in: a run that has just ended leaves its last
+        // floor on the payload, and reading that as a live run keeps the planner
+        // measuring against the run's leftovers when the bag is the answer again
+        expect(isLabyrinthRunActive({ isActive: false, roomData: grid })).toBe(false);
+        expect(isLabyrinthRunActive({ isActive: false, pathData: '[{"x":0,"y":0}]' })).toBe(false);
+    });
+
+    test('the server saying the run is on beats an empty grid', () => {
+        // The other side: a fresh entry whose floor has not been sent yet
+        expect(isLabyrinthRunActive({ isActive: true })).toBe(true);
+        expect(isLabyrinthRunActive({ isActive: true, roomData: [] })).toBe(true);
+    });
+
+    test('a payload with no flag still falls back to the floor', () => {
+        // Three-valued, not two: `isActive` absent is not `isActive: false`
+        expect(isLabyrinthRunActive({ roomData: grid, isActive: undefined })).toBe(true);
+        expect(isLabyrinthRunActive({ isActive: null, roomData: grid })).toBe(true);
+    });
+
     test('finds stock carried as a map keyed by item hrid', () => {
         const counts = readRunSupplyCounts({
             roomData: grid,

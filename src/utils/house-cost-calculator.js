@@ -1,7 +1,22 @@
 /**
  * House Cost Calculator Utility
- * Calculates the total cost to build house rooms to specific levels
- * Used for combat score calculation
+ *
+ * What it costs to build a house room up to a level, materials priced at the
+ * market.
+ *
+ * ## Which side of the book
+ *
+ * The buy side — the ask. Every question asked of this is some form of "what
+ * would it cost me to do this now": the Houses panel's affordability count, the
+ * upgrade advisor, the equipment savings goals, the combat score's estimate of
+ * what a character's rooms represent. Buying the materials is what any of those
+ * would involve, and the ask is what buying costs.
+ *
+ * It used to price at the ask/bid midpoint, which is a defensible number for
+ * nothing in particular and had the concrete cost that the same room was quoted
+ * two different figures in two of this script's own panels — the advisor and the
+ * savings row already asked for the ask. One side, and it is the one the money
+ * actually leaves at.
  */
 
 import dataManager from '../core/data-manager.js';
@@ -45,26 +60,15 @@ export function calculateHouseBuildCost(houseRoomHrid, currentLevel) {
             const prices = marketAPI.getPrice(item.itemHrid, 0);
             if (!prices) continue;
 
-            // Match MCS behavior: if only one side of the order book exists, use it for both
+            // The buy side, because buying is the thing being costed. A book
+            // with no ask still has a bid to go on — one side is a worse
+            // estimate than two, but it is an estimate, and dropping the
+            // material would understate the room by exactly that material
             // (getPrice normalizes missing sides to null)
-            let ask = prices.ask;
-            let bid = prices.bid;
+            const price = prices.ask ?? prices.bid;
+            if (price == null) continue;
 
-            if (ask != null && bid == null) {
-                bid = ask;
-            }
-            if (bid != null && ask == null) {
-                ask = bid;
-            }
-            if (ask == null && bid == null) {
-                continue;
-            }
-
-            // Use weighted average
-            const weightedPrice = (ask + bid) / 2;
-
-            const itemCost = item.count * weightedPrice;
-            totalCost += itemCost;
+            totalCost += item.count * price;
         }
     }
 

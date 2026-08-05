@@ -38,6 +38,10 @@ const {
     NOTIFICATION_SETTING_KEYS,
 } = await import('./notification-service.js');
 
+// The real schema, not a mock: the point of the drift test below is that these
+// two lists are written in different files by different hands
+const { settingsGroups: schemaGroups } = await import('../../core/settings-schema.js');
+
 /**
  * The setting hooks the module installed when it was imported.
  *
@@ -255,5 +259,25 @@ describe('asking for permission', () => {
         stubNotificationAPI('denied');
         expect(await notificationService.requestPermission()).toBe(false);
         expect(Notification.requestPermission).not.toHaveBeenCalled();
+    });
+
+    test('every notification toggle in the schema is one of the settings hooked', () => {
+        // The list is hand-maintained, and the cost of it drifting is invisible:
+        // a new toggle left off it still fires notifications, but never gets to
+        // ask for permission, so the one user gesture worth spending the prompt
+        // on goes by unused and the feature quietly works toasts-only forever.
+        //
+        // The rule, stated: every checkbox in the Notifications group is a
+        // master switch for a notifying feature and belongs on the list, except
+        // the per-buff children — `notifications_communityBuff_*` picks which
+        // buffs the community-buff warning covers, is on by default, and turning
+        // one on is not somebody asking to be notified for the first time. The
+        // number settings (the warning lead time) are not switches at all.
+        const notificationToggles = Object.values(schemaGroups.notifications.settings)
+            .filter((setting) => setting.type === 'checkbox')
+            .map((setting) => setting.id)
+            .filter((id) => !id.startsWith('notifications_communityBuff_'));
+
+        expect([...NOTIFICATION_SETTING_KEYS].sort()).toEqual(notificationToggles.sort());
     });
 });

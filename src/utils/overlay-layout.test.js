@@ -7,6 +7,7 @@ import {
     clampZoom,
     resolveLayout,
     autoGrid,
+    snapUp,
     compactColumns,
     contentBounds,
     GRID,
@@ -25,6 +26,19 @@ describe('snap', () => {
     test('a step of one is snapping switched off', () => {
         expect(snap(14, 1)).toBe(14);
         expect(snap(14.6, 1)).toBe(15);
+    });
+});
+
+describe('snapUp', () => {
+    test('rounds up to the next step', () => {
+        expect(snapUp(241)).toBe(250);
+        expect(snapUp(240)).toBe(240);
+        expect(snapUp(26, 25)).toBe(50);
+    });
+
+    test('a step of one is snapping switched off', () => {
+        expect(snapUp(14, 1)).toBe(14);
+        expect(snapUp(14.2, 1)).toBe(15);
     });
 });
 
@@ -197,6 +211,30 @@ describe('autoGrid', () => {
             { key: 'b', width: 73, height: 30 },
         ];
         expect(autoGrid(odd, 400)[1].x % GRID).toBe(0);
+    });
+
+    test('a tile whose width is off the grid does not have the next one laid over it', () => {
+        // 245 wide on a 10 grid: the advance used to snap to the *nearest* step,
+        // which is 240 — five pixels back inside a tile that is already there.
+        // Autogrid is the button that is supposed to tidy the canvas up
+        const odd = [
+            { key: 'a', width: 245, height: 30 },
+            { key: 'b', width: 245, height: 30 },
+        ];
+        const [a, b] = autoGrid(odd, 600);
+        expect(b.x).toBeGreaterThanOrEqual(a.x + 245);
+        expect(b.x % GRID).toBe(0);
+    });
+
+    test('nor a wrapped line laid over the line above it', () => {
+        // The same rounding, vertically: a 25-tall line advancing to 20
+        const odd = [
+            { key: 'a', width: 160, height: 25 },
+            { key: 'b', width: 160, height: 25 },
+        ];
+        const [, b] = autoGrid(odd, 200);
+        expect(b.y).toBeGreaterThanOrEqual(25);
+        expect(b.y % GRID).toBe(0);
     });
 });
 

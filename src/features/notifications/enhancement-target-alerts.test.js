@@ -58,7 +58,6 @@ const {
     default: enhancementTargetAlerts,
     MASTER_SETTING,
     ENHANCE_ACTION_HRID,
-    parseEnhancedItem,
 } = await import('./enhancement-target-alerts.js');
 
 const DAGGER = '/items/enhancers_top';
@@ -76,31 +75,9 @@ function attempt({ item = DAGGER, level = 0, target = 10, hrid = ENHANCE_ACTION_
 
 const send = (payload) => game.wsHandlers.action_completed(payload);
 
-describe('parseEnhancedItem', () => {
-    test('reads the item and its level out of the long form', () => {
-        expect(parseEnhancedItem('161296::/item_locations/inventory::/items/enhancers_top::5')).toEqual({
-            itemHrid: '/items/enhancers_top',
-            level: 5,
-        });
-    });
-
-    test('reads the short form, which has no leading item id', () => {
-        expect(parseEnhancedItem('/item_locations/inventory::/items/enhancers_top::0')).toEqual({
-            itemHrid: '/items/enhancers_top',
-            level: 0,
-        });
-    });
-
-    test('a bare hrid is level zero of that item', () => {
-        expect(parseEnhancedItem('/items/enhancers_top')).toEqual({ itemHrid: '/items/enhancers_top', level: 0 });
-    });
-
-    test('a hash naming no item yields no item, rather than level zero of nothing', () => {
-        expect(parseEnhancedItem('161296::/item_locations/inventory::3').itemHrid).toBeNull();
-        expect(parseEnhancedItem('').itemHrid).toBeNull();
-        expect(parseEnhancedItem(undefined).itemHrid).toBeNull();
-    });
-});
+// The hash itself is `utils/item-hash.js`'s to test — this feature only has to
+// keep asking it the right question, which the cases below do through the
+// action payloads
 
 describe('enhancement target alerts', () => {
     beforeEach(async () => {

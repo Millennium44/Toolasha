@@ -205,9 +205,17 @@ const MAX_SCAN_NODES = 4000;
  * Whether a labyrinth run is currently going.
  *
  * A run is the thing that owns its own supplies, so this is what decides which
- * pile the planners are allowed to read. Taken from the presence of a floor
- * rather than from a flag: the grid and the path are the two things that only
- * exist while a run does, and the same test is what the reference client uses.
+ * pile the planners are allowed to read.
+ *
+ * `isActive` is the server's own answer and wins outright when the payload
+ * carries it — including when it says no. A run that has just ended leaves the
+ * grid and the queued path in hand for a while afterwards, and reading those as
+ * a live run sends the planners to the run's leftover stock at exactly the
+ * moment the bag has become the right pile again.
+ *
+ * Without the flag the grid and the path stand in: both exist only while a run
+ * does, which is the same test `labyrinthRunState` falls back to in the
+ * notifications feature. Neither the flag nor either of them is not a run.
  *
  * @param {Object|null} labyrinth - A `labyrinth_updated` payload's `labyrinth`,
  *   or `characterData.characterLabyrinth`
@@ -215,6 +223,7 @@ const MAX_SCAN_NODES = 4000;
  */
 export function isLabyrinthRunActive(labyrinth) {
     if (!labyrinth || typeof labyrinth !== 'object') return false;
+    if (typeof labyrinth.isActive === 'boolean') return labyrinth.isActive;
     if (Array.isArray(labyrinth.roomData) && labyrinth.roomData.length > 0) return true;
     if (typeof labyrinth.roomData === 'string' && labyrinth.roomData.length > 2) return true;
     if (Array.isArray(labyrinth.pathData) && labyrinth.pathData.length > 0) return true;

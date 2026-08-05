@@ -9,7 +9,7 @@ import dataManager from '../../core/data-manager.js';
 import taskIcons from './task-icons.js';
 import taskIconFilters from './task-icon-filters.js';
 import taskRerollProtection from './task-reroll-protection.js';
-import { boardHasConfirmingCard } from './task-card-state.js';
+import { boardHasConfirmingCard, armConfirmSettleWatch, onConfirmFlowSettled } from './task-card-state.js';
 import domObserver from '../../core/dom-observer.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 
@@ -21,6 +21,8 @@ class TaskSorter {
         this.timerRegistry = createTimerRegistry();
         this.readClickHandler = null;
         this.settleObserver = null;
+        /** Set while the settle watch is subscribed to; see `sortTasks` */
+        this.unsubscribeSettle = null;
 
         // Task type ordering (combat tasks go to bottom)
         this.TASK_ORDER = {
@@ -47,6 +49,13 @@ class TaskSorter {
         // Use DOM observer to watch for task panel appearing
         this.watchTaskPanel();
         this.watchReadButton();
+
+        // Only with auto-sort on. Subscribing regardless would re-order the
+        // board behind a player who has never asked for it to be ordered,
+        // seconds after they closed a reroll chooser.
+        if (config.getSetting('taskSorter_autoSort')) {
+            this.unsubscribeSettle = onConfirmFlowSettled(() => this.sortTasks());
+        }
 
         this.initialized = true;
     }
@@ -357,9 +366,17 @@ class TaskSorter {
         // One of the cards is showing a reroll chooser or a discard
         // confirmation and is waiting on a second click. Re-appending the cards
         // moves that one out of the DOM and back, which is exactly the click
-        // being pulled out from under the player. The board is left alone; the
-        // next pass — the settle watch, a quest update, the button — sorts it.
+        // being pulled out from under the player, so the board is left alone.
+        //
+        // What happens next depends on who asked. Auto-sort is a standing
+        // instruction that the board be in order, and a reroll is the commonest
+        // way it stops being — so with auto-sort on this arms the settle watch
+        // and sorts as soon as no card is mid-flow. Without it, sorting is
+        // something the player does, and re-ordering the board some seconds
+        // after they closed a chooser is not what they pressed anything for:
+        // the board waits for the button.
         if (boardHasConfirmingCard(taskList)) {
+            if (this.unsubscribeSettle) armConfirmSettleWatch();
             return;
         }
 
@@ -410,6 +427,8 @@ class TaskSorter {
             this.readClickHandler = null;
         }
         this.stopSettleWatch();
+        this.unsubscribeSettle?.();
+        this.unsubscribeSettle = null;
 
         this.timerRegistry.clearAll();
         this.initialized = false;

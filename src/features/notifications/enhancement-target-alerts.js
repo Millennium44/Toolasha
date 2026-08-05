@@ -41,6 +41,7 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import webSocketHook from '../../core/websocket.js';
 import notificationService from './notification-service.js';
+import { parseItemHash } from '../../utils/item-hash.js';
 
 /** Master switch; nothing below it is consulted while this is off */
 export const MASTER_SETTING = 'notifications_enhancementTarget';
@@ -50,37 +51,6 @@ export const ENHANCE_ACTION_HRID = '/actions/enhancing/enhance';
 
 /** Prefix for the notification service's event keys */
 const EVENT_KEY_PREFIX = 'enhancement-target';
-
-/**
- * The item and its level, out of an enhancing action's primary item hash.
- *
- * The hash is a `::`-joined tuple whose shape has varied — with and without a
- * leading item id — so it is read by finding the parts rather than by counting
- * them: the segment starting `/items/` is the item, and a trailing segment that
- * parses as a number is the enhancement level. A hash with no item in it yields
- * a null hrid, which callers treat as "nothing to say" rather than as level 0
- * of something unknown.
- *
- * @param {string} primaryItemHash - As sent on the action
- * @returns {{itemHrid: string|null, level: number}} What the hash names
- */
-export function parseEnhancedItem(primaryItemHash) {
-    if (typeof primaryItemHash !== 'string' || !primaryItemHash) {
-        return { itemHrid: null, level: 0 };
-    }
-
-    const parts = primaryItemHash.split('::');
-    const itemHrid = parts.find((part) => part.startsWith('/items/')) || null;
-
-    let level = 0;
-    const last = parts[parts.length - 1];
-    if (last && !last.startsWith('/')) {
-        const parsed = Number.parseInt(last, 10);
-        if (Number.isFinite(parsed)) level = parsed;
-    }
-
-    return { itemHrid, level };
-}
 
 class EnhancementTargetAlerts {
     constructor() {
@@ -149,7 +119,7 @@ class EnhancementTargetAlerts {
         // ending to announce
         if (!(target > 0)) return;
 
-        const { itemHrid, level } = parseEnhancedItem(action.primaryItemHash);
+        const { itemHrid, level } = parseItemHash(action.primaryItemHash);
         if (!itemHrid) return;
 
         const pair = `${itemHrid}:${target}`;

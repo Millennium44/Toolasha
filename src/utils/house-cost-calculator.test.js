@@ -53,10 +53,18 @@ describe('calculateHouseBuildCost', () => {
 
     test('sums costs across all levels up to currentLevel, coins at face value', () => {
         // level1: 100 coins = 100
-        // level2: 10 plank * weighted(12,8)=10 = 100
-        // level3: 20 plank * 10 = 200
+        // level2: 10 plank * ask 12 = 120
+        // level3: 20 plank * 12 = 240
         const cost = calculateHouseBuildCost('/house_rooms/dojo', 3);
-        expect(cost).toBe(100 + 100 + 200);
+        expect(cost).toBe(100 + 120 + 240);
+    });
+
+    test('prices materials at the ask, which is what buying them costs', () => {
+        // Not the midpoint. The advisor and the equipment savings row already
+        // quoted the ask, so the same room was worth two different figures
+        // depending on which panel was asked
+        state.prices = { '/items/plank': { ask: 12, bid: 8 } };
+        expect(calculateHouseBuildCost('/house_rooms/library', 1)).toBe(5 * 12);
     });
 
     test('only counts levels up to and including currentLevel', () => {
@@ -64,10 +72,16 @@ describe('calculateHouseBuildCost', () => {
         expect(cost).toBe(100);
     });
 
-    test('uses one-sided order book price for both sides when only one exists', () => {
+    test('uses the one side the book has when there is no ask', () => {
+        // A material nobody is selling is still a material the room needs;
+        // leaving it out would understate the room by exactly that material
+        state.prices = { '/items/plank': { ask: null, bid: 9 } };
+        expect(calculateHouseBuildCost('/house_rooms/library', 1)).toBe(5 * 9);
+    });
+
+    test('an ask with no bid behind it is still the ask', () => {
         state.prices = { '/items/plank': { ask: 15, bid: null } };
-        const cost = calculateHouseBuildCost('/house_rooms/library', 1);
-        expect(cost).toBe(5 * 15);
+        expect(calculateHouseBuildCost('/house_rooms/library', 1)).toBe(5 * 15);
     });
 
     test('skips items with no price data at all', () => {

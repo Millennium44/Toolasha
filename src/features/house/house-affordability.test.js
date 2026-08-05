@@ -38,7 +38,7 @@ vi.mock('../../core/storage.js', () => ({
     },
 }));
 
-const { nextLevelCost, affordableUpgrades, setRoomTracked, isRoomTracked, roomSkill, materialsCost } =
+const { nextLevelCost, affordableUpgrades, setRoomTracked, isRoomTracked, materialsCost } =
     await import('./house-affordability.js');
 
 describe('nextLevelCost', () => {
@@ -136,21 +136,9 @@ describe('rooms you are not saving for', () => {
     });
 });
 
-describe('JHouse’s associations', () => {
-    test('a room is drawn as the skill it boosts', () => {
-        // Which is how a grid of seventeen becomes scannable: a milk bottle says
-        // Dairy Barn before the words have been read
-        expect(roomSkill('/house_rooms/dairy_barn')).toBe('milking');
-        expect(roomSkill('/house_rooms/mystical_study')).toBe('magic');
-    });
-
-    test('a room nobody has mapped falls back to its own name', () => {
-        // Which finds no sprite and draws a spacer — a missing icon rather than
-        // somebody else's
-        expect(roomSkill('/house_rooms/newly_added')).toBe('newly_added');
-        expect(roomSkill(null)).toBe('');
-    });
-});
+// JHouse's room → skill associations moved to `utils/room-skills.js`, which both
+// this panel and the equipment savings row now draw their icons from; the tests
+// for them went with it
 
 describe('both sides of the book', () => {
     const materials = [

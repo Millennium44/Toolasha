@@ -2532,8 +2532,12 @@ class LabyrinthClearRate {
             const labyrinth = this.currentLabyrinthState();
             // The grid being on screen is a run too — the state object can lag a
             // fresh entry, and a lagging flag would send the readout back to the
-            // bag for exactly the moments this fix is about
-            const runActive = isLabyrinthRunActive(labyrinth) || Boolean(this.roomData?.length);
+            // bag for exactly the moments this fix is about. Unless the server
+            // has said outright that the run is over, in which case the grid
+            // still in hand is the one it just finished and the bag is right
+            // again.
+            const runActive =
+                isLabyrinthRunActive(labyrinth) || (labyrinth?.isActive !== false && Boolean(this.roomData?.length));
 
             const run = runActive ? readRunSupplyCounts(labyrinth, hrids) : null;
             const dom = runActive && !run?.known ? readSupplyRowCounts(document, hrids) : null;
