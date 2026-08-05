@@ -68,6 +68,7 @@ export const NOTIFICATION_SETTING_KEYS = [
     'notifications_consumableLow',
     'notifications_marketListingFilled',
     'notifications_otherCharacterIdle',
+    'notifications_communityBuffExpiring',
     'notifiEmptyAction',
 ];
 

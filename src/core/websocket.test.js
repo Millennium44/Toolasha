@@ -160,6 +160,19 @@ describe('content-hash deduplication', () => {
         expect(handler).toHaveBeenCalledTimes(1);
     });
 
+    test('community_buffs_updated repeats with identical openings are processed every time', () => {
+        // Two donations to the same buff differ only past the 100-char hash
+        // window (expireTime/level) — the type must skip the content hash
+        const handler = vi.fn();
+        webSocketHook.on('community_buffs_updated', handler);
+        const message = msg('community_buffs_updated', { communityBuffs: [{ id: 'stable', level: 5 }] });
+
+        webSocketHook.processMessage(message);
+        webSocketHook.processMessage(message);
+
+        expect(handler).toHaveBeenCalledTimes(2);
+    });
+
     test('cleanupProcessedMessages trims down to the newest 50 entries once the cap is crossed', () => {
         // Cleanup triggers the instant size exceeds 100 (each message here has unique
         // content, so every one is added); the 101st push crosses the threshold and

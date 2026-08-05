@@ -99,6 +99,20 @@ describe('DataManager', () => {
         expect(listener).toHaveBeenCalledWith(payload);
     });
 
+    test('community_buffs_updated refreshes the levels getCommunityBuffLevel reads', async () => {
+        const { default: dataManager } = await import('./data-manager.js');
+        dataManager.characterData = {
+            communityBuffs: [{ hrid: '/community_buff_types/experience', level: 3 }],
+        };
+
+        const handler = webSocketHandlers.get('community_buffs_updated');
+        expect(typeof handler).toBe('function');
+
+        handler({ communityBuffs: [{ hrid: '/community_buff_types/experience', level: 4 }] });
+
+        expect(dataManager.getCommunityBuffLevel('/community_buff_types/experience')).toBe(4);
+    });
+
     test('merges market listings updates and emits updated list', async () => {
         const { default: dataManager } = await import('./data-manager.js');
         const listener = vi.fn();

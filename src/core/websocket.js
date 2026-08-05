@@ -255,6 +255,12 @@ class WebSocketHook {
             messageType === 'battle_updated' ||
             messageType === 'action_type_consumable_slots_updated' ||
             messageType === 'consumable_buffs_updated' ||
+            // Two donations to the same buff in a row produce messages whose
+            // first 100 characters are identical — type, buff id and hrid fill
+            // the window, and the changed expireTime/level sit past it — so the
+            // content hash would drop the extension and expiry alerts would
+            // fire against a stale clock
+            messageType === 'community_buffs_updated' ||
             messageType === 'character_info_updated' ||
             messageType === 'labyrinth_updated' ||
             messageType === 'loadouts_updated' ||
