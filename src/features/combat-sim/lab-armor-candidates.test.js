@@ -14,6 +14,7 @@ import {
     generateLabArmorCandidates,
     getLoadoutElements,
     getWeaponStyleFamily,
+    labelItemWithLevel,
     resolveItemEnhancement,
     styleFamilyOfStats,
 } from './lab-armor-candidates.js';
@@ -220,7 +221,7 @@ describe('generateLabArmorCandidates', () => {
         expect(bodySwap.type).toBe('cross_slot');
         expect(bodySwap.clearedSlots).toEqual([]);
         expect(bodySwap.removedItems).toEqual([{ hrid: '/items/old_tunic', enhancementLevel: 4 }]);
-        expect(bodySwap.description).toBe('Old Tunic → Kraken Tunic (+7)');
+        expect(bodySwap.description).toBe('Old Tunic +4 → Kraken Tunic +7');
     });
 
     test('describes a pair as one swap of both pieces', () => {
@@ -235,7 +236,7 @@ describe('generateLabArmorCandidates', () => {
                 c.addedSlots[LEGS]?.hrid === '/items/anchorbound_plate_legs'
         );
 
-        expect(pair.description).toBe('Old Tunic + empty → Anchorbound Plate Body + Anchorbound Plate Legs (+7)');
+        expect(pair.description).toBe('Old Tunic +4 + empty → Anchorbound Plate Body +7 + Anchorbound Plate Legs +7');
         expect(pair.removedItems).toEqual([{ hrid: '/items/old_tunic', enhancementLevel: 4 }]);
     });
 
@@ -256,7 +257,34 @@ describe('generateLabArmorCandidates', () => {
                 c.addedSlots[LEGS]?.hrid === '/items/anchorbound_plate_legs'
         );
 
-        expect(pair.description).toContain('(+7/+10)');
+        expect(pair.description).toBe('empty + empty → Anchorbound Plate Body +7 + Anchorbound Plate Legs +10');
+    });
+
+    test('no swap label ends in an aggregate level any more', () => {
+        // "… → Royal Fire Robe Top + Royal Fire Robe Bottoms (+7)" claimed one
+        // level for the whole change and said nothing about the gear coming off.
+        // Every piece on both sides carries its own now, so the trailing bracket
+        // has no job left — and a `(+7/+10)` fallback nobody could map back onto
+        // the pieces it belonged to goes with it.
+        const dto = player({
+            '/equipment_types/two_hand': { hrid: '/items/bow' },
+            [BODY]: { hrid: '/items/old_tunic', enhancementLevel: 4 },
+        });
+
+        for (const candidate of generateLabArmorCandidates(dto, gameData(), [])) {
+            expect(candidate.description).not.toMatch(/\(\+[\d/+]+\)$/);
+            // Both sides of the arrow, item by item
+            const [from, to] = candidate.description.split(' → ');
+            expect(to.split(' + ')).toHaveLength(Object.keys(candidate.addedSlots).length);
+            expect(from.split(' + ')).toHaveLength(Object.keys(candidate.addedSlots).length);
+        }
+    });
+
+    test('labels one item at a time', () => {
+        expect(labelItemWithLevel('Kraken Tunic', 7)).toBe('Kraken Tunic +7');
+        // A +0 piece is written the way the game writes it, with no "+0" on it
+        expect(labelItemWithLevel('Kraken Tunic', 0)).toBe('Kraken Tunic');
+        expect(labelItemWithLevel('Kraken Tunic')).toBe('Kraken Tunic');
     });
 
     test('describes an empty slot as empty', () => {
@@ -264,7 +292,7 @@ describe('generateLabArmorCandidates', () => {
         const bodySwap = candidates.find(
             (c) => Object.keys(c.addedSlots).length === 1 && c.addedSlots[BODY]?.hrid === '/items/kraken_tunic'
         );
-        expect(bodySwap.description).toBe('empty → Kraken Tunic (+7)');
+        expect(bodySwap.description).toBe('empty → Kraken Tunic +7');
         expect(bodySwap.removedItems).toEqual([]);
     });
 
@@ -514,7 +542,7 @@ describe('elemental weapon swaps', () => {
         expect(full.addedSlots[BODY].hrid).toBe('/items/royal_fire_robe_top');
         expect(full.addedSlots[LEGS].hrid).toBe('/items/royal_fire_robe_bottoms');
         expect(full.description).toBe(
-            'Blooming Trident + empty + empty → Blazing Trident + Royal Fire Robe Top + Royal Fire Robe Bottoms (+7)'
+            'Blooming Trident +7 + empty + empty → Blazing Trident +7 + Royal Fire Robe Top +7 + Royal Fire Robe Bottoms +7'
         );
     });
 
