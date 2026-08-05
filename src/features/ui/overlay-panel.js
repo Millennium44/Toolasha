@@ -41,6 +41,20 @@
  * you reach for to dismiss it, and a double-click that only ever opens leaves
  * you hunting for the close button.
  *
+ * ## Narrow screens
+ *
+ * A layout is saved as pixels, and the same account logs in on a desktop and on
+ * a phone. Restored straight, a two-column arrangement on a 370-pixel canvas is
+ * not two columns — `clampTile` holds every tile inside the canvas, which drags
+ * the right-hand column onto the left-hand one and puts text over text.
+ *
+ * So when the saved arrangement is wider than the room there is, the tiles are
+ * *flowed* into as many columns as the width can hold instead — one, below
+ * `ONE_COLUMN_WIDTH`. This is display-time only: nothing is written back, the
+ * desktop's arrangement is exactly as it was when it is next opened there, and
+ * dragging is switched off for as long as the tiles are not where the layout
+ * put them. See `_needsFlow` and `_flowTiles`.
+ *
  * Register at module scope, not inside `initialize`. The list lives in
  * `utils/overlay-rows.js` rather than here — see that file for why the bundle
  * layout forces it — so registration order and feature start-up order do not
@@ -123,6 +137,24 @@ const PANEL_ID = 'toolasha-overlay-panel';
 const REFRESH_MS = 1000;
 const DEFAULT_PANEL = { width: 480, height: 320 };
 const ZOOM_STEP = 10;
+
+/** Kept clear of the window's edges, so the panel never reaches them */
+const VIEWPORT_MARGIN = 8;
+/** Below this it has stopped being a panel, whatever the window says */
+const MIN_PANEL = { width: 200, height: 120 };
+
+/**
+ * The width below which the canvas holds one column of tiles and no more.
+ *
+ * A phone is around 400 pixels across and a tile is a label and a figure; two of
+ * them side by side is two ellipses. So anything under this is one column, and
+ * above it the columns are as many as {@link MIN_FLOW_COLUMN} allows.
+ */
+const ONE_COLUMN_WIDTH = 500;
+/** The narrowest a flowed column may be and still hold a readout */
+const MIN_FLOW_COLUMN = 240;
+/** Between flowed tiles, so two readouts never touch */
+const FLOW_GAP = 4;
 
 /** Marks the container the docked panel was put into, so the sheet can find it */
 const DOCK_HOST_CLASS = 'toolasha-overlay-dock-host';
@@ -299,8 +331,17 @@ class OverlayPanel {
         this.panel = null;
         /** The container the docked panel was put into, so it can be put back */
         this.dockHost = null;
-        /** Re-measures the dock when the window changes shape */
+        /** Re-measures the panel when the window changes shape */
         this.onWindowResize = null;
+        /** Watches the panel's own box, which changes without a window resize */
+        this.panelObserver = null;
+        /** The canvas width the tiles were last laid out for */
+        this.lastCanvasWidth = null;
+        /**
+         * Whether the tiles are being flowed into columns rather than placed
+         * where the saved layout says — see `_flowTiles`.
+         */
+        this.flowing = false;
         this.canvasEl = null;
         this.pickerEl = null;
         this.timerRegistry = createTimerRegistry();
@@ -347,12 +388,22 @@ class OverlayPanel {
         this.isInitialized = false;
     }
 
+    /** Whether the panel is not merely built but actually in the document */
+    get isOpen() {
+        return Boolean(this.panel && document.body.contains(this.panel));
+    }
+
     /** Open the panel, or raise it if it is already up */
     show() {
-        if (this.panel && document.body.contains(this.panel)) {
+        if (this.isOpen) {
             bringPanelToFront(this.panel);
             return;
         }
+        // Held but no longer in the document: a docked panel whose column the
+        // game took away, which on a phone is every screen that is not the
+        // inventory. Torn down rather than abandoned — its refresh timer and its
+        // listeners are still running, and each reopen would leave another set
+        if (this.panel) this._removePanel();
         this._createPanel();
         this.settings.open = true;
         this._save();
@@ -380,7 +431,10 @@ class OverlayPanel {
 
     /** Open if closed, close if open */
     toggle() {
-        if (this.panel) this.hide();
+        // What is on screen, not what is in hand: a docked panel whose column
+        // was rebuilt away still exists, and a switch that closes something
+        // invisible is a switch that does nothing when pressed
+        if (this.isOpen) this.hide();
         else this.show();
     }
 
@@ -389,9 +443,17 @@ class OverlayPanel {
         this._renderBody();
     }
 
-    /** Whether tiles can currently be moved and resized */
+    /**
+     * Whether tiles can currently be moved and resized.
+     *
+     * Never while the tiles are flowed. A flowed tile is not where the layout
+     * put it — it is where the width available put it — so a drag would be
+     * arranging a layout that is not on screen, and dropping it would write a
+     * phone's column back over the arrangement made on a desktop. The same
+     * account is logged in on both, so that write is not recoverable.
+     */
     get isEditable() {
-        return !this.settings.locked;
+        return !this.settings.locked && !this.flowing;
     }
 
     _save() {
@@ -441,7 +503,103 @@ class OverlayPanel {
         // Again after drawing: how tall the tiles came out is the thing a docked
         // panel sizes itself to, and it is not known until they are laid out
         this._fitDock();
+        this._watchViewport();
         this._startRefreshing();
+    }
+
+    /**
+     * Follow the room there is, rather than the room there was.
+     *
+     * Two things change it and neither is the other. The window changes shape —
+     * a phone turned on its side, a browser window dragged narrower — and that
+     * is what the resize event says. But the *panel* also changes width without
+     * the window doing anything: docked, it is as wide as the character column,
+     * and the column is resized by the game's own settings and by whatever else
+     * is in it. A layout laid out for the width it used to have is a layout with
+     * tiles hanging off the edge, so both are watched.
+     */
+    _watchViewport() {
+        this.onWindowResize = () => this._onViewportChange();
+        window.addEventListener('resize', this.onWindowResize);
+
+        // Guarded rather than assumed: this runs in a userscript, and the test
+        // DOM has no reason to implement an API that measures nothing
+        if (typeof ResizeObserver !== 'function' || !this.panel) return;
+
+        this.lastCanvasWidth = this._canvasWidth();
+        this.panelObserver = new ResizeObserver(() => {
+            const width = this._canvasWidth();
+            // Only when the width the tiles were laid out for has actually
+            // changed. Drawing sets the canvas's own size, and a redraw on
+            // every observation of that is a loop
+            if (width === this.lastCanvasWidth) return;
+            this.lastCanvasWidth = width;
+            this._renderBody();
+            this._placePicker();
+        });
+        this.panelObserver.observe(this.panel);
+    }
+
+    /** The window changed shape: fit to it, then redraw for what is left */
+    _onViewportChange() {
+        if (!this.panel) return;
+        this._clampToViewport();
+        this._fitDock();
+        this.lastCanvasWidth = this._canvasWidth();
+        this._renderBody();
+        this._placePicker();
+    }
+
+    /**
+     * Hold the floating panel inside the window.
+     *
+     * A saved geometry is a statement about the window it was saved in, and the
+     * account that saved it on a desktop logs in again on a phone — where a
+     * remembered 900×600 panel at x=700 is a panel with its header, its ✕ and
+     * its resize grip all off the screen. There is then no gesture that brings
+     * it back.
+     *
+     * Display-time, and deliberately: nothing here is written to storage. The
+     * desktop's geometry is still the desktop's when it is next opened there.
+     *
+     * Only plain pixel sizes are touched, which is what the regular expression
+     * is for rather than `parseFloat`. Before the saved geometry lands the panel
+     * is sized in `min(…px, 92vw)`, which is already viewport-safe; and
+     * `parseFloat` reads `92%` as 92, so a relative width would be "corrected"
+     * to ninety-two pixels.
+     */
+    _clampToViewport() {
+        if (!this.panel || this.panel.dataset.docked === 'true') return;
+
+        const px = (value) => {
+            const written = /^(-?\d+(?:\.\d+)?)px$/.exec(String(value ?? '').trim());
+            return written ? Number(written[1]) : null;
+        };
+        const room = {
+            width: Math.max(MIN_PANEL.width, window.innerWidth - VIEWPORT_MARGIN * 2),
+            height: Math.max(MIN_PANEL.height, window.innerHeight - VIEWPORT_MARGIN * 2),
+        };
+
+        const width = px(this.panel.style.width);
+        if (width !== null && width > room.width) this.panel.style.width = `${room.width}px`;
+        const height = px(this.panel.style.height);
+        if (height !== null && height > room.height) this.panel.style.height = `${room.height}px`;
+
+        // What it is now, which is what the position has to be measured against
+        const box = {
+            width: px(this.panel.style.width) ?? this.panel.offsetWidth ?? 0,
+            height: px(this.panel.style.height) ?? this.panel.offsetHeight ?? 0,
+        };
+        const left = px(this.panel.style.left);
+        if (left !== null) {
+            const most = Math.max(VIEWPORT_MARGIN, window.innerWidth - box.width - VIEWPORT_MARGIN);
+            this.panel.style.left = `${Math.round(Math.min(Math.max(left, VIEWPORT_MARGIN), most))}px`;
+        }
+        const top = px(this.panel.style.top);
+        if (top !== null) {
+            const most = Math.max(VIEWPORT_MARGIN, window.innerHeight - box.height - VIEWPORT_MARGIN);
+            this.panel.style.top = `${Math.round(Math.min(Math.max(top, VIEWPORT_MARGIN), most))}px`;
+        }
     }
 
     /** Over the game, where it can be dragged anywhere and remembers where */
@@ -475,7 +633,12 @@ class OverlayPanel {
                 this._placePicker();
             },
         });
-        restoreGeometry(this.panel, GEOMETRY_KEY, { width: 220, height: 120 }).then(() => this._renderBody());
+        restoreGeometry(this.panel, GEOMETRY_KEY, { width: 220, height: 120 }).then(() => {
+            // The geometry that lands here was measured in whatever window it
+            // was saved in, which on a phone is a window that no longer exists
+            this._clampToViewport();
+            this._renderBody();
+        });
     }
 
     /**
@@ -513,9 +676,8 @@ class OverlayPanel {
         this.dockHost = host;
         this._fitDock();
 
-        this.onWindowResize = () => this._fitDock();
-        window.addEventListener('resize', this.onWindowResize);
-
+        // The window listener that re-measures this is attached for both kinds
+        // of panel in `_watchViewport`, once the panel is placed
         this.detachResize = this._makeDockResizable();
     }
 
@@ -870,7 +1032,11 @@ class OverlayPanel {
         if (!this.isPickerOpen || !this.panel) return;
 
         const anchor = this.panel.getBoundingClientRect();
-        this.pickerEl.style.width = `${Math.max(320, anchor.width)}px`;
+        // Wide enough to hold the row list, but never wider than the screen it
+        // is drawn on — a popover hanging off a phone loses its right-hand column
+        // of controls, and there is nothing to scroll it back into view
+        const room = Math.max(MIN_PANEL.width, window.innerWidth - VIEWPORT_MARGIN * 2);
+        this.pickerEl.style.width = `${Math.min(room, Math.max(320, anchor.width))}px`;
 
         const self = this.pickerEl.getBoundingClientRect();
         const above = anchor.top - self.height - 6;
@@ -1482,9 +1648,17 @@ class OverlayPanel {
         if (undo) undo.style.color = COLORS.accent;
 
         const hint = document.createElement('div');
-        hint.textContent = this.settings.locked
-            ? 'Unlock (🔒) to drag tiles, resize them, and set each one’s text size.'
-            : 'Drag a tile to move it, its corner to resize it, and hover it for − and + to size its text.';
+        if (this.flowing) {
+            // Said rather than left to be discovered: the tiles are visibly not
+            // where they were put, and unlocking does not bring the drag back
+            hint.textContent =
+                'Too narrow for the saved arrangement, so the tiles are flowed into columns. ' +
+                'Your layout is untouched — widen the panel or open it on a larger screen to arrange it.';
+        } else {
+            hint.textContent = this.settings.locked
+                ? 'Unlock (🔒) to drag tiles, resize them, and set each one’s text size.'
+                : 'Drag a tile to move it, its corner to resize it, and hover it for − and + to size its text.';
+        }
         Object.assign(hint.style, { color: COLORS.textDim, flexBasis: '100%', marginTop: '2px' });
 
         controls.append(autogrid, importBtn, exportBtn, ...(undo ? [undo] : []), reset, hint);
@@ -1566,7 +1740,10 @@ class OverlayPanel {
     /** Repack every visible tile against the top left */
     _autoGrid() {
         this._snapshot('Autogrid');
-        const laid = this._layout();
+        // The layout as saved, not as flowed: this one writes what it is handed
+        // back to storage, and a phone's single column is not an arrangement
+        // anyone asked to keep
+        const laid = this._layout({ flow: false });
         const positions = { ...this.settings.positions };
         for (const { key, x, y } of autoGrid(laid, this._canvasWidth(), this.settings.snapToGrid ? GRID : 1)) {
             positions[key] = { x, y };
@@ -1590,6 +1767,8 @@ class OverlayPanel {
         this.panel.style.width = `${DEFAULT_PANEL.width}px`;
         this.panel.style.height = `${DEFAULT_PANEL.height}px`;
         this.panel.style.fontSize = `${this._baseFontPx()}px`;
+        // The design size is a desktop's; on a phone it is wider than the screen
+        this._clampToViewport();
         this._renderBody();
         this._renderPicker();
         this._placePicker();
@@ -1839,13 +2018,116 @@ class OverlayPanel {
      * @param {Set<string>} [options.skip] - Rows to leave out altogether. Left in
      *   and merely undrawn, a hidden tile still claims the space it would have
      *   taken, and the layout is a grid with holes in it.
+     * @param {boolean} [options.flow] - False to see the layout as saved, without
+     *   the narrow-width fallback. For Autogrid, which writes what it is given
+     *   and so must never be given a phone's arrangement.
      * @returns {Array<Object>} Laid-out rows
      */
-    _layout({ sizeFor = null, skip = null } = {}) {
+    _layout({ sizeFor = null, skip = null, flow = true } = {}) {
         const visible = resolveRows(registeredRows(), this.settings).filter(
             (row) => row.visible && !skip?.has(row.key)
         );
-        return resolveLayout(visible, this.settings, this._canvasWidth(), sizeFor);
+        const width = this._canvasWidth();
+        const tiles = resolveLayout(visible, this.settings, width, sizeFor);
+        if (!flow) return tiles;
+
+        const narrow = tiles.length > 0 && this._needsFlow(tiles, width);
+        this.flowing = narrow;
+        return narrow ? this._flowTiles(tiles, width) : tiles;
+    }
+
+    /**
+     * Whether the saved arrangement still fits the width there is.
+     *
+     * This is the whole of the jumble, and it is not a drawing bug. A saved
+     * layout is pixels — two columns of tiles at x=0 and x=250 — and the panel
+     * is opened on a phone where the canvas is 370 across. `clampTile` then does
+     * exactly what it promises: it holds every tile inside the canvas, which
+     * means the right-hand column is dragged left until it is sitting on top of
+     * the left-hand one. Tiles over tiles, text over text, and every one of them
+     * technically on screen.
+     *
+     * So the test is asked before the clamping rather than after it: the *saved*
+     * right edge is what says whether this layout was drawn for a wider window
+     * than this one. When it fits, nothing here happens and the arrangement is
+     * the arrangement — a desktop is untouched by any of this.
+     *
+     * @param {Array<Object>} tiles - Laid-out tiles
+     * @param {number} width - Canvas width
+     * @returns {boolean} True when the tiles have to be flowed instead
+     */
+    _needsFlow(tiles, width) {
+        const saved = this.settings.positions || {};
+        return tiles.some((tile) => {
+            const spot = saved[tile.key];
+            const x = Number.isFinite(spot?.x) ? spot.x : tile.x;
+            // A pixel of slack: a tile flush with the right edge fits
+            return x + tile.width > width + 1;
+        });
+    }
+
+    /**
+     * Deal the tiles into as many columns as the width can hold.
+     *
+     * Not a rescale. Making everything smaller until the desktop arrangement
+     * fits gives a phone a two-column layout at six-point text, which is a
+     * screenshot rather than a readout. The tiles keep their height and their
+     * text and are dealt into columns of the width that is actually there —
+     * one of them, below {@link ONE_COLUMN_WIDTH}.
+     *
+     * Reading order is kept: the tiles are ordered by where the saved layout put
+     * them, top to bottom then left to right, so the column on a phone runs in
+     * the order the eye ran across the desktop. Each tile then goes to whichever
+     * column is currently shortest, which keeps the columns level without any
+     * tile changing size.
+     *
+     * Overlap is impossible by construction rather than by clamping: within a
+     * column each tile starts where the last one ended, and the columns do not
+     * share any horizontal space.
+     *
+     * @param {Array<Object>} tiles - Laid-out tiles
+     * @param {number} width - Canvas width
+     * @returns {Array<Object>} The same tiles, re-placed and re-widened
+     */
+    _flowTiles(tiles, width) {
+        const columns = this._flowColumns(width);
+        const columnWidth = Math.max(MIN_TILE.width, Math.floor((width - FLOW_GAP * (columns - 1)) / columns));
+
+        const saved = this.settings.positions || {};
+        const at = (tile) => {
+            const spot = saved[tile.key];
+            return Number.isFinite(spot?.x) && Number.isFinite(spot?.y) ? spot : { x: tile.x, y: tile.y };
+        };
+        const ordered = [...tiles].sort((a, b) => at(a).y - at(b).y || at(a).x - at(b).x);
+
+        const bottoms = new Array(columns).fill(0);
+        const placed = new Map();
+        for (const tile of ordered) {
+            let column = 0;
+            for (let index = 1; index < columns; index += 1) {
+                if (bottoms[index] < bottoms[column]) column = index;
+            }
+            placed.set(tile.key, {
+                x: column * (columnWidth + FLOW_GAP),
+                y: bottoms[column],
+                width: columnWidth,
+            });
+            bottoms[column] += tile.height + FLOW_GAP;
+        }
+
+        // Handed back in the order they arrived: what changed is where they are
+        // drawn, and nothing downstream should have to notice a reordering
+        return tiles.map((tile) => ({ ...tile, ...placed.get(tile.key) }));
+    }
+
+    /**
+     * How many columns of tiles fit the width there is.
+     * @param {number} width - Canvas width
+     * @returns {number} At least one
+     */
+    _flowColumns(width) {
+        if (width < ONE_COLUMN_WIDTH) return 1;
+        return Math.max(1, Math.floor((width + FLOW_GAP) / (MIN_FLOW_COLUMN + FLOW_GAP)));
     }
 
     /**
@@ -2473,6 +2755,12 @@ class OverlayPanel {
             window.removeEventListener('resize', this.onWindowResize);
             this.onWindowResize = null;
         }
+        this.panelObserver?.disconnect();
+        this.panelObserver = null;
+        this.lastCanvasWidth = null;
+        // Decided from the width at every draw; a stale true would leave the
+        // next panel unable to be unlocked
+        this.flowing = false;
 
         // Left behind, the column keeps a flex layout and a measured height with
         // nothing to fill them

@@ -262,6 +262,36 @@ describe('after React rebuilds the column', () => {
         expect(column.classList.contains(DOCK_HOST_CLASS)).toBe(true);
     });
 
+    test('with the column gone for good, the switch still opens the overlay', () => {
+        // Which is every screen but the inventory on a phone: the column is not
+        // rebuilt, it is simply not there, and the docked panel goes with it.
+        // The switch then has a panel in hand and nothing on screen, and used to
+        // answer a press by "closing" the invisible one
+        buildColumn();
+        overlayPanel.settings.docked = true;
+        overlayPanel.show();
+
+        document.getElementById('column').remove();
+        expect(overlayPanel.isOpen).toBe(false);
+
+        overlayPanel.toggle();
+
+        expect(overlayPanel.isOpen).toBe(true);
+        expect(overlayPanel.panel.parentElement).toBe(document.body);
+    });
+
+    test('reopening it that way does not leave the old one refreshing', () => {
+        buildColumn();
+        overlayPanel.settings.docked = true;
+        overlayPanel.show();
+        const first = overlayPanel.refreshId;
+
+        document.getElementById('column').remove();
+        overlayPanel.toggle();
+
+        expect(overlayPanel.refreshId).not.toBe(first);
+    });
+
     test('a floating panel is left where it is', () => {
         buildColumn();
         overlayPanel.show();
