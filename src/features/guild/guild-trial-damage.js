@@ -797,7 +797,7 @@ class GuildTrialDamage {
             deaths: this.deaths,
             seconds: this.seconds,
         });
-        const support = summariseSupport(this.support, this.names);
+        const support = summariseSupport(this.support, this.names, this.deaths);
 
         return {
             measured: !stale && summary.players.length > 0,

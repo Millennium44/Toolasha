@@ -622,6 +622,30 @@ describe('the spectated trial fight', () => {
         expect(report.players[0].damage).toBe(1000);
     });
 
+    test('a revive at the new tier is not a heal, and the death still counts', () => {
+        // The game starts everyone fresh and alive at each tier, so a unit
+        // dead at the end of one and full at the start of the next crossed a
+        // baseline drop, not a healer
+        const tick = (tier, hp) => ({
+            type: 'guild_battle_updated',
+            battleId: 1,
+            tier,
+            pMap: { 1: { cHP: hp, mHP: 1923, cMP: 1000, mMP: 1923 } },
+            mMap: { 0: { cHP: 500_000, mHP: 618_000 } },
+        });
+
+        game.wsHandlers[GUILD_BATTLE_MESSAGE](tick(2, 1923));
+        vi.setSystemTime(at + 250);
+        game.wsHandlers[GUILD_BATTLE_MESSAGE](tick(2, 0));
+        vi.setSystemTime(at + 500);
+        game.wsHandlers[GUILD_BATTLE_MESSAGE](tick(3, 1923));
+
+        const report = guildTrialDamage.breakdown();
+        const row = report.support.players.find((entry) => entry.index === '1');
+        expect(row.healingReceived).toBe(0);
+        expect(row.deaths).toBe(1);
+    });
+
     test('a new tier is a new wave, not a 618,000-point heal', () => {
         const tick = (tier, hp) => ({
             type: 'guild_battle_updated',
