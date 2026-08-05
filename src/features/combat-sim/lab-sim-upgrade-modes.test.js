@@ -60,7 +60,7 @@ describe('the retired Mode dropdown, as a selection', () => {
 describe('reading a saved selection back', () => {
     test('nothing saved opens where the old dropdown opened', () => {
         expect(sanitizeLabUpgradeSelection(null, null)).toEqual({
-            dimensions: ['equipment'],
+            dimensions: ['equipment', 'labyrinth_buff'],
             scopeMode: 'current',
             monsters: [],
         });
@@ -86,12 +86,12 @@ describe('reading a saved selection back', () => {
     });
 
     test('an all-unknown selection falls back rather than leaving nothing checked', () => {
-        expect(sanitizeLabUpgradeSelection(['moon_phase'], null).dimensions).toEqual(['equipment']);
+        expect(sanitizeLabUpgradeSelection(['moon_phase'], null).dimensions).toEqual(['equipment', 'labyrinth_buff']);
     });
 
     test('junk in the scope slot is not a scope', () => {
         expect(sanitizeLabUpgradeSelection(null, { mode: 'everywhere', monsters: [1, '/monsters/a'] })).toEqual({
-            dimensions: ['equipment'],
+            dimensions: ['equipment', 'labyrinth_buff'],
             scopeMode: 'current',
             monsters: ['/monsters/a'],
         });
@@ -120,15 +120,31 @@ describe('what a scope can be asked', () => {
         }
     });
 
-    test('and every set is offered across a whole labyrinth too', () => {
+    test('and every set but the community buffs is offered across a whole labyrinth too', () => {
         // Ability Swaps used to be refused here on size — thousands of sims —
         // which put the refusal on the one scope where "which ability should I
         // change" is most worth asking. Size is handled by shortening the sims
         // and saying the count, not by declining the question.
         const availability = labDimensionAvailability('all', 8);
         for (const key of LAB_UPGRADE_DIMENSION_KEYS) {
+            if (key === 'community_buff') continue;
             expect(availability[key].enabled).toBe(true);
             expect(availability[key].reason).toBe('');
+        }
+    });
+
+    test('token buffs reach a whole run — the applier was the blocker, not the scope', () => {
+        for (const scope of ['current', 'all', 'selected']) {
+            expect(labDimensionAvailability(scope, 8).labyrinth_buff).toEqual({ enabled: true, reason: '' });
+        }
+    });
+
+    test('community buffs are the one set a whole run declines, and it says why', () => {
+        expect(labDimensionAvailability('current', 1).community_buff).toEqual({ enabled: true, reason: '' });
+        for (const scope of ['all', 'selected']) {
+            const rule = labDimensionAvailability(scope, 8).community_buff;
+            expect(rule.enabled).toBe(false);
+            expect(rule.reason).toMatch(/expected attempts/);
         }
     });
 
@@ -217,7 +233,24 @@ describe('a multi-set selection through the single-fight analysis', () => {
     test('everything checked keeps every set', () => {
         const plan = planLabSingleTargetModes(LAB_UPGRADE_DIMENSION_KEYS);
         expect(plan.upgradeMode).toBe('combined');
-        expect(plan.extraModes.sort()).toEqual(['ability_swap', 'combat_level', 'guild_shrine', 'house']);
+        expect(plan.extraModes.sort()).toEqual([
+            'ability_swap',
+            'combat_level',
+            'community_buff',
+            'guild_shrine',
+            'house',
+        ]);
+    });
+
+    test('token buffs never become a mode — the single-fight analysis generates them itself', () => {
+        // `generateCandidates` has no `labyrinth_buff` branch, so handing it the
+        // key would ask for a set and get an empty list back, while the analysis
+        // went on ranking the token buffs it always ranks
+        expect(planLabSingleTargetModes(['equipment', 'labyrinth_buff'])).toEqual({
+            upgradeMode: 'equipment',
+            extraModes: [],
+        });
+        expect(planLabSingleTargetModes(['labyrinth_buff'])).toEqual({ upgradeMode: 'none', extraModes: [] });
     });
 
     test('nothing left for the analysis to generate is not a quiet fallback to equipment', () => {

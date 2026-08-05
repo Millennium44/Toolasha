@@ -63,14 +63,54 @@ export const LAB_UPGRADE_DIMENSIONS = [
         label: 'House Rooms',
         defaultOn: false,
         title:
-            'One more level on each house room the combat engine actually reads — the rooms whose buffs are ' +
-            'combat stats (damage, armor, accuracy, evasion, resistances, crit, tenacity, life steal and the ' +
-            'rest), plus any room the game itself tags as usable in combat.\n\n' +
+            'House rooms whose buffs can change whether a fight is won — damage, armor, accuracy, evasion, ' +
+            'resistances, amplify, crit, attack and cast speed, thorns, regen, life steal, tenacity, ' +
+            'retaliation, threat — plus any room carrying a buff type the game itself tags as usable in ' +
+            'combat.\n\n' +
+            'Narrower than the combat sim panel, on purpose. Every house room in the game grants a global ' +
+            'experience and rare-find buff just for existing, and this table ranks one number: the share of ' +
+            'attempts that end in a clear. A skilling room admitted on those global buffs can only ever ' +
+            'report the simulation’s own noise, so the skilling rooms are left out here. The combat sim ' +
+            'panel keeps them, because its table has profit and XP columns they genuinely move.\n\n' +
             'Available for every target scope. A room level is one thing the character owns rather than ' +
             'something a loadout carries, so across several fights the same level is installed into each ' +
             'fight and measured against that fight — one purchase, its effect on each room it reaches.\n\n' +
-            'Cost is the build cost of that one level: the coins at face value plus the materials at their ' +
-            'buy price. Ranked on the same win rate and Gold/1% as every other row.',
+            'The Lv box buys several levels at once — Lv2 → Lv5 is one row costed at levels 3, 4 and 5 ' +
+            'together — and Targets sets a level per room. Cost is the build cost: coins at face value plus ' +
+            'materials at their buy price. Ranked on the same win rate and Gold/1% as every other row.',
+    },
+    {
+        key: 'labyrinth_buff',
+        label: 'Token Buffs',
+        defaultOn: true,
+        title:
+            'One more level on each labyrinth combat token upgrade — Combat Damage, Attack Speed, Cast ' +
+            'Speed, Critical Rate.\n\n' +
+            'The Configure fight has always ranked these and still does whether or not this is ticked; the ' +
+            'box is what adds them to a whole-run analysis.\n\n' +
+            'Available for every target scope. A token level is bought once and paid for in every room, ' +
+            'which makes the whole-run question the interesting one: the level is simulated against every ' +
+            'fight and aggregated exactly like a combat level.\n\n' +
+            'Paid for in labyrinth tokens rather than coins, so these rows are ranked in their own section, ' +
+            'in their own currency. The skilling and Experience tokens are not here — they move numbers ' +
+            'this table has no column for; the Skilling tab ranks those.',
+    },
+    {
+        key: 'community_buff',
+        label: 'Community',
+        defaultOn: false,
+        title:
+            'The server-wide community buffs, for the Configure fight.\n\n' +
+            'Neither of the two a combat fight reads can change whether it is won: the Experience buff ' +
+            'changes what a win is worth, and the Combat Drop buff changes what it pays out. So they are ' +
+            'ranked on XP per attempt in a section of their own, with the win-rate columns left blank ' +
+            'rather than filled in with sampling noise — and a buff whose only effect is on loot is left ' +
+            'out entirely, because this table does not price drops.\n\n' +
+            'Not offered for the whole-run scopes: that table ranks expected attempts to clear the run, ' +
+            'and no community buff moves it.\n\n' +
+            'There is no price for a level — a community buff’s level is what the whole server’s donated ' +
+            'minutes add up to — so the rows carry the cowbells per minute the game charges to keep the ' +
+            'buff running, and are read on their delta. Capped at Lv20, which is what the game calls max.',
     },
     {
         key: 'combat_level',
@@ -83,7 +123,9 @@ export const LAB_UPGRADE_DIMENSIONS = [
         label: 'Guild Shrine',
         defaultOn: false,
         title:
-            'One level on each combat guild shrine buff.\n\n' +
+            'One level on each combat guild shrine buff, or several at once — the Lv box buys up to that ' +
+            'level, so Lv0 → Lv3 is one row costed at all three levels together, capped at each buff’s own ' +
+            'maximum.\n\n' +
             'Cost covers the guild credits plus the tokens, the tokens priced through the guild shop ' +
             'token→credit exchange when a rate is known; without one, credits only.',
     },
@@ -96,16 +138,23 @@ export const LAB_UPGRADE_DIMENSION_KEYS = LAB_UPGRADE_DIMENSIONS.map((d) => d.ke
  * How many fights an analysis is about.
  *
  * `current` is the fight the Configure tab is set up for, edited loadout and
- * all — the only scope that can use the single-fight analysis, which is the
- * richer of the two (it prices each candidate, ranks the labyrinth token buffs
- * beside them, and feeds the budget planner). The other two walk the labyrinth's
- * own fight list, each room with its assigned loadout at its skip-derived level.
+ * all — the only scope that can use the single-fight analysis, which prices each
+ * candidate and is where the community buffs are ranked, since their metric is
+ * XP per attempt rather than attempts to clear a run. The other two walk the
+ * labyrinth's own fight list, each room with its assigned loadout at its
+ * skip-derived level, and feed the budget planner.
+ *
+ * Labyrinth token buffs used to be named here as a Configure-only dimension.
+ * They are not, and the reason they were never really about scope: a token buff
+ * is an argument to the simulation rather than a change to the character, so the
+ * shared candidate applier had nothing to write for one. The whole-run analysis
+ * installs them through the buff array now and every scope ranks them.
  */
 export const LAB_SCOPES = [
     {
         key: 'current',
         label: 'Configure fight',
-        title: 'The monster, room level and edited loadout set up on the Configure tab. The only scope that also ranks labyrinth token buffs and can feed the budget planner.',
+        title: 'The monster, room level and edited loadout set up on the Configure tab. The only scope that ranks community buffs, which are read on XP rather than on clear chance.',
     },
     {
         key: 'all',
@@ -346,19 +395,43 @@ export function labScopeTargetCount(scopeMode, allCount, chosenCount) {
  * multi-fight question the *interesting* one — the same purchase, measured
  * against each fight it changes.
  *
+ * Labyrinth token buffs were the other entry, and were not about scope either:
+ * the applier had nothing to write for a buff that lives in the simulation's
+ * arguments rather than on the character. The whole-run analysis passes them
+ * through the buff array now, so every scope ranks them.
+ *
+ * One rule is left, and it is a rule about the *metric* rather than about the
+ * scope. Neither community buff a combat fight reads can change whether it is
+ * won — one moves experience, the other moves loot — so the single-fight table
+ * ranks them on XP per attempt, in a section with the clear-chance columns left
+ * blank. The whole-run table has one number in it, expected attempts to clear
+ * the run, and no community buff moves that. Offering them there would be
+ * offering rows that can only ever report the simulations' own noise.
+ *
  * Kept as a function rather than collapsed into a constant because the rules
  * that lived here are the kind that come back, and a caller that has to ask is
  * a caller that will show the next reason without being rewritten.
  *
- * @param {string} _scopeMode - `current` | `all` | `selected`
+ * @param {string} scopeMode - `current` | `all` | `selected`
  * @param {number} _targetCount - From `labScopeTargetCount`
  * @returns {Object<string, {enabled: boolean, reason: string}>} Keyed by dimension
  */
-export function labDimensionAvailability(_scopeMode, _targetCount) {
+export function labDimensionAvailability(scopeMode, _targetCount) {
     const availability = {};
     for (const dimension of LAB_UPGRADE_DIMENSIONS) {
         availability[dimension.key] = { enabled: true, reason: '' };
     }
+
+    if (scopeMode === 'all' || scopeMode === 'selected') {
+        availability.community_buff = {
+            enabled: false,
+            reason:
+                'A whole run is ranked on expected attempts to clear it, and no community buff moves that — ' +
+                'they move experience and loot. Ask for them on the Configure fight, where they are ranked ' +
+                'on XP per attempt.',
+        };
+    }
+
     return availability;
 }
 
@@ -392,8 +465,14 @@ export const LAB_DIMENSION_SIMS_PER_FIGHT = {
     // One per combat skill, and a combat level is every fight
     combat_level: 6,
     guild_shrine: 6,
-    // One per combat-relevant room, and a room level is every fight
-    house: 12,
+    // One per room that can move a win rate, and a room level is every fight.
+    // Was 12 back when every house room qualified; the skilling rooms coming out
+    // is what halved it.
+    house: 7,
+    // Four combat token upgrades, each of them every fight
+    labyrinth_buff: 4,
+    // Configure-fight only, so it never contributes to a whole-run estimate
+    community_buff: 0,
 };
 
 /** Sims above which a run is worth warning about before it starts */
@@ -457,7 +536,15 @@ export function labAbilityLevelTypeAvailability(scopeMode, targetCount) {
  * @returns {{upgradeMode: string, extraModes: string[]}}
  */
 export function planLabSingleTargetModes(dimensions) {
-    const dims = [...new Set((dimensions || []).filter((key) => LAB_UPGRADE_DIMENSION_KEYS.includes(key)))];
+    // `labyrinth_buff` never becomes a mode: the single-fight analysis generates
+    // the combat token buffs itself, unconditionally, and has done since before
+    // there was a box for them. Handing it the key as a mode would ask the
+    // generator for a set it has no branch for and get an empty list back.
+    const dims = [
+        ...new Set(
+            (dimensions || []).filter((key) => LAB_UPGRADE_DIMENSION_KEYS.includes(key) && key !== 'labyrinth_buff')
+        ),
+    ];
     // Nothing for the analysis to generate. `none` matches no branch in the
     // generator, so it produces an empty candidate list rather than quietly
     // falling back to equipment and ranking gear nobody asked about.

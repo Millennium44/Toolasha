@@ -157,6 +157,8 @@ const {
     generateGuildShrineCandidates,
     generateHouseCandidates,
     houseRoomAffectsCombat,
+    houseRoomMovesWinRate,
+    houseUpgradeMaterials,
     describeHouseScan,
     resolveCandidateModes,
     candidateAssignmentKey,
@@ -4320,5 +4322,287 @@ describe('guide-driven ability swaps', () => {
         // And it is genuinely everything: every non-special ability in the data
         // bar the one already slotted
         expect(offered.length).toBe(Object.keys(ABILITIES).length - 2);
+    });
+});
+
+/**
+ * Which house rooms a labyrinth combat table is allowed to offer.
+ *
+ * A lab Upgrade run showed "Mystical Study Lv2 → Lv3" with a win-rate delta
+ * identical to an unrelated row's — the baseline's own sampling noise, wearing a
+ * room's name. Every house room in the game grants a global experience and
+ * rare-find buff just for existing, both of which the combat engine reads, so
+ * `houseRoomAffectsCombat` admitted all seventeen rooms including the ten
+ * skilling ones. That is the right answer for the combat sim's Upgrade tab,
+ * whose table has profit and XP columns those buffs genuinely move, and the
+ * wrong one for a table that ranks nothing but the share of attempts that clear.
+ */
+describe('house rooms a win rate can feel', () => {
+    const global = (typeHrid) => ({ typeHrid });
+    const scoped = (typeHrid, actionType) => ({ typeHrid, usableInActionTypeMap: { [actionType]: true } });
+
+    // What every room carries, and what admitted the whole house
+    const GLOBALS = [global('/buff_types/wisdom'), global('/buff_types/rare_find')];
+
+    const DAIRY_BARN = {
+        name: 'Dairy Barn',
+        globalBuffs: GLOBALS,
+        actionBuffs: [scoped('/buff_types/efficiency', '/action_types/milking')],
+    };
+    const ARMORY = {
+        name: 'Armory',
+        globalBuffs: GLOBALS,
+        actionBuffs: [scoped('/buff_types/armor', '/action_types/combat')],
+    };
+    const XP_ONLY_COMBAT_ROOM = {
+        name: 'Mystical Study',
+        globalBuffs: GLOBALS,
+        actionBuffs: [scoped('/buff_types/wisdom', '/action_types/combat')],
+    };
+
+    test('a skilling room is no longer admitted on the global buffs every room grants', () => {
+        // The old test still holds — this is the pair that makes the point
+        expect(houseRoomAffectsCombat(DAIRY_BARN)).toBe(true);
+        expect(houseRoomMovesWinRate(DAIRY_BARN)).toBe(false);
+    });
+
+    test('a room granting a fighting stat is kept', () => {
+        expect(houseRoomMovesWinRate(ARMORY)).toBe(true);
+    });
+
+    test('and a combat-tagged buff that only pays experience is not a fighting stat', () => {
+        expect(houseRoomMovesWinRate(XP_ONLY_COMBAT_ROOM)).toBe(false);
+    });
+
+    test('loot buffs are excluded too — this table prices no drops', () => {
+        for (const typeHrid of [
+            '/buff_types/rare_find',
+            '/buff_types/combat_drop_rate',
+            '/buff_types/combat_drop_quantity',
+        ]) {
+            expect(houseRoomMovesWinRate({ globalBuffs: [global(typeHrid)] })).toBe(false);
+        }
+    });
+
+    test('every fighting stat the engine reads keeps its room', () => {
+        for (const typeHrid of [
+            '/buff_types/damage',
+            '/buff_types/armor',
+            '/buff_types/accuracy',
+            '/buff_types/evasion',
+            '/buff_types/attack_speed',
+            '/buff_types/cast_speed',
+            '/buff_types/critical_rate',
+            '/buff_types/physical_amplify',
+            '/buff_types/fire_resistance',
+            '/buff_types/life_steal',
+            '/buff_types/hp_regen',
+            '/buff_types/tenacity',
+        ]) {
+            expect(houseRoomMovesWinRate({ globalBuffs: [global(typeHrid)] })).toBe(true);
+        }
+    });
+
+    test('a buff type this version has never heard of is kept when the game says it is combat', () => {
+        // Forward compatibility in the one direction that matters: a stat added
+        // next patch should show up as an upgrade, not be silently dropped
+        expect(houseRoomMovesWinRate({ actionBuffs: [scoped('/buff_types/moon_phase', '/action_types/combat')] })).toBe(
+            true
+        );
+    });
+
+    test('a room with no buffs at all is nothing, either way round', () => {
+        expect(houseRoomMovesWinRate({ name: 'Empty' })).toBe(false);
+        expect(houseRoomMovesWinRate(null)).toBe(false);
+    });
+
+    const houseData = {
+        houseRoomDetailMap: {
+            '/house_rooms/dairy_barn': {
+                ...DAIRY_BARN,
+                upgradeCostsMap: { 1: [{ itemHrid: '/items/coin', count: 1 }] },
+            },
+            '/house_rooms/armory': { ...ARMORY, upgradeCostsMap: { 1: [{ itemHrid: '/items/coin', count: 1 }] } },
+        },
+    };
+
+    test('the generator offers both sets of rooms or one, depending on which question is asked', () => {
+        const all = generateHouseCandidates({ houseRooms: {} }, houseData).map((c) => c.roomHrid);
+        const winRate = generateHouseCandidates({ houseRooms: {} }, houseData, 0, null, { winRateOnly: true }).map(
+            (c) => c.roomHrid
+        );
+
+        expect(all.sort()).toEqual(['/house_rooms/armory', '/house_rooms/dairy_barn']);
+        expect(winRate).toEqual(['/house_rooms/armory']);
+    });
+
+    test('and the scan counts the same rooms the generator offers', () => {
+        expect(describeHouseScan({ houseRooms: {} }, houseData).combatRelevant).toBe(2);
+        expect(describeHouseScan({ houseRooms: {} }, houseData, { winRateOnly: true }).combatRelevant).toBe(1);
+    });
+});
+
+/**
+ * Buying several house levels at once.
+ *
+ * "Mystical Study Lv2 → Lv5" is one row and one simulation rather than three of
+ * each, and its cost is levels 3, 4 and 5 added together.
+ */
+describe('a house target level', () => {
+    const roomData = {
+        houseRoomDetailMap: {
+            '/house_rooms/dojo': {
+                name: 'Dojo',
+                actionBuffs: [{ typeHrid: '/buff_types/damage' }],
+                upgradeCostsMap: {
+                    3: [{ itemHrid: '/items/coin', count: 1_000_000 }],
+                    4: [{ itemHrid: '/items/coin', count: 2_000_000 }],
+                    5: [{ itemHrid: '/items/coin', count: 4_000_000 }],
+                },
+            },
+        },
+    };
+
+    test('one row spans every level between where you are and where you asked for', () => {
+        const [candidate] = generateHouseCandidates({ houseRooms: { '/house_rooms/dojo': 2 } }, roomData, 5);
+
+        expect(candidate).toMatchObject({ currentLevel: 2, upgradeLevel: 5, levelsBought: 3 });
+        expect(candidate.description).toBe('Dojo Lv2 → Lv5');
+    });
+
+    test('and it is costed at all of them, not just the last', () => {
+        const [candidate] = generateHouseCandidates({ houseRooms: { '/house_rooms/dojo': 2 } }, roomData, 5);
+
+        expect(calculateUpgradeCost(candidate, roomData)).toBe(7_000_000);
+    });
+
+    test('a target above the cap is the cap rather than a room the game has not got', () => {
+        const [candidate] = generateHouseCandidates({ houseRooms: { '/house_rooms/dojo': 2 } }, roomData, 99);
+
+        expect(candidate.upgradeLevel).toBe(8);
+    });
+});
+
+/** What a house level actually buys, for the row's Market handoff. */
+describe('the materials behind a house level', () => {
+    const gameData = {
+        itemDetailMap: {
+            '/items/lumber': { name: 'Lumber' },
+            '/items/bag_of_10_cowbells': { name: 'Bag of 10 Cowbells' },
+        },
+        houseRoomDetailMap: {
+            '/house_rooms/dojo': {
+                upgradeCostsMap: {
+                    3: [
+                        { itemHrid: '/items/coin', count: 5_000_000 },
+                        { itemHrid: '/items/lumber', count: 100 },
+                    ],
+                    4: [
+                        { itemHrid: '/items/lumber', count: 200 },
+                        { itemHrid: '/items/bag_of_10_cowbells', count: 2 },
+                    ],
+                },
+            },
+        },
+    };
+
+    test('counts are summed across the levels in the jump, and coins left out', () => {
+        const materials = houseUpgradeMaterials(
+            { roomHrid: '/house_rooms/dojo', currentLevel: 2, upgradeLevel: 4 },
+            gameData
+        );
+
+        expect(materials.map((m) => m.itemHrid)).not.toContain('/items/coin');
+        expect(materials.find((m) => m.itemHrid === '/items/lumber').count).toBe(300);
+        expect(materials.find((m) => m.itemHrid === '/items/bag_of_10_cowbells').count).toBe(2);
+    });
+
+    test('a room the game data has nothing for is an empty list rather than a throw', () => {
+        expect(houseUpgradeMaterials({ roomHrid: '/house_rooms/nowhere' }, gameData)).toEqual([]);
+        expect(houseUpgradeMaterials({}, null)).toEqual([]);
+    });
+});
+
+/** Several community buff levels in one row. */
+describe('a community buff target level', () => {
+    test('the row spans from where the buff is to where it was asked for', () => {
+        const [expBuff] = generateCommunityBuffCandidates({ comExp: 3, comDrop: 3 }, 8);
+
+        expect(expBuff).toMatchObject({ currentLevel: 3, upgradeLevel: 8, levelsBought: 5 });
+        expect(expBuff.description).toContain('Lv3 → Lv8');
+    });
+
+    test('a target at or below where it already is falls back to one level up', () => {
+        const [expBuff] = generateCommunityBuffCandidates({ comExp: 9 }, 4);
+
+        expect(expBuff.upgradeLevel).toBe(10);
+    });
+
+    test('and the ceiling is 20, whatever was typed', () => {
+        const [expBuff] = generateCommunityBuffCandidates({ comExp: 3 }, 99);
+
+        expect(expBuff.upgradeLevel).toBe(20);
+    });
+
+    test('a buff already at the ceiling still measures the loss rather than a level 21', () => {
+        const [expBuff] = generateCommunityBuffCandidates({ comExp: 20 }, 20);
+
+        expect(expBuff).toMatchObject({ measuresLoss: true, upgradeLevel: 0, levelsBought: 0 });
+    });
+});
+
+/**
+ * What a swap is allowed to sell.
+ *
+ * A skilling piece replacing combat armour arrives carrying `keptItems` and an
+ * empty `removedItems` — the skilling generator's way of saying "this trade
+ * sells nothing" — and the costing has to honour it. It did not: the tier branch
+ * read `currentHrid` directly and credited the plate anyway, producing the
+ * −410,000,000 the Skilling tab was showing.
+ */
+describe('crediting the resale of what a swap replaces', () => {
+    const gameData = { itemDetailMap: { '/items/new': { name: 'New' }, '/items/old': { name: 'Old' } } };
+
+    beforeEach(() => {
+        resolveItemPrice.mockImplementation((hrid, { side }) => ({
+            price: side === 'sell' ? 400_000_000 : 10_000_000,
+        }));
+        // A listing at the level being bought, so the buy side is the market
+        // rather than a simulated enhance path this test is not about
+        getItemPrices.mockReturnValue({ ask: 10_000_000, bid: 9_000_000 });
+    });
+
+    const candidate = (over = {}) => ({
+        type: 'skilling_gear',
+        slot: '/equipment_types/body',
+        currentHrid: '/items/old',
+        currentLevel: 8,
+        upgradeHrid: '/items/new',
+        upgradeLevel: 5,
+        ...over,
+    });
+
+    test('an ordinary trade still nets the old piece off the new one', () => {
+        expect(calculateUpgradeCost(candidate(), gameData)).toBe(10_000_000 - 400_000_000);
+    });
+
+    test('a swap that keeps what it replaces is priced at the new piece alone', () => {
+        const kept = candidate({
+            keptItems: [{ hrid: '/items/old', enhancementLevel: 8 }],
+            removedItems: [],
+        });
+
+        expect(calculateUpgradeCost(kept, gameData)).toBe(10_000_000);
+    });
+
+    test('and the breakdown agrees with the ranked figure rather than contradicting it', () => {
+        const kept = candidate({
+            keptItems: [{ hrid: '/items/old', enhancementLevel: 8 }],
+            removedItems: [],
+        });
+        const detail = explainUpgradeCost(kept, gameData);
+
+        expect(detail.credits).toEqual([]);
+        expect(detail.net).toBe(10_000_000);
     });
 });

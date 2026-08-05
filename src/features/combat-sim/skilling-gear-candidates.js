@@ -224,6 +224,29 @@ export function skillScore(itemDetail, stats) {
 }
 
 /**
+ * Is this piece combat kit and nothing else?
+ *
+ * Read off the stats, the same way everything else in this module is: combat
+ * stats present, no noncombat stat with any value on it. A Maelstrom Plate Body
+ * answers yes; a Philosopher's Necklace, which carries both, answers no; a piece
+ * with neither — a plain cosmetic — answers no, because "not skilling gear" is
+ * not the same claim as "combat gear".
+ *
+ * Used for one thing: deciding whether a swap into skilling gear is allowed to
+ * credit the resale of what it takes off. See `bestGearForSkill`.
+ *
+ * @param {Object} itemDetail - From `itemDetailMap`
+ * @returns {boolean}
+ */
+export function isCombatOnlyItem(itemDetail) {
+    const equipment = itemDetail?.equipmentDetail;
+    if (!equipment) return false;
+
+    const hasValue = (stats) => Object.values(stats || {}).some((value) => Number(value) !== 0);
+    return hasValue(equipment.combatStats) && !hasValue(equipment.noncombatStats);
+}
+
+/**
  * Whether the character can actually wear it.
  *
  * A celestial tool twenty levels out of reach is not an upgrade, it is a
@@ -290,7 +313,7 @@ export function bestGearForSkill({ skill, equipment = {}, itemDetailMap = {}, le
 
         const name = winner.detail.name || winner.hrid.split('/').pop();
         const from = worn ? `${itemDetailMap[worn.hrid]?.name || worn.hrid.split('/').pop()} → ` : '';
-        candidates.push({
+        const candidate = {
             skillKey: skill,
             slot,
             // Empty rather than the replacement's own hrid when the slot is
@@ -302,7 +325,33 @@ export function bestGearForSkill({ skill, equipment = {}, itemDetailMap = {}, le
             upgradeLevel: NEW_GEAR_LEVEL,
             description: `${from}${name} +${NEW_GEAR_LEVEL} (${skillName(skill)})`,
             type: 'skilling_gear',
-        });
+        };
+
+        // A skilling piece never pays for itself out of combat armour.
+        //
+        // The cost of a swap is normally the new piece minus what the old one
+        // fetches, and that is right when the two are substitutes — a Holy
+        // Hatchet traded for a Celestial one is a hatchet either way, and only
+        // one of them is going in the slot. It is not right here. Loadouts mean
+        // the body slot holds a Maelstrom Plate while you fight and a
+        // Lumberjack's Top while you chop, and nobody sells the plate to buy the
+        // top. Crediting it produced rows like "Cost: −410,000,000" and a Gold/1%
+        // that ranked a woodcutting shirt above every real upgrade in the table.
+        //
+        // So the replaced piece is recorded as kept and the resale left
+        // uncredited — the same shape, and the same wording in the row, as the
+        // labyrinth's forced armor swaps. Unlike those it takes no setting:
+        // `labSim_keepReplacedGear` toggles a judgement about two pieces that
+        // really are alternatives, where selling the old one is a defensible
+        // plan. Selling combat armour to fund a skilling outfit is not a plan
+        // with a case for it, so there is no case to switch between.
+        const replaced = worn?.hrid ? itemDetailMap[worn.hrid] : null;
+        if (replaced && isCombatOnlyItem(replaced)) {
+            candidate.keptItems = [{ hrid: worn.hrid, enhancementLevel: worn.enhancementLevel || 0 }];
+            candidate.removedItems = [];
+        }
+
+        candidates.push(candidate);
     }
     return candidates;
 }
