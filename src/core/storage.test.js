@@ -257,8 +257,22 @@ describe('Storage quota handling', () => {
 });
 
 describe('Storage.estimate', () => {
+    // Node only grew a global `navigator` in v21 — CI's Node 20 has none, so
+    // the suite provides one rather than assuming the runtime's
+    const runtimeNavigator = typeof globalThis.navigator !== 'undefined';
+
+    beforeEach(() => {
+        if (!runtimeNavigator) {
+            Object.defineProperty(globalThis, 'navigator', { value: {}, configurable: true, writable: true });
+        }
+    });
+
     afterEach(() => {
-        delete globalThis.navigator.storage;
+        if (runtimeNavigator) {
+            delete globalThis.navigator.storage;
+        } else {
+            delete globalThis.navigator;
+        }
         storage._lastEstimate = null;
     });
 
