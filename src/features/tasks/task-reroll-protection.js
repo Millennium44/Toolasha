@@ -14,6 +14,7 @@ import domObserver from '../../core/dom-observer.js';
 import storage from '../../core/storage.js';
 import webSocketHook from '../../core/websocket.js';
 import { isCardInConfirmState, armConfirmSettleWatch, onConfirmFlowSettled } from './task-card-state.js';
+import { findRerollOptions } from './task-reroll-options.js';
 import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
 
 const STORAGE_KEY_PREFIX = 'taskProtectedHrids';
@@ -300,24 +301,25 @@ class TaskRerollProtection {
         const btn = e.target?.closest?.('button');
         if (!btn) return;
 
-        const btnText = btn.textContent?.trim() || '';
+        // Find the parent task card
+        const card = btn.closest('[class*="RandomTask_randomTask"]');
+        if (!card) return;
 
         // A reroll is the only thing this feature has any business stopping.
         // The initial "Reroll" button (which only opens the chooser), "Back",
         // the trash can, "Confirm Discard", "Go" and "Claim Reward" are all
-        // somebody else's click.
-        // "MooPass Free Reroll (2)", "Free Reroll", "Free" — the label has been
-        // worded three ways across builds and the count on the end moves, so it
-        // is recognised by the one word that is always in it. Matching it too
-        // narrowly is not harmless: an unmatched free reroll is a reroll
-        // per-task protection silently lets through.
-        const isPayButton = /^pay\b/i.test(btnText);
-        const isFreeReroll = /\bfree\b/i.test(btnText);
-        if (!isPayButton && !isFreeReroll) return;
+        // somebody else's click, and the shared reader knows all of them.
+        //
+        // It used to be read off the label: a paid reroll was a button whose
+        // text began with "Pay". The chooser does not always word it that way —
+        // the paid options can be an icon and a number — and under that reading
+        // the only reroll this feature could still see was the free one. Cap
+        // protection has therefore been guarding nothing at all, and a protected
+        // task could be rerolled with coins without a word.
+        const option = findRerollOptions(card).find((entry) => entry.button === btn);
+        if (!option) return;
 
-        // Find the parent task card
-        const card = btn.closest('[class*="RandomTask_randomTask"]');
-        if (!card) return;
+        const isFreeReroll = option.kind === 'free';
 
         // Check if this task is protected
         const quest = this._getQuestFromCard(card);
@@ -331,7 +333,7 @@ class TaskRerollProtection {
         // sight to explain why. Per-task protection still covers it: that is a
         // choice about the task, and a free reroll destroys the task just the
         // same.
-        const isCapProtected = this.capProtectionEnabled && isPayButton && this._isRerollAtCap(btnText);
+        const isCapProtected = this.capProtectionEnabled && !isFreeReroll && this._isRerollAtCap(option);
 
         if (!isPerTaskProtected && !isCapProtected) return;
 
@@ -491,19 +493,21 @@ class TaskRerollProtection {
     }
 
     /**
-     * Returns true if the reroll button text represents a cost meeting the configured threshold.
-     * Coin costs are always >= 10000 (formatted with K); cowbell costs are <= 32.
-     * @param {string} btnText
+     * Is this reroll option at or over its category's configured threshold?
+     *
+     * The currency comes from the option rather than from the size of its
+     * number — a 32-cowbell reroll and a 32-coin one are not the same reroll,
+     * and guessing from magnitude alone is how the free reroll's "(2)" once got
+     * measured against the cowbell cap.
+     *
+     * @param {{kind: string, cost: number|null}} option - A reroll option
      * @returns {boolean}
      * @private
      */
-    _isRerollAtCap(btnText) {
-        const match = btnText.match(/([\d,]+)(K?)/);
-        if (!match) return false;
-        const raw = parseInt(match[1].replace(/,/g, ''), 10);
-        const cost = match[2] === 'K' ? raw * 1000 : raw;
-        if (cost >= 1000) return cost >= this.coinThreshold;
-        return cost >= this.cowbellThreshold;
+    _isRerollAtCap(option) {
+        if (!option || option.cost === null || option.cost === undefined) return false;
+        if (option.kind === 'cowbell') return option.cost >= this.cowbellThreshold;
+        return option.cost >= this.coinThreshold;
     }
 
     /**

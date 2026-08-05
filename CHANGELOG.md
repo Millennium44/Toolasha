@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The reroll chooser is finally read as it is
+
+- **The MooPass reroll failure's real cause**: the code assumed paid reroll buttons say "Pay …" — they never have; they're a currency icon plus a bare number. So the chooser reader recognised *only* the free button, silently did nothing when free wasn't choosable, and a stall latch (armed by a confirmation check that accepted any task progress as "the reroll worked") could permanently kill free rerolls for the session — all while the bulk button kept quoting a 10.0K reroll it would never make. A new structural chooser reader identifies options by their sprite icon and number, the stall latch became a 10-minute cooldown, reroll confirmation now requires *this* task to actually change, and a card that can't be rerolled says so instead of wedging the queue.
+- **Bonus bug**: the same wrong "Pay" assumption meant reroll cap protection had been guarding nothing and per-task protection let paid rerolls straight through — only free rerolls were ever intercepted. Both now read the chooser correctly, with the cap measured in the option's own currency.
+- **Reroll labels are MooPass-aware**: "Reroll FREE (1)" when the free option is provably available, split labels ("2 free, 1×10.0K") when the allowance is known, and an asterisked cost with tooltip when MooPass exists but availability can't be known without opening the chooser — never a FREE that isn't proven.
+
 ### The goal planner shares, navigates, and answers instantly
 
 - **Goals share one resource ledger**: two goals can no longer both plan to spend the same crossbow or the same coins — earlier goals claim first (display order), later ones plan against what's left, with dim notes saying exactly who took what ("Sundering Crossbow ★ already spent by 'Cheesesmithing 108'"). Removing a goal gives its claims back to the goals below it, instantly.

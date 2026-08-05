@@ -107,6 +107,24 @@ function cardOnBoard(buttonLabels) {
 const buttonNamed = (card, label) => [...card.querySelectorAll('button')].find((b) => b.textContent === label);
 
 /**
+ * Give a button the currency sprite the game draws on it.
+ *
+ * The paid reroll options carry a coin or cowbell icon and a number, and the
+ * icon is the only thing that says which — a cowbell cost and a coin cost can
+ * be the same digits.
+ *
+ * @param {HTMLElement} button - The chooser button
+ * @param {string} currency - 'coin' or 'cowbell'
+ */
+function iconOn(button, currency) {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+    use.setAttribute('href', `/static/media/misc_sprite.svg#${currency}`);
+    svg.appendChild(use);
+    button.insertBefore(svg, button.firstChild);
+}
+
+/**
  * Stand a React fiber tree up over the board so the card's quest can be read.
  *
  * Protection identifies a card by walking from one of its buttons up the fiber
@@ -280,6 +298,39 @@ describe('the game keeps its clicks', () => {
         const trash = [...card.querySelectorAll('button')].find((b) => !b.textContent);
 
         expect(click(trash).defaultPrevented).toBe(false);
+    });
+
+    test('a paid reroll the build draws as an icon and a number is still guarded', async () => {
+        // Cap protection recognised a paid reroll by its label starting with
+        // "Pay". The chooser in the user's devtools capture words nothing that
+        // way — the paid options are a currency icon and a number — so the cap
+        // was guarding a button the game does not draw, and every real paid
+        // reroll went through untouched however high the cost had climbed
+        const card = await guardedCard(['Back', '320,000', '32']);
+        const coin = buttonNamed(card, '320,000');
+        iconOn(coin, 'coin');
+        iconOn(buttonNamed(card, '32'), 'cowbell');
+
+        expect(click(coin).defaultPrevented).toBe(true);
+        expect(card.querySelector('.mwi-reroll-warning')).not.toBe(null);
+    });
+
+    test('and the cowbell option is measured against the cowbell cap, not the coin one', async () => {
+        // 32 cowbells is at the cowbell cap and nowhere near the coin one; read
+        // off magnitude alone it looks like a trivial cost
+        const card = await guardedCard(['Back', '32'], 320000);
+        const cowbell = buttonNamed(card, '32');
+        iconOn(cowbell, 'cowbell');
+
+        expect(click(cowbell).defaultPrevented).toBe(true);
+    });
+
+    test('a protected task cannot be rerolled with coins behind protection’s back', async () => {
+        const card = await protectedCard(['Back', '10,000', 'MooPass Free Reroll']);
+        const coin = buttonNamed(card, '10,000');
+        iconOn(coin, 'coin');
+
+        expect(click(coin).defaultPrevented).toBe(true);
     });
 
     test('a blocked reroll goes through on the confirming click', async () => {
