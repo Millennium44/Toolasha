@@ -8,7 +8,7 @@ import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
 import webSocketHook from '../../core/websocket.js';
 import dataManager from '../../core/data-manager.js';
-import { isCardInConfirmState } from './task-card-state.js';
+import { isCardInConfirmState, armConfirmSettleWatch, onConfirmFlowSettled } from './task-card-state.js';
 import { GAME, TOOLASHA } from '../../utils/selectors.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
@@ -321,6 +321,11 @@ class TaskRerollTracker {
             this.timerRegistry.registerTimeout(taskTimeout);
         });
         this.unregisterHandlers.push(unregisterTask);
+
+        // Closing a reroll chooser adds an action row, not a card, so no
+        // observer above ever fires for it — this is the only thing that runs
+        // the pass the mid-flow skip turned down
+        this.unregisterHandlers.push(onConfirmFlowSettled(() => this.updateAllTaskDisplays()));
     }
 
     /**
@@ -440,8 +445,11 @@ class TaskRerollTracker {
     updateTaskDisplay(taskElement, claimedIds) {
         // A card showing the reroll chooser or the discard confirmation is
         // waiting on the player's second click; inserting the spend line into
-        // it now rebuilds the card under that click
+        // it now rebuilds the card under that click. The chooser outlives the
+        // reroll, so this pass has to be booked to run again — otherwise the
+        // spend line keeps the count from before the reroll indefinitely.
         if (isCardInConfirmState(taskElement)) {
+            armConfirmSettleWatch();
             return;
         }
 

@@ -12,7 +12,12 @@ import { getSettingDefinition } from '../../core/settings-schema.js';
 import { setReactInputValue } from '../../utils/react-input.js';
 import { findActionInput } from '../../utils/action-panel-helper.js';
 import { calculateTaskProfit, calculateTaskRewardValue } from './task-profit-calculator.js';
-import { isCardInConfirmState, isConfirmPendingFor } from './task-card-state.js';
+import {
+    isCardInConfirmState,
+    isConfirmPendingFor,
+    armConfirmSettleWatch,
+    onConfirmFlowSettled,
+} from './task-card-state.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
 import { timeReadable, formatPercentage, formatKMB } from '../../utils/formatters.js';
 import { GAME, TOOLASHA } from '../../utils/selectors.js';
@@ -692,6 +697,16 @@ class TaskProfitDisplay {
         for (const taskNode of existingTaskNodes) {
             this._setupTaskNode(taskNode);
         }
+
+        // Nothing above fires when a reroll chooser closes — the game adds an
+        // action row, not a card — so the rows a mid-flow pass declined to
+        // touch are redrawn from here instead
+        this.unregisterHandlers.push(
+            onConfirmFlowSettled(() => {
+                this.updateTaskProfits();
+                this.updateQueuedIndicators();
+            })
+        );
     }
 
     /**
@@ -801,8 +816,13 @@ class TaskProfitDisplay {
             // The card is mid-flow — the chooser has replaced the row this
             // reads, so the task key it computes is not the task's, and acting
             // on it tears the profit rows down and rebuilds them underneath the
-            // player's pending click
-            if (isConfirmPendingFor(taskNode)) continue;
+            // player's pending click. The chooser stays open after a reroll, so
+            // the pass is booked to run again when it closes; without that the
+            // rows keep describing the task that was rerolled away.
+            if (isConfirmPendingFor(taskNode)) {
+                armConfirmSettleWatch();
+                continue;
+            }
 
             // Get current task description to detect changes
             const taskData = this.parseTaskData(taskNode);
@@ -2532,8 +2552,13 @@ class TaskProfitDisplay {
     _updateQueuedIndicatorForCard(taskCard, rootFiber, queuedActionHrids, activeActionHrid) {
         // Mid-flow the chooser has replaced the Go button the quest is read
         // from, so this pass would decide the card has no quest and strip the
-        // badge out of the card the player is part-way through using
-        if (isCardInConfirmState(taskCard)) return;
+        // badge out of the card the player is part-way through using. Booked to
+        // run again once the chooser closes, since it can stay open for as long
+        // as the player keeps rerolling.
+        if (isCardInConfirmState(taskCard)) {
+            armConfirmSettleWatch();
+            return;
+        }
 
         const existingIndicator = taskCard.querySelector('.mwi-task-queued-indicator');
 
