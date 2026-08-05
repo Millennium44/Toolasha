@@ -40,12 +40,18 @@ let loading = null;
 const openCache = new Map();
 const openLoading = new Map();
 
+/** Enough of a panel to see and grab, when the whole of it cannot be shown */
+const EDGE_KEEP = 30;
+
 /**
  * Hold a saved geometry inside the current window.
  *
  * Size is capped at the viewport, since a panel restored wider than the screen
- * cannot be resized back — its resize grip is off the edge. Position keeps a
- * strip on screen, which is enough to grab the header and drag it back.
+ * cannot be resized back — its resize grip is off the edge. Position then puts
+ * the panel *fully* on screen rather than merely leaving a strip of it: the
+ * close button lives at the top right of every panel here, and a panel hanging
+ * off the right edge of a phone is one you cannot close. Only a panel bigger
+ * than the window falls back to showing as much as there is room for.
  *
  * @param {Object} geometry - `{left, top, width, height}` in pixels
  * @param {{width: number, height: number}} viewport - The window
@@ -57,25 +63,95 @@ export function clampGeometry(geometry, viewport, min = { width: 200, height: 80
 
     const result = {};
 
+    // A minimum wider than the screen is not a minimum, it is the bug it was
+    // written to prevent: the Treasure panel asks for 420px back on a 400px
+    // phone and comes back wider than the phone.
+    const minWidth = Math.min(min.width, viewport.width);
+    const minHeight = Math.min(min.height, viewport.height);
+
     const width = Number(geometry.width);
     const height = Number(geometry.height);
     if (Number.isFinite(width)) {
-        result.width = Math.max(min.width, Math.min(width, viewport.width));
+        result.width = Math.max(minWidth, Math.min(width, viewport.width));
     }
     if (Number.isFinite(height)) {
-        result.height = Math.max(min.height, Math.min(height, viewport.height));
+        result.height = Math.max(minHeight, Math.min(height, viewport.height));
     }
 
     const left = Number(geometry.left);
     const top = Number(geometry.top);
     if (Number.isFinite(left) && Number.isFinite(top)) {
-        // A strip of the panel is enough to grab it by
-        const margin = 60;
-        result.left = Math.min(Math.max(left, margin - (result.width || min.width)), viewport.width - margin);
-        result.top = Math.min(Math.max(top, 0), viewport.height - 30);
+        // What the panel will actually occupy once the size above is applied
+        const boxWidth = Math.min(result.width ?? minWidth, viewport.width);
+        const boxHeight = Math.min(result.height ?? EDGE_KEEP, viewport.height);
+        result.left = Math.min(Math.max(left, 0), Math.max(0, viewport.width - boxWidth));
+        result.top = Math.min(Math.max(top, 0), Math.max(0, viewport.height - boxHeight));
     }
 
     return Object.keys(result).length ? result : null;
+}
+
+/**
+ * Hold a panel that is already on screen inside the window it is on screen in.
+ *
+ * The saved-geometry clamp only ever ran on what was *stored*, so a panel that
+ * had never been moved opened wherever it was written to open — 80px in from
+ * the right of a desktop, which on a 400px phone is off the side — and stayed
+ * there. This measures the panel as it stands instead, which covers the default
+ * position, a width in `vw` that still overflows, and a window that has since
+ * been resized, with one rule.
+ *
+ * Nothing is touched unless it is out of bounds: a panel that fits keeps sizing
+ * and anchoring itself however it likes. Anchoring is what the two guards are
+ * about — an absolutely positioned panel measures from its offset parent, and a
+ * centred one is offset by its own transform, so a viewport-relative `left`
+ * would move either of them somewhere nobody asked for.
+ *
+ * @param {HTMLElement} panel - The panel, already in the document
+ * @param {{width: number, height: number}} [min] - Smallest allowed size
+ * @returns {Object|null} What was changed, or null when nothing needed to be
+ */
+export function clampPanelToViewport(panel, min) {
+    if (typeof window === 'undefined' || !panel?.isConnected) return null;
+
+    const viewport = { width: window.innerWidth, height: window.innerHeight };
+    if (!(viewport.width > 0) || !(viewport.height > 0)) return null;
+
+    if (typeof getComputedStyle === 'function') {
+        const computed = getComputedStyle(panel);
+        if (computed.position !== 'fixed') return null;
+        if (computed.transform && computed.transform !== 'none') return null;
+    }
+
+    const rect = panel.getBoundingClientRect();
+    // Not laid out yet — in a test DOM it never will be, and guessing at a
+    // position from zeroes would move every panel to the top left corner
+    if (!(rect.width > 0) && !(rect.height > 0)) return null;
+
+    const clamped = clampGeometry(
+        { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
+        viewport,
+        min
+    );
+    if (!clamped) return null;
+
+    const applied = {};
+    if (rect.width > viewport.width && clamped.width) {
+        panel.style.width = `${clamped.width}px`;
+        applied.width = clamped.width;
+    }
+    if (Math.round(clamped.left) !== Math.round(rect.left) || Math.round(clamped.top) !== Math.round(rect.top)) {
+        panel.style.left = `${clamped.left}px`;
+        panel.style.top = `${clamped.top}px`;
+        // Anchored from the left from here on; a panel positioned from the right
+        // edge would jump the moment the window is resized
+        panel.style.right = 'auto';
+        panel.style.bottom = 'auto';
+        applied.left = clamped.left;
+        applied.top = clamped.top;
+    }
+
+    return Object.keys(applied).length ? applied : null;
 }
 
 /**
@@ -173,18 +249,25 @@ export async function clearPosition(panelKey) {
 export async function restoreGeometry(panel, panelKey, min, { position = true } = {}) {
     const all = await allGeometry();
     const clamped = clampGeometry(all[panelKey], { width: window.innerWidth, height: window.innerHeight }, min);
-    if (!clamped || !panel?.isConnected) return;
+    if (!panel?.isConnected) return;
 
-    if (clamped.width) panel.style.width = `${clamped.width}px`;
-    if (clamped.height) panel.style.height = `${clamped.height}px`;
-    if (position && clamped.left !== undefined) {
-        panel.style.left = `${clamped.left}px`;
-        panel.style.top = `${clamped.top}px`;
-        // Anchored from the left from here on; a panel positioned from the right
-        // edge would jump the moment the window is resized
-        panel.style.right = 'auto';
-        panel.style.bottom = 'auto';
+    if (clamped) {
+        if (clamped.width) panel.style.width = `${clamped.width}px`;
+        if (clamped.height) panel.style.height = `${clamped.height}px`;
+        if (position && clamped.left !== undefined) {
+            panel.style.left = `${clamped.left}px`;
+            panel.style.top = `${clamped.top}px`;
+            // Anchored from the left from here on; a panel positioned from the
+            // right edge would jump the moment the window is resized
+            panel.style.right = 'auto';
+            panel.style.bottom = 'auto';
+        }
     }
+
+    // Whether or not anything was stored: a panel opening at the position it
+    // was written to open at is off the side of a phone just as surely as one
+    // restoring a position saved on a desktop.
+    clampPanelToViewport(panel, min);
 }
 
 /**

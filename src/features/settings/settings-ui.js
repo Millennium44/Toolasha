@@ -14,6 +14,7 @@ import marketAPI from '../../api/marketplace.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
+import { detectedModeLabel } from '../../utils/mobile.js';
 import scrollSimulatorUI from '../combat/scroll-simulator-ui.js';
 import ironCowMode, { IRON_COW_SETTINGS } from './iron-cow-mode.js';
 import { getDetectedGearSettings, getEnhancingParams } from '../../utils/enhancement-config.js';
@@ -64,6 +65,27 @@ function backupCharacterSuffix() {
     if (!name) return '';
     const mode = BACKUP_MODE_ABBR[dataManager.getCurrentCharacterGameMode?.()] || '';
     return `-${name}${mode ? `-${mode}` : ''}`;
+}
+
+/**
+ * An option's label, with anything only the running page can know added to it.
+ *
+ * One case so far: mobile mode's `auto`. The schema cannot say what detection
+ * currently decides — reading it there would close the circle
+ * mobile → config → settings-schema — and "Auto-detect" on its own gives the
+ * one person whose touchscreen laptop is detected wrong no way to tell a wrong
+ * detection from a wrong setting.
+ *
+ * @param {string} settingId - Which setting the option belongs to
+ * @param {string} optValue - The option's value
+ * @param {string} optLabel - The label the schema gave it
+ * @returns {string} What to show
+ */
+function liveOptionLabel(settingId, optValue, optLabel) {
+    if (settingId === 'mobileMode' && optValue === 'auto') {
+        return `${optLabel} (currently: ${detectedModeLabel()})`;
+    }
+    return optLabel;
 }
 
 class SettingsUI {
@@ -754,7 +776,11 @@ class SettingsUI {
                         const optValue = typeof option === 'object' ? option.value : option;
                         const optLabel = typeof option === 'object' ? option.label : option;
                         const selected = optValue === value ? 'selected' : '';
-                        return `<option value="${optValue}" ${selected}>${optLabel}</option>`;
+                        return `<option value="${optValue}" ${selected}>${liveOptionLabel(
+                            settingId,
+                            optValue,
+                            optLabel
+                        )}</option>`;
                     })
                     .join('');
 
@@ -1516,13 +1542,13 @@ class SettingsUI {
         const treasureBtn = document.createElement('button');
         treasureBtn.textContent = 'Treasure';
         treasureBtn.className = 'toolasha-utility-button';
-        treasureBtn.addEventListener('click', () => treasureTracker.show());
+        treasureBtn.addEventListener('click', () => treasureTracker.toggle());
         buttonsDiv.appendChild(treasureBtn);
 
         const pformanceBtn = document.createElement('button');
         pformanceBtn.textContent = 'PFormance';
         pformanceBtn.className = 'toolasha-utility-button';
-        pformanceBtn.addEventListener('click', () => pformancePanel.show());
+        pformanceBtn.addEventListener('click', () => pformancePanel.toggle());
         buttonsDiv.appendChild(pformanceBtn);
 
         container.appendChild(buttonsDiv);

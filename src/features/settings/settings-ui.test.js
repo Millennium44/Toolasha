@@ -30,6 +30,16 @@ const mocks = vi.hoisted(() => ({
     knownCharacters: [],
     synced: [],
     syncResult: { success: true, count: 0 },
+    /** Which panels the utility buttons asked to open or close */
+    toggled: [],
+    /** What the pointer looks like to auto-detection */
+    coarsePointer: false,
+}));
+
+vi.mock('../../utils/mobile.js', () => ({
+    hasCoarsePointer: () => mocks.coarsePointer,
+    isMobileMode: () => mocks.coarsePointer,
+    detectedModeLabel: () => (mocks.coarsePointer ? 'mobile' : 'desktop'),
 }));
 
 /** The smallest schema that still has an Iron Cow, a market pair and a non-market pair. */
@@ -54,6 +64,17 @@ const schema = {
         settings: {
             actionBar_enabled: { id: 'actionBar_enabled', label: 'Action bar', type: 'checkbox', default: true },
             combatSim: { id: 'combatSim', label: 'Combat simulator', type: 'checkbox', default: true },
+            mobileMode: {
+                id: 'mobileMode',
+                label: 'Mobile mode',
+                type: 'select',
+                default: 'auto',
+                options: [
+                    { value: 'auto', label: 'Auto-detect' },
+                    { value: 'on', label: 'On' },
+                    { value: 'off', label: 'Off' },
+                ],
+            },
         },
     },
     market: {
@@ -147,8 +168,12 @@ vi.mock('../../core/settings-storage.js', () => ({
 // Everything below is a neighbour the panel merely holds a button for
 vi.mock('../../api/marketplace.js', () => ({ default: { clearCacheAndRefetch: async () => true } }));
 vi.mock('../combat/scroll-simulator-ui.js', () => ({ default: { openDefaultsPopup: () => {} } }));
-vi.mock('../dev/pformance-panel.js', () => ({ default: { show: () => {} } }));
-vi.mock('../inventory/treasure-tracker.js', () => ({ default: { show: () => {} } }));
+vi.mock('../dev/pformance-panel.js', () => ({
+    default: { show: () => {}, toggle: () => mocks.toggled.push('pformance') },
+}));
+vi.mock('../inventory/treasure-tracker.js', () => ({
+    default: { show: () => {}, toggle: () => mocks.toggled.push('treasure') },
+}));
 vi.mock('../ui/overlay-panel.js', () => ({ default: { toggle: () => {} } }));
 vi.mock('../sync/sync-manager.js', () => ({
     default: { initialize: async () => {}, describeStatus: async () => 'Not linked.' },
@@ -226,6 +251,8 @@ beforeEach(() => {
     mocks.knownCharacters = [];
     mocks.synced = [];
     mocks.syncResult = { success: true, count: 0 };
+    mocks.toggled = [];
+    mocks.coarsePointer = false;
     mocks.settingsMap = {};
     for (const group of Object.values(schema)) {
         for (const [id, definition] of Object.entries(group.settings)) {
@@ -509,5 +536,64 @@ describe('copying settings to the iron cows', () => {
 
         expect(mocks.synced).toEqual([['char-2', 'char-3', 'char-4']]);
         expect(globalThis.alert.mock.calls.at(-1)[0]).toBe('Settings copied to 3 characters!');
+    });
+});
+
+describe('the buttons that open a panel', () => {
+    /**
+     * @param {string} label - The button's text
+     * @returns {HTMLElement} The utility button with that label
+     */
+    function utilityButton(label) {
+        drawPanel();
+        return [...document.querySelectorAll('.toolasha-utility-button')].find((b) => b.textContent === label);
+    }
+
+    test('Treasure closes the panel it opened, on the second press', () => {
+        // It only ever called show(), so the second press raised a panel that
+        // was already up — and on a phone the panel's own ✕ is the first thing
+        // a too-narrow header pushes off the screen
+        const button = utilityButton('Treasure');
+        button.click();
+        button.click();
+
+        expect(mocks.toggled).toEqual(['treasure', 'treasure']);
+    });
+
+    test('PFormance does too', () => {
+        utilityButton('PFormance').click();
+
+        expect(mocks.toggled).toEqual(['pformance']);
+    });
+});
+
+describe('what auto-detection is currently deciding', () => {
+    /** @returns {HTMLOptionElement} The mobile mode select's auto option */
+    function autoOption() {
+        drawPanel();
+        return document.querySelector('#mobileMode option[value="auto"]');
+    }
+
+    test('a touchscreen is said to be one', () => {
+        mocks.coarsePointer = true;
+
+        expect(autoOption().textContent).toContain('mobile');
+    });
+
+    test('and so is a cursor', () => {
+        // Without this the setting reads "Auto-detect" on the one machine where
+        // the detection is wrong, and looks exactly as correct as it does on
+        // every machine where it is right
+        expect(autoOption().textContent).toContain('desktop');
+    });
+
+    test('the schema label is kept, not replaced', () => {
+        expect(autoOption().textContent).toContain('Auto-detect');
+    });
+
+    test('the other options are left alone', () => {
+        drawPanel();
+
+        expect(document.querySelector('#mobileMode option[value="on"]').textContent.trim()).toBe('On');
     });
 });

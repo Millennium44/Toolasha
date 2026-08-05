@@ -17,6 +17,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - **The Task Tokens tile earns its rate line**: `tokens/hr this week` beneath the board value, on wall-clock time between your first and last claim (the tooltip names the sample and the basis; under two claims shows no rate rather than a fake one).
 - **Task statistics gains "Claimed Tasks (last 7 days)"**: tasks, tokens, coins, both hourly rates, the measured span — and reroll spend over the same window tied in for a **Net Task Income** figure, plus your last five completions.
 
+### Panels behave on a phone
+
+- **Floating panels stay on screen**: every remembered panel clamps to the viewport on open and again on resize/rotation — a desktop-saved position restored on a phone no longer hangs off the edge, and the clamp now insists the whole panel (close button included) is visible, not a grabbable strip. A panel's minimum size also caps at the viewport, which is what actually pushed Treasure off a 400px screen. Nothing is written back — the desktop layout is untouched on the next big screen.
+- **Treasure's ✕ is always reachable**: the header wraps on narrow screens and the close button sits pinned top-right out of the flow, with a bigger touch target in mobile mode.
+- **Treasure and PFormance buttons toggle**: a second click closes the panel, matching the Overlay button.
+- **The mobile-mode setting shows its detection**: the Auto option now reads "Auto-detect (currently: mobile/desktop)" — the hardware reading, so an override's effect stays distinguishable from what was detected.
+
 ### Sync works from a phone, and can't eat itself
 
 - **`@connect gist.githubusercontent.com` added to the userscript header**: reading a truncated gist file refetches it from GitHub's raw host, which mobile userscript managers silently block when undeclared — the phone's "Could not reach GitHub" pull failure. Reinstall the userscript to pick the header up.

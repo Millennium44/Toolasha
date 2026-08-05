@@ -8,7 +8,7 @@
  * iron cow is the leak this split exists to close.
  */
 
-import { describe, test, expect, beforeEach, vi } from 'vitest';
+import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const store = vi.hoisted(() => ({ settings: {}, networthHistory: {} }));
 
@@ -58,6 +58,8 @@ const {
     reopenIfLeftOpen,
     clearPosition,
     restoreGeometry,
+    clampGeometry,
+    clampPanelToViewport,
     _resetCaches,
 } = await import('./panel-geometry.js');
 const { _resetAdoptionCache } = await import('./character-key.js');
@@ -69,6 +71,180 @@ beforeEach(() => {
     mockDataManager.gameMode = 'standard';
     _resetCaches();
     _resetAdoptionCache();
+});
+
+describe('holding a saved geometry inside the window', () => {
+    const phone = { width: 400, height: 800 };
+
+    test('a position saved on a desktop comes back fully on a phone', () => {
+        // The bug this is here for: the Treasure panel restored at a left of
+        // 900 on a 400px screen, with the header and its close button off the
+        // right-hand side and no way to reach either.
+        const clamped = clampGeometry({ left: 900, top: 120, width: 720, height: 560 }, phone);
+
+        expect(clamped.width).toBe(400);
+        expect(clamped.left).toBe(0);
+        expect(clamped.left + clamped.width).toBeLessThanOrEqual(phone.width);
+    });
+
+    test('a panel that still fits is left where it was', () => {
+        const clamped = clampGeometry({ left: 40, top: 60, width: 300, height: 400 }, phone);
+
+        expect(clamped).toEqual({ left: 40, top: 60, width: 300, height: 400 });
+    });
+
+    test('a panel nudged past the right edge is pulled back, not merely tethered', () => {
+        // The old rule kept a 60px strip on screen, which is enough to drag a
+        // panel by on a mouse and no help at all when the part hanging off is
+        // the close button
+        const clamped = clampGeometry({ left: 380, top: 10, width: 300, height: 200 }, phone);
+
+        expect(clamped.left).toBe(100);
+    });
+
+    test('a saved position above or left of the window comes back to the corner', () => {
+        const clamped = clampGeometry({ left: -250, top: -80, width: 300, height: 200 }, phone);
+
+        expect(clamped).toMatchObject({ left: 0, top: 0 });
+    });
+
+    test('a minimum bigger than the screen is not honoured', () => {
+        // The Treasure panel asks for 420 back. A phone is 400 wide, and a
+        // minimum that overflows the screen is the bug it was written against.
+        const clamped = clampGeometry({ left: 0, top: 0, width: 720, height: 560 }, phone, {
+            width: 420,
+            height: 200,
+        });
+
+        expect(clamped.width).toBe(400);
+    });
+
+    test('a panel taller than the window sits at the top of it', () => {
+        const clamped = clampGeometry({ left: 0, top: 300, width: 300, height: 2000 }, phone);
+
+        expect(clamped.height).toBe(800);
+        expect(clamped.top).toBe(0);
+    });
+
+    test('nothing saved is nothing to apply', () => {
+        expect(clampGeometry(null, phone)).toBe(null);
+        expect(clampGeometry({}, phone)).toBe(null);
+    });
+});
+
+describe('holding a panel that is already on screen inside the window', () => {
+    /**
+     * happy-dom lays nothing out, so the rect a browser would have measured is
+     * the one thing a test has to supply.
+     * @param {Object} rect - `{left, top, width, height}`
+     * @returns {HTMLElement} A panel in the document
+     */
+    function panelAt({ left, top, width, height }) {
+        const panel = document.createElement('div');
+        Object.assign(panel.style, {
+            position: 'fixed',
+            left: `${left}px`,
+            top: `${top}px`,
+            width: `${width}px`,
+        });
+        panel.getBoundingClientRect = () => ({
+            left,
+            top,
+            width,
+            height,
+            right: left + width,
+            bottom: top + height,
+        });
+        document.body.appendChild(panel);
+        return panel;
+    }
+
+    const realWidth = window.innerWidth;
+    const realHeight = window.innerHeight;
+
+    beforeEach(() => {
+        document.body.replaceChildren();
+        Object.defineProperty(window, 'innerWidth', { configurable: true, value: 400 });
+        Object.defineProperty(window, 'innerHeight', { configurable: true, value: 800 });
+    });
+
+    afterEach(() => {
+        // A phone-sized window left behind would clamp every panel the rest of
+        // this file restores
+        Object.defineProperty(window, 'innerWidth', { configurable: true, value: realWidth });
+        Object.defineProperty(window, 'innerHeight', { configurable: true, value: realHeight });
+        document.body.replaceChildren();
+    });
+
+    test('a panel opening off the right edge is pulled in and re-anchored', () => {
+        const panel = panelAt({ left: 320, top: 80, width: 380, height: 500 });
+
+        const applied = clampPanelToViewport(panel);
+
+        expect(applied.left).toBe(20);
+        expect(panel.style.left).toBe('20px');
+        expect(panel.style.right).toBe('auto');
+    });
+
+    test('a panel wider than the screen is narrowed to it', () => {
+        const panel = panelAt({ left: 0, top: 0, width: 720, height: 500 });
+
+        clampPanelToViewport(panel);
+
+        expect(panel.style.width).toBe('400px');
+    });
+
+    test('a panel that fits is not touched at all', () => {
+        const panel = panelAt({ left: 30, top: 40, width: 300, height: 400 });
+
+        expect(clampPanelToViewport(panel)).toBe(null);
+        expect(panel.style.left).toBe('30px');
+        expect(panel.style.width).toBe('300px');
+    });
+
+    test('a centred panel is left to its transform', () => {
+        // `left: 50%` with a translate(-50%) is a different coordinate system;
+        // writing a measured left back onto one shifts it by half its width
+        const panel = panelAt({ left: 320, top: 80, width: 380, height: 500 });
+        panel.style.transform = 'translate(-50%, -50%)';
+
+        expect(clampPanelToViewport(panel)).toBe(null);
+    });
+
+    test('a panel positioned inside something else is left to its parent', () => {
+        const panel = panelAt({ left: 320, top: 80, width: 380, height: 500 });
+        panel.style.position = 'absolute';
+
+        expect(clampPanelToViewport(panel)).toBe(null);
+    });
+
+    test('an unmounted panel is not a crash', () => {
+        const panel = panelAt({ left: 320, top: 80, width: 380, height: 500 });
+        panel.remove();
+
+        expect(clampPanelToViewport(panel)).toBe(null);
+    });
+
+    test('restoring a panel that has never been moved still holds it on screen', async () => {
+        // Nothing saved, so there is nothing for the old clamp to have run on —
+        // and the panel opens at the corner it was written to open at, which on
+        // a phone is off the side
+        const panel = panelAt({ left: 320, top: 80, width: 380, height: 500 });
+
+        await restoreGeometry(panel, 'neverMoved', { width: 200, height: 80 });
+
+        expect(panel.style.left).toBe('20px');
+    });
+
+    test('restoring a desktop position onto a phone lands the whole panel on it', async () => {
+        await saveGeometry('desk', { left: 900, top: 60, width: 720, height: 560 });
+        const panel = panelAt({ left: 900, top: 60, width: 720, height: 560 });
+
+        await restoreGeometry(panel, 'desk', { width: 420, height: 200 });
+
+        expect(panel.style.width).toBe('400px');
+        expect(parseFloat(panel.style.left)).toBe(0);
+    });
 });
 
 describe('whether a panel was open', () => {
