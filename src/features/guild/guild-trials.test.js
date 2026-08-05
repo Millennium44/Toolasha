@@ -182,6 +182,9 @@ function record(overrides = {}) {
         kind: 'combat',
         level: 140,
         tier: 5,
+        // A trial that has banked something: the card's points are what say a
+        // badge counts finished tiers rather than the one in progress
+        pointsByTier: { 5: 1200 },
         samples: [],
         tiers: [],
         ...overrides,
@@ -640,6 +643,10 @@ describe('the panel, end to end', () => {
             tile.innerHTML =
                 `<div class="GuildPanel_tileName__d">${card.name}</div>` +
                 `<div class="GuildPanel_tileSummary__e">Lv.${card.level}</div>` +
+                // A card states points once it has banked a tier, and that is
+                // what tells a badge counting finished tiers from one naming the
+                // tier in progress
+                (card.points ? `<div class="Card_points__p">${card.points} pts</div>` : '') +
                 `<div class="ProgressBar_text__f">${card.bar}</div>`;
             root.appendChild(tile);
         }
@@ -810,7 +817,7 @@ describe('the panel, end to end', () => {
     });
 
     test('four tiers banked at tier 5 reach the payout block', () => {
-        const root = buildTab([{ name: 'Trial Chameleon', level: 140, bar: '618,000 / 618,000' }]);
+        const root = buildTab([{ name: 'Trial Chameleon', level: 140, points: 1200, bar: '618,000 / 618,000' }]);
         fire(root);
 
         // A card badged T5 has banked five: 400 + 200 × 4 = 1,200 base points
@@ -839,14 +846,14 @@ describe('the panel, end to end', () => {
         };
         game.prices = { '/items/bronze_bar': { ask: 100 } };
 
-        fire(buildTab([{ name: 'Trial Chameleon', level: 140, bar: '618,000 / 618,000' }]));
+        fire(buildTab([{ name: 'Trial Chameleon', level: 140, points: 1200, bar: '618,000 / 618,000' }]));
 
         expect(text()).toContain('Tokens, every eligible member600 (≈1,200,000g');
         expect(text()).toContain('via credit exchange');
     });
 
     test('with nothing to price the token payout against, the bare count is all that shows', () => {
-        fire(buildTab([{ name: 'Trial Chameleon', level: 140, bar: '618,000 / 618,000' }]));
+        fire(buildTab([{ name: 'Trial Chameleon', level: 140, points: 1200, bar: '618,000 / 618,000' }]));
 
         expect(text()).toContain('Tokens, every eligible member600');
         expect(text()).not.toContain('via credit exchange');
@@ -1204,6 +1211,85 @@ describe('the panel, end to end', () => {
         fire(root);
 
         expect(game.recorder.activity).toContain('tab-reading');
+    });
+
+    test('during the skilling hour a combat card waits rather than pretending to run', () => {
+        // Reported: the Trial Chameleon card rendered "Rate: measuring…" and
+        // "Banked: nothing yet — tier 1 in progress" during the skilling hour.
+        // The header says which kind it is about.
+        document.body.innerHTML = '';
+        const root = document.createElement('div');
+        root.className = 'GuildPanel_trialsContent__a';
+        root.innerHTML =
+            '<div class="GuildPanel_eventStatusRow__b">Skilling Trial - In Progress Thu 04:00 PM</div>' +
+            '<div class="GuildPanel_tile__c"><div class="GuildPanel_tileName__d">Foraging</div>' +
+            '<div class="ProgressBar_text__f">876 / 40,800</div></div>' +
+            '<div class="GuildPanel_tile__d"><div class="GuildPanel_tileName__d">Trial Chameleon</div>' +
+            '<div class="GuildPanel_tileSummary__e">Lv.100</div></div>';
+        document.body.appendChild(root);
+        fire();
+
+        const blocks = [...document.querySelectorAll('.mwi-trial-info[data-mwi-block^="tile:"]')];
+        const chameleon = blocks.find((block) => block.dataset.mwiBlock.includes('chameleon'));
+        const foraging = blocks.find((block) => block.dataset.mwiBlock.includes('foraging'));
+
+        expect(chameleon.textContent).toContain('scheduled');
+        expect(chameleon.textContent).not.toContain('measuring');
+        expect(chameleon.textContent).not.toContain('nothing yet');
+        // …while the kind that is running is live as ever
+        expect(foraging.textContent).toContain('Rate');
+    });
+
+    test('a combat card that has not started claims no banked tier', () => {
+        // Reported from the new build: both combat cards read "Banked: 1 tier"
+        // during the skilling hour, on cards stating 0 pts. A card at its own
+        // base level with nothing stated has banked nothing.
+        document.body.innerHTML = '';
+        const root = document.createElement('div');
+        root.className = 'GuildPanel_trialsContent__a';
+        root.innerHTML =
+            '<div class="GuildPanel_eventStatusRow__b">Skilling Trial - In Progress Thu 04:00 PM</div>' +
+            '<div class="GuildPanel_tile__c"><div class="GuildPanel_tileName__d">Foraging</div>' +
+            '<div class="ProgressBar_text__f">876 / 40,800</div></div>' +
+            '<div class="GuildPanel_tile__d"><div class="GuildPanel_tileName__d">Trial Chameleon</div>' +
+            '<div class="GuildPanel_tileSummary__e">Lv.100</div><div>0 pts</div></div>';
+        document.body.appendChild(root);
+        fire();
+
+        const chameleon = [...document.querySelectorAll('.mwi-trial-info[data-mwi-block^="tile:"]')].find((block) =>
+            block.dataset.mwiBlock.includes('chameleon')
+        );
+
+        expect(chameleon.textContent).not.toContain('Banked');
+        expect(chameleon.textContent).not.toContain('measuring');
+        expect(chameleon.textContent).toContain('scheduled');
+
+        // …and it contributes nothing to the payout either
+        expect(text()).toContain('Guild Points banked');
+        expect(text()).not.toContain('Guild Points banked400');
+    });
+
+    test('the payout is the week’s, whichever tab is open', () => {
+        // Reported: the Trials tab read "banked 2,714" while the In Progress tab
+        // read "banked 472" at the same moment, because each summed the cards it
+        // could see
+        const trialsTab = buildTrialsTabFor('Alchemy', 170, 1080);
+        fire(trialsTab);
+        const fromTrialsTab = text().match(/Guild Points banked([\d,]+)/)?.[1];
+        expect(fromTrialsTab).toBeTruthy();
+
+        // Now the In Progress tab, which shows only the running pool
+        document.body.innerHTML = '';
+        const live = document.createElement('div');
+        live.className = 'GuildPanel_trialsContent__a';
+        live.innerHTML =
+            '<div class="GuildPanel_tile__c"><div class="GuildPanel_tileName__d">Alchemy</div>' +
+            '<div class="ProgressBar_text__f">18,850 / 65,280</div></div>';
+        document.body.appendChild(live);
+        vi.setSystemTime(now + 5000);
+        fire();
+
+        expect(text().match(/Guild Points banked([\d,]+)/)?.[1]).toBe(fromTrialsTab);
     });
 
     test('the live pool files under the tier being fought, not the badge', () => {
@@ -1808,11 +1894,17 @@ describe('the first tier of a running trial', () => {
     });
 
     test('the card’s own tier always wins over the rule', () => {
-        const analysis = analyseTrial(running({ tier: 6 }), { phase: 'live' });
-        // The badge counts banked tiers, so the one being fought is the next
-        expect(analysis.tier).toBe(7);
-        expect(analysis.tiersClearedSoFar).toBe(6);
-        expect(analysis.tierSource).toBe('card');
+        // A badge with points behind it counts banked tiers, so the one being
+        // fought is the next
+        const banked = analyseTrial(running({ tier: 6, pointsByTier: { 6: 700 } }), { phase: 'live' });
+        expect(banked.tier).toBe(7);
+        expect(banked.tiersClearedSoFar).toBe(6);
+
+        // A badge with no points behind it is the tier in progress, banking nothing
+        const started = analyseTrial(running({ tier: 6 }), { phase: 'live' });
+        expect(started.tier).toBe(6);
+        expect(started.tiersClearedSoFar).toBe(0);
+        expect(banked.tierSource).toBe('card');
     });
 });
 
@@ -2035,35 +2127,105 @@ describe('the expected-tier row', () => {
     /** Nothing attributed */
     const breakdown = { measured: false, reason: 'no trial fight seen yet', players: [] };
 
-    test('a measured forecast names the tier and is captioned as derived', () => {
+    test('with no measured slowdown there is one prediction, not two', () => {
+        // "On pace for 4 tiers → T4" beside "Expected ~T3" is two bare numbers
+        // disagreeing; a reader cannot tell which to believe
         const html = renderTrialBlock(analyseTrial(record({ tier: 2 }), {}), 3, breakdown, {
             phase: 'live',
             forecast: { tier: 6, tiersCleared: 4, source: 'measured', limitedBy: 'time', coverage: null },
         });
 
-        expect(html).toContain('Expected');
-        expect(html).toContain('~T6');
-        expect(html).toContain('derived rather than fitted');
+        expect(html).toContain('On pace for');
+        expect(html).toContain('4 tiers → T6');
+        expect(html).not.toContain('Expected');
+        expect(html).toContain('derived from the game');
+    });
+
+    test('a measured slowdown is what makes two rows worth having', () => {
+        const html = renderTrialBlock(
+            analyseTrial(
+                record({
+                    kind: 'skilling',
+                    tier: 2,
+                    tiers: [
+                        { tier: 2, total: 44_880 },
+                        { tier: 3, total: 48_960 },
+                    ],
+                    samples: [
+                        { t: now, readings: [{ current: 1000, max: 44_880 }] },
+                        { t: now + 10_000, readings: [{ current: 2000, max: 44_880 }] },
+                    ],
+                }),
+                { timeLeftMs: 40 * 60_000, phase: 'live' }
+            ),
+            3,
+            breakdown,
+            {
+                phase: 'live',
+                forecast: {
+                    tier: 4,
+                    tiersCleared: 4,
+                    source: 'measured',
+                    limitedBy: 'time',
+                    decline: { perTier: -0.08, rate: 0.576, atTier: 3, observations: 3 },
+                },
+            }
+        );
+
+        // Both, and each says what it assumes
+        expect(html).toContain('On pace (flat)');
+        expect(html).toContain('Expected (slowing)');
+        expect(html).toContain('8.0 points a tier');
     });
 
     test('an estimated one says how many loadouts it rests on', () => {
         const html = renderTrialBlock(analyseTrial(record({ tier: 2 }), {}), 8, breakdown, {
             phase: 'live',
-            forecast: { tier: 4, source: 'estimated', limitedBy: 'time', coverage: { known: 3, of: 8 } },
+            forecast: {
+                tier: 4,
+                tiersCleared: 2,
+                source: 'estimated',
+                limitedBy: 'time',
+                coverage: { known: 3, of: 8 },
+            },
         });
 
-        expect(html).toContain('~T4');
+        expect(html).toContain('→ T4');
         expect(html).toContain('3 of 8 members');
         expect(html).toContain('rough shape rather than a measurement');
     });
 
-    test('a wall is called a wall, not a slow climb', () => {
+    test('a long fight is reported as enraged, not as impossible', () => {
+        // Enrage is a stacking buff — one stack a minute to ten, +10% accuracy
+        // and +10% damage each — so a fight past ten minutes is dangerous
+        // rather than unwinnable. The projection keeps its tier and says what
+        // it cannot model: the deaths.
         const html = renderTrialBlock(analyseTrial(record({ tier: 2 }), {}), 3, breakdown, {
             phase: 'live',
-            forecast: { tier: 3, source: 'measured', limitedBy: 'enrage', coverage: null },
+            forecast: {
+                tier: 5,
+                tiersCleared: 3,
+                source: 'measured',
+                limitedBy: 'time',
+                enragedFrom: 4,
+                coverage: null,
+            },
         });
 
-        expect(html).toContain('walled by the enrage timer');
+        expect(html).toContain('fully enraged');
+        expect(html).toContain('→ T5');
+        expect(html).toContain('+100% damage and +100% accuracy');
+        expect(html).toContain('expect deaths to slow this');
+        expect(html).not.toContain('wall');
+    });
+
+    test('a fight inside ten minutes says nothing about enrage', () => {
+        const html = renderTrialBlock(analyseTrial(record({ tier: 2 }), {}), 3, breakdown, {
+            phase: 'live',
+            forecast: { tier: 6, tiersCleared: 4, source: 'measured', limitedBy: 'time', enragedFrom: null },
+        });
+
+        expect(html).not.toContain('enrage');
     });
 
     test('nothing to project says which kind of nothing', () => {

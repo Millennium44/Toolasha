@@ -12,6 +12,15 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - **The count is a per-floor override again**: a number chosen because one map was worth four beacons no longer follows you onto every floor after it. Each new floor starts back on the automatic minimum.
 - **A ⟲ button beside the count** puts it back to the fewest that cover a path, without spinning the field down a step at a time.
 
+### Neither ladder has a wall, and a click is not a capture
+
+- **The profile cycler counts replies, not clicks**: a hidden chat box could mark members as logged without any profile ever opening — now a click is a timestamped request, re-offered after 20 seconds if no capture lands, the progress count derives from actual captures (wrong states self-correct), a member in flight shows as "Waiting for…", and a missing/hidden chat input says "Open the chat panel first" instead of silently doing nothing. Inert skilling units on the In Progress tab are never clicked — the chat route is the only one that works there. **⟲ Redo all** marks everyone due again without discarding stored levels; one click still equals one profile.
+- **Skilling success decline is measured and modeled**: personal stats are stored per tier, the drop is fitted (the live data reads exactly −8.0 points per tier), and future tiers scale their effective fill rate down to the game's **5% floor** — deep tiers are slow, not impossible. One observation means no trend: walk flat and say so.
+- **Enrage is a buff, not a timer**: monsters stack +10% accuracy/damage per minute to +100%/+100% at ten — fights don't end. The combat walk no longer stops at ten minutes; it carries on at DPS and captions the escalation ("fully enraged — expect deaths to slow this beyond the projection"). No forecast has a hard wall now; the hour is what ends both walks.
+- **The lifecycle phase is per trial kind**: "Skilling Trial - In Progress" no longer makes combat cards claim "measuring…" or "Banked: 1 tier" — and banked now requires stated points, since Lv.100/0 pts/T1 is tier one _in progress_ while Lv.100/236 pts/T1 is tier one _banked_.
+- **The payout block states the week's total on every tab** (it summed only visible cards on In Progress — 472 beside the Trials tab's 2,714), and **"On pace" and "Expected" are one walk**: a single row when no slowdown is measured, two clearly-labelled rows ("flat" / "slowing") when one is.
+- Anchored to live figures: pools T1–T5 exact (40,800 → 57,120, +4,080 each; T6 = 61,200 where the old fit said 63.3K), success 73.6/65.6/57.6/49.6.
+
 ### The badge means banked, and the skilling ladder is a rule now
 
 - **Mid-trial, the stated tier badge counts tiers banked and the fight is on badge + 1** — proven by the live sequence (a T2 badge while the third pool ran). "Banked 1 tier" under a T2 badge now says 2, and live pool readings file under the tier actually being fought — two tiers' pool sizes were quietly filing under one number and corrupting the ladder.

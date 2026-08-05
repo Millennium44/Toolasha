@@ -251,13 +251,60 @@ export function drawProfileCycler(body, capture = guildMemberSkills) {
         'A profile carries every skill level, which is what the skilling forecast needs; combat stat sheets ' +
         'come from fighting beside somebody instead.';
 
+    const status = panelNote('');
+    status.style.display = 'none';
+
     button.addEventListener('click', () => {
         const result = capture.openNext?.();
-        if (result?.how === 'chat') button.textContent = `Press Enter to open ${result.opened}`;
-        else if (result?.opened) button.textContent = `Opened ${result.opened}`;
+        status.style.display = '';
+
+        if (result?.how === 'no-chat') {
+            // The only route to a skilling participant's profile is the chat
+            // command, and a hidden chat swallows it silently — which is how a
+            // roster came to read "every member logged" with one missing
+            status.textContent = 'Open the chat panel first — that is how a profile is asked for.';
+            status.style.color = ROW_COLORS.bad;
+            button.textContent = `Open ${result.opened}’s profile`;
+            return;
+        }
+
+        status.style.color = ROW_COLORS.dim;
+        if (result?.how === 'chat') {
+            status.textContent = `Press Enter in chat to open ${result.opened}.`;
+            button.textContent = `Asked for ${result.opened}…`;
+        } else if (result?.opened) {
+            status.textContent = `Waiting for ${result.opened}’s profile…`;
+            button.textContent = `Asked for ${result.opened}…`;
+        }
     });
 
     card.appendChild(button);
+
+    // Redo: a capture goes stale on its own after a week, which is too slow for
+    // a player who has just watched half the guild level up. It only changes who
+    // is considered due — it never asks for a profile itself
+    if (state.logged > 0) {
+        const redo = document.createElement('button');
+        redo.className = 'mwi-profile-redo';
+        redo.textContent = `⟲ Redo all ${state.logged}`;
+        redo.style.cssText =
+            'width:100%; margin:0 0 4px; padding:3px 8px; border-radius:4px; font-size:11px; cursor:pointer;' +
+            `background:transparent; border:1px solid rgba(255,255,255,0.2); color:${ROW_COLORS.dim};`;
+        redo.title =
+            'Marks every capture as due again, so the button above walks the roster once more. Nothing is ' +
+            'thrown away — the levels already stored stand until a fresh profile replaces them.';
+        redo.addEventListener('click', () => {
+            capture.redoAll?.();
+            redo.textContent = 'Every member due again';
+            button.textContent = 'Open the next profile';
+        });
+        card.appendChild(redo);
+    }
+
+    card.appendChild(status);
+    if (state.pending) {
+        card.appendChild(panelNote(`Waiting for ${state.pending.name}’s profile to open.`));
+    }
     if (state.stale) {
         card.appendChild(panelNote(`${state.stale} capture${state.stale === 1 ? '' : 's'} older than a week.`));
     }

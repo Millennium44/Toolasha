@@ -403,7 +403,7 @@ class GuildTrialScoreboard {
                 ? `<div style="color:${DIM}; font-size:10px; margin-top:6px;">` +
                   `Expected to reach <span style="color:${GOOD}; font-weight:600;">T${forecast.tier}</span> ` +
                   `in the hour — ${forecast.source === 'measured' ? 'from the party\u2019s measured rate' : 'estimated from captured loadouts'}` +
-                  `${forecast.limitedBy === 'enrage' ? ', walled by the ten-minute enrage' : ''}.</div>`
+                  `${Number.isFinite(forecast.enragedFrom) ? ', with the boss fully enraged by then' : ''}.</div>`
                 : '';
 
         // One line rather than a tab of its own: running dry is worth knowing

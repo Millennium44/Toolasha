@@ -699,6 +699,22 @@ describe('readTrialStatus', () => {
         expect(readTrialStatus(tab([...preamble, 'Combat Trial - In Progress'])).phase).toBe('live');
     });
 
+    test('the header names which trial it is about', () => {
+        // A cycle runs the skilling hour and then the combat one, so a status
+        // without its kind attached says the combat trial is under way during
+        // the skilling hour — which is what it did
+        expect(readTrialStatus(tab(['Skilling Trial - In Progress  Thu 04:00 PM']))).toMatchObject({
+            phase: 'live',
+            kind: 'skilling',
+        });
+        expect(readTrialStatus(tab(['Combat Trial - Scheduled Thu 05:00 PM 1h 2m']))).toMatchObject({
+            phase: 'scheduled',
+            kind: 'combat',
+        });
+        // A header that names no kind is the old, single-trial case
+        expect(readTrialStatus(tab(['In Progress'])).kind).toBeNull();
+    });
+
     test('a finished cycle', () => {
         expect(readTrialStatus(tab(['Completed Thu 09:00 AM'])).phase).toBe('completed');
     });

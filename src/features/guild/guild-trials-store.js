@@ -259,6 +259,16 @@ export function recordTileSample(record, tile, at) {
         // rather than replaced: the footer shows what it shows, and a redraw
         // that omits one stat is not the stat going away
         personal: { ...(existing.personal || {}), ...(tile?.personal || {}) },
+        // …and kept per tier as well, because they are not constant across one:
+        // the same character's success rate fell eight points a tier through a
+        // watched trial, which is a thing the forecast has to model rather than
+        // a reading it can overwrite
+        personalByTier: {
+            ...(existing.personalByTier || {}),
+            ...(Number.isFinite(observationTier) && tile?.personal && Object.keys(tile.personal).length
+                ? { [observationTier]: { ...(existing.personalByTier?.[observationTier] || {}), ...tile.personal } }
+                : {}),
+        },
         signups: tile?.signups || existing.signups || null,
         pointsByTier,
         samples: samples.slice(-MAX_SAMPLES),
@@ -339,6 +349,7 @@ export function mergeTrialRecords(base, incoming) {
             kind: fresher.kind || existing.kind,
             completed: Boolean(existing.completed) || Boolean(tile.completed),
             personal: { ...(staler.personal || {}), ...(fresher.personal || {}) },
+            personalByTier: { ...(staler.personalByTier || {}), ...(fresher.personalByTier || {}) },
             level: Number.isFinite(fresher.level) ? fresher.level : existing.level,
             tier: Number.isFinite(fresher.tier) ? fresher.tier : existing.tier,
             // Carried across rather than dropped. Both come off the Trials tab

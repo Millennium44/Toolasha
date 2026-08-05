@@ -36,6 +36,10 @@ vi.mock('./guild-member-skills.js', () => ({
             tracker.opened.push(tracker.cycler.next?.name ?? null);
             return tracker.cyclerResult;
         },
+        redoAll: () => {
+            tracker.redone += 1;
+            return tracker.cycler.logged;
+        },
     },
 }));
 vi.mock('./guild-xp-tracker.js', () => ({
@@ -52,6 +56,7 @@ tracker.rows = [];
 tracker.cycler = { logged: 0, total: 0, next: null, stale: 0 };
 tracker.cyclerResult = { opened: null, how: 'done' };
 tracker.opened = [];
+tracker.redone = 0;
 
 const {
     drawProfileCycler,
@@ -81,6 +86,7 @@ const series = (points) => points.map(([hoursAgo, xp]) => ({ t: now - hoursAgo *
 describe('the profile cycler', () => {
     beforeEach(() => {
         tracker.opened = [];
+        tracker.redone = 0;
         tracker.cycler = { logged: 2, total: 8, next: { name: 'Ada' }, stale: 0 };
         tracker.cyclerResult = { opened: 'Ada', how: 'row' };
         document.body.innerHTML = '';
@@ -110,7 +116,53 @@ describe('the profile cycler', () => {
         const button = body.querySelector('button');
         button.click();
 
-        expect(button.textContent).toContain('Press Enter');
+        // The button says what it did; the status line says what to do next
+        expect(button.textContent).toContain('Asked for Ada');
+        expect(body.textContent).toContain('Press Enter in chat');
+    });
+
+    test('a hidden chat is said plainly rather than swallowed', () => {
+        // The reported failure: chat was hidden, the fill went nowhere, and the
+        // cycler moved on regardless
+        tracker.cyclerResult = { opened: 'Ada', how: 'no-chat' };
+        const body = document.createElement('div');
+        drawProfileCycler(body);
+        body.querySelector('button').click();
+
+        expect(body.textContent).toContain('Open the chat panel first');
+        // And the member is still the one being offered
+        expect(body.querySelector('button').textContent).toContain('Ada');
+    });
+
+    test('a profile still in flight is shown as waiting, not as done', () => {
+        tracker.cycler = { logged: 2, total: 8, next: null, pending: { name: 'Ada' }, stale: 0 };
+        const body = document.createElement('div');
+        drawProfileCycler(body);
+
+        expect(body.textContent).toContain('Waiting for Ada');
+        expect(body.textContent).toContain('logged 2/8');
+    });
+
+    test('redo marks everyone due again without asking for anything', () => {
+        const body = document.createElement('div');
+        drawProfileCycler(body);
+
+        const redo = body.querySelector('.mwi-profile-redo');
+        expect(redo.textContent).toContain('Redo all 2');
+
+        redo.click();
+
+        expect(tracker.redone).toBe(1);
+        // Redo changes who is due; it never opens a profile
+        expect(tracker.opened).toEqual([]);
+    });
+
+    test('with nothing captured there is nothing to redo', () => {
+        tracker.cycler = { logged: 0, total: 8, next: { name: 'Ada' }, stale: 0 };
+        const body = document.createElement('div');
+        drawProfileCycler(body);
+
+        expect(body.querySelector('.mwi-profile-redo')).toBeNull();
     });
 
     test('a fully logged roster has nothing to click', () => {
@@ -279,6 +331,7 @@ describe('the panel and tile', () => {
         tracker.cycler = { logged: 0, total: 0, next: null, stale: 0 };
         tracker.cyclerResult = { opened: null, how: 'done' };
         tracker.opened = [];
+        tracker.redone = 0;
         tracker.members = [
             { characterID: 'a', name: 'Alice' },
             { characterID: 'b', name: 'Bob' },

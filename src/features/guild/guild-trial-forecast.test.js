@@ -14,6 +14,9 @@ import {
     forecastCombatTier,
     forecastSkillingTier,
     forecastTrial,
+    SUCCESS_FLOOR,
+    successAtTier,
+    successDecline,
     tierMonsterHp,
     trialWave,
 } from './guild-trial-forecast.js';
@@ -129,14 +132,22 @@ describe('forecastCombatTier', () => {
         expect(walk.limitedBy).toBe('time');
     });
 
-    test('a tier that cannot be killed before the boss enrages is a wall', () => {
-        // Ten minutes is the cap on one fight, so 618,000 needs 1,030 dmg/s to
-        // land at all — this party is under it and clears nothing
+    test('a fight past ten minutes is enraged, not ended', () => {
+        // Enrage is a stacking buff — one stack a minute to ten, each +10%
+        // accuracy and +10% damage — so a long fight gets dangerous rather than
+        // impossible. 618,000 at 900 dmg/s takes eleven and a half minutes and
+        // is cleared, with the escalation reported alongside.
         const walk = forecastCombatTier({ ...base, tier: 2, dps: 900 });
 
-        expect(walk.tiersCleared).toBe(0);
-        expect(walk.limitedBy).toBe('enrage');
+        expect(walk.tiersCleared).toBeGreaterThan(0);
+        expect(walk.limitedBy).not.toBe('enrage');
+        expect(walk.enragedFrom).toBe(2);
         expect(ENRAGE_MS).toBe(600_000);
+    });
+
+    test('a fight comfortably inside ten minutes says nothing about enrage', () => {
+        const walk = forecastCombatTier({ ...base, tier: 2, dps: 5000 });
+        expect(walk.enragedFrom).toBeNull();
     });
 
     test('the health already off the current boss counts', () => {
@@ -215,6 +226,115 @@ describe('forecastSkillingTier', () => {
 
     test('no measured rate is no forecast at all', () => {
         expect(forecastSkillingTier({ tier: 8, rate: null, timeLeftMs: 1000, observations })).toBeNull();
+    });
+});
+
+describe('the success rate falling with the tiers', () => {
+    // Measured from the In Progress footer across a live trial: 73.6% at tier
+    // one, 65.6% at two, 57.6% at three — eight points a tier, exactly, which
+    // is a tier level rising ten against a character level that does not.
+    const observed = {
+        1: { 'Work Time': '3.14s', 'Success Rate': '73.6%' },
+        2: { 'Success Rate': '65.6%' },
+        3: { 'Success Rate': '57.6%' },
+        4: { 'Success Rate': '49.6%' },
+    };
+
+    test('the decline is fitted from what the footer said', () => {
+        // Four consecutive tiers, exactly eight points apart each time
+        const decline = successDecline(observed);
+
+        expect(decline.perTier).toBeCloseTo(-0.08, 6);
+        expect(decline.atTier).toBe(4);
+        expect(decline.rate).toBeCloseTo(0.496, 6);
+        expect(decline.observations).toBe(4);
+    });
+
+    test('one tier is a reading, not a trend', () => {
+        const decline = successDecline({ 2: { 'Success Rate': '65.6%' } });
+
+        expect(decline.perTier).toBeNull();
+        expect(decline.observations).toBe(1);
+        // With no trend the rate is walked flat
+        expect(successAtTier(decline, 9)).toBeCloseTo(0.656, 6);
+    });
+
+    test('future tiers are projected down the line, to a floor', () => {
+        const decline = successDecline(observed);
+        expect(successAtTier(decline, 5)).toBeCloseTo(0.416, 6);
+        expect(successAtTier(decline, 8)).toBeCloseTo(0.176, 6);
+
+        // Five per cent is where it stops; it never reaches zero, so a deep
+        // tier is slow rather than impossible
+        expect(successAtTier(decline, 11)).toBe(SUCCESS_FLOOR);
+        expect(successAtTier(decline, 20)).toBe(SUCCESS_FLOOR);
+    });
+
+    test('nothing measured is no decline at all', () => {
+        expect(successDecline({})).toBeNull();
+        expect(successDecline({ 1: { 'Work Time': '3.14s' } })).toBeNull();
+        expect(successAtTier(null, 4)).toBeNull();
+    });
+
+    test('the walk slows as the success rate does', () => {
+        const flat = forecastSkillingTier({
+            tier: 3,
+            rate: 100,
+            timeLeftMs: 60 * 60_000,
+            observations: [{ tier: 3, total: 48_960 }],
+            participants: 2,
+        });
+        const slowing = forecastSkillingTier({
+            tier: 3,
+            rate: 100,
+            timeLeftMs: 60 * 60_000,
+            observations: [{ tier: 3, total: 48_960 }],
+            participants: 2,
+            decline: successDecline(observed),
+        });
+
+        // Fewer tiers once the slowdown is modelled — which is the point
+        expect(slowing.tiersCleared).toBeLessThan(flat.tiersCleared);
+    });
+
+    test('past the floor the walk carries on, slowly', () => {
+        // The skilling ladder has no wall on it: the rate stops falling at 5%,
+        // so deep tiers cost twenty times what they would at full success and
+        // the hour is what ends the walk
+        const walk = forecastSkillingTier({
+            tier: 4,
+            rate: 1_000_000,
+            timeLeftMs: 60 * 60_000,
+            observations: [{ tier: 4, total: 53_040 }],
+            participants: 2,
+            decline: successDecline(observed),
+        });
+
+        expect(walk.limitedBy).not.toBe('success');
+        expect(walk.tiersCleared).toBeGreaterThan(4);
+    });
+
+    test('a tier at the floor costs what the floor says it costs', () => {
+        // Measured at tier four, where success is 49.6%. By tier eleven it is
+        // floored at 5%, so the same amount of work takes about ten times as
+        // long — slow, and still finite
+        const walk = forecastSkillingTier({
+            tier: 4,
+            rate: 100,
+            timeLeftMs: 10 * 60 * 60_000,
+            observations: [{ tier: 4, total: 53_040 }],
+            participants: 2,
+            decline: successDecline(observed),
+        });
+
+        const spent = (tier) => {
+            const index = walk.clears.findIndex((clear) => clear.tier === tier);
+            return walk.clears[index].atMs - (index > 0 ? walk.clears[index - 1].atMs : 0);
+        };
+
+        // Per unit of work, tier eleven is ~10× tier four's cost
+        const ratio = spent(11) / walk.clears[0].work / (spent(4) / walk.clears[0].work);
+        expect(ratio).toBeGreaterThan(5);
     });
 });
 

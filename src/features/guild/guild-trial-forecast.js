@@ -64,7 +64,21 @@ export const MONSTER_BASE_LEVEL = 100;
 /** How much one signed-up participant adds to monster health */
 export const PARTICIPANT_HP_STEP = 0.01;
 
-/** A trial fight enrages after ten minutes, which is a hard cap on killing it */
+/**
+ * When a trial boss reaches full enrage.
+ *
+ * Not a fight timer, which is what this file assumed and what the monster
+ * sheets' `enrageTime` looks like at a glance. The mechanic is a stacking buff:
+ * one stack a minute to a maximum of ten, each worth +10% accuracy and +10%
+ * damage, so at ten minutes the boss is hitting at double accuracy and double
+ * damage — and it goes no further.
+ *
+ * That is pressure, not a wall. A fight that runs long gets harder and more
+ * dangerous; it does not end, and a party that can out-heal it clears the tier
+ * eventually. So nothing here stops a walk at ten minutes; it says the boss will
+ * be fully enraged and that deaths may cost more time than the projection knows
+ * about.
+ */
 export const ENRAGE_MS = 10 * 60_000;
 
 /**
@@ -178,10 +192,10 @@ export function estimatePartyDamage(loadouts) {
  * How far up the ladder a combat trial gets before the hour runs out.
  *
  * Walks tier by tier, spending the current tier's *remaining* health first and
- * each later tier's derived total after it. Two things stop the walk: the hour,
- * and the ten-minute enrage — a tier that cannot be killed inside one fight is a
- * wall rather than a slow climb, and reporting it as "eventually" would be
- * wrong in the way that matters.
+ * each later tier's derived total after it. One thing stops the walk: the hour.
+ * A fight that runs past ten minutes meets a fully enraged boss — see
+ * {@link ENRAGE_MS} — which is reported as a caption rather than as an ending,
+ * because the fight does not end.
  *
  * @param {Object} input - Inputs
  * @param {number} input.baseHp - The wave's Lv.100 health
@@ -191,8 +205,8 @@ export function estimatePartyDamage(loadouts) {
  * @param {number} [input.participants] - Members signed up
  * @param {number|null} [input.remainingInTier] - Health left on the current tier, when it is known
  * @param {Function} [input.observedTotal] - `(tier) => number|null`, a tier's total as actually read
- * @returns {{finalTier: number|null, tiersCleared: number, clears: Array<Object>, limitedBy: string}|null}
- *   The projection, or null without a usable rate
+ * @returns {{finalTier: number|null, tiersCleared: number, clears: Array<Object>, limitedBy: string,
+ *   enragedFrom: number|null}|null} The projection, or null without a usable rate
  */
 export function forecastCombatTier({
     baseHp,
@@ -218,6 +232,8 @@ export function forecastCombatTier({
     let current = tier;
     let need = Number.isFinite(remainingInTier) && remainingInTier > 0 ? remainingInTier : totalFor(tier);
     let limitedBy = 'time';
+    /** The first tier whose fight runs past full enrage, if any */
+    let enraged = null;
 
     while (current <= TRIAL_MAX_TIER) {
         if (!Number.isFinite(need) || need <= 0) {
@@ -226,12 +242,10 @@ export function forecastCombatTier({
         }
 
         const takesMs = (need / dps) * 1000;
-        // The boss enrages ten minutes into a fight. A tier that needs longer is
-        // not a tier this party clears slowly; it is one they do not clear
-        if (takesMs > ENRAGE_MS) {
-            limitedBy = 'enrage';
-            break;
-        }
+        // A fight this long meets a fully enraged boss — twice the accuracy and
+        // twice the damage — which makes the tier dangerous rather than
+        // impossible. Noted, and the walk carries on.
+        if (takesMs > ENRAGE_MS) enraged = enraged ?? current;
         if (spentMs + takesMs > timeLeftMs) break;
 
         spentMs += takesMs;
@@ -250,7 +264,95 @@ export function forecastCombatTier({
         tiersCleared: clears.length,
         clears,
         limitedBy,
+        enragedFrom: enraged,
     };
+}
+
+/**
+ * The floor a success rate never falls through.
+ *
+ * Five per cent, confirmed by the player: the rate declines with the tier level
+ * and then stops there. So a deep tier is *slow* — a twentieth of the actions
+ * landing — and not impossible. Neither ladder has a wall on it: a skilling
+ * trial degrades to the floor and a combat one to a fully enraged boss, and both
+ * keep going. What ends either walk is the hour.
+ */
+export const SUCCESS_FLOOR = 0.05;
+
+/**
+ * A percentage as the game's footer writes it.
+ * @param {string} text - e.g. `73.6%`
+ * @returns {number|null} A fraction, or null
+ */
+function parsePercent(text) {
+    const match = String(text ?? '').match(/(-?[\d.]+)\s*%/);
+    if (!match) return null;
+    const value = Number(match[1]);
+    return Number.isFinite(value) ? value / 100 : null;
+}
+
+/**
+ * How the player's own success rate falls as the tiers climb.
+ *
+ * Measured, from the footer the In Progress tab already shows and the personal
+ * stats reader already captures. Across a watched trial one character's rate read
+ * 73.6% at tier one, 65.6% at tier two and 57.6% at tier three — eight points a
+ * tier, exactly, which is what a tier level rising ten against a fixed character
+ * level does. That decline matters more than it looks: at four tiers out the same
+ * player is contributing a third less than the current fill rate implies, so a
+ * forecast that walks a flat rate promises tiers nobody reaches.
+ *
+ * Fitted linearly across whatever tiers have been observed, and only where there
+ * are two — one tier is a reading, not a trend, and the caller is told to walk
+ * flat and say so.
+ *
+ * @param {Object} personalByTier - tier → the footer's own label/value pairs
+ * @returns {{atTier: number, rate: number, perTier: number|null, observations: number}|null} The fit
+ */
+export function successDecline(personalByTier) {
+    const points = [];
+    for (const [tier, stats] of Object.entries(personalByTier || {})) {
+        const level = Number(tier);
+        if (!Number.isFinite(level)) continue;
+
+        const entry = Object.entries(stats || {}).find(([label]) => /success/i.test(label));
+        const rate = entry ? parsePercent(entry[1]) : null;
+        if (rate === null || rate <= 0) continue;
+        points.push({ tier: level, rate });
+    }
+    if (!points.length) return null;
+
+    points.sort((a, b) => a.tier - b.tier);
+    const newest = points[points.length - 1];
+    if (points.length < 2) {
+        return { atTier: newest.tier, rate: newest.rate, perTier: null, observations: 1 };
+    }
+
+    // Least squares on the observations, which for the evenly spaced tiers this
+    // sees is the same as the average step and is right when they are not
+    const meanTier = points.reduce((sum, point) => sum + point.tier, 0) / points.length;
+    const meanRate = points.reduce((sum, point) => sum + point.rate, 0) / points.length;
+    let top = 0;
+    let bottom = 0;
+    for (const point of points) {
+        top += (point.tier - meanTier) * (point.rate - meanRate);
+        bottom += (point.tier - meanTier) ** 2;
+    }
+
+    const perTier = bottom > 0 ? top / bottom : null;
+    return { atTier: newest.tier, rate: newest.rate, perTier, observations: points.length };
+}
+
+/**
+ * The success rate a tier is expected to run at.
+ * @param {Object|null} decline - From {@link successDecline}
+ * @param {number} tier - The tier wanted
+ * @returns {number|null} A fraction, or null when nothing was measured
+ */
+export function successAtTier(decline, tier) {
+    if (!decline || !Number.isFinite(tier)) return null;
+    if (!Number.isFinite(decline.perTier)) return Math.max(SUCCESS_FLOOR, decline.rate);
+    return Math.max(SUCCESS_FLOOR, decline.rate + decline.perTier * (tier - decline.atTier));
 }
 
 /**
@@ -279,6 +381,7 @@ export function forecastSkillingTier({
     observations = [],
     remainingInTier = null,
     participants = 0,
+    decline = null,
 } = {}) {
     if (!Number.isFinite(tier) || !Number.isFinite(rate) || rate <= 0) return null;
     if (!Number.isFinite(timeLeftMs) || timeLeftMs < 0) return null;
@@ -299,6 +402,15 @@ export function forecastSkillingTier({
         return projectTierTotal({ observations, tier: candidate, growthPerTier });
     };
 
+    // The player's own success rate falls as the tiers climb, so the rate
+    // measured on this tier is not the rate the next one runs at
+    const declineAt = (candidate) => {
+        const success = successAtTier(decline, candidate);
+        if (success === null) return 1;
+        const here = successAtTier(decline, tier) || success;
+        return here > 0 ? success / here : 1;
+    };
+
     const clears = [];
     let spentMs = 0;
     let current = tier;
@@ -311,7 +423,10 @@ export function forecastSkillingTier({
             break;
         }
 
-        const takesMs = (need / rate) * 1000;
+        // No wall here: the success rate stops falling at its floor, so a deep
+        // tier is slow rather than impossible and the walk simply runs out of
+        // hour. Only the clock and the top of the ladder end this one.
+        const takesMs = (need / (rate * declineAt(current))) * 1000;
         if (spentMs + takesMs > timeLeftMs) break;
 
         spentMs += takesMs;
@@ -382,10 +497,12 @@ export function forecastTrial({
             observations: analysis.tiers || [],
             remainingInTier: analysis.remaining,
             participants,
+            decline: successDecline(analysis.personalByTier),
         });
         if (!walk) return nothing('nothing measured yet');
         // The tiers already banked are part of where this trial ends up
         const banked = Number.isFinite(analysis.tiersClearedSoFar) ? analysis.tiersClearedSoFar : 0;
+        const decline = successDecline(analysis.personalByTier);
         return {
             ...walk,
             tier: walk.finalTier ?? (banked > 0 ? banked : null),
@@ -393,6 +510,7 @@ export function forecastTrial({
             source: 'measured',
             coverage: null,
             reason: null,
+            decline,
         };
     }
 
