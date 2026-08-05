@@ -378,7 +378,7 @@ class GuildTrialDamage {
 
             // Damage taken, healing, mana and casts, from the same tick and the
             // same before-picture of who was preparing what
-            foldSupportTick(this.support, data?.pMap, this.state.actions);
+            foldSupportTick(this.support, data?.pMap, this.state.actions, undefined, now);
 
             // After attributing, never before: the hit on this tick was cast by
             // what was prepared before it

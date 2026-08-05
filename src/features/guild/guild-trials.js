@@ -1417,6 +1417,19 @@ class GuildTrials {
             if (analysis.kind === 'combat') {
                 this.lastForecast = forecast;
                 guildTrialScoreboard.noteForecast?.(forecast);
+                // What the guild-shareable report needs and cannot work out for
+                // itself: which trial this is, what it banked, and how far into
+                // the tier it was fighting the hour left it
+                guildTrialScoreboard.noteContext?.({
+                    trialName: tile.name,
+                    tier: analysis.tier,
+                    tiersCleared: analysis.tiersClearedSoFar,
+                    shortfall: {
+                        remaining: analysis.remaining,
+                        total: analysis.total,
+                        unit: analysis.kind === 'combat' ? 'HP' : 'work',
+                    },
+                });
             }
             return forecast;
         } catch (error) {

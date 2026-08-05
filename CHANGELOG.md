@@ -12,6 +12,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - **The count is a per-floor override again**: a number chosen because one map was worth four beacons no longer follows you onto every floor after it. Each new floor starts back on the automatic minimum.
 - **A ⟲ button beside the count** puts it back to the fewest that cover a path, without spinning the field down a step at a time.
 
+### A trial report your guild can actually read
+
+- **Copy guild report**: one click produces a Discord-pasteable summary — trial name and tiers cleared, party damage and rate, ranked player lines that only mention what happened (no zero-fields reading as failures), attributed and unattributed healing, and the line nothing has ever shown: **how close the party came** — "Stopped 83% into T4 — 112,000 of 669,500 HP left" states it both ways because a guild asks both "was it close?" and "how much more DPS did we need?". No markup, no padded columns (Discord renders proportionally), every line under 120 characters.
+- **Deaths are explicit** ("died 2×") and **mana depletion is tracked**: dry _spells_, not dry ticks — hitting zero counts once however long it lasts, with the empty time accumulated ("ran dry 3× (~4m)") — in the scoreboard, the report, and the export.
+
 ### A warning before the task board fills, and trials that predict themselves
 
 - **Task-slot alert**: opt-in notification when your last open task slot is projected to fill within a configurable lead (default 8 hours) — computed from the server's own slot cap, arrival cadence, and last-task time (no panel needs to be open), keyed to the projected minute so re-checks can't spam, re-armed automatically when completing or rerolling a task moves the projection. A board already full is its own once-per latched message. Help text says plainly that it's a projection. Fixed en route: the trial-starting alert announced "6 days 22 hours" for a 10-minute lead — milliseconds fed to a seconds formatter.

@@ -103,7 +103,7 @@ export function classifyAbility(hrid, detailMap) {
 
 /**
  * A fresh support state.
- * @returns {{players: Object, lastHP: Object, lastMP: Object, lastAtk: Object,
+ * @returns {{players: Object, lastHP: Object, lastMP: Object, lastAtk: Object, emptySince: Object,
  *   unattributedHealing: number, abilityKindsKnown: boolean}} State
  */
 export function newSupportState() {
@@ -112,6 +112,7 @@ export function newSupportState() {
         lastHP: {},
         lastMP: {},
         lastAtk: {},
+        emptySince: {},
         unattributedHealing: 0,
         abilityKindsKnown: true,
     };
@@ -133,6 +134,13 @@ function emptyRow() {
         buffCasts: 0,
         castsByAbility: {},
         lowestHealthFraction: null,
+        // Running out of mana is the thing a caster notices and the log never
+        // mentions: the bar simply stops moving. Counted as *transitions* to
+        // empty rather than ticks at empty, so sitting at zero for a minute is
+        // one dry spell and not sixty
+        manaOuts: 0,
+        emptyManaMs: 0,
+        outOfMana: false,
     };
 }
 
@@ -151,8 +159,9 @@ function emptyRow() {
  * @param {Object} pMap - The tick's players
  * @param {Object} [actions] - Player index → ability hrid, `auto` or `idle`
  * @param {Object} [detailMap] - `abilityDetailMap`, for tests
+ * @param {number|null} [at] - When the tick arrived, for the time spent at empty
  */
-export function foldSupportTick(state, pMap, actions = {}, detailMap) {
+export function foldSupportTick(state, pMap, actions = {}, detailMap, at = null) {
     const entries = Object.entries(pMap || {});
     if (!entries.length) return;
 
@@ -193,6 +202,26 @@ export function foldSupportTick(state, pMap, actions = {}, detailMap) {
                 else if (change < 0) row.manaSpent += -change;
             }
             state.lastMP[index] = mana;
+
+            // A dry spell begins when the bar reaches zero and ends when it
+            // leaves; the time between is charged to whoever was empty
+            const empty = mana <= 0;
+            if (empty && !row.outOfMana) {
+                row.manaOuts += 1;
+                row.outOfMana = true;
+                state.emptySince[index] = at;
+            } else if (!empty && row.outOfMana) {
+                const since = state.emptySince[index];
+                if (Number.isFinite(since) && Number.isFinite(at)) row.emptyManaMs += Math.max(0, at - since);
+                row.outOfMana = false;
+                delete state.emptySince[index];
+            } else if (empty && Number.isFinite(at)) {
+                const since = state.emptySince[index];
+                if (Number.isFinite(since)) {
+                    row.emptyManaMs += Math.max(0, at - since);
+                    state.emptySince[index] = at;
+                }
+            }
         }
 
         const attacks = Number(player?.atkCounter);
@@ -257,6 +286,7 @@ export function summariseSupport(state, names = {}) {
             healingDone: sum('healingDone'),
             manaSpent: sum('manaSpent'),
             casts: sum('casts'),
+            manaOuts: sum('manaOuts'),
         },
         unattributedHealing: state?.unattributedHealing || 0,
         abilityKindsKnown: state?.abilityKindsKnown !== false,
@@ -279,6 +309,9 @@ export function supportCoverage() {
         healingDone: 'attributed only when exactly one player cast a heal on the tick; the rest is unattributed',
         manaSpent: 'measured — mana falling, per player, per tick',
         casts: 'measured — the attack counter rising, labelled with the ability being prepared',
+        manaOuts:
+            'measured — the mana bar reaching zero, counted per dry spell rather than per tick, ' +
+            'with the time spent empty between the tick it emptied on and the tick it recovered on',
         damageMitigated:
             'not carried: no payload states a hit before armour, resistance or parry. ' +
             'The mitigation ratings are on each loadout instead, and damage actually taken is above',
