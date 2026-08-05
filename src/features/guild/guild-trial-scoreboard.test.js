@@ -11,13 +11,19 @@
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
-const game = vi.hoisted(() => ({ breakdown: null, loadouts: {}, restarts: 0 }));
+const game = vi.hoisted(() => ({ breakdown: null, loadouts: {}, seen: [], restarts: 0 }));
 
-vi.mock('./guild-trial-damage.js', () => ({
+// The pure parts of the damage module are the real ones — `estimateDamageSplit`
+// is what the Damage tab now draws, and a stub of it would be testing the stub
+vi.mock('./guild-trial-damage.js', async (importOriginal) => ({
+    ...(await importOriginal()),
     default: { breakdown: () => game.breakdown },
 }));
 vi.mock('./guild-loadout-capture.js', () => ({
-    guildLoadoutCapture: { forPlayer: (name) => game.loadouts[name] || null },
+    guildLoadoutCapture: {
+        forPlayer: (name) => game.loadouts[name] || null,
+        seen: () => game.seen,
+    },
 }));
 vi.mock('./guild-trial-recorder.js', () => ({
     guildTrialRecorder: {
@@ -69,6 +75,7 @@ beforeEach(() => {
     vi.useFakeTimers();
     game.breakdown = breakdown();
     game.loadouts = {};
+    game.seen = [];
     game.restarts = 0;
     document.body.innerHTML = '';
 });
@@ -195,13 +202,48 @@ describe('the panel', () => {
         };
         guildTrialScoreboard.open();
 
-        expect(text()).toContain('Nothing measured yet');
+        expect(text()).toContain('Nothing to show yet');
         expect(text()).toContain('not this week');
     });
 
-    test('every panel says its figures are estimates', () => {
+    test('with no measurement but captured builds, the Damage tab estimates the split', () => {
+        // A trial is simulated by the game from the members' builds, so a
+        // measurement can never arrive. The tab says so and shows the estimate
+        game.breakdown = { measured: false, reason: 'simulated', players: [], seconds: 0 };
+        game.seen = [
+            { name: 'Tib', at: 1, stats: { attackInterval: 3_000_000_000, autoAttackDamage: 0.6 } },
+            { name: 'Moo', at: 2, stats: { attackInterval: 3_000_000_000, autoAttackDamage: 0.3 } },
+        ];
+        guildTrialScoreboard.noteContext({ trialName: 'Trial Chameleon', members: ['Tib', 'Moo', 'Ada'] });
         guildTrialScoreboard.open();
-        expect(text()).toContain('Estimated from the battle feed');
+
+        expect(text()).toContain('Estimated from builds');
+        expect(text()).toContain('does not expose real per-player trial figures');
+        expect(text()).toContain('est. party dps');
+        expect(text()).toContain('2/3 builds');
+        // Nobody is dropped for having no sheet — they are named
+        expect(text()).toContain('Ada');
+        expect(text()).toContain('No build captured');
+        // And it never reads as a measurement
+        expect(text()).toContain('estimated');
+        expect(text()).not.toContain('Nothing to show yet');
+    });
+
+    test('the Healing tab explains the mechanic instead of promising a measurement', () => {
+        game.breakdown = { measured: false, reason: 'simulated', players: [], seconds: 0 };
+        game.seen = [{ name: 'Tib', at: 1, stats: { attackInterval: 3_000_000_000, autoAttackDamage: 0.6 } }];
+        guildTrialScoreboard.open();
+        document.querySelector('[data-tab="healing"]').click();
+
+        expect(text()).toContain('cannot be measured or estimated');
+        expect(text()).toContain('simulated by the game');
+        // A build cannot predict healing, so there is no estimate to offer here
+        expect(text()).not.toContain('Estimated from builds');
+    });
+
+    test('a measured panel says where its figures came from', () => {
+        guildTrialScoreboard.open();
+        expect(text()).toContain('Attributed off the battle feed');
         expect(text()).toContain('Only fights this character took part in');
     });
 

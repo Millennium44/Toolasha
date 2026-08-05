@@ -130,6 +130,39 @@ describe('buildGuildReport', () => {
         for (const line of report.split('\n')) expect(line.length).toBeLessThanOrEqual(120);
     });
 
+    test('with no measurement it pastes the estimate, labelled at the top', () => {
+        // A trial is simulated by the game from the members' builds, so there is
+        // never a measurement to paste — but a guild deciding who to sign up
+        // still wants the shape, and must not mistake it for the real thing
+        const report = buildGuildReport({
+            trialName: 'Trial Chameleon',
+            tiersCleared: 4,
+            tier: 5,
+            breakdown: { players: [], reason: 'simulated' },
+            shortfall: { remaining: 112_000, total: 669_500, unit: 'HP' },
+            estimate: {
+                players: [
+                    { name: 'Tib', dps: 3000, share: 75 },
+                    { name: 'Moo', dps: 1000, share: 25 },
+                ],
+                unestimated: ['Ada'],
+                total: 4000,
+                covered: 2,
+                of: 3,
+            },
+        });
+
+        // The label is the second line, where a skimmer will read it
+        expect(report.split('\n')[1]).toContain('ESTIMATED FROM BUILDS');
+        expect(report).toContain('does not expose real per-player trial figures');
+        expect(report).toContain('Est. party · ~4,000/s from 2 of 3 builds');
+        expect(report).toContain('1. Tib · ~3,000/s · 75%');
+        expect(report).toContain('No build captured, so not estimated · Ada');
+        // The result itself is still worth pasting
+        expect(report).toContain('83% into T5');
+        expect(report).not.toContain('Nothing was measured here');
+    });
+
     test('a trial nobody measured says so instead of printing an empty table', () => {
         const report = buildGuildReport({
             trialName: 'Trial Chameleon',

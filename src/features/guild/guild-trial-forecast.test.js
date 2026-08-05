@@ -397,6 +397,44 @@ describe('forecastTrial', () => {
         expect(withRate.source).toBe('measured');
     });
 
+    test('at a tier boundary the tier reached is the count, never one past it', () => {
+        // Four banked, the fifth in progress and too big for the time left. The
+        // tier the walk *enters* is five, but nothing more gets banked — so this
+        // is "4 tiers → T4", not the "4 tiers → T5" the panel used to draw.
+        const stuck = forecastTrial({
+            analysis: analysis({
+                kind: 'skilling',
+                tier: 5,
+                tiersClearedSoFar: 4,
+                rate: 0.05, // 50 work/s
+                remaining: 30_000, // 600s of it left
+                timeLeftMs: 5 * 60_000,
+                tiers: [{ tier: 5, total: 57_120 }],
+            }),
+            participants: 2,
+        });
+
+        expect(stuck.tiersCleared).toBe(4);
+        expect(stuck.tier).toBe(4);
+
+        // One more hour-minute on the clock and the fifth lands: 5 → T5
+        const lands = forecastTrial({
+            analysis: analysis({
+                kind: 'skilling',
+                tier: 5,
+                tiersClearedSoFar: 4,
+                rate: 0.05,
+                remaining: 30_000,
+                timeLeftMs: 11 * 60_000,
+                tiers: [{ tier: 5, total: 57_120 }],
+            }),
+            participants: 2,
+        });
+
+        expect(lands.tiersCleared).toBe(5);
+        expect(lands.tier).toBe(5);
+    });
+
     test('every kind of not-knowing says which kind it is', () => {
         expect(forecastTrial({ analysis: analysis({ tier: null }) }).reason).toContain('tier is not known');
         expect(forecastTrial({ analysis: analysis({ timeLeftMs: null }) }).reason).toContain('no clock');

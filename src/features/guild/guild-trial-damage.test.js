@@ -28,8 +28,15 @@ vi.mock('../../core/websocket.js', () => ({
     },
 }));
 
-const { battleMonsterNames, encounterOf, guildTrialDamage, isTrialBattle, summariseTrialDamage } =
-    await import('./guild-trial-damage.js');
+const {
+    battleMonsterNames,
+    encounterOf,
+    estimateDamageSplit,
+    guildTrialDamage,
+    isTrialBattle,
+    SIMULATED_TRIAL_NOTE,
+    summariseTrialDamage,
+} = await import('./guild-trial-damage.js');
 
 /**
  * One player in a tick, with the counters attribution reads.
@@ -373,5 +380,105 @@ describe('the live tracker', () => {
         const breakdown = guildTrialDamage.breakdown();
         expect(breakdown.stale).toBe(true);
         expect(breakdown.measured).toBe(false);
+    });
+});
+
+/**
+ * The split nobody can measure.
+ *
+ * A guild combat trial is simulated by the game from the signed-up members'
+ * builds — no client fights it, so the gate above can never arm and the panels
+ * draw this instead. Everything here is about it being *labelled* an estimate
+ * and about nobody being quietly dropped from it.
+ */
+describe('estimateDamageSplit', () => {
+    /**
+     * A captured sheet.
+     * @param {string} name - Whose
+     * @param {number} damage - `autoAttackDamage`
+     * @param {number} at - When it was captured
+     * @returns {Object} A loadout snapshot
+     */
+    const sheet = (name, damage, at = 1) => ({
+        name,
+        at,
+        // Nanoseconds on the wire, as the recorded sheets show: 3s a swing
+        stats: { attackInterval: 3_000_000_000, autoAttackDamage: damage },
+    });
+
+    test('shares the members’ own sheets out, biggest first', () => {
+        const split = estimateDamageSplit({
+            loadouts: [sheet('Moo', 0.3), sheet('Tib', 0.9)],
+            members: ['Tib', 'Moo'],
+        });
+
+        expect(split.players.map((row) => row.name)).toEqual(['Tib', 'Moo']);
+        expect(split.players[0].dps).toBeCloseTo(0.3, 9); // 0.9 over 3s
+        expect(split.players[0].share).toBeCloseTo(75, 6);
+        expect(split.total).toBeCloseTo(0.4, 9);
+    });
+
+    test('a member with no captured build is named, not dropped', () => {
+        // A leaderboard that silently omits three people reads as three people
+        // who did nothing
+        const split = estimateDamageSplit({
+            loadouts: [sheet('Tib', 0.9)],
+            members: ['Tib', 'Ada', 'Moo'],
+        });
+
+        expect(split.players.map((row) => row.name)).toEqual(['Tib']);
+        expect(split.unestimated).toEqual(['Ada', 'Moo']);
+        expect(split.covered).toBe(1);
+        expect(split.of).toBe(3);
+    });
+
+    test('with no roster it covers whoever has been seen', () => {
+        const split = estimateDamageSplit({ loadouts: [sheet('Tib', 0.9), sheet('Moo', 0.3)] });
+        expect(split.of).toBe(2);
+        expect(split.unestimated).toEqual([]);
+    });
+
+    test('a sheet that cannot say is unestimated rather than zero', () => {
+        const split = estimateDamageSplit({
+            loadouts: [{ name: 'Tib', stats: { attackInterval: 0, autoAttackDamage: 0.9 } }],
+            members: ['Tib'],
+        });
+
+        expect(split.players).toEqual([]);
+        expect(split.unestimated).toEqual(['Tib']);
+        expect(split.total).toBe(0);
+    });
+
+    test('the oldest sheet is reported, because a build is a photograph', () => {
+        const split = estimateDamageSplit({ loadouts: [sheet('Tib', 0.9, 500), sheet('Moo', 0.3, 200)] });
+        expect(split.oldestAt).toBe(200);
+    });
+
+    test('nothing at all is an empty split rather than a throw', () => {
+        expect(estimateDamageSplit().players).toEqual([]);
+        expect(estimateDamageSplit({}).of).toBe(0);
+    });
+});
+
+describe('the reason a split is never measured', () => {
+    test('says the mechanic rather than implying a fight was missed', () => {
+        expect(SIMULATED_TRIAL_NOTE).toContain('simulated');
+        expect(SIMULATED_TRIAL_NOTE).not.toContain('seen');
+
+        const verdict = isTrialBattle({ monsterNames: ['Granite Golem'], trialNames: ['Trial Chameleon'] });
+        expect(verdict.isTrial).toBe(false);
+        expect(verdict.reason).toContain('simulated');
+        // And still carries what the payload called them, for the next report
+        expect(verdict.reason).toContain('Granite Golem');
+    });
+
+    test('a guild party during the trial hour is still not a trial fight', () => {
+        // The battles a client sees during the hour are its own grinding, guild
+        // party or not — counting them would report an evening as the trial
+        const verdict = isTrialBattle({
+            monsterNames: ['/monsters/magnetic_golem', 'Stalactite Golem'],
+            trialNames: ['Trial Chameleon'],
+        });
+        expect(verdict.isTrial).toBe(false);
     });
 });

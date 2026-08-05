@@ -25,12 +25,27 @@
  * 2. **This week's encounter, by name.** The guild trials record knows the
  *    week's combat trial card ("Trial Chameleon"), and the five encounters are a
  *    closed list (`COMBAT_ENCOUNTERS`). A battle whose monster reduces to the
- *    same encounter as the card is that trial. Without a combat card on the
- *    record — no trial this week, or the panel has never been opened — rule 2
- *    cannot fire at all, which is the conservative direction.
+ *    same encounter as the card is that trial.
+ *    Without a combat card on the record — no trial this week, or the panel has
+ *    never been opened — rule 2 cannot fire at all, which is the conservative
+ *    direction.
  * 3. **Nothing else.** A battle that matches neither is not attributed, and the
  *    breakdown says so rather than showing an empty table that reads as zero
  *    damage.
+ *
+ * ## Why this gate has never armed, and should not
+ *
+ * A live export answered it: a trial fight does not exist on any client. The
+ * combat trial is **simulated server-side from the signed-up members' builds** —
+ * it runs to completion without interrupting anybody's normal play, and the In
+ * Progress tab is a spectator view of a fight nobody swings in. The battles this
+ * client sees during the trial hour are its own ordinary grinding, guild party
+ * or not, and counting them would report a stranger's evening as the guild's
+ * trial. So the gate stays exactly as narrow as it is, and the refusal says the
+ * mechanic rather than implying a fight that could have been seen and was not.
+ *
+ * The machinery is kept because the rules above would still be the right ones if
+ * the game ever does put a trial battle on the wire.
  *
  * Re-decided on every `new_battle`, because each tier of a trial is its own
  * fight and so is the zone the player returns to afterwards. A `battle_updated`
@@ -38,33 +53,45 @@
  * the next `new_battle` confirms what is being fought — a reload mid-trial
  * therefore measures nothing rather than measuring the wrong thing.
  *
- * ## What it can say
+ * ## What it can say, if it ever arms
  *
  * Damage, share of the party's total, hit rate, crit rate and deaths, per
  * player, across the whole trial and not merely the tier on screen — a trial is
  * a ladder of fights and the interesting comparison spans them. Deaths come from
  * the same feed for free: a player's health crossing zero in `pMap`.
  *
- * ## What it cannot
- *
- * **Only the fights this client is in.** A guild member watching a trial they
- * did not sign up for receives no battle traffic for it, so there is nothing
- * here to fold. That is the same limit the rest of the trials feature has and it
- * is reported the same way — the breakdown says nothing has been seen rather
- * than drawing zeroes.
- *
  * **Overkill is not counted**, and a tick that names nobody credits nobody —
  * both inherited from the attribution module, both documented there.
+ *
+ * ## What is shown instead
+ *
+ * {@link estimateDamageSplit} — a per-player split derived from the members'
+ * captured builds, which is what the panels draw and what they label it. The
+ * party-wide figure that *is* measured stays where it was: the boss bar on the
+ * In Progress tab, read by `guild-trials.js`, and labelled measured.
  */
 
 import dataManager from '../../core/data-manager.js';
 import webSocketHook from '../../core/websocket.js';
 import { attributeTick, foldEvents, newAttributionState, noteActions } from '../../utils/damage-attribution.js';
+import { autoAttackDps } from './guild-trial-forecast.js';
 import { foldSupportTick, newSupportState, summariseSupport, supportCoverage } from './guild-trial-support.js';
 import { COMBAT_ENCOUNTERS, TRIAL_ACTIVE_MS } from './guild-trials-math.js';
 
 /** Below this the per-player rates are one exchange's luck rather than a rate */
 export const MIN_SECONDS = 5;
+
+/**
+ * Why nothing is ever measured, in one sentence.
+ *
+ * The reason strings used to read "no trial fight seen here", which says a fight
+ * could have been seen and was not — so a player who *was* in the trial hour
+ * reasonably read it as a bug and reported it as one, twice. It is not a bug and
+ * there is nothing to wait for: the fight does not happen on any client.
+ */
+export const SIMULATED_TRIAL_NOTE =
+    'trial combat is simulated by the game from the signed-up members’ builds — your own battles are never ' +
+    'trial fights, so a measured per-player split does not exist';
 
 /** A tick further from the last than this is a break, not a slow swing */
 const MAX_TICK_GAP_MS = 2000;
@@ -107,7 +134,11 @@ export function isTrialBattle({ monsterNames = [], trialNames = [] } = {}) {
 
     const wanted = new Set((trialNames || []).map(encounterOf).filter(Boolean));
     if (!wanted.size) {
-        return { isTrial: false, encounter: null, reason: 'no combat trial on this week’s record' };
+        return {
+            isTrial: false,
+            encounter: null,
+            reason: `no combat trial on this week’s record — ${SIMULATED_TRIAL_NOTE}`,
+        };
     }
 
     for (const name of monsterNames) {
@@ -119,15 +150,85 @@ export function isTrialBattle({ monsterNames = [], trialNames = [] } = {}) {
 
     // Names the battle carried, in the reason. A gate that fails closed and says
     // only *that* it failed cannot be diagnosed from a bug report — this one was
-    // reported as "no per-player split during a Trial Chameleon fight" and the
-    // one fact needed to explain it, what the payload actually called those
-    // monsters, was the one fact nothing recorded.
+    // reported as "no per-player split during a Trial Chameleon fight", and what
+    // the payload actually called those monsters is the fact that answered it:
+    // ordinary zone monsters, because the battle was the player's own grinding
+    // and the trial was being simulated elsewhere the whole time.
     const seen = [...new Set(monsterNames.map((name) => String(name || '').trim()).filter(Boolean))];
     const listed = seen.length ? ` (${seen.slice(0, 4).join(', ')})` : '';
     return {
         isTrial: false,
         encounter: null,
-        reason: `the monsters${listed} are not this week’s trial encounter (${[...wanted].join(', ')})`,
+        reason:
+            `${SIMULATED_TRIAL_NOTE}. This client's own battle${listed} is not ` +
+            `this week’s trial encounter (${[...wanted].join(', ')})`,
+    };
+}
+
+/**
+ * An estimated per-player split, from the builds that have been captured.
+ *
+ * The honest replacement for a measurement that cannot exist. Each member's own
+ * sheet says what their auto-attack is worth a second; summing those and taking
+ * shares is the same arithmetic the forecast's estimated party rate already
+ * uses, so the two agree by construction. It is a *shape* — the sheet's
+ * auto-attack figure is a multiplier on a weapon whose own damage is not on it,
+ * abilities are not modelled, and a build seen a week ago is not what that
+ * member is wearing now. Everything that draws this must lead with that.
+ *
+ * Members whose sheet has never been captured are returned by name rather than
+ * dropped: a leaderboard that silently omits three people reads as three people
+ * who did nothing.
+ *
+ * @param {Object} input - Inputs
+ * @param {Array<Object>} [input.loadouts] - Snapshots from `guild-loadout-capture.js`
+ * @param {string[]} [input.members] - Everyone the split should cover, e.g. the signed-up roster
+ * @returns {{players: Array<Object>, unestimated: string[], total: number, covered: number, of: number,
+ *   oldestAt: number|null}} The split, biggest first
+ */
+export function estimateDamageSplit({ loadouts = [], members = [] } = {}) {
+    const byName = new Map();
+    for (const loadout of loadouts || []) {
+        const name = String(loadout?.name || '').trim();
+        if (!name) continue;
+        const key = name.toLowerCase();
+        // `seen()` is most-recent-first, so the first spelling of a name wins
+        if (!byName.has(key)) byName.set(key, loadout);
+    }
+
+    const wanted = (members || []).map((name) => String(name || '').trim()).filter(Boolean);
+    const roster = wanted.length ? wanted : [...byName.values()].map((loadout) => loadout.name);
+
+    const rows = [];
+    const unestimated = [];
+    const counted = new Set();
+
+    for (const name of roster) {
+        const key = name.toLowerCase();
+        if (counted.has(key)) continue;
+        counted.add(key);
+
+        const loadout = byName.get(key);
+        const dps = autoAttackDps(loadout?.stats);
+        if (dps === null) {
+            unestimated.push(name);
+            continue;
+        }
+        rows.push({ name: loadout.name || name, dps, at: Number.isFinite(loadout.at) ? loadout.at : null });
+    }
+
+    const total = rows.reduce((sum, row) => sum + row.dps, 0);
+    const stamps = rows.map((row) => row.at).filter((at) => Number.isFinite(at));
+
+    return {
+        players: rows
+            .map((row) => ({ ...row, share: total > 0 ? (row.dps / total) * 100 : null }))
+            .sort((a, b) => b.dps - a.dps),
+        unestimated,
+        total,
+        covered: rows.length,
+        of: rows.length + unestimated.length,
+        oldestAt: stamps.length ? Math.min(...stamps) : null,
     };
 }
 
@@ -238,7 +339,7 @@ class GuildTrialDamage {
         this.battleId = null;
         this.active = false;
         this.encounter = null;
-        this.reason = 'no trial fight seen yet';
+        this.reason = SIMULATED_TRIAL_NOTE;
         this.fights = 0;
         this.startedAt = 0;
         /** Every spelling of the monsters in the fight in progress, for a late verdict */
@@ -366,7 +467,9 @@ class GuildTrialDamage {
             if (data?.battleId !== this.battleId) {
                 this.battleId = data?.battleId ?? null;
                 this.active = false;
-                this.reason = 'this fight was already under way — no start message to identify it';
+                this.reason =
+                    'this fight was already under way — no start message to identify it. ' +
+                    `In any case, ${SIMULATED_TRIAL_NOTE}`;
                 return;
             }
             if (!this.active) return;

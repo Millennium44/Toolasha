@@ -164,6 +164,7 @@ const {
     placeTrialBlock,
     renderTrialBlock,
     renderTrialPlayers,
+    signedUpMembers,
     tokenPayoutLine,
     withScrollKept,
 } = await import('./guild-trials.js');
@@ -356,6 +357,33 @@ describe('participantCounts', () => {
 
     test('no tracker at all is no counts', () => {
         expect(participantCounts({})).toEqual({});
+    });
+
+    test('the same walk keeps the names, for the estimated split to cover', () => {
+        const roster = tracker([
+            {
+                characterID: '1',
+                name: 'Tib',
+                signupWeekStartAt: '2026-07-31T00:00:00Z',
+                signedUpCombatTrialHrid: '/guild_trials/chameleon',
+            },
+            {
+                characterID: '2',
+                name: 'Moo',
+                signupWeekStartAt: '2026-07-31T00:00:00Z',
+                signedUpSkillingTrialHrid: '/guild_trials/milking',
+            },
+            {
+                characterID: '3',
+                name: 'Stale',
+                signupWeekStartAt: '2026-07-24T00:00:00Z',
+                signedUpCombatTrialHrid: '/guild_trials/chameleon',
+            },
+        ]);
+
+        expect(signedUpMembers('Trial Chameleon', roster)).toEqual(['Tib']);
+        expect(signedUpMembers('Milking', roster)).toEqual(['Moo']);
+        expect(signedUpMembers('Trial Chameleon', {})).toEqual([]);
     });
 });
 
@@ -627,14 +655,14 @@ describe('the panel, end to end', () => {
      * @param {Array<Object>} cards - Cards to render
      * @returns {Element} The trials-content element
      */
-    function buildTab(cards) {
+    function buildTab(cards, statusText = 'In progress — 42:15 remaining') {
         document.body.innerHTML = '';
         const root = document.createElement('div');
         root.className = 'GuildPanel_trialsContent__a';
 
         const status = document.createElement('div');
         status.className = 'GuildPanel_eventStatusRow__b';
-        status.textContent = 'In progress — 42:15 remaining';
+        status.textContent = statusText;
         root.appendChild(status);
 
         for (const card of cards) {
@@ -647,6 +675,8 @@ describe('the panel, end to end', () => {
                 // what tells a badge counting finished tiers from one naming the
                 // tier in progress
                 (card.points ? `<div class="Card_points__p">${card.points} pts</div>` : '') +
+                // The card's own decoration, which outranks the header's kind
+                (card.completed ? '<div class="GuildPanel_status__q">Completed</div>' : '') +
                 `<div class="ProgressBar_text__f">${card.bar}</div>`;
             root.appendChild(tile);
         }
@@ -1499,6 +1529,38 @@ describe('the panel, end to end', () => {
         expect(Object.keys(game.store)).toContain('guildTrials_Milky Way');
         game.guildName = 'Milky Way';
     });
+
+    test('a card wearing a Completed badge shows results, whatever the header says', async () => {
+        // Reported: the header read "Combat Trial - In Progress" while the
+        // skilling cards below it were decorated "Completed" — and the Foraging
+        // block went on drawing a fill rate, a pace and a tier-clears-in for an
+        // hour that had ended. The card's own badge is the per-card signal.
+        const live = 'Combat Trial - In Progress — 42:15 remaining';
+        const root = buildTab(
+            [{ name: 'Trial Foraging', level: 130, points: 590, bar: '30,000 / 57,120', completed: true }],
+            live
+        );
+        fire(root);
+
+        // A second reading, so there is a rate to report as final
+        root.querySelector('[class*="ProgressBar_text"]').textContent = '30,500 / 57,120';
+        vi.setSystemTime(now + 10_000);
+        fire(root);
+
+        // The payout block is one of these too, so take the card's own
+        const block = [...document.querySelectorAll('.mwi-trial-info')].find(
+            (el) => !el.textContent.includes('Trial payout')
+        );
+        expect(block).toBeTruthy();
+        const body = block.textContent;
+
+        // Results, not a forecast and not a waiting room
+        expect(body).toContain('Final fill rate');
+        expect(body).toContain('Banked');
+        expect(body).not.toContain('On pace for');
+        expect(body).not.toContain('Tier clears in');
+        expect(body).not.toContain('scheduled');
+    });
 });
 
 /**
@@ -2123,6 +2185,61 @@ describe('one row set per phase', () => {
     });
 });
 
+describe('the arrow points at the count', () => {
+    /** Nothing attributed */
+    const breakdown = { measured: false, reason: 'no trial fight seen yet', players: [] };
+
+    /**
+     * A skilling trial four tiers deep, part way into a fifth.
+     * @param {number} timeLeftMs - What is left of the hour
+     * @returns {Object} The analysis
+     */
+    const atBoundary = (timeLeftMs) =>
+        analyseTrial(
+            record({
+                name: 'Trial Foraging',
+                kind: 'skilling',
+                level: 130,
+                // The badge counts what is banked: four, with the fifth running
+                tier: 4,
+                pointsByTier: { 4: 590 },
+                tiers: [
+                    { tier: 4, total: 53_040 },
+                    { tier: 5, total: 57_120 },
+                ],
+                samples: [
+                    { t: now, readings: [{ current: 20_000, max: 57_120 }] },
+                    // 500 work in ten seconds — 50 a second
+                    { t: now + 10_000, readings: [{ current: 20_500, max: 57_120 }] },
+                ],
+            }),
+            { participants: 2, timeLeftMs, phase: 'live' }
+        );
+
+    test('a tier entered and not finished does not move the target', () => {
+        // 36,620 work left at 50/s is twelve minutes, and there are five. So
+        // four tiers are banked and four is where this ends — the panel used to
+        // draw "4 tiers → T5" here, pointing at the tier being worked on
+        const analysis = atBoundary(5 * 60_000);
+        expect(analysis.tier).toBe(5);
+        expect(analysis.tiersClearedSoFar).toBe(4);
+        expect(analysis.pace.tiersCleared).toBe(4);
+
+        const html = renderTrialBlock(analysis, 2, breakdown, { phase: 'live' });
+        expect(html).toContain('4 tiers → T4 (Lv.130)');
+        expect(html).not.toContain('→ T5');
+    });
+
+    test('once the fifth fits, both numbers move together', () => {
+        const analysis = atBoundary(20 * 60_000);
+        expect(analysis.pace.tiersCleared).toBe(5);
+
+        const html = renderTrialBlock(analysis, 2, breakdown, { phase: 'live' });
+        expect(html).toContain('5 tiers → T5 (Lv.140)');
+        expect(html).not.toContain('→ T4');
+    });
+});
+
 describe('the expected-tier row', () => {
     /** Nothing attributed */
     const breakdown = { measured: false, reason: 'no trial fight seen yet', players: [] };
@@ -2132,11 +2249,11 @@ describe('the expected-tier row', () => {
         // disagreeing; a reader cannot tell which to believe
         const html = renderTrialBlock(analyseTrial(record({ tier: 2 }), {}), 3, breakdown, {
             phase: 'live',
-            forecast: { tier: 6, tiersCleared: 4, source: 'measured', limitedBy: 'time', coverage: null },
+            forecast: { tier: 4, tiersCleared: 4, source: 'measured', limitedBy: 'time', coverage: null },
         });
 
         expect(html).toContain('On pace for');
-        expect(html).toContain('4 tiers → T6');
+        expect(html).toContain('4 tiers → T4');
         expect(html).not.toContain('Expected');
         expect(html).toContain('derived from the game');
     });
@@ -2183,14 +2300,14 @@ describe('the expected-tier row', () => {
             phase: 'live',
             forecast: {
                 tier: 4,
-                tiersCleared: 2,
+                tiersCleared: 4,
                 source: 'estimated',
                 limitedBy: 'time',
                 coverage: { known: 3, of: 8 },
             },
         });
 
-        expect(html).toContain('→ T4');
+        expect(html).toContain('4 tiers → T4');
         expect(html).toContain('3 of 8 members');
         expect(html).toContain('rough shape rather than a measurement');
     });
@@ -2204,7 +2321,7 @@ describe('the expected-tier row', () => {
             phase: 'live',
             forecast: {
                 tier: 5,
-                tiersCleared: 3,
+                tiersCleared: 5,
                 source: 'measured',
                 limitedBy: 'time',
                 enragedFrom: 4,
@@ -2222,7 +2339,7 @@ describe('the expected-tier row', () => {
     test('a fight inside ten minutes says nothing about enrage', () => {
         const html = renderTrialBlock(analyseTrial(record({ tier: 2 }), {}), 3, breakdown, {
             phase: 'live',
-            forecast: { tier: 6, tiersCleared: 4, source: 'measured', limitedBy: 'time', enragedFrom: null },
+            forecast: { tier: 4, tiersCleared: 4, source: 'measured', limitedBy: 'time', enragedFrom: null },
         });
 
         expect(html).not.toContain('enrage');
@@ -2297,11 +2414,16 @@ describe('renderTrialPlayers', () => {
         expect(html).toContain('3 fights');
     });
 
-    test('nothing measured is a reason, not a blank', () => {
+    test('nothing measured says the mechanic, not that a fight was missed', () => {
+        // "no trial fight seen here" reads as a fight that could have been seen
+        // and was not, and was reported as a bug twice on that basis. The trial
+        // is simulated by the game from the members' builds; nobody fights it
         const html = renderTrialPlayers({ measured: false, reason: 'the monsters are not this week’s trial' }).join('');
 
         expect(html).toContain('Per player');
-        expect(html).toContain('no trial fight seen here');
+        expect(html).toContain('simulated, not fought');
+        expect(html).toContain('estimates the split from the members');
+        expect(html).not.toContain('no trial fight seen here');
     });
 
     test('a stale trial says it is the last one', () => {
