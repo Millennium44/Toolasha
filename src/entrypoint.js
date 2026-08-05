@@ -1530,6 +1530,10 @@ if (isCombatSimulatorPage()) {
         memberSample: (name) => UI.guildXPTracker.getRawMemberSample(name),
     };
 
+    // The per-player trial panel, so the command palette can reach it the way it
+    // reaches every other panel — through the page rather than through an import
+    targetWindow.Toolasha.guildTrialScoreboard = UI.guildTrialScoreboard;
+
     // Debug utilities (for diagnosing issues via console)
     targetWindow.Toolasha.debug = {
         storage: () => {

@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The trial recorder grew hands, eyes, and a scoreboard
+
+- **Auto-record**: trials record themselves — starting when the damage gate arms or a live In Progress reading appears, stopping after the trial's hour or ten minutes of silence (and saying which), snapshotting every 15 seconds to IndexedDB so a reload loses nothing. Opt-out via the new Guild Trial Auto Record setting.
+- **In-game controls**: Record / Stop, Export, and Per-player buttons on the payout block — no more console command (though `Toolasha.debug.exportTrialData()` still works and shares the same code, so the two can't drift).
+- **A ranked damage scoreboard** ("Trial Damage" in Ctrl+K): party rate and total up top, Damage and Healing tabs, ranked rows with totals, per-second rates, and share bars coloured by each player's damage type from their captured loadout. Copy-stats button; End & start new record is the recorder's own restart, not a second mechanism. Both tabs carry the estimate disclaimer.
+- **Per-player support stats, measured not modelled**: healing received (and healing _done_, credited only when exactly one player cast a heal that tick — the rest stays honestly unattributed), damage taken with each player's closest brush with death, mana spent/restored, and casts per ability. Surveyed against 6,700 recorded battle ticks. Mitigation and live threat are **refused, with the reason shipped in the export's new `coverage` object**: no payload states pre-mitigation hits or who the boss is targeting, and a simulation wearing a measurement's name helps nobody. Skilling trials capture the In Progress footer's personal figures (work time, success rate) as generic pairs, so new stats appear the day the game adds them.
+- **Archives wired in as the counterfactual it is**: guild XP figures are measurements that already include the bonus, so the panel now says so — "Archives Lv.N · +X% — already included; Lv.N+1 would add ~Y XP/h" — with the per-level rate read from client data. Skill buildings stay out of all sims (they only act during trials).
+
 ### The overlay's ⚙ popover no longer traps you, and keeps up with what it shows
 
 - **It can never cover the panel's header again**: the popover used to pick above-or-below and then clamp itself into the window, which on a tall panel — a phone, or a desktop panel dragged low — slid it _up over its own anchor_ until it sat on the header. Since the popover draws above the panel, that put the ⚙ that closes it and the ✕ that closes the overlay both underneath it, with no other way out. It now fits itself to the room instead: whichever side it fits on, else the roomier side with its height capped so it scrolls, and on a panel taller than the window it stands over its own tiles starting _below_ the header.

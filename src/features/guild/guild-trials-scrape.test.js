@@ -19,6 +19,7 @@ import {
     findTrialsRoot,
     isTrialsSetupTab,
     parsePoints,
+    readPersonalStats,
     parseSignups,
     isCombatTrialName,
     matchTrialHrid,
@@ -604,6 +605,48 @@ describe('a card that says the trial is over', () => {
             )
         )[0];
         expect(tile.completed).toBe(false);
+    });
+});
+
+describe('readPersonalStats', () => {
+    /**
+     * A tab built from lines of text, one element each.
+     * @param {string[]} lines - What the tab says
+     * @returns {Element} The root
+     */
+    function tab(lines) {
+        document.body.innerHTML = `<div class="GuildPanel_guildPanel__r">${lines
+            .map((line) => `<div>${line}</div>`)
+            .join('')}</div>`;
+        return document.querySelector('[class*="GuildPanel_guildPanel"]');
+    }
+
+    test('the footer’s own stats are read as label and value', () => {
+        // The only personal skilling figures anything offers: no socket message
+        // carries a success chance, and this footer is where the game states one
+        const stats = readPersonalStats(tab(['Work Time', '3.14s', 'Success Rate', '60.8%', 'Efficiency', '12%']));
+
+        expect(stats).toMatchObject({ 'Work Time': '3.14s', 'Success Rate': '60.8%', Efficiency: '12%' });
+    });
+
+    test('a label and value on one run are read too', () => {
+        const stats = readPersonalStats(tab(['Success Rate: 60.8%', 'Time: 3.14s']));
+        expect(stats).toMatchObject({ 'Success Rate': '60.8%', Time: '3.14s' });
+    });
+
+    test('a progress bar is not a stat', () => {
+        const stats = readPersonalStats(tab(['Alchemy', '18,850 / 65,280', '1/28 signed up']));
+        expect(stats).toEqual({});
+    });
+
+    test('whatever the game adds later is captured without being named here', () => {
+        const stats = readPersonalStats(tab(['Some New Stat', '4.5x']));
+        expect(stats['Some New Stat']).toBe('4.5x');
+    });
+
+    test('nothing to read is an empty object rather than a throw', () => {
+        expect(readPersonalStats(null)).toEqual({});
+        expect(readPersonalStats(tab([]))).toEqual({});
     });
 });
 

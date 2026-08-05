@@ -417,6 +417,52 @@ export function findTrialsRoot(scope = typeof document === 'undefined' ? null : 
 }
 
 /**
+ * The labelled numbers the In Progress tab puts in its footer.
+ *
+ * "Work Time 3.14s, Success Rate 60.8%" — the player's *own* action stats for
+ * the trial they are in, which is the only personal skilling figure anything on
+ * the wire or the screen offers. No socket message carries a success chance
+ * (the enhancement one in this codebase is a different mechanic entirely), so
+ * this is it, and it exists only while the tab is open, like every other trial
+ * reading.
+ *
+ * Read as label/number pairs rather than as a list of known stats: whatever the
+ * game decides to show lands in the record without this file having to have
+ * heard of it, and a stat that is added later is captured on the day it appears.
+ *
+ * @param {Element} root - The trials root
+ * @returns {Object<string, string>} Label → the value as the game wrote it
+ */
+export function readPersonalStats(root) {
+    const stats = {};
+    if (!root || typeof root.querySelectorAll !== 'function') return stats;
+
+    const lines = textLines(root);
+    const value = /^[+-]?[\d,]*\.?\d+\s*(%|s|ms|x)?$/i;
+    const inline = /^(.+?)[:\s]\s*([+-]?[\d,]*\.?\d+\s*(?:%|s|ms|x)?)$/i;
+
+    for (let index = 0; index < lines.length; index += 1) {
+        const line = lines[index];
+        // A reading is a bar, not a stat, and a sign-up ratio is neither
+        if (line.includes('/')) continue;
+
+        const pair = line.match(inline);
+        if (pair && /[a-z]/i.test(pair[1])) {
+            stats[pair[1].trim()] = pair[2].trim();
+            continue;
+        }
+
+        // Label on one run, number on the next, which is how the game draws most
+        // of them
+        const next = lines[index + 1];
+        if (!next || !value.test(next) || value.test(line) || !/[a-z]/i.test(line)) continue;
+        stats[line.replace(/[:\s]+$/, '')] = next.trim();
+        index += 1;
+    }
+    return stats;
+}
+
+/**
  * Whether the tab on screen is the **Trials** setup tab rather than In Progress.
  *
  * Both tabs live under the same panel and {@link findTrialsRoot} deliberately

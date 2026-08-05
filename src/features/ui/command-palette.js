@@ -225,6 +225,12 @@ function panelCommands() {
             hint: 'Trial pace and payout, on the guild In Progress tab',
             run: () => openGuildTrials(),
         },
+        {
+            name: 'Trial Damage',
+            hint: 'Damage and healing per player, ranked',
+            // A real panel, and reached the way every other panel here is
+            target: typeof window === 'undefined' ? null : window.Toolasha?.guildTrialScoreboard,
+        },
         { name: 'Settings', hint: "Toolasha's settings tab", run: () => openSettings() },
     ];
 
