@@ -9,7 +9,6 @@ import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import webSocketHook from '../../core/websocket.js';
 import taskIconFilters from './task-icon-filters.js';
-import { isCardInConfirmState } from './task-card-state.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import assetManifest from '../../utils/asset-manifest.js';
 import { getActionHridFromName } from '../../utils/game-lookups.js';
@@ -167,6 +166,14 @@ class TaskIcons {
                 this.processAllTaskCards();
             }, 250);
             this.timerRegistry.registerTimeout(iconsTimeout);
+
+            // And once more, later, without clearing the markers — so a card
+            // the game had not finished redrawing at 250 ms is picked up rather
+            // than keeping the previous task's picture until something else
+            // happens to rebuild the board. A card whose name has not changed
+            // since the first pass costs nothing here.
+            const settledTimeout = setTimeout(() => this.processAllTaskCards(), 1000);
+            this.timerRegistry.registerTimeout(settledTimeout);
         };
 
         webSocketHook.on('quests_updated', questsHandler);
@@ -275,10 +282,18 @@ class TaskIcons {
         const taskCards = taskList.querySelectorAll(GAME.TASK_CARD);
 
         taskCards.forEach((card) => {
-            // A card showing the reroll chooser or the discard confirmation is
-            // waiting on the player's second click; pulling its icons and
-            // re-adding them rebuilds the card underneath that click
-            if (isCardInConfirmState(card)) return;
+            // A card mid-flow is left alone by every other injector, because
+            // what they draw sits in the card's own flow and moving it shifts
+            // the button under the player's pending click. The picture does
+            // not: it is one absolutely-positioned, pointer-events:none layer
+            // appended to the card, behind everything, and swapping it moves
+            // nothing and intercepts nothing.
+            //
+            // That exemption is the whole point. The game leaves the reroll
+            // chooser open after a reroll, so the card the player is looking at
+            // while they reroll again is *always* mid-flow — skipping it meant
+            // the name changed to the new task and the picture stayed on the
+            // old one, for as long as they kept going.
 
             // Get current task name
             const nameElement = card.querySelector(GAME.TASK_NAME);

@@ -13,7 +13,7 @@ import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import storage from '../../core/storage.js';
 import webSocketHook from '../../core/websocket.js';
-import { isCardInConfirmState } from './task-card-state.js';
+import { isCardInConfirmState, armConfirmSettleWatch, onConfirmFlowSettled } from './task-card-state.js';
 import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
 
 const STORAGE_KEY_PREFIX = 'taskProtectedHrids';
@@ -86,6 +86,11 @@ class TaskRerollProtection {
         );
         this.unregisterHandlers.push(unregisterPanel);
 
+        // A closing reroll chooser adds an action row, not a card, so no
+        // observer above sees it — this is what repaints the cards the pass
+        // above declined to touch
+        this.unregisterHandlers.push(onConfirmFlowSettled(() => this._processAllCards()));
+
         // Process existing cards
         this._processAllCards();
     }
@@ -140,8 +145,13 @@ class TaskRerollProtection {
         }
 
         // Repainting a card that is showing the reroll chooser or the discard
-        // confirmation changes it under the player's pending click
-        if (isCardInConfirmState(taskCard)) return;
+        // confirmation changes it under the player's pending click. The chooser
+        // survives the reroll, so the repaint is booked for when it closes —
+        // the highlight otherwise still describes the rerolled-away task.
+        if (isCardInConfirmState(taskCard)) {
+            armConfirmSettleWatch();
+            return;
+        }
 
         // Get quest data via fiber traversal
         const quest = this._getQuestFromCard(taskCard);
@@ -296,8 +306,13 @@ class TaskRerollProtection {
         // The initial "Reroll" button (which only opens the chooser), "Back",
         // the trash can, "Confirm Discard", "Go" and "Claim Reward" are all
         // somebody else's click.
+        // "MooPass Free Reroll (2)", "Free Reroll", "Free" — the label has been
+        // worded three ways across builds and the count on the end moves, so it
+        // is recognised by the one word that is always in it. Matching it too
+        // narrowly is not harmless: an unmatched free reroll is a reroll
+        // per-task protection silently lets through.
         const isPayButton = /^pay\b/i.test(btnText);
-        const isFreeReroll = /free\s*reroll/i.test(btnText);
+        const isFreeReroll = /\bfree\b/i.test(btnText);
         if (!isPayButton && !isFreeReroll) return;
 
         // Find the parent task card

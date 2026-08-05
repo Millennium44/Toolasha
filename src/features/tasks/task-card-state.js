@@ -20,6 +20,20 @@
  * finishes, at which point the ordinary passes — a quest update, a card
  * re-render — redraw it.
  *
+ * Except that there is no such pass. The game leaves the reroll chooser open
+ * after a reroll (task-bulk-reroll has always had to click Back to get the
+ * trash can again, for exactly that reason), so the card sits mid-flow with the
+ * *new* task in it for as long as the player keeps rerolling — and every
+ * injector's quest-update pass, which runs 250-400 ms after the reroll, skips
+ * it. Nothing re-runs when the chooser finally closes either: the injectors are
+ * driven by `RandomTask_randomTask` nodes being added, and closing the chooser
+ * adds an action row, not a card. So the skip was permanent, and the card kept
+ * the previous task's picture, profit rows and reroll spend until something
+ * rebuilt the whole board.
+ *
+ * Hence the settle watch below: a pass that skips a card arms it, and when no
+ * card on the board is mid-flow any more every subscriber gets to run again.
+ *
  * Detection is by what the confirm views contain rather than by class name,
  * since the game renames its CSS-module classes on every build.
  */
@@ -34,7 +48,7 @@ import { GAME } from '../../utils/selectors.js';
 const CONFIRM_BUTTON_TEXT = [
     /^back$/, // the chooser's escape hatch
     /^pay\b/, // Pay 10K / Pay 1 (cowbell)
-    /free\s*reroll/, // the MooPass free reroll
+    /\bfree\b/, // the MooPass free reroll, however the build words it
     /discard/, // Confirm Discard
 ];
 
@@ -98,4 +112,76 @@ export function boardHasConfirmingCard(root = document) {
         if (isCardInConfirmState(card)) return true;
     }
     return false;
+}
+
+/**
+ * How often the settle watch asks whether the board is still mid-flow.
+ *
+ * It only ever runs while a card is showing a chooser the player has not
+ * finished with, and stops itself the moment none is, so this is a poll that
+ * costs nothing for all but a few seconds of a session.
+ */
+const SETTLE_POLL_MS = 300;
+
+const settleSubscribers = new Set();
+let settleTimer = null;
+
+/**
+ * Run something again once no card on the board is mid-flow.
+ *
+ * For the injectors, whose passes skip a card that is asking the player a
+ * question and would otherwise never look at it again. The callback runs on the
+ * settling edge — once per flow, not once per card — so it should be the
+ * feature's ordinary whole-board pass.
+ *
+ * @param {Function} callback - The pass to re-run
+ * @returns {Function} Unsubscribe
+ */
+export function onConfirmFlowSettled(callback) {
+    settleSubscribers.add(callback);
+    return () => {
+        settleSubscribers.delete(callback);
+        if (settleSubscribers.size === 0) stopConfirmSettleWatch();
+    };
+}
+
+/**
+ * Note that a pass has just skipped a card, so it gets to run again later.
+ *
+ * Idempotent and cheap: called from inside every injector's per-card skip, on
+ * every pass, for as long as the flow is open.
+ *
+ * @param {ParentNode} [root=document] - Where the board is
+ */
+export function armConfirmSettleWatch(root = document) {
+    if (settleTimer !== null) return;
+    if (settleSubscribers.size === 0) return;
+
+    settleTimer = setInterval(() => {
+        if (boardHasConfirmingCard(root)) return;
+
+        // Stopped before the callbacks run: a pass that skips some *other*
+        // card re-arms the watch from inside its own skip, and clearing the
+        // timer afterwards would throw that new arming away
+        stopConfirmSettleWatch();
+
+        for (const callback of [...settleSubscribers]) {
+            try {
+                callback();
+            } catch (error) {
+                console.error('[TaskCardState] Settle handler failed:', error);
+            }
+        }
+    }, SETTLE_POLL_MS);
+}
+
+/**
+ * Stop the settle watch. Called when it fires, when the last subscriber leaves,
+ * and by tests between cases.
+ */
+export function stopConfirmSettleWatch() {
+    if (settleTimer !== null) {
+        clearInterval(settleTimer);
+        settleTimer = null;
+    }
 }

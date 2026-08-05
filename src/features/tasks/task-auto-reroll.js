@@ -20,7 +20,7 @@ import storage from '../../core/storage.js';
 import webSocketHook from '../../core/websocket.js';
 import { calculateTaskTokenValue } from './task-profit-calculator.js';
 import { readVisibleTaskRatings } from './task-profit-display.js';
-import { isCardInConfirmState } from './task-card-state.js';
+import { isCardInConfirmState, armConfirmSettleWatch, onConfirmFlowSettled } from './task-card-state.js';
 import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
 
 const STORAGE_KEY_PREFIX = 'taskAutoRerollHrids';
@@ -118,6 +118,9 @@ class TaskAutoReroll {
             this._injectConfigButton(panel);
         });
         this.unregisterHandlers.push(unregisterPanel);
+
+        // Closing a reroll chooser adds no card, so nothing above fires for it
+        this.unregisterHandlers.push(onConfirmFlowSettled(() => this._processAllCards()));
     }
 
     /**
@@ -200,8 +203,13 @@ class TaskAutoReroll {
         // Mid-flow the card is waiting on the player's second click. Adding or
         // pulling the badge — and with it the card's outline — while they are
         // part-way through a reroll is the flicker they see and then blame on
-        // the click not registering.
-        if (isCardInConfirmState(taskCard)) return;
+        // the click not registering. The badge is judged again when the chooser
+        // closes, so a "Reroll!" left over from the previous task does not
+        // outlive it.
+        if (isCardInConfirmState(taskCard)) {
+            armConfirmSettleWatch();
+            return;
+        }
 
         const quest = this._getQuestFromCard(taskCard);
         const hrid = quest?.actionHrid || quest?.monsterHrid || '';

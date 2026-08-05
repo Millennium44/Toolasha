@@ -60,13 +60,19 @@ function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-class TaskBulkReroll {
+export class TaskBulkReroll {
     constructor() {
         this.isInitialized = false;
         this.unregisterHandlers = [];
         this.button = null;
         this.busy = false;
         this.noDeleteIds = new Set(); // questIds whose trash/discard buttons weren't found
+        // Set once free rerolls have been pressed and the server has said
+        // nothing back twice running. See _actOnCard: preferring a button that
+        // does not act is a loop with no way out of it.
+        this.freeRerollStalled = false;
+        this.lastClickWasFree = false;
+        this.silentFreeClicks = 0;
     }
 
     initialize() {
@@ -147,7 +153,8 @@ class TaskBulkReroll {
                 const acted = await this._actOnCard(next.card, next.mode);
                 if (acted) {
                     // Wait for the server to confirm before previewing the next action
-                    await this._waitForQuestsUpdate();
+                    const confirmed = await this._waitForQuestsUpdate();
+                    if (this.lastClickWasFree) this._noteFreeRerollResult(confirmed);
                     await sleep(400);
                 } else if (next.mode === 'delete') {
                     // Trash/discard buttons not found — skip this card so the
@@ -236,6 +243,7 @@ class TaskBulkReroll {
      * Returns false if the needed button couldn't be found.
      */
     async _actOnCard(card, mode) {
+        this.lastClickWasFree = false;
         if (mode === 'delete') return this._discardCard(card);
 
         let payButtons = this._findPayButtons(card);
@@ -250,24 +258,71 @@ class TaskBulkReroll {
         }
         if (!payButtons.length) return false;
 
-        const freeBtn = payButtons.find((b) => b.textContent.toLowerCase().includes('free'));
+        // The free reroll is preferred while it works, and only while it works.
+        // A MooPass whose rerolls are spent can leave the button on the card
+        // looking exactly as it did — same label, not disabled — and clicking
+        // it reaches no server, so every later click chose it again and the
+        // bulk reroller never moved off that card.
+        const freeBtn = this.freeRerollStalled ? null : payButtons.find((b) => this._isFreeReroll(b));
         if (freeBtn) {
+            this.lastClickWasFree = true;
             freeBtn.click();
             return true;
         }
         const wantCoin = mode === 'coin';
-        const target = payButtons.find((b) => this._isCoinCost(b.textContent) === wantCoin);
+        const target = payButtons.find((b) => !this._isFreeReroll(b) && this._isCoinCost(b.textContent) === wantCoin);
         if (!target) return false;
         target.click();
         return true;
     }
 
+    /**
+     * Record how a free reroll went, and stop choosing it if it goes nowhere.
+     *
+     * Two silent clicks rather than one, because the difference between a
+     * MooPass with nothing left on it and a slow server is exactly one missed
+     * reply — and treating the slow server as an exhausted pass spends coins
+     * the player did not have to spend.
+     *
+     * @param {boolean} confirmed - Did the server confirm the task changed?
+     * @private
+     */
+    _noteFreeRerollResult(confirmed) {
+        if (confirmed) {
+            this.silentFreeClicks = 0;
+            return;
+        }
+        this.silentFreeClicks += 1;
+        if (this.silentFreeClicks >= 2) {
+            this.freeRerollStalled = true;
+            console.warn('[TaskBulkReroll] Free reroll is not reaching the server; paying from here on');
+        }
+    }
+
+    /** Is this the MooPass free reroll rather than a paid one? */
+    _isFreeReroll(button) {
+        return /\bfree\b/i.test(button.textContent || '');
+    }
+
+    /**
+     * Is the game refusing this button?
+     *
+     * `disabled` is the honest form, but a button greyed out by class or by
+     * aria alone is just as unclickable, and treating it as available is a
+     * click that goes nowhere.
+     */
+    _isUnavailable(button) {
+        if (button.disabled) return true;
+        if (button.getAttribute('aria-disabled') === 'true') return true;
+        return /disabled/i.test(button.className || '');
+    }
+
     /** Pay/Free reroll buttons currently visible on a card */
     _findPayButtons(card) {
         return Array.from(card.querySelectorAll('button')).filter((b) => {
-            if (b.disabled) return false;
+            if (this._isUnavailable(b)) return false;
             const text = b.textContent.trim();
-            return text.startsWith('Pay') || text.toLowerCase().includes('free');
+            return text.startsWith('Pay') || this._isFreeReroll(b);
         });
     }
 
@@ -405,6 +460,9 @@ class TaskBulkReroll {
         }
         this.busy = false;
         this.noDeleteIds.clear();
+        this.freeRerollStalled = false;
+        this.lastClickWasFree = false;
+        this.silentFreeClicks = 0;
         this.isInitialized = false;
     }
 }

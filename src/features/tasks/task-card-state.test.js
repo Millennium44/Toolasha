@@ -11,8 +11,16 @@
  * between, which is what this reads.
  */
 
-import { describe, test, expect } from 'vitest';
-import { isCardInConfirmState, isConfirmPendingFor, taskCardOf, boardHasConfirmingCard } from './task-card-state.js';
+import { describe, test, expect, afterEach, vi } from 'vitest';
+import {
+    isCardInConfirmState,
+    isConfirmPendingFor,
+    taskCardOf,
+    boardHasConfirmingCard,
+    onConfirmFlowSettled,
+    armConfirmSettleWatch,
+    stopConfirmSettleWatch,
+} from './task-card-state.js';
 
 /**
  * A task card with the given buttons in its action row.
@@ -69,6 +77,13 @@ describe('isCardInConfirmState', () => {
         expect(isCardInConfirmState(card(['Back', 'MooPass Free Reroll']))).toBe(true);
     });
 
+    test('the free reroll is recognised however the build words it', () => {
+        // The label has been "MooPass Free Reroll", "Free Reroll (2)" and plain
+        // "Free" across builds; the count on the end moves too
+        expect(isCardInConfirmState(card(['Free Reroll (2)']))).toBe(true);
+        expect(isCardInConfirmState(card(['Free']))).toBe(true);
+    });
+
     test('the discard confirmation is mid-flow', () => {
         expect(isCardInConfirmState(card(['Confirm Discard']))).toBe(true);
     });
@@ -123,5 +138,110 @@ describe('boardHasConfirmingCard', () => {
         document.body.replaceChildren(list);
 
         expect(boardHasConfirmingCard(list)).toBe(false);
+    });
+});
+
+/**
+ * The way back.
+ *
+ * Skipping a mid-flow card used to be permanent. The game leaves the reroll
+ * chooser open after a reroll, and nothing an injector listens to fires when it
+ * finally closes — the game adds an action row, not a card — so a card that was
+ * skipped once was skipped for the rest of the session, wearing the picture and
+ * the numbers of the task that had been rerolled away.
+ */
+describe('the settle watch', () => {
+    /** A board with the given cards on it */
+    function boardOf(...cards) {
+        const list = document.createElement('div');
+        list.className = 'TasksPanel_taskList__xyz';
+        list.append(...cards);
+        document.body.replaceChildren(list);
+        return list;
+    }
+
+    afterEach(() => {
+        stopConfirmSettleWatch();
+        vi.useRealTimers();
+    });
+
+    test('a skipped pass runs again once the chooser closes', () => {
+        vi.useFakeTimers();
+        const chooser = card(['Back', 'Pay 10K', 'MooPass Free Reroll (2)']);
+        boardOf(chooser);
+
+        const rerun = vi.fn();
+        const unsubscribe = onConfirmFlowSettled(rerun);
+        armConfirmSettleWatch();
+
+        // Still mid-flow: the player has not finished with the card
+        vi.advanceTimersByTime(1000);
+        expect(rerun).not.toHaveBeenCalled();
+
+        // Back pressed — the card is at rest again
+        chooser.replaceChildren(...card(['Go', 'Reroll', '']).childNodes);
+        vi.advanceTimersByTime(300);
+
+        expect(rerun).toHaveBeenCalledTimes(1);
+
+        // And it is one pass per flow, not a poll that never stops
+        vi.advanceTimersByTime(3000);
+        expect(rerun).toHaveBeenCalledTimes(1);
+        unsubscribe();
+    });
+
+    test('a board that is already at rest settles on the next tick', () => {
+        vi.useFakeTimers();
+        boardOf(card(['Go', 'Reroll', '']));
+
+        const rerun = vi.fn();
+        const unsubscribe = onConfirmFlowSettled(rerun);
+        armConfirmSettleWatch();
+        vi.advanceTimersByTime(300);
+
+        expect(rerun).toHaveBeenCalledTimes(1);
+        unsubscribe();
+    });
+
+    test('an unsubscribed pass is not run', () => {
+        vi.useFakeTimers();
+        boardOf(card(['Go', 'Reroll']));
+
+        const rerun = vi.fn();
+        onConfirmFlowSettled(rerun)();
+        armConfirmSettleWatch();
+        vi.advanceTimersByTime(1000);
+
+        expect(rerun).not.toHaveBeenCalled();
+    });
+
+    test('one subscriber throwing does not cost the others their pass', () => {
+        vi.useFakeTimers();
+        boardOf(card(['Go', 'Reroll']));
+        const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+        const thrower = vi.fn(() => {
+            throw new Error('no');
+        });
+        const rerun = vi.fn();
+        const stopThrower = onConfirmFlowSettled(thrower);
+        const stopRerun = onConfirmFlowSettled(rerun);
+        armConfirmSettleWatch();
+        vi.advanceTimersByTime(300);
+
+        expect(thrower).toHaveBeenCalled();
+        expect(rerun).toHaveBeenCalled();
+        stopThrower();
+        stopRerun();
+        consoleError.mockRestore();
+    });
+
+    test('arming with nobody waiting leaves no timer behind', () => {
+        vi.useFakeTimers();
+        boardOf(card(['Back', 'Pay 10K']));
+
+        armConfirmSettleWatch();
+
+        expect(vi.getTimerCount()).toBe(0);
     });
 });

@@ -65,6 +65,7 @@ vi.mock('../../utils/character-key.js', () => ({
 
 const { default: taskRerollProtection } = await import('./task-reroll-protection.js');
 const { default: taskRerollTracker } = await import('./task-reroll-tracker.js');
+const { stopConfirmSettleWatch } = await import('./task-card-state.js');
 
 const MILKING = '/actions/milking/cow';
 
@@ -117,6 +118,11 @@ const buttonNamed = (card, label) => [...card.querySelectorAll('button')].find((
  * @param {Object} quest - The quest that card is showing
  */
 function reactTreeOver(card, quest) {
+    // React redraws the action row's buttons on every step of the flow, and the
+    // fiber tree is rebuilt with them — a stale tree over new buttons is a card
+    // whose quest cannot be read, which is not a state the game is ever in
+    document.getElementById('root')?.remove();
+
     const root = document.createElement('div');
     root.id = 'root';
     document.body.appendChild(root);
@@ -151,8 +157,24 @@ beforeEach(() => {
 afterEach(() => {
     taskRerollProtection.disable();
     taskRerollTracker.cleanup();
+    stopConfirmSettleWatch();
     vi.useRealTimers();
 });
+
+/**
+ * Close a card's chooser, the way pressing Back does.
+ * @param {HTMLElement} card - The card mid-flow
+ */
+function closeChooser(card) {
+    const action = card.querySelector('[class*="RandomTask_action"]');
+    action.replaceChildren(
+        ...['Go', 'Reroll', ''].map((label) => {
+            const button = document.createElement('button');
+            button.textContent = label;
+            return button;
+        })
+    );
+}
 
 /**
  * Cap protection turned on, guarding a card that is already on the board.
@@ -207,12 +229,37 @@ describe('the game keeps its clicks', () => {
         expect(click(buttonNamed(card, 'MooPass Free Reroll (2)')).defaultPrevented).toBe(false);
     });
 
+    test('the free reroll is not cancelled however the build labels it', async () => {
+        // The count moves and the wording has changed across builds; a pattern
+        // that only knows one of them is a pattern that stops recognising the
+        // free reroll on the next deploy
+        const loose = await guardedCard(['Back', 'Pay 320K', 'Free Reroll (1)']);
+        expect(click(buttonNamed(loose, 'Free Reroll (1)')).defaultPrevented).toBe(false);
+    });
+
+    test('pressing the free reroll twice is never blocked on the second press', async () => {
+        // Nothing from the paid path's lockdown may leak onto a button that
+        // costs nothing — the free reroll works on every click or it is stuck
+        const card = await guardedCard(['Back', 'Pay 320K', 'MooPass Free Reroll (2)']);
+        const free = buttonNamed(card, 'MooPass Free Reroll (2)');
+
+        expect(click(free).defaultPrevented).toBe(false);
+        expect(click(free).defaultPrevented).toBe(false);
+        expect(card.querySelector('.mwi-reroll-warning')).toBe(null);
+    });
+
     test('a card the player protected still holds its free reroll back', async () => {
         // The other half of the same rule: protecting a task is a choice about
         // that task, and a free reroll destroys it exactly as a paid one does
         const card = await protectedCard(['Back', 'Pay 10K', 'MooPass Free Reroll (2)']);
 
         expect(click(buttonNamed(card, 'MooPass Free Reroll (2)')).defaultPrevented).toBe(true);
+    });
+
+    test('and holds back a free reroll labelled with nothing but the word', async () => {
+        const card = await protectedCard(['Back', 'Pay 10K', 'Free']);
+
+        expect(click(buttonNamed(card, 'Free')).defaultPrevented).toBe(true);
     });
 
     test('Back out of the chooser is never cancelled', async () => {
@@ -282,6 +329,37 @@ describe('a card mid-flow is left alone', () => {
         taskRerollTracker.updateAllTaskDisplays();
 
         expect(card.querySelector('.mwi-reroll-cost-display')).not.toBe(null);
+    });
+
+    test('and it goes in when the chooser closes, without waiting for a new card', async () => {
+        // The half that was missing. The game leaves the chooser open after a
+        // reroll, and closing it adds an action row, not a card — so none of
+        // the observers that would have run this pass again ever fire, and the
+        // line the skip declined to draw stayed undrawn for the session.
+        vi.useFakeTimers();
+        const card = cardOnBoard(['Back', 'Pay 10K', 'MooPass Free Reroll (2)']);
+        await taskRerollTracker.initialize();
+
+        taskRerollTracker.updateAllTaskDisplays();
+        expect(card.querySelector('.mwi-reroll-cost-display')).toBe(null);
+
+        closeChooser(card);
+        vi.advanceTimersByTime(300);
+
+        expect(card.querySelector('.mwi-reroll-cost-display')).not.toBe(null);
+    });
+
+    test('the cap highlight is painted when the chooser closes, not left on the old task', async () => {
+        vi.useFakeTimers();
+        const card = await guardedCard(['Back', 'Pay 320K', 'MooPass Free Reroll (2)']);
+        expect(card.style.boxShadow).toBe('');
+
+        closeChooser(card);
+        reactTreeOver(card, { actionHrid: MILKING, coinRerollCount: 5, cowbellRerollCount: 5 });
+        vi.advanceTimersByTime(300);
+
+        // Orange: this card has spent its coin rerolls up to the configured cap
+        expect(card.style.boxShadow).toContain('251, 146, 60');
     });
 
     test('the protection pass does not repaint a card mid-flow', async () => {

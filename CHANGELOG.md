@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Task cards catch up after a reroll
+
+- **The stale picture and the stuck free reroll were one bug**: the game leaves the reroll chooser open after rerolling, and Toolasha's "never touch a mid-flow card" rule had no way back — every redraw pass skipped the card and nothing re-ran when the chooser closed, so the picture, profit rows, spend line and highlights all stayed on the old task. There's now a settle watch: any skipped card arms a poll that redraws everything the moment the chooser closes, and the task icon (a click-proof background layer) updates even mid-flow, while you're looking at it.
+- **Free MooPass rerolls are recognised however the game words them** ("Free", "Free Reroll (2)", with or without counts), never mistaken for the cowbell option, and the bulk reroller now notices a free button that silently stopped working (spent pass) after two tries and pays from then on instead of clicking forever.
+
 ### eWatch learns houses too
 
 - **House room levels are savings goals**: a "House Levels" card set beside Ability Levels — "Mystical Study Lv5" with the summed build cost across the level span (coins at face value, materials at buy price; any unpriced material makes the goal honestly unpriced, never a partial total), progress from your gold, Reached when the room gets there. Manual add from Edit mode with rooms and current levels listed, capped at the room max of 8. House goals join the headline candidates, the overlay tile, and the Everything total. The sims' house rows hand goals over via the same one-writer record the gear and ability goals use.
