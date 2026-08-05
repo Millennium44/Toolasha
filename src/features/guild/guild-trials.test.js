@@ -37,6 +37,7 @@ const game = vi.hoisted(() => ({
     recorder: { recording: false, activity: [], lifecycle: [], downloads: [], startedBy: null, endedBy: null },
     scoreboardToggles: 0,
     breakdown: {},
+    scoreboardContext: null,
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -103,7 +104,10 @@ vi.mock('../../core/storage.js', () => ({
 vi.mock('../../utils/market-data.js', () => ({
     getItemPrice: (itemHrid, { mode } = {}) => game.prices[itemHrid]?.[mode] ?? 0,
 }));
-vi.mock('./guild-trial-damage.js', () => ({
+// `encounterOf` is a pure name-matcher and the feature now routes the spectated
+// pool through it, so the real one is kept rather than stubbed
+vi.mock('./guild-trial-damage.js', async (importOriginal) => ({
+    ...(await importOriginal()),
     default: {
         initialize: vi.fn(),
         cleanup: vi.fn(),
@@ -146,7 +150,12 @@ vi.mock('../notifications/guild-trial-alerts.js', () => ({
     },
 }));
 vi.mock('./guild-trial-scoreboard.js', () => ({
-    default: { toggle: () => (game.scoreboardToggles += 1), close: vi.fn() },
+    default: {
+        toggle: () => (game.scoreboardToggles += 1),
+        close: vi.fn(),
+        noteForecast: vi.fn(),
+        noteContext: (context) => (game.scoreboardContext = context),
+    },
 }));
 vi.mock('./guild-xp-tracker.js', () => ({
     guildXPTracker: {
@@ -691,7 +700,7 @@ describe('the panel, end to end', () => {
                 // A card states points once it has banked a tier, and that is
                 // what tells a badge counting finished tiers from one naming the
                 // tier in progress
-                (card.points ? `<div class="Card_points__p">${card.points} pts</div>` : '') +
+                (Number.isFinite(card.points) ? `<div class="Card_points__p">${card.points} pts</div>` : '') +
                 // The card's own decoration, which outranks the header's kind
                 (card.completed ? '<div class="GuildPanel_status__q">Completed</div>' : '') +
                 `<div class="ProgressBar_text__f">${card.bar}</div>`;
@@ -754,6 +763,7 @@ describe('the panel, end to end', () => {
         };
         game.scoreboardToggles = 0;
         game.breakdown = {};
+        game.scoreboardContext = null;
         await trialsFeature.initialize();
     });
 
@@ -1552,12 +1562,14 @@ describe('the panel, end to end', () => {
         // The Trials tab's combat card carries a level and no bar at all, so
         // every projection said "measuring…" for the whole hour. The spectator
         // stream states the same pool to the unit, and the tier with it
-        game.breakdown = { pool: { current: 454_807, max: 618_000, tier: 2, at: now } };
+        game.breakdown = { pool: { current: 454_807, max: 618_000, tier: 2, at: now, encounter: 'chameleon' } };
         const root = buildTab([{ name: 'Trial Chameleon', level: 110, points: 400, bar: '' }]);
         root.querySelector('[class*="ProgressBar_text"]').remove();
         fire(root);
 
-        game.breakdown = { pool: { current: 453_402, max: 618_000, tier: 2, at: now + 10_000 } };
+        game.breakdown = {
+            pool: { current: 453_402, max: 618_000, tier: 2, at: now + 10_000, encounter: 'chameleon' },
+        };
         vi.setSystemTime(now + 10_000);
         fire(root);
 
@@ -1569,7 +1581,9 @@ describe('the panel, end to end', () => {
     });
 
     test('a stale pool stops standing in, rather than reading as a rate of zero', async () => {
-        game.breakdown = { pool: { current: 454_807, max: 618_000, tier: 2, at: now - 60_000 } };
+        game.breakdown = {
+            pool: { current: 454_807, max: 618_000, tier: 2, at: now - 60_000, encounter: 'chameleon' },
+        };
         const root = buildTab([{ name: 'Trial Chameleon', level: 110, points: 400, bar: '' }]);
         root.querySelector('[class*="ProgressBar_text"]').remove();
         fire(root);
@@ -1580,12 +1594,166 @@ describe('the panel, end to end', () => {
 
     test('a card the game is drawing a bar on keeps its own numbers', async () => {
         // Two sources must never disagree on screen
-        game.breakdown = { pool: { current: 1, max: 618_000, tier: 2, at: now } };
+        game.breakdown = { pool: { current: 1, max: 618_000, tier: 2, at: now, encounter: 'chameleon' } };
         const root = buildTab([{ name: 'Trial Chameleon', level: 140, bar: '618,000 / 618,000' }]);
         fire(root);
 
         const record = guildTrials.record.tiles['combat::trial chameleon'];
         expect(record.samples[0].readings[0]).toMatchObject({ current: 618_000 });
+    });
+
+    test('with two combat trials the watched pool goes to one card, not both', async () => {
+        // Reported: a week with two combat trials, both cards barless, and the
+        // Chameleon fight's pool was injected into the Hedgehog card too — so
+        // the guild report read "Trial Hedgehog — cleared 0 tiers … 490,871 of
+        // 721,000 HP left" about a fight nobody had with a hedgehog
+        game.breakdown = { pool: { current: 490_871, max: 721_000, tier: 3, at: now, encounter: 'chameleon' } };
+        const root = buildTab([
+            { name: 'Trial Chameleon', level: 120, points: 944, bar: '' },
+            { name: 'Trial Hedgehog', level: 100, points: 0, bar: '' },
+        ]);
+        root.querySelectorAll('[class*="ProgressBar_text"]').forEach((el) => el.remove());
+        fire(root);
+
+        const chameleon = guildTrials.record.tiles['combat::trial chameleon'];
+        const hedgehog = guildTrials.record.tiles['combat::trial hedgehog'];
+
+        expect(chameleon.samples.length).toBeGreaterThan(0);
+        expect(chameleon.tiers.some((entry) => entry.tier === 3 && entry.total === 721_000)).toBe(true);
+        // And the trial nobody watched stays empty rather than inheriting it
+        expect(hedgehog.samples).toHaveLength(0);
+        expect(hedgehog.tiers).toEqual([]);
+    });
+
+    test('an unidentified fight attaches to no card at all', async () => {
+        // Better "no data" on both than the right number on the wrong trial
+        game.breakdown = { pool: { current: 490_871, max: 721_000, tier: 3, at: now, encounter: null } };
+        const root = buildTab([
+            { name: 'Trial Chameleon', level: 120, points: 944, bar: '' },
+            { name: 'Trial Hedgehog', level: 100, points: 0, bar: '' },
+        ]);
+        root.querySelectorAll('[class*="ProgressBar_text"]').forEach((el) => el.remove());
+        fire(root);
+
+        expect(guildTrials.record.tiles['combat::trial chameleon'].samples).toHaveLength(0);
+        expect(guildTrials.record.tiles['combat::trial hedgehog'].samples).toHaveLength(0);
+    });
+
+    test('the guild report is about the trial that was watched', async () => {
+        game.breakdown = {
+            source: 'spectated',
+            pool: { current: 490_871, max: 721_000, tier: 3, at: now, encounter: 'chameleon' },
+        };
+        const root = buildTab([
+            // Chameleon has banked two tiers; Hedgehog has banked nothing and
+            // sorts later, so it used to win the context by being last
+            { name: 'Trial Chameleon', level: 110, points: 708, bar: '' },
+            { name: 'Trial Hedgehog', level: 100, points: 0, bar: '' },
+        ]);
+        root.querySelectorAll('[class*="ProgressBar_text"]').forEach((el) => el.remove());
+        fire(root);
+
+        expect(game.scoreboardContext?.trialName).toBe('Trial Chameleon');
+        expect(game.scoreboardContext?.tiersCleared).toBe(2);
+    });
+
+    /**
+     * The In Progress tab: a bar, and the footer of stats beneath it.
+     * @param {boolean} [live] - Whether the card still carries a bar
+     * @returns {Element} The tab
+     */
+    function buildInProgress(live = true) {
+        document.body.innerHTML = '';
+        const root = document.createElement('div');
+        root.className = 'GuildPanel_trialsContent__a';
+        root.innerHTML =
+            '<div class="GuildPanel_eventStatusRow__b">Skilling Trial - In Progress 42:15 remaining</div>' +
+            '<div class="GuildPanel_tile__c">' +
+            '<div class="GuildPanel_tileName__d">Foraging</div>' +
+            // Between tiers the bar is gone and the card is a name and its points
+            (live
+                ? '<div class="ProgressBar_text__f">20,500 / 57,120</div>'
+                : '<div class="Card_points__p">590 pts</div>') +
+            '</div>' +
+            '<div class="GuildPanel_footer__g">' +
+            '<div>Work Power</div><div>146</div>' +
+            '<div>Success Rate</div><div>49.6%</div>' +
+            // The per-minute session log the game draws beside them
+            '<div>59m</div><div>5s</div>' +
+            '<div>1m</div><div>3s</div>' +
+            '<div>Time</div><div>1s</div>' +
+            '</div>';
+        document.body.appendChild(root);
+        return root;
+    }
+
+    /** Seed the record as the Trials tab would have left it */
+    function seedForaging(extra = {}) {
+        guildTrials.record.tiles['skilling::foraging'] = {
+            name: 'Foraging',
+            kind: 'skilling',
+            level: 130,
+            tier: 4,
+            points: 590,
+            pointsByTier: { 1: 236, 2: 354, 3: 472, 4: 590 },
+            samples: [],
+            tiers: [],
+            ...extra,
+        };
+    }
+
+    test('a stats read during a tier lands under that tier', async () => {
+        // Reported from two exports: `personal` had 61 entries and
+        // `personalByTier` was empty for the whole trial, so the success-decline
+        // model — which is built from exactly this — had nothing to fit
+        const root = buildInProgress();
+        seedForaging();
+        fire(root);
+
+        const tile = guildTrials.record.tiles['skilling::foraging'];
+        // Four banked, so the readings are the fifth tier's
+        expect(tile.personalByTier['5']).toMatchObject({ 'Success Rate': '49.6%' });
+        expect(tile.personal['Success Rate']).toBe('49.6%');
+    });
+
+    test('a stats read on a card with no bar still lands under the banked tier', async () => {
+        // The join used to ride on the *reading's* tier, which is null the
+        // moment a card stops being live — so a footer read between tiers, or
+        // after the hour, went nowhere
+        const root = buildInProgress(false);
+        seedForaging();
+        fire(root);
+
+        const tile = guildTrials.record.tiles['skilling::foraging'];
+        expect(tile.personalByTier['4']).toMatchObject({ 'Success Rate': '49.6%' });
+    });
+
+    test('the per-minute time list is not a stat sheet', async () => {
+        // The exact junk from the export: "59m": "5s" … "1m": "3s", "Time": "1s"
+        const root = buildInProgress();
+        seedForaging();
+        fire(root);
+
+        const tile = guildTrials.record.tiles['skilling::foraging'];
+        expect(Object.keys(tile.personal)).toEqual(['Work Power', 'Success Rate']);
+        expect(tile.personal['59m']).toBeUndefined();
+        expect(tile.personal['1m']).toBeUndefined();
+        expect(tile.personal.Time).toBeUndefined();
+    });
+
+    test('a completed card that banked nothing says so as a result', async () => {
+        // The Hedgehog party wiped before clearing tier one, so its card read
+        // Completed with no points and no badge — and the block said "nothing
+        // yet — tier 1 in progress" under a trial that was over
+        const root = buildTab(
+            [{ name: 'Trial Hedgehog', level: 100, points: 0, bar: '721,000 / 721,000', completed: true }],
+            'Combat Trial - Completed'
+        );
+        fire(root);
+
+        expect(text()).toContain('0 tiers — fell before tier 1');
+        expect(text()).not.toContain('in progress');
+        expect(text()).not.toContain('tier not seen yet');
     });
 
     test('a card wearing a Completed badge shows results, whatever the header says', async () => {
@@ -2025,6 +2193,42 @@ describe('the first tier of a running trial', () => {
         expect(started.tier).toBe(6);
         expect(started.tiersClearedSoFar).toBe(0);
         expect(banked.tierSource).toBe('card');
+    });
+});
+
+describe('a trial that banked nothing', () => {
+    test('a stated zero outranks the completed badge', () => {
+        // The wipe case: "Lv.100, 0 pts, Completed" is a party that fell before
+        // clearing tier one, not a party that finished the tier it was fighting
+        const analysis = analyseTrial(
+            record({ kind: 'combat', tier: 1, level: 100, points: 0, pointsByTier: { 1: 0 }, completed: true }),
+            {}
+        );
+
+        expect(analysis.tiersClearedSoFar).toBe(0);
+        expect(analysis.tier).toBe(1);
+        expect(analysis.points.basePoints).toBe(0);
+    });
+
+    test('a completed card whose points were never seen is unchanged', () => {
+        // Absent is not zero, and a card read only on the In Progress tab has
+        // never stated its points at all
+        const analysis = analyseTrial(record({ kind: 'combat', tier: 3, completed: true, points: undefined }), {});
+        expect(analysis.tiersClearedSoFar).toBe(3);
+    });
+
+    test('and it contributes nothing to the payout rather than a tier’s worth', () => {
+        const wiped = analyseTrial(
+            record({ kind: 'combat', tier: 1, level: 100, points: 0, pointsByTier: { 1: 0 }, completed: true }),
+            {}
+        );
+        expect(wiped.points.basePoints).toBe(0);
+
+        const banked = analyseTrial(
+            record({ kind: 'combat', tier: 1, level: 100, points: 400, pointsByTier: { 1: 400 }, completed: true }),
+            {}
+        );
+        expect(banked.points.basePoints).toBeGreaterThan(0);
     });
 });
 
@@ -2485,12 +2689,31 @@ describe('renderTrialPlayers', () => {
     });
 
     test('a watched fight that could not be split says exactly that', () => {
-        const html = renderTrialPlayers({ measured: false, source: 'spectated', reason: 'watched' }).join('');
+        const html = renderTrialPlayers({
+            measured: false,
+            source: 'spectated',
+            reason: 'watched',
+            pool: { encounter: 'chameleon' },
+        }).join('');
 
         expect(html).toContain('watched, but unsplittable');
         expect(html).toContain('no attack counters');
         // The support figures did arrive, and the line must not imply otherwise
         expect(html).toContain('Damage taken, healing and mana came through');
+    });
+
+    test('a watched fight nothing has identified asks for one click', () => {
+        // No card may claim it until it is named — better "no data" on both
+        // combat cards than the right number on the wrong trial
+        const html = renderTrialPlayers({
+            measured: false,
+            source: 'spectated',
+            reason: 'watched',
+            pool: { encounter: null },
+        }).join('');
+
+        expect(html).toContain('click the boss to identify');
+        expect(html).toContain('attach to none');
     });
 
     test('a measured split says it was watched', () => {
@@ -2681,6 +2904,7 @@ describe('the payout block, audited', () => {
         };
         game.scoreboardToggles = 0;
         game.breakdown = {};
+        game.scoreboardContext = null;
         await trialsFeature.initialize();
     });
 

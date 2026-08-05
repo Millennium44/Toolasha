@@ -621,6 +621,50 @@ describe('the building level cap', () => {
     });
 });
 
+describe('a tile that never gained points', () => {
+    // A trial the party wiped on: completed, zero points, and nothing else on
+    // the card. It has to survive a merge and an archive like any other, or a
+    // failed trial disappears from the week's history instead of being in it
+    const wiped = () => ({
+        name: 'Trial Hedgehog',
+        kind: 'combat',
+        tier: 1,
+        points: 0,
+        completed: true,
+        pointsByTier: { 1: 0 },
+        samples: [],
+        tiers: [],
+    });
+
+    test('a stated zero survives a sample that carries no points at all', () => {
+        const record = { weekStart: 1, tiles: { 'combat::trial hedgehog': wiped() } };
+        const after = recordTileSample(record, { name: 'Trial Hedgehog', kind: 'combat', readings: [] }, 2);
+
+        const tile = after.tiles['combat::trial hedgehog'];
+        expect(tile.points).toBe(0);
+        expect(tile.completed).toBe(true);
+        expect(tile.pointsByTier).toEqual({ 1: 0 });
+    });
+
+    test('and survives a merge with a record that never saw it', () => {
+        const mine = { weekStart: 1, tiles: { 'combat::trial hedgehog': wiped() } };
+        const theirs = { weekStart: 1, tiles: {} };
+
+        const merged = mergeTrialRecords(mine, theirs);
+        expect(merged.tiles['combat::trial hedgehog'].points).toBe(0);
+        expect(mergeTrialRecords(theirs, mine).tiles['combat::trial hedgehog'].points).toBe(0);
+    });
+
+    test('and is archived with the rest of the cycle', () => {
+        const record = { weekStart: 1, tiles: { 'combat::trial hedgehog': wiped() } };
+        const archived = archiveCycle(record, 2);
+
+        expect(archived.tiles).toEqual({});
+        expect(archived.history?.length).toBe(1);
+        expect(archived.history[0].tiles['combat::trial hedgehog'].points).toBe(0);
+    });
+});
+
 describe('merging two records for one guild', () => {
     /**
      * A record holding one skilling tile with the given sample times.

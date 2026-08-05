@@ -601,7 +601,7 @@ export function readPersonalStats(root) {
         if (line.includes('/')) continue;
 
         const pair = line.match(inline);
-        if (pair && /[a-z]/i.test(pair[1])) {
+        if (pair && isStatLabel(pair[1])) {
             stats[pair[1].trim()] = pair[2].trim();
             continue;
         }
@@ -609,11 +609,54 @@ export function readPersonalStats(root) {
         // Label on one run, number on the next, which is how the game draws most
         // of them
         const next = lines[index + 1];
-        if (!next || !value.test(next) || value.test(line) || !/[a-z]/i.test(line)) continue;
+        if (!next || !value.test(next) || value.test(line) || !isStatLabel(line)) continue;
         stats[line.replace(/[:\s]+$/, '')] = next.trim();
         index += 1;
     }
     return stats;
+}
+
+/**
+ * Generic words that are a heading or a clock rather than the name of a stat.
+ *
+ * A denylist of exactly the words that turned up as labels, kept small on
+ * purpose: the open-ended capture is the point of this reader, and anything
+ * longer starts refusing stats the game has not invented yet.
+ */
+const NON_STAT_LABELS = /^(time|total|elapsed|duration|remaining|left|now)$/i;
+
+/** A label that is a number with an optional unit — `59m`, `12`, `3ms` */
+const NUMERIC_LABEL = /^[\d,.]+\s*[a-z]{0,2}$/i;
+
+/**
+ * Whether a run of text is the name of a stat rather than something beside one.
+ *
+ * The reader is deliberately open-ended — whatever the game shows lands in the
+ * record without this file having heard of it — and that is what let a **time
+ * list** in. The exported footer carried `"59m": "5s"`, `"58m": "2s"` … down to
+ * `"1m": "3s"` and `"Time": "1s"`: a per-minute session log, fifty-eight rows of
+ * it, read as stats and stored beside Work Power and Success Rate. It also
+ * carried `"Lv.100": "6"`.
+ *
+ * So the capture stays open and gains a floor. A stat's name is a *word*: it has
+ * a run of at least three letters, it is not a number with a unit stuck to it,
+ * and it is not one of the handful of generic headings that are a clock rather
+ * than a measurement. "Work Power", "Double Progress", "Ranged Accuracy" and
+ * anything shaped like them pass; "59m", "Lv.100" and a bare "Time" do not.
+ *
+ * @param {string} label - The candidate label
+ * @returns {boolean} True when it may name a stat
+ */
+export function isStatLabel(label) {
+    const text = String(label || '')
+        .replace(/[:\s]+$/, '')
+        .trim();
+    if (!text) return false;
+    if (NUMERIC_LABEL.test(text)) return false;
+    if (NON_STAT_LABELS.test(text)) return false;
+
+    // A letter-word of three, which "Lv.100" and "T3" do not have
+    return /[a-z]{3,}/i.test(text);
 }
 
 /**

@@ -1,3 +1,5 @@
+/** @vitest-environment happy-dom */
+
 /**
  * Per-player damage in a guild combat trial.
  *
@@ -5,6 +7,11 @@
  * worth asserting here is the thing this module actually adds: the gate. A
  * feature that credits the wrong fights is worse than one that credits none, so
  * most of this file is about battles that must *not* count.
+ *
+ * A DOM is opted into for the whole file rather than a few tests, because the
+ * spectated path reads the fight view's own tiles to work out *which* trial is
+ * being watched — and that identification is exactly what the panels get wrong
+ * when it is missing.
  */
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -777,5 +784,88 @@ describe('the boss’s own sheet', () => {
             },
         });
         expect(guildTrialDamage.breakdown().bossSheets).toEqual({});
+    });
+});
+
+describe('which trial is being watched', () => {
+    const at = new Date('2026-08-05T22:00:00Z').getTime();
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        vi.setSystemTime(at);
+        game.clientData = {};
+        game.loadouts = [];
+        guildTrialDamage.initialize();
+        guildTrialDamage.reset();
+        guildTrialDamage.setTrialNames(['Trial Chameleon', 'Trial Hedgehog']);
+    });
+
+    afterEach(() => {
+        guildTrialDamage.cleanup();
+        vi.useRealTimers();
+        document.body.innerHTML = '';
+    });
+
+    test('the pool carries no encounter when nothing can name it', () => {
+        // Reported: two combat trials this week, both cards barless, and an
+        // unnamed pool stood in for both — so a Chameleon fight was reported as
+        // "Trial Hedgehog — cleared 0 tiers". Unnamed now means unclaimed
+        game.wsHandlers[GUILD_BATTLE_MESSAGE](wireDump[1]);
+
+        const { pool, encounter } = guildTrialDamage.breakdown();
+        expect(encounter).toBeNull();
+        expect(pool.encounter).toBeNull();
+    });
+
+    test('the fight view’s boss tile names it', () => {
+        document.body.innerHTML =
+            '<div class="BattlePanel_monstersArea__d">' +
+            '<div class="CombatUnit_combatUnit__b"><div class="CombatUnit_name__c">Trial Chameleon</div></div>' +
+            '</div>';
+        game.wsHandlers[GUILD_BATTLE_MESSAGE](wireDump[1]);
+
+        const report = guildTrialDamage.breakdown();
+        expect(report.encounter).toBe('chameleon');
+        expect(report.bossName).toBe('Trial Chameleon');
+        expect(report.pool.encounter).toBe('chameleon');
+    });
+
+    test('one click on the boss names it, and outlives the view closing', () => {
+        game.wsHandlers.battle_unit_fetched({
+            unit: {
+                character: { name: 'Trial Chameleon' },
+                combatDetails: { combatLevel: 110, maxHitpoints: 618_000 },
+            },
+        });
+        game.wsHandlers[GUILD_BATTLE_MESSAGE](wireDump[1]);
+
+        expect(guildTrialDamage.breakdown().pool.encounter).toBe('chameleon');
+    });
+
+    test('a new battle drops the identity rather than carrying it over', () => {
+        document.body.innerHTML =
+            '<div class="BattlePanel_monstersArea__d">' +
+            '<div class="CombatUnit_combatUnit__b"><div class="CombatUnit_name__c">Trial Chameleon</div></div>' +
+            '</div>';
+        game.wsHandlers[GUILD_BATTLE_MESSAGE](wireDump[1]);
+        expect(guildTrialDamage.breakdown().encounter).toBe('chameleon');
+
+        // The view is shut and a different fight starts streaming
+        document.body.innerHTML = '';
+        game.wsHandlers[GUILD_BATTLE_MESSAGE]({ ...wireDump[1], battleId: 2 });
+
+        expect(guildTrialDamage.breakdown().encounter).toBeNull();
+    });
+
+    test('a tier change within one battle keeps it', () => {
+        document.body.innerHTML =
+            '<div class="BattlePanel_monstersArea__d">' +
+            '<div class="CombatUnit_combatUnit__b"><div class="CombatUnit_name__c">Trial Chameleon</div></div>' +
+            '</div>';
+        game.wsHandlers[GUILD_BATTLE_MESSAGE](wireDump[1]);
+        document.body.innerHTML = '';
+        game.wsHandlers[GUILD_BATTLE_MESSAGE]({ ...wireDump[1], tier: 3 });
+
+        expect(guildTrialDamage.breakdown().encounter).toBe('chameleon');
     });
 });
