@@ -2584,7 +2584,11 @@ class ActionTimeDisplay {
             if (gatheringProfit) {
                 profitData = gatheringProfit;
             } else if (actionDetails.outputItems?.[0]?.itemHrid) {
-                profitData = await profitCalculator.calculateProfit(actionDetails.outputItems[0].itemHrid);
+                // Named, because the panel is showing one action: without it the calculator
+                // could answer about a different recipe that happens to yield the same item
+                profitData = await profitCalculator.calculateProfit(actionDetails.outputItems[0].itemHrid, {
+                    actionHrid: action.actionHrid,
+                });
             }
         }
 
@@ -2696,7 +2700,9 @@ class ActionTimeDisplay {
                 if (gatheringProfit) {
                     profitData = gatheringProfit;
                 } else if (actionDetails.outputItems?.[0]?.itemHrid) {
-                    profitData = await profitCalculator.calculateProfit(actionDetails.outputItems[0].itemHrid);
+                    profitData = await profitCalculator.calculateProfit(actionDetails.outputItems[0].itemHrid, {
+                        actionHrid,
+                    });
                 }
             }
 

@@ -203,6 +203,82 @@ describe('calculateEnhancementPath', () => {
     });
 });
 
+/**
+ * The totals a strategy quotes are enough to compare two strategies and not enough to go and
+ * buy anything. The bill is the same arithmetic said as a list, so what it has to be is
+ * *consistent with the totals beside it* — a list that does not reconcile is worse than none.
+ */
+describe('the material bill a path expects to consume', () => {
+    /**
+     * @param {Array<Object>} bill - A material bill
+     * @param {string} kind - Which line kind to total
+     * @returns {number} What those lines cost between them
+     */
+    const spentOn = (bill, kind) =>
+        bill.filter((line) => line.kind === kind).reduce((sum, line) => sum + line.totalCost, 0);
+
+    test('a traditional path bills the materials the total already charged for', () => {
+        // Only the un-mirrored levels: a mirror plan reports materialCost 0 because its whole
+        // cost is folded into the items it consumes, and its bill is checked separately below
+        let checked = 0;
+        for (let level = 1; level <= 10; level++) {
+            const strategy = calculateEnhancementPath(ITEM, level, enhancingConfig).optimalStrategy;
+            if (strategy.usedMirror) continue;
+            checked += 1;
+
+            expect(spentOn(strategy.materialBill, 'material')).toBeCloseTo(strategy.materialCost, 6);
+            expect(spentOn(strategy.materialBill, 'protection')).toBeCloseTo(strategy.protectionCost, 6);
+        }
+        expect(checked).toBeGreaterThan(0);
+    });
+
+    test('the count is attempts times the per-attempt recipe, as an expectation', () => {
+        const strategy = calculateEnhancementPath(ITEM, 4, enhancingConfig).optimalStrategy;
+        const material = strategy.materialBill.find((line) => line.itemHrid === MATERIAL);
+
+        // One material per attempt, so the count is the expected attempts themselves —
+        // fractional, because an expectation is not a number of trips to the marketplace
+        expect(material.count).toBeCloseTo(strategy.expectedAttempts, 6);
+        expect(material.name).toBe('Test Material');
+    });
+
+    test('a mirrored path bills the mirrors and the base copies it combines', () => {
+        const data = calculateEnhancementPath(ITEM, 8, enhancingConfig);
+        const strategy = data.optimalStrategy;
+        expect(strategy.usedMirror).toBe(true);
+
+        const mirrors = strategy.materialBill.find((line) => line.kind === 'mirror');
+        expect(mirrors.itemHrid).toBe(MIRROR);
+        expect(mirrors.count).toBe(strategy.mirrorCount);
+
+        // A mirror plan for +8 is several items combined, and the totals-only answer says
+        // nothing about that at all — a plan that buys one base item cannot be run
+        const base = strategy.materialBill.find((line) => line.kind === 'base');
+        expect(base.itemHrid).toBe(ITEM);
+        expect(base.count).toBe(strategy.consumedItems.reduce((sum, item) => sum + item.quantity, 0));
+    });
+
+    test("a mirrored path's materials scale with the attempts it actually makes", () => {
+        const strategy = calculateEnhancementPath(ITEM, 8, enhancingConfig).optimalStrategy;
+        const material = strategy.materialBill.find((line) => line.itemHrid === MATERIAL);
+
+        // One material per attempt again, so the whole plan's attempts is the whole plan's count
+        expect(material.count).toBeCloseTo(strategy.expectedAttempts, 6);
+    });
+
+    test('every line names something buyable and costs what it says', () => {
+        for (let level = 1; level <= 10; level++) {
+            const strategy = calculateEnhancementPath(ITEM, level, enhancingConfig).optimalStrategy;
+            for (const line of strategy.materialBill) {
+                expect(line.itemHrid).toMatch(/^\/items\//);
+                expect(line.count).toBeGreaterThan(0);
+                expect(line.totalCost).toBeCloseTo(line.count * line.unitPrice, 6);
+                expect(['material', 'protection', 'mirror', 'base']).toContain(line.kind);
+            }
+        }
+    });
+});
+
 describe('calculateMinimumSellPrice', () => {
     test('is the total cost plus the target rate for the time spent', () => {
         // one hour at 10M/hr on top of a 5M cost

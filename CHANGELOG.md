@@ -6,11 +6,19 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The goal planner shares, navigates, and answers instantly
+
+- **Goals share one resource ledger**: two goals can no longer both plan to spend the same crossbow or the same coins — earlier goals claim first (display order), later ones plan against what's left, with dim notes saying exactly who took what ("Sundering Crossbow ★ already spent by 'Cheesesmithing 108'"). Removing a goal gives its claims back to the goals below it, instantly.
+- **Adding or removing a goal plans and renders immediately** — no Refresh needed; already-fetched prices are reused (Refresh still owns re-pricing), and a failed refresh no longer masquerades as an empty successful one.
+- **Click a step to go there**: production, earn, and enhance steps navigate to their game action (dotted underline marks what's clickable); buy and house steps aren't destinations and don't pretend to be.
+- **Windfalls never wear per-hour clothing**: any method whose remaining stock is gone inside an hour reads as a one-off ("Decompose 22 Master Tailoring Charm (+877.9M one-off)") whether or not a fallback follows — the leak your screenshot caught is pinned by tests.
+- **Enhance steps carry an expected-materials bill** with a Buy handoff (labelled "enhancing is random"); the shopping list is one shared module across bundles now (two open lists no longer fight over the tab bar, and the autofill observer leak is fixed at the source); profit is attributed to the right recipe when two actions make the same item.
+
 ### The sims finish their own homework
 
 - **Skilling gear rows expand like combat rows**: click for the full cost breakdown — clear-rate baseline, per-piece cost basis ("enhancing a piece you already wear" vs "a piece you don't own yet"), and the kept-gear reason where combat gear was displaced.
 - **Unpriced never reads as free, anywhere**: the old ability-cost helpers that returned 0 for an unlisted book are deleted outright (a test pins them gone); Build Score and networth now say "no price" and exclude the figure rather than counting zero — and an owned-but-unslotted book's genuinely free fill says why with a "book owned" chip.
-- **The budget planner understands swap rivalry properly**: candidates carry key *sets*, so two swaps into one slot, a fill and a displacement of the same book, and levelling-vs-swapping-away an ability all correctly exclude each other — with a distinct "a pick already uses what this needs" skip reason instead of a misleading one.
+- **The budget planner understands swap rivalry properly**: candidates carry key _sets_, so two swaps into one slot, a fill and a displacement of the same book, and levelling-vs-swapping-away an ability all correctly exclude each other — with a distinct "a pick already uses what this needs" skip reason instead of a misleading one.
 - **The lab names each loadout's archetype** after a swaps run ("Fire Lab → Fire, Old Setup → no archetype (all abilities offered)"), so a fallback is visible instead of inferred.
 - Plus: the analyze progress bar can no longer stick on an early throw, and a pre-existing formatting failure in the engine is cleaned up.
 

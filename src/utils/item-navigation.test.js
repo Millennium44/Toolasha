@@ -13,7 +13,8 @@ vi.mock('../core/data-manager.js', () => ({
     },
 }));
 
-const { findActionForItem, openItemDictionary, navigateToItem } = await import('./item-navigation.js');
+const { findActionForItem, openItemDictionary, navigateToItem, navigateToAction } =
+    await import('./item-navigation.js');
 
 function setGameRoot(gameStateNode) {
     const root = document.createElement('div');
@@ -139,5 +140,44 @@ describe('navigateToItem', () => {
         setGameRoot({ handleOpenItemDictionary: vi.fn(), handleGoToMarketplace: () => {} });
 
         expect(navigateToItem('/items/unknown')).toBe(false);
+    });
+});
+
+describe('navigateToAction', () => {
+    beforeEach(() => {
+        document.body.innerHTML = '';
+    });
+
+    test('hands the action straight to the game', () => {
+        const handleGoToAction = vi.fn();
+        setGameRoot({ handleGoToAction, handleGoToMarketplace: () => {} });
+
+        expect(navigateToAction('/actions/cheesesmithing/griffin_bulwark')).toBe(true);
+        expect(handleGoToAction).toHaveBeenCalledWith('/actions/cheesesmithing/griffin_bulwark');
+    });
+
+    test('reaches the enhancing screen through the enhancing action', () => {
+        const handleGoToAction = vi.fn();
+        setGameRoot({ handleGoToAction, handleGoToMarketplace: () => {} });
+
+        expect(navigateToAction('/actions/enhancing/enhance')).toBe(true);
+        expect(handleGoToAction).toHaveBeenCalledWith('/actions/enhancing/enhance');
+    });
+
+    test('refuses anything that is not an action hrid rather than handing it over', () => {
+        const handleGoToAction = vi.fn();
+        setGameRoot({ handleGoToAction, handleGoToMarketplace: () => {} });
+
+        expect(navigateToAction('/items/plank')).toBe(false);
+        expect(navigateToAction('')).toBe(false);
+        expect(navigateToAction(null)).toBe(false);
+        expect(handleGoToAction).not.toHaveBeenCalled();
+    });
+
+    test('says so when the game is not reachable, rather than throwing', () => {
+        expect(navigateToAction('/actions/milking/cow')).toBe(false);
+
+        setGameRoot({ handleGoToMarketplace: () => {} });
+        expect(navigateToAction('/actions/milking/cow')).toBe(false);
     });
 });

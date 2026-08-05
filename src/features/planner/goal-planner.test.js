@@ -16,12 +16,14 @@ import * as mathjs from 'mathjs';
 import { calculateEnhancement } from '../../utils/enhancement-calculator.js';
 import {
     planGoal,
+    planGoals,
     normalizeGoal,
     orderSteps,
     summarize,
     planEarnings,
     describeLeg,
     sustainableGold,
+    createResourceLedger,
     GOAL_TYPES,
 } from './goal-planner.js';
 
@@ -252,6 +254,61 @@ describe('a rate is only a rate while its inputs last', () => {
         expect(earn.description).not.toContain('437.9B');
     });
 
+    test('a windfall that covers the whole target on its own is still a windfall', () => {
+        // The screenshot bug. One charm stack worth more than the goal needs, so
+        // the leg never exhausts it and there is no fallback leg behind it — and
+        // the step read "Master Tailoring Charm at 134.3B/hr" beside "24s".
+        const charms = {
+            label: 'Decompose Master Tailoring Charm',
+            kind: 'alchemy',
+            goldPerHour: 134_300_000_000,
+            sustainable: {
+                gold: 1_200_000_000,
+                goldPerUnit: 40_000_000,
+                units: 30,
+                unitLabel: 'Master Tailoring Charm',
+                verb: 'Decompose',
+            },
+        };
+
+        const { legs } = planEarnings([charms], 877_900_000);
+
+        expect(legs).toHaveLength(1);
+        expect(legs[0].exhausts).toBe(false);
+        expect(legs[0].oneOff).toBe(true);
+        expect(describeLeg(legs[0])).toBe('Decompose 22 Master Tailoring Charm (+877.9M one-off)');
+    });
+
+    test('and says so on the step, whichever kind of goal asked for it', () => {
+        const charms = {
+            label: 'Decompose Master Tailoring Charm',
+            kind: 'alchemy',
+            goldPerHour: 134_300_000_000,
+            sustainable: {
+                gold: 1_200_000_000,
+                goldPerUnit: 40_000_000,
+                units: 30,
+                unitLabel: 'Master Tailoring Charm',
+                verb: 'Decompose',
+            },
+        };
+
+        const gold = planGoal({ type: 'gold', amount: 500_000_000 }, context({ gold: 0, goldRates: () => [charms] }));
+        expect(step(gold, 'earn').description).toContain('one-off');
+        expect(step(gold, 'earn').description).not.toContain('/hr');
+
+        const funded = planGoal(
+            { type: 'equipment', itemHrid: '/items/cape', enhancementLevel: 0 },
+            context({
+                gold: 0,
+                goldRates: () => [charms],
+                acquire: () => ({ strategy: 'buy', totalCost: 877_900_000, buyPrice: 877_900_000, requires: [] }),
+            })
+        );
+        expect(step(funded, 'fund').description).toContain('(+877.9M one-off)');
+        expect(step(funded, 'fund').description).not.toContain('/hr');
+    });
+
     test('a ceiling that outlasts an hour is still an income, and is quoted as one', () => {
         const ore = {
             label: 'Transmute Ore',
@@ -310,6 +367,245 @@ describe('a rate is only a rate while its inputs last', () => {
         const fund = step(plan, 'fund');
         expect(fund.details.legs.map((leg) => leg.oneOff)).toEqual([true, false]);
         expect(fund.description).toContain('one-off');
+    });
+});
+
+describe('one bagful, shared between the goals', () => {
+    /** The bug in one object: one crossbow, decomposed, at a fantasy hourly rate */
+    const crossbow = () => ({
+        label: 'Decompose Sundering Crossbow ★',
+        kind: 'alchemy',
+        actionHrid: '/actions/alchemy/decompose',
+        itemHrid: '/items/sundering_crossbow',
+        goldPerHour: 437_900_000_000,
+        sustainable: {
+            gold: 800_000_000,
+            goldPerUnit: 800_000_000,
+            units: 1,
+            unitLabel: 'Sundering Crossbow ★',
+            verb: 'Decompose',
+            source: 'inventory',
+        },
+    });
+    const milking = { label: 'Milk a Cow', kind: 'gathering', goldPerHour: 10_000_000 };
+
+    /**
+     * @param {Object} plan - A plan
+     * @returns {Object|undefined} Whichever step does this plan's earning
+     */
+    const earning = (plan) => plan.steps.find((entry) => entry.kind === 'earn');
+
+    test('the first goal takes the crossbow and the second plans without it', () => {
+        const plans = planGoals(
+            [
+                { id: 'a', type: 'gold', amount: 800_000_000 },
+                { id: 'b', type: 'gold', amount: 800_000_000 },
+            ],
+            context({ gold: 0, goldRates: () => [milking, crossbow()] })
+        );
+
+        expect(earning(plans[0]).details.legs[0].rate.label).toContain('Sundering Crossbow');
+        // Second goal: the stack is gone, so it falls through to the next-best
+        // method exactly as it would if the bag had been empty to begin with
+        expect(earning(plans[1]).details.legs.map((leg) => leg.rate.label)).toEqual(['Milk a Cow']);
+        expect(earning(plans[1]).timeHours).toBeCloseTo(80, 6);
+    });
+
+    test('and says who took it, rather than quietly showing a worse rate', () => {
+        const plans = planGoals(
+            [
+                { id: 'a', type: 'skill', skillHrid: '/skills/cheesesmithing', targetLevel: 108 },
+                { id: 'b', type: 'gold', amount: 800_000_000 },
+            ],
+            context({
+                gold: 0,
+                skill: () => ({ level: 100, experience: 100_000 }),
+                xpRates: () => [
+                    {
+                        label: 'Cheese',
+                        requiredLevel: 1,
+                        xpPerHour: 1000,
+                        xpPerAction: 100,
+                        actionTime: 10,
+                        totalEfficiency: 0,
+                        // Dear enough that funding the grind eats the whole crossbow
+                        goldPerHour: -8_000_000_000,
+                    },
+                ],
+                goldRates: () => [milking, crossbow()],
+            })
+        );
+
+        expect(plans[0].title).toBe('Cheesesmithing 108');
+        const notes = earning(plans[1]).details.ledgerNotes;
+        expect(notes).toContain("Sundering Crossbow ★ already spent by 'Cheesesmithing 108'");
+    });
+
+    test('a stack only partly spent leaves the rest, and says how much', () => {
+        const plans = planGoals(
+            [
+                { id: 'a', type: 'gold', amount: 300_000_000 },
+                { id: 'b', type: 'gold', amount: 800_000_000 },
+            ],
+            context({ gold: 0, goldRates: () => [milking, crossbow()] })
+        );
+
+        const legs = earning(plans[1]).details.legs;
+        expect(legs[0].rate.label).toContain('Sundering Crossbow');
+        expect(legs[0].gold).toBe(500_000_000);
+        expect(earning(plans[1]).details.ledgerNotes.join(' ')).toContain('partly spent');
+    });
+
+    test('coins in hand are spent once, so the second goal has to earn them', () => {
+        const acquire = () => ({ strategy: 'buy', totalCost: 40_000_000, buyPrice: 40_000_000, requires: [] });
+        const plans = planGoals(
+            [
+                { id: 'a', type: 'equipment', itemHrid: '/items/cape', enhancementLevel: 0 },
+                { id: 'b', type: 'equipment', itemHrid: '/items/boots', enhancementLevel: 0 },
+            ],
+            context({ gold: 50_000_000, acquire, goldRates: () => [milking] })
+        );
+
+        // 50M covers the first cape outright
+        expect(plans[0].steps.map((entry) => entry.id)).not.toContain('fund');
+        // 10M left, so the second is 30M short rather than fully funded
+        const fund = plans[1].steps.find((entry) => entry.id === 'fund');
+        expect(fund.goldDelta).toBe(30_000_000);
+        expect(fund.details.ledgerNotes.join(' ')).toContain('already committed');
+    });
+
+    test('a gold goal holds its coins rather than lending them to the goal below', () => {
+        const plans = planGoals(
+            [
+                { id: 'a', type: 'gold', amount: 500_000_000 },
+                { id: 'b', type: 'equipment', itemHrid: '/items/cape', enhancementLevel: 0 },
+            ],
+            context({
+                gold: 50_000_000,
+                acquire: () => ({ strategy: 'buy', totalCost: 40_000_000, buyPrice: 40_000_000, requires: [] }),
+                goldRates: () => [milking],
+            })
+        );
+
+        // You cannot both keep 500M and spend 40M of it on a cape
+        expect(plans[1].steps.find((entry) => entry.id === 'fund').goldDelta).toBe(40_000_000);
+    });
+
+    test('an unbounded method is never claimed, because nothing runs out', () => {
+        const plans = planGoals(
+            [
+                { id: 'a', type: 'gold', amount: 100_000_000 },
+                { id: 'b', type: 'gold', amount: 100_000_000 },
+            ],
+            context({ gold: 0, goldRates: () => [milking] })
+        );
+
+        expect(earning(plans[0]).timeHours).toBeCloseTo(10, 6);
+        expect(earning(plans[1]).timeHours).toBeCloseTo(10, 6);
+        expect(earning(plans[1]).details.ledgerNotes).toEqual([]);
+    });
+
+    test('a satisfied goal claims nothing it does not need', () => {
+        const plans = planGoals(
+            [
+                { id: 'a', type: 'gold', amount: 1000 },
+                { id: 'b', type: 'gold', amount: 800_000_000 },
+            ],
+            context({ gold: 1_000_000, goldRates: () => [milking, crossbow()] })
+        );
+
+        expect(plans[0].satisfied).toBe(true);
+        // The satisfied goal did no earning, so the crossbow is still there
+        expect(earning(plans[1]).details.legs[0].rate.label).toContain('Sundering Crossbow');
+    });
+
+    test('planning one goal on its own is unchanged — the ledger is a property of the list', () => {
+        const alone = planGoal(
+            { type: 'gold', amount: 800_000_000 },
+            context({ gold: 0, goldRates: () => [crossbow()] })
+        );
+        expect(step(alone, 'earn').details.legs[0].gold).toBe(800_000_000);
+    });
+
+    test('the rate list is decorated once per goal, not once per provider call', () => {
+        // The ledger costs one pass over the rates per goal. If it were per call
+        // it would scale with however many places happen to ask, which is the
+        // kind of cost that grows silently as the planners gain steps.
+        let calls = 0;
+        const rates = [milking, crossbow()];
+        planGoals(
+            [
+                { id: 'a', type: 'equipment', itemHrid: '/items/cape', enhancementLevel: 0 },
+                { id: 'b', type: 'equipment', itemHrid: '/items/boots', enhancementLevel: 0 },
+            ],
+            context({
+                gold: 0,
+                acquire: () => ({ strategy: 'buy', totalCost: 1_000_000_000, buyPrice: 1_000_000_000, requires: [] }),
+                goldRates: () => {
+                    calls += 1;
+                    return rates;
+                },
+            })
+        );
+
+        expect(calls).toBe(2);
+    });
+});
+
+describe('createResourceLedger', () => {
+    const stack = {
+        label: 'Transmute Ore',
+        kind: 'alchemy',
+        itemHrid: '/items/ore',
+        goldPerHour: 30_000_000,
+        sustainable: { gold: 90_000_000, goldPerUnit: 3000, units: 30_000, unitLabel: 'Ore', verb: 'Transmute' },
+    };
+
+    test('an untouched ledger hands the context straight through', () => {
+        const ledger = createResourceLedger(1000);
+        const view = ledger.view(context({ gold: 1000, goldRates: () => [stack] }));
+
+        expect(view.gold).toBe(1000);
+        expect(view.goldRates()[0]).toBe(stack);
+        expect(view.rateClaims()).toEqual([]);
+    });
+
+    test('a recorded leg comes off the ceiling and off the unit count with it', () => {
+        const ledger = createResourceLedger(0);
+        ledger.record({
+            title: 'Some goal',
+            type: 'gold',
+            goal: { amount: 0 },
+            totals: { goldSpend: 0 },
+            steps: [{ done: false, details: { legs: [{ rate: stack, gold: 60_000_000 }] } }],
+        });
+
+        const decorated = ledger.view(context({ goldRates: () => [stack] })).goldRates()[0];
+        expect(decorated.sustainable.gold).toBe(30_000_000);
+        expect(decorated.sustainable.units).toBe(10_000);
+        // The original is untouched, or the next refresh would start from a lie
+        expect(stack.sustainable.gold).toBe(90_000_000);
+    });
+
+    test('a step already done consumed nothing, so it claims nothing', () => {
+        const ledger = createResourceLedger(0);
+        ledger.record({
+            title: 'Some goal',
+            type: 'gold',
+            goal: { amount: 0 },
+            totals: { goldSpend: 0 },
+            steps: [{ done: true, details: { legs: [{ rate: stack, gold: 60_000_000 }] } }],
+        });
+
+        expect(ledger.view(context({ goldRates: () => [stack] })).rateClaims()).toEqual([]);
+    });
+
+    test('coins are claimed up to what is there, never past it', () => {
+        const ledger = createResourceLedger(100);
+        ledger.record({ title: 'Greedy', type: 'house', goal: {}, totals: { goldSpend: 400 }, steps: [] });
+
+        expect(ledger.view(context()).gold).toBe(0);
+        expect(ledger.view(context()).goldClaims()).toEqual([{ title: 'Greedy', gold: 100 }]);
     });
 });
 

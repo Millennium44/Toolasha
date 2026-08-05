@@ -30,6 +30,9 @@ import { parseItemCount } from '../../utils/number-parser.js';
 import { MARKET_TAX } from '../../utils/profit-constants.js';
 import marketAPI from '../../api/marketplace.js';
 
+/** What a mirror plan combines its leaves with */
+const MIRROR_HRID = '/items/philosophers_mirror';
+
 const _costCache = new Map();
 const _chainTimeCache = new Map();
 
@@ -102,12 +105,16 @@ export function calculateEnhancementPath(itemHrid, currentEnhancementLevel, conf
     const targetCosts = new Array(currentEnhancementLevel + 1);
     const targetTimes = new Array(currentEnhancementLevel + 1);
     const targetAttempts = new Array(currentEnhancementLevel + 1);
+    // Kept alongside the attempts because a mirror plan's protection bill is the sum over the
+    // levels it actually builds, and there is nowhere else that number survives
+    const targetProtections = new Array(currentEnhancementLevel + 1);
     targetCosts[0] = toolashaConfig.isFeatureEnabled('enhanceSim_baseItemCraftingCost')
         ? Math.min(getProductionCost(itemHrid) || Infinity, getItemPrices(itemHrid, 0)?.ask || Infinity) ||
           getRealisticBaseItemPrice(itemHrid)
         : getRealisticBaseItemPrice(itemHrid); // Level 0: base item
     targetTimes[0] = 0; // Level 0: no time needed
     targetAttempts[0] = 0; // Level 0: no attempts needed
+    targetProtections[0] = 0; // Level 0: nothing to protect
 
     for (let level = 1; level <= currentEnhancementLevel; level++) {
         const resultsForLevel = allResults[level - 1];
@@ -120,6 +127,7 @@ export function calculateEnhancementPath(itemHrid, currentEnhancementLevel, conf
         targetCosts[level] = minResult.totalCost;
         targetTimes[level] = minResult.totalTime;
         targetAttempts[level] = minResult.expectedAttempts;
+        targetProtections[level] = minResult.protectionCount || 0;
     }
 
     // Snapshot the pre-mirror numbers before the mirror pass rewrites targetCosts in place.
@@ -128,10 +136,11 @@ export function calculateEnhancementPath(itemHrid, currentEnhancementLevel, conf
     const traditionalCosts = [...targetCosts];
     const traditionalTimes = [...targetTimes];
     const traditionalAttempts = [...targetAttempts];
+    const traditionalProtections = [...targetProtections];
 
     // Step 3: Apply Philosopher's Mirror optimization (single pass, in-place)
     // Like Enhancelator lines 456-465
-    const mirrorPrice = getRealisticBaseItemPrice('/items/philosophers_mirror');
+    const mirrorPrice = getRealisticBaseItemPrice(MIRROR_HRID);
     const usedMirror = new Array(currentEnhancementLevel + 1).fill(false);
 
     if (mirrorPrice > 0) {
@@ -175,6 +184,7 @@ export function calculateEnhancementPath(itemHrid, currentEnhancementLevel, conf
             traditionalCosts,
             traditionalTimes,
             traditionalAttempts,
+            traditionalProtections,
             targetCosts,
             optimalTraditional,
             mirrorPrice
@@ -201,6 +211,12 @@ export function calculateEnhancementPath(itemHrid, currentEnhancementLevel, conf
             totalCost: optimalTraditional.totalCost,
             usedMirror: false,
             mirrorStartLevel: null,
+            materialBill: buildMaterialBill({
+                materials: optimalTraditional.materialBreakdown,
+                protectionItemHrid: optimalTraditional.protectionItemHrid,
+                protectionCount: optimalTraditional.protectionCount,
+                protectionUnitPrice: optimalTraditional.protectionAskPrice,
+            }),
         };
     }
 
@@ -343,6 +359,104 @@ function expandMirrorPlan(targetLevel, usedMirror) {
 }
 
 /**
+ * What a chosen path expects to consume, item by item.
+ *
+ * The path optimiser has always returned totals — so many coins in materials —
+ * which is enough to compare two strategies and not enough to go and buy them.
+ * This is the same arithmetic said as a list, so anything holding a plan can put
+ * it on the marketplace.
+ *
+ * **Every count is an expectation, not a bill.** Enhancing is a Markov chain:
+ * the attempt counts these quantities are multiplied out from are the *expected*
+ * number of attempts along the path, and a real run will take more or fewer.
+ * Buying exactly this list is buying the mean, which is the right order of
+ * magnitude and the wrong number to be surprised by.
+ *
+ * @param {Object} parts - The pieces of a strategy
+ * @param {Array<Object>} [parts.materials] - `materialBreakdown` rows, already multiplied by attempts
+ * @param {number} [parts.materialMultiplier=1] - Scales the rows, for a plan that runs the
+ *   same per-attempt bill a different number of times (a mirror plan's leaves)
+ * @param {string} [parts.protectionItemHrid] - What the plan protects with
+ * @param {number} [parts.protectionCount=0] - Expected protections consumed
+ * @param {number} [parts.protectionUnitPrice=0] - Price of one
+ * @param {number} [parts.mirrorCount=0] - Philosopher's Mirrors the plan combines
+ * @param {number} [parts.mirrorPrice=0] - Price of one
+ * @param {string} [parts.baseItemHrid] - Base item, for a plan that consumes more than the one
+ *   copy its owner is assumed to be holding
+ * @param {number} [parts.baseCount=0] - How many base copies the plan consumes
+ * @param {number} [parts.baseUnitPrice=0] - Price of one
+ * @returns {Array<{itemHrid: string, name: string, count: number, unitPrice: number,
+ *   totalCost: number, kind: string}>} The bill, materials first; `kind` is one of
+ *   `material`, `protection`, `mirror`, `base`
+ * @private
+ */
+function buildMaterialBill({
+    materials = [],
+    materialMultiplier = 1,
+    protectionItemHrid = null,
+    protectionCount = 0,
+    protectionUnitPrice = 0,
+    mirrorCount = 0,
+    mirrorPrice = 0,
+    baseItemHrid = null,
+    baseCount = 0,
+    baseUnitPrice = 0,
+} = {}) {
+    const gameData = dataManager.getInitClientData();
+    const nameOf = (hrid) => gameData?.itemDetailMap?.[hrid]?.name || hrid;
+
+    const bill = [];
+
+    for (const material of materials || []) {
+        const count = (material.totalQuantity || 0) * materialMultiplier;
+        if (!(count > 0)) continue;
+        bill.push({
+            itemHrid: material.itemHrid,
+            name: material.name || nameOf(material.itemHrid),
+            count,
+            unitPrice: material.unitPrice || 0,
+            totalCost: (material.unitPrice || 0) * count,
+            kind: 'material',
+        });
+    }
+
+    if (protectionItemHrid && protectionCount > 0) {
+        bill.push({
+            itemHrid: protectionItemHrid,
+            name: nameOf(protectionItemHrid),
+            count: protectionCount,
+            unitPrice: protectionUnitPrice,
+            totalCost: protectionUnitPrice * protectionCount,
+            kind: 'protection',
+        });
+    }
+
+    if (mirrorCount > 0) {
+        bill.push({
+            itemHrid: MIRROR_HRID,
+            name: nameOf(MIRROR_HRID),
+            count: mirrorCount,
+            unitPrice: mirrorPrice,
+            totalCost: mirrorPrice * mirrorCount,
+            kind: 'mirror',
+        });
+    }
+
+    if (baseItemHrid && baseCount > 0) {
+        bill.push({
+            itemHrid: baseItemHrid,
+            name: nameOf(baseItemHrid),
+            count: baseCount,
+            unitPrice: baseUnitPrice,
+            totalCost: baseUnitPrice * baseCount,
+            kind: 'base',
+        });
+    }
+
+    return bill;
+}
+
+/**
  * Build mirror-optimized result from an expanded plan
  * @param {string} itemHrid - Item being enhanced
  * @param {number} targetLevel - Target enhancement level
@@ -350,6 +464,7 @@ function expandMirrorPlan(targetLevel, usedMirror) {
  * @param {number[]} traditionalCosts - Pre-mirror cost per level
  * @param {number[]} traditionalTimes - Pre-mirror time per level
  * @param {number[]} traditionalAttempts - Pre-mirror attempts per level
+ * @param {number[]} traditionalProtections - Pre-mirror protections consumed per level
  * @param {number[]} targetCosts - Post-mirror cost per level
  * @param {Object} optimalTraditional - Best non-mirror strategy for the target level
  * @param {number} mirrorPrice - Price of one Philosopher's Mirror
@@ -362,6 +477,7 @@ function buildMirrorOptimizedResult(
     traditionalCosts,
     traditionalTimes,
     traditionalAttempts,
+    traditionalProtections,
     targetCosts,
     optimalTraditional,
     mirrorPrice
@@ -382,6 +498,19 @@ function buildMirrorOptimizedResult(
     // Mirror combinations are instant, so only the leaves cost time and attempts
     const totalTime = leaves.reduce((sum, { level, quantity }) => sum + quantity * traditionalTimes[level], 0);
     const totalAttempts = leaves.reduce((sum, { level, quantity }) => sum + quantity * traditionalAttempts[level], 0);
+    const totalProtections = leaves.reduce(
+        (sum, { level, quantity }) => sum + quantity * (traditionalProtections[level] || 0),
+        0
+    );
+
+    // Every leaf starts from its own base copy — a mirror plan for +10 buys several items and
+    // combines them, which is the fact a totals-only answer hides and a shopping list cannot
+    const totalBaseItems = leaves.reduce((sum, { quantity }) => sum + quantity, 0);
+
+    // The per-attempt material bill is the same at every level, so the target-level strategy's
+    // breakdown (which is already multiplied by *its* attempts) scales to the plan's attempts
+    const materialMultiplier =
+        optimalTraditional.expectedAttempts > 0 ? totalAttempts / optimalTraditional.expectedAttempts : 0;
 
     // For mirror phase: ONLY consumed items + mirrors
     // The consumed item costs from targetCosts already include base/materials/protection
@@ -406,6 +535,19 @@ function buildMirrorOptimizedResult(
         consumedItems: consumedItems,
         mirrorCount: mirrorCount,
         consumedItemHrid: itemHrid,
+        materialBill: buildMaterialBill({
+            materials: optimalTraditional.materialBreakdown,
+            materialMultiplier,
+            protectionItemHrid: optimalTraditional.protectionItemHrid || getCheapestProtectionPrice(itemHrid)?.itemHrid,
+            protectionCount: totalProtections,
+            protectionUnitPrice:
+                optimalTraditional.protectionAskPrice || getCheapestProtectionPrice(itemHrid)?.price || 0,
+            mirrorCount,
+            mirrorPrice,
+            baseItemHrid: itemHrid,
+            baseCount: totalBaseItems,
+            baseUnitPrice: traditionalCosts[0],
+        }),
     };
 }
 

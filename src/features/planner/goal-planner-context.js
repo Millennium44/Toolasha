@@ -517,6 +517,7 @@ function enhancementRun({ itemHrid, targetLevel, startLevel = 0 }) {
             protectionCost: strategy.protectionCost,
             protectionCount: strategy.protectionCount,
             totalCost: strategy.totalCost,
+            materialBill: strategy.materialBill || [],
             fromLevel: 0,
         };
     }
@@ -558,8 +559,47 @@ function enhancementRun({ itemHrid, targetLevel, startLevel = 0 }) {
         // a run that starts from a copy already held pays for no base at all
         baseCost: 0,
         totalCost: materialCost + protectionCost,
+        materialBill: rescaleMaterialBill(strategy.materialBill, {
+            attempts: run.attempts,
+            fromAttempts: strategy.expectedAttempts,
+            protectionCount: run.protectionCount,
+            fromProtectionCount: strategy.protectionCount,
+        }),
         fromLevel: startLevel,
     };
+}
+
+/**
+ * The optimiser's bill, restated for a run that starts part of the way up.
+ *
+ * Same reasoning as the cost above it: the shorter chain is a different Markov
+ * run but the same per-attempt recipe, so the bill is scaled by the ratio of
+ * attempts rather than rebuilt — a partial run and a full one cannot then
+ * disagree about what an attempt consumes.
+ *
+ * Base and mirror lines are dropped. A character already holding a partly
+ * enhanced copy is not buying it again, and a start above +0 never takes the
+ * mirror branch.
+ *
+ * @param {Array<Object>} bill - `materialBill` from the optimiser's strategy
+ * @param {Object} ratios - `{attempts, fromAttempts, protectionCount, fromProtectionCount}`
+ * @returns {Array<Object>} The rescaled bill
+ */
+function rescaleMaterialBill(bill, { attempts, fromAttempts, protectionCount, fromProtectionCount }) {
+    if (!Array.isArray(bill)) return [];
+
+    const materialRatio = fromAttempts > 0 ? attempts / fromAttempts : 0;
+    const protectionRatio = fromProtectionCount > 0 ? protectionCount / fromProtectionCount : 0;
+
+    const rescaled = [];
+    for (const line of bill) {
+        if (line.kind === 'base' || line.kind === 'mirror') continue;
+        const ratio = line.kind === 'protection' ? protectionRatio : materialRatio;
+        const count = (line.count || 0) * ratio;
+        if (!(count > 0)) continue;
+        rescaled.push({ ...line, count, totalCost: (line.unitPrice || 0) * count });
+    }
+    return rescaled;
 }
 
 /**
