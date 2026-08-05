@@ -18,6 +18,7 @@ import {
     findTrialClockMs,
     findTrialsRoot,
     inFloatingDialog,
+    isPlausibleReading,
     isStatLabel,
     isTrialsSetupTab,
     onTrialTab,
@@ -36,6 +37,7 @@ import {
     readTrialTiles,
     textLines,
 } from './guild-trials-scrape.js';
+import { NOTICE_BOARD_NAME } from './guild-notice-board.fixture.js';
 
 /** An hour, which is how long a trial runs */
 const HOUR_MS = 60 * 60 * 1000;
@@ -254,6 +256,42 @@ describe('readTrialTiles', () => {
 
         const tiles = readTrialTiles(document.querySelector('[class*="GuildPanel_guildPanel"]'));
         expect(tiles.map((tile) => tile.name)).toEqual(['Trial Milking']);
+    });
+});
+
+describe('a guild notice board is not a trial', () => {
+    // From a live 106-member guild: the whole notice — braille art, a welcome,
+    // three Discord links, the kick rules — became a tile, because two Discord
+    // channel ids in it have exactly the shape of a progress bar. It was then
+    // sampled every five seconds and used to start the recorder
+    const CHANNEL_LINK = 'https://discord.com/channels/1309080597314011148/1525897111936438314';
+
+    test('two Discord channel ids are not a progress bar', () => {
+        expect(parseBarReadings(CHANNEL_LINK)).toEqual([]);
+        expect(isPlausibleReading(1_309_080_597_314_011_148, 1_525_897_111_936_438_314)).toBe(false);
+    });
+
+    test('a real pool and a real boss still read', () => {
+        expect(parseBarReadings('20,500 / 57,120')).toEqual([{ current: 20_500, max: 57_120 }]);
+        expect(parseBarReadings('4.2M / 8.4M')).toEqual([{ current: 4_200_000, max: 8_400_000 }]);
+        expect(isPlausibleReading(490_871, 721_000)).toBe(true);
+        // A bar that has not been populated is still not a full one
+        expect(isPlausibleReading(0, 0)).toBe(false);
+    });
+
+    test('the notice yields no cards, however trial-shaped its prose', () => {
+        document.body.innerHTML = '';
+        const root = document.createElement('div');
+        root.className = 'GuildPanel_trialsContent__a';
+        const tile = document.createElement('div');
+        tile.className = 'GuildPanel_tile__c';
+        tile.innerHTML =
+            `<div class="GuildPanel_tileName__d">${NOTICE_BOARD_NAME.replace(/</g, '')}</div>` +
+            `<div class="ProgressBar_text__f">${CHANNEL_LINK}</div>`;
+        root.appendChild(tile);
+        document.body.appendChild(root);
+
+        expect(readTrialTiles(root)).toEqual([]);
     });
 });
 

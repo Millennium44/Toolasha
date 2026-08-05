@@ -180,6 +180,8 @@ const {
 } = await import('./guild-trials.js');
 const trialsFeature = (await import('./guild-trials.js')).default;
 
+const { NOTICE_BOARD_NAME } = await import('./guild-notice-board.fixture.js');
+
 const now = Date.parse('2026-08-04T12:00:00Z');
 
 /**
@@ -1756,6 +1758,34 @@ describe('the panel, end to end', () => {
         expect(text()).not.toContain('tier not seen yet');
     });
 
+    test('a guild notice board makes no tile, no stats and no recording', async () => {
+        // The whole failure, end to end. On a live 106-member guild the notice
+        // became a tile: two Discord channel ids in it read as a progress bar,
+        // the Overview tab's guild statistics were attached to it as the
+        // player's own action stats, and it was live enough to start the
+        // recorder — that session reads `startedBy: "tab-reading"`
+        document.body.innerHTML = '';
+        const root = document.createElement('div');
+        root.className = 'GuildPanel_trialsContent__a';
+        const tile = document.createElement('div');
+        tile.className = 'GuildPanel_tile__c';
+        tile.innerHTML =
+            `<div class="GuildPanel_tileName__d">${NOTICE_BOARD_NAME.replace(/</g, '')}</div>` +
+            '<div class="ProgressBar_text__f">' +
+            'https://discord.com/channels/1309080597314011148/1525897111936438314</div>' +
+            '<div>Guild Level</div><div>127</div>' +
+            '<div>Guild Members</div><div>106</div>';
+        root.appendChild(tile);
+        document.body.appendChild(root);
+        fire(root);
+
+        expect(Object.keys(guildTrials.record.tiles)).toEqual([]);
+        expect(game.recorder.activity).toEqual([]);
+        expect(game.recorder.recording).toBe(false);
+        // And no block was drawn over somebody's notice board
+        expect(document.querySelectorAll('.mwi-trial-info')).toHaveLength(0);
+    });
+
     test('a card wearing a Completed badge shows results, whatever the header says', async () => {
         // Reported: the header read "Combat Trial - In Progress" while the
         // skilling cards below it were decorated "Completed" — and the Foraging
@@ -2994,6 +3024,25 @@ describe('the payout block, audited', () => {
 
         expect(text()).toContain('neither the running total');
         expect(text()).toContain('needs checking');
+    });
+
+    test('a card banked across a Hall upgrade says so, rather than blaming the ladder', () => {
+        // MilkMaxxing's own T10 Milking card. The guild levelled its Builder's
+        // Hall 5 → 6 during the skilling hour, and points bank live: 500 of base
+        // at +10% and 600 at +12% is 1,222 exactly. Today's +12% alone predicts
+        // 1,232, so the card divides cleanly by neither bonus
+        game.buildingLevels = { '/guild_buildings/builders_hall': 6, '/guild_buildings/treasury': 5 };
+        buildTrialsTab({ name: 'Milking', level: 190, points: 1222, signups: '12/106' });
+        fire();
+
+        expect(text()).toContain('consistent with a Builder’s Hall upgrade during the trial');
+        expect(text()).toContain('Points bank live');
+        expect(text()).toContain('used exactly as stated');
+        // And it is not the warning about a figure nothing can explain
+        expect(text()).not.toContain('neither the running total');
+        expect(text()).not.toContain('needs checking');
+        // The card is what the guild is paid, unchanged
+        expect(text()).toContain('Guild Points banked1,222');
     });
 
     test('with no building level anywhere, the bonus is read back out of the cards', () => {

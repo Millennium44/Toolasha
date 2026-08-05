@@ -40,7 +40,14 @@
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
 import config from '../../core/config.js';
-import { BUILDING_BONUS_PER_LEVEL, GUILD_BUILDING_MAX_LEVEL, trialWeekStart } from './guild-trials-math.js';
+import {
+    BUILDING_BONUS_PER_LEVEL,
+    GUILD_BUILDING_MAX_LEVEL,
+    isTrialName,
+    MAX_TRIAL_NAME_CHARS,
+    trialWeekStart,
+} from './guild-trials-math.js';
+import { isPlausibleReading } from './guild-trials-scrape.js';
 
 /** Object store the records live in — shared with the guild XP history */
 const STORE_NAME = 'guildHistory';
@@ -401,13 +408,23 @@ export async function loadTrialRecord(guildName, now = Date.now(), characterId =
             return fresh();
         }
 
-        return {
+        // Self-heal on the way in. What is already stored was written by an
+        // older build with a looser card filter, and a filter fixed today does
+        // nothing about a notice board that is already on disk being sampled,
+        // exported and paid out every week from now on
+        const cleaned = purgeJunkTiles({
             weekStart: record.weekStart,
             tiles: record.tiles || {},
             history: Array.isArray(record.history) ? record.history : [],
             guildId: record.guildId ?? guildId,
             guildName: record.guildName ?? guildName,
-        };
+        });
+
+        if (cleaned.purged.length) {
+            console.warn('[GuildTrialsStore] Dropping stored tiles that are not trials:', cleaned.purged.join(', '));
+            await saveTrialRecord(guildName, cleaned.record, characterId, { guildId });
+        }
+        return cleaned.record;
     } catch (error) {
         console.error('[GuildTrialsStore] Failed to load trial samples:', error);
         return fresh();
@@ -432,6 +449,84 @@ export async function purgeLegacyTrialRecord() {
         console.error('[GuildTrialsStore] Failed to purge the legacy trial record:', error);
         return false;
     }
+}
+
+/**
+ * How a stored tile is shown not to be a trial.
+ *
+ * The rules the scrape now applies at read time, applied again to what is
+ * already written down. A guild's **notice board** became a tile on a live
+ * client — key
+ * `skilling::[braille art]\nWelcome to Milkmaxxing!\n\nJOIN DISCORD: …`, 987
+ * characters of it — because two Discord channel ids in the text have exactly
+ * the shape of a progress bar:
+ *
+ * ```
+ * https://discord.com/channels/1309080597314011148/1525897111936438314
+ * ```
+ *
+ * It was then sampled every five seconds, the Overview tab's guild statistics
+ * were attached to it as the player's own action stats, and it was live enough
+ * to start the recorder — the session in that export reads `startedBy:
+ * "tab-reading"`. None of that is fixed by a filter that only runs on new cards.
+ *
+ * @param {Object} tile - A stored tile
+ * @param {string} key - The key it is filed under
+ * @returns {boolean} True when it must not be kept
+ */
+export function isJunkTile(tile, key = '') {
+    const name = String(tile?.name ?? '');
+    if (!isTrialName(name)) return true;
+    // The key is derived from the name, so a key the name would not produce is a
+    // record written before the name was checked at all
+    if (/[\r\n]/.test(String(key)) || String(key).length > MAX_TRIAL_NAME_CHARS + 16) return true;
+
+    return (tile?.samples || []).some((sample) =>
+        (sample?.readings || []).some((reading) => !isPlausibleReading(reading?.current, reading?.max))
+    );
+}
+
+/**
+ * Drop stored tiles that are not trials, and say which went.
+ *
+ * The same one-time, self-healing shape the monster-loadout purge uses: the
+ * record comes back untouched — the same object — when there is nothing to
+ * purge, so a caller can tell whether a write is needed.
+ *
+ * `history` is cleaned too. An archived cycle carrying a notice board is an
+ * export full of it and a payout computed from it, a week after the fact.
+ *
+ * @param {Object|null} record - A stored record
+ * @returns {{record: Object|null, purged: string[]}} The clean record and what left
+ */
+export function purgeJunkTiles(record) {
+    if (!record || typeof record !== 'object') return { record, purged: [] };
+
+    const purged = [];
+    const clean = (tiles) => {
+        const kept = {};
+        for (const [key, tile] of Object.entries(tiles || {})) {
+            if (isJunkTile(tile, key)) {
+                // One short line of it, so a log line stays a log line
+                purged.push(
+                    `${String(tile?.name ?? key)
+                        .slice(0, 40)
+                        .replace(/\s+/g, ' ')}…`
+                );
+                continue;
+            }
+            kept[key] = tile;
+        }
+        return kept;
+    };
+
+    const tiles = clean(record.tiles);
+    const history = Array.isArray(record.history)
+        ? record.history.map((cycle) => (cycle?.tiles ? { ...cycle, tiles: clean(cycle.tiles) } : cycle))
+        : record.history;
+
+    if (!purged.length) return { record, purged };
+    return { record: { ...record, tiles, history }, purged };
 }
 
 /**

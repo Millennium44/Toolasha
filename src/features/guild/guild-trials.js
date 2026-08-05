@@ -2149,6 +2149,27 @@ class GuildTrials {
         // — the ladder's base figure with the Builders Hall bonus already on it.
         // With that understood the two agree exactly, and a disagreement left
         // over is worth reporting again.
+        // Not a mismatch at all: a total banked across a Builder's Hall upgrade.
+        // Points bank live, tier by tier, at the bonus in force when each tier
+        // clears — so a guild that levels its Hall mid-trial has a card that is a
+        // *mixture* of two bonuses and divides cleanly by neither. Confirmed by
+        // the guild it happened to; see `MAX_MID_TRIAL_UPGRADE_LEVELS`
+        const upgraded = trials.find((trial) => trial.points?.interpretation === 'mid-trial-upgrade');
+        if (upgraded?.points?.quoted) {
+            const { tier, statedPoints } = upgraded.points.quoted;
+            const derived = upgraded.points.ladder;
+            rows.push(
+                `<div style="color:${DIM}; margin-top:4px;">` +
+                    `${upgraded.name} T${tier} states ${formatWithSeparator(statedPoints)} pts, which is between ` +
+                    `the ladder at this guild’s current +${Math.round((buildersHallBonus || 0) * 100)}% and at a ` +
+                    'level or two below it — consistent with a Builder’s Hall upgrade during the trial. Points ' +
+                    'bank live, so each tier is paid at the bonus in effect when it cleared and the total is a ' +
+                    `mixture of the two. The card is used exactly as stated${
+                        Number.isFinite(derived) ? `; the ladder’s own base is ${formatWithSeparator(derived)}` : ''
+                    }.</div>`
+            );
+        }
+
         const disagreement = trials.find((trial) => trial.points?.interpretation === 'disagrees');
         if (disagreement?.points?.quoted) {
             const { tier, statedPoints } = disagreement.points.quoted;

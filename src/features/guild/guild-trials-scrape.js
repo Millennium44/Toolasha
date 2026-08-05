@@ -116,13 +116,43 @@ export function parseBarReadings(text) {
     while (match) {
         const current = parseAmount(match[1]);
         const max = parseAmount(match[2]);
-        // A max of zero is a bar that has not been populated, not a full one
-        if (Number.isFinite(current) && Number.isFinite(max) && max > 0) {
-            readings.push({ current, max });
-        }
+        if (isPlausibleReading(current, max)) readings.push({ current, max });
         match = pattern.exec(text);
     }
     return readings;
+}
+
+/**
+ * The largest pool or health bar a trial can have.
+ *
+ * The biggest real figure on the ladder is the top tier's boss health, which is
+ * a few million; a hundred million is two orders of magnitude of headroom and
+ * still refuses the thing this exists for.
+ *
+ * A guild notice board carrying `https://discord.com/channels/1309080597314011148/
+ * 1525897111936438314` has exactly the shape of a progress bar, and those two
+ * nineteen-digit channel ids were recorded as a trial's pool — then sampled
+ * every five seconds, and used to arm the recorder. Numbers that large are not
+ * a bar whatever else they are.
+ */
+export const MAX_PLAUSIBLE_READING = 1e8;
+
+/**
+ * Whether a `current / max` pair can be a progress bar at all.
+ *
+ * @param {number} current - The left-hand figure
+ * @param {number} max - The right-hand figure
+ * @returns {boolean} True when it is worth recording
+ */
+export function isPlausibleReading(current, max) {
+    if (!Number.isFinite(current) || !Number.isFinite(max)) return false;
+    // A max of zero is a bar that has not been populated, not a full one
+    if (max <= 0 || current < 0) return false;
+    if (max > MAX_PLAUSIBLE_READING || current > MAX_PLAUSIBLE_READING) return false;
+
+    // Past nine or so significant digits a double stops being able to hold the
+    // figure exactly, and every such number this has ever seen was an id
+    return Number.isSafeInteger(Math.round(max)) && Math.round(max) < MAX_PLAUSIBLE_READING;
 }
 
 /** A line saying how many members have signed up, either way round */
