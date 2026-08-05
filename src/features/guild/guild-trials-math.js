@@ -143,6 +143,34 @@ export const FIRST_TIER_POINTS = { skilling: 200, combat: 400 };
 /** Base points for each tier after the first, by trial type */
 export const EXTRA_TIER_POINTS = { skilling: 100, combat: 200 };
 
+/**
+ * What one level of a payout building is worth, as a fraction.
+ *
+ * Confirmed from the in-game upgrade popups, both of them, on a guild whose
+ * levels are known: the Builder's Hall at Lv.10 reads "Level 10 → Level 11,
+ * Guild Points: +20% → +22%", and the Treasury at Lv.5 reads "Level 5 → Level 6,
+ * Guild Token Rewards: +10% → +12%". Two percent per level, on both, and the
+ * bonus is `level × 0.02` rather than a step on top of a base.
+ *
+ * That closes the payout arithmetic end to end. Against four days of the guild's
+ * own chat announcements, `(stated points / (1 + 0.02 × hall)) / 2 × (1 + 0.02 ×
+ * treasury)` reproduces 990, 880, 1,375 and 1,320 tokens per eligible member
+ * exactly — the "extra ×1.1" that the numbers alone could not explain is the
+ * Treasury at Lv.5.
+ */
+export const BUILDING_BONUS_PER_LEVEL = 0.02;
+
+/**
+ * Highest level a guild building can reach, from the in-game "Lv. 10 / 20".
+ *
+ * A different ladder from the 21 trial tiers {@link TRIAL_MAX_TIER} counts, and
+ * the two must never be conflated.
+ */
+export const GUILD_BUILDING_MAX_LEVEL = 20;
+
+/** The largest bonus either payout building can grant */
+export const MAX_BUILDING_BONUS = GUILD_BUILDING_MAX_LEVEL * BUILDING_BONUS_PER_LEVEL;
+
 /** Share of total base points paid as tokens to every eligible member */
 export const ELIGIBLE_TOKEN_SHARE = 0.5;
 
@@ -191,13 +219,36 @@ export function tierMarginalPoints(type, tier) {
 }
 
 /**
- * What the game's own "600 pts" on a trial card is counting.
+ * How close two points figures have to be to be the same claim.
  *
- * The ladder above is derived from the in-game guide's wording, and the card
- * states a number outright. Where the two disagree the card is right — it is the
- * game talking about this trial rather than a rule reconstructed from prose — so
- * the point of this is to work out *which question* the card is answering before
- * anything is believed:
+ * Recovering a base figure from a bonused one is a division, and a bonus of
+ * 0.2 recovered from 840 gives 699.9999999999999 often enough to matter. A
+ * tenth of a point is far tighter than the hundred-point steps of the ladder.
+ */
+const POINTS_EPSILON = 0.1;
+
+/**
+ * What the game's own "840 pts" on a trial card is counting.
+ *
+ * Two questions, not one, and the second was missed for long enough to put a
+ * wrong warning on the screen.
+ *
+ * **Is it bonused?** Yes. Confirmed from a live panel: the cards read "840 pts"
+ * at skilling T6, "1,080 pts" at T8 and "480 pts" at combat T1, and the ladder
+ * derives 700, 900 and 400 — every one of them the ladder figure × 1.2, against
+ * a guild whose Builders Hall was granting +20%. The card states **Guild
+ * Points**, which the guide defines as `Base × (1 + Builders Hall bonus)`. So a
+ * card figure is divided back down to base before it is compared to anything,
+ * and everything downstream stays in base points, which is the one unit the
+ * payout arithmetic uses.
+ *
+ * Without a known Builders Hall bonus that division cannot be done, and guessing
+ * the 1.2 that happened to be true of one guild would silently corrupt every
+ * other guild's payout. The reading then comes back `interpretation: 'unbonused'`
+ * with `basePoints: null`, and the caller is expected to say the level is needed
+ * rather than to use the figure.
+ *
+ * **Which total is it?** Once in base points:
  *
  * - **Cumulative**: what the trial has been worth in total by the time this tier
  *   is cleared. Matches `trialBasePoints(type, tier)`.
@@ -205,60 +256,101 @@ export function tierMarginalPoints(type, tier) {
  *
  * At tier 1 the two are the same number, so the reading is reported as
  * `ambiguous` rather than pretending one of them was confirmed. A card that
- * matches neither is `disagrees`, which is the interesting outcome: it means the
- * ladder in this file is wrong somewhere and the caller should say so rather
- * than quietly average them.
+ * matches neither *after* the bonus is accounted for is `disagrees` — which is
+ * now a real finding rather than the everyday state it used to be.
  *
  * @param {Object} input - Inputs
  * @param {'skilling'|'combat'} input.type - Trial type
  * @param {number} input.tier - The tier the card is showing
- * @param {number} input.statedPoints - The card's own figure
- * @returns {{interpretation: string, ambiguous: boolean, statedPoints: number,
- *   ladderCumulative: number, ladderMarginal: number|null}|null} The reading, or null on unusable input
+ * @param {number} input.statedPoints - The card's own figure, as Guild Points
+ * @param {number|null} [input.buildersHallBonus] - Builders Hall bonus as a fraction, null when unknown
+ * @returns {{interpretation: string, ambiguous: boolean, statedPoints: number, basePoints: number|null,
+ *   bonusKnown: boolean, ladderCumulative: number, ladderMarginal: number|null}|null} The reading,
+ *   or null on unusable input
  */
-export function interpretCardPoints({ type, tier, statedPoints } = {}) {
+export function interpretCardPoints({ type, tier, statedPoints, buildersHallBonus = null } = {}) {
     if (!Number.isFinite(statedPoints) || !Number.isFinite(tier) || tier < 1) return null;
     if (FIRST_TIER_POINTS[type] === undefined) return null;
 
     const ladderCumulative = trialBasePoints(type, tier);
     const ladderMarginal = tierMarginalPoints(type, tier);
     const ambiguous = ladderCumulative === ladderMarginal;
+    const bonusKnown = Number.isFinite(buildersHallBonus) && buildersHallBonus > -1;
+
+    if (!bonusKnown) {
+        return {
+            interpretation: 'unbonused',
+            ambiguous,
+            statedPoints,
+            basePoints: null,
+            bonusKnown: false,
+            ladderCumulative,
+            ladderMarginal,
+        };
+    }
+
+    const basePoints = statedPoints / (1 + buildersHallBonus);
+    const same = (candidate) => Number.isFinite(candidate) && Math.abs(basePoints - candidate) <= POINTS_EPSILON;
 
     let interpretation = 'disagrees';
-    if (statedPoints === ladderCumulative) interpretation = 'cumulative';
-    else if (statedPoints === ladderMarginal) interpretation = 'marginal';
+    if (same(ladderCumulative)) interpretation = 'cumulative';
+    else if (same(ladderMarginal)) interpretation = 'marginal';
 
-    return { interpretation, ambiguous, statedPoints, ladderCumulative, ladderMarginal };
+    return {
+        interpretation,
+        ambiguous,
+        statedPoints,
+        basePoints,
+        bonusKnown: true,
+        ladderCumulative,
+        ladderMarginal,
+    };
 }
 
 /**
- * The base points a trial has actually banked, preferring the game's own figures.
+ * What a trial has banked, in Guild Points and in base points.
  *
- * `pointsByTier` is what the Trials tab said each tier was worth, collected as
- * the trial climbed. Given a reading of what those figures *mean*
- * ({@link interpretCardPoints}), the banked total is either one of them read off
- * directly (cumulative) or the banked ones added up (marginal), and where a tier
- * was never seen the ladder fills the gap — which is reported as `mixed` rather
- * than presented as the game's own number.
+ * ## The card is the answer, and it was being second-guessed
  *
- * A card that matches neither reading is still believed where it covers the tier
- * that was banked: it is the game stating what this trial is worth, and the
- * ladder is a rule reconstructed from prose. It is read as a running total,
- * which is the plainer meaning of a number on a card, and the disagreement is
- * handed back so the caller can say the ladder needs correcting rather than
- * hiding a figure it does not understand.
+ * Calibrated against four days of the guild's own chat announcements, which are
+ * the only ground truth this feature has ever had. On the day the trials were
+ * watched, the three cards read 840 (Milking), 1,080 (Alchemy) and 960 (Trial
+ * Chameleon), and the announcement read *"2880 Guild Points earned"* — the sum,
+ * exactly, and the same figure as the panel's own "Weekly Guild Points" header.
+ * The same identity holds on the other three days.
+ *
+ * Two things follow, and the second is what was wrong here:
+ *
+ * 1. A card's figure is **Guild Points, bonused**, not base points. 840 is
+ *    700 × 1.2 against a Builders Hall granting +20%, and 960 is 800 × 1.2. So
+ *    the base figure the token arithmetic needs is the card's divided by
+ *    `(1 + buildersHallBonus)`, and multiplying it *again* — which is what the
+ *    payout block did — inflates every downstream number by the bonus twice.
+ * 2. The figure covers the tier the card itself names, and is not to be looked
+ *    up under this script's own inference about how many tiers are banked. That
+ *    lookup missed by one tier on every trial, fell through to the ladder, and
+ *    is why the panel reported 2.4K against an announced 2,880.
+ *
+ * So the card's figure is taken as the trial's banked Guild Points whenever
+ * there is one. Where there is none the ladder is used, and where the Builders
+ * Hall bonus is unknown the base figure cannot be recovered at all — reported as
+ * `needsBuildersHall` rather than guessed at, because the 1.2 that is true of
+ * this guild is not true of any other.
  *
  * @param {Object} input - Inputs
  * @param {'skilling'|'combat'} input.type - Trial type
- * @param {number} input.bankedTiers - Tiers this trial has cleared
- * @param {Object<string|number, number>} [input.pointsByTier] - Tier → the card's stated points
- * @returns {{basePoints: number, source: 'ladder'|'game'|'mixed', interpretation: string|null,
- *   stated: number|null, ladder: number, quoted: {tier: number, statedPoints: number}|null}}
- *   What was banked and where the figure came from
+ * @param {number} input.bankedTiers - Tiers this trial has cleared, for the ladder fallback
+ * @param {Object<string|number, number>} [input.pointsByTier] - Tier → the card's stated Guild Points
+ * @param {number|null} [input.buildersHallBonus] - Builders Hall bonus as a fraction, null when unknown
+ * @returns {{basePoints: number, guildPoints: number|null, source: 'ladder'|'game'|'mixed',
+ *   interpretation: string|null, bonusKnown: boolean, needsBuildersHall: boolean, cardTier: number|null,
+ *   ladder: number, quoted: {tier: number, statedPoints: number}|null}} What was banked and where it came from
  */
-export function trialBankedBasePoints({ type, bankedTiers, pointsByTier = {} } = {}) {
+export function trialBankedBasePoints({ type, bankedTiers, pointsByTier = {}, buildersHallBonus = null } = {}) {
     const banked = Math.max(0, Math.floor(Number(bankedTiers) || 0));
     const ladder = trialBasePoints(type, banked);
+    const bonusKnown = Number.isFinite(buildersHallBonus) && buildersHallBonus > -1;
+    const scale = bonusKnown ? 1 + buildersHallBonus : null;
     const stated = (tier) => {
         const value = Number(pointsByTier?.[tier]);
         return Number.isFinite(value) ? value : null;
@@ -273,44 +365,115 @@ export function trialBankedBasePoints({ type, bankedTiers, pointsByTier = {} } =
         .sort((a, b) => b - a);
 
     const reading = quoted.length
-        ? interpretCardPoints({ type, tier: quoted[0], statedPoints: stated(quoted[0]) })
+        ? interpretCardPoints({ type, tier: quoted[0], statedPoints: stated(quoted[0]), buildersHallBonus })
         : null;
     const interpretation = reading?.interpretation ?? null;
     const quotedAt = reading ? { tier: quoted[0], statedPoints: reading.statedPoints } : null;
-    const nothing = { basePoints: ladder, source: 'ladder', interpretation, stated: null, ladder, quoted: quotedAt };
 
-    if (banked <= 0 || !reading) return nothing;
-
-    if (interpretation === 'cumulative' || interpretation === 'disagrees') {
-        const exact = stated(banked);
-        if (exact === null) return nothing;
-        return { basePoints: exact, source: 'game', interpretation, stated: exact, ladder, quoted: quotedAt };
-    }
-
-    // Marginal: add up what each banked tier was quoted at, falling back to the
-    // ladder for tiers whose card was never seen
-    let total = 0;
-    let sawGame = false;
-    let sawLadder = false;
-    for (let tier = 1; tier <= banked; tier += 1) {
-        const value = stated(tier);
-        if (value === null) {
-            total += tierMarginalPoints(type, tier) ?? 0;
-            sawLadder = true;
-        } else {
-            total += value;
-            sawGame = true;
-        }
-    }
-
-    return {
-        basePoints: total,
-        source: sawGame && sawLadder ? 'mixed' : sawGame ? 'game' : 'ladder',
+    const fromLadder = {
+        basePoints: ladder,
+        guildPoints: bonusKnown ? ladder * scale : null,
+        source: 'ladder',
         interpretation,
-        stated: sawGame ? total : null,
+        bonusKnown,
+        needsBuildersHall: Boolean(reading) && !bonusKnown,
+        cardTier: quotedAt?.tier ?? null,
         ladder,
         quoted: quotedAt,
     };
+
+    if (!reading) return fromLadder;
+    // A card figure that cannot be divided back down to base is still worth
+    // showing, but it cannot feed the token arithmetic
+    if (!bonusKnown) return { ...fromLadder, guildPoints: reading.statedPoints };
+
+    if (interpretation === 'marginal') {
+        // Each tier's own step, added up to the tier the cards have reached,
+        // with the ladder filling any tier whose card was never on screen
+        const top = Math.max(quotedAt.tier, banked);
+        let total = 0;
+        let sawGame = false;
+        let sawLadder = false;
+        for (let tier = 1; tier <= top; tier += 1) {
+            const value = stated(tier);
+            if (value === null) {
+                total += (tierMarginalPoints(type, tier) ?? 0) * scale;
+                sawLadder = true;
+            } else {
+                total += value;
+                sawGame = true;
+            }
+        }
+
+        return {
+            basePoints: total / scale,
+            guildPoints: total,
+            source: sawGame && sawLadder ? 'mixed' : sawGame ? 'game' : 'ladder',
+            interpretation,
+            bonusKnown,
+            needsBuildersHall: false,
+            cardTier: quotedAt.tier,
+            ladder,
+            quoted: quotedAt,
+        };
+    }
+
+    // Cumulative, or a figure the ladder cannot explain: either way it is the
+    // game stating what this trial has earned, and the announcements say the sum
+    // of exactly these figures is what the guild is paid
+    return {
+        basePoints: reading.basePoints,
+        guildPoints: reading.statedPoints,
+        source: 'game',
+        interpretation,
+        bonusKnown,
+        needsBuildersHall: false,
+        cardTier: quotedAt.tier,
+        ladder,
+        quoted: quotedAt,
+    };
+}
+
+/**
+ * The Builders Hall bonus, read back out of the cards themselves.
+ *
+ * A last resort, and a surprisingly good one. A card states Guild Points and the
+ * ladder states base points for the same tier, so their ratio *is* `1 + bonus` —
+ * and the three cards seen on one day give 840/700, 1,080/900 and 960/800, which
+ * are all exactly 1.2 across two trial types and three different tiers. That is
+ * the guild's own Builder's Hall at Lv.10, recovered without the Buildings tab
+ * ever being opened.
+ *
+ * It is deliberately hard to satisfy, because a wrong bonus here would corrupt
+ * every token figure downstream. Every card must agree, the ratio must be a
+ * whole number of 2% steps, and it must lie within the twenty levels a building
+ * has. Anything else returns null and the caller reports the level as unknown.
+ *
+ * @param {Array<{type: string, pointsByTier: Object}>} tiles - Trials with their stated points
+ * @returns {{bonus: number, level: number, ratio: number, cards: number}|null} The bonus, or null
+ */
+export function inferBuildersHallBonus(tiles) {
+    const ratios = [];
+    for (const tile of tiles || []) {
+        for (const [tier, points] of Object.entries(tile?.pointsByTier || {})) {
+            const ladder = trialBasePoints(tile?.type, Number(tier));
+            const stated = Number(points);
+            if (!(ladder > 0) || !Number.isFinite(stated) || stated <= 0) continue;
+            ratios.push(stated / ladder);
+        }
+    }
+    if (!ratios.length) return null;
+
+    const ratio = ratios[0];
+    if (ratios.some((candidate) => Math.abs(candidate - ratio) > 0.005)) return null;
+
+    const bonus = ratio - 1;
+    if (bonus < 0 || bonus > MAX_BUILDING_BONUS + 1e-9) return null;
+
+    const level = Math.round(bonus / BUILDING_BONUS_PER_LEVEL);
+    if (Math.abs(level * BUILDING_BONUS_PER_LEVEL - bonus) > 0.001) return null;
+
+    return { bonus: level * BUILDING_BONUS_PER_LEVEL, level, ratio, cards: ratios.length };
 }
 
 /**
@@ -346,13 +509,27 @@ export function eligibleMemberTokens(basePoints, treasuryBonus = 0) {
  * and the caller is expected to say so.
  *
  * `basePointsOverride` on a trial is the game's own figure for what it has
- * banked, from the Trials tab's "600 pts" rather than from the ladder above. It
- * wins where it is present, because the card is the game talking about this
- * trial and the ladder is a rule reconstructed from the guide's prose.
+ * banked, divided back down to base by {@link trialBankedBasePoints}. It wins
+ * where it is present, because the card is the game talking about this trial and
+ * the ladder is a rule reconstructed from the guide's prose.
+ *
+ * `guildPointsOverride` is the card's figure *as the card stated it*, and it is
+ * the one number here that is known to be exactly right: four days of the
+ * guild's chat announcements say the sum of the cards is the Guild Points
+ * earned. Carrying it through rather than recomputing `base × (1 + hall)` keeps
+ * the panel's total equal to the game's own to the digit, whatever rounding the
+ * game does.
+ *
+ * The token half of the arithmetic is unchanged and now has its own check:
+ * against those same four days, `0.5 × base × (1 + treasury)` reproduces the
+ * announced 990, 880, 1,375 and 1,320 tokens per eligible member exactly, with
+ * this guild's +20% Builders Hall and +10% Treasury. The apparent "×1.1 on top
+ * of half the base" is the Treasury bonus — it is already in the model, and
+ * nothing needed inventing to fit it.
  *
  * @param {Object} input - Inputs
- * @param {Array<{type: string, tiersCleared: number, name?: string, basePointsOverride?: number}>}
- *   input.trials - The week's trials
+ * @param {Array<{type: string, tiersCleared: number, name?: string, basePointsOverride?: number,
+ *   guildPointsOverride?: number}>} input.trials - The week's trials
  * @param {number|null} [input.buildersHallBonus] - Builders Hall bonus fraction, null when unknown
  * @param {number|null} [input.treasuryBonus] - Treasury bonus fraction, null when unknown
  * @returns {{basePoints: number, guildPoints: number, eligibleTokens: number, participantBonusTokens: number,
@@ -366,6 +543,7 @@ export function payoutProjection({ trials = [], buildersHallBonus = null, treasu
 
     const perTrial = trials.map((trial) => {
         const override = Number(trial?.basePointsOverride);
+        const statedGuildPoints = Number(trial?.guildPointsOverride);
         const base = Number.isFinite(override) ? override : trialBasePoints(trial?.type, trial?.tiersCleared);
         return {
             name: trial?.name ?? null,
@@ -373,7 +551,7 @@ export function payoutProjection({ trials = [], buildersHallBonus = null, treasu
             tiersCleared: Math.max(0, Math.floor(Number(trial?.tiersCleared) || 0)),
             basePoints: base,
             basePointsSource: Number.isFinite(override) ? 'game' : 'ladder',
-            guildPoints: guildPoints(base, hall),
+            guildPoints: Number.isFinite(statedGuildPoints) ? statedGuildPoints : guildPoints(base, hall),
         };
     });
 
@@ -383,7 +561,7 @@ export function payoutProjection({ trials = [], buildersHallBonus = null, treasu
 
     return {
         basePoints,
-        guildPoints: guildPoints(basePoints, hall),
+        guildPoints: perTrial.reduce((sum, trial) => sum + trial.guildPoints, 0),
         eligibleTokens,
         participantBonusTokens,
         participantTokens: eligibleTokens + participantBonusTokens,
@@ -592,6 +770,90 @@ export function etaMs(remaining, rate) {
     if (!Number.isFinite(remaining) || remaining < 0) return null;
     if (!Number.isFinite(rate) || rate <= 0) return null;
     return remaining / rate;
+}
+
+/**
+ * How much of a boss's health the party has taken off, per millisecond.
+ *
+ * Separate from {@link ratePerMs} because a combat trial's bar does not behave
+ * like a pool's. Confirmed from a live client: the In Progress combat card
+ * carries **two** bars, the boss's health and the boss's mana, and it is the
+ * first of them that damage is measured on — the second moves for reasons that
+ * have nothing to do with the party's DPS.
+ *
+ * The harder half is that a combat trial is a *ladder of bosses*, not one bar
+ * running down. The observed pair of readings straddles a tier clear:
+ *
+ * ```
+ * 23,031 / 618,000   ← tier 2's boss, nearly dead
+ * 506,273 / 669,500  ← tier 3's boss, already damaged (and 669,500 is the ladder step up from 618,000)
+ * ```
+ *
+ * Reading that as "health rose, so the party dealt no damage" is what a
+ * monotonic run does with it, and it is why a combat card could never produce a
+ * rate: the classifier looked for a bar that *falls*, and across a tier boundary
+ * neither of them does. Damage is therefore accumulated pair by pair:
+ *
+ * - **Within a tier** — same maximum, health fell: the difference.
+ * - **Across a boundary** — the maximum changed, or health rose: what was left
+ *   of the old boss (`before.current`) plus what has already come off the new
+ *   one (`after.max - after.current`).
+ *
+ * A boundary the readings straddle may have been *more than one* tier, and
+ * nothing in a pair of readings can say so on its own. Where a growth factor has
+ * been fitted the jump is checked against it; where it has not, or where the
+ * jump is too large for one step, `multiTier` is returned true and the caller is
+ * expected to caption the figure as a lower bound rather than quietly under-report
+ * a party's damage.
+ *
+ * @param {Array<{t: number, current: number, max: number}>} samples - Boss health readings, any order
+ * @param {Object} [options] - Options
+ * @param {number|null} [options.growthPerTier] - Fitted per-tier growth, for the single-step check
+ * @param {number} [options.windowMs] - Ignore readings older than this before the newest
+ * @returns {{rate: number|null, damage: number, spanMs: number, boundaries: number, multiTier: boolean,
+ *   samples: number}} The measurement
+ */
+export function combatDamageRate(samples, { growthPerTier = null, windowMs = TRIAL_ACTIVE_MS } = {}) {
+    const usable = (samples || [])
+        .filter((sample) => Number.isFinite(sample?.t) && Number.isFinite(sample?.current) && Number(sample?.max) > 0)
+        .sort((a, b) => a.t - b.t);
+
+    // A trial runs an hour, so a reading older than that belongs to a different
+    // trial and folding it in would average two events together
+    const newest = usable.length ? usable[usable.length - 1].t : 0;
+    const window = Number.isFinite(windowMs) ? usable.filter((sample) => newest - sample.t <= windowMs) : usable;
+
+    const nothing = { rate: null, damage: 0, spanMs: 0, boundaries: 0, multiTier: false, samples: window.length };
+    if (window.length < 2) return nothing;
+
+    let damage = 0;
+    let boundaries = 0;
+    let multiTier = false;
+
+    for (let index = 1; index < window.length; index += 1) {
+        const before = window[index - 1];
+        const after = window[index];
+        const cleared = after.max !== before.max || after.current > before.current;
+
+        if (!cleared) {
+            damage += before.current - after.current;
+            continue;
+        }
+
+        boundaries += 1;
+        damage += before.current + (after.max - after.current);
+
+        // One step up the ladder, or several? Only a fitted growth factor can
+        // answer that, and a boss *smaller* than the last one is not a step at all
+        const ratio = after.max / before.max;
+        const step = Number.isFinite(growthPerTier) && growthPerTier > 1 ? growthPerTier : null;
+        if (ratio < 1 || !step || ratio > Math.pow(step, 1.5)) multiTier = true;
+    }
+
+    const spanMs = window[window.length - 1].t - window[0].t;
+    if (spanMs <= 0 || damage <= 0) return { ...nothing, damage, spanMs, boundaries, multiTier };
+
+    return { rate: damage / spanMs, damage, spanMs, boundaries, multiTier, samples: window.length };
 }
 
 // ─── Pace ───────────────────────────────────────────────────────────────────

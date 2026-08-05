@@ -206,15 +206,22 @@ describe('analyseTrial', () => {
         expect(analysis.next.participantPenalty).toBeCloseTo(0.21, 12);
     });
 
-    test('a card whose two bars have not moved is not guessed at', () => {
+    test('the first bar of a combat card is the boss, before anything has moved', () => {
+        // This used to wait for one of the two bars to fall before deciding
+        // which was which, and a combat card's pair is health then mana — the
+        // second never falls for a reason the party controls, and across a tier
+        // clear neither of them falls at all. So a live trial's card was left
+        // permanently unclassified. Position is the confirmed fact here.
         const readings = [
             { current: 5, max: 10 },
             { current: 7, max: 20 },
         ];
         const analysis = analyseTrial(record({ samples: [{ t: now, readings }] }), { timeLeftMs: 60_000 });
 
+        // One sample is still not a rate
         expect(analysis.rate).toBeNull();
-        expect(analysis.remaining).toBeNull();
+        expect(analysis.remaining).toBe(5);
+        expect(analysis.total).toBe(10);
     });
 
     test('an empty record analyses to nothing rather than throwing', () => {
@@ -463,6 +470,45 @@ describe('the panel, end to end', () => {
         expect(text()).not.toContain('measuring');
     });
 
+    test('a combat card measures damage across a tier clear', () => {
+        // The recorded trial: the boss bar does not fall between these two
+        // readings, it jumps to a bigger boss. Nothing fell, so nothing was
+        // classified, so the card showed no DPS for the whole hour.
+        const root = buildTab([{ name: 'Trial Chameleon', level: 120, bar: '23,031 / 618,000' }]);
+        const bar = root.querySelector('[class*="ProgressBar_text"]');
+        fire(root);
+
+        bar.textContent = '506,273 / 669,500';
+        vi.setSystemTime(now + 414_667);
+        fire(root);
+
+        expect(text()).toContain('Party DPS');
+        expect(text()).toContain('449 dmg/s');
+        // The card's own level puts both readings at tier 3, so there is no
+        // second tier to fit a growth curve to and the boundary cannot be shown
+        // to be a single step — said outright rather than quietly under-counted
+        expect(document.body.innerHTML).toContain('lower bound');
+    });
+
+    test('the mana bar beside it is not mistaken for anything', () => {
+        const root = buildTab([{ name: 'Trial Chameleon', level: 120, bar: '600,000 / 618,000' }]);
+        const bar = root.querySelector('[class*="ProgressBar_text"]');
+        bar.textContent = '600,000 / 618,000';
+        const mana = document.createElement('div');
+        mana.className = 'ProgressBar_text__m';
+        mana.textContent = '582,560 / 600,000';
+        bar.parentElement.appendChild(mana);
+        fire(root);
+
+        bar.textContent = '500,000 / 618,000';
+        mana.textContent = '644,395 / 600,000';
+        vi.setSystemTime(now + 10_000);
+        fire(root);
+
+        // 100,000 off the boss in ten seconds, and not a number from the mana bar
+        expect(text()).toContain('10.0K dmg/s');
+    });
+
     test('four tiers banked at tier 5 reach the payout block', () => {
         const root = buildTab([{ name: 'Trial Chameleon', level: 140, bar: '618,000 / 618,000' }]);
         fire(root);
@@ -509,9 +555,10 @@ describe('the panel, end to end', () => {
     test('an unknown building bonus is captioned, not silently treated as zero', () => {
         fire(buildTab([{ name: 'Trial Chameleon', level: 140, bar: '618,000 / 618,000' }]));
 
-        expect(text()).toContain('Base figures');
-        expect(text()).toContain('Builders Hall');
+        expect(text()).toContain('level seen');
+        expect(text()).toContain('Builder’s Hall');
         expect(text()).toContain('Treasury');
+        expect(text()).toContain('each level adds 2%');
     });
 
     test('a resolvable bonus drops the caption', () => {
@@ -1003,6 +1050,32 @@ describe('renderTrialPlayers', () => {
         expect(renderTrialPlayers(null)).toEqual([]);
     });
 
+    test('the two ways of measuring party DPS are checked against each other', () => {
+        // The bar says one thing and the battle feed says another. They measure
+        // the same quantity by different routes, so a large gap means one of
+        // them is watching the wrong fight — worth a line rather than two
+        // numbers on screen that quietly differ.
+        const combat = analyseTrial(
+            record({
+                samples: [
+                    { t: now, readings: [{ current: 618_000, max: 618_000 }] },
+                    { t: now + 10_000, readings: [{ current: 518_000, max: 618_000 }] },
+                ],
+            }),
+            {}
+        );
+        expect(combat.rate * 1000).toBeCloseTo(10_000, 6);
+
+        const disagreeing = renderTrialBlock(combat, 0, { ...breakdown, partyDps: 1000 });
+        expect(disagreeing).toContain('Split disagrees');
+
+        const agreeing = renderTrialBlock(combat, 0, { ...breakdown, partyDps: 9500 });
+        expect(agreeing).not.toContain('Split disagrees');
+
+        // Nothing attributed is nothing to check against
+        expect(renderTrialBlock(combat, 0, { measured: false, reason: 'none' })).not.toContain('Split disagrees');
+    });
+
     test('a combat block carries the split and a skilling one does not', () => {
         const combat = analyseTrial(record({ samples: [{ t: now, readings: [{ current: 1, max: 2 }] }] }), {});
         expect(renderTrialBlock(combat, 0, breakdown)).toContain('Per player');
@@ -1019,23 +1092,25 @@ describe('the payout block, audited', () => {
     /**
      * The Trials tab, whose cards carry a tier, a points line and sign-ups and
      * no progress bar at all.
-     * @param {Object} card - `{name, level, points, signups}`
+     * @param {...Object} cards - Each `{name, level, points, signups}`
      * @returns {Element} The tab
      */
-    function buildTrialsTab(card) {
+    function buildTrialsTab(...cards) {
         document.body.innerHTML = '';
         const root = document.createElement('div');
         root.className = 'GuildPanel_trialsContent__a';
 
-        const tile = document.createElement('div');
-        tile.className = 'GuildPanel_tile__c';
-        tile.innerHTML =
-            `<div class="GuildPanel_tileName__d">${card.name}</div>` +
-            `<div class="GuildPanel_tileSummary__e">Lv.${card.level}</div>` +
-            `<div class="Card_points__g">${card.points} pts</div>` +
-            `<div class="Card_signups__h">${card.signups} signed up</div>` +
-            '<div class="Card_clock__i">20m 53s</div>';
-        root.appendChild(tile);
+        for (const card of cards) {
+            const tile = document.createElement('div');
+            tile.className = 'GuildPanel_tile__c';
+            tile.innerHTML =
+                `<div class="GuildPanel_tileName__d">${card.name}</div>` +
+                `<div class="GuildPanel_tileSummary__e">Lv.${card.level}</div>` +
+                `<div class="Card_points__g">${card.points} pts</div>` +
+                `<div class="Card_signups__h">${card.signups} signed up</div>` +
+                '<div class="Card_clock__i">20m 53s</div>';
+            root.appendChild(tile);
+        }
 
         document.body.appendChild(root);
         return root;
@@ -1084,29 +1159,60 @@ describe('the payout block, audited', () => {
         expect(document.body.innerHTML).toContain('Open the Trials tab');
     });
 
-    test('the game’s own points figure is preferred over the tier ladder', () => {
-        // A combat trial on tier 5 has banked four, and the ladder makes that
-        // 400 + 200×3 = 1,000. The tier-5 card quotes 1,200, which is the
-        // ladder's running total and so identifies the card as cumulative; the
-        // tier-4 card quotes 1,111, which the ladder does not agree with. The
-        // card is the game talking about this trial, so 1,111 is what is banked.
-        buildTrialsTab({ name: 'Trial Chameleon', level: 130, points: 1111, signups: '3/56' });
+    test('the cards’ own points are what the guild is paid', () => {
+        // The day this was calibrated on. The guild's chat announced "2880
+        // Guild Points earned" and the three cards read 840, 1,080 and 960 —
+        // the sum, exactly. The panel used to report 2.4K, because it looked
+        // each figure up under its own inference about how many tiers were
+        // banked, missed by one tier on every trial, and fell through to the
+        // ladder.
+        game.buildingLevels = { '/guild_buildings/builders_hall': 10, '/guild_buildings/treasury': 5 };
+
+        buildTrialsTab(
+            { name: 'Alchemy', level: 170, points: 1080, signups: '3/56' },
+            { name: 'Trial Chameleon', level: 120, points: 960, signups: '3/56' }
+        );
         fire();
 
-        buildTrialsTab({ name: 'Trial Chameleon', level: 140, points: 1200, signups: '3/56' });
-        vi.setSystemTime(now + 5000);
-        fire();
+        expect(guildTrials.record.tiles['skilling::alchemy'].pointsByTier).toEqual({ 8: 1080 });
+        expect(guildTrials.record.tiles['combat::trial chameleon'].pointsByTier).toEqual({ 3: 960 });
 
-        const tile = guildTrials.record.tiles['combat::trial chameleon'];
-        expect(tile.pointsByTier).toEqual({ 4: 1111, 5: 1200 });
+        // 1,080 + 960 = 2,040 Guild Points banked; base 1,700 at the Builder's
+        // Hall's +20%, and half of that at the Treasury's +10% is 935 tokens
         expect(text()).toContain('Guild Points banked');
-        expect(text()).toContain('1.1K');
+        expect(text()).toContain('2.0K');
+        expect(text()).toContain('Tokens, every eligible member935');
+        expect(text()).not.toContain('needs checking');
     });
 
-    test('a card whose points match neither reading is reported rather than averaged', () => {
+    test('a card the ladder cannot explain even after the bonus is reported', () => {
+        // 1,337 at combat T5 is 1,114 of base against a +20% Builder's Hall,
+        // and the ladder says 1,200 cumulative or 200 marginal. That is a real
+        // disagreement — unlike every card of every week, which is what the
+        // warning this replaces was firing on
+        game.buildingLevels = { '/guild_buildings/builders_hall': 10, '/guild_buildings/treasury': 5 };
         buildTrialsTab({ name: 'Trial Chameleon', level: 140, points: 1337, signups: '3/56' });
         fire();
 
-        expect(text()).toContain('matches neither');
+        expect(text()).toContain('neither the running total');
+        expect(text()).toContain('needs checking');
+    });
+
+    test('with no building level anywhere, the bonus is read back out of the cards', () => {
+        // No Buildings tab has been opened and no guild traffic has carried a
+        // level, but three cards state Guild Points for tiers whose base the
+        // ladder knows — and 840/700, 1,080/900 and 960/800 are all 1.2, which
+        // is the Builder's Hall at level 10 recovered from the cards themselves
+        game.buildingLevels = {};
+        buildTrialsTab(
+            { name: 'Milking', level: 150, points: 840, signups: '3/56' },
+            { name: 'Alchemy', level: 170, points: 1080, signups: '3/56' }
+        );
+        fire();
+
+        expect(text()).toContain('Builder’s Hall read as level 10');
+        expect(text()).toContain('+20%');
+        // The Treasury has no such shortcut, and the block says so
+        expect(text()).toContain('No Treasury level seen');
     });
 });

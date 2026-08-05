@@ -321,22 +321,24 @@ describe('textLines', () => {
 describe('classifyReadings', () => {
     const sample = (...pairs) => pairs.map(([current, max]) => ({ current, max }));
 
-    test('the reading that falls is the boss and the one that rises is the pool', () => {
+    test('a combat card is the boss’s health then its mana', () => {
+        // Confirmed from a live client. The second bar is the boss's mana — not
+        // a pool, and not something the party's damage moves
         const history = [
             sample([618_000, 618_000], [500_000, 600_000]),
             sample([400_000, 618_000], [540_000, 600_000]),
             sample([30_857, 618_000], [582_115, 600_000]),
         ];
-        expect(classifyReadings(history, 'combat')).toEqual({ bossIndex: 0, poolIndex: 1 });
+        expect(classifyReadings(history, 'combat')).toEqual({ bossIndex: 0, poolIndex: null });
     });
 
-    test('the same card with the columns swapped is read the same way', () => {
-        const history = [
-            sample([500_000, 600_000], [618_000, 618_000]),
-            sample([540_000, 600_000], [400_000, 618_000]),
-            sample([582_115, 600_000], [30_857, 618_000]),
-        ];
-        expect(classifyReadings(history, 'combat')).toEqual({ bossIndex: 1, poolIndex: 0 });
+    test('a combat card whose readings straddle a tier clear is still read', () => {
+        // The recorded trial, exactly: neither bar fell between the two
+        // readings, because the party finished tier 2's boss and is partway
+        // into tier 3's larger one. Deciding by movement gave up here and the
+        // card produced no rate for the whole hour.
+        const history = [sample([23_031, 618_000], [582_560, 600_000]), sample([506_273, 669_500], [644_395, 650_000])];
+        expect(classifyReadings(history, 'combat')).toEqual({ bossIndex: 0, poolIndex: null });
     });
 
     test('a single unmoved reading is called by the trial kind', () => {
@@ -344,9 +346,9 @@ describe('classifyReadings', () => {
         expect(classifyReadings([sample([100, 1000])], 'skilling')).toEqual({ bossIndex: null, poolIndex: 0 });
     });
 
-    test('two readings that have not moved are left unclassified rather than guessed', () => {
-        const history = [sample([1, 10], [2, 20]), sample([1, 10], [2, 20])];
-        expect(classifyReadings(history, 'combat')).toEqual({ bossIndex: null, poolIndex: null });
+    test('a skilling card is still read by which way its pool moves', () => {
+        const history = [sample([100, 1000]), sample([200, 1000])];
+        expect(classifyReadings(history, 'skilling')).toEqual({ bossIndex: null, poolIndex: 0 });
     });
 
     test('nothing to classify', () => {

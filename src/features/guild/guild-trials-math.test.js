@@ -18,6 +18,7 @@ import {
     TRIAL_MAX_LEVEL,
     TRIAL_MAX_TIER,
     TRIAL_START_LEVEL,
+    combatDamageRate,
     eligibleMemberTokens,
     estimateGrowthPerTier,
     etaMs,
@@ -31,6 +32,7 @@ import {
     projectTierTotal,
     ratePerMs,
     rescaleForParticipants,
+    inferBuildersHallBonus,
     interpretCardPoints,
     tierFromLevel,
     tierMarginalPoints,
@@ -431,6 +433,76 @@ describe('rates from samples', () => {
     });
 });
 
+describe('combatDamageRate', () => {
+    // A combat trial is a ladder of bosses. The bar does not run down once, it
+    // runs down repeatedly and jumps back up bigger, and a rate fitted to a
+    // monotonic run of samples gives up at the first jump — which is why a live
+    // combat card produced no DPS at all for the whole hour it was watched.
+    const at = (t, current, max) => ({ t, current, max });
+
+    test('within one tier it is the health that came off', () => {
+        const measured = combatDamageRate([at(0, 600_000, 618_000), at(10_000, 500_000, 618_000)]);
+        expect(measured.damage).toBe(100_000);
+        expect(measured.rate).toBeCloseTo(10, 6);
+        expect(measured.boundaries).toBe(0);
+        expect(measured.multiTier).toBe(false);
+    });
+
+    test('across a tier clear, the recorded trial to the digit', () => {
+        // Straight from `Toolasha.debug.exportTrialData()`: tier 2's boss with
+        // 23,031 left, then tier 3's boss — 669,500 max, which is the ladder's
+        // own step up from 618,000 — already down to 506,273. The party dealt
+        // the 23,031 that finished the first and the 163,227 off the second.
+        const measured = combatDamageRate(
+            [at(1_785_944_109_576, 23_031, 618_000), at(1_785_944_524_243, 506_273, 669_500)],
+            { growthPerTier: 669_500 / 618_000 }
+        );
+
+        expect(measured.boundaries).toBe(1);
+        expect(measured.damage).toBe(186_258);
+        expect(measured.multiTier).toBe(false);
+        // 186,258 over 414.667 s is a shade under 450 dmg/s
+        expect(measured.rate * 1000).toBeCloseTo(449.2, 1);
+    });
+
+    test('a jump too big for one step is a lower bound, and says so', () => {
+        const measured = combatDamageRate([at(0, 10_000, 618_000), at(10_000, 500_000, 900_000)], {
+            growthPerTier: 1.08,
+        });
+        expect(measured.boundaries).toBe(1);
+        expect(measured.multiTier).toBe(true);
+    });
+
+    test('with no fitted growth a boundary cannot be shown to be one tier', () => {
+        const measured = combatDamageRate([at(0, 10_000, 618_000), at(10_000, 500_000, 669_500)]);
+        expect(measured.multiTier).toBe(true);
+        expect(measured.damage).toBe(10_000 + 169_500);
+    });
+
+    test('readings older than the hour a trial runs for are left out', () => {
+        const hour = 60 * 60 * 1000;
+        const measured = combatDamageRate([
+            at(0, 618_000, 618_000),
+            at(hour + 60_000, 600_000, 618_000),
+            at(hour + 70_000, 500_000, 618_000),
+        ]);
+        expect(measured.samples).toBe(2);
+        expect(measured.damage).toBe(100_000);
+    });
+
+    test('one reading, or none, is not a rate', () => {
+        expect(combatDamageRate([at(0, 1, 2)]).rate).toBeNull();
+        expect(combatDamageRate([]).rate).toBeNull();
+        expect(combatDamageRate(null).rate).toBeNull();
+    });
+
+    test('a boss that only healed is no damage rather than negative damage', () => {
+        const measured = combatDamageRate([at(0, 100, 618_000), at(10_000, 100, 618_000)]);
+        expect(measured.rate).toBeNull();
+        expect(measured.damage).toBe(0);
+    });
+});
+
 describe('pace', () => {
     // Tiers cost 100, 200, 400, 800 … and the party does one unit a millisecond
     const totalForTier = (tier) => 100 * Math.pow(2, tier - 1);
@@ -573,30 +645,60 @@ describe('tierMarginalPoints', () => {
 });
 
 describe('interpretCardPoints', () => {
-    // The card is the game talking about this trial; the ladder is a rule
-    // reconstructed from the guide's prose. Working out which question the card
-    // is answering is what lets the two be compared at all.
-    test('a running total is recognised as one', () => {
-        // Skilling tier 5 cumulative: 200 + 100×4
-        const reading = interpretCardPoints({ type: 'skilling', tier: 5, statedPoints: 600 });
+    // A card states Guild Points — base × (1 + Builders Hall) — and the ladder
+    // states base. Comparing them without dividing the bonus back out made every
+    // card in the game look like a disagreement, and put a warning on screen
+    // saying the ladder needed correcting when it did not.
+    test('a running total is recognised as one, once the bonus is off it', () => {
+        // Skilling tier 5 cumulative is 200 + 100×4 = 600 of base, and the card
+        // states 720 against a +20% Builder's Hall
+        const reading = interpretCardPoints({
+            type: 'skilling',
+            tier: 5,
+            statedPoints: 720,
+            buildersHallBonus: 0.2,
+        });
         expect(reading.interpretation).toBe('cumulative');
+        expect(reading.basePoints).toBeCloseTo(600, 6);
         expect(reading.ladderCumulative).toBe(600);
         expect(reading.ambiguous).toBe(false);
     });
 
+    test('the live cards, to the digit', () => {
+        // The three cards on the day the guild announced "2880 Guild Points
+        // earned", against its Builder's Hall at level 10
+        const read = (type, tier, statedPoints) =>
+            interpretCardPoints({ type, tier, statedPoints, buildersHallBonus: 0.2 });
+
+        expect(read('skilling', 6, 840)).toMatchObject({ interpretation: 'cumulative' });
+        expect(read('skilling', 8, 1080)).toMatchObject({ interpretation: 'cumulative' });
+        expect(read('combat', 3, 960)).toMatchObject({ interpretation: 'cumulative' });
+        expect(read('combat', 1, 480)).toMatchObject({ interpretation: 'cumulative' });
+        expect(read('skilling', 6, 840).basePoints).toBeCloseTo(700, 6);
+    });
+
     test('a per-tier step is recognised as one', () => {
-        const reading = interpretCardPoints({ type: 'combat', tier: 4, statedPoints: 200 });
+        const reading = interpretCardPoints({ type: 'combat', tier: 4, statedPoints: 240, buildersHallBonus: 0.2 });
         expect(reading.interpretation).toBe('marginal');
         expect(reading.ladderMarginal).toBe(200);
     });
 
     test('at tier one the two readings are the same number and it says so', () => {
-        const reading = interpretCardPoints({ type: 'skilling', tier: 1, statedPoints: 200 });
+        const reading = interpretCardPoints({ type: 'skilling', tier: 1, statedPoints: 200, buildersHallBonus: 0 });
         expect(reading.ambiguous).toBe(true);
     });
 
     test('a figure matching neither is reported rather than rounded towards one', () => {
-        expect(interpretCardPoints({ type: 'skilling', tier: 5, statedPoints: 725 }).interpretation).toBe('disagrees');
+        const reading = interpretCardPoints({ type: 'skilling', tier: 5, statedPoints: 725, buildersHallBonus: 0.2 });
+        expect(reading.interpretation).toBe('disagrees');
+    });
+
+    test('without the bonus the figure cannot be divided down, and it says so', () => {
+        // Guessing the 1.2 that is true of one guild would corrupt every other
+        const reading = interpretCardPoints({ type: 'skilling', tier: 6, statedPoints: 840 });
+        expect(reading.interpretation).toBe('unbonused');
+        expect(reading.basePoints).toBeNull();
+        expect(reading.bonusKnown).toBe(false);
     });
 
     test('unusable input is null', () => {
@@ -606,41 +708,84 @@ describe('interpretCardPoints', () => {
     });
 });
 
+describe('inferBuildersHallBonus', () => {
+    test('the bonus falls out of the cards themselves', () => {
+        // 840/700, 1,080/900 and 960/800 are all 1.2 — the guild's Builder's
+        // Hall at level 10, recovered without the Buildings tab
+        const inferred = inferBuildersHallBonus([
+            { type: 'skilling', pointsByTier: { 6: 840, 8: 1080 } },
+            { type: 'combat', pointsByTier: { 3: 960 } },
+        ]);
+        expect(inferred).toMatchObject({ bonus: 0.2, level: 10, cards: 3 });
+    });
+
+    test('cards that disagree infer nothing', () => {
+        expect(inferBuildersHallBonus([{ type: 'combat', pointsByTier: { 4: 1111, 5: 1200 } }])).toBeNull();
+    });
+
+    test('a ratio that is not a whole number of 2% steps infers nothing', () => {
+        expect(inferBuildersHallBonus([{ type: 'skilling', pointsByTier: { 5: 725 } }])).toBeNull();
+    });
+
+    test('a ratio beyond twenty levels infers nothing', () => {
+        expect(inferBuildersHallBonus([{ type: 'skilling', pointsByTier: { 5: 1200 } }])).toBeNull();
+        expect(inferBuildersHallBonus([])).toBeNull();
+    });
+});
+
 describe('trialBankedBasePoints', () => {
     test('with no card seen it is the ladder, and says so', () => {
         const banked = trialBankedBasePoints({ type: 'combat', bankedTiers: 3 });
         expect(banked).toMatchObject({ basePoints: 800, source: 'ladder' });
     });
 
-    test('a cumulative card for the banked tier is used outright', () => {
+    test('the card is what the trial has earned, at the tier the card names', () => {
+        // The bug this replaces: the figure was looked up under this script's
+        // own "tier on screen minus one" inference, which is not the tier the
+        // card files its points under. It missed every time and fell through to
+        // the ladder — a whole tier short on every trial of every week.
         const banked = trialBankedBasePoints({
             type: 'skilling',
-            bankedTiers: 4,
-            // Tier 5 is on screen and cumulative; tier 4 is what was banked
-            pointsByTier: { 4: 555, 5: 600 },
+            bankedTiers: 5,
+            pointsByTier: { 6: 840 },
+            buildersHallBonus: 0.2,
         });
-        expect(banked).toMatchObject({ basePoints: 555, source: 'game', interpretation: 'cumulative' });
+        expect(banked).toMatchObject({ guildPoints: 840, source: 'game', interpretation: 'cumulative', cardTier: 6 });
+        expect(banked.basePoints).toBeCloseTo(700, 6);
     });
 
     test('marginal cards are added up, and the ladder fills the tiers never seen', () => {
         const banked = trialBankedBasePoints({
             type: 'skilling',
             bankedTiers: 3,
-            // Tier 3's card says 100, which is the per-tier step rather than the total
-            pointsByTier: { 3: 100 },
+            // Tier 3's card states 120, which is the per-tier step of 100 bonused
+            pointsByTier: { 3: 120 },
+            buildersHallBonus: 0.2,
         });
         // Tiers 1 and 2 were never on screen, so 200 + 100 comes from the ladder
-        expect(banked).toMatchObject({ basePoints: 400, source: 'mixed', interpretation: 'marginal' });
+        expect(banked).toMatchObject({ source: 'mixed', interpretation: 'marginal' });
+        expect(banked.basePoints).toBeCloseTo(400, 6);
+        expect(banked.guildPoints).toBeCloseTo(480, 6);
     });
 
-    test('a card that agrees with neither reading is flagged', () => {
-        const banked = trialBankedBasePoints({ type: 'skilling', bankedTiers: 4, pointsByTier: { 5: 725 } });
+    test('a card that agrees with neither reading is flagged and still believed', () => {
+        const banked = trialBankedBasePoints({
+            type: 'skilling',
+            bankedTiers: 4,
+            pointsByTier: { 5: 725 },
+            buildersHallBonus: 0.2,
+        });
         expect(banked.interpretation).toBe('disagrees');
+        expect(banked.guildPoints).toBe(725);
     });
 
-    test('nothing banked is nothing owed, whatever the cards say', () => {
-        expect(trialBankedBasePoints({ type: 'combat', bankedTiers: 0, pointsByTier: { 1: 400 } })).toMatchObject({
-            basePoints: 0,
+    test('without a Builders Hall bonus the card is shown but not converted', () => {
+        const banked = trialBankedBasePoints({ type: 'skilling', bankedTiers: 5, pointsByTier: { 6: 840 } });
+        expect(banked).toMatchObject({
+            guildPoints: 840,
+            basePoints: 600,
+            source: 'ladder',
+            needsBuildersHall: true,
         });
     });
 });
@@ -666,21 +811,89 @@ describe('payoutProjection with the game’s own figures', () => {
 });
 
 describe('a card the ladder cannot explain', () => {
-    test('is still believed where it covers the banked tier', () => {
+    test('is still believed, and the highest tier quoted is the one read', () => {
         // "Prefer the game's number where they disagree": the card is the game
         // talking about this trial, and the ladder is prose reconstructed
-        const banked = trialBankedBasePoints({ type: 'combat', bankedTiers: 4, pointsByTier: { 4: 1111, 5: 1200 } });
+        const banked = trialBankedBasePoints({
+            type: 'combat',
+            bankedTiers: 4,
+            pointsByTier: { 4: 1111, 5: 1200 },
+            buildersHallBonus: 0.2,
+        });
 
-        expect(banked.basePoints).toBe(1111);
+        expect(banked.guildPoints).toBe(1200);
+        expect(banked.basePoints).toBeCloseTo(1000, 6);
         expect(banked.source).toBe('game');
         expect(banked.ladder).toBe(1000);
         expect(banked.quoted).toEqual({ tier: 5, statedPoints: 1200 });
+        // Combat T5 is 1,200 of base on the ladder, so a card stating 1,200 of
+        // *Guild Points* is 1,000 of base and agrees with neither reading. It is
+        // used as stated all the same — the card is the game talking
+        expect(banked.interpretation).toBe('disagrees');
+    });
+});
+
+describe('the payout, against four days of the guild’s own announcements', () => {
+    // The only ground truth this feature has ever had. Chat, on four
+    // consecutive days, with this guild's Builder's Hall at level 10 (+20%) and
+    // its Treasury at level 5 (+10%):
+    //
+    //   2,160 points → 990 tokens each, participants +495
+    //   1,920 points → 880 each, +440
+    //   3,000 points → 1,375 each, +688 (687.5 rounded)
+    //   2,880 points → 1,320 each, +660
+    //
+    // The "extra ×1.1" those numbers imply over half the base is the Treasury.
+    // Nothing was invented to fit them; this is the model as the guide states it.
+    test.each([
+        [2160, 990],
+        [1920, 880],
+        [3000, 1375],
+        [2880, 1320],
+    ])('%i announced Guild Points pays %i tokens per eligible member', (announced, tokens) => {
+        const payout = payoutProjection({
+            trials: [
+                {
+                    type: 'skilling',
+                    tiersCleared: 0,
+                    basePointsOverride: announced / 1.2,
+                    guildPointsOverride: announced,
+                },
+            ],
+            buildersHallBonus: 0.2,
+            treasuryBonus: 0.1,
+        });
+
+        expect(payout.guildPoints).toBe(announced);
+        expect(payout.eligibleTokens).toBeCloseTo(tokens, 6);
+        expect(payout.participantBonusTokens).toBeCloseTo(tokens / 2, 6);
     });
 
-    test('a disagreement with no card for the banked tier falls back and says so', () => {
-        const banked = trialBankedBasePoints({ type: 'skilling', bankedTiers: 4, pointsByTier: { 5: 725 } });
+    test('the three cards of the watched day sum to the announced total', () => {
+        const hall = 0.2;
+        const trials = [
+            { type: 'skilling', tier: 6, stated: 840 },
+            { type: 'skilling', tier: 8, stated: 1080 },
+            { type: 'combat', tier: 3, stated: 960 },
+        ].map(({ type, tier, stated }) => {
+            const banked = trialBankedBasePoints({
+                type,
+                bankedTiers: tier - 1,
+                pointsByTier: { [tier]: stated },
+                buildersHallBonus: hall,
+            });
+            return {
+                type,
+                tiersCleared: tier,
+                basePointsOverride: banked.basePoints,
+                guildPointsOverride: banked.guildPoints,
+            };
+        });
 
-        expect(banked).toMatchObject({ basePoints: 500, source: 'ladder', interpretation: 'disagrees' });
-        expect(banked.quoted).toEqual({ tier: 5, statedPoints: 725 });
+        const payout = payoutProjection({ trials, buildersHallBonus: hall, treasuryBonus: 0.1 });
+        expect(payout.guildPoints).toBe(2880);
+        expect(payout.basePoints).toBeCloseTo(2400, 6);
+        expect(payout.eligibleTokens).toBeCloseTo(1320, 6);
+        expect(payout.participantTokens).toBeCloseTo(1980, 6);
     });
 });

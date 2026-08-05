@@ -29,8 +29,11 @@
  *
  * **Tiers cleared is inferred from the tier on screen.** A trial starts at tier
  * 1 and climbs one at a time, so a trial showing tier 7 has banked six. This is
- * the only inference here that is not measured, and it is exact for as long as
- * that rule holds.
+ * the only inference here that is not measured, and it is the one thing on the
+ * block that nothing has ever confirmed — so the payout no longer rests on it:
+ * the points come from what the cards state (below), which is checked against
+ * the guild's own announcements. It still drives the "Banked N tiers" line and
+ * where the pace projection starts from.
  *
  * **Token payouts are worth something, approximately.** Tokens have no market
  * price, but the guild shop trades them for guild credits and credits are priced
@@ -56,11 +59,16 @@
  * fix it. A player who joins a trial midway sees the first of these until they
  * look at the Trials tab once, and it is not a failure of the arithmetic.
  *
- * **The game states what a tier is worth, and it wins.** The Trials tab's cards
- * carry a "600 pts" line. The tier ladder in `guild-trials-math.js` derives the
- * same figure from the in-game guide's prose, so the two can be checked against
- * each other — and where they disagree the card is believed and the block says
- * the ladder needs correcting.
+ * **The game states what a trial has earned, and it wins.** The Trials tab's
+ * cards carry an "840 pts" line, and four days of the guild's own chat
+ * announcements say the sum of exactly those figures is the Guild Points the
+ * guild is paid. So the payout block sums the cards. They are *Guild Points* —
+ * base points with the Builder's Hall bonus already applied — which is the one
+ * thing this file used to get wrong in both directions at once: it compared them
+ * against the ladder's un-bonused figures and reported a disagreement on every
+ * card of every week, and it looked each figure up under its own inference about
+ * how many tiers were banked, missed by a tier every time, and fell back to the
+ * ladder. Announced 2,880; panel said 2.4K.
  *
  * **A combat trial's DPS can be split per player.** The card's "Party DPS" is
  * measured off the boss bar and cannot say who is producing it. The fight itself
@@ -68,11 +76,20 @@
  * but only for fights this client is actually in, and only when the fight can be
  * shown to be the trial's.
  *
- * **Payout bonuses may be unknown.** Guild Points scale with the Builders Hall
- * and token payouts with the Treasury; both levels arrive on guild traffic and
- * the bonus-per-level table has not been located in client data. When it cannot
- * be resolved the block shows base figures and says the Buildings tab will
- * refine them — the level is captured and persisted the moment it is seen.
+ * **Payout bonuses are 2% per level, both of them.** Guild Points scale with the
+ * Builder's Hall and token payouts with the Treasury, and both in-game upgrade
+ * popups confirm the same rule ("Guild Points: +20% → +22%" at Hall level 10,
+ * "Guild Token Rewards: +10% → +12%" at Treasury level 5). The *levels* arrive
+ * on guild traffic and are captured and persisted the moment they are seen. When
+ * a level has not been seen the Builder's Hall bonus can still be recovered from
+ * the cards themselves — a card states Guild Points for a tier whose base the
+ * ladder knows, and the ratio is the bonus — and the Treasury, which has no such
+ * shortcut, is left out of the token figures with the block saying so.
+ *
+ * **A combat card is health then mana.** Both bars belong to the boss, and only
+ * the first is damage. The rate is accumulated across tier clears rather than
+ * fitted to a falling bar, because a combat trial is a ladder of bosses and the
+ * bar jumps *up* every time one dies — see `combatDamageRate`.
  */
 
 import config from '../../core/config.js';
@@ -84,10 +101,13 @@ import { formatEta } from '../../utils/progress-eta.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { guildXPTracker } from './guild-xp-tracker.js';
 import {
+    EXTRA_TIER_POINTS,
     TRIAL_ACTIVE_MS,
     TRIAL_MAX_TIER,
+    combatDamageRate,
     estimateGrowthPerTier,
     etaMs,
+    inferBuildersHallBonus,
     levelFromTier,
     nextTierPreview,
     payoutProjection,
@@ -138,12 +158,13 @@ const WARN = '#f0a830';
  * @param {Object} [options] - Context
  * @param {number} [options.participants] - Signed-up participants, for the next-tier caption
  * @param {number|null} [options.timeLeftMs] - Active time left in the trial
+ * @param {number|null} [options.buildersHallBonus] - Builders Hall bonus fraction, for reading the card's points
  * @returns {{kind: string, tier: number|null, level: number|null, tiersClearedSoFar: number,
- *   rate: number|null, remaining: number|null, total: number|null, etaMs: number|null,
- *   growthPerTier: number|null, next: Object|null, pace: Object|null, samples: number,
- *   timeLeftMs: number|null}} Analysis
+ *   rate: number|null, rateNote: string|null, remaining: number|null, total: number|null,
+ *   etaMs: number|null, growthPerTier: number|null, next: Object|null, pace: Object|null,
+ *   samples: number, timeLeftMs: number|null}} Analysis
  */
-export function analyseTrial(record, { participants = 0, timeLeftMs = null } = {}) {
+export function analyseTrial(record, { participants = 0, timeLeftMs = null, buildersHallBonus = null } = {}) {
     const samples = Array.isArray(record?.samples) ? record.samples : [];
     const kind = record?.kind === 'combat' ? 'combat' : 'skilling';
     const tier = Number.isFinite(record?.tier) ? record.tier : null;
@@ -168,10 +189,18 @@ export function analyseTrial(record, { participants = 0, timeLeftMs = null } = {
         kind,
         tier,
         tierKnown,
-        // The card's own "600 pts", where it has been seen, against the ladder
-        // this file's arithmetic is built on
-        points: trialBankedBasePoints({ type: kind, bankedTiers: tiersClearedSoFar, pointsByTier }),
+        // The card's own "840 pts", where it has been seen. It is Guild Points
+        // rather than base points — see `trialBankedBasePoints` — so the Builders
+        // Hall bonus is needed to divide it back down for the token arithmetic
+        points: trialBankedBasePoints({
+            type: kind,
+            bankedTiers: tiersClearedSoFar,
+            pointsByTier,
+            buildersHallBonus,
+        }),
         pointsByTier,
+        // Set below for a combat trial whose readings straddle a tier clear
+        rateNote: null,
         level: Number.isFinite(record?.level) ? record.level : null,
         tiersClearedSoFar,
         rate: null,
@@ -190,16 +219,42 @@ export function analyseTrial(record, { participants = 0, timeLeftMs = null } = {
 
     if (index === null) return base;
 
-    const series = samples
-        .map((sample) => ({ t: sample?.t, value: sample?.readings?.[index]?.current }))
-        .filter((point) => Number.isFinite(point.t) && Number.isFinite(point.value));
-
     const latest = samples[samples.length - 1]?.readings?.[index] || null;
     const total = Number.isFinite(latest?.max) ? latest.max : null;
     const remaining = latest ? (direction === -1 ? latest.current : Math.max(0, latest.max - latest.current)) : null;
 
-    const rate = ratePerMs(series, direction);
     const growthPerTier = base.growthPerTier;
+
+    // A combat trial is a ladder of bosses, and its rate is damage rather than
+    // movement along one bar: the readings straddle tier clears, where the bar
+    // *rises* and the run-of-monotonic-samples fit gives up. See
+    // `combatDamageRate` — this is the only reason a combat card ever produced a
+    // "Party DPS" of nothing while the party was plainly killing things.
+    let rate = null;
+    let rateNote = null;
+    if (kind === 'combat') {
+        const measured = combatDamageRate(
+            samples.map((sample) => ({
+                t: sample?.t,
+                current: sample?.readings?.[index]?.current,
+                max: sample?.readings?.[index]?.max,
+            })),
+            { growthPerTier }
+        );
+        rate = measured.rate;
+        if (measured.multiTier) {
+            rateNote =
+                'A tier cleared between two readings and the gap may have covered more than one, ' +
+                'so the damage counted is a lower bound.';
+        } else if (measured.boundaries > 0) {
+            rateNote = 'Counted across a tier clear: what was left of the last boss plus what is off this one.';
+        }
+    } else {
+        const series = samples
+            .map((sample) => ({ t: sample?.t, value: sample?.readings?.[index]?.current }))
+            .filter((point) => Number.isFinite(point.t) && Number.isFinite(point.value));
+        rate = ratePerMs(series, direction);
+    }
 
     const next = Number.isFinite(tier) ? nextTierPreview({ observations, currentTier: tier, participants }) : null;
 
@@ -215,7 +270,7 @@ export function analyseTrial(record, { participants = 0, timeLeftMs = null } = {
               })
             : null;
 
-    return { ...base, rate, remaining, total, etaMs: etaMs(remaining, rate), next, pace };
+    return { ...base, rate, rateNote, remaining, total, etaMs: etaMs(remaining, rate), next, pace };
 }
 
 /**
@@ -307,14 +362,40 @@ export function renderTrialBlock(analysis, participants, breakdown = guildTrialD
         rows.push(line('Rate', analysis.samples < 2 ? 'measuring…' : 'no movement yet', DIM));
     } else {
         const perSecond = analysis.rate * 1000;
+        const measuredFrom =
+            analysis.kind === 'combat'
+                ? 'Measured from the boss bar on this card — the health one; the second bar is its mana.'
+                : 'Measured from the bar on this card, over its current tier only.';
         rows.push(
             line(
                 analysis.kind === 'combat' ? 'Party DPS' : 'Fill rate',
                 `${num(perSecond)} ${unit}/s`,
                 ACCENT,
-                'Measured from the bar on this card, over its current tier only.'
+                analysis.rateNote ? `${measuredFrom}\n${analysis.rateNote}` : measuredFrom
             )
         );
+
+        // Two independent measurements of the same thing: this one off the card's
+        // bar, and `guild-trial-damage.js`' off the battle feed. They should
+        // agree, and where they do not one of them is measuring the wrong fight
+        // — worth saying rather than showing two numbers that quietly differ.
+        const attributed = breakdown?.measured ? breakdown.partyDps : null;
+        if (Number.isFinite(attributed) && attributed > 0 && perSecond > 0) {
+            const ratio = perSecond / attributed;
+            if (ratio > 1.4 || ratio < 1 / 1.4) {
+                rows.push(
+                    line(
+                        'Split disagrees',
+                        `${num(attributed)} ${unit}/s`,
+                        WARN,
+                        'The per-player split adds up to a different party DPS than the boss bar shows. ' +
+                            'The bar covers everybody in the trial; the split covers only the fights this ' +
+                            'client took part in, so a difference is expected when the party is larger than ' +
+                            'this fight — and unexpected otherwise.'
+                    )
+                );
+            }
+        }
         rows.push(
             line(
                 analysis.kind === 'combat' ? 'Kill in' : 'Tier clears in',
@@ -714,6 +795,7 @@ class GuildTrials {
             const counts = participantCounts();
             const timeLeftMs = this._timeLeftMs(root);
             const trialsForPayout = [];
+            const bonuses = this._payoutBonuses();
 
             for (const tile of tiles) {
                 const record = this.record.tiles[tileKey(tile)];
@@ -724,7 +806,11 @@ class GuildTrials {
                 // and it needs no name-to-hrid match to be believed
                 const hrid = matchTrialHrid(tile.name, Object.keys(counts));
                 const participants = record.signups?.signed ?? (hrid ? counts[hrid] : 0);
-                const analysis = analyseTrial(record, { participants, timeLeftMs });
+                const analysis = analyseTrial(record, {
+                    participants,
+                    timeLeftMs,
+                    buildersHallBonus: bonuses.buildersHall.bonus,
+                });
 
                 trialsForPayout.push({
                     name: tile.name,
@@ -761,7 +847,7 @@ class GuildTrials {
                 else tile.element.appendChild(block);
             }
 
-            this._renderPayout(root, trialsForPayout, tiles[0]?.element || null);
+            this._renderPayout(root, trialsForPayout, tiles[0]?.element || null, bonuses);
         } catch (error) {
             console.error('[GuildTrials] Drawing the trial panel failed:', error);
         }
@@ -792,15 +878,48 @@ class GuildTrials {
     }
 
     /**
+     * Both payout bonuses, from the best source that has one.
+     *
+     * The guild's own building levels first — they ride in on guild traffic as
+     * `guildBuildingLevelMap`, the data manager captures them off any message
+     * that carries one and persists them, and the confirmed rule is 2% per level
+     * for both buildings. Failing that, the Builders Hall bonus can be recovered
+     * from the cards themselves ({@link module:./guild-trials-math.inferBuildersHallBonus}),
+     * because a card states Guild Points for a tier whose base the ladder knows
+     * and the ratio between them is the bonus. Nothing fills in for an unknown
+     * Treasury, and the block says so rather than quietly paying it as zero.
+     *
+     * @returns {{buildersHall: Object, treasury: Object}} Both, with their provenance
+     */
+    _payoutBonuses() {
+        const bonuses = readPayoutBonuses();
+        if (Number.isFinite(bonuses.buildersHall.bonus)) return bonuses;
+
+        const inferred = inferBuildersHallBonus(
+            Object.values(this.record?.tiles || {}).map((tile) => ({
+                type: tile?.kind === 'combat' ? 'combat' : 'skilling',
+                pointsByTier: tile?.pointsByTier,
+            }))
+        );
+        if (!inferred) return bonuses;
+
+        return {
+            ...bonuses,
+            buildersHall: { ...bonuses.buildersHall, level: inferred.level, bonus: inferred.bonus, source: 'cards' },
+        };
+    }
+
+    /**
      * The payout block: what is banked, and what the current pace would add.
      * @param {Element} root - The trials content element
      * @param {Array<{name: string, type: string, banked: number, projected: number}>} trials - This week's trials
      * @param {Element|null} [firstTile] - The topmost trial card, for placement when there is no status row
+     * @param {Object} [payoutBonuses] - From {@link _payoutBonuses}; resolved here when omitted
      */
-    _renderPayout(root, trials, firstTile = null) {
+    _renderPayout(root, trials, firstTile = null, payoutBonuses = null) {
         if (!trials.length) return;
 
-        const bonuses = readPayoutBonuses();
+        const bonuses = payoutBonuses || this._payoutBonuses();
         const buildersHallBonus = bonuses.buildersHall.bonus;
         const treasuryBonus = bonuses.treasury.bonus;
 
@@ -808,16 +927,39 @@ class GuildTrials {
             trials: trials.map((trial) => ({
                 ...trial,
                 tiersCleared: trial.banked,
-                // The game's own figure where a card has stated one for the tier
-                // that was banked; the ladder otherwise. `trialBankedBasePoints`
-                // decides which, and says so.
+                // The card's own figure where there is one, in both units: the
+                // Guild Points it states outright — four days of the guild's chat
+                // announcements say the sum of exactly these is what is earned —
+                // and the base points recovered from it, which is what the token
+                // arithmetic runs on. `trialBankedBasePoints` decides, and says so.
                 basePointsOverride: trial.points?.source === 'ladder' ? undefined : trial.points?.basePoints,
+                guildPointsOverride: trial.points?.guildPoints ?? undefined,
             })),
             buildersHallBonus,
             treasuryBonus,
         });
+        // The pace's figure is the banked one plus what the tiers it projects
+        // would add, rather than a second ladder walk from scratch. Rebuilding
+        // it from the ladder made "on pace" come out *below* "banked" whenever
+        // the cards had stated more than the ladder derives, which reads as the
+        // trial going backwards.
         const projected = payoutProjection({
-            trials: trials.map((trial) => ({ ...trial, tiersCleared: trial.projected })),
+            trials: trials.map((trial) => {
+                const extraTiers = Math.max(0, (trial.projected ?? trial.banked) - trial.banked);
+                const step = EXTRA_TIER_POINTS[trial.type] ?? 0;
+                const fromCards = trial.points?.source !== 'ladder';
+                const base = trial.points?.basePoints;
+                const stated = trial.points?.guildPoints;
+                return {
+                    ...trial,
+                    tiersCleared: trial.projected,
+                    basePointsOverride: fromCards && Number.isFinite(base) ? base + extraTiers * step : undefined,
+                    guildPointsOverride:
+                        fromCards && Number.isFinite(stated)
+                            ? stated + extraTiers * step * (1 + (buildersHallBonus || 0))
+                            : undefined,
+                };
+            }),
             buildersHallBonus,
             treasuryBonus,
         });
@@ -826,7 +968,12 @@ class GuildTrials {
         // different things and they all used to render as `0`, which is the one
         // reading that is never right.
         const anyTierKnown = trials.some((trial) => trial.tierKnown);
-        const anyBanked = trials.some((trial) => trial.banked > 0);
+        // A card that states a points figure has already earned it — that is what
+        // the chat announcement pays out — so it counts as banked even before
+        // this script's own tier-on-screen inference says a tier has completed
+        const anyBanked = trials.some(
+            (trial) => trial.banked > 0 || Number.isFinite(trial.points?.quoted?.statedPoints)
+        );
 
         const wrapper = document.createElement('div');
         wrapper.className = CSS_CLASS;
@@ -869,25 +1016,47 @@ class GuildTrials {
             line('Tokens, if you took part', participant.value, GOOD, participant.title),
         ];
 
+        // A genuine mismatch, which is now a much rarer thing to be. The warning
+        // this replaces fired on every card of every week and blamed the ladder,
+        // when what was actually happening is that a card states *Guild Points*
+        // — the ladder's base figure with the Builders Hall bonus already on it.
+        // With that understood the two agree exactly, and a disagreement left
+        // over is worth reporting again.
         const disagreement = trials.find((trial) => trial.points?.interpretation === 'disagrees');
         if (disagreement?.points?.quoted) {
             const { tier, statedPoints } = disagreement.points.quoted;
+            const hallLevel = bonuses.buildersHall.level;
             rows.push(
                 `<div style="color:${WARN}; margin-top:4px;">` +
-                    `${disagreement.name} T${tier} says ${formatWithSeparator(statedPoints)} pts, which matches ` +
-                    'neither the running total nor the per-tier step this script derives. The game’s number is ' +
-                    'used where it covers a banked tier — the ladder here needs correcting.</div>'
+                    `${disagreement.name} T${tier} states ${formatWithSeparator(statedPoints)} pts, which is ` +
+                    `neither the running total nor the per-tier step once the Builders Hall bonus ` +
+                    `(+${Math.round((buildersHallBonus || 0) * 100)}% at level ${hallLevel || '?'}) is taken off. ` +
+                    'The card is used as stated; the tier ladder here needs checking.</div>'
             );
         }
 
-        if (!banked.bonusesKnown) {
+        if (!Number.isFinite(buildersHallBonus) || !Number.isFinite(treasuryBonus)) {
             const missing = [];
-            if (!Number.isFinite(buildersHallBonus)) missing.push('Builders Hall');
+            if (!Number.isFinite(buildersHallBonus)) missing.push('Builder’s Hall');
             if (!Number.isFinite(treasuryBonus)) missing.push('Treasury');
             rows.push(
                 `<div style="color:${WARN}; margin-top:4px;">` +
-                    `Base figures — no ${missing.join(' or ')} bonus applied. ` +
-                    'Open the guild Buildings tab once and it will be picked up, or set it in Toolasha settings.</div>'
+                    `No ${missing.join(' or ')} level seen, so the token figures leave ` +
+                    `${missing.length === 1 ? 'that bonus' : 'those bonuses'} out — each level adds 2%. ` +
+                    'Open the guild Buildings tab once and it will be picked up, or set it in Toolasha settings.' +
+                    (Number.isFinite(buildersHallBonus)
+                        ? ''
+                        : ' The Guild Points row is still exact: it is what the cards themselves state.') +
+                    '</div>'
+            );
+        }
+
+        if (bonuses.buildersHall.source === 'cards') {
+            rows.push(
+                `<div style="color:${DIM}; margin-top:4px;">` +
+                    `Builder’s Hall read as level ${bonuses.buildersHall.level} ` +
+                    `(+${Math.round(buildersHallBonus * 100)}%) from the cards’ own points, ` +
+                    'since no building level has arrived on guild traffic yet.</div>'
             );
         }
 
@@ -910,18 +1079,21 @@ class GuildTrials {
      */
     _pointsProvenance(trials) {
         const sources = new Set(trials.map((trial) => trial.points?.source).filter(Boolean));
-        if (sources.has('game') && sources.size === 1) {
-            return 'Taken from the points each trial card states, not from this script’s tier ladder.';
-        }
+        const cards =
+            'Summed from the points each trial card states — the guild’s own end-of-trial announcement is ' +
+            'the sum of exactly these figures, so this is the number that will be paid. They are Guild ' +
+            'Points, with the Builder’s Hall bonus already in them; the token rows divide it back out.';
+
+        if (sources.has('game') && sources.size === 1) return cards;
         if (sources.has('game') || sources.has('mixed')) {
             return (
-                'Part read from the points the trial cards state and part derived from the tier ladder, ' +
-                'for tiers whose card was never on screen.'
+                `${cards} Part of this total is derived from the tier ladder instead, for trials whose card ` +
+                'was never on screen.'
             );
         }
         return (
-            'Derived from the tier ladder — 200 + 100 per extra tier for skilling, 400 + 200 for combat. ' +
-            'Open the Trials tab and the game’s own “N pts” is used instead.'
+            'Derived from the tier ladder — 200 + 100 per extra tier for skilling, 400 + 200 for combat, ' +
+            'times the Builder’s Hall bonus. Open the Trials tab and the game’s own “N pts” is used instead.'
         );
     }
 
