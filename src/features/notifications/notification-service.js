@@ -69,6 +69,9 @@ export const NOTIFICATION_SETTING_KEYS = [
     'notifications_marketListingFilled',
     'notifications_otherCharacterIdle',
     'notifications_communityBuffExpiring',
+    'notifications_labyrinthRunFinished',
+    'notifications_combatDeath',
+    'notifications_enhancementTarget',
     'notifiEmptyAction',
 ];
 

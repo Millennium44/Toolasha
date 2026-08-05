@@ -2794,6 +2794,27 @@ export const settingsGroups = {
                 default: false,
                 help: 'Projected, not observed. Each other character queue is captured when you switch away from it, and this fires once that much time has elapsed — it cannot see a character while you are not logged into it, so anything queued there from elsewhere is invisible to it. Characters with an unbounded action queued are skipped, and a character is announced again only after you next switch away from it.',
             },
+            notifications_labyrinthRunFinished: {
+                id: 'notifications_labyrinthRunFinished',
+                label: 'Notify when a labyrinth run finishes',
+                type: 'checkbox',
+                default: false,
+                help: 'Keys on the run going from active to not active, as the server reports it — so it covers every ending: cleared out, ended on a lost fight, or exited on purpose. It does not say which, because the payload does not: there is no outcome or reason field on a labyrinth message, so the alert reports the deepest floor the run reached and leaves it at that. Once per run.',
+            },
+            notifications_combatDeath: {
+                id: 'notifications_combatDeath',
+                label: 'Notify when you die in combat',
+                type: 'checkbox',
+                default: false,
+                help: 'Keys on the server’s own death count for your character going up between battles — your deaths only, not the party’s. One message per cooldown rather than one per death, so a zone that is killing you repeatedly says so once and the total in the message tells you how bad it got. Deaths that happened before you switched this on are not announced.',
+            },
+            notifications_enhancementTarget: {
+                id: 'notifications_enhancementTarget',
+                label: 'Notify when an item reaches its enhancement target',
+                type: 'checkbox',
+                default: false,
+                help: 'Reads the “enhance until +N” you set in the game’s own enhancing panel, and the level the item is at after each attempt — so it works whether or not the Enhancement Tracker is on. Nothing is announced when no target is set, since there is no ending to announce. Once per item and target, re-arming when that item is seen below the target again.',
+            },
             notifications_communityBuffExpiring: {
                 id: 'notifications_communityBuffExpiring',
                 label: 'Notify before a community buff expires',

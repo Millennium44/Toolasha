@@ -107,6 +107,9 @@ import leaderboardXPDisplay from '../features/leaderboard/leaderboard-xp-display
 // Notifications
 import emptyQueueNotification from '../features/notifications/empty-queue-notification.js';
 import communityBuffAlerts from '../features/notifications/community-buff-alerts.js';
+import labyrinthRunAlerts from '../features/notifications/labyrinth-run-alerts.js';
+import combatDeathAlerts from '../features/notifications/combat-death-alerts.js';
+import enhancementTargetAlerts from '../features/notifications/enhancement-target-alerts.js';
 import notificationService from '../features/notifications/notification-service.js';
 
 // Queue Monitor
@@ -208,6 +211,9 @@ toolashaRoot.UI = {
     leaderboardXPDisplay,
     emptyQueueNotification,
     communityBuffAlerts,
+    labyrinthRunAlerts,
+    combatDeathAlerts,
+    enhancementTargetAlerts,
     notificationService,
     queueMonitor,
     accountView,

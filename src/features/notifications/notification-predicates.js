@@ -93,6 +93,62 @@ export function isQueueExhausted(snapshot, now) {
 }
 
 /**
+ * What a `labyrinth_updated` payload says about whether a run is going.
+ *
+ * Three answers rather than two, and the third is the important one. A run
+ * *finishing* is a transition, so it can only be read off a pair of
+ * observations — and a payload that simply does not describe the run's state
+ * must not be allowed to look like the end of one. Announcing "your run
+ * finished" in the middle of a run is the failure this exists to prevent, so
+ * anything short of the server saying so reads as `unknown` and changes
+ * nothing.
+ *
+ * `isActive` is the server's own flag and is believed outright when present.
+ * Without it the grid and the queued path stand in: both exist only while a run
+ * does, which is the same test the supplies planner uses. A payload with
+ * neither the flag nor either of them is not evidence of anything.
+ *
+ * @param {Object|null} labyrinth - A `labyrinth_updated` payload's `labyrinth`,
+ *   or `characterData.characterLabyrinth`
+ * @returns {'active'|'ended'|'unknown'} What can be said about the run
+ */
+export function labyrinthRunState(labyrinth) {
+    if (!labyrinth || typeof labyrinth !== 'object') return 'unknown';
+    if (typeof labyrinth.isActive === 'boolean') return labyrinth.isActive ? 'active' : 'ended';
+
+    const filled = (value) =>
+        (Array.isArray(value) && value.length > 0) || (typeof value === 'string' && value.length > 2);
+    if (filled(labyrinth.roomData) || filled(labyrinth.pathData)) return 'active';
+    return 'unknown';
+}
+
+/**
+ * How many deaths have happened since the last look.
+ *
+ * The server's `deathCount` is a running total for the combat session, so the
+ * event is the *rise* and never the value. Two things make a rise the only
+ * usable reading: the count is republished on every battle whether or not
+ * anything died, and starting a new session takes it back down — a fall is a
+ * fresh session rather than a resurrection, and is worth no message at all.
+ *
+ * The first observation is not a rise either. Whatever the count was when the
+ * page loaded, it was already that before anybody was watching.
+ *
+ * @param {number|null} previous - Count at the last observation; null on the first
+ * @param {number} current - Count now
+ * @returns {number} Deaths newly seen; 0 when there is no rise to report
+ */
+export function newDeaths(previous, current) {
+    const now = Number(current);
+    if (!Number.isFinite(now)) return 0;
+    if (previous === null || previous === undefined) return 0;
+
+    const before = Number(previous);
+    if (!Number.isFinite(before)) return 0;
+    return now > before ? now - before : 0;
+}
+
+/**
  * Which characters have gone idle since the last look.
  *
  * Edge-triggered against what was already announced, keyed by the snapshot's
