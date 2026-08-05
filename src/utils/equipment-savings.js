@@ -39,6 +39,15 @@
  * two writers of one key lose each other's edits. A record written before this
  * existed simply has no `abilities` key and loads exactly as it did.
  *
+ * ## So are rooms
+ *
+ * A house room level is the same shape of purchase again — a pile of materials
+ * at what the market wants for them, plus the coins the level asks for outright
+ * — and it is finishable without being bought in exactly the same way, by
+ * building it. So rooms sit beside abilities under `houses`, keyed by room and
+ * capped at the level the game stops at, and a record written before they
+ * existed has no `houses` key either.
+ *
  * The model is EWatch's, from MWI Combat Suite by Frotty (MIT) — see
  * `third-party/mwi-combat-suite/` and `docs/THIRD-PARTY-LICENSES.md`. The code is
  * Toolasha's own.
@@ -205,9 +214,12 @@ export function abilityBookHrid(abilityHrid) {
     return String(abilityHrid || '').replace('/abilities/', '/items/');
 }
 
-/** An ability's name out of its hrid, for when nothing better was supplied */
-const prettyAbility = (abilityHrid) =>
-    String(abilityHrid || '')
+/** The level the game stops a house room at, and so the highest a goal can ask for */
+export const MAX_HOUSE_ROOM_LEVEL = 8;
+
+/** A name out of an hrid, for when nothing better was supplied */
+const prettyName = (hrid) =>
+    String(hrid || '')
         .split('/')
         .pop()
         .replace(/_/g, ' ')
@@ -225,7 +237,31 @@ const prettyAbility = (abilityHrid) =>
  * @returns {string}
  */
 export function abilityGoalLabel(abilityHrid, targetLevel, name = '') {
-    return `${name || prettyAbility(abilityHrid)} Lv${Math.max(0, Math.floor(Number(targetLevel) || 0))}`;
+    return goalLabel(abilityHrid, targetLevel, name);
+}
+
+/**
+ * How a house room goal reads: the room and the level, e.g. `Mystical Study Lv5`.
+ *
+ * @param {string} houseRoomHrid - The room
+ * @param {number} targetLevel - The level being saved for
+ * @param {string} [name] - A nicer name for the room, if one is known
+ * @returns {string}
+ */
+export function houseGoalLabel(houseRoomHrid, targetLevel, name = '') {
+    return goalLabel(houseRoomHrid, targetLevel, name);
+}
+
+/**
+ * The shape both labels take: a name and the level it is going to.
+ *
+ * @param {string} hrid - The ability or the room
+ * @param {number} targetLevel - The level being saved for
+ * @param {string} name - A nicer name, if one is known
+ * @returns {string}
+ */
+function goalLabel(hrid, targetLevel, name) {
+    return `${name || prettyName(hrid)} Lv${Math.max(0, Math.floor(Number(targetLevel) || 0))}`;
 }
 
 /**
@@ -240,6 +276,30 @@ export function abilityGoalLabel(abilityHrid, targetLevel, name = '') {
  * @returns {boolean}
  */
 export function abilityGoalReached(goal, currentLevel) {
+    return goalReached(goal, currentLevel);
+}
+
+/**
+ * Whether a room has already been built to the level being saved for.
+ *
+ * The same test as an ability's, for the same reason: a room you built out of
+ * materials you already had was never bought, and a goal that cannot notice
+ * that sits on the list at full price forever.
+ *
+ * @param {{targetLevel: number}} goal - The goal
+ * @param {number} currentLevel - Where the room is now
+ * @returns {boolean}
+ */
+export function houseGoalReached(goal, currentLevel) {
+    return goalReached(goal, currentLevel);
+}
+
+/**
+ * @param {{targetLevel: number}} goal - The goal
+ * @param {number} currentLevel - Where it is now
+ * @returns {boolean}
+ */
+function goalReached(goal, currentLevel) {
     const target = Math.max(0, Math.floor(Number(goal?.targetLevel) || 0));
     if (!(target > 0)) return false;
 
@@ -255,6 +315,12 @@ export function abilityGoalReached(goal, currentLevel) {
  */
 let goals = {};
 
+/**
+ * The house room goals, keyed by room hrid, for the same reason: one goal per
+ * room, because "get the Dojo to 6" and "get the Dojo to 8" are one intention.
+ */
+let rooms = {};
+
 /** The rest of the stored record — the gear side, which this module only carries */
 let record = {};
 
@@ -264,12 +330,17 @@ let loaded = false;
 /**
  * One stored goal, with everything it must have and nothing it must not.
  *
- * @param {string} abilityHrid - The ability
+ * @param {string} hrid - The ability or the room the goal is about
  * @param {Object} goal - What was handed over or read back
+ * @param {number} [cap] - The highest level the game allows, when there is one
  * @returns {Object}
  */
-function normalizeGoal(abilityHrid, goal) {
-    const targetLevel = Math.max(0, Math.floor(Number(goal?.targetLevel) || 0));
+function normalizeGoal(hrid, goal, cap = 0) {
+    let targetLevel = Math.max(0, Math.floor(Number(goal?.targetLevel) || 0));
+    // A goal above what the game allows is not a goal, it is a typo — and left
+    // alone it would be costed for levels that cannot be built and never reached
+    if (cap > 0) targetLevel = Math.min(cap, targetLevel);
+
     // Explicitly, because `Number(null)` is 0 and an unpriced goal recorded as
     // costing nothing reports itself as already affordable
     const raw = goal?.cost === null || goal?.cost === undefined || goal?.cost === '' ? null : Number(goal.cost);
@@ -278,7 +349,7 @@ function normalizeGoal(abilityHrid, goal) {
     return {
         targetLevel,
         cost,
-        label: String(goal?.label || abilityGoalLabel(abilityHrid, targetLevel)),
+        label: String(goal?.label || goalLabel(hrid, targetLevel, '')),
         updatedAt: Number(goal?.updatedAt) || 0,
     };
 }
@@ -291,7 +362,7 @@ function normalizeGoal(abilityHrid, goal) {
  */
 async function write() {
     try {
-        return await writeScoped(STORAGE_KEY, { ...record, abilities: { ...goals } }, 'settings');
+        return await writeScoped(STORAGE_KEY, { ...record, abilities: { ...goals }, houses: { ...rooms } }, 'settings');
     } catch (error) {
         console.error('[EquipmentSavings] Saving the savings record failed:', error);
         return false;
@@ -299,12 +370,13 @@ async function write() {
 }
 
 /**
- * Read the whole savings record, keeping the ability goals and handing back the
+ * Read the whole savings record, keeping the level goals and handing back the
  * rest.
  *
  * The goals are absorbed rather than returned because this module owns them from
  * here on; the caller gets the gear side it owns, and a record written before
- * ability goals existed simply has no `abilities` key and comes back untouched.
+ * ability or house goals existed simply has no `abilities` or `houses` key and
+ * comes back untouched.
  *
  * @returns {Promise<Object|null>} The record without the goals, or null when
  *   nothing has been stored for this character
@@ -321,6 +393,13 @@ export async function loadSavingsRecord() {
             goals[abilityHrid] = normalizeGoal(abilityHrid, goal);
         }
         delete rest.abilities;
+
+        rooms = {};
+        for (const [houseRoomHrid, goal] of Object.entries(rest.houses || {})) {
+            if (!houseRoomHrid || !goal || typeof goal !== 'object') continue;
+            rooms[houseRoomHrid] = normalizeGoal(houseRoomHrid, goal, MAX_HOUSE_ROOM_LEVEL);
+        }
+        delete rest.houses;
 
         record = rest;
         loaded = true;
@@ -342,6 +421,7 @@ export async function saveSavingsRecord(gear) {
     record = { ...(gear || {}) };
     // Never from the caller: the goals below are the only copy that is current
     delete record.abilities;
+    delete record.houses;
     return write();
 }
 
@@ -417,6 +497,81 @@ export function hasAbilityGoal(abilityHrid) {
  */
 export function resetAbilityGoals({ loaded: hasLoaded = true } = {}) {
     goals = {};
+    record = {};
+    loaded = hasLoaded;
+}
+
+/**
+ * Save towards a level of a house room.
+ *
+ * Idempotent per room, as an ability goal is per ability: a second call for a
+ * room already on the list replaces its target and its cost rather than putting
+ * a second guess beside the first, because the caller is usually something that
+ * has just costed the same intention more accurately.
+ *
+ * @param {Object} goal - The goal
+ * @param {string} goal.houseRoomHrid - e.g. `/house_rooms/mystical_study`
+ * @param {number} goal.targetLevel - The level being saved for, capped at the game's own
+ * @param {number|null} goal.cost - Coins for the build, or null when unpriced
+ * @param {string} [goal.label] - How it should read, e.g. `Mystical Study Lv5`
+ * @returns {Promise<void>}
+ */
+export async function addHouseGoal({ houseRoomHrid, targetLevel, cost, label } = {}) {
+    if (!houseRoomHrid) return;
+    await ensureLoaded();
+
+    rooms[houseRoomHrid] = normalizeGoal(
+        houseRoomHrid,
+        { targetLevel, cost, label, updatedAt: Date.now() },
+        MAX_HOUSE_ROOM_LEVEL
+    );
+    await write();
+}
+
+/**
+ * Stop saving for a room level.
+ * @param {string} houseRoomHrid - The room
+ * @returns {Promise<void>}
+ */
+export async function removeHouseGoal(houseRoomHrid) {
+    await ensureLoaded();
+    if (!rooms[houseRoomHrid]) return;
+
+    delete rooms[houseRoomHrid];
+    await write();
+}
+
+/**
+ * Every house room goal, as a list.
+ * @returns {Array<{houseRoomHrid: string, targetLevel: number, cost: number|null, label: string}>}
+ */
+export function houseGoals() {
+    return Object.entries(rooms).map(([houseRoomHrid, goal]) => ({ houseRoomHrid, ...goal }));
+}
+
+/**
+ * One room's goal.
+ * @param {string} houseRoomHrid - The room
+ * @returns {Object|null}
+ */
+export function houseGoalFor(houseRoomHrid) {
+    const goal = rooms[houseRoomHrid];
+    return goal ? { houseRoomHrid, ...goal } : null;
+}
+
+/** @param {string} houseRoomHrid - Whether a level of this room is being saved for */
+export function hasHouseGoal(houseRoomHrid) {
+    return Boolean(rooms[houseRoomHrid]);
+}
+
+/**
+ * Forget every room goal, for a test that must not inherit the last one.
+ *
+ * @param {{loaded?: boolean}} [options] - `loaded: false` also forgets that the
+ *   record was ever read, as `resetAbilityGoals` does
+ */
+export function resetHouseGoals({ loaded: hasLoaded = true } = {}) {
+    rooms = {};
     record = {};
     loaded = hasLoaded;
 }

@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### eWatch learns houses too
+
+- **House room levels are savings goals**: a "House Levels" card set beside Ability Levels — "Mystical Study Lv5" with the summed build cost across the level span (coins at face value, materials at buy price; any unpriced material makes the goal honestly unpriced, never a partial total), progress from your gold, Reached when the room gets there. Manual add from Edit mode with rooms and current levels listed, capped at the room max of 8. House goals join the headline candidates, the overlay tile, and the Everything total. The sims' house rows hand goals over via the same one-writer record the gear and ability goals use.
+
 ### Ability swaps follow the guide
 
 - **Swap candidates come from the community build guide now**: each loadout's archetype is detected from its weapon (spear/sword/mace/wark/bow/crossbow/fire/water/nature — any bulwark reads as wark, staff element from the weapon or robes), and only that archetype's guide abilities are offered — replacing off-guide abilities or filling empty slots, never touching an on-guide one except for its OR-alternative (Critical ↔ Fierce/Mystic Aura). A fire mage's ~100+ swap rows become ~7. Unknown weapons fall back to the old behaviour rather than guessing.
