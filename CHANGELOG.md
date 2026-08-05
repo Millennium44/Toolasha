@@ -23,6 +23,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - **`Toolasha.debug.tokenExchange()`** dumps the full table — every known colour, its rate, its source, and which conversion won — so a rate the capture hasn't seen yet is visible at a glance. Takes `'bid'`/`'average'` for the pricing side.
 - **`/shrines` ends with the token's worth** (`Guild token ≈ 1.0Kg via Green Guild Credit`), including how many exchange rates are known.
 
+### The goal planner learns two more trades
+
+- **Alchemy ranks without a DOM**: the best-items enumeration moved into a pure module the planner calls directly — every figure is the real calculator's, fees and under-level penalties included (an under-levelled item is offered with its penalty priced in; an action you can't do yet is dropped). Memoised on your alchemy level, gear, teas and price freshness, capped at the top 12.
+- **Combat income joins gold goals** — from your all-zones sim snapshot, labelled with its age (`from your all-zones run 3d ago`) and flagged `(stale)` past 7 days or `(gear changed)` when your equipment no longer matches the run. Never silently withheld; no snapshot at all becomes a note under the add form telling you an all-zones sim would add combat rates. Combat XP is deliberately not quoted against skill goals — the snapshot only keeps a cross-skill total.
+
 ### Housekeeping
 
 - **The dungeon chest→key maps live in one place now** (`src/utils/dungeon-keys.js`): combat-stats and the combat-sim adapter each kept their own copy — with the two names swapped between them — and four more modules imported the constant through the stats calculator. Everyone now reads the same table under one pair of names. Pure extraction, no behavior change.
