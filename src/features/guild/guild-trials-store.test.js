@@ -503,3 +503,75 @@ describe('merging two records for one guild', () => {
         expect(mergeTrialRecords(held, null).tiles).toEqual(held.tiles);
     });
 });
+
+describe('what the game says a tier is worth', () => {
+    const tile = (overrides = {}) => ({
+        name: 'Trial Chameleon',
+        kind: 'combat',
+        level: 140,
+        tier: 5,
+        points: 1200,
+        readings: [{ current: 618_000, max: 618_000 }],
+        ...overrides,
+    });
+
+    test('a card carrying both a tier and a points line is filed against that tier', () => {
+        const record = recordTileSample(emptyRecord(thisWeek), tile(), now);
+        expect(record.tiles['combat::trial chameleon'].pointsByTier).toEqual({ 5: 1200 });
+    });
+
+    test('a card with no tier of its own files nothing', () => {
+        // The In Progress card carries the reading and no tier. The record's
+        // carried-over tier is good enough for a total that is checked against
+        // movement, and not good enough to hang a payout figure on
+        let record = recordTileSample(emptyRecord(thisWeek), tile(), now);
+        record = recordTileSample(record, tile({ tier: null, level: null, points: 9999 }), now + 5000);
+
+        expect(record.tiles['combat::trial chameleon'].pointsByTier).toEqual({ 5: 1200 });
+    });
+
+    test('each tier keeps its own figure as the trial climbs', () => {
+        let record = recordTileSample(emptyRecord(thisWeek), tile({ tier: 5, points: 1200 }), now);
+        record = recordTileSample(record, tile({ tier: 6, points: 1400 }), now + 5000);
+
+        expect(record.tiles['combat::trial chameleon'].pointsByTier).toEqual({ 5: 1200, 6: 1400 });
+    });
+
+    test('the merge that runs when the guild name arrives keeps the Trials tab’s data', () => {
+        // Found by the payout block reading as zero: `mergeTrialRecords` rebuilt
+        // each tile without `points`, `signups` or `pointsByTier`, so the first
+        // render of every session threw away everything the Trials tab had said
+        const named = {
+            weekStart: thisWeek,
+            tiles: {
+                'combat::trial chameleon': {
+                    name: 'Trial Chameleon',
+                    kind: 'combat',
+                    tier: 5,
+                    points: 1200,
+                    signups: { signed: 3, total: 56 },
+                    pointsByTier: { 5: 1200 },
+                    samples: [{ t: 10, readings: [{ current: 1, max: 2 }] }],
+                    tiers: [],
+                },
+            },
+        };
+        const fresh = {
+            weekStart: thisWeek,
+            tiles: {
+                'combat::trial chameleon': {
+                    name: 'Trial Chameleon',
+                    kind: 'combat',
+                    samples: [{ t: 20, readings: [{ current: 1, max: 2 }] }],
+                    tiers: [],
+                },
+            },
+        };
+
+        const merged = mergeTrialRecords(named, fresh).tiles['combat::trial chameleon'];
+        expect(merged.points).toBe(1200);
+        expect(merged.signups).toEqual({ signed: 3, total: 56 });
+        expect(merged.pointsByTier).toEqual({ 5: 1200 });
+        expect(merged.tier).toBe(5);
+    });
+});

@@ -31,9 +31,12 @@ import {
     projectTierTotal,
     ratePerMs,
     rescaleForParticipants,
+    interpretCardPoints,
     tierFromLevel,
+    tierMarginalPoints,
     totalBasePoints,
     trailingRun,
+    trialBankedBasePoints,
     trialBasePoints,
     trialTimeLeftMs,
     trialWeekEnd,
@@ -552,5 +555,132 @@ describe('isTrialName', () => {
         expect(isTrialName('Guild Experience')).toBe(false);
         expect(isTrialName('MillenniumTest')).toBe(false);
         expect(isTrialName('')).toBe(false);
+    });
+});
+
+describe('tierMarginalPoints', () => {
+    test('the first tier is worth more than the ones after it', () => {
+        expect(tierMarginalPoints('skilling', 1)).toBe(200);
+        expect(tierMarginalPoints('skilling', 2)).toBe(100);
+        expect(tierMarginalPoints('combat', 1)).toBe(400);
+        expect(tierMarginalPoints('combat', 7)).toBe(200);
+    });
+
+    test('an unusable tier or type is null', () => {
+        expect(tierMarginalPoints('skilling', 0)).toBeNull();
+        expect(tierMarginalPoints('fishing', 3)).toBeNull();
+    });
+});
+
+describe('interpretCardPoints', () => {
+    // The card is the game talking about this trial; the ladder is a rule
+    // reconstructed from the guide's prose. Working out which question the card
+    // is answering is what lets the two be compared at all.
+    test('a running total is recognised as one', () => {
+        // Skilling tier 5 cumulative: 200 + 100×4
+        const reading = interpretCardPoints({ type: 'skilling', tier: 5, statedPoints: 600 });
+        expect(reading.interpretation).toBe('cumulative');
+        expect(reading.ladderCumulative).toBe(600);
+        expect(reading.ambiguous).toBe(false);
+    });
+
+    test('a per-tier step is recognised as one', () => {
+        const reading = interpretCardPoints({ type: 'combat', tier: 4, statedPoints: 200 });
+        expect(reading.interpretation).toBe('marginal');
+        expect(reading.ladderMarginal).toBe(200);
+    });
+
+    test('at tier one the two readings are the same number and it says so', () => {
+        const reading = interpretCardPoints({ type: 'skilling', tier: 1, statedPoints: 200 });
+        expect(reading.ambiguous).toBe(true);
+    });
+
+    test('a figure matching neither is reported rather than rounded towards one', () => {
+        expect(interpretCardPoints({ type: 'skilling', tier: 5, statedPoints: 725 }).interpretation).toBe('disagrees');
+    });
+
+    test('unusable input is null', () => {
+        expect(interpretCardPoints({ type: 'skilling', tier: 5 })).toBeNull();
+        expect(interpretCardPoints({ type: 'fishing', tier: 5, statedPoints: 600 })).toBeNull();
+        expect(interpretCardPoints()).toBeNull();
+    });
+});
+
+describe('trialBankedBasePoints', () => {
+    test('with no card seen it is the ladder, and says so', () => {
+        const banked = trialBankedBasePoints({ type: 'combat', bankedTiers: 3 });
+        expect(banked).toMatchObject({ basePoints: 800, source: 'ladder' });
+    });
+
+    test('a cumulative card for the banked tier is used outright', () => {
+        const banked = trialBankedBasePoints({
+            type: 'skilling',
+            bankedTiers: 4,
+            // Tier 5 is on screen and cumulative; tier 4 is what was banked
+            pointsByTier: { 4: 555, 5: 600 },
+        });
+        expect(banked).toMatchObject({ basePoints: 555, source: 'game', interpretation: 'cumulative' });
+    });
+
+    test('marginal cards are added up, and the ladder fills the tiers never seen', () => {
+        const banked = trialBankedBasePoints({
+            type: 'skilling',
+            bankedTiers: 3,
+            // Tier 3's card says 100, which is the per-tier step rather than the total
+            pointsByTier: { 3: 100 },
+        });
+        // Tiers 1 and 2 were never on screen, so 200 + 100 comes from the ladder
+        expect(banked).toMatchObject({ basePoints: 400, source: 'mixed', interpretation: 'marginal' });
+    });
+
+    test('a card that agrees with neither reading is flagged', () => {
+        const banked = trialBankedBasePoints({ type: 'skilling', bankedTiers: 4, pointsByTier: { 5: 725 } });
+        expect(banked.interpretation).toBe('disagrees');
+    });
+
+    test('nothing banked is nothing owed, whatever the cards say', () => {
+        expect(trialBankedBasePoints({ type: 'combat', bankedTiers: 0, pointsByTier: { 1: 400 } })).toMatchObject({
+            basePoints: 0,
+        });
+    });
+});
+
+describe('payoutProjection with the game’s own figures', () => {
+    test('an override wins over the ladder and is labelled', () => {
+        const payout = payoutProjection({
+            trials: [{ type: 'skilling', tiersCleared: 4, basePointsOverride: 555 }],
+            buildersHallBonus: 0.2,
+            treasuryBonus: 0,
+        });
+
+        expect(payout.basePoints).toBe(555);
+        expect(payout.perTrial[0].basePointsSource).toBe('game');
+        expect(payout.guildPoints).toBeCloseTo(666);
+    });
+
+    test('without one, nothing changes', () => {
+        const payout = payoutProjection({ trials: [{ type: 'skilling', tiersCleared: 4 }] });
+        expect(payout.basePoints).toBe(500);
+        expect(payout.perTrial[0].basePointsSource).toBe('ladder');
+    });
+});
+
+describe('a card the ladder cannot explain', () => {
+    test('is still believed where it covers the banked tier', () => {
+        // "Prefer the game's number where they disagree": the card is the game
+        // talking about this trial, and the ladder is prose reconstructed
+        const banked = trialBankedBasePoints({ type: 'combat', bankedTiers: 4, pointsByTier: { 4: 1111, 5: 1200 } });
+
+        expect(banked.basePoints).toBe(1111);
+        expect(banked.source).toBe('game');
+        expect(banked.ladder).toBe(1000);
+        expect(banked.quoted).toEqual({ tier: 5, statedPoints: 1200 });
+    });
+
+    test('a disagreement with no card for the banked tier falls back and says so', () => {
+        const banked = trialBankedBasePoints({ type: 'skilling', bankedTiers: 4, pointsByTier: { 5: 725 } });
+
+        expect(banked).toMatchObject({ basePoints: 500, source: 'ladder', interpretation: 'disagrees' });
+        expect(banked.quoted).toEqual({ tier: 5, statedPoints: 725 });
     });
 });

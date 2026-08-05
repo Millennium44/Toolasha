@@ -6,6 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Trials know who hit what, and why the payout was blank
+
+- **Per-player DPS on combat trials**: one line per player under the trial card — DPS, share of party damage, deaths — using the exact same damage attribution as the DPS panel, gated so only real trial fights count (a mid-trial reload measures nothing rather than the wrong thing, and the next zone can't inherit the tally). Spans the trial's tiers; prints its reason when nothing is measured.
+- **Seen loadouts**: clicking a player's popup (and every trial battle you're in) captures their stat sheet and abilities — armor, resistances, evasions, crit, regen, drop stats, the lot — stored per character and shown in the guild roster as dated snapshots ("seen 2h ago"), because a snapshot is a photograph. Works whether the popup is socket-fed or not; the DOM fallback stands down whenever real data arrives.
+- **The blank payout block had two causes, both fixed**: the tier only exists on the Trials tab (an In Progress-only viewer had no tier → every line zero — the three states now say "open the Trials tab", "tier 1 in progress", or a figure), and the record merge on every session's first render was silently erasing the points and signups the Trials tab had reported. "On pace" now always draws with its reason instead of vanishing.
+- **The game's own points figures now check the tier ladder**: per-tier "N pts" values are stored and preferred over the derived ladder where they disagree, with the source captioned and a warning naming any tier whose figure matches neither reading — so the next trial settles whose math is right.
+
 ### Trials read the game as it actually is
 
 - **The real structure, from live screenshots**: the Trials tab carries setup (tier, points, signups, countdown) and the separate In Progress tab carries the pool readings — no card anywhere holds both a level and a progress bar, which the old reader required, so nothing could ever record. Cards are now found by shape (a level marker or an n/m reading) and kept by name (the five encounters + ten skills), sign-up counts parse as participants instead of masquerading as progress, the In Progress total pairs with the Trials tier in one record, and the panel no longer misreads levels off its own injected badges.

@@ -48,6 +48,26 @@
  * quiet, because a blank surface during a live trial is indistinguishable from a
  * broken one. It was reported as a broken one.
  *
+ * **Zero is a claim, and usually the wrong one.** Three separate things used to
+ * reach the screen as `0`: a tier that has not been seen because only the In
+ * Progress tab was ever open (it carries no tier), a trial genuinely still on
+ * its first tier, and a pace that could not be projected. The first is *unknown*
+ * and the block now says which of the three it is, along with what to open to
+ * fix it. A player who joins a trial midway sees the first of these until they
+ * look at the Trials tab once, and it is not a failure of the arithmetic.
+ *
+ * **The game states what a tier is worth, and it wins.** The Trials tab's cards
+ * carry a "600 pts" line. The tier ladder in `guild-trials-math.js` derives the
+ * same figure from the in-game guide's prose, so the two can be checked against
+ * each other — and where they disagree the card is believed and the block says
+ * the ladder needs correcting.
+ *
+ * **A combat trial's DPS can be split per player.** The card's "Party DPS" is
+ * measured off the boss bar and cannot say who is producing it. The fight itself
+ * is an ordinary battle on the wire, so `guild-trial-damage.js` attributes it —
+ * but only for fights this client is actually in, and only when the fight can be
+ * shown to be the trial's.
+ *
  * **Payout bonuses may be unknown.** Guild Points scale with the Builders Hall
  * and token payouts with the Treasury; both levels arrive on guild traffic and
  * the bonus-per-level table has not been located in client data. When it cannot
@@ -73,8 +93,11 @@ import {
     projectPace,
     projectTierTotal,
     ratePerMs,
+    trialBankedBasePoints,
     trialWeekStart,
 } from './guild-trials-math.js';
+import guildTrialDamage from './guild-trial-damage.js';
+import guildLoadoutCapture from './guild-loadout-capture.js';
 import { describeGuildTokenGold } from './guild-token-value.js';
 import {
     classifyReadings,
@@ -130,11 +153,26 @@ export function analyseTrial(record, { participants = 0, timeLeftMs = null } = {
     const index = kind === 'combat' ? bossIndex : poolIndex;
     const direction = kind === 'combat' ? -1 : 1;
 
+    // Everything downstream of the tier — what is banked, what the payout is
+    // worth, whether a pace can be walked — is unavailable rather than zero when
+    // the tier has not been seen. The In Progress card carries no tier at all,
+    // so a player who only ever opens that tab is in this state permanently, and
+    // reporting it as "0 banked" is what made a live trial's payout read as
+    // nothing at all.
+    const tierKnown = Number.isFinite(tier);
+    const tiersClearedSoFar = tierKnown ? Math.max(0, tier - 1) : 0;
+    const pointsByTier = record?.pointsByTier && typeof record.pointsByTier === 'object' ? record.pointsByTier : {};
+
     const base = {
         kind,
         tier,
+        tierKnown,
+        // The card's own "600 pts", where it has been seen, against the ladder
+        // this file's arithmetic is built on
+        points: trialBankedBasePoints({ type: kind, bankedTiers: tiersClearedSoFar, pointsByTier }),
+        pointsByTier,
         level: Number.isFinite(record?.level) ? record.level : null,
-        tiersClearedSoFar: Number.isFinite(tier) ? Math.max(0, tier - 1) : 0,
+        tiersClearedSoFar,
         rate: null,
         remaining: null,
         total: null,
@@ -257,9 +295,10 @@ export function tokenPayoutLine(tokens, baseTitle) {
  * The block drawn under one trial tile.
  * @param {Object} analysis - From {@link analyseTrial}
  * @param {number} participants - Signed-up participants
+ * @param {Object} [breakdown] - Per-player damage, from `guildTrialDamage.breakdown()`
  * @returns {string} HTML
  */
-export function renderTrialBlock(analysis, participants) {
+export function renderTrialBlock(analysis, participants, breakdown = guildTrialDamage.breakdown()) {
     const unit = analysis.kind === 'combat' ? 'dmg' : 'work';
     const rows = [];
 
@@ -287,18 +326,36 @@ export function renderTrialBlock(analysis, participants) {
         );
     }
 
-    if (!analysis.pace && analysis.timeLeftMs === null) {
+    if (!analysis.pace) {
         // Silently omitting the row was indistinguishable from the feature not
-        // having this idea at all
-        rows.push(
-            line(
-                'On pace for',
-                'no clock visible',
-                DIM,
-                'A pace needs the time left in the trial, and no countdown was found on this tab. ' +
-                    'The game draws one while a trial is in progress — open the trial tab while it is running.'
-            )
-        );
+        // having this idea at all — and the no-clock case was the only one that
+        // said so. A pace needs four things and going quiet about the other
+        // three read as the same broken row.
+        const missing =
+            analysis.timeLeftMs === null
+                ? {
+                      text: 'no clock visible',
+                      why:
+                          'A pace needs the time left in the trial, and no countdown was found on this tab. ' +
+                          'The game draws one while a trial is in progress — open the trial tab while it is running.',
+                  }
+                : !analysis.tierKnown
+                  ? {
+                        text: 'tier not known yet',
+                        why:
+                            'A pace walks up the tier ladder, and the In Progress card does not say which tier ' +
+                            'this is. Open the Trials tab beside it once; the tier is on the card there.',
+                    }
+                  : !Number.isFinite(analysis.rate)
+                    ? {
+                          text: analysis.samples < 2 ? 'measuring…' : 'no movement yet',
+                          why:
+                              'A pace needs a measured rate, and a rate needs two readings taken while the tab ' +
+                              'is open. Nothing arrives while it is shut.',
+                      }
+                    : { text: '—', why: 'Not enough of the tier is known to project one.' };
+
+        rows.push(line('On pace for', missing.text, DIM, missing.why));
     }
 
     if (analysis.pace) {
@@ -335,16 +392,96 @@ export function renderTrialBlock(analysis, participants) {
         rows.push(line('Next tier', 'needs a second tier to fit the curve', DIM));
     }
 
-    rows.push(
-        line(
-            'Banked',
-            `${analysis.tiersClearedSoFar} tier${analysis.tiersClearedSoFar === 1 ? '' : 's'}`,
-            DIM,
-            'A trial starts at tier 1 and climbs one at a time, so the tier on screen names what is already cleared.'
-        )
-    );
+    if (!analysis.tierKnown) {
+        rows.push(
+            line(
+                'Banked',
+                'tier not seen yet',
+                DIM,
+                'Tiers cleared are read off the tier on screen, and the In Progress card carries no tier. ' +
+                    'Open the Trials tab beside it once — the tier is on the card there, and everything banked ' +
+                    'follows from it. Nothing is lost meanwhile; this is what is not yet known, not zero.'
+            )
+        );
+    } else if (analysis.tiersClearedSoFar === 0) {
+        rows.push(
+            line(
+                'Banked',
+                `nothing yet — tier ${analysis.tier} in progress`,
+                DIM,
+                'A trial starts at tier 1, so nothing is banked until the first tier completes.'
+            )
+        );
+    } else {
+        rows.push(
+            line(
+                'Banked',
+                `${analysis.tiersClearedSoFar} tier${analysis.tiersClearedSoFar === 1 ? '' : 's'}`,
+                DIM,
+                'A trial starts at tier 1 and climbs one at a time, so the tier on screen names what is ' +
+                    'already cleared.'
+            )
+        );
+    }
+
+    if (analysis.kind === 'combat') rows.push(...renderTrialPlayers(breakdown));
 
     return rows.join('');
+}
+
+/**
+ * Who in the party is producing the DPS the card is already showing.
+ *
+ * Drawn only under a combat card, and only from fights this client was actually
+ * in — see `guild-trial-damage.js` for how a trial fight is told from any other,
+ * and why measuring nothing is the right answer when it cannot be.
+ *
+ * @param {Object} breakdown - From `guildTrialDamage.breakdown()`
+ * @returns {string[]} Rows of HTML, empty when there is nothing worth a row
+ */
+export function renderTrialPlayers(breakdown) {
+    if (!breakdown) return [];
+
+    if (!breakdown.measured) {
+        // A line rather than silence: an empty space under a combat card is
+        // indistinguishable from the split having failed, and the reason is
+        // usually actionable ("you are not in this fight")
+        return [
+            line(
+                'Per player',
+                breakdown.stale ? 'last trial, not this one' : 'no trial fight seen here',
+                DIM,
+                `${breakdown.reason}.\nOnly fights this client takes part in can be split — ` +
+                    'a trial you did not sign up for sends no battle traffic to you.'
+            ),
+        ];
+    }
+
+    const rows = [
+        `<div style="margin-top:4px; color:${ACCENT}; font-weight:600;">` +
+            `Per player · ${breakdown.fights} fight${breakdown.fights === 1 ? '' : 's'}</div>`,
+    ];
+
+    for (const player of breakdown.players) {
+        const share = Number.isFinite(player.share) ? `${player.share.toFixed(0)}%` : '—';
+        const dps = player.dps === null ? 'measuring…' : `${num(player.dps)} dmg/s`;
+        const deaths = player.deaths > 0 ? ` · ${player.deaths}✝` : '';
+
+        rows.push(
+            line(
+                player.name,
+                `${dps} · ${share}${deaths}`,
+                player.deaths > 0 ? WARN : GOOD,
+                `${formatWithSeparator(Math.round(player.damage))} damage across ` +
+                    `${formatWithSeparator(player.hits)} hits.\n` +
+                    `Hit rate ${player.accuracy === null ? '—' : `${(player.accuracy * 100).toFixed(1)}%`}, ` +
+                    `crit rate ${player.critRate === null ? '—' : `${(player.critRate * 100).toFixed(1)}%`}, ` +
+                    `${player.deaths} death${player.deaths === 1 ? '' : 's'}.`
+            )
+        );
+    }
+
+    return rows;
 }
 
 class GuildTrials {
@@ -365,6 +502,15 @@ class GuildTrials {
 
         this.guildName = guildXPTracker.getOwnGuildName?.() || null;
         this.record = await loadTrialRecord(this.guildName);
+
+        // Both listen to the socket rather than to the panel, so they are
+        // started here rather than on the tab appearing: a trial fight and a
+        // unit popup both happen while the guild page is shut. `_publishTrialNames`
+        // arms the damage gate from last session's record, so a fight is
+        // recognised without the tab having been opened this session.
+        guildTrialDamage.initialize();
+        this._publishTrialNames();
+        await guildLoadoutCapture.initialize();
 
         // Any guild panel node at all, rather than a list of guesses at what the
         // two trial tabs are called. The In Progress tab's card carries neither
@@ -466,6 +612,10 @@ class GuildTrials {
             for (const tile of tiles) this.record = recordTileSample(this.record, tile, now);
             if (tiles.length) saveTrialRecord(this.guildName, this.record);
 
+            // Which encounters count as a trial fight this week. Pushed rather
+            // than pulled so the damage module never imports this one
+            this._publishTrialNames();
+
             // Asked again on every render rather than once at startup: the guild
             // name arrives on socket traffic, which is usually later than this
             // feature's initialisation. Not awaited — the drawing below does not
@@ -496,6 +646,9 @@ class GuildTrials {
                     type: tile.kind,
                     banked: analysis.tiersClearedSoFar,
                     projected: analysis.pace?.tiersCleared ?? analysis.tiersClearedSoFar,
+                    tierKnown: analysis.tierKnown,
+                    points: analysis.points,
+                    pointsByTier: analysis.pointsByTier,
                 });
 
                 const block = document.createElement('div');
@@ -551,7 +704,14 @@ class GuildTrials {
         const treasuryBonus = bonuses.treasury.bonus;
 
         const banked = payoutProjection({
-            trials: trials.map((trial) => ({ ...trial, tiersCleared: trial.banked })),
+            trials: trials.map((trial) => ({
+                ...trial,
+                tiersCleared: trial.banked,
+                // The game's own figure where a card has stated one for the tier
+                // that was banked; the ladder otherwise. `trialBankedBasePoints`
+                // decides which, and says so.
+                basePointsOverride: trial.points?.source === 'ladder' ? undefined : trial.points?.basePoints,
+            })),
             buildersHallBonus,
             treasuryBonus,
         });
@@ -560,6 +720,12 @@ class GuildTrials {
             buildersHallBonus,
             treasuryBonus,
         });
+
+        // Which of the three states the banked figure is in. They are three
+        // different things and they all used to render as `0`, which is the one
+        // reading that is never right.
+        const anyTierKnown = trials.some((trial) => trial.tierKnown);
+        const anyBanked = trials.some((trial) => trial.banked > 0);
 
         const wrapper = document.createElement('div');
         wrapper.className = CSS_CLASS;
@@ -576,13 +742,42 @@ class GuildTrials {
             'The eligible payout plus a further 50% of it for participating.'
         );
 
+        const bankedRow = !anyTierKnown
+            ? line(
+                  'Guild Points banked',
+                  'not known yet',
+                  DIM,
+                  'Banked points are counted from the tier on screen, and no card seen so far carries one — ' +
+                      'the In Progress tab does not show a tier. Open the Trials tab once and this fills in. ' +
+                      'It is unknown rather than zero.'
+              )
+            : !anyBanked
+              ? line(
+                    'Guild Points banked',
+                    'nothing banked yet',
+                    DIM,
+                    'A trial pays for tiers it has finished. This appears after the first tier completes.'
+                )
+              : line('Guild Points banked', num(banked.guildPoints), GOOD, this._pointsProvenance(trials));
+
         const rows = [
             `<div style="color:${ACCENT}; font-weight:700; margin-bottom:2px;">Trial payout</div>`,
-            line('Guild Points banked', num(banked.guildPoints), GOOD),
+            bankedRow,
             line('Guild Points on pace', num(projected.guildPoints), ACCENT),
             line('Tokens, every eligible member', eligible.value, ACCENT, eligible.title),
             line('Tokens, if you took part', participant.value, GOOD, participant.title),
         ];
+
+        const disagreement = trials.find((trial) => trial.points?.interpretation === 'disagrees');
+        if (disagreement?.points?.quoted) {
+            const { tier, statedPoints } = disagreement.points.quoted;
+            rows.push(
+                `<div style="color:${WARN}; margin-top:4px;">` +
+                    `${disagreement.name} T${tier} says ${formatWithSeparator(statedPoints)} pts, which matches ` +
+                    'neither the running total nor the per-tier step this script derives. The game’s number is ' +
+                    'used where it covers a banked tier — the ladder here needs correcting.</div>'
+            );
+        }
 
         if (!banked.bonusesKnown) {
             const missing = [];
@@ -607,10 +802,42 @@ class GuildTrials {
         else root.insertAdjacentElement('afterbegin', wrapper);
     }
 
+    /**
+     * Where the banked points figure came from, for the tooltip.
+     * @param {Array<Object>} trials - This week's trials, as `_render` built them
+     * @returns {string} A sentence
+     */
+    _pointsProvenance(trials) {
+        const sources = new Set(trials.map((trial) => trial.points?.source).filter(Boolean));
+        if (sources.has('game') && sources.size === 1) {
+            return 'Taken from the points each trial card states, not from this script’s tier ladder.';
+        }
+        if (sources.has('game') || sources.has('mixed')) {
+            return (
+                'Part read from the points the trial cards state and part derived from the tier ladder, ' +
+                'for tiers whose card was never on screen.'
+            );
+        }
+        return (
+            'Derived from the tier ladder — 200 + 100 per extra tier for skilling, 400 + 200 for combat. ' +
+            'Open the Trials tab and the game’s own “N pts” is used instead.'
+        );
+    }
+
+    /** Tell the damage tracker which encounters this week's combat trials are */
+    _publishTrialNames() {
+        const names = Object.values(this.record?.tiles || {})
+            .filter((tile) => tile?.kind === 'combat' && tile?.name)
+            .map((tile) => tile.name);
+        guildTrialDamage.setTrialNames(names);
+    }
+
     cleanup() {
         for (const unregister of this.unregister) unregister();
         this.unregister = [];
         this.timers.clearAll();
+        guildTrialDamage.cleanup();
+        guildLoadoutCapture.cleanup();
         document.querySelectorAll(`.${CSS_CLASS}`).forEach((el) => el.remove());
         this.initialized = false;
     }
