@@ -234,12 +234,13 @@ describe('the panel', () => {
         expect(text()).toContain('measured rate');
     });
 
-    test('a walled forecast says so here too', () => {
-        guildTrialScoreboard.noteForecast({ tier: 3, source: 'estimated', limitedBy: 'enrage' });
+    test('an enraged forecast says so here too, without calling it a wall', () => {
+        guildTrialScoreboard.noteForecast({ tier: 3, source: 'estimated', limitedBy: 'time', enragedFrom: 3 });
         guildTrialScoreboard.open();
 
-        expect(text()).toContain('walled by the ten-minute enrage');
+        expect(text()).toContain('with the boss fully enraged by then');
         expect(text()).toContain('estimated from captured loadouts');
+        expect(text()).not.toContain('walled');
     });
 
     test('no forecast is no row rather than an empty one', () => {

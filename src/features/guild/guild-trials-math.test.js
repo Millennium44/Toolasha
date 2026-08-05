@@ -310,16 +310,26 @@ describe('the skilling pool ladder', () => {
     // 40,800 / 44,880 / 48,960. That is 40,000 / 44,000 / 48,000 with the same
     // 1%-per-participant multiplier the combat side uses, and those are the
     // first tier's work plus a tenth of it per tier. Linear, not geometric.
-    test('reproduces the live trial exactly, on all three tiers', () => {
+    test('reproduces the live trial exactly, on all five tiers watched', () => {
+        // 40,800 / 44,880 / 48,960 / 53,040 / 57,120 — linear, +4,080 a tier,
+        // which is a tenth of the first tier's work each time
         const baseWork = 40_000;
-        expect(tierPoolWork({ baseWork, tier: 1, participants: 2 })).toBeCloseTo(40_800, 6);
-        expect(tierPoolWork({ baseWork, tier: 2, participants: 2 })).toBeCloseTo(44_880, 6);
-        expect(tierPoolWork({ baseWork, tier: 3, participants: 2 })).toBeCloseTo(48_960, 6);
+        const observed = [40_800, 44_880, 48_960, 53_040, 57_120];
+        observed.forEach((total, index) => {
+            expect(tierPoolWork({ baseWork, tier: index + 1, participants: 2 })).toBeCloseTo(total, 6);
+        });
+    });
+
+    test('the tier after the last one watched', () => {
+        // The fitted curve this replaces overshot to 63.3K on the same data;
+        // the rule gives 61,200
+        expect(tierPoolWork({ baseWork: 40_000, tier: 6, participants: 2 })).toBeCloseTo(61_200, 6);
     });
 
     test('one reading anywhere on the ladder gives the first tier', () => {
         expect(baseWorkFromObservations([{ tier: 3, total: 48_960 }], 2)).toBeCloseTo(40_000, 6);
         expect(baseWorkFromObservations([{ tier: 1, total: 40_800 }], 2)).toBeCloseTo(40_000, 6);
+        expect(baseWorkFromObservations([{ tier: 5, total: 57_120 }], 2)).toBeCloseTo(40_000, 6);
     });
 
     test('nothing observed is nothing derived', () => {

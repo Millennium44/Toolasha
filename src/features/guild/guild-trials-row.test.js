@@ -60,6 +60,9 @@ function tile({ name, tier, at, values = [0, 5000], max = 10_000 }) {
         kind: 'skilling',
         level: 100 + (tier - 1) * 10,
         tier,
+        // A card states points once it has banked a tier, which is what makes
+        // its badge a count of finished tiers rather than the one in progress
+        pointsByTier: { [tier]: 600 },
         samples: values.map((current, index) => ({
             t: at - (values.length - 1 - index) * spacing,
             readings: [{ current, max }],

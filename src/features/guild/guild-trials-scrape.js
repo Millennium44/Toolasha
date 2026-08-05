@@ -477,10 +477,11 @@ export function onTrialTab(root) {
  * with the same parser the trial clock uses.
  *
  * @param {Element} root - The trials root
- * @returns {{phase: 'scheduled'|'completed'|'live'|null, text: string, startsInMs: number|null}} The status
+ * @returns {{phase: 'scheduled'|'completed'|'live'|null, kind: 'skilling'|'combat'|null, text: string,
+ *   startsInMs: number|null}} The status
  */
 export function readTrialStatus(root) {
-    const none = { phase: null, text: '', startsInMs: null };
+    const none = { phase: null, kind: null, text: '', startsInMs: null };
     if (!root || typeof root.querySelectorAll !== 'function') return none;
 
     // The status is a *run* of text, and the game splits it across elements —
@@ -507,7 +508,12 @@ export function readTrialStatus(root) {
         if (!phase) continue;
 
         const startsInMs = phase === 'scheduled' ? parseWordyDurationMs(line) : null;
-        return { phase, text: line, startsInMs: Number.isFinite(startsInMs) ? startsInMs : null };
+        // The header names the trial it is about — "Skilling Trial - In
+        // Progress" — and a cycle runs the two kinds one after the other, so a
+        // status without its kind attached says the combat trial is under way
+        // during the skilling hour. Which is what it did.
+        const kind = /\bskilling\b/i.test(line) ? 'skilling' : /\bcombat\b/i.test(line) ? 'combat' : null;
+        return { phase, kind, text: line, startsInMs: Number.isFinite(startsInMs) ? startsInMs : null };
     }
 
     return none;

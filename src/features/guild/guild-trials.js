@@ -209,13 +209,25 @@ export function analyseTrial(
     const statedPoints = Object.keys(record?.pointsByTier || {}).some(
         (entry) => Number(record.pointsByTier[entry]) > 0
     );
-    const assumeFirst = phase === 'live' && badge === null && !statedPoints && !(record?.points > 0);
-
     const completed = Boolean(record?.completed);
+
+    // Whether this trial has finished anything at all. The points are what say
+    // so, and they are what tells the two readings of a badge apart:
+    //
+    //   "Lv.100, 0 pts, T1"   — tier one, in progress, nothing banked
+    //   "Lv.100, 236 pts, T1" — tier one banked, tier two being fought
+    //
+    // Both were watched on the same card an hour apart. Without the points half
+    // of that rule a combat card sitting at Lv.100 during the *skilling* hour
+    // claimed a banked tier for a trial that had not started, and put it in the
+    // payout.
+    const earned = statedPoints || record?.points > 0 || completed;
+    const assumeFirst = phase === 'live' && badge === null && !earned;
+
     // The tier being fought, which is what a rate, a pace and a forecast are about
-    const tier = badge !== null ? (completed ? badge : badge + 1) : assumeFirst ? FIRST_TIER : null;
+    const tier = badge !== null ? (completed || !earned ? badge : badge + 1) : assumeFirst ? FIRST_TIER : null;
     // What it has finished, which is what the payout is about
-    const bankedTiers = badge !== null ? badge : assumeFirst ? 0 : 0;
+    const bankedTiers = badge !== null && earned ? badge : 0;
     const observations = Array.isArray(record?.tiers) ? record.tiers : [];
 
     const history = samples.map((sample) => sample?.readings || []);
@@ -754,37 +766,67 @@ export function renderTrialBlock(
         rows.push(line('On pace for', missing.text, DIM, missing.why));
     }
 
-    if (analysis.pace) {
+    // One prediction, unless there are genuinely two things to say.
+    //
+    // "On pace for 4 tiers → T4" beside "Expected ~T3" is two bare numbers
+    // disagreeing, and a reader cannot tell which to believe. They are the same
+    // walk up the same derived ladder; the only thing that separates them is
+    // whether the player's own success rate falling with each tier has been
+    // measured yet. So: no measured slowdown, one row. A measured slowdown, two
+    // rows that each say what they assume — and the second being lower is then
+    // the point rather than a contradiction.
+    const slowdown = Number.isFinite(forecast?.decline?.perTier) ? forecast.decline : null;
+    const paceCaption = () => {
         const projected = analysis.pace.tiersCleared;
         const finalTier = analysis.pace.finalTier ?? analysis.tier;
         const level = levelFromTier(finalTier);
-        const caption =
-            analysis.pace.limitedBy === 'unknown-next-tier'
-                ? `${projected} tier${projected === 1 ? '' : 's'} (next tier's size unknown)`
-                : `${projected} tier${projected === 1 ? '' : 's'} → T${finalTier}${level ? ` (Lv.${level})` : ''}`;
+        return analysis.pace.limitedBy === 'unknown-next-tier'
+            ? `${projected} tier${projected === 1 ? '' : 's'} (next tier's size unknown)`
+            : `${projected} tier${projected === 1 ? '' : 's'} → T${finalTier}${level ? ` (Lv.${level})` : ''}`;
+    };
+
+    if (analysis.pace && (!forecast || forecast.tier === null || slowdown)) {
         rows.push(
             line(
-                'On pace for',
-                caption,
+                slowdown ? 'On pace (flat)' : 'On pace for',
+                paceCaption(),
                 analysis.pace.limitedBy === 'ladder' ? GOOD : WARN,
-                'Current rate held flat for the rest of the hour. A tier only counts when it fits whole.'
+                'The rate measured now, held flat for the rest of the hour. A tier only counts when it fits ' +
+                    'whole.' +
+                    (slowdown ? '\nThis one ignores the slowdown below, which is why it is the higher of the two.' : '')
             )
         );
     }
 
     if (forecast && forecast.tier !== null) {
-        const margin = forecast.limitedBy === 'enrage' ? ' · walled by the enrage timer' : '';
+        // Enrage is escalation, not an ending: the boss gains a stack a minute
+        // to ten, each +10% accuracy and +10% damage, and then stops. A tier
+        // that takes that long is dangerous rather than impossible, and what the
+        // projection cannot model is the deaths it may cost.
+        const margin = Number.isFinite(forecast.enragedFrom) ? ' · fully enraged' : '';
+        const cleared = forecast.tiersCleared;
         rows.push(
             line(
-                'Expected',
-                `~T${forecast.tier}${margin}`,
+                slowdown ? 'Expected (slowing)' : 'On pace for',
+                slowdown
+                    ? `~T${forecast.tier}${margin}`
+                    : `${cleared} tier${cleared === 1 ? '' : 's'} → T${forecast.tier}${margin}`,
                 forecast.source === 'measured' ? GOOD : WARN,
                 forecast.source === 'measured'
-                    ? 'Walked from the health each tier actually has — the game states the trial\u2019s monsters ' +
-                          'and its own health formula, so the ladder is derived rather than fitted — at the rate ' +
-                          'this party is measured to be producing.\n' +
-                          'A fight enrages after ten minutes, so a tier that cannot be killed inside one is a ' +
-                          'wall rather than a slow climb.'
+                    ? 'Walked from the work or health each tier actually needs — derived from the game\u2019s own ' +
+                          'data and rules, not fitted — at the rate this party is measured to be producing.' +
+                          (slowdown
+                              ? `\nAssumes your success rate keeps falling about ${Math.abs(
+                                    slowdown.perTier * 100
+                                ).toFixed(1)} points a tier to its 5% floor, as measured across ` +
+                                `${slowdown.observations} tiers. Past that point a tier is slow rather than ` +
+                                'impossible.'
+                              : '') +
+                          (Number.isFinite(forecast.enragedFrom)
+                              ? `\nA fight this long reaches full enrage from T${forecast.enragedFrom}: the boss ` +
+                                'gains a stack a minute to ten, ending at +100% damage and +100% accuracy. Still ' +
+                                'killable — but expect deaths to slow this beyond the projection.'
+                              : '')
                     : 'Estimated from the loadouts captured so far' +
                           (forecast.coverage
                               ? ` (${forecast.coverage.known} of ${forecast.coverage.of} members)`
@@ -1348,7 +1390,9 @@ class GuildTrials {
             // sampled into and then archived — the sample would go with it.
             const status = readTrialStatus(root);
             this._healStaleRecord(status, tiles, now);
-            guildTrialRecorder.noteLifecycle?.(status.phase, now);
+            // Any card actually running counts, whichever kind the header names
+            const anyLive = tiles.some((tile) => this._phaseFor(status, tile) === 'live');
+            guildTrialRecorder.noteLifecycle?.(anyLive ? 'live' : status.phase, now);
             // The player's own action stats live in the tab's footer rather than
             // on a card, so they are read once and attached to whichever trial
             // is the live one — the only card that can have produced them
@@ -1366,7 +1410,7 @@ class GuildTrials {
                 // *finished*, so the pool on screen is the next one along; with
                 // no badge yet, a running trial is on its first tier.
                 let readingTier = null;
-                if (status.phase === 'live' && withPersonal.readings.length) {
+                if (this._phaseFor(status, withPersonal) === 'live' && withPersonal.readings.length) {
                     if (Number.isFinite(badge)) readingTier = badge + 1;
                     else if (!(withPersonal.points > 0) && !Object.keys(held?.pointsByTier || {}).length) {
                         readingTier = FIRST_TIER;
@@ -1393,7 +1437,7 @@ class GuildTrials {
             // XP bar read as a trial card on the Overview tab — is closed twice
             // over now, by `isTrialName` matching a card's whole name and by
             // `onTrialTab` refusing a tab that is legibly something else.
-            if (live && status.phase !== 'scheduled' && status.phase !== 'completed') {
+            if (live && this._phaseFor(status, live) !== 'scheduled' && this._phaseFor(status, live) !== 'completed') {
                 guildTrialRecorder.noteActivity('tab-reading', now);
             }
 
@@ -1424,7 +1468,6 @@ class GuildTrials {
 
             const counts = participantCounts();
             const timeLeftMs = this._timeLeftMs(root);
-            const trialsForPayout = [];
             const bonuses = this._payoutBonuses();
 
             for (const tile of tiles) {
@@ -1436,21 +1479,12 @@ class GuildTrials {
                 // and it needs no name-to-hrid match to be believed
                 const hrid = matchTrialHrid(tile.name, Object.keys(counts));
                 const participants = record.signups?.signed ?? (hrid ? counts[hrid] : 0);
+                const tilePhase = this._phaseFor(status, tile);
                 const analysis = analyseTrial(record, {
                     participants,
                     timeLeftMs,
                     buildersHallBonus: bonuses.buildersHall.bonus,
-                    phase: status?.phase || null,
-                });
-
-                trialsForPayout.push({
-                    name: tile.name,
-                    type: tile.kind,
-                    banked: analysis.tiersClearedSoFar,
-                    projected: analysis.pace?.tiersCleared ?? analysis.tiersClearedSoFar,
-                    tierKnown: analysis.tierKnown,
-                    points: analysis.points,
-                    pointsByTier: analysis.pointsByTier,
+                    phase: tilePhase,
                 });
 
                 const key = `tile:${tileKey(tile)}`;
@@ -1458,7 +1492,7 @@ class GuildTrials {
                 this._placeBlock(root, key, {
                     html: renderTrialBlock(analysis, participants, undefined, {
                         participating: ownParticipation(tile.name),
-                        phase: status?.phase || null,
+                        phase: tilePhase,
                         startsInMs: status?.startsInMs ?? null,
                         forecast: this._forecast(tile, analysis, participants),
                     }),
@@ -1474,6 +1508,13 @@ class GuildTrials {
                 });
             }
 
+            // The payout is the *week's*, not this tab's. Summed from the record,
+            // which keeps every trial's stated points whichever tab was open when
+            // they were read — the two tabs were otherwise drawing the same
+            // "Trial payout" title over different totals, because each summed
+            // only the cards it could see.
+            const trialsForPayout = this._payoutTrials(status, counts, timeLeftMs, bonuses);
+
             if (this._renderPayout(root, trialsForPayout, tiles[0]?.element || null, bonuses)) {
                 drawn.add('payout');
             }
@@ -1481,6 +1522,81 @@ class GuildTrials {
         } catch (error) {
             console.error('[GuildTrials] Drawing the trial panel failed:', error);
         }
+    }
+
+    /**
+     * Every trial of the week, as the payout block wants them.
+     *
+     * From the record rather than from the cards on screen. The In Progress tab
+     * shows one running pool and the Trials tab shows all the setup cards, so a
+     * payout summed from what is visible said two different things under the
+     * same title depending on which tab the reader was on — "banked 2,714" on
+     * one and "banked 472" on the other, at the same moment. The record holds
+     * every tile's stated points regardless of which tab was open when they were
+     * read, which is exactly the sum wanted.
+     *
+     * @param {Object} status - From `readTrialStatus`
+     * @param {Object} counts - Sign-ups per trial hrid
+     * @param {number|null} timeLeftMs - Active time left
+     * @param {Object} bonuses - From {@link _payoutBonuses}
+     * @returns {Array<Object>} One entry per trial the record knows
+     */
+    _payoutTrials(status, counts, timeLeftMs, bonuses) {
+        const trials = [];
+
+        for (const record of Object.values(this.record?.tiles || {})) {
+            if (!record?.name) continue;
+
+            const hrid = matchTrialHrid(record.name, Object.keys(counts));
+            const participants = record.signups?.signed ?? (hrid ? counts[hrid] : 0);
+            const analysis = analyseTrial(record, {
+                participants,
+                timeLeftMs,
+                buildersHallBonus: bonuses.buildersHall.bonus,
+                phase: this._phaseFor(status, record),
+            });
+
+            trials.push({
+                name: record.name,
+                type: record.kind,
+                banked: analysis.tiersClearedSoFar,
+                projected: analysis.pace?.tiersCleared ?? analysis.tiersClearedSoFar,
+                tierKnown: analysis.tierKnown,
+                points: analysis.points,
+                pointsByTier: analysis.pointsByTier,
+            });
+        }
+
+        return trials;
+    }
+
+    /**
+     * Where the cycle is *for one kind of trial*.
+     *
+     * A cycle runs the skilling hour and then the combat one, and the header
+     * says which it is talking about — "Skilling Trial - In Progress". Applying
+     * that phase to every card meant the Trial Chameleon card rendered live rows
+     * during the skilling hour: "Rate: measuring…", "Banked: nothing yet — tier
+     * 1 in progress", for a trial that had not started.
+     *
+     * A card of the kind the header names takes the header's phase. A card of
+     * the other kind is waiting, unless it has evidence of its own — its own bar
+     * moving is worth more than a header about its sibling.
+     *
+     * @param {Object} status - From `readTrialStatus`
+     * @param {Object} tile - The card
+     * @returns {string|null} The phase this card is in
+     */
+    _phaseFor(status, tile) {
+        const phase = status?.phase || null;
+        if (!phase) return null;
+        // A header that does not name a kind is the old, single-trial case
+        if (!status.kind || status.kind === tile.kind) return phase;
+
+        // The other kind. Its own readings are the only thing that can say it
+        // is running while the header is about its sibling
+        if (tile.readings?.length) return 'live';
+        return phase === 'completed' ? 'scheduled' : 'scheduled';
     }
 
     /**

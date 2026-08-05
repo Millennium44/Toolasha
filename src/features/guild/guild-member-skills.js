@@ -46,6 +46,17 @@ const KEY_PREFIX = 'guildMemberSkills';
 export const STALE_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
+ * How long a requested profile is given to arrive before it is offered again.
+ *
+ * Clicking asks the game for a profile; only the game's reply proves anything.
+ * The first version marked a member as dealt with on the *click*, so a click
+ * that went nowhere — chat hidden, the fallback filling an input nobody could
+ * see — skipped that member for the session and left the roster reading "every
+ * member logged" with seven of eight actually captured.
+ */
+export const REQUEST_TIMEOUT_MS = 20_000;
+
+/**
  * Storage key for a guild's captures.
  * @param {string|null} guildName - Guild name, or null before it is known
  * @returns {string} Storage key
@@ -92,21 +103,34 @@ export function extractProfileSkills(message, at = Date.now()) {
  * @param {Array<Object>} members - The roster, from the XP tracker
  * @param {Object} captures - name (lowercased) → capture
  * @param {number} [now] - Clock
- * @returns {{next: Object|null, logged: number, total: number, stale: number}} Where the walk is
+ * @param {Object} [requests] - name (lowercased) → when their profile was asked for
+ * @param {number} [dueBefore] - Captures at or before this are due again
+ * @returns {{next: Object|null, pending: Object|null, logged: number, total: number,
+ *   stale: number}} Where the walk is
  */
-export function nextMemberToLog(members, captures = {}, now = Date.now()) {
+export function nextMemberToLog(members, captures = {}, now = Date.now(), requests = {}, dueBefore = 0) {
     const roster = (members || []).filter((member) => member?.name);
-    const held = (name) => captures?.[String(name).toLowerCase()] || null;
+    // A capture taken before the last "redo" is due again, however fresh it is
+    const held = (name) => {
+        const capture = captures?.[String(name).toLowerCase()] || null;
+        if (!capture) return null;
+        return (capture.at || 0) <= dueBefore ? null : capture;
+    };
+    const awaiting = (name) => now - (Number(requests?.[String(name).toLowerCase()]) || 0) < REQUEST_TIMEOUT_MS;
 
     let logged = 0;
     let stale = 0;
     const never = [];
     const old = [];
+    let pending = null;
 
     for (const member of roster) {
         const capture = held(member.name);
         if (!capture) {
-            never.push(member);
+            // Asked for a moment ago and still in flight: not offered again yet,
+            // and not counted as done either
+            if (awaiting(member.name)) pending = pending || member;
+            else never.push(member);
             continue;
         }
         if (now - (capture.at || 0) > STALE_AFTER_MS) {
@@ -116,7 +140,16 @@ export function nextMemberToLog(members, captures = {}, now = Date.now()) {
         logged += 1;
     }
 
-    return { next: never[0] || old[0] || null, logged, total: roster.length, stale };
+    return {
+        // Nothing else to ask for while one is in flight — but it is offered
+        // again the moment the window passes, because a click that went nowhere
+        // is not a capture
+        next: never[0] || old[0] || (pending && !never.length && !old.length ? pending : null),
+        pending,
+        logged,
+        total: roster.length,
+        stale,
+    };
 }
 
 class GuildMemberSkills {
@@ -125,8 +158,10 @@ class GuildMemberSkills {
         this.guildName = null;
         this.captures = {};
         this.onProfile = null;
-        /** Names offered this session, so a click moves on even before the reply lands */
-        this.offered = new Set();
+        /** name → when their profile was asked for, so a click in flight is not a click done */
+        this.requests = {};
+        /** Captures taken at or before this are due again; see {@link redoAll} */
+        this.dueBefore = 0;
     }
 
     /**
@@ -153,7 +188,8 @@ class GuildMemberSkills {
     /** Forget this guild's captures; used when the tab changes character */
     forget() {
         this.captures = {};
-        this.offered.clear();
+        this.requests = {};
+        this.dueBefore = 0;
     }
 
     /**
@@ -198,6 +234,43 @@ class GuildMemberSkills {
     }
 
     /**
+     * Walk the roster again, without throwing away what is already held.
+     *
+     * A capture goes stale on its own after a week, which is right for a roster
+     * that drifts slowly and wrong for a player who has just watched half the
+     * guild level up. This marks everything captured so far as due again: the
+     * button offers each member once more and the counter starts from nothing,
+     * while the levels already stored stay exactly where they are until a fresh
+     * profile replaces them.
+     *
+     * It fires no requests of its own. One click, one profile, still.
+     *
+     * @param {number} [at] - Clock
+     * @returns {number} How many captures are now due again
+     */
+    redoAll(at = Date.now()) {
+        this.dueBefore = at;
+        this.requests = {};
+        return Object.keys(this.captures).length;
+    }
+
+    /**
+     * Ask for one member's profile again, whatever its age.
+     * @param {string} name - Member name
+     * @param {number} [at] - Clock
+     */
+    redoMember(name, at = Date.now()) {
+        const key = String(name || '').toLowerCase();
+        const capture = this.captures[key];
+        if (!capture) return;
+
+        // Dated back out of the fresh window rather than deleted: the levels are
+        // still the best answer available until a newer profile arrives
+        this.captures = { ...this.captures, [key]: { ...capture, at: 0, redoRequestedAt: at } };
+        delete this.requests[key];
+    }
+
+    /**
      * How far along the roster the collection is.
      * @param {number} [now] - Clock
      * @returns {{next: Object|null, logged: number, total: number, stale: number}} Progress
@@ -208,17 +281,10 @@ class GuildMemberSkills {
         // so the first look at the panel is what starts the collection
         if (!this.initialized) this.initialize(this.guildName).catch(() => {});
 
+        // Counted from the captures and nothing else. A click is a request; the
+        // game's reply is the only thing that makes somebody logged.
         const members = guildXPTracker.getMemberList?.() || [];
-        const state = nextMemberToLog(members, this.captures, now);
-
-        // A member offered a moment ago is not offered again while the reply is
-        // still in flight, or a second click would open the same profile
-        if (state.next && this.offered.has(state.next.name.toLowerCase())) {
-            const remaining = members.filter((member) => member?.name && !this.offered.has(member.name.toLowerCase()));
-            const retry = nextMemberToLog(remaining, this.captures, now);
-            return { ...state, next: retry.next };
-        }
-        return state;
+        return nextMemberToLog(members, this.captures, now, this.requests, this.dueBefore);
     }
 
     /**
@@ -232,21 +298,29 @@ class GuildMemberSkills {
      *
      * @returns {{opened: string|null, how: string, logged: number, total: number}} What happened
      */
-    openNext() {
-        const state = this.progress();
+    openNext(now = Date.now()) {
+        const state = this.progress(now);
         if (!state.next) return { opened: null, how: 'done', logged: state.logged, total: state.total };
 
         const name = state.next.name;
-        this.offered.add(name.toLowerCase());
+        const result = (how) => ({ opened: name, how, logged: state.logged, total: state.total });
 
         const row = this._findMemberRow(name);
         if (row) {
+            this.requests[name.toLowerCase()] = now;
             row.click();
-            return { opened: name, how: 'row', logged: state.logged, total: state.total };
+            return result('row');
         }
 
-        const filled = this._fillProfileCommand(name);
-        return { opened: name, how: filled ? 'chat' : 'none', logged: state.logged, total: state.total };
+        // The chat command is the only route for a skilling trial's
+        // participants — those units were inspected and open nothing — so a
+        // chat box that is not there is worth saying rather than filling
+        // nothing and calling it done
+        const input = this._chatInput();
+        if (!input) return result('no-chat');
+
+        this.requests[name.toLowerCase()] = now;
+        return result(this._fillProfileCommand(name, input) ? 'chat' : 'no-chat');
     }
 
     /**
@@ -260,9 +334,29 @@ class GuildMemberSkills {
 
         for (const cell of document.querySelectorAll('[class*="GuildPanel"] td, [class*="GuildPanel"] [role="cell"]')) {
             if ((cell.textContent || '').trim().toLowerCase() !== wanted) continue;
+            // Only the Members tab's own rows. The In Progress tab draws a
+            // participant's name in a grid cell too, and those were inspected:
+            // for a skilling trial they open nothing at all, so clicking one
+            // would record a request that can never be answered
+            if (!cell.closest?.('table, [role="table"], [class*="Members"], [class*="membersTab"]')) continue;
             return cell.querySelector('[class*="name"], span, a') || cell;
         }
         return null;
+    }
+
+    /**
+     * The chat input, if there is one the player can actually use.
+     * @returns {Element|null} The input
+     */
+    _chatInput() {
+        if (typeof document === 'undefined') return null;
+        const input = document.querySelector('[class*="Chat_chatInputContainer"] input');
+        if (!input) return null;
+
+        // Hidden chat is why this matters: the fill goes into an input nobody
+        // can see, nothing opens, and the click looked like it worked
+        const visible = input.offsetParent !== null || (input.getClientRects?.().length ?? 0) > 0;
+        return visible ? input : null;
     }
 
     /**
@@ -270,9 +364,9 @@ class GuildMemberSkills {
      * @param {string} name - Member name
      * @returns {boolean} True when the box was filled
      */
-    _fillProfileCommand(name) {
+    _fillProfileCommand(name, chatInput = null) {
         try {
-            const input = document.querySelector('[class*="Chat_chatInputContainer"] input');
+            const input = chatInput || this._chatInput();
             if (!input) return false;
 
             const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
