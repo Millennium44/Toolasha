@@ -31,6 +31,7 @@
  */
 
 import config from '../../core/config.js';
+import webSocketHook from '../../core/websocket.js';
 import notificationService from './notification-service.js';
 import { timeReadable } from '../../utils/formatters.js';
 
@@ -51,6 +52,17 @@ export const DEFAULT_LEAD_MINUTES = 10;
 /** Event key prefixes, so the service's cooldown can tell the two apart */
 const START_KEY = 'guild-trial-start';
 const RESULTS_KEY = 'guild-trial-results';
+
+/**
+ * The line the game puts in guild chat when a cycle begins.
+ *
+ * The best start signal there is, and the only one that works with the guild
+ * panel shut: chat arrives over the socket whatever page the player is looking
+ * at, where the panel's own status is read only while somebody is looking at it.
+ * Matched loosely — the words rather than the exact sentence — so a full stop
+ * moving does not silence the alert.
+ */
+const STARTED_PATTERN = /guild\s+trials?\b.*\bbegun|\bhave\s+begun\b.*\btrials?\b|trials?\s+have\s+started/i;
 
 /**
  * The lead time, clamped to what the setting offers.
@@ -92,6 +104,8 @@ export function resultsMessage(payout) {
 
 class GuildTrialAlerts {
     constructor() {
+        /** Whether the chat listener is attached */
+        this.initialized = false;
         /** The phase last seen, so a transition can be told from a redraw */
         this.phase = null;
         /** The phase this announced a start for, so it announces it once */
@@ -100,6 +114,41 @@ class GuildTrialAlerts {
         this.trials = [];
         /** The payout at the last live reading, for the results alert */
         this.lastPayout = null;
+    }
+
+    /**
+     * Listen to guild chat for the line that says a cycle has begun.
+     *
+     * Attached here rather than in the guild feature so the alert works with the
+     * guild page closed, which is the whole point of preferring this signal.
+     */
+    initialize() {
+        if (this.initialized) return;
+        this.initialized = true;
+        this.onChat = (data) => this.noteChatLine(data?.message?.m || data?.message?.message || '');
+        webSocketHook.on('chat_message_received', this.onChat);
+    }
+
+    cleanup() {
+        if (this.onChat) webSocketHook.off('chat_message_received', this.onChat);
+        this.onChat = null;
+        this.initialized = false;
+    }
+
+    /**
+     * A chat line arrived.
+     *
+     * @param {string} text - What it said
+     * @returns {Object|null} The service's result, when this was the line
+     */
+    noteChatLine(text) {
+        if (!STARTED_PATTERN.test(String(text || ''))) return null;
+
+        // The game has said it outright, so this is the start whatever the panel
+        // last reported — and the phase is moved on so the panel agreeing a
+        // moment later does not announce it twice
+        this.phase = 'live';
+        return this._announceStarted('chat');
     }
 
     /** Forget everything; used on a character switch and by tests */
@@ -181,12 +230,15 @@ class GuildTrialAlerts {
      * "It has started", the moment the panel stops saying scheduled.
      * @returns {Object|null} The service's result
      */
-    _announceStarted() {
+    _announceStarted(source = 'panel') {
         if (!config.getSetting(START_SETTING, false)) return null;
 
         const named = this.trials.length ? ` — ${this.trials.join(', ')}` : '';
+        // One key for both sources, so whichever notices first is the one that
+        // speaks and the other is a repeat the service drops
         return notificationService.notify(`${START_KEY}:live`, `The guild trial has started${named}.`, {
             title: 'Guild trial started',
+            source,
         });
     }
 

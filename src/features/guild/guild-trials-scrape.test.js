@@ -681,6 +681,24 @@ describe('readTrialStatus', () => {
         expect(status.startsInMs).toBe(2 * 3600_000 + 24 * 60_000);
     });
 
+    test('the live header, exactly as the game writes it', () => {
+        // From the running trial: the status carries the trial's *kind* in front
+        // of it, which is not what this was built against, and the gate that
+        // reads it kept the recorder from arming
+        expect(readTrialStatus(tab(['Skilling Trial - In Progress  Thu 04:00 PM'])).phase).toBe('live');
+        expect(readTrialStatus(tab(['Combat Trial - In Progress  Thu 05:00 PM'])).phase).toBe('live');
+    });
+
+    test('a header split across elements is still one status', () => {
+        // The game draws the kind and the status as separate runs
+        expect(readTrialStatus(tab(['Skilling Trial -', 'In Progress', 'Thu 04:00 PM'])).phase).toBe('live');
+    });
+
+    test('a status below whatever the tab draws above it is still found', () => {
+        const preamble = Array.from({ length: 15 }, (_, index) => `Row ${index}`);
+        expect(readTrialStatus(tab([...preamble, 'Combat Trial - In Progress'])).phase).toBe('live');
+    });
+
     test('a finished cycle', () => {
         expect(readTrialStatus(tab(['Completed Thu 09:00 AM'])).phase).toBe('completed');
     });

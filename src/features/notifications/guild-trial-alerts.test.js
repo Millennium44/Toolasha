@@ -13,13 +13,21 @@
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
-const game = vi.hoisted(() => ({ settings: {}, values: {}, sent: [] }));
+const game = vi.hoisted(() => ({ settings: {}, values: {}, sent: [], wsHandlers: {} }));
 
 vi.mock('../../core/config.js', () => ({
     default: {
         getSetting: (key, fallback) => (key in game.settings ? game.settings[key] : fallback),
         getSettingValue: (key, fallback) => (key in game.values ? game.values[key] : fallback),
         onSettingChange: () => {},
+    },
+}));
+vi.mock('../../core/websocket.js', () => ({
+    default: {
+        on: (type, handler) => {
+            game.wsHandlers[type] = handler;
+        },
+        off: (type) => delete game.wsHandlers[type],
     },
 }));
 vi.mock('./notification-service.js', () => ({
@@ -48,7 +56,10 @@ beforeEach(() => {
     game.settings = { [START_SETTING]: true, [RESULTS_SETTING]: true };
     game.values = {};
     game.sent = [];
+    game.wsHandlers = {};
+    guildTrialAlerts.initialized = false;
     guildTrialAlerts.reset();
+    guildTrialAlerts.initialize();
 });
 
 describe('leadMinutes', () => {
@@ -105,6 +116,37 @@ describe('a trial about to start', () => {
         game.settings = { [START_SETTING]: false };
         guildTrialAlerts.noteTrialStatus({ phase: 'scheduled', startsInMs: 60_000, at: now });
         guildTrialAlerts.noteTrialStatus({ phase: 'live', at: now + 1000 });
+        expect(game.sent).toEqual([]);
+    });
+});
+
+describe('the guild chat line', () => {
+    // The signal the user asked for: it arrives whatever page they are on,
+    // where the panel's own status is only read while somebody is looking at it
+    test('the game saying so is the start', () => {
+        game.wsHandlers.chat_message_received({ message: { m: 'The guild trials have begun!' } });
+
+        expect(game.sent).toHaveLength(1);
+        expect(game.sent[0].message).toContain('has started');
+    });
+
+    test('the panel agreeing a moment later does not announce it twice', () => {
+        guildTrialAlerts.noteChatLine('The guild trials have begun!');
+        guildTrialAlerts.noteTrialStatus({ phase: 'live', at: now + 1000 });
+
+        expect(game.sent).toHaveLength(1);
+    });
+
+    test('ordinary chat is not a trial starting', () => {
+        for (const line of ['begun the raid', 'anyone want to do trials later?', '']) {
+            guildTrialAlerts.noteChatLine(line);
+        }
+        expect(game.sent).toEqual([]);
+    });
+
+    test('switched off, the line passes quietly', () => {
+        game.settings = { [START_SETTING]: false };
+        guildTrialAlerts.noteChatLine('The guild trials have begun!');
         expect(game.sent).toEqual([]);
     });
 });
