@@ -6,6 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Trial cards say what their phase can know, and stay off the notice board
+
+- **No more trial card built out of the Overview tab**: the name test was a substring match, so a notice-board paragraph containing "milking" passed it, and the guild XP bar (4,120 / 20,000) read exactly like a progress bar and anchored the card. Names now match whole strings after stripping the game's real decorations, a positive tab gate refuses pages legibly showing another tab (permissive when the tab strip can't be read — failing closed on an unverified class name is how this feature went dark twice before), and stale blocks are reaped document-wide on every pass.
+- **The recorder no longer records nothing**: "any tile with a bar" counted as trial activity — including the phantom Overview card — and a lifecycle phase that had never been read was treated as permission. Auto-record now requires the panel to say live (or the damage gate to be genuinely armed); scheduled or completed stops a self-armed session immediately. A session you pressed Record for is still yours to stop.
+- **One row set per phase**: scheduled cards collapse to "scheduled — starts in 2h 24m" instead of stacking three variations of "nothing yet"; completed cards show results only (final rate if ever measured, points, banked) and drop next-tier/pace/absence rows; live keeps the full readout. A completed trial you never joined shows the facts the tab states and skips the two rows that both said "no data".
+- **Numbers keep their units**: "522 dmg/s" can no longer split mid-unit — values are non-breaking and the label truncates instead, since the unit is what makes the number mean anything.
+
 ### Poisoned trial records heal themselves, and trials announce their own schedule
 
 - **The stale record from before the switch fix cleans itself up**: records now carry the guild they were recorded under and are refused when it names a different guild — and since the reported copy had been adopted onto the new guild's own key and looked native, the page is the final arbiter: when the game says **Scheduled** and every card states nothing while the record claims tiers and points, that contradiction archives the cycle (into a four-cycle history, not deleted). A live trial showing "0 pts" before its first tier clears never triggers it — all three conditions are required. The legacy shared fallback key is purged at startup. Belt-and-braces: `await Toolasha.debug.clearTrialData()` wipes trial records (and leaves guild XP history alone) — it shouldn't be needed.
