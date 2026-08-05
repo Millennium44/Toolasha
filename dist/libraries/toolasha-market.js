@@ -1,11 +1,11 @@
 /**
  * Toolasha Market Library
  * Market, inventory, and economy features
- * Version: 2.88.0
+ * Version: 2.89.0
  * License: CC-BY-NC-SA-4.0
  */
 
-(function (config, dataManager, domObserver, marketAPI, houseEfficiency_js, efficiency_js, bonusRevenueCalculator_js, enhancementCalculator_js, formatters_js, marketData_js, teaParser_js, profitConstants_js, profitHelpers_js, buffParser_js, equipmentParser_js, actionCalculator_js, tokenValuation_js, enhancementConfig_js, dom, materialCalculator_js, timerRegistry_js, storage, cleanupRegistry_js, domObserverHelpers_js, reactInput_js, enhancementMultipliers_js, webSocketHook, abilityCostCalculator_js, houseCostCalculator_js) {
+(function (config, dataManager, domObserver, marketAPI, houseEfficiency_js, efficiency_js, bonusRevenueCalculator_js, enhancementCalculator_js, enhancementConfig_js, profitConstants_js, formatters_js, marketData_js, teaParser_js, profitHelpers_js, buffParser_js, equipmentParser_js, actionCalculator_js, tokenValuation_js, evWorkerManager_js, dom, materialCalculator_js, gameLookups_js, timerRegistry_js, storage, cleanupRegistry_js, domObserverHelpers_js, marketplaceTabs_js, reactInput_js, panelZIndex_js, floatingPanel_js, panelGeometry_js, overlayFormat_js, overlayRows_js, webSocketHook, toast_js, enhancementMultipliers_js, performanceMonitor, abilityCostCalculator_js, houseCostCalculator_js, networthWorkerManager_js, marketplaceAutofill_js, skillHistory_js, abilityBooks_js, simplePanel_js, settingsStorage, chestTally_js, choiceDialog_js) {
     'use strict';
 
     function _interopNamespaceDefault(e) {
@@ -28,6 +28,380 @@
     var dom__namespace = /*#__PURE__*/_interopNamespaceDefault(dom);
 
     /**
+     * Enhancement XP Calculations
+     * Based on Ultimate Enhancement Tracker formulas
+     */
+
+
+    /**
+     * Get base item level from item HRID
+     * @param {string} itemHrid - Item HRID
+     * @returns {number} Base item level
+     */
+    function getBaseItemLevel(itemHrid) {
+        try {
+            const gameData = dataManager.getInitClientData();
+            const itemData = gameData?.itemDetailMap?.[itemHrid];
+
+            if (itemData?.itemLevel) {
+                return itemData.itemLevel;
+            }
+
+            return 0;
+        } catch {
+            return 0;
+        }
+    }
+
+    /**
+     * Get wisdom buff percentage from all sources
+     * Reads from dataManager.characterData (NOT localStorage)
+     * @returns {number} Wisdom buff as decimal (e.g., 0.20 for 20%)
+     */
+    function getWisdomBuff() {
+        try {
+            // Use dataManager for character data (NOT localStorage)
+            const charData = dataManager.characterData;
+            if (!charData) return 0;
+
+            let totalFlatBoost = 0;
+
+            // 1. Community Buffs
+            const communityEnhancingBuffs = charData.communityActionTypeBuffsMap?.['/action_types/enhancing'];
+            if (Array.isArray(communityEnhancingBuffs)) {
+                communityEnhancingBuffs.forEach((buff) => {
+                    if (buff.typeHrid === '/buff_types/wisdom') {
+                        totalFlatBoost += buff.flatBoost || 0;
+                    }
+                });
+            }
+
+            // 2. Equipment Buffs
+            const equipmentEnhancingBuffs = charData.equipmentActionTypeBuffsMap?.['/action_types/enhancing'];
+            if (Array.isArray(equipmentEnhancingBuffs)) {
+                equipmentEnhancingBuffs.forEach((buff) => {
+                    if (buff.typeHrid === '/buff_types/wisdom') {
+                        totalFlatBoost += buff.flatBoost || 0;
+                    }
+                });
+            }
+
+            // 3. House Buffs
+            const houseEnhancingBuffs = charData.houseActionTypeBuffsMap?.['/action_types/enhancing'];
+            if (Array.isArray(houseEnhancingBuffs)) {
+                houseEnhancingBuffs.forEach((buff) => {
+                    if (buff.typeHrid === '/buff_types/wisdom') {
+                        totalFlatBoost += buff.flatBoost || 0;
+                    }
+                });
+            }
+
+            // 4. Guild Buffs
+            const guildEnhancingBuffs = charData.guildActionTypeBuffsMap?.['/action_types/enhancing'];
+            if (Array.isArray(guildEnhancingBuffs)) {
+                guildEnhancingBuffs.forEach((buff) => {
+                    if (buff.typeHrid === '/buff_types/wisdom') {
+                        totalFlatBoost += buff.flatBoost || 0;
+                    }
+                });
+            }
+
+            // 5. Consumable Buffs (from wisdom tea, etc.)
+            const consumableEnhancingBuffs = charData.consumableActionTypeBuffsMap?.['/action_types/enhancing'];
+            if (Array.isArray(consumableEnhancingBuffs)) {
+                consumableEnhancingBuffs.forEach((buff) => {
+                    if (buff.typeHrid === '/buff_types/wisdom') {
+                        totalFlatBoost += buff.flatBoost || 0;
+                    }
+                });
+            }
+
+            // 5. Achievement Buffs
+            totalFlatBoost += dataManager.getAchievementBuffFlatBoost('/action_types/enhancing', '/buff_types/wisdom');
+
+            // Return as decimal (flatBoost is already in decimal form, e.g., 0.2 for 20%)
+            return totalFlatBoost;
+        } catch {
+            return 0;
+        }
+    }
+
+    /**
+     * Calculate XP gained from successful enhancement
+     * Formula: 1.4 × (1 + wisdom) × enhancementMultiplier × (10 + baseItemLevel)
+     * @param {number} previousLevel - Enhancement level before success
+     * @param {string} itemHrid - Item HRID
+     * @returns {number} XP gained
+     */
+    function calculateSuccessXP(previousLevel, itemHrid) {
+        const baseLevel = getBaseItemLevel(itemHrid);
+        const wisdomBuff = getWisdomBuff();
+
+        // Special handling for enhancement level 0 (base items)
+        const enhancementMultiplier =
+            previousLevel === 0
+                ? 1.0 // Base value for unenhanced items
+                : previousLevel + 1; // Normal progression
+
+        return Math.floor(1.4 * (1 + wisdomBuff) * enhancementMultiplier * (10 + baseLevel));
+    }
+
+    /**
+     * Calculate XP gained from failed enhancement
+     * Formula: 10% of success XP
+     * @param {number} previousLevel - Enhancement level that failed
+     * @param {string} itemHrid - Item HRID
+     * @returns {number} XP gained
+     */
+    function calculateFailureXP(previousLevel, itemHrid) {
+        return Math.floor(calculateSuccessXP(previousLevel, itemHrid) * 0.1);
+    }
+
+    /**
+     * Which stats an enhancement prediction is quoting.
+     *
+     * The same "+0 → +N" table means two different things depending on whose bench it describes:
+     * what this character would spend, or what a top-end enhancer would. Both are worth seeing —
+     * one is the player's real cost, the other is roughly what the listing in front of them cost
+     * whoever made it — but a number that does not say which one it is is worse than either.
+     *
+     * This module owns that choice: the persisted toggle, the params each side resolves to, and the
+     * chip the tooltip prints so the answer is always on screen next to the numbers.
+     */
+
+
+    /** Setting the toggle persists to. Mirrored in the settings panel under Item Tooltips. */
+    const PRO_RATES_SETTING = 'itemTooltip_enhancementProRates';
+
+    /** Class the delegated click handler looks for, and the marker the chip is found by. */
+    const SOURCE_CHIP_CLASS = 'toolasha-enh-source-chip';
+
+    /** Attribute naming a re-renderable enhancement section, so a toggle can redraw it in place. */
+    const SECTION_ATTR = 'data-toolasha-enh-section';
+
+    /**
+     * Whether enhancement predictions are currently quoting the pro kit rather than the player.
+     * @returns {boolean} True when pro rates are active
+     */
+    function isProRatesActive() {
+        return config.getSetting(PRO_RATES_SETTING) === true;
+    }
+
+    /**
+     * Persist which stats predictions should use.
+     * @param {boolean} active - True for pro rates, false for the player's own stats
+     */
+    function setProRatesActive(active) {
+        config.setSetting(PRO_RATES_SETTING, !!active);
+    }
+
+    /**
+     * Flip between the player's stats and the pro kit, persisting the new choice.
+     * @returns {boolean} The choice now in effect
+     */
+    function toggleProRates() {
+        const next = !isProRatesActive();
+        setProRatesActive(next);
+        return next;
+    }
+
+    /**
+     * The enhancing parameters a tooltip for this item should be computed with.
+     *
+     * Untradeable items are never somebody else's listing — the player is the only one who can be
+     * enhancing them — so they are always quoted from the character's own stats.
+     *
+     * @param {string} itemHrid - Item the tooltip is describing
+     * @returns {Object} Enhancement parameters, tagged with `paramsSource`
+     */
+    function getTooltipEnhancementParams(itemHrid) {
+        const itemDetails = dataManager.getInitClientData()?.itemDetailMap?.[itemHrid];
+        const isTradeable = itemDetails?.isTradable !== false;
+
+        if (!isTradeable) {
+            return enhancementConfig_js.getAutoDetectedParams();
+        }
+        if (isProRatesActive()) {
+            return enhancementConfig_js.getProRatesParams();
+        }
+        return enhancementConfig_js.getEnhancingParams();
+    }
+
+    /**
+     * Name the source of a set of parameters, for display beside the numbers they produced.
+     * @param {Object} params - Result of getTooltipEnhancementParams() or getEnhancingParams()
+     * @returns {{kind: 'pro'|'manual'|'yours', label: string, detail: string|null}} Chip content
+     */
+    function describeEnhancementSource(params) {
+        if (params?.paramsSource === 'pro') {
+            return {
+                kind: 'pro',
+                label: 'Pro',
+                detail: 'Pro rates: enhancing 140, Observatory 8, ultra + blessed tea, +13 Celestial enhancer, +10 gear',
+            };
+        }
+
+        const overrides = enhancementConfig_js.describeParamsSource(params);
+        if (overrides) {
+            return { kind: 'manual', label: 'Manual', detail: overrides };
+        }
+
+        return { kind: 'yours', label: 'Yours', detail: null };
+    }
+
+    /**
+     * Escape a value for use inside a double-quoted HTML attribute.
+     * @param {*} value - Value to escape
+     * @returns {string} Escaped text
+     */
+    function escapeAttr(value) {
+        return String(value ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/"/g, '&quot;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+    }
+
+    /**
+     * Build the clickable source chip shown on an enhancement section header.
+     *
+     * Pro rates get a filled, warning-coloured chip: the one mistake worth engineering against is
+     * reading a professional's cost as your own, so that state has to be unmissable rather than
+     * merely legible.
+     *
+     * @param {Object} params - Parameters the section was computed with
+     * @returns {string} HTML for the chip
+     */
+    function buildSourceChipHTML(params) {
+        const source = describeEnhancementSource(params);
+        const isPro = source.kind === 'pro';
+        const proColor = config.COLOR_TOOLTIP_WARNING || '#ffb020';
+
+        const title = isPro
+            ? `${source.detail}. Click (or press P) to switch back to your own stats.`
+            : source.detail
+              ? `${source.detail}. Click (or press P) to compare against pro rates.`
+              : 'Computed from your own enhancing level, gear and teas. Click (or press P) to compare against pro rates.';
+
+        const style = isPro
+            ? `background: ${proColor}; color: #14181f; border: 1px solid ${proColor};`
+            : 'background: rgba(255,255,255,0.10); color: inherit; border: 1px solid rgba(255,255,255,0.30);';
+
+        return (
+            `<span class="${SOURCE_CHIP_CLASS}" role="button" tabindex="0" title="${escapeAttr(title)}" ` +
+            'style="pointer-events: auto; cursor: pointer; margin-left: 6px; padding: 0 5px; border-radius: 8px; ' +
+            `font-size: 0.75em; font-weight: 700; letter-spacing: 0.3px; white-space: nowrap; vertical-align: middle; ${style}">` +
+            `${source.label} ⇄</span>`
+        );
+    }
+
+    /**
+     * Attributes that mark a built section as re-renderable in place after a toggle.
+     * @param {'path'|'milestones'} kind - Which builder produced the section
+     * @param {string} itemHrid - Item the section describes
+     * @param {number} level - Target enhancement level (0 for milestone tables)
+     * @returns {string} Attribute string to splice into the section's root element
+     */
+    function sectionAttributes(kind, itemHrid, level) {
+        return (
+            `${SECTION_ATTR}="${escapeAttr(kind)}" data-toolasha-enh-item="${escapeAttr(itemHrid)}" ` +
+            `data-toolasha-enh-level="${escapeAttr(level)}"`
+        );
+    }
+
+    /**
+     * Number Parser Utility
+     * Shared utilities for parsing numeric values from text, including item counts
+     */
+
+    /**
+     * Parse item count from text
+     * Handles various formats including:
+     * - Plain numbers: "100", "1000"
+     * - K/M suffixes: "1.5K", "2M"
+     * - International formats with separators: "1,000", "1 000", "1.000"
+     * - Mixed decimal formats: "1.234,56" (European) or "1,234.56" (US)
+     * - Prefixed formats: "x5", "Amount: 1000", "Amount: 1 000"
+     *
+     * @param {string} text - Text containing a number
+     * @param {number} defaultValue - Value to return if parsing fails (default: 1)
+     * @returns {number} Parsed numeric value
+     */
+    function parseItemCount(text, defaultValue = 1) {
+        if (!text) {
+            return defaultValue;
+        }
+
+        // Convert to string and normalize
+        text = String(text).toLowerCase().trim();
+
+        // Extract number from common patterns like "x5", "Amount: 1000"
+        const prefixMatch = text.match(/x([\d,\s.kmb]+)|amount:\s*([\d,\s.kmb]+)/i);
+        if (prefixMatch) {
+            text = prefixMatch[1] || prefixMatch[2];
+        }
+
+        // Determine whether periods and commas are thousands separators or decimal points.
+        // Rules:
+        // 1. If both exist: the one appearing first (or multiple times) is the thousands separator.
+        //    e.g. "1.234,56" → period is thousands, comma is decimal → 1234.56
+        //    e.g. "1,234.56" → comma is thousands, period is decimal → 1234.56
+        // 2. If only commas exist and comma is followed by exactly 3 digits at end: thousands separator.
+        //    e.g. "1,234" → 1234
+        // 3. If only periods exist and period is followed by exactly 3 digits at end: thousands separator.
+        //    e.g. "1.234" → 1234
+        // 4. Otherwise treat as decimal separator.
+        //    e.g. "1.5" → 1.5,  "1,5" → 1.5
+
+        const hasPeriod = text.includes('.');
+        const hasComma = text.includes(',');
+
+        if (hasPeriod && hasComma) {
+            // Both present — whichever comes last is the decimal separator
+            const lastPeriod = text.lastIndexOf('.');
+            const lastComma = text.lastIndexOf(',');
+            if (lastPeriod > lastComma) {
+                // Period is decimal: remove commas as thousands separators
+                text = text.replace(/,/g, '');
+            } else {
+                // Comma is decimal: remove periods as thousands separators, replace comma with period
+                text = text.replace(/\./g, '').replace(',', '.');
+            }
+        } else if (hasComma) {
+            // Only commas: thousands separator if followed by exactly 3 digits at end, else decimal
+            if (/,\d{3}$/.test(text)) {
+                text = text.replace(/,/g, '');
+            } else {
+                text = text.replace(',', '.');
+            }
+        } else if (hasPeriod) {
+            // Only periods: thousands separator if followed by exactly 3 digits at end, else decimal
+            if (/\.\d{3}$/.test(text)) {
+                text = text.replace(/\./g, '');
+            }
+            // else leave as-is (valid decimal like "1.5")
+        }
+
+        // Remove remaining whitespace separators
+        text = text.replace(/\s/g, '');
+
+        // Handle K/M/B suffixes (must end with the suffix letter)
+        if (/\d[kmb]$/.test(text)) {
+            if (text.endsWith('k')) {
+                return parseFloat(text) * 1000;
+            } else if (text.endsWith('m')) {
+                return parseFloat(text) * 1000000;
+            } else if (text.endsWith('b')) {
+                return parseFloat(text) * 1000000000;
+            }
+        }
+
+        // Parse plain number
+        const parsed = parseFloat(text);
+        return isNaN(parsed) ? defaultValue : parsed;
+    }
+
+    /**
      * Enhancement Tooltip Module
      *
      * Provides enhancement analysis for item tooltips.
@@ -39,6 +413,9 @@
      */
 
     const toolashaConfig = config;
+
+    /** What a mirror plan combines its leaves with */
+    const MIRROR_HRID$1 = '/items/philosophers_mirror';
 
     const _costCache = new Map();
     const _chainTimeCache = new Map();
@@ -112,12 +489,16 @@
         const targetCosts = new Array(currentEnhancementLevel + 1);
         const targetTimes = new Array(currentEnhancementLevel + 1);
         const targetAttempts = new Array(currentEnhancementLevel + 1);
+        // Kept alongside the attempts because a mirror plan's protection bill is the sum over the
+        // levels it actually builds, and there is nowhere else that number survives
+        const targetProtections = new Array(currentEnhancementLevel + 1);
         targetCosts[0] = toolashaConfig.isFeatureEnabled('enhanceSim_baseItemCraftingCost')
             ? Math.min(getProductionCost(itemHrid) || Infinity, marketData_js.getItemPrices(itemHrid, 0)?.ask || Infinity) ||
               getRealisticBaseItemPrice(itemHrid)
             : getRealisticBaseItemPrice(itemHrid); // Level 0: base item
         targetTimes[0] = 0; // Level 0: no time needed
         targetAttempts[0] = 0; // Level 0: no attempts needed
+        targetProtections[0] = 0; // Level 0: nothing to protect
 
         for (let level = 1; level <= currentEnhancementLevel; level++) {
             const resultsForLevel = allResults[level - 1];
@@ -130,26 +511,30 @@
             targetCosts[level] = minResult.totalCost;
             targetTimes[level] = minResult.totalTime;
             targetAttempts[level] = minResult.expectedAttempts;
+            targetProtections[level] = minResult.protectionCount || 0;
         }
 
-        const mirrorTargetCosts = targetCosts;
-        const mirrorTargetTimes = targetTimes;
-        const mirrorTargetAttempts = targetAttempts;
+        // Snapshot the pre-mirror numbers before the mirror pass rewrites targetCosts in place.
+        // These arrays used to be aliases of the same array, so the "traditional" cost of a level
+        // silently became its mirror cost the moment the pass touched it.
+        const traditionalCosts = [...targetCosts];
+        const traditionalTimes = [...targetTimes];
+        const traditionalAttempts = [...targetAttempts];
+        const traditionalProtections = [...targetProtections];
 
         // Step 3: Apply Philosopher's Mirror optimization (single pass, in-place)
         // Like Enhancelator lines 456-465
-        const mirrorPrice = getRealisticBaseItemPrice('/items/philosophers_mirror');
-        let mirrorStartLevel = null;
+        const mirrorPrice = getRealisticBaseItemPrice(MIRROR_HRID$1);
+        const usedMirror = new Array(currentEnhancementLevel + 1).fill(false);
 
         if (mirrorPrice > 0) {
-            for (let level = 3; level <= currentEnhancementLevel; level++) {
+            // +2 is reachable by mirroring a +0 and a +1, so it belongs in the search as well
+            for (let level = 2; level <= currentEnhancementLevel; level++) {
                 const traditionalCost = targetCosts[level];
                 const mirrorCost = targetCosts[level - 2] + targetCosts[level - 1] + mirrorPrice;
 
                 if (mirrorCost < traditionalCost) {
-                    if (mirrorStartLevel === null) {
-                        mirrorStartLevel = level;
-                    }
+                    usedMirror[level] = true;
                     targetCosts[level] = mirrorCost;
                 }
             }
@@ -167,21 +552,27 @@
             curr.totalCost < best.totalCost ? curr : best
         );
 
+        // Which levels the finished plan actually mirrors is a question about the path back from
+        // the target, not about the first level where mirroring happened to look cheap. A level
+        // that mirrors but is never reached from the target contributes nothing.
+        const mirrorPlan = expandMirrorPlan(currentEnhancementLevel, usedMirror);
+
         let optimalStrategy;
 
-        if (mirrorStartLevel !== null) {
+        if (mirrorPlan.mirrorCount > 0) {
             // Mirror was used - build mirror-optimized result
             optimalStrategy = buildMirrorOptimizedResult(
                 itemHrid,
                 currentEnhancementLevel,
-                mirrorStartLevel,
+                mirrorPlan,
+                traditionalCosts,
+                traditionalTimes,
+                traditionalAttempts,
+                traditionalProtections,
                 targetCosts,
-                itemHrid,
-                mirrorTargetCosts,
-                mirrorTargetTimes,
-                mirrorTargetAttempts,
                 optimalTraditional,
-                mirrorPrice);
+                mirrorPrice
+            );
         } else {
             // No mirror used - return traditional result
             optimalStrategy = {
@@ -204,6 +595,12 @@
                 totalCost: optimalTraditional.totalCost,
                 usedMirror: false,
                 mirrorStartLevel: null,
+                materialBill: buildMaterialBill({
+                    materials: optimalTraditional.materialBreakdown,
+                    protectionItemHrid: optimalTraditional.protectionItemHrid,
+                    protectionCount: optimalTraditional.protectionCount,
+                    protectionUnitPrice: optimalTraditional.protectionAskPrice,
+                }),
             };
         }
 
@@ -221,18 +618,20 @@
                 protectFrom: optimalStrategy.protectFrom,
                 blessedTea: config.teas.blessed,
                 guzzlingBonus: config.guzzlingBonus,
+                blessedTeaBonus: config.blessedTeaBonus,
             });
 
             if (xpCalc && xpCalc.visitCounts && xpCalc.totalTime > 0) {
-                const wisdomDecimal = (config.experienceBonus || 0) / 100;
-                const xpBaseLevel = itemDetails.level || itemDetails.equipmentDetail?.levelRequirements?.[0]?.level || 0;
+                // Same XP formula the tracker and the XPH calculator use. The old inline copy read
+                // itemDetails.level, which enhanceable equipment does not have, so it fell through
+                // to a level-requirement lookup and produced a different number for the same item.
                 let totalXP = 0;
                 for (let i = 0; i < currentEnhancementLevel; i++) {
                     const visits = xpCalc.visitCounts[i];
+                    if (!visits) continue;
                     const successRate = xpCalc.successRates[i].actualRate / 100;
-                    const enhMult = i === 0 ? 1.0 : i + 1;
-                    const successXP = Math.floor(1.4 * (1 + wisdomDecimal) * enhMult * (10 + xpBaseLevel));
-                    const failXP = Math.floor(successXP * 0.1);
+                    const successXP = calculateSuccessXP(i, itemHrid);
+                    const failXP = calculateFailureXP(i, itemHrid);
                     totalXP += visits * (successRate * successXP + (1 - successRate) * failXP);
                 }
                 xpPerHour = Math.round((totalXP / xpCalc.totalTime) * 3600);
@@ -250,6 +649,10 @@
             allStrategies: [optimalStrategy], // Only return optimal
             xpPerHour,
             totalExpectedXP,
+            // Carried through so the tooltip can say whose stats these numbers describe: the
+            // character's own, a hand-entered set, or the pro kit
+            enhancementParams: config,
+            paramsNote: describeEnhancementSource(config).detail,
         };
     }
 
@@ -269,9 +672,12 @@
                 protectFrom,
                 blessedTea: config.teas.blessed,
                 guzzlingBonus: config.guzzlingBonus,
+                blessedTeaBonus: config.blessedTeaBonus,
             };
 
-            // Calculate enhancement statistics
+            // Calculate enhancement statistics. The matrix inversion is the expensive part of a
+            // strategy, and the cost pass needs exactly the same numbers, so it is handed the
+            // result rather than inverting an identical matrix a second time.
             const result = enhancementCalculator_js.calculateEnhancement(params);
 
             if (!result || typeof result.attempts !== 'number' || typeof result.totalTime !== 'number') {
@@ -280,7 +686,7 @@
             }
 
             // Calculate costs
-            const costs = calculateTotalCost(itemHrid, targetLevel, protectFrom, config);
+            const costs = calculateTotalCost(itemHrid, targetLevel, protectFrom, config, result);
 
             return {
                 expectedAttempts: result.attempts,
@@ -294,74 +700,201 @@
     }
 
     /**
-     * Build mirror-optimized result with Fibonacci quantities
+     * Walk the mirror DP back from the target level to the items the plan actually builds.
+     *
+     * The DP decides mirror-or-not level by level, and those decisions are not necessarily a clean
+     * run: +6 can mirror while +5 does not. Assuming a contiguous block from the first mirrored
+     * level and expanding it with Fibonacci quantities invents items the plan never buys. Walking
+     * the decisions backwards from the target instead yields exactly the leaves it does buy.
+     *
+     * @param {number} targetLevel - Level the plan is building
+     * @param {boolean[]} usedMirror - Per-level mirror decisions from the DP
+     * @returns {{leaves: Array<{level: number, quantity: number}>, mirrorCount: number,
+     *   mirrorStartLevel: number|null}} Leaves are levels bought traditionally, highest first
+     * @private
+     */
+    function expandMirrorPlan(targetLevel, usedMirror) {
+        const need = new Array(targetLevel + 1).fill(0);
+        need[targetLevel] = 1;
+
+        let mirrorCount = 0;
+        let mirrorStartLevel = null;
+
+        // High to low: a level is only expanded once every demand for it is known
+        for (let level = targetLevel; level >= 2; level--) {
+            const quantity = need[level];
+            if (!quantity || !usedMirror[level]) continue;
+
+            mirrorCount += quantity;
+            mirrorStartLevel = level; // Lowest mirrored level reached, since we descend
+            need[level - 1] += quantity;
+            need[level - 2] += quantity;
+            need[level] = 0;
+        }
+
+        const leaves = [];
+        for (let level = targetLevel; level >= 0; level--) {
+            if (need[level] > 0) {
+                leaves.push({ level, quantity: need[level] });
+            }
+        }
+
+        return { leaves, mirrorCount, mirrorStartLevel };
+    }
+
+    /**
+     * What a chosen path expects to consume, item by item.
+     *
+     * The path optimiser has always returned totals — so many coins in materials —
+     * which is enough to compare two strategies and not enough to go and buy them.
+     * This is the same arithmetic said as a list, so anything holding a plan can put
+     * it on the marketplace.
+     *
+     * **Every count is an expectation, not a bill.** Enhancing is a Markov chain:
+     * the attempt counts these quantities are multiplied out from are the *expected*
+     * number of attempts along the path, and a real run will take more or fewer.
+     * Buying exactly this list is buying the mean, which is the right order of
+     * magnitude and the wrong number to be surprised by.
+     *
+     * @param {Object} parts - The pieces of a strategy
+     * @param {Array<Object>} [parts.materials] - `materialBreakdown` rows, already multiplied by attempts
+     * @param {number} [parts.materialMultiplier=1] - Scales the rows, for a plan that runs the
+     *   same per-attempt bill a different number of times (a mirror plan's leaves)
+     * @param {string} [parts.protectionItemHrid] - What the plan protects with
+     * @param {number} [parts.protectionCount=0] - Expected protections consumed
+     * @param {number} [parts.protectionUnitPrice=0] - Price of one
+     * @param {number} [parts.mirrorCount=0] - Philosopher's Mirrors the plan combines
+     * @param {number} [parts.mirrorPrice=0] - Price of one
+     * @param {string} [parts.baseItemHrid] - Base item, for a plan that consumes more than the one
+     *   copy its owner is assumed to be holding
+     * @param {number} [parts.baseCount=0] - How many base copies the plan consumes
+     * @param {number} [parts.baseUnitPrice=0] - Price of one
+     * @returns {Array<{itemHrid: string, name: string, count: number, unitPrice: number,
+     *   totalCost: number, kind: string}>} The bill, materials first; `kind` is one of
+     *   `material`, `protection`, `mirror`, `base`
+     * @private
+     */
+    function buildMaterialBill({
+        materials = [],
+        materialMultiplier = 1,
+        protectionItemHrid = null,
+        protectionCount = 0,
+        protectionUnitPrice = 0,
+        mirrorCount = 0,
+        mirrorPrice = 0,
+        baseItemHrid = null,
+        baseCount = 0,
+        baseUnitPrice = 0,
+    } = {}) {
+        const gameData = dataManager.getInitClientData();
+        const nameOf = (hrid) => gameData?.itemDetailMap?.[hrid]?.name || hrid;
+
+        const bill = [];
+
+        for (const material of materials || []) {
+            const count = (material.totalQuantity || 0) * materialMultiplier;
+            if (!(count > 0)) continue;
+            bill.push({
+                itemHrid: material.itemHrid,
+                name: material.name || nameOf(material.itemHrid),
+                count,
+                unitPrice: material.unitPrice || 0,
+                totalCost: (material.unitPrice || 0) * count,
+                kind: 'material',
+            });
+        }
+
+        if (protectionItemHrid && protectionCount > 0) {
+            bill.push({
+                itemHrid: protectionItemHrid,
+                name: nameOf(protectionItemHrid),
+                count: protectionCount,
+                unitPrice: protectionUnitPrice,
+                totalCost: protectionUnitPrice * protectionCount,
+                kind: 'protection',
+            });
+        }
+
+        if (mirrorCount > 0) {
+            bill.push({
+                itemHrid: MIRROR_HRID$1,
+                name: nameOf(MIRROR_HRID$1),
+                count: mirrorCount,
+                unitPrice: mirrorPrice,
+                totalCost: mirrorPrice * mirrorCount,
+                kind: 'mirror',
+            });
+        }
+
+        if (baseItemHrid && baseCount > 0) {
+            bill.push({
+                itemHrid: baseItemHrid,
+                name: nameOf(baseItemHrid),
+                count: baseCount,
+                unitPrice: baseUnitPrice,
+                totalCost: baseUnitPrice * baseCount,
+                kind: 'base',
+            });
+        }
+
+        return bill;
+    }
+
+    /**
+     * Build mirror-optimized result from an expanded plan
+     * @param {string} itemHrid - Item being enhanced
+     * @param {number} targetLevel - Target enhancement level
+     * @param {Object} plan - Result of expandMirrorPlan()
+     * @param {number[]} traditionalCosts - Pre-mirror cost per level
+     * @param {number[]} traditionalTimes - Pre-mirror time per level
+     * @param {number[]} traditionalAttempts - Pre-mirror attempts per level
+     * @param {number[]} traditionalProtections - Pre-mirror protections consumed per level
+     * @param {number[]} targetCosts - Post-mirror cost per level
+     * @param {Object} optimalTraditional - Best non-mirror strategy for the target level
+     * @param {number} mirrorPrice - Price of one Philosopher's Mirror
      * @private
      */
     function buildMirrorOptimizedResult(
         itemHrid,
         targetLevel,
-        mirrorStartLevel,
+        plan,
+        traditionalCosts,
+        traditionalTimes,
+        traditionalAttempts,
+        traditionalProtections,
         targetCosts,
-        consumedItemHrid,
-        mirrorTargetCosts,
-        mirrorTargetTimes,
-        mirrorTargetAttempts,
         optimalTraditional,
-        mirrorPrice,
-        _config
+        mirrorPrice
     ) {
-        const gameData = dataManager.getInitClientData();
-        gameData.itemDetailMap[itemHrid];
+        const { leaves, mirrorCount, mirrorStartLevel } = plan;
 
-        // Calculate Fibonacci quantities for consumed items
-        const n = targetLevel - mirrorStartLevel;
-        const numLowerTier = fib(n); // Quantity of (mirrorStartLevel - 2) items
-        const numUpperTier = fib(n + 1); // Quantity of (mirrorStartLevel - 1) items
-        const numMirrors = mirrorFib(n); // Quantity of Philosopher's Mirrors
+        // Every leaf is a level the plan buys outright, so it is priced at its traditional cost
+        const consumedItems = leaves.map(({ level, quantity }) => ({
+            level,
+            quantity,
+            costEach: traditionalCosts[level],
+            totalCost: quantity * traditionalCosts[level],
+        }));
 
-        const lowerTierLevel = mirrorStartLevel - 2;
-        const upperTierLevel = mirrorStartLevel - 1;
+        const consumedItemsCost = consumedItems.reduce((sum, item) => sum + item.totalCost, 0);
+        const totalMirrorsCost = mirrorCount * mirrorPrice;
 
-        // Get cost of one item at each level from mirrorTargetCosts (base item for refined items)
-        const costLowerTier = mirrorTargetCosts[lowerTierLevel];
-        const costUpperTier = mirrorTargetCosts[upperTierLevel];
+        // Mirror combinations are instant, so only the leaves cost time and attempts
+        const totalTime = leaves.reduce((sum, { level, quantity }) => sum + quantity * traditionalTimes[level], 0);
+        const totalAttempts = leaves.reduce((sum, { level, quantity }) => sum + quantity * traditionalAttempts[level], 0);
+        const totalProtections = leaves.reduce(
+            (sum, { level, quantity }) => sum + quantity * (traditionalProtections[level] || 0),
+            0
+        );
 
-        // Get time to make one item at each level from mirrorTargetTimes
-        const timeLowerTier = mirrorTargetTimes[lowerTierLevel];
-        const timeUpperTier = mirrorTargetTimes[upperTierLevel];
+        // Every leaf starts from its own base copy — a mirror plan for +10 buys several items and
+        // combines them, which is the fact a totals-only answer hides and a shopping list cannot
+        const totalBaseItems = leaves.reduce((sum, { quantity }) => sum + quantity, 0);
 
-        // Get attempts to make one item at each level from mirrorTargetAttempts
-        const attemptsLowerTier = mirrorTargetAttempts[lowerTierLevel];
-        const attemptsUpperTier = mirrorTargetAttempts[upperTierLevel];
-
-        // Calculate total costs for consumed items and mirrors
-        const totalLowerTierCost = numLowerTier * costLowerTier;
-        const totalUpperTierCost = numUpperTier * costUpperTier;
-        const totalMirrorsCost = numMirrors * mirrorPrice;
-
-        // Calculate total time for mirror strategy
-        // Time = (numLowerTier × time per lower tier) + (numUpperTier × time per upper tier)
-        // Mirror combinations are instant (no additional time)
-        const totalTime = numLowerTier * timeLowerTier + numUpperTier * timeUpperTier;
-
-        // Calculate total attempts for mirror strategy
-        const totalAttempts = numLowerTier * attemptsLowerTier + numUpperTier * attemptsUpperTier;
-
-        // Build consumed items array for display
-        const consumedItems = [
-            {
-                level: lowerTierLevel,
-                quantity: numLowerTier,
-                costEach: costLowerTier,
-                totalCost: totalLowerTierCost,
-            },
-            {
-                level: upperTierLevel,
-                quantity: numUpperTier,
-                costEach: costUpperTier,
-                totalCost: totalUpperTierCost,
-            },
-        ];
+        // The per-attempt material bill is the same at every level, so the target-level strategy's
+        // breakdown (which is already multiplied by *its* attempts) scales to the plan's attempts
+        const materialMultiplier =
+            optimalTraditional.expectedAttempts > 0 ? totalAttempts / optimalTraditional.expectedAttempts : 0;
 
         // For mirror phase: ONLY consumed items + mirrors
         // The consumed item costs from targetCosts already include base/materials/protection
@@ -377,40 +910,91 @@
             protectionCost: 0, // Not applicable for mirror phase
             protectionItemHrid: null,
             protectionCount: 0,
-            consumedItemsCost: totalLowerTierCost + totalUpperTierCost,
+            consumedItemsCost,
             philosopherMirrorCost: totalMirrorsCost,
             totalCost: targetCosts[targetLevel], // Use recursive formula result for consistency
             mirrorStartLevel: mirrorStartLevel,
             usedMirror: true,
             traditionalCost: optimalTraditional.totalCost,
             consumedItems: consumedItems,
-            mirrorCount: numMirrors,
-            consumedItemHrid: consumedItemHrid,
+            mirrorCount: mirrorCount,
+            consumedItemHrid: itemHrid,
+            materialBill: buildMaterialBill({
+                materials: optimalTraditional.materialBreakdown,
+                materialMultiplier,
+                protectionItemHrid: optimalTraditional.protectionItemHrid || getCheapestProtectionPrice(itemHrid)?.itemHrid,
+                protectionCount: totalProtections,
+                protectionUnitPrice:
+                    optimalTraditional.protectionAskPrice || getCheapestProtectionPrice(itemHrid)?.price || 0,
+                mirrorCount,
+                mirrorPrice,
+                baseItemHrid: itemHrid,
+                baseCount: totalBaseItems,
+                baseUnitPrice: traditionalCosts[0],
+            }),
         };
+    }
+
+    /**
+     * Fixed price for untradeable trainee charms, which have no market listing.
+     */
+    const TRAINEE_CHARM_PRICE = 250000;
+
+    /**
+     * Price one enhancement material.
+     *
+     * Three callers used to each carry their own copy of these rules — trainee charms are
+     * untradeable and priced flat, coins are worth their face value, and a market quote with one
+     * side missing borrows the side that exists — and they had already drifted apart. This is the
+     * single answer all of them ask.
+     *
+     * @param {string} itemHrid - Material item HRID
+     * @param {'ask'|'bid'} [side='ask'] - Which side of the book to price against
+     * @returns {number} Unit price in coins, or 0 when nothing is known about the item
+     */
+    function getEnhancementMaterialPrice(itemHrid, side = 'ask') {
+        if (!itemHrid) return 0;
+
+        // Untradeable: no market listing exists, so use the fixed value on both sides
+        if (itemHrid.startsWith('/items/trainee_')) {
+            return TRAINEE_CHARM_PRICE;
+        }
+        if (itemHrid === '/items/coin') {
+            return 1;
+        }
+
+        const marketPrice = marketData_js.getItemPrices(itemHrid, 0);
+        if (marketPrice) {
+            let ask = marketPrice.ask;
+            let bid = marketPrice.bid;
+
+            // Match MCS behavior: when only one side is quoted, both sides use it
+            if (ask > 0 && bid < 0) bid = ask;
+            if (bid > 0 && ask < 0) ask = bid;
+
+            const price = side === 'bid' ? bid : ask;
+            if (price > 0) return price;
+        }
+
+        // Fallback: production cost, then NPC sell price
+        const gameData = dataManager.getInitClientData();
+        const materialDetail = gameData?.itemDetailMap?.[itemHrid];
+        return getProductionCost(itemHrid, side) || materialDetail?.sellPrice || 0;
     }
 
     /**
      * Calculate total cost for enhancement path
      * Matches original MWI Tools v25.0 cost calculation
+     * @param {string} itemHrid - Item HRID
+     * @param {number} targetLevel - Target enhancement level
+     * @param {number} protectFrom - Protection threshold
+     * @param {Object} config - Enhancement configuration
+     * @param {Object} pathResult - Markov result for this strategy, already computed by the caller
      * @private
      */
-    function calculateTotalCost(itemHrid, targetLevel, protectFrom, config) {
+    function calculateTotalCost(itemHrid, targetLevel, protectFrom, config, pathResult) {
         const gameData = dataManager.getInitClientData();
         const itemDetails = gameData.itemDetailMap[itemHrid];
-        const itemLevel = itemDetails.itemLevel || 1;
-
-        // Calculate total attempts for full path (0 to targetLevel)
-        const pathResult = enhancementCalculator_js.calculateEnhancement({
-            enhancingLevel: config.enhancingLevel,
-            houseLevel: config.houseLevel,
-            toolBonus: config.toolBonus || 0,
-            speedBonus: config.speedBonus || 0,
-            itemLevel,
-            targetLevel,
-            protectFrom,
-            blessedTea: config.teas.blessed,
-            guzzlingBonus: config.guzzlingBonus,
-        });
 
         // Calculate per-action material cost (same for all enhancement levels)
         // enhancementCosts is a flat array of materials needed per attempt
@@ -419,39 +1003,8 @@
         if (itemDetails.enhancementCosts) {
             for (const material of itemDetails.enhancementCosts) {
                 const materialDetail = gameData.itemDetailMap[material.itemHrid];
-                let price;
-                let bidPrice = 0;
-
-                // Special case: Trainee charms have fixed 250k price (untradeable)
-                if (material.itemHrid.startsWith('/items/trainee_')) {
-                    price = 250000;
-                    bidPrice = 250000;
-                } else if (material.itemHrid === '/items/coin') {
-                    price = 1; // Coins have face value of 1
-                    bidPrice = 1;
-                } else {
-                    const marketPrice = marketData_js.getItemPrices(material.itemHrid, 0);
-                    if (marketPrice) {
-                        let ask = marketPrice.ask;
-                        let bid = marketPrice.bid;
-
-                        // Match MCS behavior: if one price is positive and other is negative, use positive for both
-                        if (ask > 0 && bid < 0) {
-                            bid = ask;
-                        }
-                        if (bid > 0 && ask < 0) {
-                            ask = bid;
-                        }
-
-                        // MCS uses just ask for material prices
-                        price = ask;
-                        bidPrice = bid;
-                    } else {
-                        // Fallback: production cost, then NPC sell price
-                        price = getProductionCost(material.itemHrid, 'ask') || materialDetail?.sellPrice || 0;
-                        bidPrice = getProductionCost(material.itemHrid, 'bid') || materialDetail?.sellPrice || 0;
-                    }
-                }
+                const price = getEnhancementMaterialPrice(material.itemHrid, 'ask');
+                const bidPrice = getEnhancementMaterialPrice(material.itemHrid, 'bid');
                 perActionCost += price * material.count;
 
                 const totalQuantity = material.count * pathResult.attempts;
@@ -727,30 +1280,17 @@
     }
 
     /**
-     * Fibonacci calculation for item quantities (from Enhancelator)
-     * @private
+     * Minimum sell price that covers the total cost plus a target hourly rate for the
+     * time the enhancement takes, optionally grossed up for the marketplace seller tax.
+     * @param {number} totalCost - Total cost to reach the level, on one side (ask or bid)
+     * @param {number} totalTimeSeconds - Total enhancing time, in seconds
+     * @param {number} hourlyRate - Target coins/hour for time spent
+     * @param {boolean} includeTax - Whether to gross up for the marketplace seller tax
+     * @returns {number} Minimum sell price
      */
-    function fib(n) {
-        let a = 1,
-            b = 1;
-        for (let i = 2; i <= n; i++) {
-            [a, b] = [b, a + b];
-        }
-        return b;
-    }
-
-    /**
-     * Mirror Fibonacci calculation for mirror quantities (from Enhancelator)
-     * @private
-     */
-    function mirrorFib(n) {
-        if (n === 0) return 1;
-        let a = 1,
-            b = 2;
-        for (let i = 2; i <= n; i++) {
-            [a, b] = [b, a + b + 1];
-        }
-        return b;
+    function calculateMinimumSellPrice(totalCost, totalTimeSeconds, hourlyRate, includeTax) {
+        const breakeven = totalCost + hourlyRate * (totalTimeSeconds / 3600);
+        return includeTax ? breakeven / (1 - profitConstants_js.MARKET_TAX) : breakeven;
     }
 
     /**
@@ -763,7 +1303,8 @@
             return '';
         }
 
-        const { itemHrid, targetLevel, optimalStrategy, xpPerHour, totalExpectedXP } = enhancementData;
+        const { itemHrid, targetLevel, optimalStrategy, xpPerHour, totalExpectedXP, paramsNote, enhancementParams } =
+            enhancementData;
 
         // Validate required fields
         if (
@@ -776,8 +1317,15 @@
             return '';
         }
 
-        let html = '<div style="border-top: 1px solid rgba(255,255,255,0.2); margin-top: 8px; padding-top: 8px;">';
-        html += '<div style="font-weight: bold; margin-bottom: 4px;">ENHANCEMENT PATH (+0 → +' + targetLevel + ')</div>';
+        let html =
+            `<div ${sectionAttributes('path', itemHrid, targetLevel)} ` +
+            'style="border-top: 1px solid rgba(255,255,255,0.2); margin-top: 8px; padding-top: 8px;">';
+        html +=
+            '<div style="font-weight: bold; margin-bottom: 4px;">ENHANCEMENT PATH (+0 → +' +
+            targetLevel +
+            ')' +
+            buildSourceChipHTML(enhancementParams) +
+            '</div>';
         html += '<div style="font-size: 0.9em; margin-left: 8px;">';
 
         // Optimal strategy
@@ -811,12 +1359,14 @@
         html += '<th style="padding: 2px 4px; text-align: right;">Bid</th>';
         html += '</tr>';
 
+        // Hoisted so both breakdowns populate them and the minimum-sell section below can read them
+        let totalAsk = 0;
+        let totalBid = 0;
+
         // Check if using mirror optimization
         if (optimalStrategy.usedMirror && optimalStrategy.consumedItems && optimalStrategy.consumedItems.length > 0) {
             // Mirror-optimized breakdown
             // Calculate totals for mirror path
-            let totalAsk = 0;
-            let totalBid = 0;
 
             // Consumed items (enhanced items at specific levels)
             const sortedConsumed = [...optimalStrategy.consumedItems]
@@ -888,8 +1438,8 @@
             // Traditional (non-mirror) breakdown
             // Calculate totals
             let totalCount = 1; // Base item counts as 1
-            let totalAsk = optimalStrategy.baseAskPrice || optimalStrategy.baseCost;
-            let totalBid = optimalStrategy.baseBidPrice || optimalStrategy.baseCost;
+            totalAsk = optimalStrategy.baseAskPrice || optimalStrategy.baseCost;
+            totalBid = optimalStrategy.baseBidPrice || optimalStrategy.baseCost;
 
             const rows = [];
 
@@ -1005,10 +1555,132 @@
             html += '<div>Total XP: ~' + formatters_js.formatLargeNumber(totalExpectedXP) + '</div>';
         }
 
+        // Target hourly rate / minimum sell price — only when a rate is configured.
+        // The rate is a text setting, so it is read with getSettingValue(); getSetting() only
+        // ever answers with a boolean and would silently parse to 0 here.
+        const hourlyRate = parseItemCount(config.getSettingValue('itemTooltip_enhancingHourlyRate', ''), 0);
+        if (hourlyRate > 0) {
+            const includeTax = config.getSetting('itemTooltip_enhancingHourlyRateTax');
+            const minSellAsk = calculateMinimumSellPrice(totalAsk, optimalStrategy.totalTime, hourlyRate, includeTax);
+            const minSellBid = calculateMinimumSellPrice(totalBid, optimalStrategy.totalTime, hourlyRate, includeTax);
+
+            const enhancedPrices = marketData_js.getItemPrices(itemHrid, targetLevel);
+            const priceColor = (price, minimum) =>
+                price > 0 ? (price >= minimum ? config.COLOR_TOOLTIP_PROFIT : config.COLOR_TOOLTIP_LOSS) : '';
+            const askColor = priceColor(enhancedPrices?.ask, minSellAsk);
+            const bidColor = priceColor(enhancedPrices?.bid, minSellBid);
+
+            html += '<div style="margin-top: 4px;">Your rate: ' + formatters_js.formatKMB(hourlyRate) + '/hr</div>';
+            html += '<div>Minimum sell: ';
+            html += `<span${askColor ? ` style="color: ${askColor};"` : ''}>${formatters_js.formatKMB(minSellAsk)}</span>(ask)/`;
+            html += `<span${bidColor ? ` style="color: ${bidColor};"` : ''}>${formatters_js.formatKMB(minSellBid)}</span>(bid)`;
+            html += '</div>';
+        }
+
+        // A quiet note, not a warning: these numbers are only as true as the stats behind them,
+        // and a hand-entered stat is the one place they can quietly stop describing this character
+        if (paramsNote) {
+            html += `<div style="margin-top: 4px; font-size: 0.8em; opacity: 0.6;">${paramsNote}</div>`;
+        }
+
         html += '</div>'; // Close margin-left div
         html += '</div>'; // Close main container
 
         return html;
+    }
+
+    /**
+     * Redraw every enhancement section currently on screen with whatever source is now active.
+     *
+     * The sections are plain HTML inside a game tooltip, so the cheapest correct refresh is to
+     * rebuild the same section from the same item and level and swap it in. Anything still open
+     * therefore switches the moment the toggle flips, rather than showing the old kit's numbers
+     * under the new kit's label until the next hover.
+     */
+    function rerenderOpenEnhancementSections() {
+        if (typeof document === 'undefined') return;
+
+        for (const section of document.querySelectorAll(`[${SECTION_ATTR}]`)) {
+            try {
+                const itemHrid = section.getAttribute('data-toolasha-enh-item');
+                if (!itemHrid) continue;
+
+                const kind = section.getAttribute(SECTION_ATTR);
+                const params = getTooltipEnhancementParams(itemHrid);
+
+                let html;
+                if (kind === 'milestones') {
+                    html = buildEnhancementMilestonesHTML(itemHrid, params);
+                } else {
+                    const level = parseInt(section.getAttribute('data-toolasha-enh-level'), 10);
+                    const data = level > 0 ? calculateEnhancementPath(itemHrid, level, params) : null;
+                    html = data ? buildEnhancementTooltipHTML(data) : '';
+                }
+
+                // An empty rebuild means the new params produced nothing to say; leaving the old
+                // section up would label it with a source that did not produce it, so it goes
+                section.outerHTML = html;
+            } catch (error) {
+                console.error('[Enhancement Tooltip] Failed to redraw section for new stats source:', error);
+            }
+        }
+    }
+
+    let _sourceToggleHandlers = null;
+
+    /**
+     * Make the source chip live: clicking it, or pressing P while a section is on screen, switches
+     * the prediction between the player's own stats and pro rates and redraws what is open.
+     *
+     * The key is what makes the toggle usable on a hover tooltip, which vanishes the moment the
+     * pointer leaves the item it describes — there is no way to walk the cursor over to the chip.
+     * The chip stays clickable for the tooltips that do stay open (item click popups).
+     */
+    function installEnhancementSourceToggle() {
+        if (typeof document === 'undefined' || _sourceToggleHandlers) return;
+
+        const flip = () => {
+            toggleProRates();
+            rerenderOpenEnhancementSections();
+        };
+
+        const onClick = (event) => {
+            const chip = event.target?.closest?.(`.${SOURCE_CHIP_CLASS}`);
+            if (!chip) return;
+            event.preventDefault();
+            event.stopPropagation();
+            flip();
+        };
+
+        const onKeyDown = (event) => {
+            if (event.key?.toLowerCase() !== 'p' || event.ctrlKey || event.altKey || event.metaKey) return;
+
+            // Never steal a keystroke from chat, a price box or any other field being typed into
+            const target = event.target;
+            const tag = target?.tagName;
+            if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target?.isContentEditable) return;
+
+            // Only meaningful while a prediction is actually on screen to be re-sourced
+            if (!document.querySelector(`[${SECTION_ATTR}]`)) return;
+
+            event.preventDefault();
+            flip();
+        };
+
+        document.addEventListener('click', onClick, true);
+        document.addEventListener('keydown', onKeyDown, true);
+        _sourceToggleHandlers = { onClick, onKeyDown };
+    }
+
+    /**
+     * Remove the source toggle's listeners.
+     */
+    function uninstallEnhancementSourceToggle() {
+        if (typeof document === 'undefined' || !_sourceToggleHandlers) return;
+
+        document.removeEventListener('click', _sourceToggleHandlers.onClick, true);
+        document.removeEventListener('keydown', _sourceToggleHandlers.onKeyDown, true);
+        _sourceToggleHandlers = null;
     }
 
     const MILESTONE_LEVELS = [5, 7, 10, 12];
@@ -1059,8 +1731,13 @@
         const thStyle = (align = 'right') =>
             `style="padding: 1px 6px; text-align: ${align}; opacity: 0.6; font-weight: normal;"`;
 
-        let html = '<div style="border-top: 1px solid rgba(255,255,255,0.2); margin-top: 8px; padding-top: 8px;">';
-        html += '<div style="font-weight: bold; margin-bottom: 4px;">Enhancement Milestones</div>';
+        let html =
+            `<div ${sectionAttributes('milestones', itemHrid, 0)} ` +
+            'style="border-top: 1px solid rgba(255,255,255,0.2); margin-top: 8px; padding-top: 8px;">';
+        html +=
+            '<div style="font-weight: bold; margin-bottom: 4px;">Enhancement Milestones' +
+            buildSourceChipHTML(enhancementConfig) +
+            '</div>';
         html += '<table style="font-size: 0.9em; border-collapse: collapse; width: 100%;">';
         html += '<thead><tr>';
         html += `<th ${thStyle('left')}>Level</th>`;
@@ -1081,6 +1758,12 @@
         }
 
         html += '</tbody></table>';
+
+        const paramsNote = describeEnhancementSource(enhancementConfig).detail;
+        if (paramsNote) {
+            html += `<div style="font-size: 0.8em; opacity: 0.6; margin-top: 2px;">${paramsNote}</div>`;
+        }
+
         html += '</div>';
 
         return html;
@@ -1142,9 +1825,13 @@
         /**
          * Calculate profit for a crafted item
          * @param {string} itemHrid - Item HRID
+         * @param {Object} [options] - Options
+         * @param {string} [options.actionHrid] - The recipe this calculation is about. Pass it whenever
+         *   the caller started from an action rather than from an item: two recipes can yield the same
+         *   output, and without this the answer is about whichever one the lookup happens to pick.
          * @returns {Promise<Object|null>} Profit data or null if not craftable
          */
-        async calculateProfit(itemHrid) {
+        async calculateProfit(itemHrid, { actionHrid } = {}) {
             // Get item details
             const itemDetails = dataManager.getItemDetails(itemHrid);
             if (!itemDetails) {
@@ -1152,7 +1839,7 @@
             }
 
             // Find the action that produces this item
-            const action = this.findProductionAction(itemHrid);
+            const action = this.findProductionAction(itemHrid, { actionHrid });
             if (!action) {
                 return null; // Not a craftable item
             }
@@ -1323,6 +2010,10 @@
             return {
                 itemName: itemDetails.name,
                 itemHrid,
+                // Which recipe this figure is about. Two actions can yield the same item, so a
+                // caller filing the margin against an action needs to know it got the one it meant.
+                actionHrid: action.actionHrid,
+                productionCandidates: action.candidateActionHrids,
                 actionTime: effectiveActionTime,
                 actionsPerHour,
                 itemsPerHour,
@@ -1403,28 +2094,116 @@
         }
 
         /**
-         * Find the action that produces a given item
+         * Find the action that produces a given item.
+         *
+         * Most items have exactly one recipe and this is a lookup. Some have two —
+         * the same output from different inputs — and then "the action that produces
+         * it" is not a well-formed question, so the contract is:
+         *
+         * 1. **The caller says which.** Anything that started from an action (the
+         *    production-profit calculator, the action panel) passes `actionHrid`, and
+         *    that recipe is the answer. This is the case the bug was about: the
+         *    planner files each margin against the action it asked for, and the
+         *    lookup used to hand back the *first* recipe in the map, so one action's
+         *    gold-per-hour could be filed under a different action's hrid.
+         * 2. **Otherwise, the best margin.** A caller that started from an item —
+         *    a marketplace tooltip, the sort — is asking "what is this worth to
+         *    make", and the answer a player cares about is the recipe they would
+         *    actually use. The margin is estimated per action from prices alone
+         *    (output revenue minus inputs), which is enough to rank two recipes and
+         *    costs nothing when there is only one.
+         *
          * @param {string} itemHrid - Item HRID
-         * @returns {Object|null} Action output data or null
+         * @param {Object} [options] - Options
+         * @param {string} [options.actionHrid] - The recipe the calculation is about
+         * @returns {Object|null} Action output data, plus `candidateActionHrids`, or null
          */
-        findProductionAction(itemHrid) {
+        findProductionAction(itemHrid, { actionHrid: wantedActionHrid } = {}) {
             const actionDetailMap = this.getActionDetailMap();
 
-            // Search through all actions for one that produces this item
+            // Search through all actions for ones that produce this item
+            const candidates = [];
             for (const [actionHrid, action] of Object.entries(actionDetailMap)) {
-                if (action.outputItems) {
-                    for (const output of action.outputItems) {
-                        if (output.itemHrid === itemHrid) {
-                            return {
-                                actionHrid,
-                                ...output,
-                            };
-                        }
+                if (!action.outputItems) continue;
+                for (const output of action.outputItems) {
+                    if (output.itemHrid === itemHrid) {
+                        candidates.push({ actionHrid, action, output });
+                        break;
                     }
                 }
             }
 
-            return null;
+            if (candidates.length === 0) {
+                return null;
+            }
+
+            const candidateActionHrids = candidates.map((candidate) => candidate.actionHrid);
+
+            // The caller named the recipe: that is the answer, whatever it is worth.
+            // A name that does not produce this item is ignored rather than obeyed —
+            // returning nothing for an item that is plainly craftable would be worse
+            // than falling back to the ranking.
+            const named = wantedActionHrid && candidates.find((candidate) => candidate.actionHrid === wantedActionHrid);
+            const chosen = named || (candidates.length === 1 ? candidates[0] : this.bestMarginCandidate(candidates));
+
+            return {
+                actionHrid: chosen.actionHrid,
+                ...chosen.output,
+                candidateActionHrids,
+            };
+        }
+
+        /**
+         * Of several recipes for the same item, the one with the widest margin.
+         *
+         * A price-only estimate: what one action's output sells for, less what its
+         * inputs cost. No efficiency, no teas, no bonus drops — those scale both
+         * sides of a comparison between two recipes for the same output, and the
+         * full calculation cannot be used to choose between recipes because it is
+         * the thing being chosen *for*. An unpriceable input makes a recipe look
+         * free, so it loses rather than winning: a cost that cannot be read is not a
+         * cost of zero.
+         *
+         * @param {Array<{actionHrid: string, action: Object, output: Object}>} candidates - Recipes
+         * @returns {Object} The winner; the first candidate on a tie, so the answer is stable
+         */
+        bestMarginCandidate(candidates) {
+            const priceOf = (hrid) => {
+                if (hrid === '/items/coin') return { price: 1, missing: false };
+                const resolved = profitHelpers_js.resolveItemPrice(hrid, { context: 'profit', side: 'buy' });
+                return { price: resolved?.price || 0, missing: Boolean(resolved?.missing) };
+            };
+
+            let best = candidates[0];
+            let bestMargin = -Infinity;
+
+            for (const candidate of candidates) {
+                const { action, output } = candidate;
+                const sold = profitHelpers_js.resolveItemPrice(output.itemHrid, { context: 'profit', side: 'sell' });
+                let margin = (sold?.price || 0) * (output.count || 1);
+                let unpriceable = Boolean(sold?.missing);
+
+                if (action.upgradeItemHrid) {
+                    const upgrade = priceOf(action.upgradeItemHrid);
+                    margin -= upgrade.price;
+                    unpriceable = unpriceable || upgrade.missing;
+                }
+                for (const input of action.inputItems || []) {
+                    const cost = priceOf(input.itemHrid);
+                    margin -= cost.price * (input.count || 1);
+                    unpriceable = unpriceable || cost.missing;
+                }
+
+                // Ranked below every recipe that could be costed, but still ranked,
+                // so an item whose recipes are all unpriceable still resolves to one
+                const score = unpriceable ? -Infinity : margin;
+                if (score > bestMargin) {
+                    bestMargin = score;
+                    best = candidate;
+                }
+            }
+
+            return best;
         }
 
         /**
@@ -1618,344 +2397,62 @@
     const profitCalculator = new ProfitCalculator();
 
     /**
-     * Worker Pool Manager
-     * Manages a pool of Web Workers for parallel task execution
+     * Alchemy coin fees.
+     *
+     * The game charges gold to run an alchemy action, and that charge is nowhere in
+     * the game's data: `actionDetails.coinCost` is 0 for every `/actions/alchemy/*`
+     * action, and nothing the websocket reports records the fee that was actually
+     * paid (the decompose tracker drops the coin entry from `endCharacterItems`
+     * outright). Both formulas below are reverse-engineered, and this module is the
+     * one place that states them so the callers cannot drift apart again.
      */
 
-    class WorkerPool {
-        constructor(workerScript, poolSize = null) {
-            // Auto-detect optimal pool size (max 4 workers)
-            this.poolSize = poolSize || Math.min(navigator.hardwareConcurrency || 2, 4);
-            this.workerScript = workerScript;
-            this.workers = [];
-            this.taskQueue = [];
-            this.activeWorkers = new Set();
-            this.nextTaskId = 0;
-            this.initialized = false;
-        }
-
-        /**
-         * Initialize the worker pool
-         */
-        async initialize() {
-            if (this.initialized) {
-                return;
-            }
-
-            try {
-                // Create workers
-                for (let i = 0; i < this.poolSize; i++) {
-                    const worker = new Worker(URL.createObjectURL(this.workerScript));
-                    this.workers.push({
-                        id: i,
-                        worker,
-                        busy: false,
-                        currentTask: null,
-                    });
-                }
-
-                this.initialized = true;
-            } catch (error) {
-                console.error('[WorkerPool] Failed to initialize:', error);
-                throw error;
-            }
-        }
-
-        /**
-         * Execute a task in the worker pool
-         * @param {Object} taskData - Data to send to worker
-         * @returns {Promise} Promise that resolves with worker result
-         */
-        async execute(taskData) {
-            if (!this.initialized) {
-                await this.initialize();
-            }
-
-            return new Promise((resolve, reject) => {
-                const taskId = this.nextTaskId++;
-                const task = {
-                    id: taskId,
-                    data: taskData,
-                    resolve,
-                    reject,
-                    timestamp: Date.now(),
-                };
-
-                // Try to assign to an available worker immediately
-                const availableWorker = this.workers.find((w) => !w.busy);
-
-                if (availableWorker) {
-                    this.assignTask(availableWorker, task);
-                } else {
-                    // Queue the task if all workers are busy
-                    this.taskQueue.push(task);
-                }
-            });
-        }
-
-        /**
-         * Execute multiple tasks in parallel
-         * @param {Array} taskDataArray - Array of task data objects
-         * @returns {Promise<Array>} Promise that resolves with array of results
-         */
-        async executeAll(taskDataArray) {
-            if (!this.initialized) {
-                await this.initialize();
-            }
-
-            const promises = taskDataArray.map((taskData) => this.execute(taskData));
-            return Promise.all(promises);
-        }
-
-        /**
-         * Assign a task to a worker
-         * @private
-         */
-        assignTask(workerWrapper, task) {
-            workerWrapper.busy = true;
-            workerWrapper.currentTask = task;
-
-            // Set up message handler for this specific task
-            const messageHandler = (e) => {
-                const { taskId, result, error } = e.data;
-
-                if (taskId === task.id) {
-                    // Clean up
-                    workerWrapper.worker.removeEventListener('message', messageHandler);
-                    workerWrapper.worker.removeEventListener('error', errorHandler);
-                    workerWrapper.busy = false;
-                    workerWrapper.currentTask = null;
-
-                    // Resolve or reject the promise
-                    if (error) {
-                        task.reject(new Error(error));
-                    } else {
-                        task.resolve(result);
-                    }
-
-                    // Process next task in queue
-                    this.processQueue();
-                }
-            };
-
-            const errorHandler = (error) => {
-                console.error('[WorkerPool] Worker error:', error);
-                workerWrapper.worker.removeEventListener('message', messageHandler);
-                workerWrapper.worker.removeEventListener('error', errorHandler);
-                workerWrapper.busy = false;
-                workerWrapper.currentTask = null;
-
-                task.reject(error);
-
-                // Process next task in queue
-                this.processQueue();
-            };
-
-            workerWrapper.worker.addEventListener('message', messageHandler);
-            workerWrapper.worker.addEventListener('error', errorHandler);
-
-            // Send task to worker
-            workerWrapper.worker.postMessage({
-                taskId: task.id,
-                data: task.data,
-            });
-        }
-
-        /**
-         * Process the next task in the queue
-         * @private
-         */
-        processQueue() {
-            if (this.taskQueue.length === 0) {
-                return;
-            }
-
-            const availableWorker = this.workers.find((w) => !w.busy);
-            if (availableWorker) {
-                const task = this.taskQueue.shift();
-                this.assignTask(availableWorker, task);
-            }
-        }
-
-        /**
-         * Get pool statistics
-         */
-        getStats() {
-            return {
-                poolSize: this.poolSize,
-                busyWorkers: this.workers.filter((w) => w.busy).length,
-                queuedTasks: this.taskQueue.length,
-                totalWorkers: this.workers.length,
-            };
-        }
-
-        /**
-         * Terminate all workers and clean up
-         */
-        terminate() {
-            for (const workerWrapper of this.workers) {
-                workerWrapper.worker.terminate();
-            }
-
-            this.workers = [];
-            this.taskQueue = [];
-            this.initialized = false;
-        }
-    }
+    /** Alchemy types billed by item level: (10 + itemLevel) × 5 per item */
+    const LEVEL_PRICED_TYPES = new Set(['decompose', 'unrefine']);
 
     /**
-     * Expected Value Calculator Worker Manager
-     * Manages a worker pool for parallel EV container calculations
+     * Coinify is not billed at all — the item is the input and coins are the output,
+     * so there is no separate gold fee to pay. Every other coinify site in the repo
+     * already assumed this (the profit calculator hardcodes `coinCost = 0`, the action
+     * planner and the gold summary both skip coinify outright); only the coinify history
+     * viewer charged the transmute fee, which overstated every session's cost. The rule
+     * lives here now so the sites cannot disagree again.
      */
-
-
-    // Worker pool instance
-    let workerPool$1 = null;
-
-    // Worker script as inline string
-    const WORKER_SCRIPT$1 = `
-// Cache for EV calculation results
-const evCache = new Map();
-
-/**
- * Calculate expected value for a single container
- * @param {Object} data - Container calculation data
- * @returns {Object} {containerHrid, ev}
- */
-function calculateContainerEV(data) {
-    const { containerHrid, dropTable, priceMap, COIN_HRID, MARKET_TAX } = data;
-
-    if (!dropTable || dropTable.length === 0) {
-        return { containerHrid, ev: null };
-    }
-
-    let totalExpectedValue = 0;
-
-    // Calculate expected value for each drop
-    for (const drop of dropTable) {
-        const itemHrid = drop.itemHrid;
-        const dropRate = drop.dropRate || 0;
-        const minCount = drop.minCount || 0;
-        const maxCount = drop.maxCount || 0;
-
-        // Skip invalid drops
-        if (dropRate <= 0 || (minCount === 0 && maxCount === 0)) {
-            continue;
-        }
-
-        // Calculate average drop count
-        const avgCount = (minCount + maxCount) / 2;
-
-        // Get price for this drop
-        const priceData = priceMap[itemHrid];
-        if (!priceData || priceData.price === null) {
-            continue; // Skip drops with missing data
-        }
-
-        const price = priceData.price;
-        const canBeSold = priceData.canBeSold;
-        const isCoin = itemHrid === COIN_HRID;
-
-        // Calculate drop value with tax
-        const dropValue = isCoin
-            ? avgCount * dropRate * price
-            : canBeSold
-              ? avgCount * dropRate * price * (1 - MARKET_TAX)
-              : avgCount * dropRate * price;
-
-        totalExpectedValue += dropValue;
-    }
-
-    return { containerHrid, ev: totalExpectedValue };
-}
-
-/**
- * Calculate EV for a batch of containers
- * @param {Array} containers - Array of container data objects
- * @returns {Array} Array of {containerHrid, ev} results
- */
-function calculateBatchEV(containers) {
-    const results = [];
-
-    for (const container of containers) {
-        const result = calculateContainerEV(container);
-        if (result.ev !== null) {
-            evCache.set(result.containerHrid, result.ev);
-        }
-        results.push(result);
-    }
-
-    return results;
-}
-
-self.onmessage = function (e) {
-    const { taskId, data } = e.data;
-    try {
-        const { action, params } = data;
-
-        if (action === 'calculateBatch') {
-            const results = calculateBatchEV(params.containers);
-            self.postMessage({ taskId, result: results });
-        } else if (action === 'clearCache') {
-            evCache.clear();
-            self.postMessage({ taskId, result: { success: true, message: 'Cache cleared' } });
-        } else {
-            throw new Error(\`Unknown action: \${action}\`);
-        }
-    } catch (error) {
-        self.postMessage({ taskId, error: error.message || String(error) });
-    }
-};
-`;
+    const FREE_TYPES = new Set(['coinify']);
 
     /**
-     * Get or create the worker pool instance
+     * Coin fee for one alchemy action, including the item's bulk multiplier.
+     *
+     * Three families:
+     *  - decompose / unrefine — `(10 + itemLevel) * 5` per item
+     *  - transmute — `max(50, floor(sellPrice / 5))` per item
+     *  - coinify — free (see FREE_TYPES)
+     *
+     * Decompose used `max(50, floor(sellPrice / 5))` in the history viewer while
+     * every other decompose site used the item-level formula. Nothing in the repo
+     * can adjudicate that — the fee is absent from game data and unrecorded in
+     * session history — so the item-level formula won, being the one the other
+     * decompose sites and upstream already agreed on.
+     *
+     * @param {Object|null|undefined} itemDetails - Item details from dataManager
+     * @param {'decompose'|'unrefine'|'transmute'|'coinify'} alchemyType - Which alchemy action
+     * @param {number} [bulkMultiplierOverride] - Bulk size to bill at, for history callers that
+     *   recorded the multiplier in effect at the time rather than the item's current one
+     * @returns {number} Coin fee per action, or 0 when the item is unknown
      */
-    async function getWorkerPool$1() {
-        if (workerPool$1) {
-            return workerPool$1;
+    function getAlchemyCoinCost(itemDetails, alchemyType, bulkMultiplierOverride) {
+        if (!itemDetails) return 0;
+        if (FREE_TYPES.has(alchemyType)) return 0;
+
+        const bulkMultiplier = itemDetails.alchemyDetail?.bulkMultiplier || 1;
+
+        if (LEVEL_PRICED_TYPES.has(alchemyType)) {
+            const itemLevel = itemDetails.itemLevel || 1;
+            return (10 + itemLevel) * 5 * bulkMultiplier;
         }
 
-        try {
-            // Create worker blob from inline script
-            const blob = new Blob([WORKER_SCRIPT$1], { type: 'application/javascript' });
-
-            // Initialize worker pool with 2-4 workers
-            workerPool$1 = new WorkerPool(blob);
-            await workerPool$1.initialize();
-
-            return workerPool$1;
-        } catch (error) {
-            throw error;
-        }
-    }
-
-    /**
-     * Calculate EV for multiple containers in parallel
-     * @param {Array} containers - Array of container data objects
-     * @returns {Promise<Array>} Array of {containerHrid, ev} results
-     */
-    async function calculateEVBatch(containers) {
-        const pool = await getWorkerPool$1();
-
-        // Split containers into chunks for parallel processing
-        const chunkSize = Math.ceil(containers.length / pool.getStats().poolSize);
-        const chunks = [];
-
-        for (let i = 0; i < containers.length; i += chunkSize) {
-            chunks.push(containers.slice(i, i + chunkSize));
-        }
-
-        // Process chunks in parallel
-        const tasks = chunks.map((chunk) => ({
-            action: 'calculateBatch',
-            params: { containers: chunk },
-        }));
-
-        const results = await pool.executeAll(tasks);
-
-        // Flatten results
-        return results.flat();
+        const sellPrice = itemDetails.sellPrice || 0;
+        return Math.max(50, Math.floor(sellPrice / 5)) * bulkMultiplier;
     }
 
     /**
@@ -2067,7 +2564,7 @@ self.onmessage = function (e) {
 
                 // Calculate all containers in parallel using workers
                 try {
-                    const results = await calculateEVBatch(containerData);
+                    const results = await evWorkerManager_js.calculateEVBatch(containerData);
 
                     // Update cache with results
                     for (const result of results) {
@@ -2374,6 +2871,10 @@ self.onmessage = function (e) {
 
             this.containerCache.clear();
             this.isInitialized = false;
+
+            // The pool recreates itself on the next batch; idle workers should not
+            // outlive the feature that spawned them
+            evWorkerManager_js.terminateEVWorkerPool();
         }
 
         disable() {
@@ -2396,9 +2897,9 @@ self.onmessage = function (e) {
      * - Tea: Catalytic Tea provides /buff_types/alchemy_success (5% ratio boost, scales with Drink Concentration)
      * - Catalyst (type-specific): +15% multiplicative, consumed once per successful action
      * - Catalyst (prime): +25% multiplicative, consumed once per successful action
-     * - Transmute under-level penalty: perLevel = 0.9 / itemLevel, applied when alchemyLevel < itemLevel
-     * - Formula (coinify/decompose): finalRate = min(1, baseRate × (1 + catalystBonus + teaBonus))
-     * - Formula (transmute): finalRate = min(1, baseRate × (1 + catalyst + perLevel × (alchemyLvl - itemLvl) + tea))
+     * - Under-level penalty: perLevel = 0.9 / itemLevel, applied when alchemyLevel < itemLevel.
+     *   It keys off the item's level, not the action, so all three types take it.
+     * - Formula: finalRate = min(1, baseRate × (1 + catalyst + perLevel × (alchemyLvl - itemLvl) + tea))
      */
 
 
@@ -2423,21 +2924,10 @@ self.onmessage = function (e) {
         prime: 0.25, // 25% multiplicative
     };
 
-    /**
-     * @param {Object} itemDetails - Item details from dataManager
-     * @param {'decompose'|'transmute'} alchemyType - Which alchemy action
-     * @returns {number} Gold cost per alchemy action (includes bulkMultiplier)
-     */
-    function calculateAlchemyCoinCost(itemDetails, alchemyType) {
-        const bulkMultiplier = itemDetails.alchemyDetail?.bulkMultiplier || 1;
-        if (alchemyType === 'transmute') {
-            const sellPrice = itemDetails.sellPrice || 0;
-            return Math.max(50, Math.floor(sellPrice / 5)) * bulkMultiplier;
-        }
-        // Decompose / Unrefine
-        const level = itemDetails.itemLevel || 1;
-        return (10 + level) * 5 * bulkMultiplier;
-    }
+    // Under-level penalty: perLevel = 0.9 / itemLevel per level below the item's level
+    const UNDER_LEVEL_PENALTY_NUMERATOR = 0.9;
+
+    // The alchemy coin fee lives in utils/alchemy-fees.js — see getAlchemyCoinCost.
 
     /**
      * Calculate alchemy-specific bonus drops (essences + rares) from item level.
@@ -2584,6 +3074,100 @@ self.onmessage = function (e) {
         };
     }
 
+    /**
+     * Per-tea action speed contributions from the equipped drinks.
+     * Speed teas expose a `/buff_types/action_speed` buff whose flatBoost is a decimal
+     * (0.06 for +6%) and, like every other tea bonus, scales with Drink Concentration.
+     *
+     * @param {Array} drinkSlots - Active drink slots for the action type
+     * @param {Object} itemDetailMap - Item details from init_client_data
+     * @param {number} drinkConcentration - Drink Concentration as a decimal (0.12 for 12%)
+     * @returns {Array<{name: string, speedBonus: number}>} One entry per tea that grants speed
+     */
+    function parseTeaSpeedDetails(drinkSlots, itemDetailMap, drinkConcentration = 0) {
+        if (!Array.isArray(drinkSlots) || !itemDetailMap) {
+            return [];
+        }
+
+        const details = [];
+
+        for (const drink of drinkSlots) {
+            if (!drink || !drink.itemHrid) continue;
+
+            const itemDetails = itemDetailMap[drink.itemHrid];
+            const buffs = itemDetails?.consumableDetail?.buffs;
+            if (!Array.isArray(buffs)) continue;
+
+            let speedBonus = 0;
+            for (const buff of buffs) {
+                if (buff?.typeHrid !== '/buff_types/action_speed') continue;
+                speedBonus += (buff.flatBoost || 0) * (1 + drinkConcentration);
+            }
+
+            if (speedBonus > 0) {
+                details.push({ name: itemDetails.name, speedBonus });
+            }
+        }
+
+        return details;
+    }
+
+    /**
+     * Build the action speed breakdown for an alchemy action and fold the tea speed
+     * bonus into the action time.
+     *
+     * calculateActionStats() already divides the base time by the equipment, personal
+     * and guild speed bonuses but ignores drinks. Speed sources stack additively, so
+     * the multiplier it applied is recovered as baseTime / actionTime and the tea
+     * bonus is added to it rather than applied as a second, multiplicative division.
+     *
+     * @param {Object} actionDetails - Action detail object from game data
+     * @param {Object} params
+     * @param {Map} params.equipment - Equipment map from dataManager.getEquipment()
+     * @param {Object} params.itemDetailMap - Item details from init_client_data
+     * @param {Array} params.drinkSlots - Active drink slots for the action type
+     * @param {number} params.drinkConcentration - Drink Concentration as a decimal
+     * @param {number} params.actionTime - Action time in seconds from calculateActionStats()
+     * @returns {{actionTime: number, actionSpeedBreakdown: Object}}
+     */
+    function buildActionSpeedStats(
+        actionDetails,
+        { equipment, itemDetailMap, drinkSlots, drinkConcentration, actionTime }
+    ) {
+        const baseTime = actionDetails.baseTimeCost / 1e9;
+        const equipmentSpeed = equipmentParser_js.parseEquipmentSpeedBonuses(equipment, actionDetails.type, itemDetailMap);
+
+        // Per-item equipment speed breakdown (skill-specific + generic skilling speed)
+        const skillSpecificSpeed = actionDetails.type.replace('/action_types/', '') + 'Speed';
+        const equipmentDetails = equipmentParser_js.debugEquipmentSpeedBonuses(equipment, itemDetailMap)
+            .filter((item) => item.speedType === skillSpecificSpeed || item.speedType === 'skillingSpeed')
+            .map((item) => ({
+                name: item.itemName,
+                enhancementLevel: item.enhancementLevel,
+                speedBonus: item.scaledBonus,
+            }));
+
+        const teaDetails = parseTeaSpeedDetails(drinkSlots, itemDetailMap, drinkConcentration);
+        const teaSpeed = teaDetails.reduce((sum, tea) => sum + tea.speedBonus, 0);
+
+        let adjustedActionTime = actionTime;
+        if (teaSpeed > 0 && actionTime > 0 && baseTime > 0) {
+            const appliedSpeedMultiplier = baseTime / actionTime;
+            adjustedActionTime = Math.max(profitConstants_js.MIN_ACTION_TIME_SECONDS, baseTime / (appliedSpeedMultiplier + teaSpeed));
+        }
+
+        return {
+            actionTime: adjustedActionTime,
+            actionSpeedBreakdown: {
+                total: equipmentSpeed + teaSpeed,
+                equipment: equipmentSpeed,
+                tea: teaSpeed,
+                equipmentDetails,
+                teaDetails,
+            },
+        };
+    }
+
     class AlchemyProfitCalculator {
         constructor() {
             // Cache for item detail map
@@ -2600,6 +3184,27 @@ self.onmessage = function (e) {
                 this._itemDetailMap = initData?.itemDetailMap || {};
             }
             return this._itemDetailMap;
+        }
+
+        /**
+         * Under-level success penalty: alchemy punishes working above your level, and the
+         * penalty depends on the item's level, not on which alchemy action you ran. It used
+         * to be applied on the transmute path only, which left coinify and decompose quoting
+         * an under-levelled character the full base rate.
+         *
+         * Formula: `perLevel × (alchemyLevel - itemLevel)` with `perLevel = 0.9 / itemLevel`,
+         * so it is 0 at or above the item's level and never worse than -0.9 (a 90% cut) at
+         * level 1 against a max-level item.
+         *
+         * @param {number} itemLevel - The item's level
+         * @returns {number} Penalty term, <= 0, additive into the success-rate bonus sum
+         */
+        getUnderLevelPenalty(itemLevel) {
+            const level = itemLevel || 1;
+            const skills = dataManager.getSkills();
+            const alchemySkill = skills?.find((s) => s.skillHrid === '/skills/alchemy');
+            const alchemyLevel = alchemySkill?.level || 1;
+            return alchemyLevel < level ? (UNDER_LEVEL_PENALTY_NUMERATOR / level) * (alchemyLevel - level) : 0;
         }
 
         /**
@@ -2842,39 +3447,23 @@ self.onmessage = function (e) {
                     levelRequirementOverride: itemDetails.itemLevel || 1,
                 });
 
-                const { actionTime, totalEfficiency, efficiencyBreakdown } = actionStats;
+                const { totalEfficiency, efficiencyBreakdown } = actionStats;
 
                 // Get equipment for drink concentration and speed calculation
                 const equipment = dataManager.getEquipment();
 
-                // Calculate action speed breakdown with details
-                const _baseTime = actionDetails.baseTimeCost / 1e9;
-                const speedBonus = equipmentParser_js.parseEquipmentSpeedBonuses(equipment, actionDetails.type, gameData.itemDetailMap);
-
-                // Get detailed equipment speed breakdown
-                const allSpeedBonuses = equipmentParser_js.debugEquipmentSpeedBonuses(equipment, gameData.itemDetailMap);
-                const skillName = actionDetails.type.replace('/action_types/', '');
-                const skillSpecificSpeed = skillName + 'Speed';
-                const relevantSpeeds = allSpeedBonuses.filter((item) => {
-                    return item.speedType === skillSpecificSpeed || item.speedType === 'skillingSpeed';
-                });
-
-                // TODO: Add tea speed bonuses when tea-parser supports it
-                const teaSpeed = 0;
-                const actionSpeedBreakdown = {
-                    total: speedBonus + teaSpeed,
-                    equipment: speedBonus,
-                    tea: teaSpeed,
-                    equipmentDetails: relevantSpeeds.map((item) => ({
-                        name: item.itemName,
-                        enhancementLevel: item.enhancementLevel,
-                        speedBonus: item.scaledBonus,
-                    })),
-                    teaDetails: [], // TODO: Add when tea speed is supported
-                };
-
                 // Get drink concentration separately (not in breakdown from calculateActionStats)
                 const drinkConcentration = teaParser_js.getDrinkConcentration(equipment, gameData.itemDetailMap);
+                const drinkSlots = dataManager.getActionDrinkSlots('/action_types/alchemy');
+
+                // Action speed breakdown, and the action time with tea speed folded in
+                const { actionTime, actionSpeedBreakdown } = buildActionSpeedStats(actionDetails, {
+                    equipment,
+                    itemDetailMap: gameData.itemDetailMap,
+                    drinkSlots,
+                    drinkConcentration,
+                    actionTime: actionStats.actionTime,
+                });
 
                 // Calculate input cost (material cost)
                 const bulkMultiplier = itemDetails.alchemyDetail?.bulkMultiplier || 1;
@@ -2908,7 +3497,7 @@ self.onmessage = function (e) {
 
                 // Calculate live tea cost (used for tea combinations)
                 const teaCostData = profitHelpers_js.calculateTeaCostsPerHour({
-                    drinkSlots: dataManager.getActionDrinkSlots('/action_types/alchemy'),
+                    drinkSlots,
                     drinkConcentration,
                     itemDetailMap: gameData.itemDetailMap,
                     getItemPrice: (hrid) => marketData_js.getItemPrice(hrid, { context: 'profit', side: 'buy' }),
@@ -2919,6 +3508,7 @@ self.onmessage = function (e) {
                 const combo = _comboFn({
                     actionType: 'coinify',
                     baseSuccessRate: BASE_SUCCESS_RATES.COINIFY,
+                    levelPenalty: this.getUnderLevelPenalty(itemLevel),
                     actionsPerHour: actionsPerHourWithEfficiency,
                     efficiencyDecimal,
                     actionTime,
@@ -3100,37 +3690,21 @@ self.onmessage = function (e) {
                     levelRequirementOverride: itemDetails.itemLevel || 1,
                 });
 
-                const { actionTime, totalEfficiency, efficiencyBreakdown } = actionStats;
+                const { totalEfficiency, efficiencyBreakdown } = actionStats;
 
                 // Get equipment for drink concentration and speed calculation
                 const equipment = dataManager.getEquipment();
-
-                // Calculate action speed breakdown with details
-                const _baseTime = actionDetails.baseTimeCost / 1e9;
-                const speedBonus = equipmentParser_js.parseEquipmentSpeedBonuses(equipment, actionDetails.type, gameData.itemDetailMap);
-
-                // Get detailed equipment speed breakdown
-                const allSpeedBonuses = equipmentParser_js.debugEquipmentSpeedBonuses(equipment, gameData.itemDetailMap);
-                const skillName = actionDetails.type.replace('/action_types/', '');
-                const skillSpecificSpeed = skillName + 'Speed';
-                const relevantSpeeds = allSpeedBonuses.filter((item) => {
-                    return item.speedType === skillSpecificSpeed || item.speedType === 'skillingSpeed';
-                });
-
-                // TODO: Add tea speed bonuses when tea-parser supports it
-                const teaSpeed = 0;
-                const actionSpeedBreakdown = {
-                    total: speedBonus + teaSpeed,
-                    equipment: speedBonus,
-                    tea: teaSpeed,
-                    equipmentDetails: relevantSpeeds.map((item) => ({
-                        name: item.itemName,
-                        enhancementLevel: item.enhancementLevel,
-                        speedBonus: item.scaledBonus,
-                    })),
-                    teaDetails: [], // TODO: Add when tea speed is supported
-                };
                 const drinkConcentration = teaParser_js.getDrinkConcentration(equipment, gameData.itemDetailMap);
+                const drinkSlots = dataManager.getActionDrinkSlots('/action_types/alchemy');
+
+                // Action speed breakdown, and the action time with tea speed folded in
+                const { actionTime, actionSpeedBreakdown } = buildActionSpeedStats(actionDetails, {
+                    equipment,
+                    itemDetailMap: gameData.itemDetailMap,
+                    drinkSlots,
+                    drinkConcentration,
+                    actionTime: actionStats.actionTime,
+                });
 
                 // Get input cost (market price of the item being decomposed)
                 const inputPrice = marketData_js.getItemPrice(itemHrid, { context: 'profit', side: 'buy', enhancementLevel });
@@ -3184,7 +3758,7 @@ self.onmessage = function (e) {
                     }
                 }
 
-                const coinCost = calculateAlchemyCoinCost(itemDetails, 'decompose');
+                const coinCost = getAlchemyCoinCost(itemDetails, 'decompose');
 
                 // Calculate per-hour values
                 // Convert efficiency from percentage to decimal
@@ -3202,7 +3776,7 @@ self.onmessage = function (e) {
 
                 // Calculate live tea cost (used for tea combinations)
                 const teaCostData = profitHelpers_js.calculateTeaCostsPerHour({
-                    drinkSlots: dataManager.getActionDrinkSlots('/action_types/alchemy'),
+                    drinkSlots,
                     drinkConcentration,
                     itemDetailMap: gameData.itemDetailMap,
                     getItemPrice: (hrid) => marketData_js.getItemPrice(hrid, { context: 'profit', side: 'buy' }),
@@ -3213,6 +3787,7 @@ self.onmessage = function (e) {
                 const combo = _comboFn({
                     actionType: 'decompose',
                     baseSuccessRate: BASE_SUCCESS_RATES.DECOMPOSE,
+                    levelPenalty: this.getUnderLevelPenalty(itemLevel),
                     actionsPerHour: actionsPerHourWithEfficiency,
                     efficiencyDecimal,
                     actionTime,
@@ -3384,13 +3959,8 @@ self.onmessage = function (e) {
                     return null; // Cannot transmute
                 }
 
-                // Calculate under-level penalty for transmute
-                // Formula: perLevel × (alchemyLevel - itemLevel) where perLevel = 0.9 / itemLevel
                 const itemLevel = itemDetails.itemLevel || 1;
-                const skills = dataManager.getSkills();
-                const alchemySkill = skills?.find((s) => s.skillHrid === '/skills/alchemy');
-                const alchemyLevel = alchemySkill?.level || 1;
-                const levelPenalty = alchemyLevel < itemLevel ? (0.9 / itemLevel) * (alchemyLevel - itemLevel) : 0;
+                const levelPenalty = this.getUnderLevelPenalty(itemLevel);
 
                 // Get alchemy action details
                 const actionDetails = gameData.actionDetailMap['/actions/alchemy/transmute'];
@@ -3412,37 +3982,21 @@ self.onmessage = function (e) {
                     levelRequirementOverride: itemDetails.itemLevel || 1,
                 });
 
-                const { actionTime, totalEfficiency, efficiencyBreakdown } = actionStats;
+                const { totalEfficiency, efficiencyBreakdown } = actionStats;
 
                 // Get equipment for drink concentration and speed calculation
                 const equipment = dataManager.getEquipment();
-
-                // Calculate action speed breakdown with details
-                const _baseTime = actionDetails.baseTimeCost / 1e9;
-                const speedBonus = equipmentParser_js.parseEquipmentSpeedBonuses(equipment, actionDetails.type, gameData.itemDetailMap);
-
-                // Get detailed equipment speed breakdown
-                const allSpeedBonuses = equipmentParser_js.debugEquipmentSpeedBonuses(equipment, gameData.itemDetailMap);
-                const skillName = actionDetails.type.replace('/action_types/', '');
-                const skillSpecificSpeed = skillName + 'Speed';
-                const relevantSpeeds = allSpeedBonuses.filter((item) => {
-                    return item.speedType === skillSpecificSpeed || item.speedType === 'skillingSpeed';
-                });
-
-                // TODO: Add tea speed bonuses when tea-parser supports it
-                const teaSpeed = 0;
-                const actionSpeedBreakdown = {
-                    total: speedBonus + teaSpeed,
-                    equipment: speedBonus,
-                    tea: teaSpeed,
-                    equipmentDetails: relevantSpeeds.map((item) => ({
-                        name: item.itemName,
-                        enhancementLevel: item.enhancementLevel,
-                        speedBonus: item.scaledBonus,
-                    })),
-                    teaDetails: [], // TODO: Add when tea speed is supported
-                };
                 const drinkConcentration = teaParser_js.getDrinkConcentration(equipment, gameData.itemDetailMap);
+                const drinkSlots = dataManager.getActionDrinkSlots('/action_types/alchemy');
+
+                // Action speed breakdown, and the action time with tea speed folded in
+                const { actionTime, actionSpeedBreakdown } = buildActionSpeedStats(actionDetails, {
+                    equipment,
+                    itemDetailMap: gameData.itemDetailMap,
+                    drinkSlots,
+                    drinkConcentration,
+                    actionTime: actionStats.actionTime,
+                });
 
                 // Get input cost (market price of the item being transmuted)
                 const inputPrice = marketData_js.getItemPrice(itemHrid, { context: 'profit', side: 'buy' });
@@ -3494,7 +4048,7 @@ self.onmessage = function (e) {
                     }
                 }
 
-                const coinCost = calculateAlchemyCoinCost(itemDetails, 'transmute');
+                const coinCost = getAlchemyCoinCost(itemDetails, 'transmute');
 
                 // Gross material cost (before self-return adjustment)
                 const grossMaterialCost = inputPrice * bulkMultiplier;
@@ -3514,7 +4068,7 @@ self.onmessage = function (e) {
 
                 // Calculate live tea cost (used for tea combinations)
                 const teaCostData = profitHelpers_js.calculateTeaCostsPerHour({
-                    drinkSlots: dataManager.getActionDrinkSlots('/action_types/alchemy'),
+                    drinkSlots,
                     drinkConcentration,
                     itemDetailMap: gameData.itemDetailMap,
                     getItemPrice: (hrid) => marketData_js.getItemPrice(hrid, { context: 'profit', side: 'buy' }),
@@ -4073,104 +4627,223 @@ self.onmessage = function (e) {
     }
 
     /**
-     * Number Parser Utility
-     * Shared utilities for parsing numeric values from text, including item counts
+     * Format profit data into HTML for display
+     * @param {Object} profitData - Profit data from calculateForagingProfit
+     * @returns {string} HTML string
      */
-
-    /**
-     * Parse item count from text
-     * Handles various formats including:
-     * - Plain numbers: "100", "1000"
-     * - K/M suffixes: "1.5K", "2M"
-     * - International formats with separators: "1,000", "1 000", "1.000"
-     * - Mixed decimal formats: "1.234,56" (European) or "1,234.56" (US)
-     * - Prefixed formats: "x5", "Amount: 1000", "Amount: 1 000"
-     *
-     * @param {string} text - Text containing a number
-     * @param {number} defaultValue - Value to return if parsing fails (default: 1)
-     * @returns {number} Parsed numeric value
-     */
-    function parseItemCount(text, defaultValue = 1) {
-        if (!text) {
-            return defaultValue;
+    function formatProfitDisplay$1(profitData) {
+        if (!profitData) {
+            return '';
         }
 
-        // Convert to string and normalize
-        text = String(text).toLowerCase().trim();
+        const lines = [];
+        lines.push(`<div style="color: var(--script-color); text-align: left; margin-top: 8px;">`);
+        lines.push(`<strong>Overall Profit:</strong>`);
+        lines.push(`<br>${formatters_js.formatWithSeparator(Math.round(profitData.profitPerHour))}/hour`);
 
-        // Extract number from common patterns like "x5", "Amount: 1000"
-        const prefixMatch = text.match(/x([\d,\s.kmb]+)|amount:\s*([\d,\s.kmb]+)/i);
-        if (prefixMatch) {
-            text = prefixMatch[1] || prefixMatch[2];
+        // Only show per day if profit is positive
+        if (profitData.profitPerHour > 0) {
+            lines.push(`, ${formatters_js.formatWithSeparator(Math.round(profitData.profitPerDay))}/day`);
         }
 
-        // Determine whether periods and commas are thousands separators or decimal points.
-        // Rules:
-        // 1. If both exist: the one appearing first (or multiple times) is the thousands separator.
-        //    e.g. "1.234,56" → period is thousands, comma is decimal → 1234.56
-        //    e.g. "1,234.56" → comma is thousands, period is decimal → 1234.56
-        // 2. If only commas exist and comma is followed by exactly 3 digits at end: thousands separator.
-        //    e.g. "1,234" → 1234
-        // 3. If only periods exist and period is followed by exactly 3 digits at end: thousands separator.
-        //    e.g. "1.234" → 1234
-        // 4. Otherwise treat as decimal separator.
-        //    e.g. "1.5" → 1.5,  "1,5" → 1.5
+        // Show efficiency breakdown
+        lines.push(`<br><span style="font-size: 0.9em; opacity: 0.8;">`);
+        lines.push(`(+${profitData.totalEfficiency.toFixed(1)}% efficiency: `);
 
-        const hasPeriod = text.includes('.');
-        const hasComma = text.includes(',');
-
-        if (hasPeriod && hasComma) {
-            // Both present — whichever comes last is the decimal separator
-            const lastPeriod = text.lastIndexOf('.');
-            const lastComma = text.lastIndexOf(',');
-            if (lastPeriod > lastComma) {
-                // Period is decimal: remove commas as thousands separators
-                text = text.replace(/,/g, '');
-            } else {
-                // Comma is decimal: remove periods as thousands separators, replace comma with period
-                text = text.replace(/\./g, '').replace(',', '.');
-            }
-        } else if (hasComma) {
-            // Only commas: thousands separator if followed by exactly 3 digits at end, else decimal
-            if (/,\d{3}$/.test(text)) {
-                text = text.replace(/,/g, '');
-            } else {
-                text = text.replace(',', '.');
-            }
-        } else if (hasPeriod) {
-            // Only periods: thousands separator if followed by exactly 3 digits at end, else decimal
-            if (/\.\d{3}$/.test(text)) {
-                text = text.replace(/\./g, '');
-            }
-            // else leave as-is (valid decimal like "1.5")
+        const effParts = [];
+        if (profitData.details.levelEfficiency > 0) {
+            effParts.push(`${profitData.details.levelEfficiency}% level`);
+        }
+        if (profitData.details.houseEfficiency > 0) {
+            effParts.push(`${profitData.details.houseEfficiency.toFixed(1)}% house`);
+        }
+        if (profitData.details.teaEfficiency > 0) {
+            effParts.push(`${profitData.details.teaEfficiency.toFixed(1)}% tea`);
+        }
+        if (profitData.details.equipmentEfficiency > 0) {
+            effParts.push(`${profitData.details.equipmentEfficiency.toFixed(1)}% equip`);
+        }
+        if (profitData.details.achievementEfficiency > 0) {
+            effParts.push(`${profitData.details.achievementEfficiency.toFixed(1)}% achievement`);
+        }
+        if (profitData.details.personalEfficiency > 0) {
+            effParts.push(`${profitData.details.personalEfficiency.toFixed(1)}% seal`);
+        }
+        if (profitData.details.gourmetBonus > 0) {
+            effParts.push(`${profitData.details.gourmetBonus.toFixed(1)}% gourmet`);
         }
 
-        // Remove remaining whitespace separators
-        text = text.replace(/\s/g, '');
+        lines.push(effParts.join(', '));
+        lines.push(`)</span>`);
 
-        // Handle K/M/B suffixes (must end with the suffix letter)
-        if (/\d[kmb]$/.test(text)) {
-            if (text.endsWith('k')) {
-                return parseFloat(text) * 1000;
-            } else if (text.endsWith('m')) {
-                return parseFloat(text) * 1000000;
-            } else if (text.endsWith('b')) {
-                return parseFloat(text) * 1000000000;
+        // Show actions per hour
+        lines.push(`<br>Actions: ${profitData.actionsPerHour.toFixed(1)}/hour`);
+
+        // Show primary drop quantities (base + gourmet + processing)
+        if (profitData.baseOutputs && profitData.baseOutputs.length > 0) {
+            lines.push(`<br>Primary Drops:`);
+            for (const output of profitData.baseOutputs) {
+                lines.push(`<br><span style="font-size: 0.85em; opacity: 0.7; margin-left: 10px;">`);
+                const decimals = output.itemsPerHour < 1 ? 2 : 1;
+                if (output.dropRate < 1.0) {
+                    lines.push(
+                        `• ${output.name} (Base): ~${output.itemsPerHour.toFixed(decimals)}/hour (${formatters_js.formatPercentage(output.dropRate, 1)} drop rate)`
+                    );
+                } else {
+                    lines.push(`• ${output.name} (Base): ~${output.itemsPerHour.toFixed(decimals)}/hour`);
+                }
+                lines.push(`</span>`);
             }
         }
 
-        // Parse plain number
-        const parsed = parseFloat(text);
-        return isNaN(parsed) ? defaultValue : parsed;
+        if (profitData.gourmetBonuses && profitData.gourmetBonuses.length > 0) {
+            for (const output of profitData.gourmetBonuses) {
+                lines.push(`<br><span style="font-size: 0.85em; opacity: 0.7; margin-left: 10px;">`);
+                const decimals = output.itemsPerHour < 1 ? 2 : 1;
+                lines.push(
+                    `• ${output.name} (Gourmet ${formatters_js.formatPercentage(profitData.gourmetBonus || 0, 1)}): ~${output.itemsPerHour.toFixed(decimals)}/hour`
+                );
+                lines.push(`</span>`);
+            }
+        }
+
+        if (profitData.processingConversions && profitData.processingConversions.length > 0) {
+            const netProcessingValue = Math.round(profitData.processingRevenueBonus || 0);
+            const netProcessingLabel = `${netProcessingValue >= 0 ? '+' : '-'}${formatters_js.formatWithSeparator(Math.abs(netProcessingValue))}`;
+            lines.push(
+                `<br><span style="font-size: 0.85em; opacity: 0.7; margin-left: 10px;">• Processing (${formatters_js.formatPercentage(profitData.processingBonus, 1)} proc): Net ${netProcessingLabel}/hour</span>`
+            );
+
+            for (const conversion of profitData.processingConversions) {
+                lines.push(`<br><span style="font-size: 0.85em; opacity: 0.7; margin-left: 20px;">`);
+                lines.push(
+                    `• ${conversion.rawItem} consumed: -${conversion.rawConsumedPerHour.toFixed(1)}/hour @ ${formatters_js.formatWithSeparator(Math.round(conversion.rawPriceEach))}`
+                );
+                lines.push(`</span>`);
+                lines.push(`<br><span style="font-size: 0.85em; opacity: 0.7; margin-left: 20px;">`);
+                lines.push(
+                    `• ${conversion.processedItem} produced: ${conversion.conversionsPerHour.toFixed(1)}/hour @ ${formatters_js.formatWithSeparator(Math.round(conversion.processedPriceEach))}`
+                );
+                lines.push(`</span>`);
+            }
+        }
+
+        // Show drink costs breakdown
+        if (profitData.drinkCostPerHour > 0) {
+            lines.push(`<br>Drink costs: -${formatters_js.formatWithSeparator(Math.round(profitData.drinkCostPerHour))}/hour`);
+
+            // Show individual drink costs
+            if (profitData.drinkCosts && profitData.drinkCosts.length > 0) {
+                for (const drink of profitData.drinkCosts) {
+                    lines.push(`<br><span style="font-size: 0.85em; opacity: 0.7; margin-left: 10px;">`);
+                    lines.push(
+                        `• ${drink.name}: ${formatters_js.formatWithSeparator(Math.round(drink.priceEach))} each × ${drink.drinksPerHour.toFixed(1)}/hour → ${formatters_js.formatWithSeparator(Math.round(drink.costPerHour))}/hour`
+                    );
+                    lines.push(`</span>`);
+                }
+            }
+        }
+
+        // Show bonus revenue breakdown (essences and rare finds)
+        if (profitData.bonusRevenue && profitData.bonusRevenue.totalBonusRevenue > 0) {
+            lines.push(
+                `<br>Bonus revenue: ${formatters_js.formatWithSeparator(Math.round(profitData.bonusRevenue.totalBonusRevenue))}/hour`
+            );
+
+            const bonusParts = [];
+            if (profitData.bonusRevenue.essenceFindBonus > 0) {
+                bonusParts.push(`${profitData.bonusRevenue.essenceFindBonus.toFixed(1)}% essence find`);
+            }
+            if (profitData.bonusRevenue.rareFindBonus > 0) {
+                const rareFindBreakdown = profitData.bonusRevenue.rareFindBreakdown || {};
+                const rareFindParts = [];
+                if (rareFindBreakdown.equipment > 0) {
+                    rareFindParts.push(`${rareFindBreakdown.equipment.toFixed(1)}% equip`);
+                }
+                if (rareFindBreakdown.house > 0) {
+                    rareFindParts.push(`${rareFindBreakdown.house.toFixed(1)}% house`);
+                }
+                if (rareFindBreakdown.achievement > 0) {
+                    rareFindParts.push(`${rareFindBreakdown.achievement.toFixed(1)}% achievement`);
+                }
+
+                if (rareFindParts.length > 0) {
+                    bonusParts.push(
+                        `${profitData.bonusRevenue.rareFindBonus.toFixed(1)}% rare find (${rareFindParts.join(', ')})`
+                    );
+                } else {
+                    bonusParts.push(`${profitData.bonusRevenue.rareFindBonus.toFixed(1)}% rare find`);
+                }
+            }
+
+            if (bonusParts.length > 0) {
+                lines.push(` (${bonusParts.join(', ')})`);
+            }
+
+            // Show individual bonus drops
+            if (profitData.bonusRevenue.bonusDrops && profitData.bonusRevenue.bonusDrops.length > 0) {
+                for (const drop of profitData.bonusRevenue.bonusDrops) {
+                    lines.push(`<br><span style="font-size: 0.85em; opacity: 0.7; margin-left: 10px;">`);
+                    const decimals = drop.dropsPerHour < 1 ? 2 : 1;
+                    const dropRatePct = formatters_js.formatPercentage(drop.dropRate, drop.dropRate < 0.01 ? 3 : 2);
+                    lines.push(
+                        `• ${drop.itemName}: ${dropRatePct} drop, ~${drop.dropsPerHour.toFixed(decimals)}/hour → ${formatters_js.formatWithSeparator(Math.round(drop.revenuePerHour))}/hour`
+                    );
+                    lines.push(`</span>`);
+                }
+            }
+        }
+
+        // Processing bonus now displayed within Primary Drops
+
+        // Show Gathering Quantity bonus (increases item drops)
+        if (profitData.totalGathering > 0) {
+            const gatheringParts = [];
+            if (profitData.gatheringTea > 0) {
+                gatheringParts.push(`${formatters_js.formatPercentage(profitData.gatheringTea, 1)} tea`);
+            }
+            if (profitData.communityGathering > 0) {
+                gatheringParts.push(`${formatters_js.formatPercentage(profitData.communityGathering, 1)} community`);
+            }
+            if (profitData.achievementGathering > 0) {
+                gatheringParts.push(`${formatters_js.formatPercentage(profitData.achievementGathering, 1)} achievement`);
+            }
+            if (profitData.personalGathering > 0) {
+                gatheringParts.push(`${formatters_js.formatPercentage(profitData.personalGathering, 1)} seal`);
+            }
+
+            lines.push(`<br>Gathering: +${formatters_js.formatPercentage(profitData.totalGathering, 1)} quantity`);
+            if (gatheringParts.length > 0) {
+                lines.push(` (${gatheringParts.join(' + ')})`);
+            }
+        }
+
+        lines.push(`</div>`);
+
+        return lines.join('');
     }
 
+    var gatheringProfit = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        calculateGatheringProfit: calculateGatheringProfit,
+        formatProfitDisplay: formatProfitDisplay$1
+    });
+
     /**
-     * Combat Statistics Calculator
-     * Calculates income, profit, consumable costs, and other statistics
+     * Dungeon chest → key maps
+     *
+     * Which key each dungeon chest costs. Two relationships, both 1:1 per chest:
+     * a *regular* chest implies one entry key was spent to enter the dungeon that
+     * dropped it, and *every* chest (regular or refinement) takes one chest key to
+     * open.
+     *
+     * Shared here so combat-stats and the combat-sim adapter (and everything that
+     * prices chests net of their key) read the same table instead of each keeping
+     * a copy. For the dungeon-action → entry-key map, see `key-ledger.js`.
      */
 
 
-    // Maps dungeon chest HRIDs (regular and refinement) to their required chest key HRIDs (1:1 relationship)
+    /** Dungeon chest HRID (regular and refinement) → the chest key that opens it (1:1) */
     const DUNGEON_CHEST_CHEST_KEYS = {
         '/items/chimerical_chest': '/items/chimerical_chest_key',
         '/items/sinister_chest': '/items/sinister_chest_key',
@@ -4181,86 +4854,6 @@ self.onmessage = function (e) {
         '/items/enchanted_refinement_chest': '/items/enchanted_chest_key',
         '/items/pirate_refinement_chest': '/items/pirate_chest_key',
     };
-
-    /**
-     * Game Data Lookup Utilities
-     *
-     * Centralized functions for resolving display names to HRIDs.
-     * Handles the ★ ↔ (R) refined item display name difference between
-     * test server and live server.
-     */
-
-
-    /**
-     * Generate alternate display names to handle ★ ↔ (R) refined item naming.
-     * @param {string} name - Original display name
-     * @returns {string[]} Array of alternate names to try (may be empty)
-     */
-    function getRefinedNameVariants(name) {
-        const variants = [];
-        if (name.includes('★')) {
-            variants.push(name.replace(/\s*★/, ' (R)'));
-        }
-        if (name.includes('(R)')) {
-            variants.push(name.replace(/\s*\(R\)/, ' ★'));
-        }
-        return variants;
-    }
-
-    /**
-     * Find an action HRID from its display name.
-     * Tries exact match first, then ★ ↔ (R) variants for refined items.
-     * @param {string} actionName - Display name of the action
-     * @returns {string|null} Action HRID or null if not found
-     */
-    function getActionHridFromName(actionName) {
-        const gameData = dataManager.getInitClientData();
-        if (!gameData?.actionDetailMap) {
-            return null;
-        }
-
-        // Try exact match first
-        for (const [hrid, detail] of Object.entries(gameData.actionDetailMap)) {
-            if (detail.name === actionName) {
-                return hrid;
-            }
-        }
-
-        // Try ★ ↔ (R) variants for refined items
-        for (const variant of getRefinedNameVariants(actionName)) {
-            for (const [hrid, detail] of Object.entries(gameData.actionDetailMap)) {
-                if (detail.name === variant) {
-                    return hrid;
-                }
-            }
-        }
-
-        return null;
-    }
-
-    /**
-     * Get the coin cost of an item from the in-game shop.
-     * Returns 0 if the item is not available in the shop or not purchasable with coins.
-     * @param {string} itemHrid - Item HRID
-     * @returns {number} Coin cost, or 0 if not available in shop
-     */
-    function getShopCoinCost(itemHrid) {
-        const gameData = dataManager.getInitClientData();
-        if (!gameData?.shopItemDetailMap) return 0;
-
-        for (const shopItem of Object.values(gameData.shopItemDetailMap)) {
-            if (shopItem.itemHrid === itemHrid) {
-                if (shopItem.costs && shopItem.costs.length > 0) {
-                    const coinCost = shopItem.costs.find((cost) => cost.itemHrid === '/items/coin');
-                    if (coinCost) {
-                        return coinCost.count;
-                    }
-                }
-            }
-        }
-
-        return 0;
-    }
 
     /**
      * Market Tooltip Prices Feature
@@ -4330,6 +4923,9 @@ self.onmessage = function (e) {
 
             // Add CSS to prevent tooltip cutoff
             this.addTooltipStyles();
+
+            // Make the "Yours / Pro" chip on enhancement sections clickable (and P-pressable)
+            installEnhancementSourceToggle();
 
             // Register with centralized DOM observer
             this.setupObserver();
@@ -4579,8 +5175,9 @@ self.onmessage = function (e) {
 
             // Show enhancement milestones for unenhanced equipment items
             if (enhancementLevel === 0 && config.getSetting('itemTooltip_enhancementMilestones')) {
-                const isTradeable = itemDetails.isTradable !== false;
-                const enhancementConfig = isTradeable ? enhancementConfig_js.getEnhancingParams() : enhancementConfig_js.getAutoDetectedParams();
+                // Whose stats these are — the character's, or the pro kit the chip lets you
+                // compare against — is decided in one place so tooltip and chip cannot disagree
+                const enhancementConfig = getTooltipEnhancementParams(itemHrid);
                 if (enhancementConfig) {
                     const milestonesHTML = buildEnhancementMilestonesHTML(itemHrid, enhancementConfig);
                     if (milestonesHTML) {
@@ -4600,9 +5197,9 @@ self.onmessage = function (e) {
 
             // Show enhancement path for enhanced items (1-20)
             if (enhancementLevel > 0 && config.getSetting('itemTooltip_enhancementPath')) {
-                // Use auto-detected stats for untradeable items (you're the one enhancing)
-                const isTradeable = itemDetails.isTradable !== false;
-                const enhancementConfig = isTradeable ? enhancementConfig_js.getEnhancingParams() : enhancementConfig_js.getAutoDetectedParams();
+                // Untradeable items are always quoted from your own stats; everything else follows
+                // the source chip on the section header
+                const enhancementConfig = getTooltipEnhancementParams(itemHrid);
                 if (enhancementConfig) {
                     // Calculate optimal enhancement path
                     const enhancementData = calculateEnhancementPath(itemHrid, enhancementLevel, enhancementConfig);
@@ -4770,7 +5367,7 @@ self.onmessage = function (e) {
             const actionNameEl = actionPanel.querySelector('[class*="SkillActionDetail_name"]');
             if (!actionNameEl) return null;
 
-            const actionHrid = getActionHridFromName(actionNameEl.textContent.trim());
+            const actionHrid = gameLookups_js.getActionHridFromName(actionNameEl.textContent.trim());
             if (!actionHrid) return null;
 
             const actionDetails = dataManager.getActionDetails(actionHrid);
@@ -5607,6 +6204,8 @@ self.onmessage = function (e) {
                 this.unregisterObserver();
                 this.unregisterObserver = null;
             }
+
+            uninstallEnhancementSourceToggle();
 
             this.isActive = false;
             this.isInitialized = false;
@@ -7304,6 +7903,748 @@ self.onmessage = function (e) {
     const itemCountDisplay = new ItemCountDisplay();
 
     /**
+     * Consent gate for the adopt-once migration.
+     *
+     * Legacy account-wide data is never silently claimed by whichever character
+     * logs in first. The first time an adoptable value is found, one modal asks
+     * which character should inherit the pre-scoping data; until the user
+     * confirms, every legacy value stays where it is. The heuristics (game mode,
+     * test names, networth history) only choose which character the dialog
+     * preselects.
+     *
+     * The decision is stored account-wide under `adoptionTargetCharacterId` and
+     * can be reopened from the console via `Toolasha.debug.chooseDataOwner()`.
+     */
+
+    const DECISION_KEY = 'adoptionTargetCharacterId';
+
+    /** undefined = not read yet, null = undecided, string = chosen character id. */
+    let cachedDecision;
+
+    /** One prompt per session, shared by every concurrent readScoped call. */
+    let promptPromise = null;
+
+    /**
+     * The character chosen to inherit legacy data, or null while undecided.
+     * @returns {Promise<string|null>} Chosen character id
+     */
+    async function getAdoptionTargetId() {
+        if (cachedDecision === undefined) {
+            cachedDecision = await storage.get(DECISION_KEY, 'settings', null);
+        }
+        return cachedDecision;
+    }
+
+    /**
+     * Record the choice.
+     * @param {string} id - Character id that inherits legacy data
+     * @returns {Promise<void>}
+     */
+    async function setAdoptionTargetId(id) {
+        cachedDecision = id;
+        await storage.set(DECISION_KEY, id, 'settings', true);
+    }
+
+    /**
+     * Show the choose-a-character dialog (once per session).
+     *
+     * Fire-and-forget from data paths: callers must not await this before
+     * returning a fallback, or a modal would block feature initialization.
+     * @param {{recommendedId?: string|null}} [options] - Which character to preselect
+     * @returns {Promise<string|null>} The chosen id, or null for "not now"
+     */
+    function requestAdoptionConsent(options = {}) {
+        if (promptPromise) return promptPromise;
+        if (typeof document === 'undefined' || !document.body) return Promise.resolve(null);
+
+        promptPromise = (async () => {
+            try {
+                const names = (await storage.get('accountCharacterNames', 'settings', null)) || {};
+                const currentId = dataManager.getCurrentCharacterId();
+                const currentName = dataManager.getCurrentCharacterName?.() || '';
+                const known = { ...names };
+                if (currentId && !known[currentId]) known[currentId] = currentName || String(currentId);
+                const recommended = options.recommendedId || currentId;
+                const chosen = await showDialog(known, recommended, currentId);
+                if (chosen) await setAdoptionTargetId(chosen);
+                return chosen;
+            } catch (error) {
+                console.error('[AdoptionConsent] Prompt failed:', error);
+                return null;
+            }
+        })();
+        return promptPromise;
+    }
+
+    /**
+     * The dialog itself. Resolves with a character id or null for "not now".
+     * @param {Record<string, string>} characters - id → display name
+     * @param {string|null} recommendedId - Preselected id
+     * @param {string|null} currentId - The logged-in character, labeled as such
+     * @returns {Promise<string|null>} Choice
+     */
+    function showDialog(characters, recommendedId, currentId) {
+        return new Promise((resolve) => {
+            const overlay = document.createElement('div');
+            // Above every panel tier — this blocks a data migration, nothing may cover it
+            overlay.style.cssText =
+                'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:2147483600; ' +
+                'display:flex; align-items:center; justify-content:center;';
+
+            const ids = Object.keys(characters);
+            const rows = ids
+                .map((id) => {
+                    const checked = id === recommendedId ? ' checked' : '';
+                    const who = `${characters[id]}${id === currentId ? ' (this character)' : ''}`;
+                    return (
+                        `<label style="display:block; margin:4px 0; cursor:pointer;">` +
+                        `<input type="radio" name="mwi-adopt-target" value="${id}"${checked}> ${who}</label>`
+                    );
+                })
+                .join('');
+
+            const card = document.createElement('div');
+            card.style.cssText =
+                'background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:8px; ' +
+                'padding:16px 20px; max-width:420px; font-size:13px; line-height:1.5;';
+            card.innerHTML =
+                `<div style="font-weight:700; font-size:14px; margin-bottom:8px;">Toolasha — who owns the saved data?</div>` +
+                `<div style="color:#aaa; margin-bottom:10px;">Saved data from before per-character scoping was found ` +
+                `(watchlist, savings targets, trackers, panel state…). Choose which character should inherit it — ` +
+                `nothing moves until you confirm.</div>` +
+                rows +
+                `<div style="margin-top:12px; display:flex; gap:8px; justify-content:flex-end;">` +
+                `<button id="mwi-adopt-later" style="background:#333; color:#ccc; border:1px solid #555; border-radius:4px; padding:4px 12px; cursor:pointer;">Not now</button>` +
+                `<button id="mwi-adopt-confirm" style="background:#4a6fdc; color:#fff; border:none; border-radius:4px; padding:4px 12px; cursor:pointer;">Confirm</button>` +
+                `</div>` +
+                `<div style="color:#777; margin-top:8px; font-size:11px;">Applies as data is next read; reload to apply everywhere. ` +
+                `Reopen later with Toolasha.debug.chooseDataOwner().</div>`;
+
+            overlay.appendChild(card);
+            document.body.appendChild(overlay);
+
+            const done = (value) => {
+                overlay.remove();
+                resolve(value);
+            };
+            card.querySelector('#mwi-adopt-confirm').addEventListener('click', () => {
+                const picked = card.querySelector('input[name="mwi-adopt-target"]:checked');
+                done(picked ? picked.value : null);
+            });
+            card.querySelector('#mwi-adopt-later').addEventListener('click', () => done(null));
+        });
+    }
+
+    /**
+     * Append-only history, stored as records rather than as one array.
+     *
+     * ## The write amplification this exists to end
+     *
+     * A recorder that keeps its history in a single key does the same three things
+     * on every event: read the whole array, push one entry, write the whole array
+     * back. The cost of recording one loot drop is therefore the size of every loot
+     * drop already recorded, and it grows for as long as the player keeps playing —
+     * which is the shape of every quota failure this script has had. The loot log
+     * rewrote five hundred entries per `loot_log_updated`; the alchemy trackers
+     * rewrote every session ever, immediately, on every completed action.
+     *
+     * Splitting the array over several keys makes the write proportional to what
+     * changed instead of to what is kept. A new entry lands in one record; the other
+     * records are untouched, so IndexedDB never sees them.
+     *
+     * ## Chunks, not one key per entry
+     *
+     * A key per entry would make every write minimal, and would also put a thousand
+     * keys per character into a store whose soft budget is measured in hundreds (see
+     * `STORE_KEY_BUDGETS` in `core/storage.js`). Grouping entries by the hour, day or
+     * month they belong to keeps both numbers small: the record written is the
+     * current bucket, which holds the handful of entries recorded since the bucket
+     * opened, and the key count grows with calendar time rather than with events.
+     *
+     * ## What the callers keep
+     *
+     * Nothing above this changes shape. A recorder still holds its history as one
+     * array, still hands the whole array to `save()`, and still gets the whole array
+     * back from `load()`. The diff against the last known state is what turns a
+     * whole-array save into a one-record write, so the call sites did not have to
+     * learn about chunking to stop paying for it.
+     *
+     * ## Migration, and what happens when the disk is full
+     *
+     * The legacy single-array key is split on the first read and then deleted. If
+     * the split cannot be written — which on a full disk is exactly when it matters —
+     * the legacy key is left alone and the recorder keeps using it. A migration that
+     * bricked the history the moment storage filled up would be worse than the write
+     * amplification it was meant to fix.
+     */
+
+
+    /** Two digits, for a date part */
+    const pad = (value) => String(value).padStart(2, '0');
+
+    /**
+     * Which bucket a timestamp falls in.
+     *
+     * UTC rather than local time, so a chunk id does not change meaning when the
+     * player travels or the clocks go back — a record written in one zone has to be
+     * found again from another.
+     *
+     * @param {number} t - Milliseconds since the epoch
+     * @param {'month'|'day'|'hour'} granularity - How wide a bucket is
+     * @returns {string} A sortable id: `YYYY-MM`, `YYYY-MM-DD` or `YYYY-MM-DDTHH`
+     */
+    function timeChunkId(t, granularity = 'month') {
+        const date = new Date(Number.isFinite(t) ? t : 0);
+        const month = `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}`;
+        if (granularity === 'month') return month;
+        const day = `${month}-${pad(date.getUTCDate())}`;
+        if (granularity === 'day') return day;
+        return `${day}T${pad(date.getUTCHours())}`;
+    }
+
+    /**
+     * The character ids a set of record keys names.
+     *
+     * Record keys are `<prefix>_<characterId>_<chunkId>`, so the id is the segment
+     * between the prefix and the next underscore. Character ids are alphanumeric
+     * (see `NETWORTH_SERIES_RE` in `utils/character-key.js`), which is what makes
+     * that split unambiguous.
+     *
+     * @param {Array<string>} keys - Keys from one store
+     * @param {string} prefix - The record prefix including its trailing underscore
+     * @returns {Array<string>} Character ids, in key order, deduplicated
+     */
+    function idsFromRecordKeys(keys, prefix) {
+        const ids = [];
+        const seen = new Set();
+        for (const key of keys || []) {
+            if (typeof key !== 'string' || !key.startsWith(prefix)) continue;
+            const rest = key.slice(prefix.length);
+            const end = rest.indexOf('_');
+            if (end <= 0) continue;
+            const id = rest.slice(0, end);
+            if (seen.has(id)) continue;
+            seen.add(id);
+            ids.push(id);
+        }
+        return ids;
+    }
+
+    /**
+     * Every record key in a store belonging to one character.
+     *
+     * @param {Array<string>} keys - Keys from one store
+     * @param {string} prefix - The record prefix, without its trailing underscore
+     * @param {string} charId - Whose records to pick out
+     * @returns {Array<string>} Matching keys, in chunk-id order
+     */
+    function recordKeysFor(keys, prefix, charId) {
+        const scoped = `${prefix}_${charId}_`;
+        return (keys || []).filter((key) => typeof key === 'string' && key.startsWith(scoped)).sort();
+    }
+
+    /**
+     * A history kept as one record per time bucket.
+     *
+     * @param {Object} options - Wiring
+     * @param {string} options.storeName - Object store the records live in
+     * @param {string} options.prefix - Record key prefix, e.g. `lootLogRec`
+     * @param {Function} options.legacyKey - `(charId) => string`, the pre-split single key
+     * @param {Function} options.groupOf - `(entry) => string`, which chunk an entry belongs to
+     * @param {Function} options.compare - Sort comparator for the assembled array
+     * @param {boolean} [options.immediate] - Skip write debouncing, for recorders that did
+     * @param {string} [options.label] - Module name for log lines
+     * @returns {ChunkedHistory} The store
+     */
+    function createChunkedHistory(options) {
+        return new ChunkedHistory(options);
+    }
+
+    class ChunkedHistory {
+        constructor({ storeName, prefix, legacyKey, groupOf, compare, immediate = false, label = 'ChunkedHistory' }) {
+            this.storeName = storeName;
+            this.prefix = prefix;
+            this.legacyKey = legacyKey;
+            this.groupOf = groupOf;
+            this.compare = compare;
+            this.immediate = immediate;
+            this.label = label;
+
+            /** Whose records are in memory */
+            this._charId = null;
+            /** Whether a read has happened for that character */
+            this._loaded = false;
+            /** The assembled array, which is the truth between flushes */
+            this._entries = [];
+            /** chunkId → the JSON last written for it, so a save can write only what moved */
+            this._snapshot = new Map();
+            /**
+             * Whether the split failed and the legacy key is still the record.
+             *
+             * Set when a migration could not be written — a full disk, a database
+             * that will not answer. Reads and writes then go to the legacy key as
+             * they always did, and the next session tries the split again.
+             */
+            this._legacy = false;
+        }
+
+        /**
+         * @param {string} charId - Whose record
+         * @param {string} chunkId - Which bucket
+         * @returns {string} The key that bucket lives under
+         */
+        keyFor(charId, chunkId) {
+            return `${this.prefix}_${charId}_${chunkId}`;
+        }
+
+        /** @returns {boolean} True while the legacy single-array key is still in use */
+        isLegacy() {
+            return this._legacy;
+        }
+
+        /**
+         * The whole history, oldest or newest first per the comparator.
+         *
+         * Returns a copy: the array held here is what the next save diffs against,
+         * and a caller that sorted or spliced the live one would make that diff a
+         * lie. The entry objects themselves are shared, which is what lets a
+         * recorder mutate the session it is in the middle of.
+         *
+         * @param {string} charId - Whose history
+         * @returns {Promise<Array<Object>>} The assembled entries
+         */
+        async load(charId) {
+            if (!charId) return [];
+            if (this._loaded && this._charId === charId) return [...this._entries];
+
+            this._charId = charId;
+            this._loaded = true;
+            this._entries = [];
+            this._snapshot = new Map();
+            this._legacy = false;
+
+            try {
+                const legacy = await storage.get(this.legacyKey(charId), this.storeName, null);
+
+                if (Array.isArray(legacy) && legacy.length > 0) {
+                    const split = await this._migrate(charId, legacy);
+                    this._legacy = !split;
+                    this._entries = this._sorted(legacy);
+                    return [...this._entries];
+                }
+
+                if (Array.isArray(legacy)) {
+                    // An empty legacy array is nothing to split and nothing to keep
+                    await storage.delete(this.legacyKey(charId), this.storeName);
+                }
+
+                this._entries = await this._readRecords(charId);
+            } catch (error) {
+                console.error(`[${this.label}] Reading the history failed:`, error);
+                this._entries = [];
+            }
+
+            return [...this._entries];
+        }
+
+        /**
+         * Persist a whole history, writing only the chunks that moved.
+         *
+         * Deliberately not awaited by most callers: the debounced write's promise
+         * resolves when its timer fires, so awaiting it would stall the caller for
+         * the debounce delay. `storage.flushAll()` on unload is what lands the last
+         * one.
+         *
+         * @param {string} charId - Whose history
+         * @param {Array<Object>} entries - The history as it now stands
+         * @returns {Promise<boolean>} False when there was nowhere to write it
+         */
+        async save(charId, entries) {
+            if (!charId) return false;
+
+            // A save before any read has nothing to diff against, and taking the
+            // list as the whole truth would delete every chunk it does not mention
+            if (!this._loaded || this._charId !== charId) await this.load(charId);
+
+            const list = Array.isArray(entries) ? entries : [];
+            this._entries = this._sorted(list);
+
+            if (this._legacy) {
+                storage.set(this.legacyKey(charId), list, this.storeName, this.immediate);
+                return true;
+            }
+
+            const grouped = this._group(list);
+            const next = new Map();
+            const pending = [];
+
+            for (const [chunkId, bucket] of grouped) {
+                const serialized = JSON.stringify(bucket);
+                next.set(chunkId, serialized);
+                if (this._snapshot.get(chunkId) === serialized) continue;
+                const write = storage.set(this.keyFor(charId, chunkId), bucket, this.storeName, this.immediate);
+                if (this.immediate) pending.push(write);
+            }
+
+            // A rolling window drops its oldest entries; here that is a chunk that
+            // no longer has any, and pruning is deleting its key
+            for (const chunkId of this._snapshot.keys()) {
+                if (next.has(chunkId)) continue;
+                pending.push(storage.delete(this.keyFor(charId, chunkId), this.storeName));
+            }
+
+            this._snapshot = next;
+
+            if (pending.length > 0) await Promise.all(pending);
+            return true;
+        }
+
+        /**
+         * Forget one character's history entirely, records and legacy key alike.
+         * @param {string} charId - Whose history
+         * @returns {Promise<void>}
+         */
+        async clear(charId) {
+            if (!charId) return;
+
+            try {
+                const keys = await storage.getAllKeys(this.storeName);
+                for (const key of recordKeysFor(keys, this.prefix, charId)) {
+                    await storage.delete(key, this.storeName);
+                }
+                await storage.delete(this.legacyKey(charId), this.storeName);
+            } catch (error) {
+                console.error(`[${this.label}] Clearing the history failed:`, error);
+            }
+
+            this.forget();
+        }
+
+        /**
+         * Drop the in-memory copy, so the next read comes from storage.
+         *
+         * What a character switch needs: the departing character's entries must not
+         * be served to the arriving one, and — far worse — must not be written back
+         * under the arriving one's key.
+         */
+        forget() {
+            this._charId = null;
+            this._loaded = false;
+            this._entries = [];
+            this._snapshot = new Map();
+            this._legacy = false;
+        }
+
+        /**
+         * Split a legacy array into records and remove it.
+         *
+         * @param {string} charId - Whose history
+         * @param {Array<Object>} legacy - The single-array value as stored
+         * @returns {Promise<boolean>} True when the records are now the record
+         * @private
+         */
+        async _migrate(charId, legacy) {
+            const grouped = this._group(legacy);
+            if (grouped.size === 0) return false;
+
+            const records = {};
+            for (const [chunkId, bucket] of grouped) records[this.keyFor(charId, chunkId)] = bucket;
+
+            const written = await storage.putAll(this.storeName, records);
+            if (written !== grouped.size || storage.isQuotaExceeded()) {
+                console.warn(
+                    `[${this.label}] Splitting the stored history stalled (${written}/${grouped.size} chunks) — ` +
+                        'keeping the single key and reading from it'
+                );
+                return false;
+            }
+
+            // Records from an interrupted earlier attempt would otherwise show up
+            // beside the ones just written, as entries nothing put there
+            try {
+                const keys = await storage.getAllKeys(this.storeName);
+                for (const key of recordKeysFor(keys, this.prefix, charId)) {
+                    if (key in records) continue;
+                    await storage.delete(key, this.storeName);
+                }
+            } catch (error) {
+                console.error(`[${this.label}] Clearing stale chunks failed:`, error);
+            }
+
+            const removed = await storage.delete(this.legacyKey(charId), this.storeName);
+            if (!removed) {
+                // The legacy key outliving the split is the one state that loses
+                // data: the next load would read it and overwrite everything
+                // recorded since. Stay on it until it can actually be removed.
+                console.warn(`[${this.label}] The legacy key could not be removed — continuing to use it`);
+                return false;
+            }
+
+            this._snapshot = new Map();
+            for (const [chunkId, bucket] of grouped) this._snapshot.set(chunkId, JSON.stringify(bucket));
+            return true;
+        }
+
+        /**
+         * Read every record of one character back into one array.
+         *
+         * One key at a time rather than `getAll()`: these stores hold other things
+         * too — a year of item-level networth snapshots, another feature's keys —
+         * and a whole-store read would pull all of it into memory to assemble a
+         * series of timestamps and totals.
+         *
+         * @param {string} charId - Whose records
+         * @returns {Promise<Array<Object>>} The assembled entries
+         * @private
+         */
+        async _readRecords(charId) {
+            const keys = await storage.getAllKeys(this.storeName);
+            const entries = [];
+
+            for (const key of recordKeysFor(keys, this.prefix, charId)) {
+                const bucket = await storage.get(key, this.storeName, null);
+                if (!Array.isArray(bucket)) continue;
+                this._snapshot.set(key.slice(`${this.prefix}_${charId}_`.length), JSON.stringify(bucket));
+                entries.push(...bucket);
+            }
+
+            return this._sorted(entries);
+        }
+
+        /**
+         * @param {Array<Object>} entries - Entries in any order
+         * @returns {Map<string, Array<Object>>} chunkId → its entries, in input order
+         * @private
+         */
+        _group(entries) {
+            const grouped = new Map();
+            for (const entry of entries || []) {
+                if (entry == null) continue;
+                const chunkId = this.groupOf(entry);
+                if (chunkId === null || chunkId === undefined || chunkId === '') continue;
+                const id = String(chunkId);
+                const bucket = grouped.get(id);
+                if (bucket) bucket.push(entry);
+                else grouped.set(id, [entry]);
+            }
+            return grouped;
+        }
+
+        /**
+         * @param {Array<Object>} entries - Entries in any order
+         * @returns {Array<Object>} A new array in the comparator's order
+         * @private
+         */
+        _sorted(entries) {
+            return this.compare ? [...entries].sort(this.compare) : [...entries];
+        }
+    }
+
+    /**
+     * Per-character storage key helpers.
+     *
+     * Character-specific state stored under a bare key leaks between characters —
+     * the market cow's watchlist shows up on the iron cow. Every feature that
+     * persists per-character state should build its key through {@link characterKey}
+     * and read through {@link readScoped}, which also handles one-time adoption of
+     * the legacy global value.
+     *
+     * Adoption policy: a legacy global value almost always belongs to the account's
+     * main character. It is adopted (moved to the scoped key, legacy deleted) only
+     * by an adoption candidate — a non-ironcow character which, when several
+     * characters have networth history, owns the longest series. Other characters
+     * simply start clean and leave the legacy value in place for the main to claim.
+     */
+
+    const NETWORTH_SERIES_RE = /^networth_[0-9a-zA-Z]+$/;
+
+    /**
+     * The networth series after it was split into one record per month.
+     *
+     * A migrated character has no `networth_<id>` key at all, so the length
+     * comparison below would see nothing and let every character adopt — including
+     * the alts the policy exists to keep out.
+     */
+    const NETWORTH_RECORD_PREFIX = 'networthSeries';
+
+    /** Per-character memo of the adoption decision, reset only on reload. */
+    const adoptionDecisions = new Map();
+
+    /**
+     * A storage key scoped to the character now logged in.
+     *
+     * Uses the codebase's dominant `${base}_${charId}` idiom with a `'default'`
+     * fallback before login, so account-view suffix parsing keeps working.
+     * @param {string} base - The unscoped key
+     * @returns {string} `base_<characterId>`, or `base_default` before login
+     */
+    function characterKey(base) {
+        return `${base}_${dataManager.getCurrentCharacterId() || 'default'}`;
+    }
+
+    /**
+     * How many networth points one character has recorded, either way it is stored.
+     *
+     * The pre-migration single key wins where it exists: its presence is what says
+     * the split has not happened, so any records beside it are a half-finished
+     * migration rather than the series.
+     *
+     * @param {Array<string>} keys - Every key in the networth store
+     * @param {string} id - Whose series
+     * @returns {Promise<number>} Points recorded
+     */
+    async function networthSeriesLength(keys, id) {
+        const legacy = await storage.get(`networth_${id}`, 'networthHistory', null);
+        if (Array.isArray(legacy) && legacy.length > 0) return legacy.length;
+
+        let length = 0;
+        for (const key of recordKeysFor(keys, NETWORTH_RECORD_PREFIX, id)) {
+            const chunk = await storage.get(key, 'networthHistory', null);
+            if (Array.isArray(chunk)) length += chunk.length;
+        }
+        return length;
+    }
+
+    /**
+     * Whether the given character should inherit legacy (pre-scoping) global data.
+     *
+     * Iron cow characters never adopt — the legacy value was almost certainly
+     * written by the market character. When several characters have networth
+     * history, only the one with the longest series adopts. On any failure the
+     * check errs toward adopting, so a solo-character install migrates cleanly.
+     * @param {string} charId - The character considering adoption
+     * @returns {Promise<boolean>} True when this character may claim legacy data
+     */
+    async function isAdoptionCandidate(charId) {
+        if (adoptionDecisions.has(charId)) {
+            return adoptionDecisions.get(charId);
+        }
+
+        let decision = true;
+        try {
+            // Same signal MCS reads: character.gameMode. 'standard' is the market
+            // character; 'ironcow' and 'legacy_ironcow' never adopt.
+            const gameMode = dataManager.getCurrentCharacterGameMode();
+            const name =
+                typeof dataManager.getCurrentCharacterName === 'function'
+                    ? dataManager.getCurrentCharacterName() || ''
+                    : '';
+            if (typeof gameMode === 'string' && gameMode.includes('ironcow')) {
+                decision = false;
+            } else if (/test/i.test(name)) {
+                // A test character is never the main, whatever its history says.
+                decision = false;
+            } else {
+                const keys = await storage.getAllKeys('networthHistory');
+                const ids = new Set([
+                    ...keys
+                        .filter((key) => typeof key === 'string' && NETWORTH_SERIES_RE.test(key))
+                        .map((key) => key.slice('networth_'.length)),
+                    ...idsFromRecordKeys(keys, `${NETWORTH_RECORD_PREFIX}_`),
+                ]);
+
+                if (ids.size > 0 && !ids.has(charId)) {
+                    // Someone on this account has recorded history and this
+                    // character has none — it is not the main. Skipping the
+                    // comparison here is what once let a fresh alt adopt
+                    // everything just by logging in first.
+                    decision = false;
+                } else if (ids.size > 1) {
+                    let bestId = null;
+                    let bestLength = -1;
+                    for (const id of ids) {
+                        const length = await networthSeriesLength(keys, id);
+                        if (length > bestLength) {
+                            bestLength = length;
+                            bestId = id;
+                        }
+                    }
+                    decision = bestId === null || bestId === charId;
+                }
+            }
+        } catch (error) {
+            console.error('[CharacterKey] Adoption check failed, adopting by default:', error);
+            decision = true;
+        }
+
+        adoptionDecisions.set(charId, decision);
+        return decision;
+    }
+
+    /**
+     * Read a per-character key, migrating any legacy global value exactly once.
+     *
+     * Looks up `characterKey(base)` first. When absent and the legacy bare `base`
+     * key exists, either adopts it (moves it to this character's key and deletes
+     * the legacy copy — main character only, see module doc) or discards it
+     * (deletes the legacy copy and starts clean), per `options.migrate`.
+     *
+     * Discard is for state derived from one character's gear or sim results, where
+     * inheriting another character's data is worse than starting empty.
+     * @param {string} base - The unscoped key
+     * @param {string} [storeName] - Object store name (default: 'settings')
+     * @param {*} [defaultValue] - Value returned when neither key exists
+     * @param {{migrate?: 'adopt'|'discard'}} [options] - Legacy migration mode (default: 'adopt')
+     * @returns {Promise<*>} The stored value or default
+     */
+    async function readScoped(base, storeName = 'settings', defaultValue = null, options = {}) {
+        const { migrate = 'adopt' } = options;
+
+        const scopedKey = characterKey(base);
+        const scoped = await storage.get(scopedKey, storeName, null);
+        if (scoped !== null) {
+            return scoped;
+        }
+
+        const legacy = await storage.get(base, storeName, null);
+        if (legacy === null) {
+            return defaultValue;
+        }
+
+        if (migrate === 'discard') {
+            await storage.delete(base, storeName);
+            return defaultValue;
+        }
+
+        const charId = dataManager.getCurrentCharacterId();
+        if (!charId) {
+            return defaultValue;
+        }
+
+        // Adoption is user-confirmed, never automatic. The heuristics only pick
+        // which character the dialog preselects.
+        const targetId = await getAdoptionTargetId();
+        if (targetId === null) {
+            // Fire-and-forget: awaiting a modal here would hang feature init.
+            isAdoptionCandidate(charId).then(
+                (candidate) => requestAdoptionConsent({ recommendedId: candidate ? charId : null }),
+                () => requestAdoptionConsent({})
+            );
+            return defaultValue;
+        }
+        if (targetId !== charId) {
+            // Leave the legacy value in place for the chosen character to claim.
+            return defaultValue;
+        }
+
+        await storage.set(scopedKey, legacy, storeName, true);
+        await storage.delete(base, storeName);
+        return legacy;
+    }
+
+    /**
+     * Write a value under this character's scoped key.
+     * @param {string} base - The unscoped key
+     * @param {*} value - Value to store
+     * @param {string} [storeName] - Object store name (default: 'settings')
+     * @param {boolean} [immediate] - Skip write debouncing
+     * @returns {Promise<boolean>} Success status
+     */
+    async function writeScoped(base, value, storeName = 'settings', immediate = false) {
+        return storage.set(characterKey(base), value, storeName, immediate);
+    }
+
+    /**
      * Estimated Listing Age Module
      *
      * Estimates creation times for all market listings using listing ID interpolation
@@ -7313,14 +8654,62 @@ self.onmessage = function (e) {
      */
 
 
+    /** Store both halves of the old shared key live in */
+    const LISTINGS_STORE = 'marketListings';
+
+    /**
+     * The log of *your* listings — full records, one set per character.
+     *
+     * Scoped, because it is what the Market History table shows and what the order
+     * book highlights green: another character's listing ids matched against the
+     * book would claim its rows as yours.
+     */
+    const LISTINGS_BASE = 'marketListingTimestamps';
+
+    /**
+     * Bare `{id, timestamp}` points used only to date *other* people's listings.
+     *
+     * Global, because a listing id means the same thing to every character — this
+     * is calibration data, not anybody's history, and splitting it per character
+     * would halve the accuracy of both.
+     */
+    const ANCHORS_KEY = 'marketListingAnchors';
+
+    /**
+     * Cap on the shared anchor pool.
+     *
+     * The estimator interpolates/regresses over id→time, so what it benefits from
+     * is coverage across the id range, not raw point count — a few thousand points
+     * spread over the range estimate just as well as ten times that many packed
+     * densely in one region. Bounded so the pool can grow indefinitely at runtime
+     * without the stored array or the per-lookup scan becoming a problem.
+     */
+    const ANCHOR_POOL_MAX = 3000;
+
+    /**
+     * Anchor points from the RWI script author's data, for a fresh install that has
+     * no listings of its own to interpolate between.
+     */
+    const SEED_ANCHORS = [
+        { id: 106442952, timestamp: 1763409373481 },
+        { id: 106791533, timestamp: 1763541486867 },
+        { id: 107530218, timestamp: 1763842767083 },
+        { id: 107640371, timestamp: 1763890560819 },
+        { id: 107678558, timestamp: 1763904036320 },
+    ];
+
     class EstimatedListingAge {
         constructor() {
             this.knownListings = []; // Array of {id, timestamp, createdTimestamp, enhancementLevel, ...} sorted by id
+            this.anchors = []; // Shared {id, timestamp} calibration points, sorted by id
+            this.anchorsLoaded = false;
+            this.estimationPoints = []; // knownListings ∪ anchors, sorted by id
             this.orderBooksCache = {}; // Cache of order book data from WebSocket
             this.currentItemHrid = null; // Track current item from WebSocket
             this.unregisterWebSocket = null;
             this.unregisterObserver = null;
-            this.storageKey = 'marketListingTimestamps';
+            this.storageKey = LISTINGS_BASE;
+            this.anchorsKey = ANCHORS_KEY;
             this.orderBooksCacheKey = 'marketOrderBooksCache';
             this.isInitialized = false;
         }
@@ -7389,38 +8778,181 @@ self.onmessage = function (e) {
         }
 
         /**
-         * Load historical listing data from IndexedDB
+         * Load the shared anchor pool, harvesting it out of the legacy shared key.
+         *
+         * Runs before anything can read the per-character key, because adopting that
+         * key deletes the legacy copy — and the legacy copy is where every anchor
+         * written before the split still lives. Both characters need those points,
+         * so they are lifted out first and only then is the rest adopted.
+         * @returns {Promise<void>}
+         */
+        async loadAnchors() {
+            try {
+                const stored = (await storage.getJSON(this.anchorsKey, LISTINGS_STORE, [])) || [];
+                const legacy = await storage.getJSON(LISTINGS_BASE, LISTINGS_STORE, null);
+
+                const byId = new Map();
+                const add = (entry) => {
+                    if (!entry || typeof entry.id !== 'number' || typeof entry.timestamp !== 'number') return;
+                    if (!byId.has(entry.id)) byId.set(entry.id, { id: entry.id, timestamp: entry.timestamp });
+                };
+
+                stored.forEach(add);
+                // The half of the legacy array that was never anybody's listing
+                if (Array.isArray(legacy)) legacy.filter((entry) => entry && !entry.itemHrid).forEach(add);
+                SEED_ANCHORS.forEach(add);
+
+                this.anchors = [...byId.values()].sort((a, b) => a.id - b.id);
+                if (this.anchors.length !== stored.length) {
+                    await storage.setJSON(this.anchorsKey, this.anchors, LISTINGS_STORE, true);
+                }
+            } catch (error) {
+                console.error('[EstimatedListingAge] Failed to load listing anchors:', error);
+                this.anchors = [...SEED_ANCHORS];
+            } finally {
+                this.anchorsLoaded = true;
+            }
+        }
+
+        /**
+         * Load this character's listing log from IndexedDB
          */
         async loadHistoricalData() {
             try {
-                const stored = await storage.getJSON(this.storageKey, 'marketListings', []);
-
-                // Load all historical data (no time-based filtering)
-                this.knownListings = stored.sort((a, b) => a.id - b.id);
-
-                // Add hardcoded seed listings for baseline estimation accuracy
-                // These are anchor points from RWI script author's data
-                const seedListings = [
-                    { id: 106442952, timestamp: 1763409373481 },
-                    { id: 106791533, timestamp: 1763541486867 },
-                    { id: 107530218, timestamp: 1763842767083 },
-                    { id: 107640371, timestamp: 1763890560819 },
-                    { id: 107678558, timestamp: 1763904036320 },
-                ];
-
-                // Add seeds only if they don't already exist in stored data
-                for (const seed of seedListings) {
-                    if (!this.knownListings.find((l) => l.id === seed.id)) {
-                        this.knownListings.push(seed);
-                    }
+                if (!this.anchorsLoaded) {
+                    await this.loadAnchors();
                 }
 
-                // Re-sort after adding seeds
-                this.knownListings.sort((a, b) => a.id - b.id);
+                const stored = (await readScoped(LISTINGS_BASE, LISTINGS_STORE, [], { migrate: 'adopt' })) || [];
+
+                // Load all historical data (no time-based filtering). Entries without
+                // an itemHrid are anchors, which now live in their own global key.
+                const personal = stored.filter((entry) => entry && entry.itemHrid);
+                this.knownListings = personal.sort((a, b) => a.id - b.id);
+
+                // An array adopted from before the split still carries its anchor
+                // half; drop it now rather than re-filtering it on every read
+                if (personal.length !== stored.length) {
+                    await this.saveHistoricalData();
+                }
             } catch (error) {
                 console.error('[EstimatedListingAge] Failed to load historical data:', error);
                 this.knownListings = [];
             }
+
+            this.rebuildEstimationPoints();
+        }
+
+        /**
+         * Rebuild the set of points ages are estimated from: this character's own
+         * listings, which are exact, over the shared anchors, which are not.
+         */
+        rebuildEstimationPoints() {
+            const byId = new Map();
+            for (const anchor of this.anchors) byId.set(anchor.id, anchor);
+            for (const listing of this.knownListings) byId.set(listing.id, listing);
+            this.estimationPoints = [...byId.values()].sort((a, b) => a.id - b.id);
+        }
+
+        /**
+         * Grow the shared anchor pool with new {id, timestamp} candidates.
+         *
+         * Growth-only merge: an id already in the pool keeps its existing timestamp,
+         * so re-observing the same id (a status update re-recording a listing, the
+         * same order book row on a later refresh) is a no-op rather than a
+         * potentially-noisier overwrite. Never removes an id except via capacity
+         * eviction, so adding anchors never regresses an estimate that already had
+         * a point to work with — it only ever has more to work with.
+         * @param {Array<{id: number, timestamp: number}>} entries - Candidate anchor points
+         * @returns {Promise<void>}
+         */
+        async addAnchors(entries) {
+            if (!Array.isArray(entries) || entries.length === 0) {
+                return;
+            }
+
+            const byId = new Map();
+            for (const anchor of this.anchors) byId.set(anchor.id, anchor);
+
+            let grew = false;
+            for (const entry of entries) {
+                if (!entry || typeof entry.id !== 'number' || typeof entry.timestamp !== 'number') continue;
+                if (isNaN(entry.id) || isNaN(entry.timestamp)) continue;
+                if (byId.has(entry.id)) continue;
+                byId.set(entry.id, { id: entry.id, timestamp: entry.timestamp });
+                grew = true;
+            }
+
+            if (!grew) {
+                return;
+            }
+
+            this.anchors = this._evictToCapacity([...byId.values()].sort((a, b) => a.id - b.id));
+            this.rebuildEstimationPoints();
+            await this._persistAnchors();
+        }
+
+        /**
+         * Trim a sorted anchor array down to ANCHOR_POOL_MAX, thinning the densest
+         * neighborhoods first.
+         *
+         * Repeatedly removes whichever interior point has the smallest combined gap
+         * to its neighbors (points[i+1].id - points[i-1].id) — that point is the
+         * most redundant one for interpolation, since its neighbors already bracket
+         * it tightly. The two endpoints are never evicted: they define the id range
+         * the pool can interpolate across at all, and losing either would shrink
+         * coverage rather than just density.
+         * @param {Array<{id: number, timestamp: number}>} sorted - Anchors sorted by id
+         * @returns {Array<{id: number, timestamp: number}>} At most ANCHOR_POOL_MAX anchors, still sorted by id
+         */
+        _evictToCapacity(sorted) {
+            if (sorted.length <= ANCHOR_POOL_MAX) {
+                return sorted;
+            }
+
+            const points = [...sorted];
+            while (points.length > ANCHOR_POOL_MAX && points.length > 2) {
+                let victimIndex = 1;
+                let smallestGap = Infinity;
+                for (let i = 1; i < points.length - 1; i++) {
+                    const gap = points[i + 1].id - points[i - 1].id;
+                    if (gap < smallestGap) {
+                        smallestGap = gap;
+                        victimIndex = i;
+                    }
+                }
+                points.splice(victimIndex, 1);
+            }
+
+            return points;
+        }
+
+        /**
+         * Persist the anchor pool.
+         *
+         * Debounced (no `immediate` flag) like the rest of storage — growth events
+         * (a new listing, an order book response) can arrive in bursts and do not
+         * each need a separate IndexedDB write.
+         * @returns {Promise<void>}
+         */
+        async _persistAnchors() {
+            try {
+                await storage.setJSON(this.anchorsKey, this.anchors, LISTINGS_STORE);
+            } catch (error) {
+                console.error('[EstimatedListingAge] Failed to save listing anchors:', error);
+            }
+        }
+
+        /**
+         * This character's stored listing log, migrated and split.
+         *
+         * The one reader-side entry point, so nothing else has to know the key, the
+         * store, or that a legacy shared array ever existed.
+         * @returns {Promise<Array>} Copies of the stored listings, sorted by id
+         */
+        async personalListings() {
+            await this.loadHistoricalData();
+            return this.knownListings.map((listing) => ({ ...listing }));
         }
 
         /**
@@ -7445,7 +8977,7 @@ self.onmessage = function (e) {
          */
         async saveHistoricalData() {
             try {
-                await storage.setJSON(this.storageKey, this.knownListings, 'marketListings', true);
+                await writeScoped(LISTINGS_BASE, this.knownListings, LISTINGS_STORE, true);
             } catch (error) {
                 console.error('[EstimatedListingAge] Failed to save historical data:', error);
             }
@@ -7460,6 +8992,7 @@ self.onmessage = function (e) {
         async deleteListing(listingId) {
             await this.loadHistoricalData();
             this.knownListings = this.knownListings.filter((l) => l.id !== listingId);
+            this.rebuildEstimationPoints();
             await this.saveHistoricalData();
         }
 
@@ -7571,6 +9104,25 @@ self.onmessage = function (e) {
 
                     // IMPORTANT: Populate createdTimestamp on all listings (for queue length estimator)
                     // RWI does this in their saveOrderBooks function
+                    //
+                    // Growth: a listing that already carries a createdTimestamp we did not just
+                    // write ourselves is a real, observed id↔time pair for someone else's
+                    // listing — free calibration data this handler already sees on every order
+                    // book response, with no new listener required.
+                    const observedAnchors = [];
+                    const captureRealTimestamp = (listing) => {
+                        if (!listing.createdTimestamp || !listing.listingId) {
+                            return;
+                        }
+                        const ts =
+                            typeof listing.createdTimestamp === 'number'
+                                ? listing.createdTimestamp
+                                : new Date(listing.createdTimestamp).getTime();
+                        if (!isNaN(ts)) {
+                            observedAnchors.push({ id: listing.listingId, timestamp: ts });
+                        }
+                    };
+
                     if (orderBooks) {
                         // Handle both array and object format
                         const orderBooksArray = Array.isArray(orderBooks) ? orderBooks : Object.values(orderBooks);
@@ -7584,6 +9136,8 @@ self.onmessage = function (e) {
                                     if (!listing.createdTimestamp && listing.listingId) {
                                         const estimatedTimestamp = this.estimateTimestamp(listing.listingId);
                                         listing.createdTimestamp = new Date(estimatedTimestamp).toISOString();
+                                    } else {
+                                        captureRealTimestamp(listing);
                                     }
                                 }
                             }
@@ -7594,10 +9148,16 @@ self.onmessage = function (e) {
                                     if (!listing.createdTimestamp && listing.listingId) {
                                         const estimatedTimestamp = this.estimateTimestamp(listing.listingId);
                                         listing.createdTimestamp = new Date(estimatedTimestamp).toISOString();
+                                    } else {
+                                        captureRealTimestamp(listing);
                                     }
                                 }
                             }
                         }
+                    }
+
+                    if (observedAnchors.length > 0) {
+                        this.addAnchors(observedAnchors);
                     }
 
                     // Store with timestamp for staleness tracking
@@ -7753,9 +9313,15 @@ self.onmessage = function (e) {
 
             // Re-sort by ID
             this.knownListings.sort((a, b) => a.id - b.id);
+            this.rebuildEstimationPoints();
 
             // Save to storage (debounced)
             this.saveHistoricalData();
+
+            // Growth: this id↔time pair is exact, so mirror it into the shared
+            // anchor pool too — dedup means re-recording the same id on a later
+            // status update is a no-op here.
+            this.addAnchors([{ id: entry.id, timestamp: entry.timestamp }]);
         }
 
         /**
@@ -8218,18 +9784,20 @@ self.onmessage = function (e) {
          * @returns {number} Estimated timestamp in milliseconds
          */
         estimateTimestamp(listingId) {
-            if (this.knownListings.length === 0) {
+            const points = this.estimationPoints;
+
+            if (points.length === 0) {
                 // No data, assume recent (1 hour ago)
                 return Date.now() - 60 * 60 * 1000;
             }
 
-            if (this.knownListings.length === 1) {
+            if (points.length === 1) {
                 // Only one data point, use it
-                return this.knownListings[0].timestamp;
+                return points[0].timestamp;
             }
 
-            const minId = this.knownListings[0].id;
-            const maxId = this.knownListings[this.knownListings.length - 1].id;
+            const minId = points[0].id;
+            const maxId = points[points.length - 1].id;
 
             let estimate;
             // Check if ID is within known range
@@ -8256,26 +9824,28 @@ self.onmessage = function (e) {
          * @returns {number} Estimated timestamp
          */
         linearInterpolation(listingId) {
+            const points = this.estimationPoints;
+
             // Check for exact match
-            const exact = this.knownListings.find((entry) => entry.id === listingId);
+            const exact = points.find((entry) => entry.id === listingId);
             if (exact) {
                 return exact.timestamp;
             }
 
             // Find surrounding points
             let leftIndex = 0;
-            let rightIndex = this.knownListings.length - 1;
+            let rightIndex = points.length - 1;
 
-            for (let i = 0; i < this.knownListings.length - 1; i++) {
-                if (listingId >= this.knownListings[i].id && listingId <= this.knownListings[i + 1].id) {
+            for (let i = 0; i < points.length - 1; i++) {
+                if (listingId >= points[i].id && listingId <= points[i + 1].id) {
                     leftIndex = i;
                     rightIndex = i + 1;
                     break;
                 }
             }
 
-            const left = this.knownListings[leftIndex];
-            const right = this.knownListings[rightIndex];
+            const left = points[leftIndex];
+            const right = points[rightIndex];
 
             // Linear interpolation formula
             const idRange = right.id - left.id;
@@ -8291,21 +9861,23 @@ self.onmessage = function (e) {
          * @returns {number} Estimated timestamp
          */
         linearRegression(listingId) {
+            const points = this.estimationPoints;
+
             // Calculate linear regression slope
             let sumX = 0,
                 sumY = 0;
-            for (const entry of this.knownListings) {
+            for (const entry of points) {
                 sumX += entry.id;
                 sumY += entry.timestamp;
             }
 
-            const n = this.knownListings.length;
+            const n = points.length;
             const meanX = sumX / n;
             const meanY = sumY / n;
 
             let numerator = 0;
             let denominator = 0;
-            for (const entry of this.knownListings) {
+            for (const entry of points) {
                 numerator += (entry.id - meanX) * (entry.timestamp - meanY);
                 denominator += (entry.id - meanX) * (entry.id - meanX);
             }
@@ -8313,10 +9885,10 @@ self.onmessage = function (e) {
             const slope = numerator / denominator;
 
             // Get boundary points
-            const minId = this.knownListings[0].id;
-            const maxId = this.knownListings[this.knownListings.length - 1].id;
-            const minTimestamp = this.knownListings[0].timestamp;
-            const maxTimestamp = this.knownListings[this.knownListings.length - 1].timestamp;
+            const minId = points[0].id;
+            const maxId = points[points.length - 1].id;
+            const minTimestamp = points[0].timestamp;
+            const maxTimestamp = points[points.length - 1].timestamp;
 
             // Extrapolate from closest boundary (RWI approach)
             // This prevents drift from large intercept values
@@ -8370,11 +9942,11 @@ self.onmessage = function (e) {
      * A registry letting other scripts put their own toggle against each row of
      * Market History and of the live My Listings table.
      *
-     * Deliberately ignorant of what a mark means. A listing might be part of a
-     * flip, a purchase to record against a guild ledger, something to come back to
-     * — the viewer needs a glyph, a state and a handler, and nothing else. That is
-     * what lets a marker whose meaning lives in a private script appear in a public
-     * one without the meaning coming with it.
+     * Deliberately ignorant of what a mark means. A listing might be one half of a
+     * trade somebody is tracking, a purchase to record against a guild ledger,
+     * something to come back to — the viewer needs a glyph, a state and a handler,
+     * and nothing else. That is what lets a marker whose meaning lives in a private
+     * script appear in a public one without the meaning coming with it.
      *
      * Pure registry: no DOM, so the decisions here are testable and the rendering
      * stays where the rest of the table is built.
@@ -8445,13 +10017,13 @@ self.onmessage = function (e) {
         /**
          * Add a column of toggles to Market History.
          *
-         *     const remove = Toolasha.Market.listingMarkers.register('flip-finder', {
+         *     const remove = Toolasha.Market.listingMarkers.register('my-script', {
          *         stateFor: (listing) => ({
          *             glyph: '★',
-         *             active: isFlip(listing),
-         *             title: 'Count this listing as a flip',
+         *             active: isTracked(listing),
+         *             title: 'Track this listing',
          *         }),
-         *         onToggle: (listing) => toggleFlip(listing),
+         *         onToggle: (listing) => toggleTracked(listing),
          *     });
          *
          * Both functions are also handed a context object naming the surface the
@@ -9591,7 +11163,11 @@ self.onmessage = function (e) {
                   : '#00FF00';
             const title = lastUpdated ? estimatedListingAge.getStalenessTooltip(lastUpdated) : undefined;
 
-            return createStyledCell(formatters_js.formatKMB(topOrderPrice, 1), color, { title });
+            return createStyledCell(
+                formatters_js.formatKMB(topOrderPrice, config.getSettingValue('market_listingPricePrecision', 1)),
+                color,
+                { title }
+            );
         }
 
         /**
@@ -9647,7 +11223,10 @@ self.onmessage = function (e) {
                 unclaimedCoinCount,
                 unclaimedItemCount
             );
-            return createStyledCell(formatters_js.formatKMB(totalPrice, 1), this.getAmountColor(totalPrice));
+            return createStyledCell(
+                formatters_js.formatKMB(totalPrice, config.getSettingValue('market_listingPricePrecision', 1)),
+                this.getAmountColor(totalPrice)
+            );
         }
 
         /**
@@ -10465,166 +12044,6 @@ self.onmessage = function (e) {
     const marketOrderTotals = new MarketOrderTotals();
 
     /**
-     * Marketplace Custom Tabs Utility
-     * Provides shared functionality for creating and managing custom marketplace tabs
-     * Used by missing materials features (actions, houses, etc.)
-     */
-
-
-    /**
-     * Create a custom material tab for the marketplace
-     * @param {Object} material - Material data object
-     * @param {string} material.itemHrid - Item HRID
-     * @param {string} material.itemName - Display name for the item
-     * @param {number} material.missing - Amount missing (0 if sufficient)
-     * @param {number} [material.queued=0] - Amount reserved by queue
-     * @param {boolean} material.isTradeable - Whether item can be traded
-     * @param {HTMLElement} referenceTab - Tab element to clone structure from
-     * @param {Function} onClickCallback - Callback when tab is clicked, receives (e, material)
-     * @returns {HTMLElement} Created tab element
-     */
-    function createMaterialTab(material, referenceTab, onClickCallback) {
-        // Clone reference tab structure
-        const tab = referenceTab.cloneNode(true);
-
-        // Mark as custom tab for later identification
-        tab.setAttribute('data-mwi-custom-tab', 'true');
-        tab.setAttribute('data-item-hrid', material.itemHrid);
-        tab.setAttribute('data-missing-quantity', material.missing.toString());
-
-        // Color coding:
-        // - Red: Missing materials (missing > 0)
-        // - Green: Sufficient materials (missing = 0)
-        // - Gray: Not tradeable
-        let statusColor;
-        let statusText;
-
-        if (material.missing > 0) {
-            statusColor = '#ef4444'; // Red - missing materials
-            // Show queued amount if any materials are reserved by queue
-            const queuedText = material.queued > 0 ? ` (${formatters_js.formatWithSeparator(material.queued)} Q'd)` : '';
-            statusText = `Missing: ${formatters_js.formatWithSeparator(material.missing)}${queuedText}`;
-        } else {
-            statusColor = '#4ade80'; // Green - sufficient materials
-            statusText = `Sufficient (${formatters_js.formatWithSeparator(material.required)})`;
-        }
-
-        // Update text content
-        const badgeSpan = tab.querySelector('[class*="TabsComponent_badge"]');
-        if (badgeSpan) {
-            // Title case: capitalize first letter of each word
-            const titleCaseName = material.itemName
-                .split(' ')
-                .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
-                .join(' ');
-
-            badgeSpan.innerHTML = `
-            <div style="text-align: center;">
-                <div>${titleCaseName}</div>
-                <div style="font-size: 0.75em; color: ${statusColor};">
-                    ${statusText}
-                </div>
-            </div>
-        `;
-        }
-
-        // Remove selected state
-        tab.classList.remove('Mui-selected');
-        tab.setAttribute('aria-selected', 'false');
-        tab.setAttribute('tabindex', '-1');
-
-        // Add click handler
-        tab.addEventListener('click', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-
-            // Call the provided callback
-            if (onClickCallback) {
-                onClickCallback(e, material);
-            }
-        });
-
-        return tab;
-    }
-
-    /**
-     * Remove all custom material tabs from the marketplace
-     */
-    function removeMaterialTabs() {
-        const customTabs = document.querySelectorAll('[data-mwi-custom-tab="true"]');
-        customTabs.forEach((tab) => tab.remove());
-    }
-
-    /**
-     * Setup marketplace cleanup observer
-     * Watches for marketplace panel removal and calls cleanup callback
-     * @param {Function} onCleanup - Callback when marketplace closes, receives no args
-     * @param {Array} tabsArray - Array reference to track tabs (will be checked for length)
-     * @returns {Function} Unregister function to stop observing
-     */
-    function setupMarketplaceCleanupObserver(onCleanup, tabsArray) {
-        let pollInterval = null;
-
-        function poll() {
-            if (!tabsArray || tabsArray.length === 0) return;
-
-            // If custom tabs were removed from DOM, clean up
-            const hasCustomTabsInDOM = tabsArray.some((tab) => document.body.contains(tab));
-            if (!hasCustomTabsInDOM) {
-                if (onCleanup) onCleanup();
-                return;
-            }
-
-            // If marketplace panel is hidden (navigated away), clean up
-            const marketplacePanel = document.querySelector('.MarketplacePanel_marketplacePanel__21b7o');
-            const subPanelContainer = marketplacePanel?.closest('.MainPanel_subPanelContainer__1i-H9');
-            if (subPanelContainer && getComputedStyle(subPanelContainer).display === 'none') {
-                if (onCleanup) onCleanup();
-            }
-        }
-
-        pollInterval = setInterval(poll, 1000);
-
-        return () => {
-            if (pollInterval) {
-                clearInterval(pollInterval);
-                pollInterval = null;
-            }
-        };
-    }
-
-    /**
-     * Get game object via React fiber
-     * @returns {Object|null} Game component instance
-     */
-    function getGameObject() {
-        const rootEl = document.getElementById('root');
-        const rootFiber = rootEl?._reactRootContainer?.current || rootEl?._reactRootContainer?._internalRoot?.current;
-        if (!rootFiber) return null;
-
-        function find(fiber) {
-            if (!fiber) return null;
-            if (fiber.stateNode?.handleGoToMarketplace) return fiber.stateNode;
-            return find(fiber.child) || find(fiber.sibling);
-        }
-
-        return find(rootFiber);
-    }
-
-    /**
-     * Navigate to marketplace for a specific item
-     * @param {string} itemHrid - Item HRID to navigate to
-     * @param {number} enhancementLevel - Enhancement level (default 0)
-     */
-    function navigateToMarketplace(itemHrid, enhancementLevel = 0) {
-        const game = getGameObject();
-        if (game?.handleGoToMarketplace) {
-            game.handleGoToMarketplace(itemHrid, enhancementLevel);
-        }
-        // Silently fail if game API unavailable - feature still provides value without auto-navigation
-    }
-
-    /**
      * Market History Viewer Module
      *
      * Displays a comprehensive table of all market listings with:
@@ -10655,6 +12074,8 @@ self.onmessage = function (e) {
             this.typeFilter = 'all'; // 'all', 'buy', 'sell'
             this.statusFilter = 'all'; // 'all', 'active', 'filled', 'filled_active', 'canceled', 'expired', 'unknown'
             this.useKMBFormat = false; // K/M/B formatting toggle
+            // Base of a per-character key; estimatedListingAge owns the scoping and
+            // the split of the old shared array, so reads go through it
             this.storageKey = 'marketListingTimestamps';
             this.timerRegistry = timerRegistry_js.createTimerRegistry();
 
@@ -10727,7 +12148,10 @@ self.onmessage = function (e) {
          */
         async loadFilters() {
             try {
-                const savedFilters = await storage.getJSON('marketHistoryFilters', 'settings', null);
+                // Discarded rather than adopted on migration: a filter naming items
+                // and dates is a view of one character's log, and pointing it at
+                // another's shows an empty table with no visible reason
+                const savedFilters = await readScoped('marketHistoryFilters', 'settings', null, { migrate: 'discard' });
                 if (savedFilters) {
                     // Convert date strings back to Date objects
                     this.filters.dateFrom = savedFilters.dateFrom ? new Date(savedFilters.dateFrom) : null;
@@ -10754,7 +12178,7 @@ self.onmessage = function (e) {
                     selectedEnhLevels: this.filters.selectedEnhLevels,
                     selectedTypes: this.filters.selectedTypes,
                 };
-                await storage.setJSON('marketHistoryFilters', filtersToSave, 'settings', true);
+                await writeScoped('marketHistoryFilters', filtersToSave, 'settings', true);
             } catch (error) {
                 console.error('[MarketHistoryViewer] Failed to save filters:', error);
             }
@@ -10766,7 +12190,7 @@ self.onmessage = function (e) {
         addMarketplaceTab() {
             const ensureTabExists = () => {
                 // Get tabs container
-                const tabsContainer = document.querySelector('.MuiTabs-flexContainer[role="tablist"]');
+                const tabsContainer = marketplaceTabs_js.visibleTabsContainer();
                 if (!tabsContainer) return;
 
                 // Verify this is the marketplace tabs (check for Market Listings tab)
@@ -10835,7 +12259,7 @@ self.onmessage = function (e) {
                     document.body,
                     () => {
                         // Check if marketplace is still active
-                        const tabsContainer = document.querySelector('.MuiTabs-flexContainer[role="tablist"]');
+                        const tabsContainer = marketplaceTabs_js.visibleTabsContainer();
                         if (!tabsContainer) {
                             // Marketplace closed, clean up tab
                             if (this.marketplaceTab && !document.body.contains(this.marketplaceTab)) {
@@ -10874,8 +12298,9 @@ self.onmessage = function (e) {
          */
         async loadListings() {
             try {
-                const stored = await storage.getJSON(this.storageKey, 'marketListings', []);
-                // Filter out listings without itemHrid (e.g., seed listings from estimated-listing-age)
+                const stored = await estimatedListingAge.personalListings();
+                // Belt and braces: anchors are split off before this point, but a
+                // row with no item is not a row this table can draw
                 this.listings = stored.filter((listing) => listing && listing.itemHrid);
 
                 // Migrate old listings without status field
@@ -11212,7 +12637,11 @@ self.onmessage = function (e) {
          * Create modal structure
          */
         createModal() {
-            // Modal overlay
+            // Modal overlay — full-screen intentional modal, so it sits at config.Z_MODAL
+            // rather than the persistent-floating-panel tier (PANEL_Z_CAP); popouts spawned
+            // from it (import progress, filter dropdowns) sit just above at Z_MODAL + 1/+2,
+            // still comfortably below native browser dialogs (confirm/alert), which are
+            // always topmost regardless of z-index.
             this.modal = document.createElement('div');
             this.modal.className = 'mwi-market-history-modal';
             this.modal.style.cssText = `
@@ -11225,20 +12654,22 @@ self.onmessage = function (e) {
             display: none;
             justify-content: center;
             align-items: center;
-            z-index: 10000;
+            z-index: ${config.Z_MODAL};
         `;
 
-            // Modal content
+            // Modal content — shared navy/blue-accent chrome (see simple-panel.js)
             const content = document.createElement('div');
             content.className = 'mwi-market-history-content';
             content.style.cssText = `
-            background: #2a2a2a;
+            background: rgba(10, 10, 20, 0.97);
+            border: 1px solid rgba(74, 158, 255, 0.5);
             border-radius: 8px;
             padding: 20px;
             max-width: 95%;
             max-height: 90%;
             overflow: auto;
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+            color: #e8ecf5;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
         `;
 
             // Header
@@ -11248,13 +12679,15 @@ self.onmessage = function (e) {
             justify-content: space-between;
             align-items: center;
             margin-bottom: 20px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid rgba(74, 158, 255, 0.3);
         `;
 
             const title = document.createElement('h2');
             title.textContent = 'Market History';
             title.style.cssText = `
             margin: 0;
-            color: #fff;
+            color: #8fb4ff;
         `;
 
             const closeBtn = document.createElement('button');
@@ -11262,7 +12695,7 @@ self.onmessage = function (e) {
             closeBtn.style.cssText = `
             background: none;
             border: none;
-            color: #fff;
+            color: #e8ecf5;
             font-size: 24px;
             cursor: pointer;
             padding: 0;
@@ -11979,7 +13412,7 @@ self.onmessage = function (e) {
                     itemCell.title = 'Open this item in the marketplace';
                     itemCell.addEventListener('click', () => {
                         this.closeModal();
-                        navigateToMarketplace(listing.itemHrid, listing.enhancementLevel || 0);
+                        marketplaceTabs_js.navigateToMarketplace(listing.itemHrid, listing.enhancementLevel || 0);
                     });
 
                     row.appendChild(itemCell);
@@ -12302,22 +13735,26 @@ self.onmessage = function (e) {
                 top: 50%;
                 left: 50%;
                 transform: translate(-50%, -50%);
-                background: #2a2a2a;
+                background: rgba(10, 10, 20, 0.97);
+                border: 1px solid rgba(74, 158, 255, 0.5);
                 padding: 20px;
                 border-radius: 8px;
-                color: #fff;
-                z-index: 10001;
+                color: #e8ecf5;
+                z-index: ${config.Z_MODAL + 1};
                 box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
             `;
                 progressMsg.textContent = `Importing ${lines.length - 1} listings from CSV...`;
                 document.body.appendChild(progressMsg);
 
                 // Load existing listings
-                const existingListings = await storage.getJSON(this.storageKey, 'marketListings', []);
+                const existingListings = await estimatedListingAge.personalListings();
                 const existingIds = new Set(existingListings.map((l) => l.id));
 
                 let imported = 0;
                 let skipped = 0;
+                // Imported rows are exact id↔time pairs too — mirror them into the
+                // shared anchor pool the same way live recording does
+                const newAnchors = [];
 
                 // Build item name to HRID map
                 const itemNameToHrid = {};
@@ -12413,11 +13850,13 @@ self.onmessage = function (e) {
                     };
 
                     existingListings.push(listing);
+                    newAnchors.push({ id: listing.id, timestamp: listing.timestamp });
                     imported++;
                 }
 
                 // Save to storage
-                await storage.setJSON(this.storageKey, existingListings, 'marketListings', true);
+                await writeScoped(this.storageKey, existingListings, 'marketListings', true);
+                await estimatedListingAge.addAnchors(newAnchors);
 
                 // Remove progress message
                 document.body.removeChild(progressMsg);
@@ -12534,22 +13973,26 @@ self.onmessage = function (e) {
                 top: 50%;
                 left: 50%;
                 transform: translate(-50%, -50%);
-                background: #2a2a2a;
+                background: rgba(10, 10, 20, 0.97);
+                border: 1px solid rgba(74, 158, 255, 0.5);
                 padding: 20px;
                 border-radius: 8px;
-                color: #fff;
-                z-index: 10001;
+                color: #e8ecf5;
+                z-index: ${config.Z_MODAL + 1};
                 box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
             `;
                 progressMsg.textContent = `Importing ${marketList.length} listings...`;
                 document.body.appendChild(progressMsg);
 
                 // Convert imported format to Toolasha format
-                const existingListings = await storage.getJSON(this.storageKey, 'marketListings', []);
+                const existingListings = await estimatedListingAge.personalListings();
                 const existingIds = new Set(existingListings.map((l) => l.id));
 
                 let imported = 0;
                 let skipped = 0;
+                // Imported rows are exact id↔time pairs too — mirror them into the
+                // shared anchor pool the same way live recording does
+                const newAnchors = [];
 
                 for (const etListing of marketList) {
                     // Skip if we already have this listing
@@ -12572,11 +14015,13 @@ self.onmessage = function (e) {
                     };
 
                     existingListings.push(toolashaListing);
+                    newAnchors.push({ id: toolashaListing.id, timestamp: toolashaListing.timestamp });
                     imported++;
                 }
 
                 // Save to storage
-                await storage.setJSON(this.storageKey, existingListings, 'marketListings', true);
+                await writeScoped(this.storageKey, existingListings, 'marketListings', true);
+                await estimatedListingAge.addAnchors(newAnchors);
 
                 // Remove progress message
                 document.body.removeChild(progressMsg);
@@ -12619,6 +14064,7 @@ self.onmessage = function (e) {
                 `⚠️ WARNING: This will permanently delete ALL market history data!\n` +
                     `You are about to delete ${this.listings.length} listings.\n` +
                     `RECOMMENDATION: Export to CSV first using the "Export CSV" button.\n` +
+                    `Anonymous age anchors are kept so age estimates stay accurate.\n` +
                     `This action CANNOT be undone!\n` +
                     `Are you absolutely sure you want to continue?`
             );
@@ -12628,8 +14074,18 @@ self.onmessage = function (e) {
             }
 
             try {
+                // "Clear History" only wipes this character's personal listing log —
+                // the item/price/status record of what *you* sold. It deliberately
+                // leaves the anonymous {id, timestamp} anchor mirror in place: those
+                // pairs carry no item, price, or character info, so keeping them isn't
+                // keeping "history", and every other listing's age estimate on this
+                // and every other character depends on that shared pool staying intact.
+                // Backfill it one last time first, in case any of these listings predate
+                // anchor growth and were never mirrored.
+                await estimatedListingAge.addAnchors(this.listings.map((l) => ({ id: l.id, timestamp: l.timestamp })));
+
                 // Clear from storage
-                await storage.setJSON(this.storageKey, [], 'marketListings', true);
+                await writeScoped(this.storageKey, [], 'marketListings', true);
 
                 // Clear local data
                 this.listings = [];
@@ -12797,7 +14253,7 @@ self.onmessage = function (e) {
             popup.style.position = 'fixed';
             popup.style.top = `${buttonRect.bottom + 5}px`;
             popup.style.left = `${buttonRect.left}px`;
-            popup.style.zIndex = '10002';
+            popup.style.zIndex = String(config.Z_MODAL + 2);
 
             document.body.appendChild(popup);
             this.activeFilterPopup = popup;
@@ -13641,7 +15097,7 @@ self.onmessage = function (e) {
                 this.refreshBtn.textContent = `Refresh Next (${startIndex + 1}/${rows.length})`;
             }
 
-            navigateToMarketplace(itemHrid, enhancementLevel);
+            marketplaceTabs_js.navigateToMarketplace(itemHrid, enhancementLevel);
         }
 
         cleanup() {
@@ -13667,7 +15123,7 @@ self.onmessage = function (e) {
      */
 
 
-    const STORAGE_KEY$1 = 'inventoryTabs_config';
+    const STORAGE_KEY$4 = 'inventoryTabs_config';
     const STORE = 'settings';
     const CONFIG_VERSION = 1;
 
@@ -13694,7 +15150,7 @@ self.onmessage = function (e) {
      * @returns {string}
      */
     function getStorageKey$2(characterId) {
-        return `${characterId}_${STORAGE_KEY$1}`;
+        return `${characterId}_${STORAGE_KEY$4}`;
     }
 
     /**
@@ -14566,7 +16022,7 @@ self.onmessage = function (e) {
             }
 
             // Navigate to marketplace for this item
-            navigateToMarketplace(itemHrid, enhancementLevel);
+            marketplaceTabs_js.navigateToMarketplace(itemHrid, enhancementLevel);
 
             // Wait for the marketplace panel to render
             await new Promise((r) => setTimeout(r, 300));
@@ -15087,7 +16543,7 @@ self.onmessage = function (e) {
      *
      * A claim on inventory that keeps items out of the bulk sell queue.
      *
-     * Deliberately ignorant of why anything is held. A flip waiting to be relisted,
+     * Deliberately ignorant of why anything is held. Stock waiting to be relisted,
      * a crafting reserve, something promised to a guildmate — the assistant only
      * needs the keys, so no reason has to be modelled here, and a caller with a
      * reason of its own need not live in this repository to use it.
@@ -15137,6 +16593,2521 @@ self.onmessage = function (e) {
     }
 
     /**
+     * Watchlist
+     *
+     * A named set of items, what you hold of each, and what it is worth.
+     *
+     * The list itself is trivial. Two things about it are not, and they are the
+     * reason this is a module with tests rather than a few lines inside a panel.
+     *
+     * ## Un-ticking a set must not take items another set still wants
+     *
+     * Items go on the list one at a time, or a whole zone's drop table at once, or a
+     * whole chest's contents. Zones share drops — Aqua Planet and Jungle Planet have
+     * items in common — so removing one set cannot simply remove everything it
+     * contributed. Every row remembers which set put it there, and un-ticking a set
+     * **re-homes** any of its rows that another still-enabled set also contains,
+     * rather than deleting them. Get that wrong and un-ticking one zone silently
+     * empties part of another, which reads as the list losing things at random.
+     *
+     * Rows added by hand have no set, and nothing automatic ever removes them.
+     *
+     * ## The vendor price is a floor, not a comparison
+     *
+     * The market bid can sit below what the vendor pays flat. When it does, the bid
+     * is not the item's value — it is a number you would be a fool to accept, and
+     * showing it as the value quietly advises the worse of two sales. So the row
+     * reports the vendor price and says why. The same applies with more force to an
+     * item that has no market at all: a bid of zero is the absence of a price, not a
+     * value of nothing.
+     *
+     * The model is NTally's, from MWI Combat Suite by Frotty (MIT) — see
+     * `third-party/mwi-combat-suite/` and `docs/THIRD-PARTY-LICENSES.md`. The code is
+     * Toolasha's own.
+     */
+
+    /**
+     * Put items on the list under a given set.
+     *
+     * Items already on the list are left where they are rather than moved, so
+     * ticking a second set that shares a drop does not take that row's existing
+     * home — which is the thing un-ticking relies on.
+     *
+     * @param {Array<{hrid: string, name: string, source: string|null}>} entries - The list
+     * @param {Array<{hrid: string, name: string}>} items - What to add
+     * @param {string|null} source - The set adding them, or null when added by hand
+     * @returns {Array<Object>} A new list
+     */
+    function addToWatchlist(entries, items, source = null) {
+        const known = new Set((entries || []).map((entry) => entry.hrid));
+        const added = [];
+
+        for (const item of items || []) {
+            if (!item?.hrid || known.has(item.hrid)) continue;
+            known.add(item.hrid);
+            added.push({ hrid: item.hrid, name: item.name || item.hrid, source });
+        }
+        return [...(entries || []), ...added];
+    }
+
+    /**
+     * Take one item off, whoever put it there.
+     *
+     * @param {Array<Object>} entries - The list
+     * @param {string} hrid - What to remove
+     * @returns {Array<Object>} A new list
+     */
+    function removeFromWatchlist(entries, hrid) {
+        return (entries || []).filter((entry) => entry.hrid !== hrid);
+    }
+
+    /**
+     * Un-tick a set, keeping what another still-enabled set also contains.
+     *
+     * @param {Array<Object>} entries - The list
+     * @param {string} source - The set being turned off
+     * @param {Array<{id: string, hrids: Iterable<string>}>} stillOn - Sets still enabled, in order
+     * @returns {Array<Object>} A new list, with survivors re-homed
+     */
+    function removeSource(entries, source, stillOn = []) {
+        const homes = (stillOn || []).map((set) => ({ id: set.id, hrids: new Set(set.hrids) }));
+
+        return (entries || []).flatMap((entry) => {
+            // Added by hand, or by a set that is not the one being turned off
+            if (entry.source === null || entry.source === undefined || entry.source !== source) return [entry];
+
+            // First in the given order, so the same list re-homes the same way every
+            // time rather than shuffling as sets are toggled
+            const home = homes.find((set) => set.hrids.has(entry.hrid));
+            return home ? [{ ...entry, source: home.id }] : [];
+        });
+    }
+
+    /**
+     * The price a row should report, and whether that needs saying out loud.
+     *
+     * @param {number} bid - Current market bid
+     * @param {number} vendor - What the vendor pays flat
+     * @returns {{price: number, flag: string|null}} `flag` is `below-vendor`,
+     *   `equals-vendor`, `no-market`, or null when the bid stands on its own
+     */
+    function vendorFloor(bid, vendor) {
+        const market = Number(bid) || 0;
+        const flat = Number(vendor) || 0;
+
+        if (!(flat > 0)) return { price: market, flag: null };
+        // No market at all: the vendor price is the only price, and zero would be a
+        // claim that the item is worthless rather than that nobody is buying it
+        if (!(market > 0)) return { price: flat, flag: 'no-market' };
+        if (market < flat) return { price: flat, flag: 'below-vendor' };
+        if (market === flat) return { price: flat, flag: 'equals-vendor' };
+
+        return { price: market, flag: null };
+    }
+
+    /**
+     * How many of an item are sitting in your own sell orders.
+     *
+     * A watchlist that counts only the inventory says you have none of something
+     * you have two hundred of — they are just on the market rather than in the bag.
+     * That is the difference between "I need to farm this" and "I need to wait", and
+     * a collection checklist that cannot tell them apart is worse than no checklist.
+     *
+     * Unclaimed items from a filled **buy** order count too: they are yours, bought
+     * and paid for, and only a click away from the inventory.
+     *
+     * @param {Array<Object>} listings - The game's `myMarketListings`
+     * @returns {Object<string, {listed: number, unclaimed: number}>} By item hrid
+     */
+    function listedCounts(listings) {
+        const counts = {};
+        const bump = (hrid, field, amount) => {
+            if (!hrid || !(amount > 0)) return;
+            counts[hrid] = counts[hrid] || { listed: 0, unclaimed: 0 };
+            counts[hrid][field] += amount;
+        };
+
+        for (const listing of listings || []) {
+            const remaining = Math.max(0, (listing?.orderQuantity || 0) - (listing?.filledQuantity || 0));
+            // Only a sell order is holding items; a buy order's remainder is coin
+            if (listing?.isSell) bump(listing.itemHrid, 'listed', remaining);
+            bump(listing?.itemHrid, 'unclaimed', listing?.unclaimedItemCount || 0);
+        }
+        return counts;
+    }
+
+    /**
+     * Price and count every row.
+     *
+     * The lookups are passed in rather than imported, so the awkward parts — the
+     * vendor floor, the multiplication, the totals — are testable without a market.
+     *
+     * @param {Array<Object>} entries - The list
+     * @param {Object} lookups - How to resolve a row
+     * @param {Function} lookups.quantityOf - `(hrid) => number`
+     * @param {Function} lookups.pricesFor - `(hrid) => {ask, bid}|null`
+     * @param {Function} [lookups.vendorOf] - `(hrid) => number`
+     * @param {Function} [lookups.listedOf] - `(hrid) => {listed, unclaimed}`
+     * @returns {Array<Object>} Rows with `held`, `listed`, `unclaimed`, `quantity`,
+     *   `ask`, `bid`, `flag`, `totalAsk`, `totalBid`. `quantity` is everything you
+     *   own of the item wherever it is sitting; `held` is only the bag.
+     */
+    function valueWatchlist(entries, { quantityOf, pricesFor, vendorOf, listedOf }) {
+        return (entries || []).map((entry) => {
+            const held = Number(quantityOf?.(entry.hrid)) || 0;
+            const market = listedOf?.(entry.hrid) || {};
+            const listed = Number(market.listed) || 0;
+            const unclaimed = Number(market.unclaimed) || 0;
+            // Everything you own of it, wherever it happens to be
+            const quantity = held + listed + unclaimed;
+
+            const prices = pricesFor?.(entry.hrid) || {};
+            const ask = Number(prices.ask) || 0;
+            const floor = vendorFloor(prices.bid, vendorOf?.(entry.hrid));
+
+            return {
+                ...entry,
+                held,
+                listed,
+                unclaimed,
+                quantity,
+                ask,
+                bid: floor.price,
+                flag: floor.flag,
+                totalAsk: ask * quantity,
+                totalBid: floor.price * quantity,
+            };
+        });
+    }
+
+    /**
+     * What the whole list is worth.
+     * @param {Array<Object>} rows - From `valueWatchlist`
+     * @returns {{ask: number, bid: number, items: number, held: number}}
+     */
+    function watchlistTotals(rows) {
+        return (rows || []).reduce(
+            (totals, row) => ({
+                ask: totals.ask + (row.totalAsk || 0),
+                bid: totals.bid + (row.totalBid || 0),
+                items: totals.items + 1,
+                // How many of the tracked items you actually hold any of, which is
+                // the "12 / 30" a collection checklist is for
+                held: totals.held + (row.quantity > 0 ? 1 : 0),
+            }),
+            { ask: 0, bid: 0, items: 0, held: 0 }
+        );
+    }
+
+    /**
+     * Order the rows.
+     *
+     * By value means by what you hold, not by unit price — a stack of one cheap item
+     * is not more valuable than a stack of a thousand. Ties break on name so the
+     * order is stable rather than dependent on which sets were ticked first.
+     *
+     * @param {Array<Object>} rows - From `valueWatchlist`
+     * @param {string} by - `name` or `value`
+     * @param {string} direction - `asc` or `desc`
+     * @returns {Array<Object>} A new array
+     */
+    function sortRows(rows, by = 'name', direction = 'asc') {
+        const sign = direction === 'desc' ? -1 : 1;
+
+        return [...(rows || [])].sort((a, b) => {
+            if (by === 'value') {
+                const difference = (a.totalAsk || 0) - (b.totalAsk || 0);
+                if (difference) return sign * difference;
+            }
+            return sign * String(a.name).localeCompare(String(b.name));
+        });
+    }
+
+    /**
+     * Drop sources
+     *
+     * Everything a combat zone can drop, and everything a chest can contain.
+     *
+     * The point is to turn one gesture — "track Pirate Cove" — into the thirty rows
+     * that means. Doing it by hand is thirty clicks and a wiki tab; doing it from
+     * the game's own data is exact and cannot go stale.
+     *
+     * ## Three tables, not one
+     *
+     * An ordinary zone drops from its monsters, and a monster has **two** tables:
+     * `dropTable` and `rareDropTable`. They are separate in the game's data because
+     * they scale by different stats, and a walk that reads only the first quietly
+     * omits precisely the drops anybody would be tracking a zone for.
+     *
+     * A zone also has **boss spawns** alongside its random ones, whose drops are
+     * again the interesting ones.
+     *
+     * A **dungeon** does not work like either: it pays out of a reward table on
+     * completion rather than per monster, so its drops come from `dungeonInfo`
+     * instead. Reading a dungeon as an ordinary zone finds nothing at all.
+     *
+     * Coins are excluded throughout. Everything drops coins, they are not an item
+     * anybody tracks, and one row saying "Coin" on every set is noise.
+     *
+     * The model is NTally's, from MWI Combat Suite by Frotty (MIT) — see
+     * `third-party/mwi-combat-suite/` and `docs/THIRD-PARTY-LICENSES.md`. The code is
+     * Toolasha's own.
+     */
+
+    const COIN_HRID = '/items/coin';
+    const COMBAT_ACTION_PREFIX = '/actions/combat/';
+
+    /**
+     * An item's display name, falling back to something readable.
+     *
+     * @param {string} itemHrid - e.g. `/items/purples_gift`
+     * @param {Object} itemDetailMap - The game's map
+     * @returns {string}
+     */
+    function nameOf$2(itemHrid, itemDetailMap) {
+        const known = itemDetailMap?.[itemHrid]?.name;
+        if (known) return known;
+
+        return itemHrid.replace('/items/', '').replace(/_/g, ' ');
+    }
+
+    /**
+     * Every combat zone the game has, as sets you could track.
+     *
+     * Read from the action map rather than listed, so a zone added by an update
+     * appears without anybody editing a constant — which is what a hardcoded list of
+     * fifteen planets guarantees will not happen.
+     *
+     * @param {Object} actionDetailMap - The game's map
+     * @returns {Array<{id: string, hrid: string, name: string, isDungeon: boolean}>}
+     */
+    function combatZones(actionDetailMap) {
+        const zones = [];
+
+        for (const [hrid, action] of Object.entries(actionDetailMap || {})) {
+            if (!hrid.startsWith(COMBAT_ACTION_PREFIX) || !action?.combatZoneInfo) continue;
+
+            zones.push({
+                // Keyed by hrid, like the chests are, because the id is what gets
+                // handed back to look the set's contents up — a short name looks
+                // tidier in storage and resolves to nothing in the action map
+                id: hrid,
+                hrid,
+                name: action.name || hrid.slice(COMBAT_ACTION_PREFIX.length).replace(/_/g, ' '),
+                isDungeon: Boolean(action.combatZoneInfo.isDungeon),
+            });
+        }
+        return zones.sort((a, b) => (a.sortIndex ?? 0) - (b.sortIndex ?? 0) || a.name.localeCompare(b.name));
+    }
+
+    /**
+     * Everything a zone can drop.
+     *
+     * @param {string} actionHrid - e.g. `/actions/combat/pirate_cove`
+     * @param {Object} data - The game's `initClientData`
+     * @returns {Array<{hrid: string, name: string}>} Deduplicated, coins excluded
+     */
+    function zoneDrops(actionHrid, data) {
+        const { actionDetailMap, combatMonsterDetailMap, itemDetailMap } = data || {};
+        const zone = actionDetailMap?.[actionHrid]?.combatZoneInfo;
+        if (!zone) return [];
+
+        const drops = new Map();
+        const add = (drop) => {
+            const hrid = drop?.itemHrid;
+            if (!hrid || hrid === COIN_HRID || drops.has(hrid)) return;
+            drops.set(hrid, { hrid, name: nameOf$2(hrid, itemDetailMap) });
+        };
+
+        // A dungeon pays out of a reward table on completion, so its monsters'
+        // tables are not where its drops come from
+        if (zone.isDungeon) {
+            for (const drop of zone.dungeonInfo?.rewardDropTable || []) add(drop);
+            return [...drops.values()];
+        }
+
+        const fight = zone.fightInfo;
+        if (!fight || !combatMonsterDetailMap) return [];
+
+        const addMonster = (monsterHrid) => {
+            const monster = combatMonsterDetailMap[monsterHrid];
+            if (!monster) return;
+            // Both tables: rare is where the reason to track a zone usually lives
+            for (const drop of monster.dropTable || []) add(drop);
+            for (const drop of monster.rareDropTable || []) add(drop);
+        };
+
+        for (const spawn of fight.randomSpawnInfo?.spawns || []) addMonster(spawn.combatMonsterHrid);
+        for (const spawn of fight.bossSpawns || []) addMonster(spawn.combatMonsterHrid);
+
+        return [...drops.values()];
+    }
+
+    /**
+     * Every item that can be opened, as sets you could track.
+     *
+     * @param {Object} data - The game's `initClientData`
+     * @returns {Array<{id: string, hrid: string, name: string}>}
+     */
+    function openableItems(data) {
+        const { openableLootDropMap, itemDetailMap } = data || {};
+
+        return Object.keys(openableLootDropMap || {})
+            .map((hrid) => ({ id: hrid, hrid, name: nameOf$2(hrid, itemDetailMap) }))
+            .sort((a, b) => a.name.localeCompare(b.name));
+    }
+
+    /**
+     * Everything a chest can contain, and the chest itself.
+     *
+     * The chest is included because a chest you have not opened is a thing you hold
+     * and a thing with a price, and a list of its contents that omits it cannot tell
+     * you what the pile is worth.
+     *
+     * @param {string} chestHrid - e.g. `/items/purples_gift`
+     * @param {Object} data - The game's `initClientData`
+     * @returns {Array<{hrid: string, name: string}>} Deduplicated, coins excluded
+     */
+    function openableDrops(chestHrid, data) {
+        const { openableLootDropMap, itemDetailMap } = data || {};
+        const table = openableLootDropMap?.[chestHrid];
+        if (!table) return [];
+
+        const drops = new Map([[chestHrid, { hrid: chestHrid, name: nameOf$2(chestHrid, itemDetailMap) }]]);
+
+        for (const drop of table) {
+            const hrid = drop?.itemHrid;
+            if (!hrid || hrid === COIN_HRID || drops.has(hrid)) continue;
+            drops.set(hrid, { hrid, name: nameOf$2(hrid, itemDetailMap) });
+        }
+        return [...drops.values()];
+    }
+
+    /**
+     * Networth Cache
+     * LRU cache for expensive enhancement cost calculations
+     * Prevents recalculating the same enhancement paths repeatedly
+     */
+
+    class NetworthCache {
+        constructor(maxSize = 100) {
+            this.maxSize = maxSize;
+            this.cache = new Map();
+            this.marketDataHash = null;
+        }
+
+        /**
+         * Generate cache key for enhancement calculation
+         * @param {string} itemHrid - Item HRID
+         * @param {number} enhancementLevel - Enhancement level
+         * @returns {string} Cache key
+         */
+        generateKey(itemHrid, enhancementLevel) {
+            return `${itemHrid}_${enhancementLevel}`;
+        }
+
+        /**
+         * Generate hash of market data for cache invalidation
+         * Uses first 10 items' prices as a simple hash
+         * @param {Object} marketData - Market data object
+         * @returns {string} Hash string
+         */
+        generateMarketHash(marketData) {
+            if (!marketData || !marketData.marketData) return 'empty';
+
+            // Cheap rolling hash over every item so any price change invalidates the
+            // cache (sampling only the first 10 items left stale values behind)
+            let hash = 0;
+            for (const [hrid, data] of Object.entries(marketData.marketData)) {
+                const entry = `${hrid}:${data[0]?.a || 0}:${data[0]?.b || 0}`;
+                let entryHash = 0;
+                for (let i = 0; i < entry.length; i++) {
+                    entryHash = (entryHash * 31 + entry.charCodeAt(i)) | 0;
+                }
+                hash = (hash ^ entryHash) | 0;
+            }
+
+            return String(hash);
+        }
+
+        /**
+         * Check if market data has changed and invalidate cache if needed
+         * @param {Object} marketData - Current market data
+         */
+        checkAndInvalidate(marketData) {
+            const newHash = this.generateMarketHash(marketData);
+
+            if (this.marketDataHash !== null && this.marketDataHash !== newHash) {
+                // Market data changed, invalidate entire cache
+                this.clear();
+            }
+
+            this.marketDataHash = newHash;
+        }
+
+        /**
+         * Get cached enhancement cost
+         * @param {string} itemHrid - Item HRID
+         * @param {number} enhancementLevel - Enhancement level
+         * @returns {number|null} Cached cost or null if not found
+         */
+        get(itemHrid, enhancementLevel) {
+            const key = this.generateKey(itemHrid, enhancementLevel);
+
+            if (!this.cache.has(key)) {
+                return null;
+            }
+
+            // Move to end (most recently used)
+            const value = this.cache.get(key);
+            this.cache.delete(key);
+            this.cache.set(key, value);
+
+            return value;
+        }
+
+        /**
+         * Set cached enhancement cost
+         * @param {string} itemHrid - Item HRID
+         * @param {number} enhancementLevel - Enhancement level
+         * @param {number} cost - Enhancement cost
+         */
+        set(itemHrid, enhancementLevel, cost) {
+            const key = this.generateKey(itemHrid, enhancementLevel);
+
+            // Delete if exists (to update position)
+            if (this.cache.has(key)) {
+                this.cache.delete(key);
+            }
+
+            // Add to end
+            this.cache.set(key, cost);
+
+            // Evict oldest if over size limit
+            if (this.cache.size > this.maxSize) {
+                const firstKey = this.cache.keys().next().value;
+                this.cache.delete(firstKey);
+            }
+        }
+
+        /**
+         * Clear entire cache
+         */
+        clear() {
+            this.cache.clear();
+            this.marketDataHash = null;
+        }
+
+        /**
+         * Get cache statistics
+         * @returns {Object} {size, maxSize, hitRate}
+         */
+        getStats() {
+            return {
+                size: this.cache.size,
+                maxSize: this.maxSize,
+                marketDataHash: this.marketDataHash,
+            };
+        }
+    }
+
+    const networthCache = new NetworthCache();
+
+    /**
+     * Inventory Badge Manager
+     * Centralized management for all inventory item badges
+     * Prevents race conditions with React re-renders by coordinating all badge rendering
+     */
+
+
+    /**
+     * InventoryBadgeManager class manages all inventory item badges from multiple features
+     */
+    class InventoryBadgeManager {
+        constructor() {
+            this.providers = new Map(); // name -> { renderFn, priority }
+            this.currentInventoryElem = null;
+            this.unregisterHandlers = [];
+            this.isInitialized = false;
+            this.processedItems = new WeakSet(); // Track processed item containers
+            this.warnedItems = new Set(); // Track items we've already warned about
+            this.isCalculating = false; // Guard flag to prevent recursive calls
+            this.lastCalculationTime = 0; // Timestamp of last calculation
+            this.CALCULATION_COOLDOWN = 250; // 250ms minimum between calculations
+            this.isRendering = false; // Guard flag for renderAllBadges
+            this.lastRenderTime = 0; // Timestamp of last render
+            this.RENDER_COOLDOWN = 100; // 100ms minimum between render calls
+            this.inventoryLookupCache = null; // Cached inventory lookup map
+            this.inventoryLookupCacheTime = 0; // Timestamp when cache was built
+            this.INVENTORY_CACHE_TTL = 500; // 500ms cache lifetime
+            this.nameToHridMap = null; // Reverse lookup: item name -> HRID (built once, lazy)
+        }
+
+        /**
+         * Initialize badge manager
+         */
+        initialize() {
+            if (this.isInitialized) {
+                return;
+            }
+
+            this.isInitialized = true;
+
+            // Check if inventory is already open
+            const existingInv = document.querySelector('[class*="Inventory_items"]');
+            if (existingInv) {
+                this.currentInventoryElem = existingInv;
+            }
+
+            // Watch for inventory panel
+            const unregister = domObserver.onClass('InventoryBadgeManager', 'Inventory_items', (elem) => {
+                this.currentInventoryElem = elem;
+            });
+            this.unregisterHandlers.push(unregister);
+
+            // Watch for MuiTooltip-popperInteractive closing (item click popup) and re-render badges.
+            // When an inventory item is clicked, the game shows an interactive popper.
+            // When that popper closes, React may have re-rendered the item container, wiping badges.
+            const unwatchPopper = domObserverHelpers_js.createMutationWatcher(
+                document.body,
+                (mutations) => {
+                    for (const mutation of mutations) {
+                        for (const node of mutation.addedNodes) {
+                            if (node.nodeType !== Node.ELEMENT_NODE) continue;
+                            if (node.classList?.contains('MuiTooltip-popperInteractive')) {
+                                setTimeout(() => this.renderAllBadges(), 50);
+                                return;
+                            }
+                        }
+                        for (const node of mutation.removedNodes) {
+                            if (node.nodeType !== Node.ELEMENT_NODE) continue;
+                            if (node.classList?.contains('MuiTooltip-popperInteractive')) {
+                                setTimeout(() => this.renderAllBadges(), 50);
+                                return;
+                            }
+                        }
+                    }
+                },
+                { childList: true }
+            );
+            this.unregisterHandlers.push(unwatchPopper);
+        }
+
+        /**
+         * Register a badge provider
+         * @param {string} name - Unique provider name
+         * @param {Function} renderFn - Function(itemElem) that renders badges for an item
+         * @param {number} priority - Render order (lower = earlier, default 100)
+         */
+        registerProvider(name, renderFn, priority = 100) {
+            this.providers.set(name, { renderFn, priority });
+
+            // Clear processed tracking when new provider registers
+            // This ensures items get re-rendered with all providers
+            this.clearProcessedTracking();
+        }
+
+        /**
+         * Unregister a badge provider
+         * @param {string} name - Provider name
+         */
+        unregisterProvider(name) {
+            this.providers.delete(name);
+        }
+
+        /**
+         * Clear processed tracking (forces re-render on next pass)
+         */
+        clearProcessedTracking() {
+            this.processedItems = new WeakSet();
+        }
+
+        /**
+         * Invalidate caches so next renderAllBadges() uses fresh data.
+         * Call this when inventory contents change (items_updated events).
+         */
+        invalidateCache() {
+            this.inventoryLookupCache = null;
+            this.inventoryLookupCacheTime = 0;
+            this.clearProcessedTracking();
+        }
+
+        /**
+         * Render all badges on all items from all providers
+         */
+        async renderAllBadges() {
+            if (!this.currentInventoryElem) return;
+
+            // Cooldown check for renderAllBadges
+            const now = Date.now();
+            const timeSinceLastRender = now - this.lastRenderTime;
+            if (timeSinceLastRender < this.RENDER_COOLDOWN) {
+                return;
+            }
+            this.lastRenderTime = now;
+
+            // Prevent concurrent renders
+            if (this.isRendering) {
+                return;
+            }
+            this.isRendering = true;
+
+            try {
+                // Calculate prices for all items
+                await this.calculatePricesForAllItems();
+
+                const itemElems = this.currentInventoryElem.querySelectorAll('[class*="Item_itemContainer"]');
+
+                // Sort providers by priority
+                const sortedProviders = Array.from(this.providers.entries()).sort((a, b) => a[1].priority - b[1].priority);
+
+                for (const itemElem of itemElems) {
+                    // Check if already processed AND badges still exist
+                    // React can destroy inner content while keeping container reference
+                    const wasProcessed = this.processedItems.has(itemElem);
+                    const hasBadges = this.itemHasBadges(itemElem);
+
+                    // Skip only if processed AND badges still exist
+                    if (wasProcessed && hasBadges) {
+                        continue;
+                    }
+
+                    // Call each provider's render function for this item
+                    for (const [name, { renderFn }] of sortedProviders) {
+                        try {
+                            renderFn(itemElem);
+                        } catch (error) {
+                            console.error(`[InventoryBadgeManager] Error in provider "${name}":`, error);
+                        }
+                    }
+
+                    // Mark as processed
+                    this.processedItems.add(itemElem);
+                }
+            } finally {
+                // Clear rendering guard even on error so later renders are not blocked forever
+                this.isRendering = false;
+            }
+        }
+
+        /**
+         * Calculate prices for all items in inventory
+         */
+        async calculatePricesForAllItems() {
+            if (!this.currentInventoryElem) return;
+
+            // Prevent recursive calls
+            if (this.isCalculating) {
+                return;
+            }
+
+            // Cooldown check - prevent spamming during rapid events
+            const now = Date.now();
+            const timeSinceLastCalc = now - this.lastCalculationTime;
+            if (timeSinceLastCalc < this.CALCULATION_COOLDOWN) {
+                return;
+            }
+            this.lastCalculationTime = now;
+
+            this.isCalculating = true;
+
+            try {
+                const inventoryElem = this.currentInventoryElem;
+
+                // Build inventory cache once if expired or missing (500ms TTL)
+                let inventory = null;
+                let inventoryLookup = null;
+
+                const cacheAge = now - this.inventoryLookupCacheTime;
+                if (this.inventoryLookupCache && cacheAge < this.INVENTORY_CACHE_TTL) {
+                    // Use cached data
+                    inventory = this.inventoryLookupCache.inventory;
+                    inventoryLookup = this.inventoryLookupCache.lookup;
+                } else {
+                    // Rebuild cache
+                    inventory = dataManager.getInventory();
+                    if (inventory) {
+                        inventoryLookup = new Map();
+                        for (const item of inventory) {
+                            if (item.itemLocationHrid === '/item_locations/inventory') {
+                                const key = `${item.itemHrid}|${item.count}|${item.enhancementLevel || 0}`;
+                                inventoryLookup.set(key, item);
+                            }
+                        }
+                        // Store in cache
+                        this.inventoryLookupCache = { inventory, lookup: inventoryLookup };
+                        this.inventoryLookupCacheTime = now;
+                    }
+                }
+
+                // Process each category
+                for (const categoryDiv of inventoryElem.children) {
+                    const itemElems = categoryDiv.querySelectorAll('[class*="Item_itemContainer"]');
+                    await this.calculateItemPrices(itemElems, inventory, inventoryLookup);
+                }
+            } finally {
+                // Clear guard even on error so later calculations are not blocked forever
+                this.isCalculating = false;
+            }
+        }
+
+        /**
+         * Calculate and store prices for all items (populates dataset.askValue/bidValue)
+         * @param {NodeList} itemElems - Item elements
+         * @param {Array} cachedInventory - Optional cached inventory data
+         * @param {Map} cachedInventoryLookup - Optional cached inventory lookup map
+         */
+        async calculateItemPrices(itemElems, cachedInventory = null, cachedInventoryLookup = null) {
+            const gameData = dataManager.getInitClientData();
+            if (!gameData) {
+                console.warn('[InventoryBadgeManager] Game data not available yet');
+                return;
+            }
+
+            // Use cached inventory if provided, otherwise fetch fresh
+            let inventory = cachedInventory;
+            let inventoryLookup = cachedInventoryLookup;
+
+            if (!inventory || !inventoryLookup) {
+                // Get inventory data for enhancement level matching
+                inventory = dataManager.getInventory();
+                if (!inventory) {
+                    console.warn('[InventoryBadgeManager] Inventory data not available yet');
+                    return;
+                }
+
+                // Build lookup map: itemHrid|count -> inventory item
+                inventoryLookup = new Map();
+                for (const item of inventory) {
+                    if (item.itemLocationHrid === '/item_locations/inventory') {
+                        const key = `${item.itemHrid}|${item.count}|${item.enhancementLevel || 0}`;
+                        inventoryLookup.set(key, item);
+                    }
+                }
+            }
+
+            // OPTIMIZATION: Pre-fetch all market prices in one batch
+            const itemsToPrice = [];
+            for (const item of inventory) {
+                if (item.itemLocationHrid === '/item_locations/inventory') {
+                    itemsToPrice.push({
+                        itemHrid: item.itemHrid,
+                        enhancementLevel: item.enhancementLevel || 0,
+                    });
+                }
+            }
+            const priceCache = marketAPI.getPricesBatch(itemsToPrice);
+
+            // Get settings for high enhancement cost mode. The expensive
+            // calculateEnhancementPath path only runs when the Net Worth feature
+            // is enabled — disabling that feature skips the per-item enhancement
+            // simulation that can take 100+ ms for each +20 piece and freeze the
+            // tab during init when the inventory has many high-enhancement items.
+            const useHighEnhancementCost =
+                config.getSetting('networth_highEnhancementUseCost') && config.isFeatureEnabled('networth');
+            const minLevel = config.getSetting('networth_highEnhancementMinLevel') || 13;
+
+            // Currency items to skip (actual currencies, not category)
+            const currencyHrids = new Set([
+                '/items/gold_coin',
+                '/items/cowbell',
+                '/items/task_token',
+                '/items/chimerical_token',
+                '/items/sinister_token',
+                '/items/enchanted_token',
+                '/items/pirate_token',
+            ]);
+
+            for (const itemElem of itemElems) {
+                // Get item HRID from SVG aria-label
+                const svg = itemElem.querySelector('svg');
+                if (!svg) continue;
+
+                const itemName = svg.getAttribute('aria-label');
+                if (!itemName) continue;
+
+                // Find item HRID
+                const itemHrid = this.findItemHrid(itemName, gameData);
+                if (!itemHrid) {
+                    console.warn('[InventoryBadgeManager] Could not find HRID for item:', itemName);
+                    continue;
+                }
+
+                // Skip actual currency items
+                if (currencyHrids.has(itemHrid)) {
+                    itemElem.dataset.askPrice = 0;
+                    itemElem.dataset.bidPrice = 0;
+                    itemElem.dataset.askValue = 0;
+                    itemElem.dataset.bidValue = 0;
+                    continue;
+                }
+
+                // Get item count
+                const countElem = itemElem.querySelector('[class*="Item_count"]');
+                if (!countElem) continue;
+
+                const itemCount = parseItemCount(countElem.textContent, 0);
+
+                // Get item details (reused throughout)
+                const itemDetails = gameData.itemDetailMap[itemHrid];
+
+                // Handle trainee items (untradeable, no market data)
+                if (itemHrid.includes('trainee_')) {
+                    // EXCEPTION: Trainee charms should use vendor price
+                    const equipmentType = itemDetails?.equipmentDetail?.type;
+                    const isCharm = equipmentType === '/equipment_types/charm';
+                    const sellPrice = itemDetails?.sellPrice;
+
+                    if (isCharm && sellPrice) {
+                        // Use sell price for trainee charms
+                        itemElem.dataset.askPrice = sellPrice;
+                        itemElem.dataset.bidPrice = sellPrice;
+                        itemElem.dataset.askValue = sellPrice * itemCount;
+                        itemElem.dataset.bidValue = sellPrice * itemCount;
+                    } else {
+                        // Other trainee items (weapons/armor) remain at 0
+                        itemElem.dataset.askPrice = 0;
+                        itemElem.dataset.bidPrice = 0;
+                        itemElem.dataset.askValue = 0;
+                        itemElem.dataset.bidValue = 0;
+                    }
+                    continue;
+                }
+
+                // Handle openable containers (chests, crates, caches)
+                if (itemDetails?.isOpenable && expectedValueCalculator.isInitialized) {
+                    const evData = expectedValueCalculator.calculateExpectedValue(itemHrid);
+                    if (evData && evData.expectedValue > 0) {
+                        let netValue = evData.expectedValue;
+
+                        const chestKeyHrid = DUNGEON_CHEST_CHEST_KEYS[itemHrid];
+                        if (chestKeyHrid) {
+                            const keyPricingSetting = config.getSettingValue('profitCalc_keyPricingMode') || 'ask';
+                            const keyPrices = marketAPI.getPrice(chestKeyHrid);
+                            const keyPrice = keyPrices?.[keyPricingSetting] ?? keyPrices?.ask ?? 0;
+                            netValue -= keyPrice;
+                        }
+
+                        itemElem.dataset.askPrice = netValue;
+                        itemElem.dataset.bidPrice = netValue;
+                        itemElem.dataset.askValue = netValue * itemCount;
+                        itemElem.dataset.bidValue = netValue * itemCount;
+                        continue;
+                    }
+                }
+
+                // Match to inventory item to get enhancement level
+                const enhEl = itemElem.querySelector('[class*="Item_enhancementLevel"]');
+                const domEnhancementLevel = enhEl ? parseInt(enhEl.textContent.trim().replace('+', ''), 10) || 0 : 0;
+                const key = `${itemHrid}|${itemCount}|${domEnhancementLevel}`;
+                const inventoryItem = inventoryLookup.get(key);
+                const enhancementLevel = inventoryItem?.enhancementLevel || 0;
+
+                // Check if item is equipment
+                const isEquipment = !!itemDetails?.equipmentDetail;
+
+                let askPrice = 0;
+                let bidPrice = 0;
+
+                // Determine pricing method
+                if (isEquipment && useHighEnhancementCost && enhancementLevel >= minLevel) {
+                    // Use enhancement cost calculation for high-level equipment
+                    const cachedCost = networthCache.get(itemHrid, enhancementLevel);
+
+                    if (cachedCost !== null) {
+                        // Use cached value for both ask and bid
+                        askPrice = cachedCost;
+                        bidPrice = cachedCost;
+                    } else {
+                        // Calculate enhancement cost
+                        const enhancementParams = enhancementConfig_js.getEnhancingParams();
+                        const enhancementPath = calculateEnhancementPath(itemHrid, enhancementLevel, enhancementParams);
+
+                        if (enhancementPath && enhancementPath.optimalStrategy) {
+                            const enhancementCost = enhancementPath.optimalStrategy.totalCost;
+
+                            // Cache the result
+                            networthCache.set(itemHrid, enhancementLevel, enhancementCost);
+
+                            // Use enhancement cost for both ask and bid
+                            askPrice = enhancementCost;
+                            bidPrice = enhancementCost;
+                        } else {
+                            // Enhancement calculation failed, fallback to market price
+                            const key = `${itemHrid}:${enhancementLevel}`;
+                            const marketPrice = priceCache.get(key);
+                            if (marketPrice) {
+                                askPrice = marketPrice.ask > 0 ? marketPrice.ask : 0;
+                                bidPrice = marketPrice.bid > 0 ? marketPrice.bid : 0;
+                            }
+                        }
+                    }
+                } else {
+                    // Use market price (for non-equipment or low enhancement levels)
+                    const key = `${itemHrid}:${enhancementLevel}`;
+                    const marketPrice = priceCache.get(key);
+
+                    // Start with whatever market data exists
+                    if (marketPrice) {
+                        askPrice = marketPrice.ask > 0 ? marketPrice.ask : 0;
+                        bidPrice = marketPrice.bid > 0 ? marketPrice.bid : 0;
+                    }
+
+                    // For enhanced equipment, fill in missing prices with enhancement cost.
+                    // Same gate as the primary high-enhancement branch above: this fallback
+                    // runs calculateEnhancementPath per item, which is the actual freeze
+                    // source for +20 inventories. Skip it when Net Worth is disabled.
+                    if (
+                        useHighEnhancementCost &&
+                        isEquipment &&
+                        enhancementLevel > 0 &&
+                        (askPrice === 0 || bidPrice === 0)
+                    ) {
+                        // Check cache first
+                        const cachedCost = networthCache.get(itemHrid, enhancementLevel);
+                        let enhancementCost = cachedCost;
+
+                        if (cachedCost === null) {
+                            // Calculate enhancement cost
+                            const enhancementParams = enhancementConfig_js.getEnhancingParams();
+                            const enhancementPath = calculateEnhancementPath(itemHrid, enhancementLevel, enhancementParams);
+
+                            if (enhancementPath && enhancementPath.optimalStrategy) {
+                                enhancementCost = enhancementPath.optimalStrategy.totalCost;
+                                networthCache.set(itemHrid, enhancementLevel, enhancementCost);
+                            } else {
+                                enhancementCost = null;
+                            }
+                        }
+
+                        // Fill in missing prices
+                        if (enhancementCost !== null) {
+                            if (askPrice === 0) askPrice = enhancementCost;
+                            if (bidPrice === 0) bidPrice = enhancementCost;
+                        }
+                    } else if (isEquipment && enhancementLevel === 0 && askPrice === 0 && bidPrice === 0) {
+                        // For unenhanced equipment with no market data, use crafting cost
+                        const craftingCost = this.calculateCraftingCost(itemHrid);
+                        if (craftingCost > 0) {
+                            askPrice = craftingCost;
+                            bidPrice = craftingCost;
+                        } else if (!this.warnedItems.has(itemHrid)) {
+                            // No crafting recipe found (likely drop-only item) - silently skip
+                            this.warnedItems.add(itemHrid);
+                        }
+                    } else if (!isEquipment && askPrice === 0 && bidPrice === 0) {
+                        // Non-equipment with no market data - silently skip
+                        if (!this.warnedItems.has(itemHrid)) {
+                            this.warnedItems.add(itemHrid);
+                        }
+                        // Leave values at 0 (no badge will be shown)
+                    }
+                }
+
+                // Apply market tax if setting is enabled
+                if (config.getSetting('invSort_netOfTax')) {
+                    const taxRate = itemHrid === profitConstants_js.COWBELL_BAG_HRID ? profitConstants_js.COWBELL_BAG_TAX : profitConstants_js.MARKET_TAX;
+                    askPrice *= 1 - taxRate;
+                    bidPrice *= 1 - taxRate;
+                }
+
+                // Store per-item prices (for badge display)
+                itemElem.dataset.askPrice = askPrice;
+                itemElem.dataset.bidPrice = bidPrice;
+
+                // Store stack totals (for sorting and stack value badges)
+                itemElem.dataset.askValue = askPrice * itemCount;
+                itemElem.dataset.bidValue = bidPrice * itemCount;
+            }
+        }
+
+        /**
+         * Calculate crafting cost for an item (used for unenhanced equipment with no market data)
+         * @param {string} itemHrid - Item HRID
+         * @returns {number} Total material cost or 0 if not craftable
+         */
+        calculateCraftingCost(itemHrid) {
+            const gameData = dataManager.getInitClientData();
+            if (!gameData) return 0;
+
+            // Find the action that produces this item
+            for (const action of Object.values(gameData.actionDetailMap || {})) {
+                if (action.outputItems) {
+                    for (const output of action.outputItems) {
+                        if (output.itemHrid === itemHrid) {
+                            // Found the crafting action, calculate material costs
+                            let inputCost = 0;
+
+                            // Add input items
+                            if (action.inputItems && action.inputItems.length > 0) {
+                                for (const input of action.inputItems) {
+                                    const inputPrice = marketData_js.getItemPrice(input.itemHrid, { mode: 'ask' }) || 0;
+                                    inputCost += inputPrice * input.count;
+                                }
+                            }
+
+                            // Apply Artisan Tea reduction (0.9x) to input materials
+                            inputCost *= 0.9;
+
+                            // Add upgrade item cost (not affected by Artisan Tea)
+                            let upgradeCost = 0;
+                            if (action.upgradeItemHrid) {
+                                const upgradePrice = marketData_js.getItemPrice(action.upgradeItemHrid, { mode: 'ask' }) || 0;
+                                upgradeCost = upgradePrice;
+                            }
+
+                            const totalCost = inputCost + upgradeCost;
+
+                            // Divide by output count to get per-item cost
+                            return totalCost / (output.count || 1);
+                        }
+                    }
+                }
+            }
+
+            return 0;
+        }
+
+        /**
+         * Find item HRID from item name
+         * @param {string} itemName - Item display name
+         * @param {Object} gameData - Game data
+         * @returns {string|null} Item HRID
+         */
+        /**
+         * Build reverse lookup map from item name to HRID
+         * Built once on first use, cached thereafter
+         * @param {Object} gameData - Game data
+         */
+        buildNameToHridMap(gameData) {
+            if (this.nameToHridMap) {
+                return; // Already built
+            }
+
+            this.nameToHridMap = new Map();
+
+            if (!gameData || !gameData.itemDetailMap) {
+                console.warn('[InventoryBadgeManager] Cannot build name lookup: missing itemDetailMap');
+                return;
+            }
+
+            // Build reverse lookup: name -> HRID (one-time O(n) operation)
+            for (const [hrid, item] of Object.entries(gameData.itemDetailMap)) {
+                if (item.name) {
+                    this.nameToHridMap.set(item.name, hrid);
+                    // Add ★ ↔ (R) variants so both display formats resolve
+                    if (item.name.includes('(R)')) {
+                        this.nameToHridMap.set(item.name.replace(/\s*\(R\)/, ' ★'), hrid);
+                    } else if (item.name.includes('★')) {
+                        this.nameToHridMap.set(item.name.replace(/\s*★/, ' (R)'), hrid);
+                    }
+                }
+            }
+        }
+
+        /**
+         * Find item HRID by name (optimized with reverse lookup map)
+         * @param {string} itemName - Item name
+         * @param {Object} gameData - Game data
+         * @returns {string|null} Item HRID or null if not found
+         */
+        findItemHrid(itemName, gameData) {
+            // Build map on first use (lazy initialization)
+            if (!this.nameToHridMap) {
+                this.buildNameToHridMap(gameData);
+            }
+
+            // O(1) lookup
+            return this.nameToHridMap.get(itemName) || null;
+        }
+
+        /**
+         * Check if item has any badges
+         * @param {Element} itemElem - Item container element
+         * @returns {boolean} True if item has any badge elements
+         */
+        itemHasBadges(itemElem) {
+            return !!(
+                itemElem.querySelector('.mwi-badge-price-bid') ||
+                itemElem.querySelector('.mwi-badge-price-ask') ||
+                itemElem.querySelector('.mwi-stack-price')
+            );
+        }
+
+        /**
+         * Disable and cleanup
+         */
+        disable() {
+            this.unregisterHandlers.forEach((unregister) => unregister());
+            this.unregisterHandlers = [];
+            this.providers.clear();
+            this.processedItems = new WeakSet();
+            this.currentInventoryElem = null;
+            this.isInitialized = false;
+        }
+    }
+
+    const inventoryBadgeManager = new InventoryBadgeManager();
+
+    /**
+     * Watchlist
+     *
+     * A list of items you care about, what you hold, and what it is worth.
+     *
+     * Inventory Value already says what the whole bag is worth, which is a number
+     * you cannot act on — it moves when anything moves. The question behind this one
+     * is narrower and answerable: *these thirty things, how many have I got, what
+     * are they worth, and which of them should I not be selling on the market.*
+     *
+     * ## Building the list is the feature
+     *
+     * Adding thirty items one at a time is thirty clicks and a wiki tab, and nobody
+     * does it twice. So a whole zone's drop table goes on with one tick, read from
+     * the game's own data — both drop tables of every ordinary spawn and every boss,
+     * or the reward table if it is a dungeon. Chests work the same way. Items can
+     * still be added one at a time, and those are never removed by un-ticking
+     * anything.
+     *
+     * ## The vendor warning
+     *
+     * A market bid below what the vendor pays flat is not a price, it is a trap, and
+     * a list that reports it as the item's value quietly advises the worse of two
+     * sales. Those rows show the vendor price and say so. Toolasha already made this
+     * comparison inside the bulk-sell flow; here it stands as a property of the item
+     * rather than as a step in selling one.
+     *
+     * The set algebra is in `utils/watchlist.js` and the drop-table walking in
+     * `utils/drop-sources.js`, both with tests. This module reads the game, draws
+     * the panel, and does no arithmetic of its own.
+     *
+     * The panel is NTally's, from MWI Combat Suite by Frotty (MIT) — see
+     * `third-party/mwi-combat-suite/` and `docs/THIRD-PARTY-LICENSES.md`. The code is
+     * Toolasha's own.
+     */
+
+
+    const PANEL_ID$3 = 'toolasha-watchlist-panel';
+    const GEOMETRY_KEY$1 = 'watchlistPanel';
+    const STORAGE_KEY$3 = 'watchlist';
+    const DEFAULT_PANEL$2 = { width: 560, height: 640 };
+    const REFRESH_MS$1 = 5000;
+    const DOT_CLASS = 'toolasha-watchlist-dot';
+    const MENU_BUTTON_CLASS$1 = 'toolasha-watchlist-track';
+    const MENU_BUTTON_SETTING$1 = 'watchlist_menuButton';
+    const DOTS_SETTING = 'watchlist_inventoryDots';
+
+    const COLORS$2 = {
+        background: 'rgba(14, 16, 22, 0.97)',
+        card: 'rgba(255, 255, 255, 0.04)',
+        headerBg: 'rgba(20, 30, 24, 0.9)',
+        border: 'rgba(120, 210, 150, 0.32)',
+        hairline: 'rgba(255, 255, 255, 0.10)',
+        text: '#e8ecf5',
+        textDim: 'rgba(232, 236, 245, 0.5)',
+        accent: '#7fd6a3',
+    };
+
+    /**
+     * What the list is and which sets built it.
+     *
+     * At module scope and persisted, because the overlay row and the inventory dot
+     * both read it while the panel is closed — which is most of the time.
+     */
+    const state$1 = { entries: [], zones: {}, chests: {}, sortBy: 'value', direction: 'desc' };
+
+    /** What a character with no saved list starts from */
+    const emptyState = () => ({ entries: [], zones: {}, chests: {}, sortBy: 'value', direction: 'desc' });
+
+    /**
+     * Read this character's list back.
+     *
+     * Waits for the database — it is opened after the libraries are evaluated, so a
+     * read at module scope always returns the default and the list looks like it
+     * forgot everything — and for a character, because the key it reads is that
+     * character's and there is no answer before login.
+     * @returns {Promise<void>}
+     */
+    async function reload$1() {
+        try {
+            await storage.ready;
+            const saved = await readScoped(STORAGE_KEY$3, 'settings', null, { migrate: 'adopt' });
+            Object.assign(state$1, emptyState(), saved || {});
+            // The dot has by now drawn the previous character's list on every item
+            inventoryBadgeManager.invalidateCache?.();
+        } catch (error) {
+            console.error('[Watchlist] Reading the watchlist failed:', error);
+        }
+    }
+
+    reload$1();
+    // The key is the character's, so the list has to be read again as a different
+    // one — features are re-initialised on a switch but this state is module-scope
+    // and outlives that
+    dataManager.on('character_initialized', reload$1);
+    dataManager.on('character_switched', reload$1);
+
+    /** Write the list back, without making anybody wait for it */
+    function persist$1() {
+        writeScoped(STORAGE_KEY$3, { ...state$1 }, 'settings').catch((error) =>
+            console.error('[Watchlist] Saving the list failed:', error)
+        );
+    }
+
+    /**
+     * Whether an item is on the list.
+     *
+     * Exported because it is what the inventory dot asks, and because "is this
+     * tracked" is a reasonable thing for anything else to want to know.
+     *
+     * @param {string} itemHrid - The item
+     * @returns {boolean}
+     */
+    function isWatched(itemHrid) {
+        return state$1.entries.some((entry) => entry.hrid === itemHrid);
+    }
+
+    /** @returns {Array<Object>} The raw list */
+    function watchlistEntries() {
+        return [...state$1.entries];
+    }
+
+    /**
+     * Put one item on the list by hand.
+     *
+     * By hand means no set owns it, so un-ticking every zone and chest leaves it
+     * exactly where it is.
+     *
+     * @param {string} itemHrid - The item
+     * @param {string} [name] - Its display name
+     */
+    function watchItem(itemHrid, name) {
+        state$1.entries = addToWatchlist(state$1.entries, [{ hrid: itemHrid, name: name || nameOf$1(itemHrid) }], null);
+        persist$1();
+    }
+
+    /**
+     * Take one item off, whichever set put it there.
+     * @param {string} itemHrid - The item
+     */
+    function unwatchItem(itemHrid) {
+        state$1.entries = removeFromWatchlist(state$1.entries, itemHrid);
+        persist$1();
+    }
+
+    /**
+     * Empty the list, and untick every set.
+     *
+     * Both, because they are one thing: leaving the sets ticked would leave every
+     * checkbox claiming to have put rows on a list with no rows on it, and the next
+     * tick of that box would do nothing visible.
+     *
+     * One tick can add thirty rows, so undoing a mess has to be one gesture too.
+     */
+    function clearWatchlist() {
+        state$1.entries = [];
+        state$1.zones = {};
+        state$1.chests = {};
+        persist$1();
+        inventoryBadgeManager.invalidateCache?.();
+    }
+
+    /**
+     * @param {string} itemHrid - The item
+     * @returns {string} Its name, or something readable from the hrid
+     */
+    function nameOf$1(itemHrid) {
+        return dataManager.getItemDetails?.(itemHrid)?.name || String(itemHrid).replace('/items/', '').replace(/_/g, ' ');
+    }
+
+    /**
+     * How many of an item the character holds, across every stack.
+     *
+     * Summed rather than taken from the first match: the same item at different
+     * enhancement levels is several inventory entries, and reporting one of them is
+     * reporting a number that is right for nothing.
+     *
+     * @param {string} itemHrid - The item
+     * @returns {number}
+     */
+    function heldCount(itemHrid) {
+        let total = 0;
+        for (const entry of dataManager.getInventory?.() || []) {
+            if (entry?.itemHrid === itemHrid) total += entry.count || 0;
+        }
+        return total;
+    }
+
+    /**
+     * What the vendor pays flat for an item.
+     * @param {string} itemHrid - The item
+     * @returns {number}
+     */
+    function vendorPriceOf(itemHrid) {
+        return dataManager.getItemDetails?.(itemHrid)?.sellPrice || 0;
+    }
+
+    /**
+     * Every row, priced and counted.
+     * @returns {Array<Object>} From `valueWatchlist`, sorted
+     */
+    function watchlistRows() {
+        // Built once per pass rather than per row: it is a walk of every listing,
+        // and there are more rows than listings
+        const listed = listedCounts(
+            dataManager.getCharacterData?.()?.myMarketListings || dataManager.characterData?.myMarketListings
+        );
+
+        const rows = valueWatchlist(state$1.entries, {
+            quantityOf: heldCount,
+            pricesFor: (hrid) => marketData_js.getItemPrices(hrid),
+            vendorOf: vendorPriceOf,
+            listedOf: (hrid) => listed[hrid],
+        });
+        return sortRows(rows, state$1.sortBy, state$1.direction);
+    }
+
+    /**
+     * Tick or untick a set, adding or re-homing its items.
+     *
+     * @param {string} kind - `zones` or `chests`
+     * @param {string} id - Which set
+     * @param {boolean} on - Ticked or not
+     */
+    function toggleSet(kind, id, on) {
+        const source = `${kind}:${id}`;
+
+        if (on) {
+            state$1[kind][id] = true;
+            state$1.entries = addToWatchlist(state$1.entries, contentsOf(kind, id), source);
+        } else {
+            delete state$1[kind][id];
+            // Everything still ticked, so an item two sets share is re-homed rather
+            // than lost — the reason this is not a filter
+            const stillOn = [];
+            for (const other of ['zones', 'chests']) {
+                for (const otherId of Object.keys(state$1[other])) {
+                    stillOn.push({ id: `${other}:${otherId}`, hrids: contentsOf(other, otherId).map((item) => item.hrid) });
+                }
+            }
+            state$1.entries = removeSource(state$1.entries, source, stillOn);
+        }
+        persist$1();
+        inventoryBadgeManager.invalidateCache?.();
+    }
+
+    /**
+     * @param {string} kind - `zones` or `chests`
+     * @param {string} id - Which set
+     * @returns {Array<{hrid: string, name: string}>}
+     */
+    function contentsOf(kind, id) {
+        const data = dataManager.getInitClientData?.();
+        if (!data) return [];
+
+        return kind === 'zones' ? zoneDrops(id, data) : openableDrops(id, data);
+    }
+
+    class WatchlistPanel {
+        constructor() {
+            this.panel = null;
+            this.bodyEl = null;
+            this.refreshId = null;
+            this.collapsed = { zones: true, chests: true };
+        }
+
+        show() {
+            if (this.panel && document.body.contains(this.panel)) {
+                panelZIndex_js.bringPanelToFront(this.panel);
+                return;
+            }
+            this._create();
+        }
+
+        hide() {
+            this._remove();
+        }
+
+        toggle() {
+            if (this.panel) this.hide();
+            else this.show();
+        }
+
+        _create() {
+            this.panel = document.createElement('div');
+            this.panel.id = PANEL_ID$3;
+            Object.assign(this.panel.style, {
+                position: 'fixed',
+                top: '140px',
+                left: '110px',
+                zIndex: String(config.Z_FLOATING_PANEL),
+                // Clamped so the first open on a phone is not wider than the screen
+                width: `min(${DEFAULT_PANEL$2.width}px, 92vw)`,
+                height: `min(${DEFAULT_PANEL$2.height}px, 80vh)`,
+                background: COLORS$2.background,
+                border: `1px solid ${COLORS$2.border}`,
+                borderRadius: '8px',
+                boxShadow: '0 8px 32px rgba(0, 0, 0, 0.6)',
+                color: COLORS$2.text,
+                fontSize: '12px',
+                display: 'flex',
+                flexDirection: 'column',
+                overflow: 'hidden',
+            });
+
+            this.headerEl = this._header();
+            this.panel.appendChild(this.headerEl);
+
+            this.bodyEl = document.createElement('div');
+            Object.assign(this.bodyEl.style, {
+                flex: '1',
+                overflow: 'auto',
+                padding: '8px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '8px',
+                fontVariantNumeric: 'tabular-nums',
+            });
+            this.panel.appendChild(this.bodyEl);
+
+            this.detachDrag = floatingPanel_js.makeDraggable(this.panel, this.headerEl, (position) => {
+                panelGeometry_js.saveGeometry(GEOMETRY_KEY$1, { left: parseFloat(position.left), top: parseFloat(position.top) });
+            });
+            this.detachResize = floatingPanel_js.makeResizable(this.panel, {
+                minWidth: 380,
+                minHeight: 240,
+                onResize: (size) => panelGeometry_js.saveGeometry(GEOMETRY_KEY$1, size),
+            });
+
+            document.body.appendChild(this.panel);
+            panelZIndex_js.registerFloatingPanel(this.panel);
+            panelGeometry_js.restoreGeometry(this.panel, GEOMETRY_KEY$1, { width: 380, height: 240 });
+
+            this._render();
+            this.refreshId = setInterval(() => {
+                if (document.hidden) return;
+                this._render();
+            }, REFRESH_MS$1);
+        }
+
+        _header() {
+            const header = document.createElement('div');
+            Object.assign(header.style, {
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px',
+                cursor: 'move',
+                padding: '7px 8px 7px 11px',
+                background: COLORS$2.headerBg,
+                borderBottom: `1px solid ${COLORS$2.border}`,
+                userSelect: 'none',
+                flex: '0 0 auto',
+            });
+
+            const title = document.createElement('span');
+            title.textContent = 'Watchlist';
+            title.style.fontWeight = 'bold';
+            title.style.color = COLORS$2.accent;
+
+            this.headerCount = document.createElement('span');
+            this.headerCount.style.color = COLORS$2.textDim;
+
+            this.headerTotal = document.createElement('span');
+            this.headerTotal.style.color = overlayFormat_js.ROW_COLORS.gold;
+
+            const spacer = document.createElement('div');
+            spacer.style.flex = '1';
+
+            const close = document.createElement('button');
+            close.textContent = '✕';
+            Object.assign(close.style, {
+                background: 'none',
+                border: 'none',
+                color: COLORS$2.text,
+                cursor: 'pointer',
+                fontSize: '13px',
+                padding: '2px 4px',
+            });
+            close.addEventListener('click', (event) => {
+                event.stopPropagation();
+                this.hide();
+            });
+
+            // Both switches are here rather than in the body: they are about the
+            // panel's reach into the rest of the game rather than about any one
+            // item, and a row of tick boxes under a long table is a row nobody
+            // scrolls to. They are the same settings the settings page has, not
+            // copies, so the two can never disagree.
+            this.dotsBtn = this._toggle(
+                DOTS_SETTING,
+                () => (config.getSetting(DOTS_SETTING) ? 'Dots on' : 'Dots off'),
+                'A dot in the corner of every inventory tile holding a tracked item. Knowing what is on the list ' +
+                    'while you are looking at your inventory is the point of having one — but it is another mark on a ' +
+                    'busy grid, so it can go.'
+            );
+            this.menuBtn = this._toggle(
+                MENU_BUTTON_SETTING$1,
+                () => (config.getSetting(MENU_BUTTON_SETTING$1) ? 'Menu button on' : 'Menu button off'),
+                'Adds Track / Untrack beside Sell when you click an inventory item. Off by default, because it ' +
+                    'changes a menu you open for other reasons and a misclick there is a sale.'
+            );
+
+            header.append(title, this.headerCount, this.headerTotal, spacer, this.dotsBtn, this.menuBtn, close);
+            return header;
+        }
+
+        /**
+         * A header switch that says which way it is set.
+         *
+         * @param {string} setting - Which setting it writes
+         * @param {Function} label - Returns the current label
+         * @param {string} title - Hover explanation
+         * @returns {HTMLButtonElement}
+         */
+        _toggle(setting, label, title) {
+            const button = document.createElement('button');
+            button.title = title;
+            button.dataset.setting = setting;
+            button._label = label;
+            Object.assign(button.style, {
+                background: 'rgba(255, 255, 255, 0.06)',
+                border: `1px solid ${COLORS$2.border}`,
+                borderRadius: '3px',
+                cursor: 'pointer',
+                fontSize: '10px',
+                padding: '2px 7px',
+                whiteSpace: 'nowrap',
+            });
+            button.addEventListener('click', (event) => {
+                event.stopPropagation();
+                config.setSetting(setting, !config.getSetting(setting));
+                this._paintToggles();
+            });
+            return button;
+        }
+
+        /** Put the header switches in step with the settings they write */
+        _paintToggles() {
+            for (const button of [this.dotsBtn, this.menuBtn]) {
+                if (!button?._label) continue;
+                button.textContent = button._label();
+                const on = Boolean(config.getSetting(button.dataset.setting));
+                button.style.color = on ? COLORS$2.accent : COLORS$2.textDim;
+                button.style.opacity = on ? '1' : '0.7';
+            }
+        }
+
+        _render() {
+            if (!this.bodyEl) return;
+
+            const rows = watchlistRows();
+            const totals = watchlistTotals(rows);
+
+            this.headerCount.textContent = `${totals.held} / ${totals.items}`;
+            this.headerCount.title = 'How many of the tracked items you hold any of.';
+            this.headerTotal.textContent = `${formatters_js.formatKMB(totals.ask)} ask · ${formatters_js.formatKMB(totals.bid)} bid`;
+            this._paintToggles();
+
+            this.bodyEl.replaceChildren();
+            for (const build of [
+                () => this._sets('zones', 'Zones', combatZones(dataManager.getInitClientData?.()?.actionDetailMap)),
+                () => this._sets('chests', 'Chests', openableItems(dataManager.getInitClientData?.())),
+                () => this._table(rows),
+            ]) {
+                // One section that cannot be drawn must not take the others with it
+                try {
+                    this.bodyEl.appendChild(build());
+                } catch (error) {
+                    console.error('[Watchlist] A section could not be drawn:', error);
+                    const failed = this._note(`This section could not be drawn: ${error.message}`);
+                    failed.style.color = overlayFormat_js.ROW_COLORS.bad;
+                    this.bodyEl.appendChild(failed);
+                }
+            }
+        }
+
+        /**
+         * The tick boxes for one kind of set.
+         *
+         * @param {string} kind - `zones` or `chests`
+         * @param {string} title - Heading
+         * @param {Array<{id: string, name: string, isDungeon?: boolean}>} available - What can be ticked
+         * @returns {HTMLElement}
+         */
+        _sets(kind, title, available) {
+            const card = this._card();
+            const on = Object.keys(state$1[kind]).length;
+
+            const heading = document.createElement('div');
+            Object.assign(heading.style, {
+                color: COLORS$2.accent,
+                fontWeight: 'bold',
+                cursor: 'pointer',
+                userSelect: 'none',
+            });
+            heading.textContent = `${this.collapsed[kind] ? '▶' : '▼'} ${title}${on ? ` — ${on} on` : ''}`;
+            heading.addEventListener('click', () => {
+                this.collapsed[kind] = !this.collapsed[kind];
+                this._render();
+            });
+            card.appendChild(heading);
+
+            if (this.collapsed[kind]) return card;
+            if (!available.length) {
+                card.appendChild(this._note('Nothing loaded yet.'));
+                return card;
+            }
+
+            const grid = document.createElement('div');
+            Object.assign(grid.style, {
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(168px, 1fr))',
+                gap: '2px 8px',
+                marginTop: '5px',
+            });
+
+            for (const set of available) {
+                const label = document.createElement('label');
+                Object.assign(label.style, { display: 'flex', alignItems: 'center', gap: '5px', cursor: 'pointer' });
+
+                const box = document.createElement('input');
+                box.type = 'checkbox';
+                box.checked = Boolean(state$1[kind][set.id]);
+                box.addEventListener('change', () => {
+                    toggleSet(kind, set.id, box.checked);
+                    this._render();
+                });
+
+                const name = document.createElement('span');
+                name.textContent = set.name;
+                name.style.overflow = 'hidden';
+                name.style.textOverflow = 'ellipsis';
+                name.style.whiteSpace = 'nowrap';
+                if (set.isDungeon) {
+                    name.style.color = overlayFormat_js.ROW_COLORS.accent;
+                    name.title = 'A dungeon — its drops come from the completion reward table, not from its monsters.';
+                }
+
+                label.append(box, name);
+                grid.appendChild(label);
+            }
+            card.appendChild(grid);
+            return card;
+        }
+
+        /**
+         * @param {Array<Object>} rows - From `watchlistRows`
+         * @returns {HTMLElement}
+         */
+        _table(rows) {
+            const card = this._card();
+
+            const heading = this._row();
+            heading.style.color = COLORS$2.textDim;
+            heading.style.borderBottom = `1px solid ${COLORS$2.hairline}`;
+            heading.style.paddingBottom = '3px';
+
+            const clear = document.createElement('button');
+            clear.textContent = '⌫';
+            Object.assign(clear.style, {
+                background: 'none',
+                border: 'none',
+                color: COLORS$2.textDim,
+                cursor: 'pointer',
+                padding: '0 2px',
+            });
+            clear.title = 'Empty the list and untick every set';
+            clear.dataset.clearAll = 'true';
+            clear.addEventListener('click', () => {
+                clearWatchlist();
+                this._render();
+            });
+
+            heading.append(
+                document.createElement('span'),
+                this._sortHeader('Item', 'name'),
+                this._cell('Held'),
+                this._cell('Unit'),
+                this._sortHeader('Value', 'value', 'right'),
+                rows.length ? clear : document.createElement('span')
+            );
+            card.appendChild(heading);
+
+            if (!rows.length) {
+                card.appendChild(this._note('Nothing tracked yet — tick a zone or a chest above.'));
+                return card;
+            }
+
+            for (const item of rows) card.appendChild(this._itemRow(item));
+            return card;
+        }
+
+        /**
+         * @param {Object} item - One priced row
+         * @returns {HTMLElement}
+         */
+        _itemRow(item) {
+            const line = this._row();
+            line.style.padding = '2px 0';
+
+            const icon = overlayFormat_js.itemIcon(item.hrid, 20);
+            overlayFormat_js.linkToMarketplace(icon, item.hrid, marketplaceTabs_js.navigateToMarketplace);
+            // Nothing held is still a row worth having — it is the part of the
+            // collection you have not got — but it should not look like the rest
+            if (!item.quantity) icon.style.filter = 'grayscale(100%)';
+            icon.style.opacity = item.quantity ? '1' : '0.4';
+
+            const name = document.createElement('span');
+            name.textContent = item.name;
+            Object.assign(name.style, { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
+            overlayFormat_js.linkToMarketplace(name, item.hrid, marketplaceTabs_js.navigateToMarketplace);
+            if (!item.quantity) name.style.color = COLORS$2.textDim;
+
+            const held = this._cell(item.quantity ? formatters_js.formatWithSeparator(item.quantity) : '—');
+            held.style.color = item.quantity ? COLORS$2.text : COLORS$2.textDim;
+            // Where they are matters: on the market is "wait", in the bag is "done",
+            // and a single number cannot tell you which
+            if (item.listed || item.unclaimed) {
+                held.style.color = overlayFormat_js.ROW_COLORS.accent;
+                const parts = [`${formatters_js.formatWithSeparator(item.held)} in the bag`];
+                if (item.listed) parts.push(`${formatters_js.formatWithSeparator(item.listed)} listed for sale`);
+                if (item.unclaimed) parts.push(`${formatters_js.formatWithSeparator(item.unclaimed)} unclaimed on the market`);
+                held.title = parts.join(', ');
+                held.textContent = `${formatters_js.formatWithSeparator(item.quantity)}*`;
+            }
+
+            const unit = this._cell(this._unitText(item));
+            unit.style.color = item.flag ? overlayFormat_js.ROW_COLORS.bad : COLORS$2.textDim;
+            if (item.flag) unit.title = FLAG_MEANING[item.flag];
+
+            const value = this._cell(`${formatters_js.formatKMB(item.totalAsk)} · ${formatters_js.formatKMB(item.totalBid)}`);
+            value.style.color = overlayFormat_js.ROW_COLORS.gold;
+            value.title = `${formatters_js.formatWithSeparator(item.totalAsk)} at ask, ${formatters_js.formatWithSeparator(item.totalBid)} at bid.`;
+
+            const remove = document.createElement('button');
+            remove.textContent = '✕';
+            // Marked, because the header's close button is also an ✕ and "the first
+            // button on the panel" is the wrong one
+            remove.dataset.removeItem = item.hrid;
+            Object.assign(remove.style, {
+                background: 'none',
+                border: 'none',
+                color: COLORS$2.textDim,
+                cursor: 'pointer',
+                padding: '0 2px',
+            });
+            remove.title = 'Take this off the list';
+            remove.addEventListener('click', () => {
+                unwatchItem(item.hrid);
+                inventoryBadgeManager.invalidateCache?.();
+                this._render();
+            });
+
+            line.append(icon, name, held, unit, value, remove);
+            return line;
+        }
+
+        /**
+         * The unit price, saying when the market is not where to sell.
+         * @param {Object} item - One priced row
+         * @returns {string}
+         */
+        _unitText(item) {
+            const ask = formatters_js.formatKMB(item.ask);
+            if (item.flag === 'no-market') return `${ask} · ${formatters_js.formatKMB(item.bid)} vendor`;
+            if (item.flag === 'below-vendor') return `${ask} · ⚠ ${formatters_js.formatKMB(item.bid)} vendor`;
+            if (item.flag === 'equals-vendor') return `${ask} · ${formatters_js.formatKMB(item.bid)} vend`;
+
+            return `${ask} · ${formatters_js.formatKMB(item.bid)}`;
+        }
+
+        /**
+         * @param {string} text - Column label
+         * @param {string} by - What it sorts on
+         * @param {string} [align] - Text alignment
+         * @returns {HTMLElement}
+         */
+        _sortHeader(text, by, align = 'left') {
+            const header = document.createElement('span');
+            const active = state$1.sortBy === by;
+            header.textContent = active ? `${text} ${state$1.direction === 'asc' ? '▲' : '▼'}` : text;
+            Object.assign(header.style, { cursor: 'pointer', textAlign: align, userSelect: 'none' });
+            if (active) header.style.color = COLORS$2.accent;
+
+            header.addEventListener('click', () => {
+                if (state$1.sortBy === by) state$1.direction = state$1.direction === 'asc' ? 'desc' : 'asc';
+                else {
+                    state$1.sortBy = by;
+                    // Names read best from A, values from the top
+                    state$1.direction = by === 'name' ? 'asc' : 'desc';
+                }
+                persist$1();
+                this._render();
+            });
+            return header;
+        }
+
+        _card() {
+            const card = document.createElement('div');
+            Object.assign(card.style, {
+                background: COLORS$2.card,
+                border: `1px solid ${COLORS$2.hairline}`,
+                borderRadius: '6px',
+                padding: '7px 9px',
+            });
+            return card;
+        }
+
+        _row() {
+            const line = document.createElement('div');
+            Object.assign(line.style, {
+                display: 'grid',
+                gridTemplateColumns: '22px minmax(0, 1fr) 62px 128px 132px 18px',
+                gap: '6px',
+                alignItems: 'center',
+            });
+            return line;
+        }
+
+        _cell(text) {
+            const cell = document.createElement('span');
+            cell.textContent = text;
+            cell.style.textAlign = 'right';
+            cell.style.whiteSpace = 'nowrap';
+            return cell;
+        }
+
+        _note(text) {
+            const note = document.createElement('div');
+            note.textContent = text;
+            note.style.color = COLORS$2.textDim;
+            return note;
+        }
+
+        _remove() {
+            clearInterval(this.refreshId);
+            this.refreshId = null;
+            this.detachDrag?.();
+            this.detachDrag = null;
+            this.detachResize?.();
+            this.detachResize = null;
+
+            if (!this.panel) return;
+            panelZIndex_js.unregisterFloatingPanel(this.panel);
+            this.panel.remove();
+            this.panel = null;
+            this.bodyEl = null;
+        }
+    }
+
+    /**
+     * An item's hrid from the name on its tile, remembered.
+     *
+     * The lookup walks the whole item map, and the dot asks it once per tile on
+     * every inventory render. Names do not change, so asking twice is waste — and at
+     * a few hundred tiles against a few thousand items it is the kind of waste that
+     * shows up as the inventory tab stuttering.
+     */
+    const hridByName = new Map();
+
+    /**
+     * @param {string} name - Display name from the tile's `aria-label`
+     * @returns {string|null}
+     */
+    function hridForName(name) {
+        if (hridByName.has(name)) return hridByName.get(name);
+
+        const hrid = gameLookups_js.getItemHridFromName(name);
+        // Cached only once the item map has loaded, or the first inventory render
+        // of a session poisons the cache with nulls that never expire
+        if (hrid) hridByName.set(name, hrid);
+        return hrid;
+    }
+
+    /** What each flag means, said once rather than at every call site */
+    const FLAG_MEANING = {
+        'below-vendor': 'The market bid is below what the vendor pays. Sell this to the vendor.',
+        'equals-vendor': 'The market bid matches the vendor price, so either sale is the same.',
+        'no-market': 'No market price — this is what the vendor pays.',
+    };
+
+    const watchlistPanel = new WatchlistPanel();
+
+    /**
+     * The dot on tracked items in the inventory grid.
+     *
+     * The point of a watchlist is knowing what is on it while you are looking at
+     * your inventory, not while you are looking at the list — a list you have to
+     * open to consult is a list you consult twice and then forget.
+     *
+     * @param {HTMLElement} itemElem - One inventory tile
+     */
+    function markTrackedItem(itemElem) {
+        const existing = itemElem.querySelector(`.${DOT_CLASS}`);
+
+        // Checked per tile rather than by unregistering the provider, because the
+        // provider is what walks the grid — with it gone, the dots already drawn
+        // would sit there until the game happened to rebuild the tile
+        if (!config.getSetting(DOTS_SETTING)) {
+            existing?.remove();
+            return;
+        }
+
+        const name = itemElem.querySelector('svg')?.getAttribute('aria-label');
+        const hrid = name && hridForName(name);
+        if (!hrid || !isWatched(hrid)) {
+            existing?.remove();
+            return;
+        }
+        if (existing) return;
+
+        // The dot is positioned against the tile, and a tile the game left static
+        // would push it to whatever ancestor is positioned — usually the whole
+        // inventory panel, so every dot lands in the same corner
+        if (getComputedStyle(itemElem).position === 'static') itemElem.style.position = 'relative';
+
+        const dot = document.createElement('div');
+        dot.className = DOT_CLASS;
+        Object.assign(dot.style, {
+            position: 'absolute',
+            top: '2px',
+            left: '2px',
+            width: '8px',
+            height: '8px',
+            borderRadius: '50%',
+            background: COLORS$2.accent,
+            boxShadow: `0 0 3px ${COLORS$2.accent}`,
+            pointerEvents: 'none',
+            zIndex: '12',
+        });
+        itemElem.appendChild(dot);
+    }
+
+    /**
+     * The Track button in the game's own item menu.
+     *
+     * Off by default, and deliberately: this adds a button to a menu you open for
+     * other reasons, next to Sell. Somebody who never uses the watchlist should not
+     * find their item menu rearranged by a feature they did not ask for, and a
+     * misclick there is a sale.
+     *
+     * The switch lives in one place — the setting — and both the settings page and
+     * the panel's own checkbox write to it. `onSettingChange` does the rest, so
+     * flipping it from either surface attaches or detaches the observer immediately
+     * rather than at the next reload.
+     */
+    let detachMenuObserver$1 = null;
+
+    /**
+     * Put a Track button on one item menu.
+     * @param {HTMLElement} actionMenu - The game's `Item_actionMenu` popup
+     */
+    function injectTrackButton(actionMenu) {
+        if (actionMenu.querySelector(`.${MENU_BUTTON_CLASS$1}`)) return;
+
+        const itemName = actionMenu.querySelector('[class*="Item_name"]')?.textContent?.trim();
+        const hrid = itemName && hridForName(itemName);
+        if (!hrid) return;
+
+        const button = document.createElement('button');
+        // The game's own button classes, taken from a button already in this menu,
+        // so it does not look like something bolted on
+        const sibling = actionMenu.querySelector('button');
+        if (sibling) button.className = sibling.className;
+        button.classList.add(MENU_BUTTON_CLASS$1);
+
+        const label = () => {
+            button.textContent = isWatched(hrid) ? 'Untrack' : 'Track';
+        };
+        label();
+
+        button.addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+
+            if (isWatched(hrid)) unwatchItem(hrid);
+            else watchItem(hrid, itemName);
+
+            label();
+            inventoryBadgeManager.invalidateCache?.();
+            // The panel may be open behind the menu, and a list that does not
+            // change when you press Track looks like a button that does nothing
+            if (watchlistPanel.panel) watchlistPanel._render();
+        });
+
+        actionMenu.appendChild(button);
+    }
+
+    /** Start watching for item menus, if the setting says to */
+    function applyMenuButtonSetting$1() {
+        const wanted = config.getSetting(MENU_BUTTON_SETTING$1);
+
+        if (wanted && !detachMenuObserver$1) {
+            detachMenuObserver$1 = domObserver.onClass('WatchlistTrackButton', 'Item_actionMenu', injectTrackButton);
+        } else if (!wanted && detachMenuObserver$1) {
+            detachMenuObserver$1();
+            detachMenuObserver$1 = null;
+            document.querySelectorAll(`.${MENU_BUTTON_CLASS$1}`).forEach((button) => button.remove());
+        }
+    }
+
+    var watchlist = {
+        name: 'Watchlist',
+        initialize: () => {
+            // getSetting, not isFeatureEnabled: this key is not in the legacy
+            // features map, so the registry's own check always passed and the
+            // checkbox did nothing
+            if (!config.getSetting('watchlist')) return;
+
+            inventoryBadgeManager.registerProvider('watchlist-dot', markTrackedItem, 150);
+            applyMenuButtonSetting$1();
+            config.onSettingChange(MENU_BUTTON_SETTING$1, applyMenuButtonSetting$1);
+            // Turning the dots off has to clear the ones already drawn; turning
+            // them on has to redraw without waiting for the grid to change
+            config.onSettingChange(DOTS_SETTING, () => {
+                if (!config.getSetting(DOTS_SETTING)) {
+                    document.querySelectorAll(`.${DOT_CLASS}`).forEach((dot) => dot.remove());
+                }
+                inventoryBadgeManager.invalidateCache?.();
+            });
+        },
+        cleanup: () => {
+            inventoryBadgeManager.unregisterProvider('watchlist-dot');
+            document.querySelectorAll(`.${DOT_CLASS}`).forEach((dot) => dot.remove());
+            detachMenuObserver$1?.();
+            detachMenuObserver$1 = null;
+            document.querySelectorAll(`.${MENU_BUTTON_CLASS$1}`).forEach((button) => button.remove());
+            watchlistPanel.hide();
+        },
+    };
+
+    overlayRows_js.registerRow({
+        key: 'watchlist',
+        empty: 'Nothing watched',
+        name: 'Watchlist',
+        defaultSize: { width: 230, height: 30 },
+        render: (container) => {
+            const rows = watchlistRows();
+            if (!rows.length) return overlayFormat_js.blank(container);
+
+            const totals = watchlistTotals(rows);
+            const flagged = rows.filter((item) => item.flag === 'below-vendor').length;
+
+            overlayFormat_js.row(container, [
+                { text: 'Watch', color: overlayFormat_js.ROW_COLORS.dim },
+                { text: `${totals.held}/${totals.items}`, color: COLORS$2.accent, bold: true },
+                { text: formatters_js.formatKMB(totals.ask), color: overlayFormat_js.ROW_COLORS.gold, push: true },
+                // The one thing on this list that is a call to action rather than a
+                // figure, so it earns the space when there is any
+                flagged ? { text: `⚠ ${flagged}`, color: overlayFormat_js.ROW_COLORS.bad } : null,
+            ]);
+            container.title =
+                `${totals.held} of ${totals.items} tracked items held, worth ${formatters_js.formatWithSeparator(Math.round(totals.ask))} at ask.` +
+                (flagged ? `\n${flagged} would sell for more to the vendor than to the market.` : '');
+        },
+        onOpen: () => watchlistPanel.toggle(),
+    });
+
+    /**
+     * Loadout Snapshot
+     *
+     * Listens for `loadouts_updated` WebSocket messages to capture all loadout configurations
+     * (equipment, abilities, consumables, enhancement levels) in real time.
+     *
+     * Stored snapshots are used by profit calculators to apply the correct tool/equipment
+     * bonuses for a skill even when that loadout is not currently equipped.
+     *
+     * Skill matching: the loadout's actionTypeHrid (e.g. "/action_types/brewing") is compared
+     * to the action type of the profit calculation. An "All Skills" loadout (empty actionTypeHrid)
+     * is used as a fallback when no skill-specific snapshot is found.
+     *
+     * Priority: skill default > all skills default > skill non-default > all skills non-default
+     */
+
+
+    const STORAGE_KEY_PREFIX$1 = 'loadout_snapshots';
+
+    /**
+     * Returns the active WebSocket hook instance.
+     * In the multi-bundle production build each library bundles its own copy of websocket.js,
+     * but only the Core library's instance has install() called on it.
+     * Prefer window.Toolasha.Core.webSocketHook so listeners actually receive messages.
+     * Falls back to the bundled copy for the dev standalone build (single bundle, one instance).
+     */
+    function getWebSocketHook() {
+        return (typeof window !== 'undefined' && window.Toolasha?.Core?.webSocketHook) || webSocketHook;
+    }
+
+    /**
+     * Get character-scoped storage key.
+     * @returns {string}
+     */
+    function getStorageKey$1() {
+        const charId = dataManager.getCurrentCharacterId() || 'default';
+        return `${STORAGE_KEY_PREFIX$1}_${charId}`;
+    }
+
+    /**
+     * Parse a wearable hash string into itemLocationHrid, itemHrid, and enhancementLevel.
+     * Format: "characterId::/item_locations/location::/items/item_hrid::enhancementLevel"
+     * Empty string means no item in that slot.
+     * @param {string} itemLocationHrid - The equipment slot key (e.g. "/item_locations/body")
+     * @param {string} wearableHash - The wearable hash value
+     * @returns {{ itemLocationHrid: string, itemHrid: string, enhancementLevel: number }|null}
+     */
+    function parseWearable(itemLocationHrid, wearableHash) {
+        if (!wearableHash) return null;
+
+        const parts = wearableHash.split('::');
+        const itemHrid = parts.find((p) => p.startsWith('/items/'));
+        if (!itemHrid) return null;
+
+        const lastPart = parts[parts.length - 1];
+        const enhancementLevel = !lastPart.startsWith('/') ? parseInt(lastPart, 10) || 0 : 0;
+
+        return { itemLocationHrid, itemHrid, enhancementLevel };
+    }
+
+    /**
+     * The best enhancement level owned of every item, from the inventory.
+     *
+     * Equipped pieces are in `characterItems` alongside the loose ones, so this
+     * covers what is worn as well as what is in the bag — which is what "highest
+     * owned" means to the game.
+     *
+     * @param {Array<Object>} [items] - Defaults to the live inventory
+     * @returns {Map<string, number>} Item hrid → highest enhancement level owned
+     */
+    function highestOwnedEnhancements(items) {
+        const inventory = dataManager.characterItems || dataManager.characterData?.characterItems || [];
+        const highest = new Map();
+        for (const item of inventory) {
+            if (!item?.itemHrid || !(item.count > 0)) continue;
+            const level = item.enhancementLevel || 0;
+            if (!highest.has(item.itemHrid) || level > highest.get(item.itemHrid)) {
+                highest.set(item.itemHrid, level);
+            }
+        }
+        return highest;
+    }
+
+    /**
+     * What one slot of a loadout is really wearing.
+     *
+     * A loadout pinned with "use exact enhancement" wears what it says. Every other
+     * loadout wears the best copy owned, so a stored level is a stale reading of
+     * that rather than a fact — it is the level at the moment the loadout was last
+     * saved, and enhancing the item since does not rewrite it.
+     *
+     * Never lower than what is stored: an inventory that has not arrived yet is an
+     * empty map, and dropping a known +10 to 0 on the strength of it would be worse
+     * than the staleness this is here to fix.
+     *
+     * @param {Object} snapshot - The loadout
+     * @param {Object} equip - One entry of `snapshot.equipment`
+     * @param {Map<string, number>} owned - From `highestOwnedEnhancements`
+     * @returns {number} Enhancement level
+     */
+    function resolveEnhancementLevel(snapshot, equip, owned) {
+        const stored = equip?.enhancementLevel || 0;
+        if (snapshot?.useExactEnhancement) return stored;
+        const highest = owned?.get(equip?.itemHrid);
+        return highest === undefined ? stored : Math.max(stored, highest);
+    }
+
+    /**
+     * Convert a server loadout object into our snapshot format.
+     * @param {Object} loadout - A loadout entry from characterLoadoutMap
+     * @returns {Object} snapshot
+     */
+    function buildSnapshot(loadout) {
+        // Parse equipment from wearableMap
+        const equipment = [];
+        for (const [locationHrid, hash] of Object.entries(loadout.wearableMap || {})) {
+            const parsed = parseWearable(locationHrid, hash);
+            if (parsed) equipment.push(parsed);
+        }
+
+        // Parse drinks
+        const drinks = (loadout.drinkItemHrids || []).map((hrid) => ({
+            itemHrid: hrid || '',
+        }));
+
+        // Parse food
+        const food = (loadout.foodItemHrids || []).map((hrid) => ({
+            itemHrid: hrid || '',
+        }));
+
+        // Parse abilities
+        const abilities = [];
+        for (const [slot, hrid] of Object.entries(loadout.abilityMap || {})) {
+            if (hrid) abilities.push({ abilityHrid: hrid, slot: parseInt(slot, 10) });
+        }
+
+        return {
+            name: loadout.name,
+            actionTypeHrid: loadout.actionTypeHrid || '',
+            isDefault: !!loadout.isDefault,
+            useExactEnhancement: loadout.useExactEnhancement ?? false,
+            ordinal: loadout.ordinal || 0,
+            equipment,
+            abilities,
+            food,
+            drinks,
+            abilityCombatTriggersMap: loadout.abilityCombatTriggersMap || {},
+            consumableCombatTriggersMap: loadout.consumableCombatTriggersMap || {},
+            savedAt: Date.now(),
+        };
+    }
+
+    class LoadoutSnapshot {
+        constructor() {
+            this.snapshots = {}; // In-memory cache: { [loadoutName]: snapshot }
+            this.characterInitializedHandler = null;
+            this.updateListeners = [];
+            this.isInitialized = false;
+
+            // Register WebSocket handler at module load time so in-session loadout
+            // changes are captured whenever loadouts_updated fires.
+            this.loadoutsUpdatedHandler = (data) => this._onLoadoutsUpdated(data);
+            getWebSocketHook().on('loadouts_updated', this.loadoutsUpdatedHandler);
+        }
+
+        /**
+         * Register a callback to be called whenever snapshots are updated.
+         * @param {Function} fn
+         */
+        onUpdate(fn) {
+            this.updateListeners.push(fn);
+        }
+
+        /**
+         * Remove a previously registered update callback.
+         * @param {Function} fn
+         */
+        offUpdate(fn) {
+            this.updateListeners = this.updateListeners.filter((l) => l !== fn);
+        }
+
+        _emitUpdate() {
+            this.updateListeners.forEach((fn) => fn());
+        }
+
+        async initialize() {
+            if (this.isInitialized) return;
+            this.isInitialized = true;
+
+            // Re-register WS handler if it was cleared by disable()
+            if (!this.loadoutsUpdatedHandler) {
+                this.loadoutsUpdatedHandler = (data) => this._onLoadoutsUpdated(data);
+                getWebSocketHook().on('loadouts_updated', this.loadoutsUpdatedHandler);
+            }
+
+            // Load from storage — loadouts_updated only fires when the user visits the loadouts
+            // UI, so storage is always the source of snapshots at startup.
+            if (Object.keys(this.snapshots).length === 0) {
+                const storageKey = getStorageKey$1();
+                // NOTE: getCurrentCharacterId() is set by the time this runs, because
+                // features are initialized from inside the character_initialized
+                // handler — so the key here is already character-scoped. The listener
+                // below cannot correct it if it ever were not: that event has already
+                // fired and will only come again on a character switch.
+                this.snapshots = (await storage.getJSON(storageKey, 'settings', null)) || {};
+
+                // Fallback for Steam users: if storage is also empty, bootstrap from
+                // the characterLoadoutMap embedded in init_character_data (already in dataManager).
+                if (Object.keys(this.snapshots).length === 0) {
+                    const characterLoadoutMap = dataManager.characterData?.characterLoadoutMap;
+                    if (characterLoadoutMap && Object.keys(characterLoadoutMap).length > 0) {
+                        this._onLoadoutsUpdated({ characterLoadoutMap });
+                    }
+                }
+            }
+
+            // Reload from the correct character-scoped key once character data is available
+            this.characterInitializedHandler = async () => {
+                const storageKey = getStorageKey$1();
+                const fresh = (await storage.getJSON(storageKey, 'settings', null)) || {};
+                if (Object.keys(fresh).length > 0) {
+                    this.snapshots = fresh;
+                    this._emitUpdate();
+                }
+            };
+            dataManager.on('character_initialized', this.characterInitializedHandler);
+        }
+
+        /**
+         * Handle a loadouts_updated WebSocket message.
+         * Replaces all snapshots with the server's current state.
+         * @param {Object} data - The WebSocket message payload
+         */
+        _onLoadoutsUpdated(data) {
+            const loadoutMap = data.characterLoadoutMap;
+            if (!loadoutMap) {
+                console.warn('[LoadoutSnapshot] loadouts_updated received but no characterLoadoutMap');
+                return;
+            }
+
+            const newSnapshots = {};
+            for (const [id, loadout] of Object.entries(loadoutMap)) {
+                if (!loadout.name) continue;
+                newSnapshots[id] = buildSnapshot(loadout);
+            }
+
+            this.snapshots = newSnapshots;
+            storage.setJSON(getStorageKey$1(), this.snapshots, 'settings');
+            this._emitUpdate();
+        }
+
+        /**
+         * Update a snapshot equipment item's enhancement level.
+         * Used when the highest owned enhancement of a loadout item changes (up or down).
+         * @param {string} itemHrid - Base item HRID (e.g. "/items/sword")
+         * @param {number} newLevel - New enhancement level (highest currently owned)
+         * @returns {boolean} True if any snapshot was updated
+         */
+        updateEnhancementLevel(itemHrid, newLevel) {
+            let changed = false;
+            for (const snapshot of Object.values(this.snapshots)) {
+                // Exact-mode snapshots intentionally hold a frozen level — never auto-update them.
+                if (snapshot.useExactEnhancement) continue;
+                for (const eq of snapshot.equipment || []) {
+                    if (eq.itemHrid === itemHrid && eq.enhancementLevel !== newLevel) {
+                        eq.enhancementLevel = newLevel;
+                        snapshot.savedAt = Date.now();
+                        changed = true;
+                    }
+                }
+            }
+            if (changed) {
+                storage.setJSON(getStorageKey$1(), this.snapshots, 'settings');
+                this._emitUpdate();
+            }
+            return changed;
+        }
+
+        /**
+         * Find the best snapshot for a given action type.
+         * Priority: skill default > all skills default > skill non-default > all skills non-default
+         * @param {string} actionTypeHrid - e.g. "/action_types/brewing"
+         * @returns {Object|null} snapshot entry or null
+         */
+        _findSnapshot(actionTypeHrid) {
+            if (!config.getSetting('loadoutSnapshot')) return null;
+
+            let skillDefault = null;
+            let allSkillsDefault = null;
+            let skillNonDefault = null;
+            let allSkillsNonDefault = null;
+
+            for (const snapshot of Object.values(this.snapshots)) {
+                if (snapshot.actionTypeHrid === actionTypeHrid) {
+                    if (snapshot.isDefault) {
+                        skillDefault = snapshot;
+                    } else {
+                        skillNonDefault = snapshot;
+                    }
+                } else if (snapshot.actionTypeHrid === '') {
+                    if (snapshot.isDefault) {
+                        allSkillsDefault = snapshot;
+                    } else {
+                        allSkillsNonDefault = snapshot;
+                    }
+                }
+            }
+
+            return skillDefault || allSkillsDefault || skillNonDefault || allSkillsNonDefault || null;
+        }
+
+        /**
+         * Get a Map<itemLocationHrid, item> for the best loadout snapshot matching the given
+         * action type. Returns null if no snapshot exists or the feature is disabled.
+         * The returned Map has the same format as dataManager.getEquipment().
+         * @param {string} actionTypeHrid
+         * @returns {Map<string, Object>|null}
+         */
+        getSnapshotForSkill(actionTypeHrid) {
+            const snapshot = this._findSnapshot(actionTypeHrid);
+            if (!snapshot || !snapshot.equipment?.length) return null;
+            return new Map(snapshot.equipment.map((e) => [e.itemLocationHrid, e]));
+        }
+
+        /**
+         * Get the drink slots array for the best loadout snapshot matching the given
+         * action type. Returns null if no snapshot exists or the feature is disabled.
+         * The returned array has the same format as dataManager.getActionDrinkSlots().
+         * @param {string} actionTypeHrid
+         * @returns {Array<{itemHrid: string}>|null}
+         */
+        getSnapshotDrinksForSkill(actionTypeHrid) {
+            const snapshot = this._findSnapshot(actionTypeHrid);
+            if (!snapshot) return null;
+            // Filter out empty slots so callers get only actual items
+            const filled = (snapshot.drinks || []).filter((d) => d.itemHrid);
+            return filled.length > 0 ? filled : null;
+        }
+
+        /**
+         * Get all saved loadout snapshots as a flat array.
+         * @returns {Array<Object>} Array of snapshot objects
+         */
+        getAllSnapshots() {
+            return Object.values(this.snapshots).sort((a, b) => a.ordinal - b.ordinal);
+        }
+
+        /**
+         * The equipment a loadout would actually put on, at the levels it would
+         * actually wear.
+         *
+         * A snapshot's stored enhancement level is only the truth for a loadout
+         * pinned with "use exact enhancement". The default is the other way round —
+         * the game equips the **highest copy you own** — and the wearable hash the
+         * snapshot is parsed from routinely carries 0, or a level from before the
+         * last enhancement. Reading it literally reports a refined cape at +0 while
+         * the character is wearing it at +10, and every number computed from that
+         * loadout is quietly wrong in the same direction.
+         *
+         * @param {Object} snapshot - From `snapshots` / `getAllSnapshots`
+         * @returns {Array<{itemHrid: string, enhancementLevel: number, itemLocationHrid: string}>}
+         */
+        resolveEquipment(snapshot) {
+            const owned = highestOwnedEnhancements();
+            return (snapshot?.equipment || []).map((equip) => ({
+                ...equip,
+                enhancementLevel: resolveEnhancementLevel(snapshot, equip, owned),
+            }));
+        }
+
+        /**
+         * Get the name and default status of the saved loadout being used for a given action type.
+         * Returns an object with name and isDefault, or null if no snapshot exists or feature is disabled.
+         * @param {string} actionTypeHrid
+         * @returns {{ name: string, isDefault: boolean }|null}
+         */
+        getSnapshotInfoForSkill(actionTypeHrid) {
+            const snapshot = this._findSnapshot(actionTypeHrid);
+            if (!snapshot) return null;
+            return { name: snapshot.name, isDefault: !!snapshot.isDefault };
+        }
+
+        disable() {
+            if (this.loadoutsUpdatedHandler) {
+                getWebSocketHook().off('loadouts_updated', this.loadoutsUpdatedHandler);
+                this.loadoutsUpdatedHandler = null;
+            }
+
+            if (this.characterInitializedHandler) {
+                dataManager.off('character_initialized', this.characterInitializedHandler);
+                this.characterInitializedHandler = null;
+            }
+
+            this.updateListeners = [];
+            this.isInitialized = false;
+        }
+    }
+
+    const loadoutSnapshot = new LoadoutSnapshot();
+
+    /**
      * Bulk Sell Assistant
      *
      * Sells the whole inventory through the market one item at a time with one
@@ -15157,9 +19128,65 @@ self.onmessage = function (e) {
     const BUTTON_ID = 'mwi-bulk-sell-btn';
     const CHIP_ID = 'mwi-bulk-sell-chip';
     const PANEL_POSITION_KEY = 'bulkSellPanelPosition';
+    /** The source that is not a tab: whatever the Watchlist is currently tracking */
+    const WATCHLIST_SOURCE = 'watchlist';
+
+    /**
+     * The rules the assistant decides by, editable from its own panel.
+     *
+     * They live in the settings the decision already reads rather than in a copy,
+     * so the panel and the settings page can never disagree. Here because the
+     * moment you want to change one of these is the moment you are watching it make
+     * the wrong call — not the moment you are reading the settings page.
+     */
+    const TUNABLES = [
+        {
+            key: 'market_bulkSellMinListingValue',
+            fallback: 1500000,
+            label: 'Insta-sell stacks under',
+            suffix: 'coins',
+            title: 'Stacks worth less than this (count × ask) are insta-sold rather than using up a listing slot. 0 turns the rule off.',
+        },
+        {
+            key: 'market_bulkSellSupplyRatio',
+            fallback: 1,
+            label: 'Insta-sell when supply beats demand by',
+            suffix: '×',
+            title: 'Insta-sell when sell-order supply exceeds buy-order demand times this. 1 = whenever sellers outnumber buyers; 0 turns the rule off.',
+        },
+        {
+            key: 'market_bulkSellQueueDays',
+            fallback: 2,
+            label: 'Insta-sell when the front ask is older than',
+            suffix: 'days',
+            title: 'A sell queue whose front listing has waited this long is not moving, so joining it would not sell either. 0 turns the rule off.',
+        },
+    ];
     const MS_PER_DAY = 86400000;
 
     const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+
+    /**
+     * Every piece of gear saved into a loadout, as hold keys.
+     *
+     * A loadout is a claim on an item: you are still using it, just not right now.
+     * Selling one is not merely a mistake, it is a mistake you find out about the
+     * next time you switch to that loadout and it is not there.
+     *
+     * Keyed by item and enhancement level, so a +10 in a loadout does not protect
+     * the +0 you keep for melting.
+     *
+     * @returns {Array<string>} Hold keys
+     */
+    function loadoutHoldKeys() {
+        const keys = [];
+        for (const snapshot of loadoutSnapshot.getAllSnapshots?.() || []) {
+            for (const piece of snapshot.equipment || []) {
+                if (piece?.itemHrid) keys.push(holdKey(piece.itemHrid, piece.enhancementLevel));
+            }
+        }
+        return keys;
+    }
 
     class BulkSellAssistant {
         constructor() {
@@ -15181,16 +19208,62 @@ self.onmessage = function (e) {
             this.panelPosition = null;
             /**
              * Other scripts' claims on inventory: name -> () => iterable of hold
-             * keys. Kept deliberately ignorant of why anything is held — a flip
+             * keys. Kept deliberately ignorant of why anything is held — stock
              * waiting to be relisted, a crafting reserve, a gift — so nothing about
              * the reason has to live in here.
              */
             this.holdProviders = new Map();
             this.heldCount = 0;
+            /** Enhanced gear the watchlist source declined to sweep up */
+            this.enhancedSkipped = 0;
             this._hasTabs = false;
             this._tabPrefLoaded = false;
             this.toggleBtn = null;
             this.panelVisible = false;
+            this.rulesOpen = false;
+        }
+
+        /**
+         * What was left out of the queue and why.
+         *
+         * Counted and said rather than silently dropped: an item missing from a sell
+         * run with no explanation is indistinguishable from a bug, and one of these
+         * reasons — gear that is in a loadout — is the difference between a tidy
+         * inventory and a loadout that stops working.
+         *
+         * @param {Object} [options] - `bare: true` for a sentence of its own
+         * @returns {string}
+         */
+        _skipNote({ bare = false } = {}) {
+            const parts = [];
+            if (this.heldCount > 0) parts.push(`${this.heldCount} held back (in a loadout, or claimed elsewhere)`);
+            if (this.enhancedSkipped > 0) {
+                parts.push(`${this.enhancedSkipped} enhanced item${this.enhancedSkipped === 1 ? '' : 's'} skipped`);
+            }
+            if (!parts.length) return '';
+            return bare ? parts.join(' · ') : ` (${parts.join(', ')})`;
+        }
+
+        /**
+         * What the Watchlist is tracking, as the same key set a tab produces.
+         *
+         * Plain hrids: the watchlist tracks an item rather than an item at an
+         * enhancement level, so every level of a tracked item is in scope — which
+         * is what "sell what I am watching" means.
+         *
+         * @returns {Set<string>} Hrids
+         */
+        _watchlistItems() {
+            try {
+                // `hrid`, which is what a watchlist entry calls it. Reading
+                // `itemHrid` — what an inventory item calls it — produced a set of
+                // undefined, an empty source, and "no tradable items" against a
+                // list of seventy.
+                return new Set(watchlistEntries().map((entry) => entry.hrid));
+            } catch (error) {
+                console.error('[BulkSellAssistant] Reading the watchlist failed:', error);
+                return new Set();
+            }
         }
 
         /** Character-scoped storage key for the remembered tab selection */
@@ -15205,7 +19278,7 @@ self.onmessage = function (e) {
          * them away again when the claim ends.
          *
          *     const release = Toolasha.Market.bulkSellAssistant.addHoldProvider(
-         *         'flip-finder',
+         *         'my-script',
          *         () => ['/items/cheese', '/items/cheese_sword+3']
          *     );
          *
@@ -15424,7 +19497,11 @@ self.onmessage = function (e) {
             }
 
             chip.style.cursor = 'move';
-            chip.addEventListener('mousedown', (e) => {
+            // Pointer events so a finger works too; mousedown never fires on a
+            // touchscreen, and touch-action:none stops the browser claiming the
+            // gesture for scrolling
+            chip.style.touchAction = 'none';
+            chip.addEventListener('pointerdown', (e) => {
                 if (e.button !== 0) return;
                 if (e.target.closest('button, select, input')) return;
                 e.preventDefault();
@@ -15435,15 +19512,17 @@ self.onmessage = function (e) {
 
                 const onMove = (move) => applyPosition(move.clientX - grabX, move.clientY - grabY);
                 const onUp = () => {
-                    document.removeEventListener('mousemove', onMove);
-                    document.removeEventListener('mouseup', onUp);
+                    document.removeEventListener('pointermove', onMove);
+                    document.removeEventListener('pointerup', onUp);
+                    document.removeEventListener('pointercancel', onUp);
                     const final = chip.getBoundingClientRect();
                     this.panelPosition = { left: final.left, top: final.top };
                     storage.set(PANEL_POSITION_KEY, this.panelPosition, 'settings');
                 };
 
-                document.addEventListener('mousemove', onMove);
-                document.addEventListener('mouseup', onUp);
+                document.addEventListener('pointermove', onMove);
+                document.addEventListener('pointerup', onUp);
+                document.addEventListener('pointercancel', onUp);
             });
         }
 
@@ -15466,8 +19545,9 @@ self.onmessage = function (e) {
             const tabSel = document.createElement('select');
             tabSel.className = `${CHIP_ID}-tab`;
             tabSel.title =
-                'Only sell items assigned to this Toolasha inventory tab (a parent tab includes its child tabs). ' +
-                'Items also assigned to a tab above the selected one are kept, not sold.';
+                'What to sell. "Watchlist" is whatever the Watchlist is tracking, at every enhancement level. ' +
+                'A Toolasha inventory tab sells only the items assigned to it (a parent tab includes its child tabs), ' +
+                'and items also assigned to a tab above the selected one are kept rather than sold.';
             tabSel.style.cssText =
                 'display:none; border:1px solid rgba(74,158,255,0.35); border-radius:5px; background:rgba(20,26,44,0.95); ' +
                 'color:#cfd8ea; font-size:12px; padding:2px 4px; max-width:150px; cursor:pointer; font-family:inherit;';
@@ -15517,17 +19597,120 @@ self.onmessage = function (e) {
             closeBtn.addEventListener('mouseenter', () => (closeBtn.style.color = '#e0e0e0'));
             closeBtn.addEventListener('mouseleave', () => (closeBtn.style.color = '#7d879c'));
 
-            chip.appendChild(status);
-            chip.appendChild(tabSel);
-            chip.appendChild(mainBtn);
-            chip.appendChild(stopBtn);
-            chip.appendChild(closeBtn);
+            // The rules it decides by, one click away rather than on the settings
+            // page. The moment you want to change one of these is the moment you
+            // are watching it make the wrong call.
+            const gear = document.createElement('button');
+            gear.className = `${CHIP_ID}-gear`;
+            gear.textContent = '\u2699';
+            gear.title = 'Show the rules this decides by';
+            gear.style.cssText =
+                'border:0; border-radius:5px; background:rgba(255,255,255,0.08); color:#cfd8ea; font-size:12px; ' +
+                'line-height:1; padding:3px 6px; cursor:pointer; font-family:inherit;';
+            gear.addEventListener('click', () => {
+                this.rulesOpen = !this.rulesOpen;
+                this._renderRules();
+            });
+
+            const row = document.createElement('div');
+            row.style.cssText = 'display:flex; align-items:center; gap:6px;';
+            row.append(status, tabSel, mainBtn, stopBtn, gear, closeBtn);
+
+            const rules = document.createElement('div');
+            rules.className = `${CHIP_ID}-rules`;
+            rules.style.cssText = 'display:none; flex-direction:column; gap:4px; padding-top:6px; margin-top:2px;';
+
+            // The chip is a row; with the rules under it, it is a column of two
+            chip.style.flexDirection = 'column';
+            chip.style.alignItems = 'stretch';
+            chip.appendChild(row);
+            chip.appendChild(rules);
 
             this._makeDraggable(chip);
             document.body.appendChild(chip);
             this.chip = chip;
             this._render();
+            this._renderRules();
             this._populateTabSelect();
+        }
+
+        /**
+         * The decision rules, as editable fields.
+         *
+         * Written straight into the settings the decision already reads, so this is
+         * the same switch as the settings page rather than a copy of it — there is
+         * no third place for the two to disagree in.
+         */
+        _renderRules() {
+            const rules = this.chip?.querySelector(`.${CHIP_ID}-rules`);
+            if (!rules) return;
+
+            rules.style.display = this.rulesOpen ? 'flex' : 'none';
+            if (!this.rulesOpen) return;
+
+            rules.textContent = '';
+            const border = document.createElement('div');
+            border.style.cssText = 'border-top:1px solid rgba(74,158,255,0.25); margin-bottom:2px;';
+            rules.appendChild(border);
+
+            const note = document.createElement('div');
+            note.textContent = 'Any one of these makes it insta-sell instead of listing. 0 turns a rule off.';
+            note.style.cssText = 'color:#7d879c; font-size:11px; max-width:340px; white-space:normal;';
+            rules.appendChild(note);
+
+            for (const tunable of TUNABLES) {
+                const line = document.createElement('label');
+                line.style.cssText =
+                    'display:flex; align-items:center; gap:6px; font-size:11px; color:#cfd8ea; white-space:nowrap;';
+                line.title = tunable.title;
+
+                const text = document.createElement('span');
+                text.textContent = tunable.label;
+                text.style.cssText = 'flex:1;';
+
+                const input = document.createElement('input');
+                input.type = 'number';
+                input.min = '0';
+                input.value = String(config.getSettingValue(tunable.key, tunable.fallback));
+                input.style.cssText =
+                    'width:90px; border:1px solid rgba(74,158,255,0.35); border-radius:4px; ' +
+                    'background:rgba(20,26,44,0.95); color:#cfd8ea; font-size:11px; padding:2px 4px; font-family:inherit;';
+                // On change rather than on every keystroke: half a typed number is
+                // a rule, and one that would be applied the moment it was typed
+                input.addEventListener('change', () => {
+                    const value = Number(input.value);
+                    if (!Number.isFinite(value) || value < 0) {
+                        input.value = String(config.getSettingValue(tunable.key, tunable.fallback));
+                        return;
+                    }
+                    config.setSetting(tunable.key, value);
+                });
+                // The chip is dragged by its background; a field you cannot click
+                // into is not a field
+                input.addEventListener('mousedown', (event) => event.stopPropagation());
+
+                const suffix = document.createElement('span');
+                suffix.textContent = tunable.suffix;
+                suffix.style.cssText = 'color:#7d879c; width:38px;';
+
+                line.append(text, input, suffix);
+                rules.appendChild(line);
+            }
+
+            const vendor = document.createElement('label');
+            vendor.style.cssText = 'display:flex; align-items:center; gap:6px; font-size:11px; color:#cfd8ea;';
+            vendor.title =
+                'When the vendor pays at least what the market would net after tax, open the vendor sale instead. ' +
+                'Unenhanced items only.';
+            const box = document.createElement('input');
+            box.type = 'checkbox';
+            box.checked = Boolean(config.getSetting('market_bulkSellVendorCheck'));
+            box.addEventListener('mousedown', (event) => event.stopPropagation());
+            box.addEventListener('change', () => config.setSetting('market_bulkSellVendorCheck', box.checked));
+            const vendorText = document.createElement('span');
+            vendorText.textContent = 'Vendor when the market is no better';
+            vendor.append(box, vendorText);
+            rules.appendChild(vendor);
         }
 
         /**
@@ -15553,7 +19736,12 @@ self.onmessage = function (e) {
                 console.error('[BulkSellAssistant] Failed to load inventory tab config:', error);
             }
 
+            // The Watchlist is a list of items like a tab is, so it belongs in the
+            // same picker rather than as a second control beside it. Offered only
+            // when it has something in it — an empty source would build an empty
+            // queue and look like a broken button.
             const options = [{ value: 'all', label: 'All items' }];
+            if (this._watchlistItems().size) options.push({ value: WATCHLIST_SOURCE, label: 'Watchlist' });
             const walk = (nodes, depth) => {
                 for (const node of nodes) {
                     options.push({ value: node.id, label: `${'\u00A0\u00A0'.repeat(depth)}${node.name}` });
@@ -15562,7 +19750,7 @@ self.onmessage = function (e) {
             };
             walk(tabs, 0);
 
-            this._hasTabs = tabs.length > 0;
+            this._hasTabs = options.length > 1;
             const signature = JSON.stringify(options);
             if (sel.dataset.signature !== signature) {
                 sel.dataset.signature = signature;
@@ -15628,8 +19816,18 @@ self.onmessage = function (e) {
             // hrids for +0 items and "hrid+level" for enhanced ones
             let tabItems = null;
             let aboveItems = null;
+            let watchedHrids = null;
             let tabName = '';
-            if (this.selectedTabId && this.selectedTabId !== 'all') {
+            if (this.selectedTabId === WATCHLIST_SOURCE) {
+                watchedHrids = this._watchlistItems();
+                tabName = 'Watchlist';
+                if (!watchedHrids.size) {
+                    this.statusNote = 'Nothing on the watchlist';
+                    this.state = 'idle';
+                    this._render();
+                    return;
+                }
+            } else if (this.selectedTabId && this.selectedTabId !== 'all') {
                 try {
                     const tabConfig = await loadConfig(dataManager.getCurrentCharacterId());
                     const found = findTab(tabConfig, this.selectedTabId);
@@ -15655,10 +19853,16 @@ self.onmessage = function (e) {
             }
 
             const clientData = dataManager.getInitClientData();
-            const heldKeys = collectHeldKeys(this.holdProviders, (name, error) =>
+            // Gear saved into a loadout is gear you are still using — just not right
+            // now. Through the hold mechanism rather than a filter of its own, so it
+            // is counted and reported like every other claim on the inventory.
+            const providers = new Map(this.holdProviders);
+            providers.set('loadouts', () => loadoutHoldKeys());
+            const heldKeys = collectHeldKeys(providers, (name, error) =>
                 console.error(`[BulkSellAssistant] Hold provider "${name}" failed; its items are not held:`, error)
             );
             let held = 0;
+            let enhanced = 0;
             const items = (dataManager.characterItems || []).filter((item) => {
                 if (item.itemLocationHrid !== '/item_locations/inventory') return false;
                 if ((item.count || 0) <= 0) return false;
@@ -15676,9 +19880,24 @@ self.onmessage = function (e) {
                     if (!tabItems.has(key)) return false;
                     if (aboveItems.has(key)) return false;
                 }
+                // Matched on the hrid rather than the key: the watchlist tracks an
+                // item, not an item at a level, so every level of a tracked item is
+                // in scope. A tab is the other way round and keeps its own keys.
+                if (watchedHrids) {
+                    if (!watchedHrids.has(item.itemHrid)) return false;
+                    // …which is exactly why enhanced gear is left out of it. The
+                    // list tracks "Gobo Defender"; matching every level of that
+                    // swept a +10 into the queue at six million coins. A tab names
+                    // the level it means, so it is trusted to mean it.
+                    if ((item.enhancementLevel || 0) > 0) {
+                        enhanced++;
+                        return false;
+                    }
+                }
                 return true;
             });
             this.heldCount = held;
+            this.enhancedSkipped = enhanced;
             // Most expensive stack first: cached market unit price (ask, else bid) × count
             this.queue = items
                 .map((item) => {
@@ -15700,9 +19919,10 @@ self.onmessage = function (e) {
                 );
 
             if (!this.queue.length) {
-                this.statusNote = tabItems
-                    ? `No tradable items in "${tabName}"${held > 0 ? ` (${held} held back)` : ''}`
-                    : `No tradable items in inventory${held > 0 ? ` (${held} held back)` : ''}`;
+                const why = this._skipNote();
+                this.statusNote = tabName
+                    ? `No tradable items in "${tabName}"${why}`
+                    : `No tradable items in inventory${why}`;
                 this.state = 'idle';
                 this._render();
                 return;
@@ -15710,7 +19930,7 @@ self.onmessage = function (e) {
             this.index = 0;
             // Say so rather than letting the count quietly differ from what is in
             // the inventory
-            this.statusNote = held > 0 ? `${held} item${held === 1 ? '' : 's'} held back` : '';
+            this.statusNote = this._skipNote({ bare: true });
             this._prepareCurrent();
         }
 
@@ -15732,7 +19952,7 @@ self.onmessage = function (e) {
             // trailing clicks/re-renders dismiss it right after it opens
             if (this._tryVendorSell()) return;
 
-            navigateToMarketplace(this.current.itemHrid, this.current.enhancementLevel);
+            marketplaceTabs_js.navigateToMarketplace(this.current.itemHrid, this.current.enhancementLevel);
             // No order book within the timeout → item isn't marketable right now
             this.bookTimeout = setTimeout(() => this._skip('no market data'), 3000);
         }
@@ -16032,6 +20252,355 @@ self.onmessage = function (e) {
     const bulkSellAssistant = new BulkSellAssistant();
 
     /**
+     * Notification Service
+     *
+     * One place that decides *how* the player gets told something, so the features
+     * that know *what* to tell them do not each grow their own half of a
+     * notification system.
+     *
+     * The game is an idle game, which means the interesting moments happen while
+     * you are not looking. Three channels cover the ways you can not be looking:
+     *
+     * - **Browser notification** — the tab is hidden, so the only surface left is
+     *   the desktop. Gated behind its own setting *and* the browser's permission,
+     *   because an unprompted permission dialog is the fastest way to have every
+     *   notification from this script blocked forever.
+     * - **Tab title flash** — also for a hidden tab, and the fallback when
+     *   permission was never given. A prefixed title is visible in the tab strip
+     *   without any permission at all, and it is restored the moment you come back.
+     * - **Toast** — the tab is visible, so a desktop notification would be noise
+     *   over a window you are already looking at. The shared toast stack says it
+     *   in-page instead.
+     *
+     * ## Why the de-duplication is here and not in the callers
+     *
+     * Every producer is a *predicate over state that keeps being re-evaluated* —
+     * the drink panel redraws on every inventory change, the market badge refreshes
+     * on every listing message. Each of them could hold its own "did I already say
+     * this" flag, and each would get it subtly wrong. A cooldown per event key,
+     * held once, means a producer can be as trigger-happy as its data is noisy and
+     * the player still hears it once.
+     *
+     * ## Why the state is on `globalThis`
+     *
+     * The production build splits the script into per-area bundles, and only
+     * modules listed in the rollup config's shared maps are single copies. A module
+     * under `src/features/` is not one of those, so the market bundle, the actions
+     * bundle and the UI bundle each get their own copy of this file. Sharing the
+     * cooldown map and the "already watching settings" flag through a global means
+     * the copies behave as one service, which is what matters — the alternative is
+     * three permission prompts and three independent cooldowns.
+     */
+
+
+    /** What a flashed tab title is prefixed with; stripped again on focus */
+    const TITLE_FLASH_PREFIX = '❗ ';
+
+    /** The same event may not be announced twice inside this window */
+    const DEFAULT_COOLDOWN_MS = 10 * 60 * 1000;
+
+    /** How long a desktop notification sits there before closing itself */
+    const BROWSER_NOTIFICATION_TTL_MS = 8000;
+
+    /** Title on a desktop notification when the caller does not give one */
+    const DEFAULT_TITLE = 'Milky Way Idle';
+
+    /**
+     * The settings whose being switched **on** is a user gesture we can ask for
+     * notification permission inside.
+     *
+     * This list is the whole reason permission is not requested at page load: a
+     * prompt nobody asked for is usually dismissed, and a dismissed prompt is
+     * remembered. Ticking "notify me" is the one moment the player has said yes to
+     * being notified, so it is the only moment worth spending the prompt on.
+     */
+    const NOTIFICATION_SETTING_KEYS = [
+        'notifications_browserEnabled',
+        'notifications_consumableLow',
+        'notifications_marketListingFilled',
+        'notifications_otherCharacterIdle',
+        'notifications_communityBuffExpiring',
+        'notifications_labyrinthRunFinished',
+        'notifications_combatDeath',
+        'notifications_enhancementTarget',
+        'notifications_trialStarting',
+        'notifications_trialResults',
+        'notifications_taskSlotsFull',
+        'notifiEmptyAction',
+    ];
+
+    /** Where the cross-bundle state lives; see the module comment */
+    const GLOBAL_STATE_KEY = '__toolashaNotificationState';
+
+    /**
+     * The one piece of state every copy of this module shares.
+     * @returns {{lastFired: Map<string, number>, watching: boolean}}
+     */
+    function sharedState() {
+        const host = typeof globalThis === 'undefined' ? {} : globalThis;
+        if (!host[GLOBAL_STATE_KEY]) {
+            host[GLOBAL_STATE_KEY] = { lastFired: new Map(), watching: false };
+        }
+        return host[GLOBAL_STATE_KEY];
+    }
+
+    /**
+     * Whether the player can currently see the page.
+     *
+     * `document.hidden` rather than focus: a tab that is visible but behind another
+     * window still shows toasts fine, and a desktop notification for something you
+     * can see on screen is the annoying kind.
+     *
+     * @returns {boolean} True when the page is not being displayed
+     */
+    function isPageHidden() {
+        if (typeof document === 'undefined') return false;
+        return document.hidden === true || document.visibilityState === 'hidden';
+    }
+
+    class NotificationService {
+        constructor() {
+            /** Overridable so tests do not have to wait ten minutes */
+            this.cooldownMs = DEFAULT_COOLDOWN_MS;
+            /** Undoes the focus/visibility listeners while a title is flashed */
+            this.unwatchFocus = null;
+        }
+
+        /** @returns {Map<string, number>} eventKey → when it last went out */
+        get lastFired() {
+            return sharedState().lastFired;
+        }
+
+        /**
+         * Tell the player something, once.
+         *
+         * @param {string} eventKey - Identity of the thing being announced. The same
+         *   key is silent until its cooldown expires, so it should name the *event*
+         *   ("market-listing-filled") and not the message text
+         * @param {string} message - Plain text; what actually happened
+         * @param {Object} [options] - Options
+         * @param {string} [options.title] - Desktop notification title
+         * @param {number} [options.cooldownMs] - Override the de-duplication window
+         * @returns {{fired: boolean, channels: string[], reason?: string}} What went out, and where
+         */
+        notify(eventKey, message, { title = DEFAULT_TITLE, cooldownMs = this.cooldownMs } = {}) {
+            if (!eventKey || !message) {
+                return { fired: false, channels: [], reason: 'nothing to say' };
+            }
+
+            const now = Date.now();
+            const last = this.lastFired.get(eventKey);
+            if (last !== undefined && now - last < cooldownMs) {
+                return { fired: false, channels: [], reason: 'cooldown' };
+            }
+
+            const channels = [];
+            try {
+                if (isPageHidden()) {
+                    if (this.sendBrowserNotification(message, title)) channels.push('browser');
+                    if (this.flashTitle()) channels.push('title');
+                } else if (this.showInPage(message)) {
+                    channels.push('toast');
+                }
+            } catch (error) {
+                console.error('[NotificationService] Failed to deliver notification:', error);
+            }
+
+            // Only a delivered message starts the clock. Burning the cooldown on a
+            // notification that reached no channel — permission refused, no DOM yet
+            // — would silence the next attempt, which is the one that might work
+            if (!channels.length) {
+                return { fired: false, channels, reason: 'no channel available' };
+            }
+
+            this.lastFired.set(eventKey, now);
+            return { fired: true, channels };
+        }
+
+        /**
+         * The desktop channel.
+         * @param {string} message - Body text
+         * @param {string} title - Notification title
+         * @returns {boolean} Whether one was actually shown
+         */
+        sendBrowserNotification(message, title) {
+            if (!config.getSetting('notifications_browserEnabled')) return false;
+            if (typeof Notification === 'undefined') return false;
+            if (Notification.permission !== 'granted') return false;
+
+            const notification = new Notification(title, {
+                body: message,
+                icon: 'https://www.milkywayidle.com/favicon.ico',
+                // Same tag for everything we send: a stack of desktop notifications
+                // for one game is worse than the newest replacing the last
+                tag: 'toolasha',
+                requireInteraction: false,
+            });
+
+            notification.onclick = () => {
+                window.focus();
+                notification.close();
+            };
+            notification.onerror = (error) => {
+                console.error('[NotificationService] Notification error:', error);
+            };
+
+            setTimeout(() => notification.close(), BROWSER_NOTIFICATION_TTL_MS);
+            return true;
+        }
+
+        /**
+         * The in-page channel.
+         * @param {string} message - What to say
+         * @returns {boolean} Whether a toast went up
+         */
+        showInPage(message) {
+            return !!toast_js.showToast(message, { kind: 'warn', duration: 10000 });
+        }
+
+        /**
+         * Mark the tab title, and arrange for it to be unmarked.
+         *
+         * Prefixing rather than replacing, because the game writes its own title and
+         * whatever it says is still worth reading — and checking for the prefix
+         * first means several notifications in a row leave one mark, not five.
+         *
+         * @returns {boolean} Whether the title now carries the mark
+         */
+        flashTitle() {
+            if (typeof document === 'undefined') return false;
+
+            const current = document.title || '';
+            if (!current.startsWith(TITLE_FLASH_PREFIX)) {
+                document.title = TITLE_FLASH_PREFIX + current;
+            }
+            this._watchForReturn();
+            return true;
+        }
+
+        /**
+         * Put the title back the way the game left it.
+         *
+         * Strips the prefix rather than restoring a remembered string: the game
+         * rewrites its own title while you are away, and restoring what it said an
+         * hour ago would show a stale action name.
+         */
+        restoreTitle() {
+            if (typeof document === 'undefined') return;
+
+            const current = document.title || '';
+            if (current.startsWith(TITLE_FLASH_PREFIX)) {
+                document.title = current.slice(TITLE_FLASH_PREFIX.length);
+            }
+            this.unwatchFocus?.();
+            this.unwatchFocus = null;
+        }
+
+        /** Listen for the player coming back, once per flash */
+        _watchForReturn() {
+            if (this.unwatchFocus || typeof window === 'undefined') return;
+
+            const onReturn = () => {
+                if (!isPageHidden()) this.restoreTitle();
+            };
+            window.addEventListener('focus', onReturn);
+            document.addEventListener('visibilitychange', onReturn);
+            this.unwatchFocus = () => {
+                window.removeEventListener('focus', onReturn);
+                document.removeEventListener('visibilitychange', onReturn);
+            };
+        }
+
+        /**
+         * Ask for notification permission, and only from a user gesture.
+         *
+         * @returns {Promise<boolean>} Whether notifications may now be sent
+         */
+        async requestPermission() {
+            if (typeof Notification === 'undefined') {
+                console.warn('[NotificationService] Browser notifications are not supported here');
+                return false;
+            }
+            if (Notification.permission === 'granted') return true;
+            // A refusal is permanent until the player changes it in the browser, and
+            // asking again does nothing but throw
+            if (Notification.permission === 'denied') return false;
+
+            try {
+                return (await Notification.requestPermission()) === 'granted';
+            } catch (error) {
+                console.warn('[NotificationService] Permission request failed:', error);
+                return false;
+            }
+        }
+
+        /**
+         * Ask for permission whenever a notification setting is switched on.
+         *
+         * This is the whole of the "do not prompt at page load" fix. It runs at
+         * import time rather than from a feature's `initialize`, because every
+         * notification setting defaults to off — so the feature that would have
+         * installed the hook is exactly the feature that is not running yet.
+         */
+        watchSettings() {
+            const state = sharedState();
+            if (state.watching) return;
+            state.watching = true;
+
+            for (const key of NOTIFICATION_SETTING_KEYS) {
+                config.onSettingChange(key, (enabled) => {
+                    if (enabled) this.requestPermission();
+                });
+            }
+        }
+
+        /** Forget every cooldown and put the title back. For teardown and for tests. */
+        reset() {
+            this.lastFired.clear();
+            this.restoreTitle();
+            this.cooldownMs = DEFAULT_COOLDOWN_MS;
+        }
+    }
+
+    const notificationService = new NotificationService();
+
+    // Side effect at module scope, deliberately: see `watchSettings`
+    notificationService.watchSettings();
+
+    /**
+     * Notification Predicates
+     *
+     * The "has something actually happened" half of each notification, kept apart
+     * from the feature that observes it.
+     *
+     * Every producer watches a value that is recomputed constantly — the finished
+     * listing count refreshes on each market message, the drink panel redraws on
+     * each inventory change — so "the value is bad" is never the question. The
+     * question is always "is it *newly* bad", and that is a two-argument function
+     * over the previous observation and the current one. Written as such it can be
+     * tested without a DOM, a websocket or a clock, which is the only reason these
+     * are separate files at all.
+     */
+
+    /**
+     * Whether more listings have finished than last time we looked.
+     *
+     * Only an increase. Collecting the spoils takes the count *down*, and being
+     * told about that is being told about something you just did yourself. The
+     * first observation of a session is not a change either: the count was already
+     * whatever it was before the page loaded, and announcing it on load would fire
+     * on every refresh.
+     *
+     * @param {number|null} previous - Count at the last observation; null on the first
+     * @param {number} current - Count now
+     * @returns {boolean} True when this is a rise from a known previous count
+     */
+    function listingsNewlyFinished(previous, current) {
+        if (previous === null || previous === undefined) return false;
+        return Number(current) > Number(previous);
+    }
+
+    /**
      * Marketplace Badge Filter
      *
      * Quietens the Marketplace badge in the left sidebar so it only appears when a
@@ -16051,25 +20620,48 @@ self.onmessage = function (e) {
      * alone deliberately. Once you are in the marketplace, knowing there is
      * something to collect is useful; it is only the sidebar nag that isn't.
      *
-     * Implemented as a stylesheet toggled by listing data rather than by clearing
-     * the badge's text. React owns that node and rewrites it on every update, so
-     * anything written into it would be overwritten within the second; a rule the
-     * game does not know about survives every re-render.
+     * Hiding is a stylesheet, because a rule the game does not know about survives
+     * every re-render. Showing a *different number* is not: the badge is the game's
+     * own element, and a count printed in a pseudo-element is a bare digit sitting
+     * where a styled badge should be. So the digits are rewritten in place and put
+     * back whenever React writes its own over them, which leaves the badge exactly
+     * the badge — same shape, same colour, same position.
      */
 
 
     const STYLE_ID = 'mwi-marketplace-badge-filter';
 
+    /** The sidebar item, found by its own icon label rather than by position */
+    const NAV = '[class*="NavigationBar_nav__"]:has(svg[aria-label="navigationBar.marketplace"])';
+
     /**
-     * Hides only the sidebar's Marketplace badge. Scoped through the nav item's own
-     * icon label rather than a position, so a reordered sidebar still matches, and
-     * excluding the ocean variant the way the other badge features do.
+     * The badge itself.
+     *
+     * `NavigationBar_badge__` with the trailing double underscore, which is where
+     * the CSS-module hash begins — so this is the whole class name rather than a
+     * prefix of it. Without those two characters it also matched the sidebar's
+     * other badge-ish elements, and the count was written into both: the
+     * Marketplace badge read "2 2". The ocean variant is excluded the way the other
+     * badge features do.
      */
-    const CSS$1 = `
-    [class*="NavigationBar_nav__"]:has(svg[aria-label="navigationBar.marketplace"]) [class*="NavigationBar_badge"]:not([class*="NavigationBar_ocean"]) {
-        display: none !important;
+    const BADGE = `${NAV} [class*="NavigationBar_badge__"]:not([class*="NavigationBar_ocean"])`;
+
+    /**
+     * The element the number actually lives in.
+     *
+     * Usually the badge itself, but a badge that wraps its text in a span would put
+     * the digits one level down — and writing over the badge instead would throw
+     * that span away along with whatever styling it carries. Descends only through
+     * only-children, which is as far as "the same box, drawn deeper" goes.
+     *
+     * @param {HTMLElement} badge - The badge element
+     * @returns {HTMLElement} Where to write the count
+     */
+    function countHolder(badge) {
+        let node = badge;
+        while (node.childNodes.length === 1 && node.children.length === 1) node = node.children[0];
+        return node;
     }
-`;
 
     /**
      * Whether a listing is done and holding something for you.
@@ -16097,73 +20689,295 @@ self.onmessage = function (e) {
         return ordered > 0 && filled >= ordered;
     }
 
-    /**
-     * Whether any listing in the book warrants badging the sidebar.
-     * @param {Object} listings - Keyed by listing id
-     * @returns {boolean}
-     */
-    function anyFinished(listings) {
-        return Object.values(listings || {}).some(isFinishedWithSpoils);
-    }
-
     class MarketplaceBadgeFilter {
         constructor() {
-            this.listings = {};
             this.hidden = false;
+            /** How many finished listings the badge is currently claiming */
+            this.showing = null;
             this.unregister = null;
+            /** The last non-empty listing array seen on the wire */
+            this.lastSeen = null;
+            /** Undoes the shared observer registration, when there is one */
+            this.unwatchAdded = null;
+            /** Watches the sidebar item's own text, since React rewrites it */
+            this.textWatcher = null;
+            this.watchedNav = null;
+            /**
+             * Finished count at the previous observation, for the notification.
+             *
+             * Separate from `showing`, which is what the badge is *displaying* and
+             * stays null while the filter itself is switched off — the notification
+             * has to work in that case too.
+             */
+            this.lastFinishedCount = null;
         }
 
         initialize() {
-            if (!config.getSetting('market_badgeOnlyWhenFinished')) return;
+            // Two features now read the same listings: this filter, and the "a
+            // listing finished" notification. Either being on is reason enough to
+            // listen, and each decides for itself what to do with the count
+            const wantsBadge = config.getSetting('market_badgeOnlyWhenFinished');
+            const wantsNotification = config.getSetting('notifications_marketListingFilled');
+            if (!wantsBadge && !wantsNotification) return;
 
-            const initHandler = (data) => this.ingest(data?.myMarketListings);
-            const updateHandler = (data) => this.ingest(data?.endMarketListings);
-
-            dataManager.on('character_initialized', initHandler);
+            // The payload is kept as well as read from the character's book, because
+            // the two have disagreed: whichever of them has listings is the one to
+            // believe. Trusting only the book meant that if it ever came back empty
+            // the badge was hidden with no way to tell from the outside why.
+            const updateHandler = (data) => {
+                const listings = data?.endMarketListings || data?.myMarketListings;
+                if (Array.isArray(listings) && listings.length) this.lastSeen = listings;
+                this.refresh();
+            };
+            dataManager.on('character_initialized', updateHandler);
             dataManager.on('market_listings_updated', updateHandler);
             this.unregister = () => {
-                dataManager.off('character_initialized', initHandler);
+                dataManager.off('character_initialized', updateHandler);
                 dataManager.off('market_listings_updated', updateHandler);
             };
 
-            // Nothing is known until the first payload arrives. Hiding straight away
-            // rather than waiting means a stale badge from before the script loaded
-            // does not sit there unexplained; the first update corrects it either way.
-            this.apply(false);
+            // Read what is already known rather than waiting to be told.
+            //
+            // This is the whole of the bug it used to have. Features are initialized
+            // from *inside* the `character_initialized` handler, so by the time this
+            // runs that event has already fired and this listener will never see it.
+            // The old code hid the badge here and then waited for a payload that had
+            // already gone past — so a filled order sitting there through a reload
+            // stayed unbadged until some unrelated listing happened to change.
+            this.refresh();
         }
 
         /**
-         * @param {Array<Object>} listings - Listings from the server
+         * Re-decide from the listings as they currently stand.
+         *
+         * Read from the data manager rather than accumulated here. It already merges
+         * each `market_listings_updated` into the character's book, and a private
+         * copy could only drift from it — a listing that leaves the book would linger
+         * in the copy at whatever state it was last seen, badging the sidebar for an
+         * order that no longer exists.
          */
-        ingest(listings) {
-            if (!Array.isArray(listings)) return;
-            for (const listing of listings) {
-                if (!listing || listing.id == null) continue;
-                this.listings[listing.id] = listing;
+        refresh() {
+            // The count, not just the presence. The game badges every listing with
+            // anything collectable, so a filled order beside a buy order that has
+            // taken 130 of 719 reads "2" — and collecting the 130 does nothing but
+            // silence it. One of those is finished, so the badge should say one.
+            const finished = this.book().filter(isFinishedWithSpoils).length;
+
+            this.announce(finished);
+            if (config.getSetting('market_badgeOnlyWhenFinished')) this.apply(finished);
+        }
+
+        /**
+         * Say so when another listing has finished.
+         *
+         * Deliberately not "the badge is showing something": the badge also shows
+         * something the entire time you leave one uncollected, and a notification
+         * for a state rather than an event is a notification you learn to ignore.
+         * Only a rise counts.
+         *
+         * @param {number} finished - How many listings have finished now
+         */
+        announce(finished) {
+            if (!config.getSetting('notifications_marketListingFilled')) {
+                // Still tracked while switched off, so turning it on mid-session
+                // does not announce a backlog that was already sitting there
+                this.lastFinishedCount = finished;
+                return;
             }
-            this.apply(anyFinished(this.listings));
+
+            if (listingsNewlyFinished(this.lastFinishedCount, finished)) {
+                const noun = finished === 1 ? 'listing has' : 'listings have';
+                notificationService.notify('market-listing-filled', `${finished} market ${noun} finished.`);
+            }
+            this.lastFinishedCount = finished;
         }
 
         /**
-         * @param {boolean} show - Whether the badge is warranted
+         * The listings to judge, from whichever source has any.
+         *
+         * @returns {Array<Object>} Possibly empty
          */
-        apply(show) {
-            if (show === !this.hidden) return;
-            this.hidden = !show;
-            if (this.hidden) dom.addStyles(CSS$1, STYLE_ID);
-            else dom.removeStyles(STYLE_ID);
+        book() {
+            const held = dataManager.characterData?.myMarketListings;
+            if (Array.isArray(held) && held.length) return held;
+            return this.lastSeen || [];
+        }
+
+        /**
+         * Why the badge is or is not showing.
+         *
+         * The feature's only output is the absence of something, which is
+         * indistinguishable from it being switched off, from the game not badging,
+         * and from every listing genuinely still working. This says which.
+         *
+         * Console: `Toolasha.Debug.marketBadge()`
+         *
+         * @returns {Object} What it can see
+         */
+        describe() {
+            const listings = this.book();
+            const finished = listings.filter(isFinishedWithSpoils);
+
+            const report = {
+                settingOn: !!config.getSetting('market_badgeOnlyWhenFinished'),
+                listening: !!this.unregister,
+                fromCharacterData: Array.isArray(dataManager.characterData?.myMarketListings)
+                    ? dataManager.characterData.myMarketListings.length
+                    : 'absent',
+                fromLastMessage: this.lastSeen ? this.lastSeen.length : 'none seen',
+                finished: finished.length,
+                hidingBadge: this.hidden,
+                styleInDocument: !!document.getElementById(STYLE_ID),
+                badgeOnScreen: !!document.querySelector(BADGE),
+                badgeSays: document.querySelector(BADGE)?.textContent ?? 'no badge',
+            };
+
+            console.log('[Toolasha] Marketplace badge filter:', report);
+            if (listings.length) {
+                console.table(
+                    listings.map((listing) => ({
+                        id: listing.id,
+                        status: String(listing.status || '')
+                            .split('/')
+                            .pop(),
+                        ordered: listing.orderQuantity,
+                        filled: listing.filledQuantity,
+                        unclaimedItems: listing.unclaimedItemCount,
+                        unclaimedCoins: listing.unclaimedCoinCount,
+                        countsAsFinished: isFinishedWithSpoils(listing),
+                    }))
+                );
+            }
+            return report;
+        }
+
+        /**
+         * @param {number} finished - How many listings have finished
+         */
+        apply(finished) {
+            if (finished === this.showing) return;
+            this.showing = finished;
+            this.hidden = finished === 0;
+
+            // Removed first: `addStyles` appends a new element every call, so
+            // toggling without this leaves a stack of them and the oldest wins
+            dom.removeStyles(STYLE_ID);
+
+            if (finished === 0) {
+                this._stopWatching();
+                dom.addStyles(`${BADGE} { display: none !important; }`, STYLE_ID);
+                return;
+            }
+            this._watch();
+            this._paint();
+        }
+
+        /**
+         * Write our count into the game's badge.
+         *
+         * Only when it differs, which is what keeps the observer that calls this
+         * from feeding itself: our own write produces a mutation, that mutation
+         * calls this again, and the text already says what it should.
+         *
+         * @returns {boolean} Whether there was a badge to write into
+         */
+        _paint() {
+            const badge = document.querySelector(BADGE);
+            if (!badge || this.showing === null || this.showing === 0) return false;
+
+            const holder = countHolder(badge);
+            const text = String(this.showing);
+            if (holder.textContent !== text) holder.textContent = text;
+            return true;
+        }
+
+        /**
+         * Keep it written.
+         *
+         * Two different things undo it, so it takes two watchers. React rewrites the
+         * digits in place, which is a `characterData` change and invisible to the
+         * shared observer — that needs one scoped to the sidebar item. And the item
+         * itself is torn down and rebuilt, which the shared observer is exactly for.
+         */
+        _watch() {
+            if (!this.unwatchAdded) {
+                this.unwatchAdded = domObserver.register('MarketplaceBadge', () => this._attach(), { debounce: true });
+            }
+            this._attach();
+        }
+
+        /** Point the scoped observer at the sidebar item currently on screen */
+        _attach() {
+            const badge = document.querySelector(BADGE);
+            const nav = badge?.closest('[class*="NavigationBar_nav__"]');
+            if (!nav) return;
+
+            if (this.watchedNav !== nav) {
+                this.textWatcher?.disconnect();
+                this.textWatcher = new MutationObserver(() => this._paint());
+                this.textWatcher.observe(nav, { childList: true, subtree: true, characterData: true });
+                this.watchedNav = nav;
+            }
+            this._paint();
+        }
+
+        _stopWatching() {
+            this.unwatchAdded?.();
+            this.unwatchAdded = null;
+            this.textWatcher?.disconnect();
+            this.textWatcher = null;
+            this.watchedNav = null;
         }
 
         disable() {
             this.unregister?.();
             this.unregister = null;
+            this._stopWatching();
             dom.removeStyles(STYLE_ID);
             this.hidden = false;
-            this.listings = {};
+            this.showing = null;
+            this.lastFinishedCount = null;
         }
     }
 
     const marketplaceBadgeFilter = new MarketplaceBadgeFilter();
+
+    /**
+     * Whether this is a touch device, and whether to act like it.
+     *
+     * Two questions, deliberately separate. `hasCoarsePointer` is a fact about the
+     * hardware — the primary pointer cannot hit a 14px target — and things sized
+     * for fingers key on it directly. `isMobileMode` is a *choice* that defaults to
+     * that fact: auto-detection is right until the one person on a touchscreen
+     * laptop wants desktop layouts, and a setting that cannot be overridden is a
+     * bug report waiting to be written.
+     */
+
+
+    /**
+     * Whether the primary pointer is a finger rather than a cursor.
+     *
+     * `pointer: coarse` rather than user-agent sniffing: it asks about the actual
+     * input device instead of guessing from a browser string that lies for
+     * compatibility reasons.
+     *
+     * @returns {boolean}
+     */
+    function hasCoarsePointer() {
+        return typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
+    }
+
+    /**
+     * Whether features should adjust for a phone-sized, touch-driven screen.
+     *
+     * @returns {boolean}
+     */
+    function isMobileMode() {
+        const mode = config.getSettingValue('mobileMode', 'auto');
+        if (mode === 'on') return true;
+        if (mode === 'off') return false;
+        return hasCoarsePointer();
+    }
 
     /**
      * Market Prices
@@ -16303,7 +21117,7 @@ self.onmessage = function (e) {
      */
 
 
-    const STORAGE_KEY = 'mooketPrices';
+    const STORAGE_KEY$2 = 'mooketPrices';
     const SAVE_INTERVAL_MS = 60 * 1000;
 
     class MarketPriceStore {
@@ -16320,7 +21134,7 @@ self.onmessage = function (e) {
             if (this.bookHandler) return;
 
             try {
-                const stored = (await storage.getJSON(STORAGE_KEY, 'marketListings', {})) || {};
+                const stored = (await storage.getJSON(STORAGE_KEY$2, 'marketListings', {})) || {};
                 this.entries = pruneStale(stored, Date.now() - PRICE_MAX_AGE_MS);
             } catch (error) {
                 console.error('[MooketPrices] Loading prices failed:', error);
@@ -16449,7 +21263,7 @@ self.onmessage = function (e) {
             this.dirty = false;
             try {
                 this.entries = pruneStale(this.entries, Date.now() - PRICE_MAX_AGE_MS);
-                await storage.setJSON(STORAGE_KEY, this.entries, 'marketListings');
+                await storage.setJSON(STORAGE_KEY$2, this.entries, 'marketListings');
             } catch (error) {
                 console.error('[MooketPrices] Saving prices failed:', error);
             }
@@ -16457,6 +21271,56 @@ self.onmessage = function (e) {
     }
 
     const marketPriceStore = new MarketPriceStore();
+
+    /**
+     * Which game server this is
+     *
+     * Milky Way Idle runs a test server beside the live one, on its own hostname
+     * and with its own database. Playing on it is ordinary — it is where new
+     * content is tried — but the two are different worlds: different characters,
+     * different prices, different economy.
+     *
+     * That matters wherever Toolasha sends something outward. A test-server order
+     * book uploaded to a pooled price dataset is not a cheaper price, it is a wrong
+     * one, and it is indistinguishable from a real one once it has landed. So
+     * anything that contributes data to a shared service asks here first.
+     *
+     * Reading is a different question and mostly harmless — a test-server session
+     * looking up live history gets live history, which is what it was after.
+     */
+
+    /** The live game, the test game, and nothing else Toolasha runs on */
+    const TEST_HOSTNAMES = new Set(['test.milkywayidle.com', 'api-test.milkywayidle.com']);
+
+    /**
+     * The hostname this page is on, or an empty string off a browser.
+     * @returns {string}
+     */
+    function currentHostname() {
+        try {
+            return String(globalThis.location?.hostname || '').toLowerCase();
+        } catch {
+            return '';
+        }
+    }
+
+    /**
+     * Whether this is the test server.
+     *
+     * Matches by hostname rather than by anything in the game data, because the
+     * answer is needed before a character has loaded and because the hostname is
+     * the one thing the two servers can never share.
+     *
+     * @param {string} [hostname] - Overrides the page's own, for tests
+     * @returns {boolean} True on the test server, false on live and false anywhere
+     *   the question does not apply — an unknown host is treated as live, which is
+     *   the answer that keeps a real session contributing
+     */
+    function isTestServer(hostname = currentHostname()) {
+        const host = String(hostname || '').toLowerCase();
+        if (!host) return false;
+        return TEST_HOSTNAMES.has(host);
+    }
 
     /**
      * Market History API
@@ -16475,6 +21339,15 @@ self.onmessage = function (e) {
      * Both directions talk to a third party, which is why the switch starts off and
      * why the setting says plainly what each does: reading tells the server which
      * items you look up, contributing tells it the books you opened and when.
+     *
+     * ## Never from the test server
+     *
+     * The test server has its own economy, so a book observed there is not a cheap
+     * price, it is a wrong one — and once it is in a pooled dataset there is nothing
+     * in it that says where it came from. Contributing is therefore off on the test
+     * server whatever the setting says, and the socket that carries it is never
+     * opened. Reading still works, because a test-server session asking for live
+     * history gets live history.
      */
 
 
@@ -16496,6 +21369,8 @@ self.onmessage = function (e) {
             this.socket = null;
             this.reconnectTimer = null;
             this.closing = false;
+            /** Said once. The getter is read on every book, and on every reconnect. */
+            this.notedTestServer = false;
         }
 
         /** @returns {boolean} Whether history may be fetched at all */
@@ -16505,11 +21380,22 @@ self.onmessage = function (e) {
 
         /**
          * @returns {boolean} Whether observed books may be sent back. The same
-         *   switch as reading: taking from a pooled dataset without feeding it is
-         *   what empties it.
+         *   switch as reading — taking from a pooled dataset without feeding it is
+         *   what empties it — except on the test server, where the honest
+         *   contribution is none.
          */
         get contributing() {
-            return this.enabled;
+            if (!this.enabled) return false;
+
+            if (isTestServer()) {
+                if (!this.notedTestServer) {
+                    this.notedTestServer = true;
+                    console.log('[Mooket] test server — not sending data');
+                }
+                return false;
+            }
+
+            return true;
         }
 
         /**
@@ -16796,6 +21682,16 @@ self.onmessage = function (e) {
         });
     }
 
+    var marketHistoryData = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        DAILY_GROUPING_THRESHOLD: DAILY_GROUPING_THRESHOLD,
+        HISTORY_RANGES: HISTORY_RANGES,
+        buildHistorySeries: buildHistorySeries,
+        historyLabels: historyLabels,
+        median: median,
+        splitVolume: splitVolume
+    });
+
     /**
      * Market Watchlist
      *
@@ -16948,10 +21844,44 @@ self.onmessage = function (e) {
      */
 
 
-    const PANEL_ID = 'mwi-market-history-panel';
+    const PANEL_ID$2 = 'mwi-market-history-panel';
     const TAB_ID = 'mwi-market-history-tab';
+    /** Where the panel is and how it draws — one panel, so one global answer */
     const PREFS_KEY = 'mooketPanelPrefs';
+    /**
+     * What this character is watching.
+     *
+     * Split out of the prefs object, because it is the one field in it that is not
+     * about the panel: an iron cow watching its own handful of items had the market
+     * character's list of forty pushed onto it every time either of them saved.
+     */
+    const WATCHLIST_BASE = 'mooketWatchlist';
     const POLL_MS = 500;
+
+    /**
+     * Lift a pre-split watchlist out of the shared prefs object into its own key.
+     *
+     * Seeding the bare key and letting `readScoped` take it from there hands the
+     * adoption rules — the main character claims it, an iron cow starts clean —
+     * to one implementation instead of a second copy of them here.
+     * @param {Object|null} savedPrefs - The prefs object as read from storage
+     * @returns {Promise<void>}
+     */
+    async function splitLegacyWatchlist(savedPrefs) {
+        if (!savedPrefs || savedPrefs.watchlist === undefined) return;
+
+        try {
+            const alreadySplit = await storage.get(WATCHLIST_BASE, 'settings', null);
+            if (alreadySplit === null) {
+                await storage.setJSON(WATCHLIST_BASE, normaliseWatchlist(savedPrefs.watchlist), 'settings', true);
+            }
+            const remaining = { ...savedPrefs };
+            delete remaining.watchlist;
+            await storage.setJSON(PREFS_KEY, remaining, 'settings', true);
+        } catch (error) {
+            console.error('[MarketHistory] Splitting the panel watchlist out failed:', error);
+        }
+    }
 
     /** Series colours, in the order the datasets are built */
     const SERIES = [
@@ -16985,15 +21915,7 @@ self.onmessage = function (e) {
             if (!config.getSetting('market_pooledHistory')) return;
             this.isInitialized = true;
 
-            try {
-                const saved = await storage.getJSON(PREFS_KEY, 'settings', null);
-                if (saved) {
-                    this.prefs = { ...this.prefs, ...saved };
-                    this.watchlist = normaliseWatchlist(saved.watchlist);
-                }
-            } catch (error) {
-                console.error('[MarketHistory] Loading panel preferences failed:', error);
-            }
+            await this.loadPrefs();
 
             await marketPriceStore.initialize();
             marketHistoryAPI.connect();
@@ -17042,9 +21964,37 @@ self.onmessage = function (e) {
             this.isInitialized = false;
         }
 
+        /**
+         * Read the panel's own settings and this character's watched items.
+         *
+         * Separate from `initialize` because it is the whole of what a character
+         * switch has to redo, and because it is the only part of start-up that can
+         * be tested without a canvas.
+         * @returns {Promise<void>}
+         */
+        async loadPrefs() {
+            try {
+                const saved = await storage.getJSON(PREFS_KEY, 'settings', null);
+                if (saved) {
+                    this.prefs = { ...this.prefs, ...saved };
+                    delete this.prefs.watchlist;
+                }
+                await splitLegacyWatchlist(saved);
+                // Assigned whether or not anything was found: initialize runs again
+                // after a character switch, and the previous character's list must
+                // not survive it
+                this.watchlist = normaliseWatchlist(await readScoped(WATCHLIST_BASE, 'settings', null));
+            } catch (error) {
+                console.error('[MarketHistory] Loading panel preferences failed:', error);
+            }
+        }
+
         async savePrefs() {
             try {
-                await storage.setJSON(PREFS_KEY, { ...this.prefs, watchlist: this.watchlist }, 'settings');
+                const prefs = { ...this.prefs };
+                delete prefs.watchlist;
+                await storage.setJSON(PREFS_KEY, prefs, 'settings');
+                await writeScoped(WATCHLIST_BASE, this.watchlist, 'settings');
             } catch (error) {
                 console.error('[MarketHistory] Saving panel preferences failed:', error);
             }
@@ -17064,7 +22014,7 @@ self.onmessage = function (e) {
 
         buildPanel() {
             const panel = document.createElement('div');
-            panel.id = PANEL_ID;
+            panel.id = PANEL_ID$2;
             panel.style.cssText = `
             position: fixed; left: ${this.prefs.x}px; top: ${this.prefs.y}px;
             width: ${this.prefs.w}px; z-index: 9000; display: none;
@@ -17074,7 +22024,11 @@ self.onmessage = function (e) {
             min-width: 260px; min-height: 60px;
         `;
 
-            panel.appendChild(this.buildToolbar());
+            // The toolbar is the one region a finger can drag from: the chip row
+            // has to keep touch scrolling, and the canvas keeps its own gestures
+            const toolbar = this.buildToolbar();
+            toolbar.style.touchAction = 'none';
+            panel.appendChild(toolbar);
 
             this.chipRow = document.createElement('div');
             this.chipRow.style.cssText =
@@ -17245,7 +22199,9 @@ self.onmessage = function (e) {
          * @param {HTMLElement} panel - The panel
          */
         makeDraggable(panel) {
-            panel.addEventListener('mousedown', (e) => {
+            // Pointer events so a finger works too; mousedown never fires on a
+            // touchscreen
+            panel.addEventListener('pointerdown', (e) => {
                 if (this.prefs.locked) return;
                 if (e.button !== 0 || e.target.closest('button, select, canvas, input')) return;
                 // The browser's own resize handle lives in the bottom-right corner
@@ -17263,8 +22219,9 @@ self.onmessage = function (e) {
                     panel.style.top = `${Math.min(Math.max(0, move.clientY - grabY), maxTop)}px`;
                 };
                 const onUp = () => {
-                    document.removeEventListener('mousemove', onMove);
-                    document.removeEventListener('mouseup', onUp);
+                    document.removeEventListener('pointermove', onMove);
+                    document.removeEventListener('pointerup', onUp);
+                    document.removeEventListener('pointercancel', onUp);
                     const final = panel.getBoundingClientRect();
                     this.prefs.x = final.left;
                     this.prefs.y = final.top;
@@ -17273,8 +22230,9 @@ self.onmessage = function (e) {
                     this.savePrefs();
                 };
 
-                document.addEventListener('mousemove', onMove);
-                document.addEventListener('mouseup', onUp);
+                document.addEventListener('pointermove', onMove);
+                document.addEventListener('pointerup', onUp);
+                document.addEventListener('pointercancel', onUp);
             });
         }
 
@@ -17331,7 +22289,7 @@ self.onmessage = function (e) {
                 }
 
                 chip.addEventListener('click', () => {
-                    navigateToMarketplace(itemHrid, Number(level));
+                    marketplaceTabs_js.navigateToMarketplace(itemHrid, Number(level));
                     this.showItem(itemHrid, Number(level));
                 });
                 chip.addEventListener('contextmenu', (e) => {
@@ -17341,9 +22299,16 @@ self.onmessage = function (e) {
                     this.savePrefs();
                 });
 
+                // Touch gets sized-up controls: 8px arrows are unhittable with a
+                // finger, and right-click-to-remove does not exist there — an
+                // explicit × stands in, since a long-press that silently deletes a
+                // watch would be worse than one extra glyph of clutter
+                const coarse = hasCoarsePointer();
+
                 const arrows = document.createElement('span');
-                arrows.style.cssText =
-                    'display:flex; flex-direction:column; line-height:0.7; font-size:8px; color:#8fa0c8;';
+                arrows.style.cssText = coarse
+                    ? 'display:flex; flex-direction:column; line-height:0.9; font-size:13px; color:#8fa0c8; gap:2px;'
+                    : 'display:flex; flex-direction:column; line-height:0.7; font-size:8px; color:#8fa0c8;';
                 for (const [glyph, direction] of [
                     ['▲', -1],
                     ['▼', 1],
@@ -17351,6 +22316,7 @@ self.onmessage = function (e) {
                     const step = document.createElement('span');
                     step.textContent = glyph;
                     step.style.cursor = 'pointer';
+                    if (coarse) step.style.padding = '2px 4px';
                     step.addEventListener('click', (e) => {
                         e.stopPropagation();
                         this.watchlist = moveWatched(this.watchlist, entry.key, direction);
@@ -17360,6 +22326,20 @@ self.onmessage = function (e) {
                     arrows.appendChild(step);
                 }
                 chip.appendChild(arrows);
+
+                if (coarse) {
+                    const remove = document.createElement('span');
+                    remove.textContent = '×';
+                    remove.title = 'Remove from watchlist';
+                    remove.style.cssText = 'cursor:pointer; padding:2px 6px; font-size:14px; line-height:1; color:#c88f8f;';
+                    remove.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        this.watchlist = removeWatched(this.watchlist, entry.key);
+                        this.renderChips();
+                        this.savePrefs();
+                    });
+                    chip.appendChild(remove);
+                }
 
                 this.chipRow.appendChild(chip);
             }
@@ -17564,8 +22544,32 @@ self.onmessage = function (e) {
     const PHILO_HRID = '/items/philosophers_stone';
     const PRIME_CATALYST_HRID = '/items/prime_catalyst';
     const PRIME_CATALYST_ADDITIVE_BONUS = 0.25; // 25% additive boost
-    const TRANSMUTE_ACTION_TIME_SECONDS = 20;
+    const TRANSMUTE_ACTION_HRID = '/actions/alchemy/transmute';
+    const CATALYTIC_TEA_HRID = '/items/catalytic_tea';
     const CATALYTIC_TEA_BUFF_TYPE = '/buff_types/alchemy_success';
+    // Only used when actionDetailMap is unavailable (offline/no init data) — the
+    // real time comes from actionDetails.baseTimeCost, scaled by speed/efficiency.
+    const FALLBACK_ACTION_TIME_SECONDS = 20;
+    // Under-level transmute penalty: perLevel × (alchemyLevel − itemLevel).
+    // Matches alchemy-profit-calculator.js.
+    const LEVEL_PENALTY_NUMERATOR = 0.9;
+
+    /**
+     * Which side of the book each pricing mode buys and sells at.
+     * Mirrors the profitCalc_pricingMode options in settings-schema.js.
+     */
+    const PRICING_MODES = {
+        conservative: { buy: 'ask', sell: 'bid', label: 'Instant buy / Instant sell' },
+        hybrid: { buy: 'ask', sell: 'ask', label: 'Instant buy / Patient sell' },
+        optimistic: { buy: 'bid', sell: 'ask', label: 'Patient buy / Patient sell' },
+        patientBuy: { buy: 'bid', sell: 'bid', label: 'Patient buy / Instant sell' },
+    };
+
+    // Philo gamba is a long-tail lottery: rows are only worth acting on if they
+    // still pay when every stone is dumped into a standing bid, so this table
+    // starts conservative even when the global profit setting is more generous.
+    const DEFAULT_PRICING_MODE = 'conservative';
+    const GLOBAL_PRICING_MODE = 'global';
 
     class PhiloCalculator {
         constructor() {
@@ -17576,6 +22580,8 @@ self.onmessage = function (e) {
 
             // User-editable inputs
             this.philoPrice = 0;
+            this.philoBid = 0;
+            this.philoAsk = 0;
             this.catalystPrice = 0;
             this.useCatalyst = true;
             this.useCatalyticTea = false;
@@ -17583,12 +22589,21 @@ self.onmessage = function (e) {
             this.drinkConcentrationLevel = null; // 0-20; null = not saved yet (auto-detect from gear)
             this.hideNegativeProfitItems = true;
             this.filterText = '';
+            this.pricingMode = DEFAULT_PRICING_MODE;
+            // Per-item manual cost basis, hrid → coins (the buy-side twin of the
+            // philo price input)
+            this.itemCostOverrides = {};
+            this._manualPhiloPrice = false;
+            this._manualCatalystPrice = false;
             this._escHandler = null;
 
             // Cached row data
             this.rows = [];
             // Lazy map of refined-item hrid → producing action (for craft-cost pricing)
             this._refineActionByOutput = null;
+            // Per-pass caches, cleared on every recalculation
+            this._actionStatsCache = new Map();
+            this._bonusRevenueCache = new Map();
         }
 
         /**
@@ -17696,14 +22711,60 @@ self.onmessage = function (e) {
         }
 
         /**
-         * Load default prices from market data
+         * Resolve the pricing mode this table is currently calculating with.
+         * 'global' defers to the shared profitCalc_pricingMode setting; anything
+         * unrecognised falls back to the conservative default.
+         * @returns {string} A key of PRICING_MODES
+         */
+        resolvePricingMode() {
+            if (this.pricingMode === GLOBAL_PRICING_MODE) {
+                const globalMode = config.getSettingValue('profitCalc_pricingMode', 'hybrid');
+                return PRICING_MODES[globalMode] ? globalMode : 'hybrid';
+            }
+            return PRICING_MODES[this.pricingMode] ? this.pricingMode : DEFAULT_PRICING_MODE;
+        }
+
+        /**
+         * Which book side ('ask' or 'bid') the active pricing mode uses
+         * @param {string} side - 'buy' or 'sell'
+         * @returns {string} 'ask' or 'bid'
+         */
+        getPriceType(side) {
+            return PRICING_MODES[this.resolvePricingMode()][side];
+        }
+
+        /**
+         * Philo sale price for a given book side. A manually entered price wins
+         * outright — the user has told us what they will actually get.
+         * @param {string} [sellType] - 'bid' or 'ask'; defaults to the active mode
+         * @returns {number} Price before market tax
+         */
+        getPhiloPrice(sellType) {
+            if (this._manualPhiloPrice) {
+                return this.philoPrice || 0;
+            }
+            const type = sellType || this.getPriceType('sell');
+            return (type === 'bid' ? this.philoBid : this.philoAsk) || 0;
+        }
+
+        /**
+         * Load default prices from market data (respecting the active pricing mode)
          */
         loadDefaultPrices() {
             const philoPriceData = marketAPI.getPrice(PHILO_HRID, 0);
-            this.philoPrice = philoPriceData?.bid || 0;
+            this.philoBid = philoPriceData?.bid > 0 ? philoPriceData.bid : 0;
+            this.philoAsk = philoPriceData?.ask > 0 ? philoPriceData.ask : 0;
+            if (!this._manualPhiloPrice) {
+                this.philoPrice = this.getPhiloPrice();
+            }
 
-            const catalystPriceData = marketAPI.getPrice(PRIME_CATALYST_HRID, 0);
-            this.catalystPrice = catalystPriceData?.ask || 0;
+            if (!this._manualCatalystPrice) {
+                const catalystPriceData = marketAPI.getPrice(PRIME_CATALYST_HRID, 0);
+                const buyType = this.getPriceType('buy');
+                const preferred = catalystPriceData?.[buyType];
+                const other = catalystPriceData?.[buyType === 'ask' ? 'bid' : 'ask'];
+                this.catalystPrice = preferred > 0 ? preferred : other > 0 ? other : 0;
+            }
         }
 
         /**
@@ -17737,7 +22798,9 @@ self.onmessage = function (e) {
          */
         async loadSettings() {
             try {
-                const saved = await storage.getJSON('philoCalculatorSettings', 'settings', null);
+                // Read every time the calculator is opened, so the key is the one
+                // belonging to whoever is logged in now
+                const saved = await readScoped('philoCalculatorSettings', 'settings', null, { migrate: 'adopt' });
                 if (saved) {
                     this.useCatalyst = saved.useCatalyst !== false;
                     this.useCatalyticTea = saved.useCatalyticTea || false;
@@ -17745,6 +22808,13 @@ self.onmessage = function (e) {
                     this.drinkConcentrationLevel = saved.drinkConcentrationLevel ?? null;
                     this.hideNegativeProfitItems = saved.hideNegativeProfitItems !== false;
                     this.filterText = saved.filterText || '';
+                    const savedMode = saved.pricingMode;
+                    this.pricingMode =
+                        savedMode === GLOBAL_PRICING_MODE || PRICING_MODES[savedMode] ? savedMode : DEFAULT_PRICING_MODE;
+                    this.itemCostOverrides =
+                        saved.itemCostOverrides && typeof saved.itemCostOverrides === 'object'
+                            ? { ...saved.itemCostOverrides }
+                            : {};
                 }
             } catch (error) {
                 console.error('[PhiloCalculator] Failed to load settings:', error);
@@ -17756,7 +22826,7 @@ self.onmessage = function (e) {
          */
         async saveSettings() {
             try {
-                await storage.setJSON(
+                await writeScoped(
                     'philoCalculatorSettings',
                     {
                         useCatalyst: this.useCatalyst,
@@ -17764,6 +22834,8 @@ self.onmessage = function (e) {
                         drinkConcentrationLevel: this.drinkConcentrationLevel,
                         hideNegativeProfitItems: this.hideNegativeProfitItems,
                         filterText: this.filterText,
+                        pricingMode: this.pricingMode,
+                        itemCostOverrides: this.itemCostOverrides,
                     },
                     'settings',
                     true
@@ -17882,6 +22954,182 @@ self.onmessage = function (e) {
         }
 
         /**
+         * Under-level transmute success penalty.
+         * perLevel = 0.9 / itemLevel, applied only when below the item's level.
+         * @param {number} itemLevel - Item level being transmuted
+         * @returns {number} Negative penalty term, or 0 when at/above level
+         */
+        getLevelPenalty(itemLevel) {
+            const level = itemLevel || 1;
+            const skills = dataManager.getSkills();
+            const alchemySkill = skills?.find((s) => s.skillHrid === '/skills/alchemy');
+            const alchemyLevel = alchemySkill?.level || 1;
+            return alchemyLevel < level ? (LEVEL_PENALTY_NUMERATOR / level) * (alchemyLevel - level) : 0;
+        }
+
+        /**
+         * Action time and efficiency for transmuting an item of a given level.
+         * Alchemy scales efficiency off the item's level rather than the action's
+         * own requirement, so results are cached per item level.
+         * @param {number} itemLevel - Item level being transmuted
+         * @returns {{actionTime: number, efficiency: number, estimated: boolean}} Action stats
+         */
+        getActionStats(itemLevel) {
+            const level = itemLevel || 1;
+            if (this._actionStatsCache.has(level)) {
+                return this._actionStatsCache.get(level);
+            }
+
+            let stats = { actionTime: FALLBACK_ACTION_TIME_SECONDS, efficiency: 0, estimated: true };
+            try {
+                const gameData = dataManager.getInitClientData();
+                const actionDetails = gameData?.actionDetailMap?.[TRANSMUTE_ACTION_HRID];
+                if (actionDetails?.baseTimeCost) {
+                    const actionStats = actionCalculator_js.calculateActionStats(actionDetails, {
+                        skills: dataManager.getSkills(),
+                        equipment: dataManager.getEquipment(),
+                        itemDetailMap: gameData.itemDetailMap,
+                        includeCommunityBuff: true,
+                        levelRequirementOverride: level,
+                    });
+                    if (actionStats?.actionTime > 0) {
+                        stats = {
+                            actionTime: actionStats.actionTime,
+                            efficiency: (actionStats.totalEfficiency || 0) / 100,
+                            estimated: false,
+                        };
+                    }
+                }
+            } catch (error) {
+                console.error('[PhiloCalculator] Failed to calculate action stats:', error);
+            }
+
+            this._actionStatsCache.set(level, stats);
+            return stats;
+        }
+
+        /**
+         * Catalytic tea cost charged against a single action. Teas are consumed on
+         * a clock, not per action, so the hourly burn is divided by the action rate
+         * the same way calculateTeaCostsPerHour is consumed elsewhere.
+         * @param {number} actionsPerHour - Effective actions per hour (with efficiency)
+         * @returns {number} Coins per action
+         */
+        getTeaCostPerAction(actionsPerHour) {
+            if (!this.useCatalyticTea || !(actionsPerHour > 0)) {
+                return 0;
+            }
+
+            try {
+                const gameData = dataManager.getInitClientData();
+                const buyType = this.getPriceType('buy');
+                const teaCosts = profitHelpers_js.calculateTeaCostsPerHour({
+                    drinkSlots: [{ itemHrid: CATALYTIC_TEA_HRID }],
+                    drinkConcentration: this.getDrinkConcentrationForLevel(this.drinkConcentrationLevel),
+                    itemDetailMap: gameData?.itemDetailMap || {},
+                    getItemPrice: (hrid) => {
+                        const resolved = profitHelpers_js.resolveItemPrice(hrid, { side: 'buy', mode: buyType, context: 'profit' });
+                        return resolved.missing ? null : resolved.price;
+                    },
+                });
+                return teaCosts.totalCostPerHour / actionsPerHour;
+            } catch (error) {
+                console.error('[PhiloCalculator] Failed to calculate tea cost:', error);
+                return 0;
+            }
+        }
+
+        /**
+         * Alchemy essence and rare (artisan's crate) revenue for one transmute
+         * attempt. The rates and prices come from the canonical alchemy calculator
+         * rather than being re-derived here; a row whose input has no market data
+         * there simply contributes no bonus revenue.
+         * @param {string} itemHrid - Item being transmuted
+         * @returns {number} Coins per action, after market tax
+         */
+        getBonusRevenuePerAction(itemHrid) {
+            if (this._bonusRevenueCache.has(itemHrid)) {
+                return this._bonusRevenueCache.get(itemHrid);
+            }
+
+            let total = 0;
+            try {
+                const transmute = alchemyProfitCalculator.calculateTransmuteProfit(itemHrid);
+                for (const drop of transmute?.dropRevenues || []) {
+                    if (!drop?.isEssence && !drop?.isRare) continue;
+                    // Taxed, unlike the canonical calculator: essences and crates
+                    // are sold like any other drop, and this table taxes every
+                    // sold drop uniformly.
+                    total += profitHelpers_js.calculatePriceAfterTax(drop.revenuePerAttempt || 0);
+                }
+            } catch (error) {
+                console.error('[PhiloCalculator] Failed to resolve bonus drop revenue:', error);
+                total = 0;
+            }
+
+            this._bonusRevenueCache.set(itemHrid, total);
+            return total;
+        }
+
+        /**
+         * Resolve what one input item costs to acquire, and what a returned copy of
+         * it is worth back.
+         *
+         * The book side follows the active pricing mode. Refined items compare the
+         * +0 quote against crafting (base item + refinement materials) and take the
+         * cheaper path; capes are often listed only at low enhancement levels, so
+         * those are scanned as a last resort — and a row priced that way is flagged,
+         * because a +3 listing is not a cost basis a +0 transmute can be run at.
+         * @param {string} itemHrid - Item HRID
+         * @returns {{itemCost: number, selfReturnUnitValue: number, source: string, fallbackLevel: number}|null}
+         */
+        resolveItemCost(itemHrid) {
+            const override = this.itemCostOverrides[itemHrid];
+            if (typeof override === 'number' && override > 0) {
+                return { itemCost: override, selfReturnUnitValue: override, source: 'override', fallbackLevel: 0 };
+            }
+
+            const buyType = this.getPriceType('buy');
+            const quoteAt = (level) => {
+                const priceData = marketAPI.getPrice(itemHrid, level);
+                return priceData?.[buyType] > 0 ? priceData[buyType] : null;
+            };
+
+            let itemCost = quoteAt(0);
+            let source = itemCost === null ? null : 'market';
+            let fallbackLevel = 0;
+
+            if (itemHrid.endsWith('_refined')) {
+                const craftCost = this.getRefinementCraftCost(itemHrid);
+                if (craftCost !== null && (itemCost === null || craftCost < itemCost)) {
+                    itemCost = craftCost;
+                    source = 'craft';
+                }
+                for (let level = 1; level <= 5 && itemCost === null; level++) {
+                    const quote = quoteAt(level);
+                    if (quote !== null) {
+                        itemCost = quote;
+                        source = 'enhanced';
+                        fallbackLevel = level;
+                    }
+                }
+            }
+
+            if (itemCost === null || itemCost === undefined) return null;
+
+            // A self-return hands back a +0 item, never the enhanced listing the
+            // cost basis had to borrow from, so credit it at the base item's own
+            // quote (0 when the base has no market at all).
+            let selfReturnUnitValue = itemCost;
+            if (source === 'enhanced') {
+                const base = marketAPI.getPrice(itemHrid, 0);
+                selfReturnUnitValue = base?.bid > 0 ? base.bid : base?.ask > 0 ? base.ask : 0;
+            }
+
+            return { itemCost, selfReturnUnitValue, source, fallbackLevel };
+        }
+
+        /**
          * Calculate all columns for a single item
          * @param {string} itemHrid - Item HRID
          * @param {Object} itemDetails - Item detail object
@@ -17891,8 +23139,17 @@ self.onmessage = function (e) {
             const alchemy = itemDetails.alchemyDetail;
             const baseTransmuteRate = alchemy.transmuteSuccessRate;
 
-            // Calculate additive bonuses
-            let totalBonus = 0;
+            // Find philo drop rate
+            const philoDrop = alchemy.transmuteDropTable.find((d) => d.itemHrid === PHILO_HRID);
+            if (!philoDrop) return null;
+
+            const itemLevel = itemDetails.itemLevel || 1;
+
+            // Calculate additive bonuses. The under-level penalty is a negative
+            // term in the same sum, matching the game's success formula:
+            // min(1, base × (1 + catalyst + levelPenalty + tea))
+            const levelPenalty = this.getLevelPenalty(itemLevel);
+            let totalBonus = levelPenalty;
 
             // Catalytic tea bonus
             if (this.useCatalyticTea && this.catalyticTeaRatioBoost > 0) {
@@ -17905,99 +23162,96 @@ self.onmessage = function (e) {
                 totalBonus += PRIME_CATALYST_ADDITIVE_BONUS;
             }
 
-            const successRate = Math.min(1.0, baseTransmuteRate * (1 + totalBonus));
+            const successRate = Math.max(0, Math.min(1.0, baseTransmuteRate * (1 + totalBonus)));
+            if (!(successRate > 0)) return null; // Under-levelled into never succeeding
             const bulkMultiplier = alchemy.bulkMultiplier || 1;
 
-            // Find philo drop rate
-            const philoDrop = alchemy.transmuteDropTable.find((d) => d.itemHrid === PHILO_HRID);
-            if (!philoDrop) return null;
-
             const philoDropRate = philoDrop.dropRate;
-            // Per-action chance drives the math; the displayed Philo % matches the
-            // game's output panel (conditional on a successful transmute)
-            const philoChancePerAction = successRate * philoDropRate;
+            const avgPhiloCount = (philoDrop.minCount + philoDrop.maxCount) / 2;
+            // Philos actually produced per action — bulk transmutes roll the whole
+            // drop table at bulk scale, the same scale the input cost is charged at
+            const philosPerAction = successRate * philoDropRate * avgPhiloCount * bulkMultiplier;
+            if (!(philosPerAction > 0)) return null;
 
-            // Acquisition cost. Only ask prices are actionable — a bid is what a
-            // buyer offers, not a price the item can be acquired at, and lowball
-            // bids made bid-priced rows absurdly profitable. Refined items compare
-            // the +0 ask against crafting (base item + refinement materials) and
-            // take the cheaper path; capes are often listed only at low
-            // enhancement levels, so those are scanned as a last resort.
-            const askAt = (level) => {
-                const priceData = marketAPI.getPrice(itemHrid, level);
-                return priceData?.ask > 0 ? priceData.ask : null;
-            };
-            let itemCost = askAt(0);
-            let costIsCraftEstimate = false;
-            if (itemHrid.endsWith('_refined')) {
-                const craftCost = this.getRefinementCraftCost(itemHrid);
-                if (craftCost !== null && (itemCost === null || craftCost < itemCost)) {
-                    itemCost = craftCost;
-                    costIsCraftEstimate = true;
-                }
-                for (let level = 1; level <= 5 && itemCost === null; level++) {
-                    itemCost = askAt(level);
-                }
-            }
-            if (itemCost === null || itemCost === undefined) return null;
+            const costBasis = this.resolveItemCost(itemHrid);
+            if (!costBasis) return null;
+            const { itemCost, selfReturnUnitValue, source: costSource, fallbackLevel } = costBasis;
 
             // Catalyst cost per action (consumed only on success)
             const catalystCostPerAction = this.useCatalyst ? successRate * this.catalystPrice : 0;
 
-            // Transmute coin cost: max(50, sellPrice / 5) × bulkMultiplier per action
-            const sellPrice = itemDetails.sellPrice || 0;
-            const coinCost = Math.max(50, Math.floor(sellPrice / 5)) * bulkMultiplier;
+            // Transmute coin fee — see utils/alchemy-fees.js (bulkMultiplier already folded in)
+            const coinCost = getAlchemyCoinCost(itemDetails, 'transmute');
+
+            // Real action time and efficiency from game data
+            const { actionTime, efficiency, estimated } = this.getActionStats(itemLevel);
+            const actionsPerHour = profitHelpers_js.calculateActionsPerHour(actionTime) * (1 + efficiency);
+            const teaCostPerAction = this.getTeaCostPerAction(actionsPerHour);
 
             // Total cost per transmute action
-            const totalCostPerAction = itemCost * bulkMultiplier + catalystCostPerAction + coinCost;
+            const totalCostPerAction = itemCost * bulkMultiplier + catalystCostPerAction + coinCost + teaCostPerAction;
 
-            // Calculate EV of all drops (including philo)
-            let evPerAction = 0;
-            for (const drop of alchemy.transmuteDropTable) {
-                let dropValue;
-                if (drop.itemHrid === PHILO_HRID) {
-                    dropValue = this.philoPrice;
-                } else if (drop.itemHrid === itemHrid) {
-                    // Self-return: value at the same resolved cost used on the cost
-                    // side, so untradable inputs (refined capes) credit the return
-                    dropValue = itemCost;
-                } else {
-                    const dropPrice = marketAPI.getPrice(drop.itemHrid, 0);
-                    dropValue = dropPrice?.bid;
-                    if (dropValue === null || dropValue === undefined) continue;
+            const bonusRevenuePerAction = this.getBonusRevenuePerAction(itemHrid);
+
+            /**
+             * Expected revenue of one action when every sellable drop is liquidated
+             * on the given book side. Sold drops pay market tax; the self-return
+             * does not, because it goes straight back into the transmuter.
+             * @param {string} sellType - 'bid' (instant) or 'ask' (patient)
+             * @returns {number} Coins per action
+             */
+            const expectedValueFor = (sellType) => {
+                let ev = 0;
+                for (const drop of alchemy.transmuteDropTable) {
+                    let dropValue;
+                    if (drop.itemHrid === itemHrid) {
+                        dropValue = selfReturnUnitValue;
+                    } else if (drop.itemHrid === PHILO_HRID) {
+                        dropValue = profitHelpers_js.calculatePriceAfterTax(this.getPhiloPrice(sellType));
+                    } else {
+                        const quote = marketAPI.getPrice(drop.itemHrid, 0)?.[sellType];
+                        if (!(quote > 0)) continue;
+                        dropValue = profitHelpers_js.calculatePriceAfterTax(quote);
+                    }
+
+                    const avgCount = (drop.minCount + drop.maxCount) / 2;
+                    ev += successRate * drop.dropRate * avgCount * bulkMultiplier * dropValue;
                 }
+                return ev + bonusRevenuePerAction;
+            };
 
-                const avgCount = (drop.minCount + drop.maxCount) / 2;
-                evPerAction += successRate * drop.dropRate * avgCount * dropValue;
-            }
+            const evInstant = expectedValueFor('bid');
+            const evPatient = expectedValueFor('ask');
+            const evPerAction = this.getPriceType('sell') === 'bid' ? evInstant : evPatient;
 
             // Profit per action (EV now includes philo value)
             const profitPerAction = evPerAction - totalCostPerAction;
 
             // Actions and items needed per philo
-            const actionsPerPhilo = 1 / philoChancePerAction;
+            const actionsPerPhilo = 1 / philosPerAction;
 
-            // Net items consumed per action (input minus expected self-returns)
+            // Net items consumed per action (input minus expected self-returns),
+            // both sides at bulk scale
             const selfDrop = alchemy.transmuteDropTable.find((d) => d.itemHrid === itemHrid);
             const selfDropRate = selfDrop ? selfDrop.dropRate : 0;
             const avgSelfCount = selfDrop ? (selfDrop.minCount + selfDrop.maxCount) / 2 : 0;
             const returnChancePerAction = successRate * selfDropRate;
-            const itemsPerAction = bulkMultiplier - returnChancePerAction * avgSelfCount;
+            const itemsPerAction = bulkMultiplier * (1 - returnChancePerAction * avgSelfCount);
 
             // Items needed per philo (net items consumed × actions needed)
             const itemsPerPhilo = actionsPerPhilo * itemsPerAction;
 
-            // Profit per philo obtained
+            // Profit per philo obtained, at both liquidation speeds
             const profitPerPhilo = profitPerAction * actionsPerPhilo;
+            const profitPerPhiloInstant = (evInstant - totalCostPerAction) * actionsPerPhilo;
+            const profitPerPhiloPatient = (evPatient - totalCostPerAction) * actionsPerPhilo;
 
             // Profit margin
             const profitMargin = profitPerAction / totalCostPerAction;
 
-            // Time per philo
-            const timePerPhiloSeconds = actionsPerPhilo * TRANSMUTE_ACTION_TIME_SECONDS;
+            // Time per philo (efficiency buys extra actions, not shorter ones)
+            const timePerPhiloSeconds = actionsPerHour > 0 ? (actionsPerPhilo / actionsPerHour) * profitConstants_js.SECONDS_PER_HOUR : 0;
 
-            // Profit per hour
-            const actionsPerHour = 3600 / TRANSMUTE_ACTION_TIME_SECONDS;
             const profitPerHour = profitPerAction * actionsPerHour;
 
             // Revenue and cost per hour
@@ -18006,24 +23260,38 @@ self.onmessage = function (e) {
 
             return {
                 itemHrid,
-                name: this.getItemName(itemHrid) + (costIsCraftEstimate ? ' ⚒' : ''),
+                name: this.getItemName(itemHrid),
                 cost: itemCost,
+                costSource,
+                costFallbackLevel: fallbackLevel,
                 // Displayed as the game shows them: conditional on a successful transmute
                 philoChance: philoDropRate,
                 returnChance: selfDropRate,
                 transmuteChance: baseTransmuteRate,
                 effectiveTransmuteChance: successRate,
+                levelPenalty,
                 transmuteCost: totalCostPerAction,
+                teaCostPerAction,
+                bonusRevenuePerAction,
                 ev: evPerAction,
+                evInstant,
+                evPatient,
                 itemsPerAction,
                 actionsPerPhilo,
                 itemsPerPhilo,
                 profitPerPhilo,
+                profitPerPhiloInstant,
+                profitPerPhiloPatient,
                 profitMargin,
+                actionTime,
+                efficiency,
+                actionTimeEstimated: estimated,
+                actionsPerHour,
                 timePerPhiloSeconds,
                 profitPerHour,
                 revenuePerHour,
                 costPerHour,
+                pricingMode: this.resolvePricingMode(),
             };
         }
 
@@ -18033,6 +23301,9 @@ self.onmessage = function (e) {
         calculateAllRows() {
             const items = this.findPhiloTransmuteItems();
             this.rows = [];
+            // Gear, teas and prices can all have moved since the last pass
+            this._actionStatsCache.clear();
+            this._bonusRevenueCache.clear();
 
             for (const { itemHrid, itemDetails } of items) {
                 const row = this.calculateRow(itemHrid, itemDetails);
@@ -18220,6 +23491,7 @@ self.onmessage = function (e) {
             philoLabel.textContent = 'Philo Price: ';
             const philoInput = document.createElement('input');
             philoInput.type = 'text';
+            philoInput.className = 'philo-calc-price-input';
             philoInput.value = this.philoPrice.toLocaleString();
             philoInput.style.cssText = `
             width: 130px;
@@ -18230,10 +23502,12 @@ self.onmessage = function (e) {
             border-radius: 4px;
             font-size: 13px;
         `;
+            philoInput.title = 'Sale price per Philosopher’s Stone. Overrides the market quote for every column.';
             philoInput.addEventListener('change', () => {
                 const parsed = parseInt(philoInput.value.replaceAll(',', '').replaceAll('.', ''), 10);
                 if (!isNaN(parsed)) {
                     this.philoPrice = parsed;
+                    this._manualPhiloPrice = true;
                     this.recalculate();
                 }
             });
@@ -18245,6 +23519,7 @@ self.onmessage = function (e) {
             catLabel.textContent = 'Catalyst Price: ';
             const catInput = document.createElement('input');
             catInput.type = 'text';
+            catInput.className = 'philo-calc-price-input';
             catInput.value = this.catalystPrice.toLocaleString();
             catInput.style.cssText = `
             width: 130px;
@@ -18259,6 +23534,7 @@ self.onmessage = function (e) {
                 const parsed = parseInt(catInput.value.replaceAll(',', '').replaceAll('.', ''), 10);
                 if (!isNaN(parsed)) {
                     this.catalystPrice = parsed;
+                    this._manualCatalystPrice = true;
                     this.recalculate();
                 }
             });
@@ -18282,6 +23558,7 @@ self.onmessage = function (e) {
             container.appendChild(philoLabel);
             container.appendChild(catLabel);
             container.appendChild(checkLabel);
+            container.appendChild(this.createPricingModeControl());
 
             // Catalytic Tea checkbox
             const teaCheckLabel = document.createElement('label');
@@ -18407,9 +23684,7 @@ self.onmessage = function (e) {
                     await marketAPI.fetch(true);
                     this.loadDefaultPrices();
                     // Update the price inputs to reflect new data
-                    const inputs = container.querySelectorAll('input[type="text"]');
-                    if (inputs[0]) inputs[0].value = this.philoPrice.toLocaleString();
-                    if (inputs[1]) inputs[1].value = this.catalystPrice.toLocaleString();
+                    this.syncPriceInputs();
                     this.recalculate();
                 } catch (error) {
                     console.error('[PhiloCalculator] Failed to refresh prices:', error);
@@ -18424,11 +23699,180 @@ self.onmessage = function (e) {
         }
 
         /**
+         * Pricing mode dropdown. Defaults to conservative rather than following the
+         * global profit setting, and says so in its tooltip.
+         * @returns {HTMLElement} Label wrapping the select
+         */
+        createPricingModeControl() {
+            const label = document.createElement('label');
+            label.style.cssText = 'display: flex; align-items: center; gap: 6px; font-size: 13px;';
+            label.textContent = 'Pricing: ';
+
+            const globalMode = config.getSettingValue('profitCalc_pricingMode', 'hybrid');
+            const globalLabel = PRICING_MODES[globalMode]?.label || globalMode;
+            label.title =
+                `Defaults to ${PRICING_MODES[DEFAULT_PRICING_MODE].label} regardless of the global profit ` +
+                `pricing mode (currently ${globalLabel}): a philo hunt only pays if it still pays when the ` +
+                'stones are sold into standing bids, so this table refuses to assume a patient sale. ' +
+                'Choose Global to follow the shared setting instead.';
+
+            const select = document.createElement('select');
+            select.style.cssText = `
+            padding: 4px 8px;
+            background: #1a1a1a;
+            color: #fff;
+            border: 1px solid #555;
+            border-radius: 4px;
+            font-size: 13px;
+        `;
+
+            const options = [
+                [GLOBAL_PRICING_MODE, `Global (${globalLabel})`],
+                ...Object.entries(PRICING_MODES).map(([value, mode]) => [value, mode.label]),
+            ];
+            for (const [value, text] of options) {
+                const option = document.createElement('option');
+                option.value = value;
+                option.textContent = text;
+                if (value === this.pricingMode) {
+                    option.selected = true;
+                }
+                select.appendChild(option);
+            }
+
+            select.addEventListener('change', () => {
+                this.pricingMode = select.value;
+                // Un-pinned prices track whichever side of the book the new mode reads
+                this.loadDefaultPrices();
+                this.syncPriceInputs();
+                this.recalculate();
+                this.saveSettings();
+            });
+
+            label.appendChild(select);
+            return label;
+        }
+
+        /**
+         * Push the current philo/catalyst prices back into their inputs
+         */
+        syncPriceInputs() {
+            const inputs = this.modal?.querySelectorAll('.philo-calc-price-input');
+            if (!inputs) return;
+            if (inputs[0]) inputs[0].value = this.philoPrice.toLocaleString();
+            if (inputs[1]) inputs[1].value = this.catalystPrice.toLocaleString();
+        }
+
+        /**
          * Recalculate all rows and re-render
          */
         recalculate() {
             this.calculateAllRows();
             this.renderTable();
+        }
+
+        /**
+         * Draw the cost cell: the resolved cost basis, a marker explaining where it
+         * came from, and click-to-edit for a manual override.
+         * @param {HTMLElement} td - Cell to fill
+         * @param {Object} row - Row data
+         */
+        renderCostCell(td, row) {
+            const markers = {
+                craft: {
+                    glyph: ' ⚒',
+                    title: 'Cost is the refinement craft estimate (base item + materials), not a listing.',
+                },
+                enhanced: {
+                    glyph: ` ⚠+${row.costFallbackLevel}`,
+                    title:
+                        `No +0 listing — cost basis borrowed from the +${row.costFallbackLevel} ask, which is dearer ` +
+                        'than a +0 item and is not a price this transmute can actually be run at. Self-returns are ' +
+                        'credited at the base item price, so this row is a lower bound at best. Click to override.',
+                },
+                override: { glyph: ' ✎', title: 'Manual cost override. Click to change, clear the field to remove.' },
+            };
+
+            const marker = markers[row.costSource];
+            td.textContent = formatters_js.formatLargeNumber(Math.round(row.cost)) + (marker?.glyph || '');
+            td.title = marker?.title || 'Click to override this item’s cost basis.';
+            td.style.cursor = 'pointer';
+            if (row.costSource === 'enhanced') {
+                td.style.color = config.COLOR_WARNING;
+            }
+
+            td.addEventListener('click', () => this.editCostOverride(td, row));
+        }
+
+        /**
+         * Swap a cost cell for an input so the user can pin the item's cost basis,
+         * the same way the philo price input pins the sell side.
+         * @param {HTMLElement} td - Cost cell
+         * @param {Object} row - Row data
+         */
+        editCostOverride(td, row) {
+            if (td.querySelector('input')) return;
+
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.value = String(this.itemCostOverrides[row.itemHrid] ?? Math.round(row.cost));
+            input.style.cssText = `
+            width: 90px;
+            padding: 2px 4px;
+            background: #1a1a1a;
+            color: #fff;
+            border: 1px solid #4a90e2;
+            border-radius: 3px;
+            font-size: 12px;
+            text-align: right;
+        `;
+
+            const commit = () => {
+                const raw = input.value.replaceAll(',', '').replaceAll('.', '').trim();
+                const parsed = parseInt(raw, 10);
+                if (raw === '' || parsed <= 0 || isNaN(parsed)) {
+                    delete this.itemCostOverrides[row.itemHrid];
+                } else {
+                    this.itemCostOverrides[row.itemHrid] = parsed;
+                }
+                this.recalculate();
+                this.saveSettings();
+            };
+
+            input.addEventListener('keydown', (e) => {
+                e.stopPropagation(); // Escape belongs to the input, not the modal
+                if (e.key === 'Enter') input.blur();
+                if (e.key === 'Escape') this.renderTable();
+            });
+            input.addEventListener('blur', commit);
+
+            td.textContent = '';
+            td.appendChild(input);
+            input.focus();
+            input.select();
+        }
+
+        /**
+         * Draw the paired instant | patient profit cell
+         * @param {HTMLElement} td - Cell to fill
+         * @param {Object} row - Row data
+         */
+        renderPairedProfitCell(td, row) {
+            const part = (value) => {
+                const span = document.createElement('span');
+                span.textContent = formatters_js.formatLargeNumber(Math.round(value));
+                span.style.color = value >= 0 ? config.COLOR_PROFIT : config.COLOR_LOSS;
+                return span;
+            };
+
+            const separator = document.createElement('span');
+            separator.textContent = ' | ';
+            separator.style.color = '#888';
+
+            td.appendChild(part(row.profitPerPhiloInstant));
+            td.appendChild(separator);
+            td.appendChild(part(row.profitPerPhiloPatient));
+            td.title = 'Instant: stones sold into standing bids. Patient: stones listed at ask and waited out.';
         }
 
         /**
@@ -18450,7 +23894,11 @@ self.onmessage = function (e) {
                 { key: 'itemsPerAction', label: 'Items/Act' },
                 { key: 'actionsPerPhilo', label: 'Acts/Philo' },
                 { key: 'itemsPerPhilo', label: 'Items/Philo' },
-                { key: 'profitPerPhilo', label: 'Profit/Philo' },
+                {
+                    key: 'profitPerPhiloInstant',
+                    label: 'Profit/Philo (instant | patient)',
+                    title: 'Left: stones sold into standing bids. Right: stones listed and waited out at ask. Sorts on instant.',
+                },
                 { key: 'profitMargin', label: 'Margin' },
                 { key: 'timePerPhiloSeconds', label: 'Time/Philo' },
                 { key: 'profitPerHour', label: 'Profit/Hr' },
@@ -18486,6 +23934,9 @@ self.onmessage = function (e) {
 
                 const arrow = this.sortColumn === col.key ? (this.sortDirection === 'asc' ? ' \u25B2' : ' \u25BC') : '';
                 th.textContent = col.label + arrow;
+                if (col.title) {
+                    th.title = col.title;
+                }
 
                 th.addEventListener('click', () => this.toggleSort(col.key));
                 headerRow.appendChild(th);
@@ -18529,6 +23980,12 @@ self.onmessage = function (e) {
                         case 'name':
                             td.textContent = value;
                             break;
+                        case 'cost':
+                            this.renderCostCell(td, row);
+                            break;
+                        case 'profitPerPhiloInstant':
+                            this.renderPairedProfitCell(td, row);
+                            break;
                         case 'philoChance':
                         case 'returnChance':
                         case 'transmuteChance':
@@ -18542,7 +23999,6 @@ self.onmessage = function (e) {
                         case 'timePerPhiloSeconds':
                             td.textContent = formatters_js.timeReadable(value);
                             break;
-                        case 'profitPerPhilo':
                         case 'profitPerHour':
                             td.textContent = formatters_js.formatLargeNumber(Math.round(value));
                             td.style.color = value >= 0 ? config.COLOR_PROFIT : config.COLOR_LOSS;
@@ -19277,7 +24733,7 @@ self.onmessage = function (e) {
      */
     async function waitForMarketplace() {
         for (let i = 0; i < 50; i++) {
-            const tabsContainer = document.querySelector('.MuiTabs-flexContainer[role="tablist"]');
+            const tabsContainer = marketplaceTabs_js.visibleTabsContainer();
             if (tabsContainer) {
                 const hasMarket = Array.from(tabsContainer.children).some((btn) =>
                     btn.textContent.includes('Market Listings')
@@ -19295,10 +24751,10 @@ self.onmessage = function (e) {
      * Inject tabs for all queued items into the marketplace tab strip.
      */
     function injectTabs() {
-        const tabsContainer = document.querySelector('.MuiTabs-flexContainer[role="tablist"]');
+        const tabsContainer = marketplaceTabs_js.visibleTabsContainer();
         if (!tabsContainer) return;
 
-        removeMaterialTabs();
+        marketplaceTabs_js.removeMaterialTabs();
         currentTabs.length = 0;
 
         const referenceTab = Array.from(tabsContainer.children).find((btn) => btn.textContent.includes('My Listings'));
@@ -19316,8 +24772,8 @@ self.onmessage = function (e) {
                 isTradeable: true,
             };
 
-            const tab = createMaterialTab(material, referenceTab, (_e, mat) => {
-                navigateToMarketplace(mat.itemHrid, 0);
+            const tab = marketplaceTabs_js.createMaterialTab(material, referenceTab, (_e, mat) => {
+                marketplaceTabs_js.navigateToMarketplace(mat.itemHrid, 0);
             });
 
             const badgeSpan = tab.querySelector('[class*="TabsComponent_badge"]');
@@ -19384,7 +24840,7 @@ self.onmessage = function (e) {
 
         // After removing sold-out tabs, navigate to the first remaining queued item
         if (toRemove.length > 0 && queue.length > 0) {
-            navigateToMarketplace(queue[0].itemHrid, 0);
+            marketplaceTabs_js.navigateToMarketplace(queue[0].itemHrid, 0);
         }
     }
 
@@ -19413,7 +24869,7 @@ self.onmessage = function (e) {
      * Handle cleanup when user leaves the marketplace.
      */
     function handleMarketplaceCleanup() {
-        removeMaterialTabs();
+        marketplaceTabs_js.removeMaterialTabs();
         currentTabs.length = 0;
         queue.length = 0;
         if (inventoryUpdateHandler) {
@@ -19437,7 +24893,7 @@ self.onmessage = function (e) {
         queue.push({ itemHrid, itemName });
 
         if (isFirstItem) {
-            const tabsContainer = document.querySelector('.MuiTabs-flexContainer[role="tablist"]');
+            const tabsContainer = marketplaceTabs_js.visibleTabsContainer();
             const alreadyInMarket =
                 tabsContainer &&
                 Array.from(tabsContainer.children).some((btn) => btn.textContent.includes('Market Listings'));
@@ -19453,12 +24909,12 @@ self.onmessage = function (e) {
                 });
             }
 
-            cleanupObserver = setupMarketplaceCleanupObserver(handleMarketplaceCleanup, currentTabs);
+            cleanupObserver = marketplaceTabs_js.setupMarketplaceCleanupObserver(handleMarketplaceCleanup, currentTabs);
             setupInventoryListener();
         }
 
         injectTabs();
-        navigateToMarketplace(itemHrid, 0);
+        marketplaceTabs_js.navigateToMarketplace(itemHrid, 0);
     }
 
     /**
@@ -19645,6 +25101,189 @@ self.onmessage = function (e) {
 
     const milkywayMarketLink = new MilkyWayMarketLink();
 
+    /**
+     * Production Profit Calculator
+     *
+     * Calculates comprehensive profit/hour for production actions (Brewing, Cooking, Crafting, Tailoring, Cheesesmithing)
+     * Reuses existing profit calculator from tooltip system.
+     */
+
+
+    /**
+     * Action types for production skills (5 skills)
+     */
+    const PRODUCTION_TYPES = [
+        '/action_types/brewing',
+        '/action_types/cooking',
+        '/action_types/cheesesmithing',
+        '/action_types/crafting',
+        '/action_types/tailoring',
+    ];
+
+    /**
+     * Calculate comprehensive profit for a production action
+     * @param {string} actionHrid - Action HRID (e.g., "/actions/brewing/efficiency_tea")
+     * @returns {Object|null} Profit data or null if not applicable
+     */
+    async function calculateProductionProfit(actionHrid) {
+        const gameData = dataManager.getInitClientData();
+        const actionDetail = gameData.actionDetailMap[actionHrid];
+
+        if (!actionDetail) {
+            return null;
+        }
+
+        // Only process production actions with outputs
+        if (!PRODUCTION_TYPES.includes(actionDetail.type)) {
+            return null;
+        }
+
+        if (!actionDetail.outputItems || actionDetail.outputItems.length === 0) {
+            return null; // No output - nothing to calculate
+        }
+
+        // Note: Market API is pre-loaded by caller (max-produceable.js)
+        // No need to check or fetch here
+
+        // Get output item HRID
+        const outputItemHrid = actionDetail.outputItems[0].itemHrid;
+
+        // Reuse existing profit calculator (does all the heavy lifting).
+        // The action is named as well as the item: two recipes can yield the same output, and
+        // without the name the calculator answers about whichever it finds first — so a caller
+        // filing this margin against `actionHrid` could be filing the other recipe's number.
+        const profitData = await profitCalculator.calculateProfit(outputItemHrid, { actionHrid });
+
+        if (!profitData) {
+            return null;
+        }
+
+        return profitData;
+    }
+
+    /**
+     * Format profit data into display object for panel display
+     * @param {Object} profitData - Profit data from calculateProductionProfit
+     * @returns {Object} Formatted display data
+     */
+    function formatProfitDisplay(profitData) {
+        if (!profitData) {
+            return null;
+        }
+
+        // Helper: Format number with appropriate decimals (2 if < 1, else 1)
+        const formatWithDecimals = (value) => {
+            if (value < 1) {
+                return parseFloat(value.toFixed(2));
+            }
+            return parseFloat(value.toFixed(1));
+        };
+
+        return {
+            profit: Math.round(profitData.profitPerHour),
+            profitPerDay: Math.round(profitData.profitPerDay),
+            revenue: Math.round(
+                profitData.itemsPerHour * profitData.priceAfterTax + profitData.gourmetBonusItems * profitData.priceAfterTax
+            ),
+            costs: Math.round(profitData.materialCostPerHour + profitData.totalTeaCostPerHour),
+            actionsPerHour: formatWithDecimals(profitData.actionsPerHour),
+            totalEfficiency: profitData.totalEfficiency,
+
+            // Output details (preserve decimals for items/hour)
+            baseOutputItems: formatWithDecimals(profitData.itemsPerHour),
+            gourmetBonusItems: formatWithDecimals(profitData.gourmetBonusItems),
+            priceEach: Math.round(profitData.priceAfterTax),
+
+            // Material breakdown
+            materialCosts: profitData.materialCosts,
+            totalMaterialCost: Math.round(profitData.materialCostPerHour),
+
+            // Tea breakdown
+            teaCosts: profitData.teaCosts,
+            totalTeaCost: Math.round(profitData.totalTeaCostPerHour),
+
+            // Pricing mode
+            pricingMode: profitData.pricingMode,
+
+            // Efficiency breakdown
+            details: {
+                levelEfficiency: profitData.levelEfficiency,
+                houseEfficiency: profitData.houseEfficiency,
+                teaEfficiency: profitData.teaEfficiency,
+                equipmentEfficiency: profitData.equipmentEfficiency,
+                artisanBonus: profitData.artisanBonus,
+                gourmetBonus: profitData.gourmetBonus,
+                efficiencyMultiplier: profitData.efficiencyMultiplier, // For time calculations
+            },
+        };
+    }
+
+    var productionProfit = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        calculateProductionProfit: calculateProductionProfit,
+        formatProfitDisplay: formatProfitDisplay
+    });
+
+    /**
+     * Work that should not hold up the rest of the start.
+     *
+     * Features are initialised one after another and each is awaited, so anything a
+     * feature does inside `initialize()` is time every feature behind it spends
+     * waiting. That is right for wiring up listeners, which is fast, and wrong for
+     * reading a year of history out of IndexedDB or repricing an entire inventory —
+     * work whose result nobody is looking at yet, and which cost the page thirteen
+     * seconds between two features alone.
+     *
+     * The rule this expresses: **register synchronously, compute later**. A feature
+     * hands its heavy part to `runInBackground`, gets a promise back, and awaits that
+     * promise anywhere its own correctness depends on the work being done. Everything
+     * else gets to start.
+     */
+
+
+    /**
+     * Wait for a quiet moment, or the next tick if the browser will not say.
+     *
+     * @returns {Promise<void>}
+     */
+    function whenIdle() {
+        return new Promise((resolve) => {
+            if (typeof requestIdleCallback === 'function') {
+                requestIdleCallback(() => resolve(), { timeout: 2000 });
+            } else {
+                setTimeout(resolve, 0);
+            }
+        });
+    }
+
+    /**
+     * Run something after the page has drawn, and time it.
+     *
+     * Timed under `bg:` so a startup trace can tell work that delayed the page from
+     * work that merely happened afterwards — the difference between a slow start and
+     * a busy one, which a flat list of durations cannot show.
+     *
+     * Failures are logged and swallowed: this is work nobody is waiting on, and a
+     * rejected promise nobody awaits is an unhandled rejection in the console for
+     * every user who has that feature on.
+     *
+     * @param {string} name - What it is, e.g. `networth`
+     * @param {Function} work - The heavy part
+     * @returns {Promise<*>} Resolves when the work is done, never rejects
+     */
+    async function runInBackground(name, work) {
+        await whenIdle();
+        const startedAt = performanceMonitor.sinceBoot();
+        try {
+            return await work();
+        } catch (error) {
+            console.error(`[Toolasha] Background work "${name}" failed:`, error);
+            return null;
+        } finally {
+            performanceMonitor.snapshot(`bg:${name}`, performanceMonitor.sinceBoot() - startedAt, startedAt);
+        }
+    }
+
     const CONNECTION_STATES = {
         CONNECTED: 'connected',
         DISCONNECTED: 'disconnected',
@@ -19809,15 +25448,495 @@ self.onmessage = function (e) {
     const connectionState = new ConnectionState();
 
     /**
+     * Action Panel Sort Manager
+     *
+     * Centralized sorting logic for action panels.
+     * Handles both profit-based sorting and pin priority.
+     * Used by max-produceable and gathering-stats features.
+     */
+
+
+    class ActionPanelSort {
+        constructor() {
+            this.panels = new Map(); // actionPanel → {actionHrid, profitPerHour, expPerHour}
+            this.pinnedActions = new Set(); // Set of pinned action HRIDs
+            this.cachedStats = {}; // actionHrid → { profitPerHour, expPerHour }
+            this.sortMode = 'default'; // 'default' | 'profit' | 'xp' | 'coinsPerXp'
+            this.sortTimeout = null; // Debounce timer
+            this.initialized = false;
+            this.timerRegistry = timerRegistry_js.createTimerRegistry();
+            this.handlers = {};
+            this.pinChangeListeners = [];
+            this.sortModeListeners = [];
+        }
+
+        /**
+         * Get character-scoped storage key for sort mode.
+         * @returns {string}
+         */
+        _getSortStorageKey() {
+            const charId = dataManager.getCurrentCharacterId() || 'default';
+            return `actionSortMode_${charId}`;
+        }
+
+        /**
+         * Get character-scoped storage key for pinned actions.
+         * @returns {string}
+         */
+        _getPinnedStorageKey() {
+            const charId = dataManager.getCurrentCharacterId() || 'default';
+            return `pinnedActions_${charId}`;
+        }
+
+        /**
+         * Initialize - load pinned actions from storage
+         */
+        async initialize() {
+            if (this.initialized) return;
+
+            const pinnedData = await storage.getJSON(this._getPinnedStorageKey(), 'settings', []);
+            this.pinnedActions = new Set(pinnedData);
+            this.sortMode = await storage.get(this._getSortStorageKey(), 'settings', 'default');
+            this.initialized = true;
+            this._notifySortModeListeners();
+
+            // Listen for character switch to clear character-specific data
+            if (!this.handlers.characterSwitch) {
+                this.handlers.characterSwitch = () => this.onCharacterSwitching();
+                dataManager.on('character_switching', this.handlers.characterSwitch);
+            }
+
+            // Listen for character initialized to reload pins for the new character
+            if (!this.handlers.characterInit) {
+                this.handlers.characterInit = (data) => {
+                    if (data?._isCharacterSwitch) this.onCharacterInitialized();
+                };
+                dataManager.on('character_initialized', this.handlers.characterInit);
+            }
+        }
+
+        /**
+         * Handle character switching - clear cached data only (character ID is still old)
+         */
+        onCharacterSwitching() {
+            this.clearAllPanels();
+            this.pinnedActions.clear();
+            this.cachedStats = {};
+            this.initialized = false;
+        }
+
+        /**
+         * Handle character initialized - reload pins for the new character
+         */
+        async onCharacterInitialized() {
+            const pinnedData = await storage.getJSON(this._getPinnedStorageKey(), 'settings', []);
+            this.pinnedActions = new Set(pinnedData);
+            this.sortMode = await storage.get(this._getSortStorageKey(), 'settings', 'default');
+            this.initialized = true;
+            this._notifySortModeListeners();
+        }
+
+        /**
+         * Disable - cleanup event listeners
+         */
+        disable() {
+            this.clearAllPanels();
+            if (this.handlers.characterSwitch) {
+                dataManager.off('character_switching', this.handlers.characterSwitch);
+                this.handlers.characterSwitch = null;
+            }
+            if (this.handlers.characterInit) {
+                dataManager.off('character_initialized', this.handlers.characterInit);
+                this.handlers.characterInit = null;
+            }
+            this.initialized = false;
+        }
+
+        /**
+         * Register a panel for sorting
+         * @param {HTMLElement} actionPanel - The action panel element
+         * @param {string} actionHrid - The action HRID
+         * @param {number|null} profitPerHour - Profit per hour (null if not calculated yet)
+         */
+        registerPanel(actionPanel, actionHrid, profitPerHour = null) {
+            this.panels.set(actionPanel, {
+                actionHrid: actionHrid,
+                profitPerHour: profitPerHour,
+                expPerHour: null,
+            });
+        }
+
+        /**
+         * Update profit for a registered panel
+         * @param {HTMLElement} actionPanel - The action panel element
+         * @param {number|null} profitPerHour - Profit per hour
+         */
+        updateProfit(actionPanel, profitPerHour) {
+            const data = this.panels.get(actionPanel);
+            if (data) {
+                data.profitPerHour = profitPerHour;
+                if (!this.cachedStats[data.actionHrid]) this.cachedStats[data.actionHrid] = {};
+                this.cachedStats[data.actionHrid].profitPerHour = profitPerHour;
+            }
+        }
+
+        /**
+         * Update exp/hr for a registered panel
+         * @param {HTMLElement} actionPanel - The action panel element
+         * @param {number|null} expPerHour - Experience per hour
+         */
+        updateExpPerHour(actionPanel, expPerHour) {
+            const data = this.panels.get(actionPanel);
+            if (data) {
+                data.expPerHour = expPerHour;
+                if (!this.cachedStats[data.actionHrid]) this.cachedStats[data.actionHrid] = {};
+                this.cachedStats[data.actionHrid].expPerHour = expPerHour;
+            }
+        }
+
+        /**
+         * Set the active sort mode
+         * @param {'default'|'profit'|'xp'|'coinsPerXp'} mode
+         */
+        setSortMode(mode) {
+            this.sortMode = mode;
+            storage.set(this._getSortStorageKey(), mode, 'settings');
+            this._notifySortModeListeners();
+        }
+
+        /**
+         * Get the active sort mode
+         * @returns {'default'|'profit'|'xp'|'coinsPerXp'}
+         */
+        getSortMode() {
+            return this.sortMode;
+        }
+
+        onSortModeChange(callback) {
+            this.sortModeListeners.push(callback);
+        }
+
+        _notifySortModeListeners() {
+            for (const cb of this.sortModeListeners) cb(this.sortMode);
+        }
+
+        /**
+         * Unregister a panel (cleanup when panel removed from DOM)
+         * @param {HTMLElement} actionPanel - The action panel element
+         */
+        unregisterPanel(actionPanel) {
+            this.panels.delete(actionPanel);
+        }
+
+        /**
+         * Toggle pin state for an action
+         * @param {string} actionHrid - Action HRID to toggle
+         * @returns {boolean} New pin state
+         */
+        async togglePin(actionHrid) {
+            if (this.pinnedActions.has(actionHrid)) {
+                this.pinnedActions.delete(actionHrid);
+            } else {
+                this.pinnedActions.add(actionHrid);
+            }
+
+            // Save to storage
+            await storage.setJSON(this._getPinnedStorageKey(), Array.from(this.pinnedActions), 'settings', true);
+
+            for (const cb of this.pinChangeListeners) {
+                try {
+                    cb();
+                } catch {
+                    /* ignore */
+                }
+            }
+
+            return this.pinnedActions.has(actionHrid);
+        }
+
+        /**
+         * Check if action is pinned
+         * @param {string} actionHrid - Action HRID
+         * @returns {boolean}
+         */
+        isPinned(actionHrid) {
+            return this.pinnedActions.has(actionHrid);
+        }
+
+        onPinChange(cb) {
+            this.pinChangeListeners.push(cb);
+        }
+
+        offPinChange(cb) {
+            const idx = this.pinChangeListeners.indexOf(cb);
+            if (idx > -1) this.pinChangeListeners.splice(idx, 1);
+        }
+
+        /**
+         * Get all pinned actions
+         * @returns {Set<string>}
+         */
+        getPinnedActions() {
+            return this.pinnedActions;
+        }
+
+        /**
+         * Get cached profit/xp stats for an action
+         * @param {string} actionHrid - Action HRID
+         * @returns {Object|null} { profitPerHour, expPerHour } or null
+         */
+        getCachedStats(actionHrid) {
+            return this.cachedStats[actionHrid] || null;
+        }
+
+        /**
+         * Clear all panel references (called during character switch to prevent memory leaks)
+         */
+        clearAllPanels() {
+            // Clear sort timeout
+            if (this.sortTimeout) {
+                clearTimeout(this.sortTimeout);
+                this.sortTimeout = null;
+            }
+
+            this.timerRegistry.clearAll();
+
+            // Clear all panel references
+            this.panels.clear();
+        }
+
+        /**
+         * Trigger a debounced sort
+         */
+        triggerSort() {
+            this.scheduleSortIfEnabled();
+        }
+
+        /**
+         * Schedule a sort to run after a short delay (debounced)
+         */
+        scheduleSortIfEnabled() {
+            const hasPinnedActions = this.pinnedActions.size > 0;
+
+            // Only sort if a sort mode is active OR there are pinned actions
+            if (this.sortMode === 'default' && !hasPinnedActions) {
+                return;
+            }
+
+            // Clear existing timeout
+            if (this.sortTimeout) {
+                clearTimeout(this.sortTimeout);
+            }
+
+            // Schedule new sort after 300ms of inactivity (reduced from 500ms)
+            this.sortTimeout = setTimeout(() => {
+                this.sortPanelsByProfit();
+                this.sortTimeout = null;
+            }, 300);
+            this.timerRegistry.registerTimeout(this.sortTimeout);
+        }
+
+        /**
+         * Sort action panels by the active sort mode, with pinned actions at top
+         */
+        sortPanelsByProfit() {
+            const sortMode = this.sortMode;
+
+            // Group panels by their parent container
+            const containerMap = new Map();
+
+            // Clean up stale panels and group by container
+            for (const [actionPanel, data] of this.panels.entries()) {
+                const container = actionPanel.parentElement;
+
+                // If no parent, panel is detached - clean it up
+                if (!container) {
+                    this.panels.delete(actionPanel);
+                    continue;
+                }
+
+                if (!containerMap.has(container)) {
+                    containerMap.set(container, []);
+                }
+
+                const isPinned = this.pinnedActions.has(data.actionHrid);
+
+                containerMap.get(container).push({
+                    panel: actionPanel,
+                    profit: data.profitPerHour ?? null,
+                    exp: data.expPerHour ?? null,
+                    pinned: isPinned,
+                    originalIndex: containerMap.get(container).length,
+                    actionHrid: data.actionHrid,
+                });
+            }
+
+            // Dismiss any open tooltips before reordering (prevents stuck tooltips)
+            // Only dismiss if a tooltip exists and its trigger is not hovered
+            const openTooltip = document.querySelector('.MuiTooltip-popper');
+            if (openTooltip) {
+                const trigger = document.querySelector(`[aria-describedby="${openTooltip.id}"]`);
+                if (!trigger || !trigger.matches(':hover')) {
+                    dom.dismissTooltips();
+                }
+            }
+
+            // Sort and reorder each container
+            for (const [container, panels] of containerMap.entries()) {
+                panels.sort((a, b) => {
+                    // Pinned actions always come first
+                    if (a.pinned && !b.pinned) return -1;
+                    if (!a.pinned && b.pinned) return 1;
+
+                    // Both same pin state — apply active sort mode
+                    return this._compareByMode(a, b, sortMode);
+                });
+
+                // Reorder DOM elements using DocumentFragment to batch reflows
+                // This prevents 50 individual reflows (one per appendChild)
+                const fragment = document.createDocumentFragment();
+                panels.forEach(({ panel }) => {
+                    fragment.appendChild(panel);
+                });
+                container.appendChild(fragment);
+            }
+        }
+
+        /**
+         * Compare two panel entries by the active sort mode
+         * @private
+         */
+        _compareByMode(a, b, sortMode) {
+            if (sortMode === 'profit') {
+                if (a.profit === null && b.profit === null) return 0;
+                if (a.profit === null) return 1;
+                if (b.profit === null) return -1;
+                return b.profit - a.profit;
+            }
+
+            if (sortMode === 'xp') {
+                if (a.exp === null && b.exp === null) return 0;
+                if (a.exp === null) return 1;
+                if (b.exp === null) return -1;
+                return b.exp - a.exp;
+            }
+
+            if (sortMode === 'coinsPerXp') {
+                const aRatio = a.profit !== null && a.exp ? a.profit / a.exp : null;
+                const bRatio = b.profit !== null && b.exp ? b.profit / b.exp : null;
+                if (aRatio === null && bRatio === null) return 0;
+                if (aRatio === null) return 1;
+                if (bRatio === null) return -1;
+                return bRatio - aRatio;
+            }
+
+            // 'default' — sort ascending by required level, falling back to insertion order
+            const aLevel = dataManager.getActionDetails(a.actionHrid)?.levelRequirement?.level ?? null;
+            const bLevel = dataManager.getActionDetails(b.actionHrid)?.levelRequirement?.level ?? null;
+            if (aLevel === null && bLevel === null) return a.originalIndex - b.originalIndex;
+            if (aLevel === null) return 1;
+            if (bLevel === null) return -1;
+            if (aLevel !== bLevel) return aLevel - bLevel;
+            return a.originalIndex - b.originalIndex;
+        }
+    }
+
+    new ActionPanelSort();
+
+    /**
      * Task Profit Calculator
      * Calculates total profit for gathering and production tasks
      * Includes task rewards (coins, task tokens, Purple's Gift) + action profit
      */
 
 
+    const TASK_TOKEN_HRID = '/items/task_token';
+
+    // Purple's Gift drops once per 50 completed tasks — the basis is tasks, not
+    // tokens, so the prorated value is credited per task rather than per token.
+    const TASKS_PER_PURPLES_GIFT = 50;
+
+    /**
+     * Value one Task Shop line is worth per task token.
+     * Openable items (the caches/crates/chests) are worth their expected contents;
+     * anything else tradable is worth its market price.
+     * @param {string} itemHrid - Shop item
+     * @param {Object} itemDetailMap - Game item details
+     * @returns {number} Coins the item is worth, or 0 when unpriceable
+     */
+    function valueOfShopItem(itemHrid, itemDetailMap) {
+        let value = marketData_js.getItemPrice(itemHrid, { context: 'profit', side: 'sell' }) || 0;
+
+        if (itemDetailMap?.[itemHrid]?.isOpenable) {
+            const evData = expectedValueCalculator.calculateExpectedValue(itemHrid);
+            const expectedValue = evData?.expectedValue || 0;
+            if (expectedValue > value) {
+                value = expectedValue;
+            }
+        }
+
+        return value;
+    }
+
+    /**
+     * A shop line's costs, whichever shape the game used for it.
+     * @param {Object} line - Shop line
+     * @returns {Array<Object>} Cost entries
+     */
+    function shopCosts(line) {
+        if (Array.isArray(line?.costs)) return line.costs;
+        if (line?.cost) return [line.cost];
+        return [];
+    }
+
+    /**
+     * Find the best coins-per-token line in the Task Shop.
+     *
+     * Reads taskShopItemDetailMap, so a new shop line, a changed token price or a
+     * line that buys several of something is priced correctly — none of which a
+     * hardcoded list of three chests at 30 tokens each could ever notice.
+     *
+     * @returns {{perToken: number, itemHrid: string, tokenCost: number, itemValue: number}|null}
+     */
+    function findBestTaskShopValue() {
+        const gameData = dataManager.getInitClientData();
+        const shopMap = gameData?.taskShopItemDetailMap;
+        if (!shopMap) {
+            return null;
+        }
+
+        const itemDetailMap = gameData.itemDetailMap || {};
+        let best = null;
+
+        for (const line of Object.values(shopMap)) {
+            const itemHrid = line?.itemHrid;
+            if (!itemHrid) continue;
+
+            // Only lines actually bought with task tokens say anything about what a
+            // task token is worth
+            const costs = shopCosts(line);
+            if (costs.length !== 1 || costs[0]?.itemHrid !== TASK_TOKEN_HRID) continue;
+
+            const tokenCost = costs[0].count || 0;
+            if (tokenCost <= 0) continue;
+
+            const unitValue = valueOfShopItem(itemHrid, itemDetailMap);
+            if (unitValue <= 0) continue;
+
+            // One purchase can hand over several of something, and the shop says so
+            const itemValue = unitValue * (line.outputCount || 1);
+            const perToken = itemValue / tokenCost;
+            if (!best || perToken > best.perToken) {
+                best = { perToken, itemHrid, tokenCost, itemValue };
+            }
+        }
+
+        return best;
+    }
+
     /**
      * Calculate Task Token value from Task Shop items
-     * Uses same approach as Ranged Way Idle - find best Task Shop item
+     * Uses the best coins-per-token line the Task Shop actually offers.
      * @returns {Object} Token value breakdown or error state
      */
     function calculateTaskTokenValue() {
@@ -19831,722 +25950,34 @@ self.onmessage = function (e) {
             };
         }
 
-        const taskShopItems = [
-            '/items/large_meteorite_cache',
-            '/items/large_artisans_crate',
-            '/items/large_treasure_chest',
-        ];
+        const best = findBestTaskShopValue();
+        if (!best) {
+            return {
+                tokenValue: null,
+                giftPerTask: null,
+                totalPerToken: null,
+                error: 'Task Shop data unavailable',
+            };
+        }
 
-        // Get expected value of each Task Shop item (all cost 30 tokens)
-        const expectedValues = taskShopItems.map((itemHrid) => {
-            const result = expectedValueCalculator.calculateExpectedValue(itemHrid);
-            if (!result) {
-                console.warn(`[TaskProfit] Expected value returned null for task shop item: ${itemHrid}`);
-            }
-            return result?.expectedValue || 0;
-        });
+        const taskTokenValue = best.perToken;
 
-        // Use best (highest value) item
-        const bestValue = Math.max(...expectedValues);
-
-        // Task Token value = best chest value / 30 (cost in tokens)
-        const taskTokenValue = bestValue / 30;
-
-        // Calculate Purple's Gift prorated value (divide by 50 tasks)
+        // Calculate Purple's Gift prorated value (one gift per 50 tasks)
         const giftResult = expectedValueCalculator.calculateExpectedValue('/items/purples_gift');
         if (!giftResult) {
             console.warn('[TaskProfit] Expected value returned null for /items/purples_gift');
         }
         const giftValue = giftResult?.expectedValue || 0;
-        const giftPerTask = giftValue / 50;
+        const giftPerTask = giftValue / TASKS_PER_PURPLES_GIFT;
 
         return {
             tokenValue: taskTokenValue,
             giftPerTask: giftPerTask,
+            bestShopItemHrid: best.itemHrid,
+            bestShopTokenCost: best.tokenCost,
             totalPerToken: taskTokenValue + giftPerTask,
             error: null,
         };
-    }
-
-    /**
-     * Networth Cache
-     * LRU cache for expensive enhancement cost calculations
-     * Prevents recalculating the same enhancement paths repeatedly
-     */
-
-    class NetworthCache {
-        constructor(maxSize = 100) {
-            this.maxSize = maxSize;
-            this.cache = new Map();
-            this.marketDataHash = null;
-        }
-
-        /**
-         * Generate cache key for enhancement calculation
-         * @param {string} itemHrid - Item HRID
-         * @param {number} enhancementLevel - Enhancement level
-         * @returns {string} Cache key
-         */
-        generateKey(itemHrid, enhancementLevel) {
-            return `${itemHrid}_${enhancementLevel}`;
-        }
-
-        /**
-         * Generate hash of market data for cache invalidation
-         * Uses first 10 items' prices as a simple hash
-         * @param {Object} marketData - Market data object
-         * @returns {string} Hash string
-         */
-        generateMarketHash(marketData) {
-            if (!marketData || !marketData.marketData) return 'empty';
-
-            // Cheap rolling hash over every item so any price change invalidates the
-            // cache (sampling only the first 10 items left stale values behind)
-            let hash = 0;
-            for (const [hrid, data] of Object.entries(marketData.marketData)) {
-                const entry = `${hrid}:${data[0]?.a || 0}:${data[0]?.b || 0}`;
-                let entryHash = 0;
-                for (let i = 0; i < entry.length; i++) {
-                    entryHash = (entryHash * 31 + entry.charCodeAt(i)) | 0;
-                }
-                hash = (hash ^ entryHash) | 0;
-            }
-
-            return String(hash);
-        }
-
-        /**
-         * Check if market data has changed and invalidate cache if needed
-         * @param {Object} marketData - Current market data
-         */
-        checkAndInvalidate(marketData) {
-            const newHash = this.generateMarketHash(marketData);
-
-            if (this.marketDataHash !== null && this.marketDataHash !== newHash) {
-                // Market data changed, invalidate entire cache
-                this.clear();
-            }
-
-            this.marketDataHash = newHash;
-        }
-
-        /**
-         * Get cached enhancement cost
-         * @param {string} itemHrid - Item HRID
-         * @param {number} enhancementLevel - Enhancement level
-         * @returns {number|null} Cached cost or null if not found
-         */
-        get(itemHrid, enhancementLevel) {
-            const key = this.generateKey(itemHrid, enhancementLevel);
-
-            if (!this.cache.has(key)) {
-                return null;
-            }
-
-            // Move to end (most recently used)
-            const value = this.cache.get(key);
-            this.cache.delete(key);
-            this.cache.set(key, value);
-
-            return value;
-        }
-
-        /**
-         * Set cached enhancement cost
-         * @param {string} itemHrid - Item HRID
-         * @param {number} enhancementLevel - Enhancement level
-         * @param {number} cost - Enhancement cost
-         */
-        set(itemHrid, enhancementLevel, cost) {
-            const key = this.generateKey(itemHrid, enhancementLevel);
-
-            // Delete if exists (to update position)
-            if (this.cache.has(key)) {
-                this.cache.delete(key);
-            }
-
-            // Add to end
-            this.cache.set(key, cost);
-
-            // Evict oldest if over size limit
-            if (this.cache.size > this.maxSize) {
-                const firstKey = this.cache.keys().next().value;
-                this.cache.delete(firstKey);
-            }
-        }
-
-        /**
-         * Clear entire cache
-         */
-        clear() {
-            this.cache.clear();
-            this.marketDataHash = null;
-        }
-
-        /**
-         * Get cache statistics
-         * @returns {Object} {size, maxSize, hitRate}
-         */
-        getStats() {
-            return {
-                size: this.cache.size,
-                maxSize: this.maxSize,
-                marketDataHash: this.marketDataHash,
-            };
-        }
-    }
-
-    const networthCache = new NetworthCache();
-
-    /**
-     * Networth Item Valuation Worker Manager
-     * Manages parallel item valuation calculations including enhancement paths
-     */
-
-
-    // Worker pool instance
-    let workerPool = null;
-
-    // Worker script as inline string
-    const WORKER_SCRIPT = `
-// Import math.js library for enhancement calculations
-importScripts('https://cdnjs.cloudflare.com/ajax/libs/mathjs/12.4.2/math.js');
-
-// Cache for item valuations
-const valuationCache = new Map();
-
-// Enhancement calculation BASE_SUCCESS_RATES
-const BASE_SUCCESS_RATES = [50,45,45,40,40,40,35,35,35,35,30,30,30,30,30,30,30,30,30,30];
-
-/**
- * Calculate production cost from crafting/upgrading recipe
- * @param {string} itemHrid - Item HRID
- * @param {Object} priceMap - Price map
- * @param {Object} actionDetailMap - Action detail map from game data
- * @returns {number} Production cost
- */
-function calculateProductionCost(itemHrid, priceMap, actionDetailMap) {
-    // Find the action that produces this item
-    let action = null;
-    for (const actionHrid in actionDetailMap) {
-        const actionData = actionDetailMap[actionHrid];
-        if (actionData.outputItems && actionData.outputItems.length > 0) {
-            if (actionData.outputItems[0].itemHrid === itemHrid) {
-                action = actionData;
-                break;
-            }
-        }
-    }
-
-    if (!action) {
-        return 0;
-    }
-
-    let totalPrice = 0;
-
-    // Sum up input material costs
-    if (action.inputItems) {
-        for (const input of action.inputItems) {
-            // Match main thread: getItemPrice(input.itemHrid, { mode: 'ask' }) || 0
-            let inputPrice = priceMap[input.itemHrid + ':0_ask'];
-            if (inputPrice === undefined) inputPrice = priceMap[input.itemHrid + ':0'];
-            if (inputPrice === null || inputPrice === undefined) inputPrice = 0;
-
-            // Recursively calculate production cost if no market price (matches main thread)
-            if (inputPrice === 0) {
-                inputPrice = calculateProductionCost(input.itemHrid, priceMap, actionDetailMap);
-            }
-
-            totalPrice += inputPrice * input.count;
-        }
-    }
-
-    // Apply Artisan Tea reduction (0.9x)
-    totalPrice *= 0.9;
-
-    // Add upgrade item cost if this is an upgrade recipe (for refined items)
-    if (action.upgradeItemHrid) {
-        // Match main thread: getItemPrice(action.upgradeItemHrid, { mode: 'ask' }) || 0
-        let upgradePrice = priceMap[action.upgradeItemHrid + ':0_ask'];
-        if (upgradePrice === undefined) upgradePrice = priceMap[action.upgradeItemHrid + ':0'];
-        if (upgradePrice === null || upgradePrice === undefined) upgradePrice = 0;
-
-        // Recursively calculate production cost if no market price (matches main thread)
-        if (upgradePrice === 0) {
-            upgradePrice = calculateProductionCost(action.upgradeItemHrid, priceMap, actionDetailMap);
-        }
-
-        totalPrice += upgradePrice;
-    }
-
-    return totalPrice;
-}
-
-/**
- * Calculate enhancement path cost using proper strategy optimization
- * @param {Object} params - Enhancement calculation parameters
- * @returns {number} Total cost
- */
-function calculateEnhancementCost(params) {
-    const { itemHrid, targetLevel, enhancementParams, itemDetails, priceMap, actionDetailMap } = params;
-
-    if (!itemDetails.enhancementCosts || targetLevel < 1 || targetLevel > 20) {
-        return null;
-    }
-
-    const itemLevel = itemDetails.itemLevel || 1;
-
-    // Get base item cost using realistic pricing (matches main thread logic)
-    const basePrice = getRealisticPrice(itemHrid, null, priceMap, actionDetailMap);
-
-    // Build cost array for each level by testing all protection strategies
-    const targetCosts = new Array(targetLevel + 1);
-    targetCosts[0] = basePrice;
-
-    for (let level = 1; level <= targetLevel; level++) {
-        // Calculate per-attempt material cost (sum of ALL materials)
-        let perAttemptMaterialCost = 0;
-        if (itemDetails.enhancementCosts && itemDetails.enhancementCosts.length > 0) {
-            for (const material of itemDetails.enhancementCosts) {
-                let materialPrice = 0;
-
-                // Special cases
-                if (material.itemHrid.startsWith('/items/trainee_')) {
-                    materialPrice = 250000; // Trainee charms are untradeable, fixed price
-                } else if (material.itemHrid === '/items/coin') {
-                    materialPrice = 1; // Coins have face value of 1
-                } else {
-                    // Get material details for sellPrice fallback
-                    const materialDetail = itemDetails.enhancementCosts ?
-                        (itemDetails.allItemDetails && itemDetails.allItemDetails[material.itemHrid]) : null;
-
-                    // Try to get market price from priceMap
-                    const hasMarketData = (material.itemHrid + ':0_ask') in priceMap || (material.itemHrid + ':0') in priceMap;
-
-                    if (hasMarketData) {
-                        let ask = priceMap[material.itemHrid + ':0_ask'];
-                        if (ask === undefined) ask = priceMap[material.itemHrid + ':0'];
-                        let bid = priceMap[material.itemHrid + ':0_bid'];
-
-                        // Match MCS behavior: if one price is positive and other is negative, use positive for both
-                        if (ask > 0 && bid < 0) {
-                            bid = ask;
-                        }
-                        if (bid > 0 && ask < 0) {
-                            ask = bid;
-                        }
-
-                        // MCS uses just ask for material prices (matches main thread)
-                        materialPrice = ask || 0;
-                    } else {
-                        // Fallback to sellPrice if no market data (matches main thread)
-                        materialPrice = materialDetail?.sellPrice || 0;
-                    }
-                }
-
-                perAttemptMaterialCost += materialPrice * material.count;
-            }
-        }
-
-        // Test no protection (protectFrom = 0)
-        let minCost = Infinity;
-        const noProtResult = calculateStrategyRealCost(
-            enhancementParams,
-            itemLevel,
-            level,
-            0,
-            perAttemptMaterialCost,
-            basePrice,
-            priceMap,
-            itemDetails,
-            itemHrid,
-            actionDetailMap
-        );
-        if (noProtResult < minCost) {
-            minCost = noProtResult;
-        }
-
-        // Test protection from level 2 to current level
-        for (let protectFrom = 2; protectFrom <= level; protectFrom++) {
-            const protResult = calculateStrategyRealCost(
-                enhancementParams,
-                itemLevel,
-                level,
-                protectFrom,
-                perAttemptMaterialCost,
-                basePrice,
-                priceMap,
-                itemDetails,
-                itemHrid,
-                actionDetailMap
-            );
-            if (protResult < minCost) {
-                minCost = protResult;
-            }
-        }
-
-        targetCosts[level] = minCost;
-    }
-
-    // Apply Philosopher's Mirror optimization
-    let mirrorPrice = priceMap['/items/philosophers_mirror:0'] || 0;
-    if (mirrorPrice === 0) {
-        mirrorPrice = calculateProductionCost('/items/philosophers_mirror', priceMap, actionDetailMap);
-    }
-
-    if (mirrorPrice > 0) {
-        for (let level = 3; level <= targetLevel; level++) {
-            const traditionalCost = targetCosts[level];
-            const mirrorCost = targetCosts[level - 2] + targetCosts[level - 1] + mirrorPrice;
-            if (mirrorCost < traditionalCost) {
-                targetCosts[level] = mirrorCost;
-            }
-        }
-    }
-
-    return targetCosts[targetLevel];
-}
-
-/**
- * Calculate real cost for a specific protection strategy
- * Now includes support for Blessed Tea
- */
-function calculateStrategyRealCost(
-    enhancementParams,
-    itemLevel,
-    targetLevel,
-    protectFrom,
-    perAttemptMaterialCost,
-    baseItemPrice,
-    priceMap,
-    itemDetails,
-    itemHrid,
-    actionDetailMap
-) {
-    const { enhancingLevel, toolBonus, blessedTea = false, guzzlingBonus = 1.0 } = enhancementParams;
-
-    // Calculate success multiplier
-    let totalBonus;
-    if (enhancingLevel >= itemLevel) {
-        const levelAdvantage = 0.05 * (enhancingLevel - itemLevel);
-        totalBonus = 1 + (toolBonus + levelAdvantage) / 100;
-    } else {
-        totalBonus = 1 - 0.5 * (1 - enhancingLevel / itemLevel) + toolBonus / 100;
-    }
-
-    // Build Markov chain with Blessed Tea support
-    const markov = math.zeros(20, 20);
-
-    for (let i = 0; i < targetLevel; i++) {
-        const baseSuccessRate = BASE_SUCCESS_RATES[i] / 100.0;
-        const successChance = baseSuccessRate * totalBonus;
-        const failureDestination = protectFrom > 0 && i >= protectFrom ? i - 1 : 0;
-
-        if (blessedTea) {
-            // Blessed Tea: 1% base chance to jump +2, scaled by guzzling bonus
-            const skipChance = successChance * 0.01 * guzzlingBonus;
-            const remainingSuccess = successChance * (1 - 0.01 * guzzlingBonus);
-
-            if (i + 2 <= targetLevel) {
-                markov.set([i, i + 2], skipChance);
-            }
-            markov.set([i, i + 1], remainingSuccess);
-            markov.set([i, failureDestination], 1 - successChance);
-        } else {
-            markov.set([i, i + 1], successChance);
-            markov.set([i, failureDestination], 1.0 - successChance);
-        }
-    }
-
-    markov.set([targetLevel, targetLevel], 1.0);
-
-    // Solve for expected attempts and protections
-    const Q = markov.subset(math.index(math.range(0, targetLevel), math.range(0, targetLevel)));
-    const I = math.identity(targetLevel);
-    const M = math.inv(math.subtract(I, Q));
-
-    let attempts = 0;
-    for (let i = 0; i < targetLevel; i++) {
-        attempts += M.get([0, i]);
-    }
-
-    // Calculate expected protection uses
-    let protections = 0;
-    if (protectFrom > 0 && protectFrom < targetLevel) {
-        for (let i = protectFrom; i < targetLevel; i++) {
-            const timesAtLevel = M.get([0, i]);
-            const failureChance = markov.get([i, i - 1]);
-            protections += timesAtLevel * failureChance;
-        }
-    }
-
-    // Get protection item price using realistic pricing (like main thread)
-    let protectionPrice = 0;
-    if (protections > 0) {
-        protectionPrice = getRealisticPrice(itemHrid, baseItemPrice, priceMap, actionDetailMap);
-
-        // Check mirror of protection
-        const mirrorPrice = getRealisticPrice('/items/mirror_of_protection', null, priceMap, actionDetailMap);
-        if (mirrorPrice > 0 && mirrorPrice < protectionPrice) {
-            protectionPrice = mirrorPrice;
-        }
-
-        // Check specific protection items
-        if (itemDetails.protectionItemHrids && itemDetails.protectionItemHrids.length > 0) {
-            for (const protHrid of itemDetails.protectionItemHrids) {
-                const protPrice = getRealisticPrice(protHrid, null, priceMap, actionDetailMap);
-                if (protPrice > 0 && protPrice < protectionPrice) {
-                    protectionPrice = protPrice;
-                }
-            }
-        }
-    }
-
-    const materialCost = perAttemptMaterialCost * attempts;
-    const protectionCost = protectionPrice * protections;
-
-    return baseItemPrice + materialCost + protectionCost;
-}
-
-/**
- * Get realistic price for an item (matches main thread logic)
- * Handles inflation detection and fallbacks
- */
-function getRealisticPrice(itemHrid, knownBasePrice, priceMap, actionDetailMap) {
-    let ask = priceMap[itemHrid + ':0_ask'];
-    if (ask === undefined) ask = priceMap[itemHrid + ':0'];
-    if (ask === null || ask === undefined) ask = 0;
-
-    let bid = priceMap[itemHrid + ':0_bid'];
-    if (bid === null || bid === undefined) bid = 0;
-
-    // Calculate production cost as fallback
-    const productionCost = calculateProductionCost(itemHrid, priceMap, actionDetailMap);
-
-    // If both ask and bid exist
-    if (ask > 0 && bid > 0) {
-        // If ask is significantly higher than bid (>30% markup), use max(bid, production)
-        if (ask / bid > 1.3) {
-            return Math.max(bid, productionCost);
-        }
-        // Otherwise use ask (normal market)
-        return ask;
-    }
-
-    // If only ask exists
-    if (ask > 0) {
-        // If ask is inflated compared to production, use production
-        if (productionCost > 0 && ask / productionCost > 1.3) {
-            return productionCost;
-        }
-        // Otherwise use max of ask and production
-        return Math.max(ask, productionCost);
-    }
-
-    // If only bid exists, use max(bid, production)
-    if (bid > 0) {
-        return Math.max(bid, productionCost);
-    }
-
-    // No market data - use production cost or known base price
-    return productionCost > 0 ? productionCost : (knownBasePrice || 0);
-}
-
-/**
- * Calculate value for a single item
- * @param {Object} data - Item data
- * @returns {Object} {itemIndex, value}
- */
-function calculateItemValue(data) {
-    const { itemIndex, item, priceMap, useHighEnhancementCost, minLevel, enhancementParams, itemDetails, actionDetailMap } = data;
-    const { itemHrid, enhancementLevel = 0, count = 1 } = item;
-
-    let itemValue = 0;
-
-    // For enhanced items (1+)
-    if (enhancementLevel >= 1) {
-        // For high enhancement levels, use cost instead of market price (if enabled)
-        if (useHighEnhancementCost && enhancementLevel >= minLevel) {
-            // Calculate enhancement cost
-            const cost = calculateEnhancementCost({
-                itemHrid,
-                targetLevel: enhancementLevel,
-                enhancementParams,
-                itemDetails,
-                priceMap,
-                actionDetailMap
-            });
-
-            if (cost !== null && cost > 0) {
-                itemValue = cost;
-            } else {
-                // Fallback to base item price or production cost
-                let basePrice = priceMap[itemHrid + ':0'] || 0;
-                if (basePrice === 0) {
-                    basePrice = calculateProductionCost(itemHrid, priceMap, actionDetailMap);
-                }
-                itemValue = basePrice;
-            }
-        } else {
-            // Normal logic: try market price first
-            const marketPrice = priceMap[itemHrid + ':' + enhancementLevel] || 0;
-
-            if (marketPrice > 0) {
-                itemValue = marketPrice;
-            } else {
-                // No market data, calculate enhancement cost
-                const cost = calculateEnhancementCost({
-                    itemHrid,
-                    targetLevel: enhancementLevel,
-                    enhancementParams,
-                    itemDetails,
-                    priceMap,
-                    actionDetailMap
-                });
-
-                if (cost !== null && cost > 0) {
-                    itemValue = cost;
-                } else {
-                    let basePrice = priceMap[itemHrid + ':0'] || 0;
-                    if (basePrice === 0) {
-                        basePrice = calculateProductionCost(itemHrid, priceMap, actionDetailMap);
-                    }
-                    itemValue = basePrice;
-                }
-            }
-        }
-    } else {
-        // Unenhanced items: use market price or production cost
-        itemValue = priceMap[itemHrid + ':0'] || 0;
-        if (itemValue === 0) {
-            itemValue = calculateProductionCost(itemHrid, priceMap, actionDetailMap);
-        }
-    }
-
-    return { itemIndex, value: itemValue * count };
-}
-
-/**
- * Calculate values for a batch of items
- * @param {Array} items - Array of item data objects
- * @returns {Array} Array of {itemIndex, value} results
- */
-function calculateItemValueBatch(items) {
-    const results = [];
-
-    for (const itemData of items) {
-        const result = calculateItemValue(itemData);
-        results.push(result);
-    }
-
-    return results;
-}
-
-self.onmessage = function (e) {
-    const { taskId, data } = e.data;
-    try {
-        const { action, params } = data;
-
-        if (action === 'calculateBatch') {
-            const results = calculateItemValueBatch(params.items);
-            self.postMessage({ taskId, result: results });
-        } else if (action === 'clearCache') {
-            valuationCache.clear();
-            self.postMessage({ taskId, result: { success: true, message: 'Cache cleared' } });
-        } else {
-            throw new Error(\`Unknown action: \${action}\`);
-        }
-    } catch (error) {
-        self.postMessage({ taskId, error: error.message || String(error) });
-    }
-};
-`;
-
-    /**
-     * Get or create the worker pool instance
-     */
-    async function getWorkerPool() {
-        if (workerPool) {
-            return workerPool;
-        }
-
-        try {
-            // Create worker blob from inline script
-            const blob = new Blob([WORKER_SCRIPT], { type: 'application/javascript' });
-
-            // Initialize worker pool with 2-4 workers
-            workerPool = new WorkerPool(blob);
-            await workerPool.initialize();
-
-            return workerPool;
-        } catch (error) {
-            throw error;
-        }
-    }
-
-    /**
-     * Calculate values for multiple items in parallel
-     * @param {Array} items - Array of item objects
-     * @param {Object} priceMap - Price map for all items
-     * @param {Object} config - Configuration options
-     * @param {Object} gameData - Game data with item details
-     * @returns {Promise<Array>} Array of values in same order as input
-     */
-    async function calculateItemValueBatch(items, priceMap, configOptions, gameData) {
-        const pool = await getWorkerPool();
-
-        // Prepare data for workers - need to include item details, material details, and actionDetailMap
-        const itemsWithDetails = items.map((item, index) => {
-            const itemDetails = gameData.itemDetailMap[item.itemHrid];
-
-            // Include material item details for sellPrice fallback
-            const allItemDetails = {};
-            if (itemDetails && itemDetails.enhancementCosts) {
-                for (const material of itemDetails.enhancementCosts) {
-                    const materialDetail = gameData.itemDetailMap[material.itemHrid];
-                    if (materialDetail) {
-                        allItemDetails[material.itemHrid] = {
-                            sellPrice: materialDetail.sellPrice,
-                            name: materialDetail.name,
-                        };
-                    }
-                }
-            }
-
-            return {
-                itemIndex: index,
-                item,
-                priceMap,
-                useHighEnhancementCost: configOptions.useHighEnhancementCost,
-                minLevel: configOptions.minLevel,
-                enhancementParams: configOptions.enhancementParams,
-                itemDetails: itemDetails ? { ...itemDetails, allItemDetails } : {},
-                actionDetailMap: gameData.actionDetailMap,
-            };
-        });
-
-        // Split items into chunks for parallel processing
-        const chunkSize = Math.ceil(itemsWithDetails.length / pool.getStats().poolSize);
-        const chunks = [];
-
-        for (let i = 0; i < itemsWithDetails.length; i += chunkSize) {
-            chunks.push(itemsWithDetails.slice(i, i + chunkSize));
-        }
-
-        // Process chunks in parallel
-        const tasks = chunks.map((chunk) => ({
-            action: 'calculateBatch',
-            params: { items: chunk },
-        }));
-
-        const results = await pool.executeAll(tasks);
-
-        // Flatten results and sort by itemIndex to maintain order
-        const flatResults = results.flat();
-        flatResults.sort((a, b) => a.itemIndex - b.itemIndex);
-
-        // Extract just the values
-        return flatResults.map((r) => r.value);
     }
 
     /**
@@ -20555,16 +25986,17 @@ self.onmessage = function (e) {
      * Persisted per character to IndexedDB (settings store).
      *
      * Exclusion types:
-     *   assetType  - entire section ('houses', 'abilities', 'abilityBooks', 'listings', 'equipped')
-     *   category   - all items in an inventory category ('/item_categories/food', etc.)
-     *   item       - all stacks of a specific item type ('/items/...')
-     *   houseRoom  - one specific house room ('/house_rooms/...')
-     *   ability    - one specific ability ('/abilities/...')
-     *   loadout    - all equipment items in a named loadout snapshot
+     *   assetType   - entire section ('houses', 'abilities', 'abilityBooks', 'guildShrines', 'listings', 'equipped')
+     *   category    - all items in an inventory category ('/item_categories/food', etc.)
+     *   item        - all stacks of a specific item type ('/items/...')
+     *   houseRoom   - one specific house room ('/house_rooms/...')
+     *   ability     - one specific ability ('/abilities/...')
+     *   guildShrine - one specific guild shrine buff ('/guild_buffs/...')
+     *   loadout     - all equipment items in a named loadout snapshot
      */
 
 
-    const STORAGE_KEY_PREFIX$1 = 'networth_exclusions';
+    const STORAGE_KEY_PREFIX = 'networth_exclusions';
 
     /** @type {Array<{type: string, value: string}>|null} In-memory cache */
     let cache = null;
@@ -20573,9 +26005,9 @@ self.onmessage = function (e) {
      * Get the character-scoped storage key.
      * @returns {string}
      */
-    function getStorageKey$1() {
+    function getStorageKey() {
         const charId = dataManager.getCurrentCharacterId() || 'default';
-        return `${STORAGE_KEY_PREFIX$1}_${charId}`;
+        return `${STORAGE_KEY_PREFIX}_${charId}`;
     }
 
     /**
@@ -20584,7 +26016,7 @@ self.onmessage = function (e) {
      */
     async function loadExclusions() {
         if (cache === null) {
-            cache = (await storage.getJSON(getStorageKey$1(), 'settings', [])) || [];
+            cache = (await storage.getJSON(getStorageKey(), 'settings', [])) || [];
         }
         return cache;
     }
@@ -20607,7 +26039,7 @@ self.onmessage = function (e) {
 
     /**
      * Check whether a given type/value pair is currently excluded.
-     * @param {string} type - 'assetType' | 'category' | 'item' | 'houseRoom' | 'ability' | 'loadout'
+     * @param {string} type - 'assetType' | 'category' | 'item' | 'houseRoom' | 'ability' | 'guildShrine' | 'loadout'
      * @param {string} value - HRID or loadout name
      * @returns {boolean}
      */
@@ -20628,7 +26060,7 @@ self.onmessage = function (e) {
             list.push({ type, value });
             cache = list;
             // Fire-and-forget: persist in background so the UI updates instantly
-            storage.setJSON(getStorageKey$1(), list, 'settings');
+            storage.setJSON(getStorageKey(), list, 'settings');
         }
     }
 
@@ -20645,7 +26077,7 @@ self.onmessage = function (e) {
             list.splice(idx, 1);
             cache = list;
             // Fire-and-forget: persist in background so the UI updates instantly
-            storage.setJSON(getStorageKey$1(), list, 'settings');
+            storage.setJSON(getStorageKey(), list, 'settings');
         }
     }
 
@@ -20655,336 +26087,83 @@ self.onmessage = function (e) {
      */
     async function clearExclusions() {
         cache = [];
-        storage.setJSON(getStorageKey$1(), [], 'settings');
+        storage.setJSON(getStorageKey(), [], 'settings');
     }
 
     /**
-     * Loadout Snapshot
+     * Guild credit pricing
      *
-     * Listens for `loadouts_updated` WebSocket messages to capture all loadout configurations
-     * (equipment, abilities, consumables, enhancement levels) in real time.
+     * Guild credits are never listed on the marketplace, so "what did this shrine
+     * level cost" has no direct answer. It has an indirect one: credits are obtained
+     * by handing in ordinary tradeable items at published conversion rates, so the
+     * gold value of a credit is the price of the cheapest item that yields one.
      *
-     * Stored snapshots are used by profit calculators to apply the correct tool/equipment
-     * bonuses for a skill even when that loadout is not currently equipped.
+     * That is the same reasoning the guild credit exchange table uses, kept here so
+     * the upgrade advisor and the build score agree with the exchange table and with
+     * each other rather than each inventing a rate.
      *
-     * Skill matching: the loadout's actionTypeHrid (e.g. "/action_types/brewing") is compared
-     * to the action type of the profit calculation. An "All Skills" loadout (empty actionTypeHrid)
-     * is used as a fallback when no skill-specific snapshot is found.
+     * Guild *tokens* are deliberately not priced. Nothing converts into them, so any
+     * gold figure would be invented; callers show the token count separately.
+     */
+
+
+    /**
+     * Cheapest gold cost of one credit of each type, by conversion.
+     * @param {string} [mode='ask'] - Pricing side: 'ask' to buy the items in, 'bid' to value what you hand over
+     * @returns {Object} creditItemHrid → gold per credit
+     */
+    function buildGoldPerCredit(mode = 'ask') {
+        const itemDetailMap = dataManager.getInitClientData()?.itemDetailMap || {};
+        const cheapest = {};
+
+        for (const [hrid, item] of Object.entries(itemDetailMap)) {
+            for (const conversion of item.guildCreditConversions || []) {
+                const price = marketData_js.getItemPrice(hrid, { mode });
+                if (!(price > 0) || !(conversion.creditCount > 0)) continue;
+                const perCredit = (price * conversion.itemCount) / conversion.creditCount;
+                const creditHrid = conversion.creditItemHrid;
+                if (!cheapest[creditHrid] || perCredit < cheapest[creditHrid]) cheapest[creditHrid] = perCredit;
+            }
+        }
+
+        return cheapest;
+    }
+
+    /**
+     * Price a list of credit costs in gold.
      *
-     * Priority: skill default > all skills default > skill non-default > all skills non-default
+     * A credit item with a market listing of its own is taken at that price; every
+     * other one falls back to the cheapest conversion. An item with neither is
+     * reported rather than counted as free — a total that quietly drops a line is
+     * worse than no total.
+     *
+     * @param {Array<{itemHrid: string, count: number}>} creditCosts - Costs to price
+     * @param {Object} [options]
+     * @param {string} [options.mode='ask'] - Pricing side
+     * @param {Object} [options.goldPerCredit] - Prebuilt rate map, to avoid rebuilding it per call
+     * @returns {{lines: Array<Object>, total: number|null, unpriced: Array<string>}}
      */
+    function priceGuildCreditCosts(creditCosts, { mode = 'ask', goldPerCredit = null } = {}) {
+        const rates = goldPerCredit || buildGoldPerCredit(mode);
+        const itemDetailMap = dataManager.getInitClientData()?.itemDetailMap || {};
 
+        const lines = [];
+        const unpriced = [];
+        let total = 0;
 
-    const STORAGE_KEY_PREFIX = 'loadout_snapshots';
+        for (const { itemHrid, count } of creditCosts || []) {
+            if (!itemHrid || !(count > 0)) continue;
+            const name = itemDetailMap[itemHrid]?.name || itemHrid.split('/').pop().replace(/_/g, ' ');
+            const direct = marketData_js.getItemPrice(itemHrid, { mode });
+            const each = direct > 0 ? direct : rates[itemHrid] || null;
 
-    /**
-     * Returns the active WebSocket hook instance.
-     * In the multi-bundle production build each library bundles its own copy of websocket.js,
-     * but only the Core library's instance has install() called on it.
-     * Prefer window.Toolasha.Core.webSocketHook so listeners actually receive messages.
-     * Falls back to the bundled copy for the dev standalone build (single bundle, one instance).
-     */
-    function getWebSocketHook() {
-        return (typeof window !== 'undefined' && window.Toolasha?.Core?.webSocketHook) || webSocketHook;
+            lines.push({ itemHrid, name, count, goldEach: each, gold: each === null ? null : each * count });
+            if (each === null) unpriced.push(name);
+            else total += each * count;
+        }
+
+        return { lines, total: unpriced.length > 0 ? null : total, unpriced };
     }
-
-    /**
-     * Get character-scoped storage key.
-     * @returns {string}
-     */
-    function getStorageKey() {
-        const charId = dataManager.getCurrentCharacterId() || 'default';
-        return `${STORAGE_KEY_PREFIX}_${charId}`;
-    }
-
-    /**
-     * Parse a wearable hash string into itemLocationHrid, itemHrid, and enhancementLevel.
-     * Format: "characterId::/item_locations/location::/items/item_hrid::enhancementLevel"
-     * Empty string means no item in that slot.
-     * @param {string} itemLocationHrid - The equipment slot key (e.g. "/item_locations/body")
-     * @param {string} wearableHash - The wearable hash value
-     * @returns {{ itemLocationHrid: string, itemHrid: string, enhancementLevel: number }|null}
-     */
-    function parseWearable(itemLocationHrid, wearableHash) {
-        if (!wearableHash) return null;
-
-        const parts = wearableHash.split('::');
-        const itemHrid = parts.find((p) => p.startsWith('/items/'));
-        if (!itemHrid) return null;
-
-        const lastPart = parts[parts.length - 1];
-        const enhancementLevel = !lastPart.startsWith('/') ? parseInt(lastPart, 10) || 0 : 0;
-
-        return { itemLocationHrid, itemHrid, enhancementLevel };
-    }
-
-    /**
-     * Convert a server loadout object into our snapshot format.
-     * @param {Object} loadout - A loadout entry from characterLoadoutMap
-     * @returns {Object} snapshot
-     */
-    function buildSnapshot(loadout) {
-        // Parse equipment from wearableMap
-        const equipment = [];
-        for (const [locationHrid, hash] of Object.entries(loadout.wearableMap || {})) {
-            const parsed = parseWearable(locationHrid, hash);
-            if (parsed) equipment.push(parsed);
-        }
-
-        // Parse drinks
-        const drinks = (loadout.drinkItemHrids || []).map((hrid) => ({
-            itemHrid: hrid || '',
-        }));
-
-        // Parse food
-        const food = (loadout.foodItemHrids || []).map((hrid) => ({
-            itemHrid: hrid || '',
-        }));
-
-        // Parse abilities
-        const abilities = [];
-        for (const [slot, hrid] of Object.entries(loadout.abilityMap || {})) {
-            if (hrid) abilities.push({ abilityHrid: hrid, slot: parseInt(slot, 10) });
-        }
-
-        return {
-            name: loadout.name,
-            actionTypeHrid: loadout.actionTypeHrid || '',
-            isDefault: !!loadout.isDefault,
-            useExactEnhancement: loadout.useExactEnhancement ?? false,
-            ordinal: loadout.ordinal || 0,
-            equipment,
-            abilities,
-            food,
-            drinks,
-            abilityCombatTriggersMap: loadout.abilityCombatTriggersMap || {},
-            consumableCombatTriggersMap: loadout.consumableCombatTriggersMap || {},
-            savedAt: Date.now(),
-        };
-    }
-
-    class LoadoutSnapshot {
-        constructor() {
-            this.snapshots = {}; // In-memory cache: { [loadoutName]: snapshot }
-            this.characterInitializedHandler = null;
-            this.updateListeners = [];
-            this.isInitialized = false;
-
-            // Register WebSocket handler at module load time so in-session loadout
-            // changes are captured whenever loadouts_updated fires.
-            this.loadoutsUpdatedHandler = (data) => this._onLoadoutsUpdated(data);
-            getWebSocketHook().on('loadouts_updated', this.loadoutsUpdatedHandler);
-        }
-
-        /**
-         * Register a callback to be called whenever snapshots are updated.
-         * @param {Function} fn
-         */
-        onUpdate(fn) {
-            this.updateListeners.push(fn);
-        }
-
-        /**
-         * Remove a previously registered update callback.
-         * @param {Function} fn
-         */
-        offUpdate(fn) {
-            this.updateListeners = this.updateListeners.filter((l) => l !== fn);
-        }
-
-        _emitUpdate() {
-            this.updateListeners.forEach((fn) => fn());
-        }
-
-        async initialize() {
-            if (this.isInitialized) return;
-            this.isInitialized = true;
-
-            // Re-register WS handler if it was cleared by disable()
-            if (!this.loadoutsUpdatedHandler) {
-                this.loadoutsUpdatedHandler = (data) => this._onLoadoutsUpdated(data);
-                getWebSocketHook().on('loadouts_updated', this.loadoutsUpdatedHandler);
-            }
-
-            // Load from storage — loadouts_updated only fires when the user visits the loadouts
-            // UI, so storage is always the source of snapshots at startup.
-            if (Object.keys(this.snapshots).length === 0) {
-                const storageKey = getStorageKey();
-                // NOTE: getCurrentCharacterId() may be null at this point (before init_character_data
-                // arrives), so getStorageKey() may return 'loadout_snapshots_default'. We will reload
-                // from the correct key once character_initialized fires.
-                this.snapshots = (await storage.getJSON(storageKey, 'settings', null)) || {};
-
-                // Fallback for Steam users: if storage is also empty, bootstrap from
-                // the characterLoadoutMap embedded in init_character_data (already in dataManager).
-                if (Object.keys(this.snapshots).length === 0) {
-                    const characterLoadoutMap = dataManager.characterData?.characterLoadoutMap;
-                    if (characterLoadoutMap && Object.keys(characterLoadoutMap).length > 0) {
-                        this._onLoadoutsUpdated({ characterLoadoutMap });
-                    }
-                }
-            }
-
-            // Reload from the correct character-scoped key once character data is available
-            this.characterInitializedHandler = async () => {
-                const storageKey = getStorageKey();
-                const fresh = (await storage.getJSON(storageKey, 'settings', null)) || {};
-                if (Object.keys(fresh).length > 0) {
-                    this.snapshots = fresh;
-                    this._emitUpdate();
-                }
-            };
-            dataManager.on('character_initialized', this.characterInitializedHandler);
-        }
-
-        /**
-         * Handle a loadouts_updated WebSocket message.
-         * Replaces all snapshots with the server's current state.
-         * @param {Object} data - The WebSocket message payload
-         */
-        _onLoadoutsUpdated(data) {
-            const loadoutMap = data.characterLoadoutMap;
-            if (!loadoutMap) {
-                console.warn('[LoadoutSnapshot] loadouts_updated received but no characterLoadoutMap');
-                return;
-            }
-
-            const newSnapshots = {};
-            for (const [id, loadout] of Object.entries(loadoutMap)) {
-                if (!loadout.name) continue;
-                newSnapshots[id] = buildSnapshot(loadout);
-            }
-
-            this.snapshots = newSnapshots;
-            storage.setJSON(getStorageKey(), this.snapshots, 'settings');
-            this._emitUpdate();
-        }
-
-        /**
-         * Update a snapshot equipment item's enhancement level.
-         * Used when the highest owned enhancement of a loadout item changes (up or down).
-         * @param {string} itemHrid - Base item HRID (e.g. "/items/sword")
-         * @param {number} newLevel - New enhancement level (highest currently owned)
-         * @returns {boolean} True if any snapshot was updated
-         */
-        updateEnhancementLevel(itemHrid, newLevel) {
-            let changed = false;
-            for (const snapshot of Object.values(this.snapshots)) {
-                // Exact-mode snapshots intentionally hold a frozen level — never auto-update them.
-                if (snapshot.useExactEnhancement) continue;
-                for (const eq of snapshot.equipment || []) {
-                    if (eq.itemHrid === itemHrid && eq.enhancementLevel !== newLevel) {
-                        eq.enhancementLevel = newLevel;
-                        snapshot.savedAt = Date.now();
-                        changed = true;
-                    }
-                }
-            }
-            if (changed) {
-                storage.setJSON(getStorageKey(), this.snapshots, 'settings');
-                this._emitUpdate();
-            }
-            return changed;
-        }
-
-        /**
-         * Find the best snapshot for a given action type.
-         * Priority: skill default > all skills default > skill non-default > all skills non-default
-         * @param {string} actionTypeHrid - e.g. "/action_types/brewing"
-         * @returns {Object|null} snapshot entry or null
-         */
-        _findSnapshot(actionTypeHrid) {
-            if (!config.getSetting('loadoutSnapshot')) return null;
-
-            let skillDefault = null;
-            let allSkillsDefault = null;
-            let skillNonDefault = null;
-            let allSkillsNonDefault = null;
-
-            for (const snapshot of Object.values(this.snapshots)) {
-                if (snapshot.actionTypeHrid === actionTypeHrid) {
-                    if (snapshot.isDefault) {
-                        skillDefault = snapshot;
-                    } else {
-                        skillNonDefault = snapshot;
-                    }
-                } else if (snapshot.actionTypeHrid === '') {
-                    if (snapshot.isDefault) {
-                        allSkillsDefault = snapshot;
-                    } else {
-                        allSkillsNonDefault = snapshot;
-                    }
-                }
-            }
-
-            return skillDefault || allSkillsDefault || skillNonDefault || allSkillsNonDefault || null;
-        }
-
-        /**
-         * Get a Map<itemLocationHrid, item> for the best loadout snapshot matching the given
-         * action type. Returns null if no snapshot exists or the feature is disabled.
-         * The returned Map has the same format as dataManager.getEquipment().
-         * @param {string} actionTypeHrid
-         * @returns {Map<string, Object>|null}
-         */
-        getSnapshotForSkill(actionTypeHrid) {
-            const snapshot = this._findSnapshot(actionTypeHrid);
-            if (!snapshot || !snapshot.equipment?.length) return null;
-            return new Map(snapshot.equipment.map((e) => [e.itemLocationHrid, e]));
-        }
-
-        /**
-         * Get the drink slots array for the best loadout snapshot matching the given
-         * action type. Returns null if no snapshot exists or the feature is disabled.
-         * The returned array has the same format as dataManager.getActionDrinkSlots().
-         * @param {string} actionTypeHrid
-         * @returns {Array<{itemHrid: string}>|null}
-         */
-        getSnapshotDrinksForSkill(actionTypeHrid) {
-            const snapshot = this._findSnapshot(actionTypeHrid);
-            if (!snapshot) return null;
-            // Filter out empty slots so callers get only actual items
-            const filled = (snapshot.drinks || []).filter((d) => d.itemHrid);
-            return filled.length > 0 ? filled : null;
-        }
-
-        /**
-         * Get all saved loadout snapshots as a flat array.
-         * @returns {Array<Object>} Array of snapshot objects
-         */
-        getAllSnapshots() {
-            return Object.values(this.snapshots).sort((a, b) => a.ordinal - b.ordinal);
-        }
-
-        /**
-         * Get the name and default status of the saved loadout being used for a given action type.
-         * Returns an object with name and isDefault, or null if no snapshot exists or feature is disabled.
-         * @param {string} actionTypeHrid
-         * @returns {{ name: string, isDefault: boolean }|null}
-         */
-        getSnapshotInfoForSkill(actionTypeHrid) {
-            const snapshot = this._findSnapshot(actionTypeHrid);
-            if (!snapshot) return null;
-            return { name: snapshot.name, isDefault: !!snapshot.isDefault };
-        }
-
-        disable() {
-            if (this.loadoutsUpdatedHandler) {
-                getWebSocketHook().off('loadouts_updated', this.loadoutsUpdatedHandler);
-                this.loadoutsUpdatedHandler = null;
-            }
-
-            if (this.characterInitializedHandler) {
-                dataManager.off('character_initialized', this.characterInitializedHandler);
-                this.characterInitializedHandler = null;
-            }
-
-            this.updateListeners = [];
-            this.isInitialized = false;
-        }
-    }
-
-    const loadoutSnapshot = new LoadoutSnapshot();
 
     /**
      * Networth Calculator
@@ -20994,6 +26173,7 @@ self.onmessage = function (e) {
      * - Market listings
      * - Houses (all 17)
      * - Abilities (equipped + others)
+     * - Guild shrine levels bought (credits only — tokens have no gold price)
      */
 
 
@@ -21135,7 +26315,7 @@ self.onmessage = function (e) {
             }
 
             // Try shop cost as final fallback (for shop-only items)
-            const shopCost = getShopCoinCost(itemHrid);
+            const shopCost = gameLookups_js.getShopCoinCost(itemHrid);
             if (shopCost > 0) {
                 return shopCost;
             }
@@ -21323,7 +26503,12 @@ self.onmessage = function (e) {
         for (const ability of characterAbilities) {
             if (!ability.abilityHrid || ability.level === 0) continue;
 
-            const cost = abilityCostCalculator_js.calculateAbilityCost(ability.abilityHrid, ability.level);
+            // No listing for the book is no price, not a free ability. Counting it
+            // as zero quietly understated the total and put the row at the bottom
+            // of the list as though it were worthless
+            const priced = abilityCostCalculator_js.explainAbilityCost(ability.abilityHrid, ability.level);
+            const unpriced = priced?.total == null;
+            const cost = unpriced ? 0 : priced.total;
             totalCost += cost;
 
             // Format ability name for display
@@ -21337,6 +26522,8 @@ self.onmessage = function (e) {
                 hrid: ability.abilityHrid,
                 name: `${abilityName} ${ability.level}`,
                 cost: cost,
+                unpriced,
+                books: priced?.books ?? 0,
             };
 
             breakdown.push(abilityData);
@@ -21362,6 +26549,75 @@ self.onmessage = function (e) {
             equippedBreakdown,
             otherBreakdown,
         };
+    }
+
+    /**
+     * Cumulative cost of every guild shrine level the character has bought.
+     *
+     * A shrine level is paid for in guild credits and guild tokens. Credits have a
+     * gold value — the cheapest tradeable items that convert into them, the rate the
+     * guild exchange table quotes — so levels 1..current can be priced the way
+     * houses and abilities are, at the same pricing mode as the rest of net worth.
+     * Tokens cannot: nothing converts into them, so they are returned as a count for
+     * the row's tooltip and never added to a gold figure.
+     *
+     * The levels ride on guild traffic that may not have arrived this session, in
+     * which case data-manager hands back the reading it persisted, or nothing at
+     * all. Nothing at all is reported as `known: false` so the display omits the row
+     * rather than claiming the character has bought no shrine levels.
+     *
+     * @param {Object} characterGuildBuffMap - buffHrid → `{guildBuffHrid, level}`
+     * @param {string} [pricingMode='ask'] - Pricing side, as the net worth setting selects it
+     * @returns {{totalCost: number, tokens: number, breakdown: Array<Object>, known: boolean}}
+     */
+    function calculateGuildShrinesCost(characterGuildBuffMap, pricingMode = 'ask') {
+        const detailMap = dataManager.getInitClientData()?.guildBuffDetailMap;
+        if (!detailMap || !characterGuildBuffMap || Object.keys(characterGuildBuffMap).length === 0) {
+            return { totalCost: 0, tokens: 0, breakdown: [], known: false };
+        }
+
+        // Built once and shared: every level of every shrine prices the same credits
+        const goldPerCredit = buildGoldPerCredit(pricingMode);
+
+        let totalCost = 0;
+        let totalTokens = 0;
+        const breakdown = [];
+
+        for (const [buffHrid, entry] of Object.entries(characterGuildBuffMap)) {
+            const level = Math.max(0, Math.floor(Number(entry?.level) || 0));
+            const detail = detailMap[buffHrid];
+            if (!detail || level <= 0) continue;
+
+            let cost = 0;
+            let tokens = 0;
+            for (let step = 1; step <= level; step++) {
+                const levelCost = detail.levelCosts?.[String(step)];
+                if (!levelCost) continue;
+                tokens += Math.max(0, Math.floor(Number(levelCost.guildTokenCost) || 0));
+                // An unpriced credit contributes nothing rather than blocking the
+                // whole row: this is a running total of what was spent, and one
+                // credit type without a conversion should not blank the other four
+                const { lines } = priceGuildCreditCosts(levelCost.creditCosts, { mode: pricingMode, goldPerCredit });
+                for (const line of lines) cost += line.gold || 0;
+            }
+
+            totalCost += cost;
+            totalTokens += tokens;
+
+            // Named off the buff, not the shrine: Force sells a combat buff and a
+            // skilling one, and two rows both called "Force" would be unreadable
+            const buffName = buffHrid
+                .replace('/guild_buffs/', '')
+                .split('_')
+                .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+                .join(' ');
+
+            breakdown.push({ hrid: buffHrid, name: `${buffName} ${level}`, level, cost, tokens });
+        }
+
+        breakdown.sort((a, b) => b.cost - a.cost);
+
+        return { totalCost, tokens: totalTokens, breakdown, known: true };
     }
 
     /**
@@ -21447,7 +26703,7 @@ self.onmessage = function (e) {
                       }
 
                       try {
-                          const values = await calculateItemValueBatch(
+                          const values = await networthWorkerManager_js.calculateItemValueBatch(
                               itemsNeedingWorkers,
                               priceMap,
                               { useHighEnhancementCost, minLevel, enhancementParams },
@@ -21855,13 +27111,47 @@ self.onmessage = function (e) {
             }
         }
 
+        // Calculate guild shrines value — apply per-shrine and whole-section exclusions.
+        // The levels are not part of getCombinedData(): they arrive on guild traffic
+        // rather than with the character, and data-manager holds them separately.
+        let guildShrinesData = calculateGuildShrinesCost(
+            dataManager.characterGuildBuffMap,
+            config.getSettingValue('networth_pricingMode') || 'ask'
+        );
+        if (isExcluded('assetType', 'guildShrines') && guildShrinesData.totalCost > 0) {
+            trackExcluded('assetType', 'guildShrines', 'All Guild Shrines', guildShrinesData.totalCost);
+            guildShrinesData = { totalCost: 0, tokens: 0, breakdown: [], known: guildShrinesData.known };
+        } else {
+            let excludedShrineCost = 0;
+            let excludedShrineTokens = 0;
+            const remainingShrines = [];
+            for (const shrine of guildShrinesData.breakdown) {
+                if (isExcluded('guildShrine', shrine.hrid)) {
+                    trackExcluded('guildShrine', shrine.hrid, shrine.name, shrine.cost);
+                    excludedShrineCost += shrine.cost;
+                    excludedShrineTokens += shrine.tokens;
+                } else {
+                    remainingShrines.push(shrine);
+                }
+            }
+            if (excludedShrineCost > 0 || excludedShrineTokens > 0) {
+                guildShrinesData = {
+                    totalCost: guildShrinesData.totalCost - excludedShrineCost,
+                    tokens: guildShrinesData.tokens - excludedShrineTokens,
+                    breakdown: remainingShrines,
+                    known: guildShrinesData.known,
+                };
+            }
+        }
+
         // Build excluded summary
         const excludedItems = [...excludedByKey.values()].sort((a, b) => b.amount - a.amount);
         const excludedTotal = excludedItems.reduce((sum, e) => sum + e.amount, 0);
 
         // Calculate totals
         const currentAssetsTotal = equippedValue + inventoryValue + listingsValue;
-        const fixedAssetsTotal = housesData.totalCost + abilitiesData.totalCost + abilityBooksValue;
+        const fixedAssetsTotal =
+            housesData.totalCost + abilitiesData.totalCost + abilityBooksValue + guildShrinesData.totalCost;
         const totalNetworth = currentAssetsTotal + fixedAssetsTotal;
 
         // Sort breakdowns by value descending
@@ -21890,6 +27180,7 @@ self.onmessage = function (e) {
                     totalCost: abilityBooksValue,
                     breakdown: abilityBooksBreakdown,
                 },
+                guildShrines: guildShrinesData,
             },
         };
     }
@@ -21923,6 +27214,7 @@ self.onmessage = function (e) {
                     totalCost: 0,
                     breakdown: [],
                 },
+                guildShrines: { totalCost: 0, tokens: 0, breakdown: [], known: false },
             },
         };
     }
@@ -21938,8 +27230,84 @@ self.onmessage = function (e) {
     const SNAPSHOT_INTERVAL = 60 * 60 * 1000; // 1 hour
     const MAX_DETAIL_SNAPSHOTS = 25; // ~24h of hourly snapshots + 1 buffer
 
+    /** Beyond this age, the history is thinned rather than kept point for point */
+    const RETENTION_FULL_MS = 365 * 24 * 60 * 60 * 1000;
+
+    /** One point per day is all a year-old trend can usefully say */
+    const TAIL_BUCKET_MS = 24 * 60 * 60 * 1000;
+
+    /** A hard ceiling under the thinning, so nothing can grow without bound */
+    const MAX_HISTORY_POINTS = 12000;
+
     /** Gap threshold for chart line breaks (2 hours) */
     const GAP_THRESHOLD_MS = 2 * 60 * 60 * 1000;
+
+    /**
+     * The compact series, one record per calendar month.
+     *
+     * The whole series — up to `MAX_HISTORY_POINTS` of them — used to be rewritten
+     * every hour to append one point, and a year of history is most of a megabyte.
+     * A month's record holds the points recorded since the month began, so the
+     * hourly write is that month and nothing else; every earlier month is settled
+     * and never touched again.
+     *
+     * A month rather than something finer because the points are small and there are
+     * a lot of them: the key count has to stay inside `STORE_KEY_BUDGETS`, which
+     * this store already spends on twenty-five item-level detail snapshots.
+     *
+     * The prefix deliberately does not begin `networth_`, which the account view
+     * scans for character ids (`account-data.js`) and `character-key.js` matches
+     * against `^networth_[0-9a-zA-Z]+$` when deciding who adopts legacy data. A
+     * chunked key under that prefix would read as a character called
+     * `<id>_2026-08`.
+     */
+    const SERIES_PREFIX = 'networthSeries';
+
+    const seriesStore = createChunkedHistory({
+        storeName: STORE_NAME,
+        prefix: SERIES_PREFIX,
+        legacyKey: (charId) => `networth_${charId}`,
+        groupOf: (point) => timeChunkId(point?.t, 'month'),
+        compare: (a, b) => (a?.t || 0) - (b?.t || 0),
+        label: 'NetworthHistory',
+    });
+
+    /**
+     * Keep the recent year whole and the rest as a daily outline.
+     *
+     * The alternative retentions are both wrong: dropping everything past a cutoff
+     * loses the only record of what the account looked like a year ago, and keeping
+     * every hourly point forever means an ever-growing array rewritten on every
+     * snapshot. A day is the finest resolution anyone reads a year-old trend at.
+     *
+     * @param {Array<Object>} history - Snapshots, oldest first
+     * @param {number} [now] - Clock, injectable for tests
+     * @returns {Array<Object>} Retained snapshots, oldest first
+     */
+    function pruneHistory(history, now = Date.now()) {
+        if (!Array.isArray(history) || history.length === 0) return [];
+
+        const cutoff = now - RETENTION_FULL_MS;
+        const tail = [];
+        const recent = [];
+        let lastBucket = null;
+
+        for (const point of history) {
+            if (!point || typeof point.t !== 'number') continue;
+            if (point.t >= cutoff) {
+                recent.push(point);
+                continue;
+            }
+            const bucket = Math.floor(point.t / TAIL_BUCKET_MS);
+            if (bucket !== lastBucket) {
+                tail.push(point);
+                lastBucket = bucket;
+            }
+        }
+
+        const pruned = tail.concat(recent);
+        return pruned.length > MAX_HISTORY_POINTS ? pruned.slice(pruned.length - MAX_HISTORY_POINTS) : pruned;
+    }
 
     class NetworthHistory {
         constructor() {
@@ -21948,6 +27316,19 @@ self.onmessage = function (e) {
             this.characterId = null;
             this.timerRegistry = timerRegistry_js.createTimerRegistry();
             this.networthFeature = null;
+        }
+
+        /**
+         * @param {number} t - Snapshot timestamp
+         * @returns {string} The key that one detail snapshot lives under
+         */
+        _detailKey(t) {
+            return `networthDetail_${this.characterId}_${t}`;
+        }
+
+        /** @returns {string} The pre-split key that held the whole detail array */
+        _legacyDetailKey() {
+            return `networthDetail_${this.characterId}`;
         }
 
         /**
@@ -21963,13 +27344,19 @@ self.onmessage = function (e) {
                 return;
             }
 
-            // Load existing history from storage
-            const storageKey = `networth_${this.characterId}`;
-            this.history = await storage.get(storageKey, STORE_NAME, []);
+            // Load existing history from storage, thinning anything past retention.
+            // Done on load rather than only on write so a history that grew under an
+            // older build is brought back inside budget without waiting an hour.
+            // Thinning drops points out of the oldest months entirely, and the save
+            // that follows deletes those months' records.
+            const loaded = await seriesStore.load(this.characterId);
+            this.history = pruneHistory(loaded);
+            if (this.history.length !== loaded.length) {
+                seriesStore.save(this.characterId, this.history);
+            }
 
             // Load existing detail history from storage
-            const detailKey = `networthDetail_${this.characterId}`;
-            this.detailHistory = await storage.get(detailKey, STORE_NAME, []);
+            this.detailHistory = await this._loadDetailHistory();
 
             // Take an immediate first snapshot
             await this.takeSnapshot();
@@ -21980,12 +27367,62 @@ self.onmessage = function (e) {
         }
 
         /**
+         * The detail snapshots, one key each, migrating anything left in the old
+         * single-array key.
+         *
+         * The array was rewritten whole on every hourly snapshot — twenty-five
+         * item-level maps of an entire inventory, to append one of them. Per-snapshot
+         * keys make the hourly write the one snapshot that is new.
+         * @returns {Promise<Array<{t: number, items: Object}>>} Snapshots, oldest first
+         * @private
+         */
+        async _loadDetailHistory() {
+            const legacy = await storage.get(this._legacyDetailKey(), STORE_NAME, null);
+
+            if (Array.isArray(legacy) && legacy.length > 0) {
+                const kept = legacy.slice(-MAX_DETAIL_SNAPSHOTS);
+                const entries = {};
+                for (const snapshot of kept) {
+                    if (typeof snapshot?.t === 'number') entries[this._detailKey(snapshot.t)] = snapshot;
+                }
+                await storage.putAll(STORE_NAME, entries);
+                await storage.delete(this._legacyDetailKey(), STORE_NAME);
+                return kept;
+            }
+
+            // Already split: gather this character's snapshot keys back into order
+            const prefix = `${this._legacyDetailKey()}_`;
+            const keys = (await storage.getAllKeys(STORE_NAME)).filter(
+                (key) => typeof key === 'string' && key.startsWith(prefix)
+            );
+
+            const snapshots = [];
+            for (const key of keys) {
+                const snapshot = await storage.get(key, STORE_NAME, null);
+                if (snapshot && typeof snapshot.t === 'number') snapshots.push(snapshot);
+            }
+            snapshots.sort((a, b) => a.t - b.t);
+
+            // A window that grew past its cap (an interrupted trim, an older build)
+            // is brought back to size here rather than left to accumulate
+            while (snapshots.length > MAX_DETAIL_SNAPSHOTS) {
+                const dropped = snapshots.shift();
+                await storage.delete(this._detailKey(dropped.t), STORE_NAME);
+            }
+
+            return snapshots;
+        }
+
+        /**
          * Take a snapshot of the current networth data
          */
         async takeSnapshot() {
             if (!connectionState.isConnected()) return;
             if (!this.networthFeature?.currentData) return;
             if (!this.characterId) return;
+            // Nothing below can be stored, and an item-level snapshot of a whole
+            // inventory is not cheap to build for a write that will be refused
+            if (storage.isQuotaExceeded()) return;
 
             const data = this.networthFeature.currentData;
 
@@ -22001,17 +27438,28 @@ self.onmessage = function (e) {
                 abilities: Math.round(data.fixedAssets.abilities.totalCost + data.fixedAssets.abilityBooks.totalCost),
             };
 
-            this.pushSnapshot(snapshot);
+            // Written only when the calculator actually costed the shrines. A zero
+            // would be a claim — "this account has no shrines" — and the snapshots
+            // taken before the calculator knew about shrines cannot make it. The
+            // chart draws a missing field as a gap, which is the honest reading.
+            const shrineCost = data.fixedAssets.guildShrines?.totalCost;
+            if (Number.isFinite(shrineCost)) {
+                snapshot.guildShrines = Math.round(shrineCost);
+            }
 
-            // Take item-level detail snapshot for 24h breakdown
+            this.pushSnapshot(snapshot);
+            this.history = pruneHistory(this.history);
+
+            // Take item-level detail snapshot for 24h breakdown, which persists
+            // itself — only the new snapshot is written, not the whole window
             this.takeDetailSnapshot(data);
 
-            // Persist to storage
-            const storageKey = `networth_${this.characterId}`;
-            await storage.set(storageKey, this.history, STORE_NAME);
-
-            const detailKey = `networthDetail_${this.characterId}`;
-            await storage.set(detailKey, this.detailHistory, STORE_NAME);
+            // Persist — queued, not awaited. The debounced set's promise resolves
+            // only when its 3-second timer fires, so awaiting two in series was six
+            // seconds of waiting for timers that exist to postpone the write. This
+            // runs hourly and at startup; nothing downstream needs the write landed.
+            // Only the current month's record is written; the rest have not moved.
+            seriesStore.save(this.characterId, this.history);
         }
 
         /**
@@ -22093,12 +27541,18 @@ self.onmessage = function (e) {
                 }
             }
 
-            this.detailHistory.push({ t: Date.now(), items });
+            const snapshot = { t: Date.now(), items };
+            this.detailHistory.push(snapshot);
 
-            // Trim to rolling window
+            // Trim to rolling window, taking the dropped snapshots' keys with it
             if (this.detailHistory.length > MAX_DETAIL_SNAPSHOTS) {
-                this.detailHistory.splice(0, this.detailHistory.length - MAX_DETAIL_SNAPSHOTS);
+                const dropped = this.detailHistory.splice(0, this.detailHistory.length - MAX_DETAIL_SNAPSHOTS);
+                for (const old of dropped) {
+                    storage.delete(this._detailKey(old.t), STORE_NAME);
+                }
             }
+
+            storage.set(this._detailKey(snapshot.t), snapshot, STORE_NAME);
         }
 
         /**
@@ -22133,6 +27587,25 @@ self.onmessage = function (e) {
         }
 
         /**
+         * The recent slice of the history, for a trend rather than the whole record.
+         *
+         * A read rather than exposing `history` itself: a caller outside this
+         * module wants the last `hours` of points, not this class's storage shape,
+         * and reaching into `.history` directly would tie it to both. `history` is
+         * only ever the current character's — it is loaded fresh in `initialize`
+         * keyed by `characterId` and cleared in `disable` — so a character switch
+         * cannot leave a discontinuity in the middle of what this returns.
+         *
+         * @param {number} hours - How far back to look
+         * @returns {Array<Object>} Snapshots within the window, oldest first
+         */
+        recentSeries(hours) {
+            if (!(hours > 0)) return [];
+            const cutoff = Date.now() - hours * 60 * 60 * 1000;
+            return this.history.filter((point) => point.t >= cutoff);
+        }
+
+        /**
          * Delete a snapshot by timestamp and persist the change to storage.
          * @param {number} timestamp - The `t` value of the snapshot to remove
          */
@@ -22140,8 +27613,7 @@ self.onmessage = function (e) {
             const idx = this.history.findIndex((s) => s.t === timestamp);
             if (idx === -1) return;
             this.history.splice(idx, 1);
-            const storageKey = `networth_${this.characterId}`;
-            await storage.set(storageKey, this.history, STORE_NAME);
+            await seriesStore.save(this.characterId, this.history);
         }
 
         /**
@@ -22149,6 +27621,10 @@ self.onmessage = function (e) {
          */
         disable() {
             this.timerRegistry.clearAll();
+            // The records in memory belong to the character being left; serving them
+            // to the next one would be wrong, and writing them back under its keys
+            // would be worse
+            seriesStore.forget();
             this.history = [];
             this.detailHistory = [];
             this.characterId = null;
@@ -22179,6 +27655,7 @@ self.onmessage = function (e) {
         { key: 'listings', label: 'Listings', color: '#8b5cf6' },
         { key: 'house', label: 'House', color: '#f97316' },
         { key: 'abilities', label: 'Abilities', color: '#06b6d4' },
+        { key: 'guildShrines', label: 'Guild Shrines', color: '#ec4899' },
     ];
 
     /** The chart modal's element id, and the control that opens and closes it */
@@ -22203,6 +27680,7 @@ self.onmessage = function (e) {
                 listings: false,
                 house: false,
                 abilities: false,
+                guildShrines: false,
             };
             this.currentRange = '7d';
             this.currentCustomFrom = null;
@@ -22305,7 +27783,7 @@ self.onmessage = function (e) {
             border: 2px solid #555;
             border-radius: 8px;
             padding: 20px;
-            z-index: 100000;
+            z-index: ${panelZIndex_js.PANEL_Z_CAP - 2};
             display: flex;
             flex-direction: column;
         `;
@@ -22950,6 +28428,10 @@ self.onmessage = function (e) {
                     if (!p._raw) return { x: p.x, y: NaN };
                     let val = p._raw[cat.key];
                     if (cat.key === 'inventory') val = (val || 0) - (p._raw.gold || 0);
+                    // Older snapshots predate this category (e.g. Guild Shrines was added
+                    // later) and simply never wrote the field — NaN renders as a gap
+                    // rather than a fabricated zero dip.
+                    if (val == null) val = NaN;
                     return { x: p.x, y: val };
                 });
                 datasets.push({
@@ -23228,18 +28710,20 @@ self.onmessage = function (e) {
             border-radius: 6px;
             padding: 10px 14px;
             max-height: 300px;
-            width: 360px;
+            width: min(360px, 92vw);
             overflow-y: auto;
             font-size: 12px;
             color: #ccc;
-            z-index: 100001;
+            z-index: ${panelZIndex_js.PANEL_Z_CAP - 1};
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
         `;
 
-            // Position below the toggle element
+            // Position below the toggle element, pulled back from the right edge
+            // when the anchor sits closer to it than the popout is wide
             const rect = toggle.getBoundingClientRect();
+            const width = Math.min(360, window.innerWidth * 0.92);
             container.style.top = `${rect.bottom + 4}px`;
-            container.style.left = `${rect.left}px`;
+            container.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - width - 8))}px`;
 
             this.render24hBreakdown(container);
             document.body.appendChild(container);
@@ -23660,6 +29144,13 @@ self.onmessage = function (e) {
             categories.push({ label: 'Listings', value: raw.listings || 0, prev: prevRaw?.listings });
             categories.push({ label: 'House', value: raw.house || 0, prev: prevRaw?.house });
             categories.push({ label: 'Abilities', value: raw.abilities || 0, prev: prevRaw?.abilities });
+            // Older snapshots predate this field — 0 rather than undefined, consistent
+            // with the other categories above, but not backfilled onto prevRaw.
+            categories.push({
+                label: 'Guild Shrines',
+                value: raw.guildShrines || 0,
+                prev: prevRaw?.guildShrines,
+            });
             if (raw.nonExcluded != null && raw.nonExcluded !== raw.total) {
                 const excluded = raw.total - raw.nonExcluded;
                 const prevExcluded = prevRaw?.nonExcluded != null ? prevRaw.total - prevRaw.nonExcluded : null;
@@ -23731,7 +29222,7 @@ self.onmessage = function (e) {
 
             popup.style.cssText = `
             position: fixed;
-            z-index: 100002;
+            z-index: ${panelZIndex_js.PANEL_Z_CAP};
             background: #1e1e2e;
             border: 1px solid #555;
             border-radius: 6px;
@@ -23836,60 +29327,6 @@ self.onmessage = function (e) {
     const networthHistoryChart = new NetworthHistoryChart();
 
     /**
-     * Floating Panel Z-Index Manager
-     * Manages bring-to-front ordering for persistent floating panels.
-     * All panels are capped below config.Z_FLOATING_PANEL + 99 (1199)
-     * so they never cross the game's MUI modal layer (~1300).
-     */
-
-
-    const panels = new Set();
-
-    /**
-     * Register a floating panel element for z-index management
-     * @param {HTMLElement} el - The panel element
-     */
-    function registerFloatingPanel(el) {
-        panels.add(el);
-    }
-
-    /**
-     * Unregister a floating panel element
-     * @param {HTMLElement} el - The panel element
-     */
-    function unregisterFloatingPanel(el) {
-        panels.delete(el);
-    }
-
-    /**
-     * Bring a panel to the front among all registered panels,
-     * without exceeding config.Z_FLOATING_PANEL + 99.
-     * @param {HTMLElement} el - The panel to bring forward
-     */
-    function bringPanelToFront(el) {
-        const base = config.Z_FLOATING_PANEL;
-        const cap = base + 99;
-
-        let maxZ = base;
-        for (const p of panels) {
-            const z = parseInt(p.style.zIndex) || base;
-            if (z > maxZ) maxZ = z;
-        }
-
-        const next = maxZ + 1;
-        if (next > cap) {
-            // Overflow — reassign all from base upward, put el last
-            let i = base;
-            for (const p of panels) {
-                if (p !== el) p.style.zIndex = String(i++);
-            }
-            el.style.zIndex = String(i);
-        } else {
-            el.style.zIndex = String(next);
-        }
-    }
-
-    /**
      * Networth Exclusion Popup
      * Draggable modal for managing net worth exclusions.
      * Shows current exclusions as removable chips and a searchable list of all excludable entries.
@@ -23924,7 +29361,7 @@ self.onmessage = function (e) {
             this.searchList = this._buildSearchList(networthData);
 
             if (this.container) {
-                bringPanelToFront(this.container);
+                panelZIndex_js.bringPanelToFront(this.container);
                 this._refreshContent();
                 return;
             }
@@ -23992,6 +29429,13 @@ self.onmessage = function (e) {
                     name: 'All Ability Books',
                     amount: fa.abilityBooks.totalCost,
                 });
+            if (!isExcluded('assetType', 'guildShrines') && (fa?.guildShrines?.totalCost ?? 0) > 0)
+                add({
+                    type: 'assetType',
+                    value: 'guildShrines',
+                    name: 'All Guild Shrines',
+                    amount: fa.guildShrines.totalCost,
+                });
 
             // Inventory categories — byCategory already reflects post-exclusion items
             for (const [catName, catData] of Object.entries(ca?.inventory?.byCategory ?? {})) {
@@ -24030,6 +29474,12 @@ self.onmessage = function (e) {
             for (const ability of fa?.abilities?.breakdown ?? []) {
                 if (!ability.hrid || isExcluded('ability', ability.hrid)) continue;
                 add({ type: 'ability', value: ability.hrid, name: ability.name, amount: ability.cost });
+            }
+
+            // Individual guild shrine buffs — breakdown already reflects post-exclusion
+            for (const shrine of fa?.guildShrines?.breakdown ?? []) {
+                if (!shrine.hrid || isExcluded('guildShrine', shrine.hrid)) continue;
+                add({ type: 'guildShrine', value: shrine.hrid, name: shrine.name, amount: shrine.cost });
             }
 
             // Loadout snapshots — only show if not already excluded
@@ -24122,7 +29572,7 @@ self.onmessage = function (e) {
             this.container.appendChild(header);
             this.container.appendChild(body);
             document.body.appendChild(this.container);
-            registerFloatingPanel(this.container);
+            panelZIndex_js.registerFloatingPanel(this.container);
 
             this._renderBody(body);
             this._setupDragging(header);
@@ -24285,6 +29735,11 @@ self.onmessage = function (e) {
                         return (fa?.abilityBooks?.breakdown ?? []).map((i) => ({
                             name: `${i.name}${i.count > 1 ? ` x${i.count}` : ''}`,
                             value: i.value ?? 0,
+                        }));
+                    case 'guildShrines':
+                        return (fa?.guildShrines?.breakdown ?? []).map((i) => ({
+                            name: i.name,
+                            value: i.cost ?? 0,
                         }));
                 }
             }
@@ -24468,6 +29923,7 @@ self.onmessage = function (e) {
                 houses: 'All Houses',
                 abilities: 'All Abilities',
                 abilityBooks: 'All Ability Books',
+                guildShrines: 'All Guild Shrines',
             };
             if (exc.type === 'assetType') return ASSET_TYPE_NAMES[exc.value] ?? exc.value;
             if (exc.type === 'loadout') return `Loadout: ${exc.value}`;
@@ -24482,6 +29938,15 @@ self.onmessage = function (e) {
             if (exc.type === 'item') return gd.itemDetailMap?.[exc.value]?.name ?? exc.value;
             if (exc.type === 'houseRoom') return gd.houseRoomDetailMap?.[exc.value]?.name ?? exc.value;
             if (exc.type === 'ability') return gd.abilityDetailMap?.[exc.value]?.name ?? exc.value;
+            if (exc.type === 'guildShrine') {
+                // Guild buffs carry no display name of their own, so the hrid tail
+                // is de-slugged the same way the net worth row names them
+                return exc.value
+                    .replace('/guild_buffs/', '')
+                    .split('_')
+                    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+                    .join(' ');
+            }
             return exc.value;
         }
 
@@ -24542,9 +30007,14 @@ self.onmessage = function (e) {
         // ─── Drag ────────────────────────────────────────────────────
 
         _setupDragging(header) {
-            header.addEventListener('mousedown', (e) => {
+            // Pointer events so a finger works too; mousedown never fires on a
+            // touchscreen, and touch-action:none stops the browser claiming the
+            // gesture for scrolling
+            header.style.touchAction = 'none';
+
+            header.addEventListener('pointerdown', (e) => {
                 if (e.target.tagName === 'BUTTON') return;
-                bringPanelToFront(this.container);
+                panelZIndex_js.bringPanelToFront(this.container);
                 this.isDragging = true;
                 const rect = this.container.getBoundingClientRect();
                 this.container.style.transform = 'none';
@@ -24572,8 +30042,9 @@ self.onmessage = function (e) {
                 header.style.cursor = 'grab';
             };
 
-            document.addEventListener('mousemove', this.dragMoveHandler);
-            document.addEventListener('mouseup', this.dragUpHandler);
+            document.addEventListener('pointermove', this.dragMoveHandler);
+            document.addEventListener('pointerup', this.dragUpHandler);
+            document.addEventListener('pointercancel', this.dragUpHandler);
         }
 
         _setupClickOutside() {
@@ -24588,11 +30059,12 @@ self.onmessage = function (e) {
         _teardown() {
             clearTimeout(this.searchTimeout);
             if (this.dragMoveHandler) {
-                document.removeEventListener('mousemove', this.dragMoveHandler);
+                document.removeEventListener('pointermove', this.dragMoveHandler);
                 this.dragMoveHandler = null;
             }
             if (this.dragUpHandler) {
-                document.removeEventListener('mouseup', this.dragUpHandler);
+                document.removeEventListener('pointerup', this.dragUpHandler);
+                document.removeEventListener('pointercancel', this.dragUpHandler);
                 this.dragUpHandler = null;
             }
             if (this.clickOutsideHandler) {
@@ -24600,7 +30072,7 @@ self.onmessage = function (e) {
                 this.clickOutsideHandler = null;
             }
             if (this.container) {
-                unregisterFloatingPanel(this.container);
+                panelZIndex_js.unregisterFloatingPanel(this.container);
                 this.container.remove();
                 this.container = null;
             }
@@ -24964,6 +30436,10 @@ self.onmessage = function (e) {
             const showFixedAssets = fa.total > 0;
             const showHouses = fa.houses.totalCost > 0;
             const showAbilities = fa.abilities.totalCost > 0;
+            // Shrine levels arrive on guild traffic and may never have been seen.
+            // No row at all beats a row reading zero for something unknown.
+            const guildShrines = fa.guildShrines ?? { totalCost: 0, tokens: 0, breakdown: [] };
+            const showGuildShrines = (guildShrines.breakdown?.length ?? 0) > 0;
             const showExcluded = excl.total > 0;
 
             this.container.innerHTML = `
@@ -25102,6 +30578,18 @@ self.onmessage = function (e) {
                     `
                             : ''
                     }
+
+                    ${
+                        showGuildShrines
+                            ? `
+                        <!-- Guild Shrines -->
+                        <div style="cursor: pointer; margin-top: 4px;" id="mwi-guild-shrines-toggle" title="Guild credits spent on every shrine level bought. ${formatters_js.formatKMB(guildShrines.tokens || 0)} guild tokens were also spent — nothing converts into tokens, so they carry no gold value here.">
+                            + Guild Shrines: ${formatters_js.networthFormatter(Math.round(guildShrines.totalCost))}
+                        </div>
+                        <div id="mwi-guild-shrines-breakdown" style="display: none; margin-left: 20px; font-size: 0.8rem; color: #bbb; white-space: pre-line;">${this.renderGuildShrinesBreakdown(guildShrines.breakdown)}</div>
+                    `
+                            : ''
+                    }
                 </div>
                 `
                         : ''
@@ -25180,7 +30668,7 @@ self.onmessage = function (e) {
 
         /**
          * Render abilities breakdown HTML
-         * @param {Array} breakdown - Array of {name, cost}
+         * @param {Array} breakdown - Array of {name, cost, unpriced}
          * @returns {string} HTML string
          */
         renderAbilitiesBreakdown(breakdown) {
@@ -25190,6 +30678,9 @@ self.onmessage = function (e) {
 
             return breakdown
                 .map((ability) => {
+                    // Nobody is selling the book, so the total below does not
+                    // include it — which is worth saying rather than drawing a 0
+                    if (ability.unpriced) return `${ability.name}: no price`;
                     return `${ability.name}: ${formatters_js.networthFormatter(Math.round(ability.cost))}`;
                 })
                 .join('\n');
@@ -25208,6 +30699,29 @@ self.onmessage = function (e) {
             return breakdown
                 .map((book) => {
                     return `${book.name} (${formatters_js.formatKMB(book.count)}): ${formatters_js.networthFormatter(Math.round(book.value))}`;
+                })
+                .join('\n');
+        }
+
+        /**
+         * Render guild shrines breakdown HTML.
+         *
+         * Each line carries its token cost beside the gold one, because the gold
+         * figure alone understates what a shrine level took to buy and the tokens
+         * have no price that could be folded in.
+         *
+         * @param {Array} breakdown - Array of {name, cost, tokens}
+         * @returns {string} HTML string
+         */
+        renderGuildShrinesBreakdown(breakdown) {
+            if (!breakdown || breakdown.length === 0) {
+                return '<div>No shrine levels bought</div>';
+            }
+
+            return breakdown
+                .map((shrine) => {
+                    const tokens = shrine.tokens > 0 ? ` (+${formatters_js.formatKMB(shrine.tokens)} tokens)` : '';
+                    return `${shrine.name}: ${formatters_js.networthFormatter(Math.round(shrine.cost))}${tokens}`;
                 })
                 .join('\n');
         }
@@ -25465,6 +30979,15 @@ self.onmessage = function (e) {
                     'mwi-ability-books-toggle',
                     'mwi-ability-books-breakdown',
                     `Ability Books: ${formatters_js.networthFormatter(Math.round(fa.abilityBooks.totalCost))}`
+                );
+            }
+
+            // Guild shrines toggle (only when levels are actually known)
+            if ((fa.guildShrines?.breakdown?.length ?? 0) > 0) {
+                this.setupToggle(
+                    'mwi-guild-shrines-toggle',
+                    'mwi-guild-shrines-breakdown',
+                    `Guild Shrines: ${formatters_js.networthFormatter(Math.round(fa.guildShrines.totalCost))}`
                 );
             }
 
@@ -25774,7 +31297,7 @@ self.onmessage = function (e) {
             networthInventoryDisplay.setNetworthFeature(this);
 
             // Initialize exclusions from storage
-            await initExclusions();
+            await performanceMonitor.span('init:networth', 'exclusions', () => initExclusions());
 
             // Initialize header display (always enabled with networth feature)
             if (config.isFeatureEnabled('networth')) {
@@ -25798,18 +31321,21 @@ self.onmessage = function (e) {
             // Set up event-driven updates instead of polling
             this.setupEventListeners();
 
-            // Initial calculation
-            if (connectionState.isConnected()) {
-                await this.recalculate();
-            }
-
-            // Initialize networth history tracker (hourly snapshots for chart)
-            if (config.getSetting('networth_historyChart')) {
-                networthHistoryChart.setNetworthFeature(this);
-                await networthHistory.initialize(this);
-            }
-
             this.isActive = true;
+
+            // The first calculation prices every item in the inventory and every
+            // saved snapshot in the history — seconds of work, and every feature
+            // after this one in the registry was waiting behind it for a number
+            // nobody has looked at yet. It runs once the page has drawn instead.
+            this.ready = runInBackground('networth', async () => {
+                if (connectionState.isConnected()) {
+                    await performanceMonitor.span('bg:networth', 'first calculation', () => this.recalculate());
+                }
+                if (config.getSetting('networth_historyChart')) {
+                    networthHistoryChart.setNetworthFeature(this);
+                    await performanceMonitor.span('bg:networth', 'history', () => networthHistory.initialize(this));
+                }
+            });
         }
 
         /**
@@ -25959,6 +31485,10 @@ self.onmessage = function (e) {
             // Clear the enhancement cost cache (character-specific)
             networthCache.clear();
 
+            // The pool recreates itself on the next batch; idle workers should not
+            // outlive the feature that spawned them
+            networthWorkerManager_js.terminateItemValueWorkerPool();
+
             this.currentData = null;
             this.isActive = false;
         }
@@ -25967,640 +31497,1644 @@ self.onmessage = function (e) {
     const networthFeature = new NetworthFeature();
 
     /**
-     * Inventory Badge Manager
-     * Centralized management for all inventory item badges
-     * Prevents race conditions with React re-renders by coordinating all badge rendering
+     * Open the net worth history chart, or close it if it is already up.
+     *
+     * The tile is one number; the chart is where that number came from and where it
+     * has been. Wrapped rather than handed over directly because opening it loads
+     * saved preferences first, and the overlay calls `onOpen` inside a synchronous
+     * try/catch — a rejection would escape it as an unhandled promise.
+     *
+     * @returns {Promise<void>}
+     */
+    async function openHistoryChart$1() {
+        try {
+            await networthHistoryChart.toggleModal();
+        } catch (error) {
+            console.error('[Networth] Opening the history chart failed:', error);
+        }
+    }
+
+    // Registered at module scope so the overlay has the row regardless of start-up
+    // order. Reads the value the feature last calculated rather than calculating:
+    // a full networth pass prices every item you own and runs a worker pool, which
+    // is not something a row redrawn every second may do. The figure refreshes when
+    // the feature itself recalculates, on item and price changes.
+    overlayRows_js.registerRow({
+        key: 'netWorth',
+        empty: 'No net worth yet',
+        name: 'Net Worth',
+        defaultSize: { width: 180, height: 30 },
+        render: (container) => {
+            const total = networthFeature.currentData?.totalNetworth;
+            if (!(total > 0)) return overlayFormat_js.blank(container);
+
+            overlayFormat_js.row(container, [
+                { text: 'Net Worth', color: overlayFormat_js.ROW_COLORS.dim },
+                { text: formatters_js.formatLargeNumber(Math.round(total)), color: overlayFormat_js.ROW_COLORS.good, bold: true, push: true },
+            ]);
+            container.title = 'Everything you own, priced.\nDouble-click for the net worth history chart.';
+        },
+        onOpen: openHistoryChart$1,
+    });
+
+    /**
+     * Ability Book panel
+     *
+     * Every ability at once: what its next level costs in books, and which of them
+     * is the cheapest thing you could buy right now.
+     *
+     * The Item Dictionary already answers this for one ability — the one whose book
+     * you happen to be looking at. That is the wrong shape for the question people
+     * actually ask, which is not "what does this cost" but "what should I buy". You
+     * cannot answer the second by opening the first eighteen times.
+     *
+     * ## Cheapest is not nearest
+     *
+     * The ability closest to its next level is rarely the cheapest to level. Books
+     * differ in the experience they grant and by orders of magnitude in price, so
+     * the ability two hundred experience from a level can cost more than one four
+     * thousand away. The panel sorts by cost for that reason, and the overlay row
+     * carries the winner.
+     *
+     * An unpriced book is **unknown, not free**. Treating a missing price as zero
+     * would make whatever nobody is selling win every time, which is precisely
+     * backwards. Those rows say so and are excluded from the cheapest.
+     *
+     * The arithmetic is in `utils/ability-books.js`, shared with the dictionary
+     * calculator so the two cannot disagree about the same number.
+     *
+     * The panel is BRead's, from MWI Combat Suite by Frotty (MIT) — see
+     * `third-party/mwi-combat-suite/` and `docs/THIRD-PARTY-LICENSES.md`. The code is
+     * Toolasha's own.
+     */
+
+
+    const PANEL_ID$1 = 'toolasha-ability-book-panel';
+    const GEOMETRY_KEY = 'abilityBookPanel';
+    const DEFAULT_PANEL$1 = { width: 500, height: 420 };
+    const REFRESH_MS = 5000;
+
+    const COLORS$1 = {
+        background: 'rgba(14, 16, 22, 0.97)',
+        card: 'rgba(255, 255, 255, 0.04)',
+        headerBg: 'rgba(28, 24, 34, 0.9)',
+        border: 'rgba(190, 170, 255, 0.32)',
+        hairline: 'rgba(255, 255, 255, 0.10)',
+        text: '#e8ecf5',
+        textDim: 'rgba(232, 236, 245, 0.5)',
+        accent: '#b9a4ff',
+        // Its own orange rather than the palette's gold, because books and cost sit
+        // side by side and two figures in one colour read as one figure
+        books: '#ffa657',
+    };
+
+    /** The level every ability is being aimed at, when one is set */
+    let sharedTarget = null;
+
+    /**
+     * A level chosen for one ability, which overrides the shared one.
+     *
+     * Per ability rather than one for all, because the levels are not level: taking
+     * an ability at 41 and one at 70 both to 100 are different purchases, and the
+     * question is usually about one of them.
+     *
+     * @type {Map<string, number>}
+     */
+    const abilityTargets = new Map();
+
+    /**
+     * How fast each ability is earning experience.
+     *
+     * Same measurement a skill rate uses — abilities have an hrid and an experience
+     * total, which is all it reads. Ten minutes back rather than session start, so a
+     * change of activity shows up rather than being averaged away.
+     */
+    const abilityHistory = skillHistory_js.createSkillHistory();
+
+    /**
+     * The target set for one ability.
+     * @param {string} abilityHrid - Which ability
+     * @returns {number|null}
+     */
+    function targetFor(abilityHrid) {
+        return abilityTargets.get(abilityHrid) ?? sharedTarget;
+    }
+
+    /** Put every ability back to its next level */
+    function resetAbilityTargets() {
+        abilityTargets.clear();
+        sharedTarget = null;
+    }
+
+    /**
+     * Fills the quantity box in the game's buy dialog.
+     *
+     * Registered on first use rather than when the panel opens: the dialog is
+     * reached by navigating to the marketplace and then clicking + New Buy Listing,
+     * which can be a while later and with the panel closed in between. An observer
+     * that only lives as long as the panel would miss exactly that.
+     */
+    const autofill = marketplaceAutofill_js.createAutofillManager('AbilityBookPanel');
+    let autofillReady = false;
+
+    /**
+     * Open a book's marketplace listing with the number you need already typed in.
+     *
+     * The count is the point of the panel and retyping it into the dialog is where
+     * it gets rounded to something convenient — 2,800 rather than 2,809 is one book
+     * short of a level, discovered a fortnight later.
+     *
+     * @param {string} itemHrid - The book
+     * @param {number|null} books - How many, or null when it cannot be worked out
+     */
+    function buyBooks(itemHrid, books) {
+        if (!autofillReady) {
+            autofill.initialize();
+            autofillReady = true;
+        }
+
+        // One-shot rather than standing: the dialog does not say which item it is
+        // for, so a quantity left armed would fill in the next thing you buy
+        if (books > 0) autofill.setQuantity(Math.ceil(books));
+        else autofill.clearQuantity();
+
+        marketplaceTabs_js.navigateToMarketplace(itemHrid);
+    }
+
+    /**
+     * An ability's readable name.
+     * @param {string} abilityHrid - e.g. `/abilities/quick_shot`
+     * @returns {string}
+     */
+    function abilityName$1(abilityHrid) {
+        const detail = dataManager.getInitClientData?.()?.abilityDetailMap?.[abilityHrid];
+        if (detail?.name) return detail.name;
+
+        return String(abilityHrid || '')
+            .split('/')
+            .pop()
+            .replace(/_/g, ' ')
+            .replace(/\b\w/g, (letter) => letter.toUpperCase());
+    }
+
+    /**
+     * A plan for every ability the character has.
+     *
+     * Exported because the overlay row reads it while the panel is closed, and
+     * because a disagreement between the row and the panel would be here.
+     *
+     * @param {number|null|Function} [target] - A level beyond the next one, or
+     *   `(abilityHrid) => level|null` when each ability has its own
+     * @returns {Array<Object>} From `abilityPlan`, cheapest first
+     */
+    function abilityPlans(target = targetFor) {
+        const data = dataManager.getInitClientData?.();
+        const table = data?.levelExperienceTable;
+        if (!table) return [];
+
+        const abilities = equippedAbilities();
+        // The rate the panel's time column divides by. Sampled here rather than in
+        // the panel so the reading is taken whether or not the panel is open — a
+        // rate that only starts measuring when you look at it takes ten minutes to
+        // say anything, every time.
+        abilityHistory.sample(
+            abilities.map((ability) => ({ skillHrid: ability.abilityHrid, experience: ability.experience }))
+        );
+
+        const plans = [];
+        for (const ability of abilities) {
+            if (!ability?.abilityHrid) continue;
+
+            const itemHrid = abilityBooks_js.bookItemFor(ability.abilityHrid);
+            const perBookExperience = data?.itemDetailMap?.[itemHrid]?.abilityBookDetail?.experienceGain;
+
+            const plan = abilityBooks_js.abilityPlan({
+                ability,
+                perBookExperience,
+                bookPrice: marketData_js.getItemPrices(itemHrid)?.ask || 0,
+                table,
+                targetLevel: typeof target === 'function' ? target(ability.abilityHrid) : target,
+            });
+            if (plan) {
+                plans.push({
+                    ...plan,
+                    name: abilityName$1(ability.abilityHrid),
+                    experiencePerHour: abilityHistory.rateFor(ability.abilityHrid),
+                });
+            }
+        }
+
+        // Cheapest first, and the ones with no price last rather than first — they
+        // are the least informative rows, not the most attractive
+        return plans.sort((a, b) => {
+            if (a.costToNext === null) return b.costToNext === null ? a.name.localeCompare(b.name) : 1;
+            if (b.costToNext === null) return -1;
+            return a.costToNext - b.costToNext;
+        });
+    }
+
+    /**
+     * The abilities actually in your kit, with their level and experience.
+     *
+     * Two sources, and both are needed. `combatUnit.combatAbilities` is the live
+     * equipped state — the five slots — and is the only place that says which
+     * abilities are in use rather than merely owned. `characterAbilities` is the
+     * only place that carries experience, which is what "how far to the next level"
+     * turns on. Neither alone answers the question.
+     *
+     * Not `getInitClientData()`, which is static game data: it has an
+     * `abilityDetailMap` describing every ability in the game and nothing about
+     * yours. Reading the character out of it is how this panel first shipped
+     * showing an empty list.
+     *
+     * @returns {Array<{abilityHrid: string, level: number, experience: number}>}
+     */
+    function equippedAbilities() {
+        const character = dataManager.characterData;
+        const equipped = character?.combatUnit?.combatAbilities || [];
+        const owned = character?.characterAbilities || [];
+
+        const abilities = [];
+        for (const slot of equipped) {
+            if (!slot?.abilityHrid) continue;
+
+            const known = owned.find((entry) => entry.abilityHrid === slot.abilityHrid);
+            abilities.push({
+                abilityHrid: slot.abilityHrid,
+                level: known?.level ?? slot.level ?? 0,
+                // Without the experience the level is a floor, not a position: every
+                // ability would read as freshly levelled and every plan would be
+                // the full cost of a level
+                experience: known?.experience ?? 0,
+            });
+        }
+        return abilities;
+    }
+
+    class AbilityBookPanel {
+        constructor() {
+            this.panel = null;
+            this.bodyEl = null;
+            this.refreshId = null;
+        }
+
+        show() {
+            if (this.panel && document.body.contains(this.panel)) {
+                panelZIndex_js.bringPanelToFront(this.panel);
+                return;
+            }
+            this._create();
+        }
+
+        hide() {
+            this._remove();
+        }
+
+        toggle() {
+            if (this.panel) this.hide();
+            else this.show();
+        }
+
+        _create() {
+            this.panel = document.createElement('div');
+            this.panel.id = PANEL_ID$1;
+            Object.assign(this.panel.style, {
+                position: 'fixed',
+                top: '150px',
+                left: '130px',
+                zIndex: String(config.Z_FLOATING_PANEL),
+                // Clamped so the first open on a phone is not wider than the screen
+                width: `min(${DEFAULT_PANEL$1.width}px, 92vw)`,
+                height: `min(${DEFAULT_PANEL$1.height}px, 80vh)`,
+                background: COLORS$1.background,
+                border: `1px solid ${COLORS$1.border}`,
+                borderRadius: '8px',
+                boxShadow: '0 8px 32px rgba(0, 0, 0, 0.6)',
+                color: COLORS$1.text,
+                fontSize: '12px',
+                display: 'flex',
+                flexDirection: 'column',
+                overflow: 'hidden',
+            });
+
+            this.headerEl = this._header();
+            this.panel.appendChild(this.headerEl);
+
+            this.bodyEl = document.createElement('div');
+            Object.assign(this.bodyEl.style, {
+                flex: '1',
+                overflow: 'auto',
+                padding: '8px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '8px',
+                fontVariantNumeric: 'tabular-nums',
+            });
+            this.panel.appendChild(this.bodyEl);
+
+            this.detachDrag = floatingPanel_js.makeDraggable(this.panel, this.headerEl, (position) => {
+                panelGeometry_js.saveGeometry(GEOMETRY_KEY, { left: parseFloat(position.left), top: parseFloat(position.top) });
+            });
+            this.detachResize = floatingPanel_js.makeResizable(this.panel, {
+                minWidth: 400,
+                minHeight: 240,
+                onResize: (size) => panelGeometry_js.saveGeometry(GEOMETRY_KEY, size),
+            });
+
+            document.body.appendChild(this.panel);
+            panelZIndex_js.registerFloatingPanel(this.panel);
+            panelGeometry_js.restoreGeometry(this.panel, GEOMETRY_KEY, { width: 400, height: 240 });
+
+            this._render();
+            this.refreshId = setInterval(() => {
+                if (document.hidden) return;
+                this._refresh();
+            }, REFRESH_MS);
+        }
+
+        _header() {
+            const header = document.createElement('div');
+            Object.assign(header.style, {
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px',
+                cursor: 'move',
+                padding: '7px 8px 7px 11px',
+                background: COLORS$1.headerBg,
+                borderBottom: `1px solid ${COLORS$1.border}`,
+                userSelect: 'none',
+                flex: '0 0 auto',
+            });
+
+            const title = document.createElement('span');
+            title.textContent = 'Ability Books';
+            title.style.fontWeight = 'bold';
+            title.style.color = COLORS$1.accent;
+
+            // The same summary the overlay tile carries, so the panel you opened
+            // from it opens showing the figure you opened it for
+            this.headerBest = document.createElement('span');
+            Object.assign(this.headerBest.style, { display: 'flex', alignItems: 'center', gap: '5px' });
+
+            const spacer = document.createElement('div');
+            spacer.style.flex = '1';
+
+            const reset = document.createElement('button');
+            reset.textContent = 'Reset';
+            Object.assign(reset.style, {
+                background: 'rgba(255, 255, 255, 0.08)',
+                border: `1px solid ${COLORS$1.hairline}`,
+                borderRadius: '3px',
+                color: COLORS$1.text,
+                cursor: 'pointer',
+                fontSize: '11px',
+                padding: '2px 9px',
+            });
+            reset.title = 'Put every ability back to its next level.';
+            reset.addEventListener('click', (event) => {
+                event.stopPropagation();
+                resetAbilityTargets();
+                this._render();
+            });
+
+            const close = document.createElement('button');
+            close.textContent = '✕';
+            Object.assign(close.style, {
+                background: 'none',
+                border: 'none',
+                color: COLORS$1.text,
+                cursor: 'pointer',
+                fontSize: '13px',
+                padding: '2px 4px',
+            });
+            close.addEventListener('click', (event) => {
+                event.stopPropagation();
+                this.hide();
+            });
+
+            header.append(title, this.headerBest, spacer, reset, close);
+            return header;
+        }
+
+        /**
+         * The cheapest next level, written the way the tile writes it.
+         * @param {Object|null} best - From `cheapestNextLevel`
+         */
+        _drawHeaderBest(best) {
+            this.headerBest.replaceChildren();
+            if (!best) return;
+
+            const icon = overlayFormat_js.itemIcon(best.itemHrid, 18);
+            overlayFormat_js.linkToMarketplace(icon, best.itemHrid, marketplaceTabs_js.navigateToMarketplace);
+
+            this.headerBest.append(
+                icon,
+                this._value(formatters_js.formatWithSeparator(best.booksToNext), overlayFormat_js.ROW_COLORS.good),
+                this._label('books'),
+                this._value(formatters_js.formatKMB(best.costToNext), overlayFormat_js.ROW_COLORS.gold)
+            );
+            this.headerBest.title = `${best.name} is the cheapest next ability level you could buy right now.`;
+        }
+
+        /** The periodic redraw, which leaves a field being typed into alone */
+        _refresh() {
+            const active = document.activeElement;
+            if (this.panel?.contains(active) && active.tagName === 'INPUT') return;
+            this._render();
+        }
+
+        _render() {
+            if (!this.bodyEl) return;
+
+            const plans = abilityPlans();
+            // `costToNext` is there whatever target a row is aimed at, and the next
+            // level is what the header is about — the thing you could go and buy now
+            this._drawHeaderBest(abilityBooks_js.cheapestNextLevel(plans));
+
+            this.bodyEl.replaceChildren();
+            for (const build of [() => this._targetBar(plans), () => this._table(plans)]) {
+                // One section that cannot be drawn must not take the other with it
+                try {
+                    this.bodyEl.appendChild(build());
+                } catch (error) {
+                    console.error('[AbilityBooks] A section could not be drawn:', error);
+                    const failed = this._note(`This section could not be drawn: ${error.message}`);
+                    failed.style.color = overlayFormat_js.ROW_COLORS.bad;
+                    this.bodyEl.appendChild(failed);
+                }
+            }
+        }
+
+        /**
+         * One target level for every ability, and what the lot would cost.
+         * @param {Array<Object>} plans - From `abilityPlans`
+         * @returns {HTMLElement}
+         */
+        _targetBar(plans) {
+            const card = this._card();
+            Object.assign(card.style, { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' });
+
+            const label = this._label('Take everything to level');
+
+            const input = document.createElement('input');
+            input.type = 'number';
+            input.min = '1';
+            input.value = sharedTarget === null ? '' : String(sharedTarget);
+            input.placeholder = 'next';
+            Object.assign(input.style, {
+                width: '68px',
+                background: 'rgba(255, 255, 255, 0.06)',
+                border: `1px solid ${COLORS$1.hairline}`,
+                borderRadius: '3px',
+                color: COLORS$1.text,
+                fontSize: '11px',
+                padding: '2px 3px',
+                textAlign: 'right',
+            });
+            input.addEventListener('change', () => {
+                const parsed = Math.round(Number(input.value));
+                sharedTarget = Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+                // A level set for everything replaces the ones set one at a time,
+                // or "everything" would quietly mean "everything else"
+                abilityTargets.clear();
+                this._render();
+            });
+            // A level typed here should not also be a game hotkey
+            input.addEventListener('keydown', (event) => {
+                if (event.key === 'Enter') input.blur();
+                event.stopPropagation();
+            });
+
+            const totals = abilityBooks_js.aimedTotals(plans);
+
+            const summary = document.createElement('span');
+            summary.append(
+                this._value(`${formatters_js.formatWithSeparator(totals.books)} books`, overlayFormat_js.ROW_COLORS.dim),
+                document.createTextNode(' · '),
+                this._value(formatters_js.formatKMB(totals.cost), overlayFormat_js.ROW_COLORS.gold)
+            );
+            summary.title = 'Every ability taken to the level its own row is aimed at.';
+            // A total that quietly excludes rows is a lower bound wearing a total's
+            // clothes, so the count of what it could not price is said out loud
+            if (totals.unpriced) {
+                const missing = this._value(` (+${totals.unpriced} unpriced)`, overlayFormat_js.ROW_COLORS.bad);
+                missing.title = 'Books with no market price, which cannot be included in the total.';
+                summary.appendChild(missing);
+            }
+
+            card.append(label, input, summary);
+            return card;
+        }
+
+        /**
+         * @param {Array<Object>} plans - From `abilityPlans`
+         * @returns {HTMLElement}
+         */
+        _table(plans) {
+            const card = this._card();
+            // No heading row. Five rows of six figures do not need labelling twice
+            // over, and the labels were the widest thing in three of the columns —
+            // the panel spent a line and a third of its type size saying "Books"
+            // above a column of book counts. Each cell carries its own tooltip.
+            card.title = 'Level · book · experience to go and the rate · time · books · cost · the level being aimed at.';
+
+            if (!plans.length) {
+                card.appendChild(this._note('No abilities learned yet.'));
+                return card;
+            }
+
+            for (const plan of plans) card.appendChild(this._planRow(plan));
+            return card;
+        }
+
+        /**
+         * @param {Object} plan - One ability's plan
+         * @returns {HTMLElement}
+         */
+        _planRow(plan) {
+            const line = this._row();
+            line.style.padding = '7px 0';
+
+            // Every figure to the right of the level answers "to the target", and
+            // the target is the next level until you say otherwise
+            const aimed = plan.targetLevel !== null;
+            const books = aimed ? plan.booksToTarget : plan.booksToNext;
+            const cost = aimed ? plan.costToTarget : plan.costToNext;
+            const owed = aimed ? plan.experienceToTarget : plan.experienceToNext;
+
+            const level = this._cell(plan.level === 0 ? '—' : String(plan.level));
+            Object.assign(level.style, {
+                color: overlayFormat_js.ROW_COLORS.gold,
+                fontWeight: 'bold',
+                fontSize: '17px',
+                textAlign: 'center',
+            });
+            level.title = plan.level === 0 ? 'Not learned yet.' : `${plan.name} is level ${plan.level}.`;
+
+            // The icon is the name. An ability's book is its picture and a column of
+            // pictures is read faster than a column of words — and the words were
+            // ellipsed to "Pen…" at any width that left room for the figures.
+            const icon = overlayFormat_js.itemIcon(plan.itemHrid, 28);
+            icon.style.justifySelf = 'center';
+            overlayFormat_js.linkToMarketplace(icon, plan.itemHrid, (itemHrid) => buyBooks(itemHrid, books));
+            icon.style.opacity = plan.level === 0 ? '0.55' : '1';
+            // An ability never learned reads differently from one at level 1, since
+            // its first book buys the ability rather than a level
+            icon.setAttribute(
+                'title',
+                (plan.level === 0
+                    ? `${plan.name} — not learned. The first book teaches the ability rather than levelling it.`
+                    : plan.name) +
+                    (books > 0
+                        ? `\nClick to buy: opens the marketplace with ${formatters_js.formatWithSeparator(books)} filled in.`
+                        : '\nClick to open in the marketplace.')
+            );
+
+            line.append(level, icon, this._experienceCell(plan, owed), this._timeCell(plan, owed));
+
+            const booksCell = this._cell(books === null ? '—' : formatters_js.formatWithSeparator(books));
+            Object.assign(booksCell.style, { color: COLORS$1.books, fontWeight: 'bold', fontSize: '17px' });
+            booksCell.title = `${plan.name}: ${books === null ? 'no' : formatters_js.formatWithSeparator(books)} books at ${formatters_js.formatWithSeparator(plan.perBookExperience)} experience each.`;
+
+            const costCell = this._cell(cost === null ? 'no price' : formatters_js.formatKMB(cost));
+            costCell.style.color = cost === null ? overlayFormat_js.ROW_COLORS.bad : overlayFormat_js.ROW_COLORS.gold;
+            costCell.title =
+                cost === null
+                    ? 'Nobody is selling this book, so its cost is unknown rather than nothing.'
+                    : `${formatters_js.formatWithSeparator(books)} books at ${formatters_js.formatWithSeparator(plan.bookPrice)} each.`;
+
+            line.append(booksCell, costCell, this._targetInput(plan));
+            return line;
+        }
+
+        /**
+         * Experience still owed, and how fast it is coming in.
+         *
+         * The rate below the figure rather than beside it, because the two are read
+         * together — a number of experience means nothing until you know whether it
+         * is an hour away or a fortnight.
+         *
+         * @param {Object} plan - One ability's plan
+         * @param {number|null} owed - Experience to the target
+         * @returns {HTMLElement}
+         */
+        _experienceCell(plan, owed) {
+            const cell = document.createElement('span');
+            Object.assign(cell.style, { whiteSpace: 'nowrap', lineHeight: '1.2', minWidth: '0' });
+
+            const remaining = document.createElement('div');
+            remaining.textContent = owed === null ? '—' : formatters_js.formatWithSeparator(Math.ceil(owed));
+            Object.assign(remaining.style, { color: overlayFormat_js.ROW_COLORS.good, fontSize: '14px' });
+            remaining.title = 'Experience still owed to the level this row is aimed at.';
+
+            const rate = document.createElement('div');
+            rate.textContent = plan.experiencePerHour ? `${formatters_js.formatKMB(plan.experiencePerHour)}/hr` : '—/hr';
+            Object.assign(rate.style, { color: COLORS$1.textDim, fontSize: '10px' });
+            rate.title = plan.experiencePerHour
+                ? 'Measured over the last ten minutes of play.'
+                : 'No experience gained yet, so there is no rate to measure.';
+
+            cell.append(remaining, rate);
+            return cell;
+        }
+
+        /**
+         * @param {Object} plan - One ability's plan
+         * @param {number|null} owed - Experience to the target
+         * @returns {HTMLElement}
+         */
+        _timeCell(plan, owed) {
+            // Unmeasurable rather than infinite: an ability you are not training has
+            // no arrival time, and "never" would be a claim about the future
+            const seconds = plan.experiencePerHour && owed !== null ? (owed / plan.experiencePerHour) * 3600 : null;
+            const cell = this._cell(seconds === null ? '—' : overlayFormat_js.shortDuration(seconds));
+            Object.assign(cell.style, {
+                color: seconds === null ? COLORS$1.textDim : overlayFormat_js.ROW_COLORS.accent,
+                textAlign: 'center',
+            });
+            cell.title = seconds === null ? 'Needs a measured experience rate for this ability.' : 'At the current rate.';
+            return cell;
+        }
+
+        /**
+         * The level this ability is being taken to.
+         * @param {Object} plan - One ability's plan
+         * @returns {HTMLElement}
+         */
+        _targetInput(plan) {
+            const input = document.createElement('input');
+            input.type = 'number';
+            input.min = String(plan.level + 1);
+            input.max = '200';
+            input.value = String(plan.targetLevel ?? plan.level + 1);
+            input.dataset.ability = plan.abilityHrid;
+            Object.assign(input.style, {
+                width: '100%',
+                background: 'rgba(255, 255, 255, 0.06)',
+                border: `1px solid ${COLORS$1.hairline}`,
+                borderRadius: '3px',
+                color: COLORS$1.text,
+                fontSize: '11px',
+                padding: '2px 3px',
+                textAlign: 'center',
+            });
+            input.addEventListener('change', () => {
+                const parsed = Math.round(Number(input.value));
+                // The next level is the resting state, not a target — storing it
+                // would leave the row stuck at a level it is about to pass
+                if (Number.isFinite(parsed) && parsed > plan.level + 1) abilityTargets.set(plan.abilityHrid, parsed);
+                else abilityTargets.delete(plan.abilityHrid);
+                this._render();
+            });
+            // A level typed here should not also be a game hotkey
+            input.addEventListener('keydown', (event) => {
+                if (event.key === 'Enter') input.blur();
+                event.stopPropagation();
+            });
+            return input;
+        }
+
+        _card() {
+            const card = document.createElement('div');
+            Object.assign(card.style, {
+                background: COLORS$1.card,
+                border: `1px solid ${COLORS$1.hairline}`,
+                borderRadius: '6px',
+                padding: '7px 9px',
+            });
+            return card;
+        }
+
+        _row() {
+            const line = document.createElement('div');
+            Object.assign(line.style, {
+                display: 'grid',
+                gridTemplateColumns: '40px 34px minmax(0, 1fr) 84px 62px 78px 62px',
+                gap: '6px',
+                alignItems: 'center',
+            });
+            return line;
+        }
+
+        _cell(text) {
+            const cell = document.createElement('span');
+            cell.textContent = text;
+            cell.style.textAlign = 'right';
+            cell.style.whiteSpace = 'nowrap';
+            return cell;
+        }
+
+        _left(text) {
+            const cell = document.createElement('span');
+            cell.textContent = text;
+            return cell;
+        }
+
+        _label(text) {
+            const label = document.createElement('span');
+            label.textContent = text;
+            label.style.color = COLORS$1.textDim;
+            return label;
+        }
+
+        _value(text, color) {
+            const value = document.createElement('span');
+            value.textContent = text;
+            if (color) value.style.color = color;
+            return value;
+        }
+
+        _note(text) {
+            const note = document.createElement('div');
+            note.textContent = text;
+            note.style.color = COLORS$1.textDim;
+            return note;
+        }
+
+        _remove() {
+            clearInterval(this.refreshId);
+            this.refreshId = null;
+            this.detachDrag?.();
+            this.detachDrag = null;
+            this.detachResize?.();
+            this.detachResize = null;
+
+            if (!this.panel) return;
+            panelZIndex_js.unregisterFloatingPanel(this.panel);
+            this.panel.remove();
+            this.panel = null;
+            this.bodyEl = null;
+        }
+    }
+
+    const abilityBookPanel = new AbilityBookPanel();
+
+    /**
+     * Net worth overlay rows
+     *
+     * The pieces of net worth worth watching on their own.
+     *
+     * Net worth as a single figure moves too slowly to be interesting and hides the
+     * parts that do move: coins spent, listings that have sold, books bought. Each
+     * of these is one field of the same calculation, so they cost nothing to add and
+     * nothing to keep current.
+     *
+     * ## Nothing is computed here
+     *
+     * A full net worth pass prices every item you own and runs a worker pool, which
+     * is emphatically not something a row redrawn once a second may do. Every row
+     * here reads the last result the feature published and does no work of its own,
+     * so the figures refresh when net worth itself recalculates — on item and price
+     * changes — rather than on the overlay's timer.
+     *
+     * The rows are OPanel's, from MWI Combat Suite by Frotty (MIT) — see
+     * `third-party/mwi-combat-suite/` and `docs/THIRD-PARTY-LICENSES.md`. The code is
+     * Toolasha's own.
      */
 
 
     /**
-     * InventoryBadgeManager class manages all inventory item badges from multiple features
+     * A field of the last published net worth, or null.
+     * @param {Function} pick - `(data) => number|undefined`
+     * @returns {number|null} The figure, or null when there is nothing published yet
      */
-    class InventoryBadgeManager {
-        constructor() {
-            this.providers = new Map(); // name -> { renderFn, priority }
-            this.currentInventoryElem = null;
-            this.unregisterHandlers = [];
-            this.isInitialized = false;
-            this.processedItems = new WeakSet(); // Track processed item containers
-            this.warnedItems = new Set(); // Track items we've already warned about
-            this.isCalculating = false; // Guard flag to prevent recursive calls
-            this.lastCalculationTime = 0; // Timestamp of last calculation
-            this.CALCULATION_COOLDOWN = 250; // 250ms minimum between calculations
-            this.isRendering = false; // Guard flag for renderAllBadges
-            this.lastRenderTime = 0; // Timestamp of last render
-            this.RENDER_COOLDOWN = 100; // 100ms minimum between render calls
-            this.inventoryLookupCache = null; // Cached inventory lookup map
-            this.inventoryLookupCacheTime = 0; // Timestamp when cache was built
-            this.INVENTORY_CACHE_TTL = 500; // 500ms cache lifetime
-            this.nameToHridMap = null; // Reverse lookup: item name -> HRID (built once, lazy)
-        }
-
-        /**
-         * Initialize badge manager
-         */
-        initialize() {
-            if (this.isInitialized) {
-                return;
-            }
-
-            this.isInitialized = true;
-
-            // Check if inventory is already open
-            const existingInv = document.querySelector('[class*="Inventory_items"]');
-            if (existingInv) {
-                this.currentInventoryElem = existingInv;
-            }
-
-            // Watch for inventory panel
-            const unregister = domObserver.onClass('InventoryBadgeManager', 'Inventory_items', (elem) => {
-                this.currentInventoryElem = elem;
-            });
-            this.unregisterHandlers.push(unregister);
-
-            // Watch for MuiTooltip-popperInteractive closing (item click popup) and re-render badges.
-            // When an inventory item is clicked, the game shows an interactive popper.
-            // When that popper closes, React may have re-rendered the item container, wiping badges.
-            const unwatchPopper = domObserverHelpers_js.createMutationWatcher(
-                document.body,
-                (mutations) => {
-                    for (const mutation of mutations) {
-                        for (const node of mutation.addedNodes) {
-                            if (node.nodeType !== Node.ELEMENT_NODE) continue;
-                            if (node.classList?.contains('MuiTooltip-popperInteractive')) {
-                                setTimeout(() => this.renderAllBadges(), 50);
-                                return;
-                            }
-                        }
-                        for (const node of mutation.removedNodes) {
-                            if (node.nodeType !== Node.ELEMENT_NODE) continue;
-                            if (node.classList?.contains('MuiTooltip-popperInteractive')) {
-                                setTimeout(() => this.renderAllBadges(), 50);
-                                return;
-                            }
-                        }
-                    }
-                },
-                { childList: true }
-            );
-            this.unregisterHandlers.push(unwatchPopper);
-        }
-
-        /**
-         * Register a badge provider
-         * @param {string} name - Unique provider name
-         * @param {Function} renderFn - Function(itemElem) that renders badges for an item
-         * @param {number} priority - Render order (lower = earlier, default 100)
-         */
-        registerProvider(name, renderFn, priority = 100) {
-            this.providers.set(name, { renderFn, priority });
-
-            // Clear processed tracking when new provider registers
-            // This ensures items get re-rendered with all providers
-            this.clearProcessedTracking();
-        }
-
-        /**
-         * Unregister a badge provider
-         * @param {string} name - Provider name
-         */
-        unregisterProvider(name) {
-            this.providers.delete(name);
-        }
-
-        /**
-         * Clear processed tracking (forces re-render on next pass)
-         */
-        clearProcessedTracking() {
-            this.processedItems = new WeakSet();
-        }
-
-        /**
-         * Invalidate caches so next renderAllBadges() uses fresh data.
-         * Call this when inventory contents change (items_updated events).
-         */
-        invalidateCache() {
-            this.inventoryLookupCache = null;
-            this.inventoryLookupCacheTime = 0;
-            this.clearProcessedTracking();
-        }
-
-        /**
-         * Render all badges on all items from all providers
-         */
-        async renderAllBadges() {
-            if (!this.currentInventoryElem) return;
-
-            // Cooldown check for renderAllBadges
-            const now = Date.now();
-            const timeSinceLastRender = now - this.lastRenderTime;
-            if (timeSinceLastRender < this.RENDER_COOLDOWN) {
-                return;
-            }
-            this.lastRenderTime = now;
-
-            // Prevent concurrent renders
-            if (this.isRendering) {
-                return;
-            }
-            this.isRendering = true;
-
-            try {
-                // Calculate prices for all items
-                await this.calculatePricesForAllItems();
-
-                const itemElems = this.currentInventoryElem.querySelectorAll('[class*="Item_itemContainer"]');
-
-                // Sort providers by priority
-                const sortedProviders = Array.from(this.providers.entries()).sort((a, b) => a[1].priority - b[1].priority);
-
-                for (const itemElem of itemElems) {
-                    // Check if already processed AND badges still exist
-                    // React can destroy inner content while keeping container reference
-                    const wasProcessed = this.processedItems.has(itemElem);
-                    const hasBadges = this.itemHasBadges(itemElem);
-
-                    // Skip only if processed AND badges still exist
-                    if (wasProcessed && hasBadges) {
-                        continue;
-                    }
-
-                    // Call each provider's render function for this item
-                    for (const [name, { renderFn }] of sortedProviders) {
-                        try {
-                            renderFn(itemElem);
-                        } catch (error) {
-                            console.error(`[InventoryBadgeManager] Error in provider "${name}":`, error);
-                        }
-                    }
-
-                    // Mark as processed
-                    this.processedItems.add(itemElem);
-                }
-            } finally {
-                // Clear rendering guard even on error so later renders are not blocked forever
-                this.isRendering = false;
-            }
-        }
-
-        /**
-         * Calculate prices for all items in inventory
-         */
-        async calculatePricesForAllItems() {
-            if (!this.currentInventoryElem) return;
-
-            // Prevent recursive calls
-            if (this.isCalculating) {
-                return;
-            }
-
-            // Cooldown check - prevent spamming during rapid events
-            const now = Date.now();
-            const timeSinceLastCalc = now - this.lastCalculationTime;
-            if (timeSinceLastCalc < this.CALCULATION_COOLDOWN) {
-                return;
-            }
-            this.lastCalculationTime = now;
-
-            this.isCalculating = true;
-
-            try {
-                const inventoryElem = this.currentInventoryElem;
-
-                // Build inventory cache once if expired or missing (500ms TTL)
-                let inventory = null;
-                let inventoryLookup = null;
-
-                const cacheAge = now - this.inventoryLookupCacheTime;
-                if (this.inventoryLookupCache && cacheAge < this.INVENTORY_CACHE_TTL) {
-                    // Use cached data
-                    inventory = this.inventoryLookupCache.inventory;
-                    inventoryLookup = this.inventoryLookupCache.lookup;
-                } else {
-                    // Rebuild cache
-                    inventory = dataManager.getInventory();
-                    if (inventory) {
-                        inventoryLookup = new Map();
-                        for (const item of inventory) {
-                            if (item.itemLocationHrid === '/item_locations/inventory') {
-                                const key = `${item.itemHrid}|${item.count}|${item.enhancementLevel || 0}`;
-                                inventoryLookup.set(key, item);
-                            }
-                        }
-                        // Store in cache
-                        this.inventoryLookupCache = { inventory, lookup: inventoryLookup };
-                        this.inventoryLookupCacheTime = now;
-                    }
-                }
-
-                // Process each category
-                for (const categoryDiv of inventoryElem.children) {
-                    const itemElems = categoryDiv.querySelectorAll('[class*="Item_itemContainer"]');
-                    await this.calculateItemPrices(itemElems, inventory, inventoryLookup);
-                }
-            } finally {
-                // Clear guard even on error so later calculations are not blocked forever
-                this.isCalculating = false;
-            }
-        }
-
-        /**
-         * Calculate and store prices for all items (populates dataset.askValue/bidValue)
-         * @param {NodeList} itemElems - Item elements
-         * @param {Array} cachedInventory - Optional cached inventory data
-         * @param {Map} cachedInventoryLookup - Optional cached inventory lookup map
-         */
-        async calculateItemPrices(itemElems, cachedInventory = null, cachedInventoryLookup = null) {
-            const gameData = dataManager.getInitClientData();
-            if (!gameData) {
-                console.warn('[InventoryBadgeManager] Game data not available yet');
-                return;
-            }
-
-            // Use cached inventory if provided, otherwise fetch fresh
-            let inventory = cachedInventory;
-            let inventoryLookup = cachedInventoryLookup;
-
-            if (!inventory || !inventoryLookup) {
-                // Get inventory data for enhancement level matching
-                inventory = dataManager.getInventory();
-                if (!inventory) {
-                    console.warn('[InventoryBadgeManager] Inventory data not available yet');
-                    return;
-                }
-
-                // Build lookup map: itemHrid|count -> inventory item
-                inventoryLookup = new Map();
-                for (const item of inventory) {
-                    if (item.itemLocationHrid === '/item_locations/inventory') {
-                        const key = `${item.itemHrid}|${item.count}|${item.enhancementLevel || 0}`;
-                        inventoryLookup.set(key, item);
-                    }
-                }
-            }
-
-            // OPTIMIZATION: Pre-fetch all market prices in one batch
-            const itemsToPrice = [];
-            for (const item of inventory) {
-                if (item.itemLocationHrid === '/item_locations/inventory') {
-                    itemsToPrice.push({
-                        itemHrid: item.itemHrid,
-                        enhancementLevel: item.enhancementLevel || 0,
-                    });
-                }
-            }
-            const priceCache = marketAPI.getPricesBatch(itemsToPrice);
-
-            // Get settings for high enhancement cost mode. The expensive
-            // calculateEnhancementPath path only runs when the Net Worth feature
-            // is enabled — disabling that feature skips the per-item enhancement
-            // simulation that can take 100+ ms for each +20 piece and freeze the
-            // tab during init when the inventory has many high-enhancement items.
-            const useHighEnhancementCost =
-                config.getSetting('networth_highEnhancementUseCost') && config.isFeatureEnabled('networth');
-            const minLevel = config.getSetting('networth_highEnhancementMinLevel') || 13;
-
-            // Currency items to skip (actual currencies, not category)
-            const currencyHrids = new Set([
-                '/items/gold_coin',
-                '/items/cowbell',
-                '/items/task_token',
-                '/items/chimerical_token',
-                '/items/sinister_token',
-                '/items/enchanted_token',
-                '/items/pirate_token',
-            ]);
-
-            for (const itemElem of itemElems) {
-                // Get item HRID from SVG aria-label
-                const svg = itemElem.querySelector('svg');
-                if (!svg) continue;
-
-                const itemName = svg.getAttribute('aria-label');
-                if (!itemName) continue;
-
-                // Find item HRID
-                const itemHrid = this.findItemHrid(itemName, gameData);
-                if (!itemHrid) {
-                    console.warn('[InventoryBadgeManager] Could not find HRID for item:', itemName);
-                    continue;
-                }
-
-                // Skip actual currency items
-                if (currencyHrids.has(itemHrid)) {
-                    itemElem.dataset.askPrice = 0;
-                    itemElem.dataset.bidPrice = 0;
-                    itemElem.dataset.askValue = 0;
-                    itemElem.dataset.bidValue = 0;
-                    continue;
-                }
-
-                // Get item count
-                const countElem = itemElem.querySelector('[class*="Item_count"]');
-                if (!countElem) continue;
-
-                const itemCount = parseItemCount(countElem.textContent, 0);
-
-                // Get item details (reused throughout)
-                const itemDetails = gameData.itemDetailMap[itemHrid];
-
-                // Handle trainee items (untradeable, no market data)
-                if (itemHrid.includes('trainee_')) {
-                    // EXCEPTION: Trainee charms should use vendor price
-                    const equipmentType = itemDetails?.equipmentDetail?.type;
-                    const isCharm = equipmentType === '/equipment_types/charm';
-                    const sellPrice = itemDetails?.sellPrice;
-
-                    if (isCharm && sellPrice) {
-                        // Use sell price for trainee charms
-                        itemElem.dataset.askPrice = sellPrice;
-                        itemElem.dataset.bidPrice = sellPrice;
-                        itemElem.dataset.askValue = sellPrice * itemCount;
-                        itemElem.dataset.bidValue = sellPrice * itemCount;
-                    } else {
-                        // Other trainee items (weapons/armor) remain at 0
-                        itemElem.dataset.askPrice = 0;
-                        itemElem.dataset.bidPrice = 0;
-                        itemElem.dataset.askValue = 0;
-                        itemElem.dataset.bidValue = 0;
-                    }
-                    continue;
-                }
-
-                // Handle openable containers (chests, crates, caches)
-                if (itemDetails?.isOpenable && expectedValueCalculator.isInitialized) {
-                    const evData = expectedValueCalculator.calculateExpectedValue(itemHrid);
-                    if (evData && evData.expectedValue > 0) {
-                        let netValue = evData.expectedValue;
-
-                        const chestKeyHrid = DUNGEON_CHEST_CHEST_KEYS[itemHrid];
-                        if (chestKeyHrid) {
-                            const keyPricingSetting = config.getSettingValue('profitCalc_keyPricingMode') || 'ask';
-                            const keyPrices = marketAPI.getPrice(chestKeyHrid);
-                            const keyPrice = keyPrices?.[keyPricingSetting] ?? keyPrices?.ask ?? 0;
-                            netValue -= keyPrice;
-                        }
-
-                        itemElem.dataset.askPrice = netValue;
-                        itemElem.dataset.bidPrice = netValue;
-                        itemElem.dataset.askValue = netValue * itemCount;
-                        itemElem.dataset.bidValue = netValue * itemCount;
-                        continue;
-                    }
-                }
-
-                // Match to inventory item to get enhancement level
-                const enhEl = itemElem.querySelector('[class*="Item_enhancementLevel"]');
-                const domEnhancementLevel = enhEl ? parseInt(enhEl.textContent.trim().replace('+', ''), 10) || 0 : 0;
-                const key = `${itemHrid}|${itemCount}|${domEnhancementLevel}`;
-                const inventoryItem = inventoryLookup.get(key);
-                const enhancementLevel = inventoryItem?.enhancementLevel || 0;
-
-                // Check if item is equipment
-                const isEquipment = !!itemDetails?.equipmentDetail;
-
-                let askPrice = 0;
-                let bidPrice = 0;
-
-                // Determine pricing method
-                if (isEquipment && useHighEnhancementCost && enhancementLevel >= minLevel) {
-                    // Use enhancement cost calculation for high-level equipment
-                    const cachedCost = networthCache.get(itemHrid, enhancementLevel);
-
-                    if (cachedCost !== null) {
-                        // Use cached value for both ask and bid
-                        askPrice = cachedCost;
-                        bidPrice = cachedCost;
-                    } else {
-                        // Calculate enhancement cost
-                        const enhancementParams = enhancementConfig_js.getEnhancingParams();
-                        const enhancementPath = calculateEnhancementPath(itemHrid, enhancementLevel, enhancementParams);
-
-                        if (enhancementPath && enhancementPath.optimalStrategy) {
-                            const enhancementCost = enhancementPath.optimalStrategy.totalCost;
-
-                            // Cache the result
-                            networthCache.set(itemHrid, enhancementLevel, enhancementCost);
-
-                            // Use enhancement cost for both ask and bid
-                            askPrice = enhancementCost;
-                            bidPrice = enhancementCost;
-                        } else {
-                            // Enhancement calculation failed, fallback to market price
-                            const key = `${itemHrid}:${enhancementLevel}`;
-                            const marketPrice = priceCache.get(key);
-                            if (marketPrice) {
-                                askPrice = marketPrice.ask > 0 ? marketPrice.ask : 0;
-                                bidPrice = marketPrice.bid > 0 ? marketPrice.bid : 0;
-                            }
-                        }
-                    }
-                } else {
-                    // Use market price (for non-equipment or low enhancement levels)
-                    const key = `${itemHrid}:${enhancementLevel}`;
-                    const marketPrice = priceCache.get(key);
-
-                    // Start with whatever market data exists
-                    if (marketPrice) {
-                        askPrice = marketPrice.ask > 0 ? marketPrice.ask : 0;
-                        bidPrice = marketPrice.bid > 0 ? marketPrice.bid : 0;
-                    }
-
-                    // For enhanced equipment, fill in missing prices with enhancement cost.
-                    // Same gate as the primary high-enhancement branch above: this fallback
-                    // runs calculateEnhancementPath per item, which is the actual freeze
-                    // source for +20 inventories. Skip it when Net Worth is disabled.
-                    if (
-                        useHighEnhancementCost &&
-                        isEquipment &&
-                        enhancementLevel > 0 &&
-                        (askPrice === 0 || bidPrice === 0)
-                    ) {
-                        // Check cache first
-                        const cachedCost = networthCache.get(itemHrid, enhancementLevel);
-                        let enhancementCost = cachedCost;
-
-                        if (cachedCost === null) {
-                            // Calculate enhancement cost
-                            const enhancementParams = enhancementConfig_js.getEnhancingParams();
-                            const enhancementPath = calculateEnhancementPath(itemHrid, enhancementLevel, enhancementParams);
-
-                            if (enhancementPath && enhancementPath.optimalStrategy) {
-                                enhancementCost = enhancementPath.optimalStrategy.totalCost;
-                                networthCache.set(itemHrid, enhancementLevel, enhancementCost);
-                            } else {
-                                enhancementCost = null;
-                            }
-                        }
-
-                        // Fill in missing prices
-                        if (enhancementCost !== null) {
-                            if (askPrice === 0) askPrice = enhancementCost;
-                            if (bidPrice === 0) bidPrice = enhancementCost;
-                        }
-                    } else if (isEquipment && enhancementLevel === 0 && askPrice === 0 && bidPrice === 0) {
-                        // For unenhanced equipment with no market data, use crafting cost
-                        const craftingCost = this.calculateCraftingCost(itemHrid);
-                        if (craftingCost > 0) {
-                            askPrice = craftingCost;
-                            bidPrice = craftingCost;
-                        } else if (!this.warnedItems.has(itemHrid)) {
-                            // No crafting recipe found (likely drop-only item) - silently skip
-                            this.warnedItems.add(itemHrid);
-                        }
-                    } else if (!isEquipment && askPrice === 0 && bidPrice === 0) {
-                        // Non-equipment with no market data - silently skip
-                        if (!this.warnedItems.has(itemHrid)) {
-                            this.warnedItems.add(itemHrid);
-                        }
-                        // Leave values at 0 (no badge will be shown)
-                    }
-                }
-
-                // Apply market tax if setting is enabled
-                if (config.getSetting('invSort_netOfTax')) {
-                    const taxRate = itemHrid === profitConstants_js.COWBELL_BAG_HRID ? profitConstants_js.COWBELL_BAG_TAX : profitConstants_js.MARKET_TAX;
-                    askPrice *= 1 - taxRate;
-                    bidPrice *= 1 - taxRate;
-                }
-
-                // Store per-item prices (for badge display)
-                itemElem.dataset.askPrice = askPrice;
-                itemElem.dataset.bidPrice = bidPrice;
-
-                // Store stack totals (for sorting and stack value badges)
-                itemElem.dataset.askValue = askPrice * itemCount;
-                itemElem.dataset.bidValue = bidPrice * itemCount;
-            }
-        }
-
-        /**
-         * Calculate crafting cost for an item (used for unenhanced equipment with no market data)
-         * @param {string} itemHrid - Item HRID
-         * @returns {number} Total material cost or 0 if not craftable
-         */
-        calculateCraftingCost(itemHrid) {
-            const gameData = dataManager.getInitClientData();
-            if (!gameData) return 0;
-
-            // Find the action that produces this item
-            for (const action of Object.values(gameData.actionDetailMap || {})) {
-                if (action.outputItems) {
-                    for (const output of action.outputItems) {
-                        if (output.itemHrid === itemHrid) {
-                            // Found the crafting action, calculate material costs
-                            let inputCost = 0;
-
-                            // Add input items
-                            if (action.inputItems && action.inputItems.length > 0) {
-                                for (const input of action.inputItems) {
-                                    const inputPrice = marketData_js.getItemPrice(input.itemHrid, { mode: 'ask' }) || 0;
-                                    inputCost += inputPrice * input.count;
-                                }
-                            }
-
-                            // Apply Artisan Tea reduction (0.9x) to input materials
-                            inputCost *= 0.9;
-
-                            // Add upgrade item cost (not affected by Artisan Tea)
-                            let upgradeCost = 0;
-                            if (action.upgradeItemHrid) {
-                                const upgradePrice = marketData_js.getItemPrice(action.upgradeItemHrid, { mode: 'ask' }) || 0;
-                                upgradeCost = upgradePrice;
-                            }
-
-                            const totalCost = inputCost + upgradeCost;
-
-                            // Divide by output count to get per-item cost
-                            return totalCost / (output.count || 1);
-                        }
-                    }
-                }
-            }
-
-            return 0;
-        }
-
-        /**
-         * Find item HRID from item name
-         * @param {string} itemName - Item display name
-         * @param {Object} gameData - Game data
-         * @returns {string|null} Item HRID
-         */
-        /**
-         * Build reverse lookup map from item name to HRID
-         * Built once on first use, cached thereafter
-         * @param {Object} gameData - Game data
-         */
-        buildNameToHridMap(gameData) {
-            if (this.nameToHridMap) {
-                return; // Already built
-            }
-
-            this.nameToHridMap = new Map();
-
-            if (!gameData || !gameData.itemDetailMap) {
-                console.warn('[InventoryBadgeManager] Cannot build name lookup: missing itemDetailMap');
-                return;
-            }
-
-            // Build reverse lookup: name -> HRID (one-time O(n) operation)
-            for (const [hrid, item] of Object.entries(gameData.itemDetailMap)) {
-                if (item.name) {
-                    this.nameToHridMap.set(item.name, hrid);
-                    // Add ★ ↔ (R) variants so both display formats resolve
-                    if (item.name.includes('(R)')) {
-                        this.nameToHridMap.set(item.name.replace(/\s*\(R\)/, ' ★'), hrid);
-                    } else if (item.name.includes('★')) {
-                        this.nameToHridMap.set(item.name.replace(/\s*★/, ' (R)'), hrid);
-                    }
-                }
-            }
-        }
-
-        /**
-         * Find item HRID by name (optimized with reverse lookup map)
-         * @param {string} itemName - Item name
-         * @param {Object} gameData - Game data
-         * @returns {string|null} Item HRID or null if not found
-         */
-        findItemHrid(itemName, gameData) {
-            // Build map on first use (lazy initialization)
-            if (!this.nameToHridMap) {
-                this.buildNameToHridMap(gameData);
-            }
-
-            // O(1) lookup
-            return this.nameToHridMap.get(itemName) || null;
-        }
-
-        /**
-         * Check if item has any badges
-         * @param {Element} itemElem - Item container element
-         * @returns {boolean} True if item has any badge elements
-         */
-        itemHasBadges(itemElem) {
-            return !!(
-                itemElem.querySelector('.mwi-badge-price-bid') ||
-                itemElem.querySelector('.mwi-badge-price-ask') ||
-                itemElem.querySelector('.mwi-stack-price')
-            );
-        }
-
-        /**
-         * Disable and cleanup
-         */
-        disable() {
-            this.unregisterHandlers.forEach((unregister) => unregister());
-            this.unregisterHandlers = [];
-            this.providers.clear();
-            this.processedItems = new WeakSet();
-            this.currentInventoryElem = null;
-            this.isInitialized = false;
+    function fromNetworth(pick) {
+        const data = networthFeature.currentData;
+        if (!data) return null;
+        const value = pick(data);
+        return Number.isFinite(value) ? value : null;
+    }
+
+    /**
+     * Open the net worth history chart, or close it if it is already up.
+     *
+     * Each of these tiles is one field of the same calculation, and the chart plots
+     * that field over time — gold, inventory, listings are three of its series. So
+     * the chart is the detail behind the tile, which is what `onOpen` is for.
+     *
+     * Wrapped rather than handed over directly because opening it loads saved
+     * preferences first, and the overlay calls `onOpen` inside a synchronous
+     * try/catch — a rejection would escape it as an unhandled promise.
+     *
+     * @returns {Promise<void>}
+     */
+    async function openHistoryChart() {
+        try {
+            await networthHistoryChart.toggleModal();
+        } catch (error) {
+            console.error('[NetworthRows] Opening the history chart failed:', error);
         }
     }
 
-    const inventoryBadgeManager = new InventoryBadgeManager();
+    overlayRows_js.registerRow({
+        key: 'coins',
+        empty: 'No coins counted',
+        name: 'Coins',
+        defaultSize: { width: 160, height: 30 },
+        render: (container) => {
+            const coins = fromNetworth((data) => data.coins);
+            // Zero coins is a real answer and worth showing; no answer yet is not
+            if (coins === null) return overlayFormat_js.blank(container);
+
+            overlayFormat_js.row(container, [
+                overlayFormat_js.glyph('coin'),
+                { text: formatters_js.formatLargeNumber(Math.round(coins)), color: overlayFormat_js.ROW_COLORS.gold, bold: true, push: true },
+            ]);
+            container.title = 'Coins on hand.\nDouble-click for the net worth history chart.';
+        },
+        onOpen: openHistoryChart,
+    });
+
+    overlayRows_js.registerRow({
+        key: 'marketListings',
+        empty: 'No listings',
+        name: 'Market Listings',
+        defaultSize: { width: 180, height: 30 },
+        render: (container) => {
+            const listings = fromNetworth((data) => data.currentAssets?.listings?.value);
+            if (listings === null) return overlayFormat_js.blank(container);
+
+            overlayFormat_js.row(container, [
+                overlayFormat_js.glyph('market'),
+                { text: formatters_js.formatLargeNumber(Math.round(listings)), color: overlayFormat_js.ROW_COLORS.accent, bold: true, push: true },
+            ]);
+            container.title = 'What your open market listings are worth.\nDouble-click for the net worth history chart.';
+        },
+        onOpen: openHistoryChart,
+    });
+
+    overlayRows_js.registerRow({
+        key: 'inventoryValue',
+        empty: 'No inventory value yet',
+        name: 'Inventory Value',
+        defaultSize: { width: 180, height: 30 },
+        render: (container) => {
+            const inventory = fromNetworth((data) => data.currentAssets?.inventory?.value);
+            if (inventory === null) return overlayFormat_js.blank(container);
+
+            overlayFormat_js.row(container, [
+                overlayFormat_js.glyph('inventory'),
+                { text: formatters_js.formatLargeNumber(Math.round(inventory)), bold: true, push: true },
+            ]);
+            container.title = 'What everything in your inventory is worth.\nDouble-click for the net worth history chart.';
+        },
+        onOpen: openHistoryChart,
+    });
+
+    /**
+     * The next ability level, and what it costs.
+     *
+     * BRead's own tile: the cheapest ability to advance, written as its book's icon,
+     * how many books that level takes, and what they come to. The icon does the
+     * naming — a tile is not wide enough to spell "Penetrating Strike" and still
+     * have room for the number that decides anything.
+     *
+     * Books already held sit in the tooltip. They are a figure; the cheapest next
+     * level is a purchase, and only one of the two is worth a tile.
+     */
+    overlayRows_js.registerRow({
+        key: 'skillBooks',
+        empty: 'No books held',
+        name: 'Skill Books',
+        defaultSize: { width: 180, height: 30 },
+        render: (container) => {
+            const books = networthFeature.currentData?.fixedAssets?.abilityBooks;
+            const breakdown = books?.breakdown || [];
+            const held = breakdown.reduce((sum, entry) => sum + (entry.count || 0), 0);
+
+            const best = abilityBooks_js.cheapestNextLevel(abilityPlans(null));
+            if (!best) return overlayFormat_js.blank(container);
+
+            overlayFormat_js.row(
+                container,
+                [
+                    { icon: best.itemHrid, size: 18 },
+                    // Counted, not abbreviated: "2.8K books" is a number you cannot
+                    // put in a buy order, and this is a figure you act on
+                    { text: formatters_js.formatWithSeparator(best.booksToNext), color: overlayFormat_js.ROW_COLORS.good, bold: true },
+                    { text: 'books', color: overlayFormat_js.ROW_COLORS.dim },
+                    { text: formatters_js.formatLargeNumber(Math.round(best.costToNext)), color: overlayFormat_js.ROW_COLORS.gold },
+                ],
+                { center: true }
+            );
+            container.title =
+                `${best.name} is the cheapest next ability level: ${best.booksToNext} books at ` +
+                `${Math.round(best.bookPrice).toLocaleString()} each.` +
+                (breakdown.length
+                    ? `\nYou hold ${formatters_js.formatLargeNumber(held)} unread books worth ` +
+                      `${formatters_js.formatLargeNumber(Math.round(books.totalCost || 0))}.`
+                    : '') +
+                '\nDouble-click for every equipped ability.';
+        },
+        // BRead's panel, behind the row that was already about books
+        onOpen: () => abilityBookPanel.toggle(),
+    });
+
+    /**
+     * Deferred load
+     *
+     * Reading from storage that is not open yet.
+     *
+     * A module that loads its saved state at import time is racing the database.
+     * IndexedDB opens asynchronously and the bootstrap opens it after the libraries
+     * are evaluated, so a `storage.getJSON` at module scope reliably returns the
+     * default — and reliably logs "Database not available" while doing it. The
+     * feature then runs on defaults for the rest of the session and looks like it
+     * simply forgot everything.
+     *
+     * The fix is not to load later, because the overlay reads that state on its
+     * first paint. It is to wait for the database rather than to ask it early.
+     *
+     * This used to poll — read, wait, read again, for about five seconds — because
+     * a shut database is indistinguishable from an empty one from the outside. The
+     * storage module now says when it has finished starting up, so there is one
+     * thing to wait on and no guessing about how long.
+     */
+
+
+    /**
+     * Read a key once storage can answer.
+     *
+     * @param {string} key - Storage key
+     * @param {string} store - Object store
+     * @param {Function} onLoaded - Called with the value, only when one was found
+     * @param {string} [label] - What to call this in the log
+     * @returns {Promise<void>}
+     */
+    async function loadWhenReady(key, store, onLoaded, label = key) {
+        try {
+            await storage.ready;
+            const saved = await storage.getJSON(key, store, null);
+            if (saved !== null && saved !== undefined) onLoaded(saved);
+        } catch (error) {
+            console.error(`[DeferredLoad] Reading ${label} failed:`, error);
+        }
+    }
+
+    /**
+     * Charm value
+     *
+     * Which charm buys the most experience per coin.
+     *
+     * A charm grants a percentage bonus to one skill's experience. The bonus scales
+     * with the charm's tier and its enhancement level, and the price scales with
+     * neither in any orderly way — so the best charm to buy is not the highest tier,
+     * and it is not the cheapest. It is whichever gives the most bonus per coin, and
+     * that is a division nobody does in their head across six tiers and twenty
+     * enhancement levels.
+     *
+     * ## Bonus per coin, not bonus
+     *
+     * Ranking by bonus alone recommends the grandmaster charm every time, which is
+     * true and useless. Ranking by price recommends the trainee charm, which is
+     * worse. The ratio is the only ordering that answers "what should I buy".
+     *
+     * An unpriced charm is **unknown, not free** — the same rule the ability book
+     * panel needs, for the same reason: dividing by a missing price would put
+     * whatever nobody is selling at the top of the list.
+     *
+     * The tier table and the enhancement curve are QCharm's, from MWI Combat Suite
+     * by Frotty (MIT) — see `third-party/mwi-combat-suite/` and
+     * `docs/THIRD-PARTY-LICENSES.md`. The code is Toolasha's own.
+     */
+
+    /** The experience bonus a charm of each tier grants before enhancement */
+    const CHARM_TIER_EXPERIENCE = {
+        trainee: 1,
+        basic: 2,
+        advanced: 3.5,
+        expert: 5,
+        master: 6.5,
+        grandmaster: 8,
+    };
+
+    /**
+     * The tier named in a charm's hrid.
+     *
+     * Read from the name rather than from a list of every charm, so a charm added by
+     * an update is priced correctly instead of being missed.
+     *
+     * @param {string} itemHrid - e.g. `/items/expert_task_charm`
+     * @returns {string|null} The tier, or null when it is not a charm we know
+     */
+    function charmTier(itemHrid) {
+        const name = String(itemHrid || '');
+        for (const tier of Object.keys(CHARM_TIER_EXPERIENCE)) {
+            if (name.includes(`/${tier}_`)) return tier;
+        }
+        return null;
+    }
+
+    /**
+     * What the game's vendor charges for a trainee charm.
+     *
+     * Nobody lists trainee charms on the market — there is no profit in reselling
+     * something the shop stocks at a fixed price — so the market has no ask for one
+     * and a market-only reading of the family shows the bottom tier as unpriced.
+     * It is not unpriced; it costs this, always, and that is the floor every other
+     * tier's value per coin is judged against.
+     *
+     * The shop sells them unenhanced. A trainee charm at +5 is somebody's
+     * enhancement work and is priced by the market like anything else.
+     */
+    const TRAINEE_SHOP_PRICE = 250_000;
+
+    /** Charm hrids are `/items/<tier>_<focus>_charm`, and both halves matter */
+    const CHARM_HRID = /^\/items\/(trainee|basic|advanced|expert|master|grandmaster)_(.+)_charm$/;
+
+    /**
+     * What a charm costs when the market has no ask for it.
+     *
+     * Only the trainee tier has one. Every other tier with no listings is genuinely
+     * unpriced, and saying it costs nothing would put it top of a value ranking.
+     *
+     * @param {string} itemHrid - The charm
+     * @param {number} [enhancementLevel] - How enhanced
+     * @returns {number} The shop price, or 0 for "nobody is selling this"
+     */
+    function shopPrice(itemHrid, enhancementLevel = 0) {
+        return charmTier(itemHrid) === 'trainee' && enhancementLevel === 0 ? TRAINEE_SHOP_PRICE : 0;
+    }
+
+    /**
+     * What a charm focuses on — the part of its name that is not the tier.
+     *
+     * @param {string} itemHrid - e.g. `/items/expert_melee_charm`
+     * @returns {string|null} e.g. `melee`
+     */
+    function charmFocus(itemHrid) {
+        return CHARM_HRID.exec(String(itemHrid || ''))?.[2] ?? null;
+    }
+
+    /**
+     * Every tier of the charm you are wearing.
+     *
+     * The comparison worth making is within one focus. A melee charm and a brewing
+     * charm are not alternatives to each other — they train different things — so a
+     * ranking across every charm in the game is a list of things you do not want,
+     * with the one you do want somewhere in it.
+     *
+     * @param {string} itemHrid - Any charm in the family
+     * @returns {string[]} The six hrids, lowest tier first; empty for a non-charm
+     */
+    function charmFamily(itemHrid) {
+        const focus = charmFocus(itemHrid);
+        if (!focus) return [];
+        return Object.keys(CHARM_TIER_EXPERIENCE).map((tier) => `/items/${tier}_${focus}_charm`);
+    }
+
+    /**
+     * A charm's name in the shape a table column wants.
+     *
+     * @param {string} itemHrid - The charm
+     * @returns {string} e.g. `Melee (Expert)`, or the hrid when it is not a charm
+     */
+    function charmDisplayName(itemHrid) {
+        const match = CHARM_HRID.exec(String(itemHrid || ''));
+        if (!match) return String(itemHrid || '');
+
+        const capitalise = (word) => word.charAt(0).toUpperCase() + word.slice(1);
+        const focus = match[2].split('_').map(capitalise).join(' ');
+        return `${focus} (${capitalise(match[1])})`;
+    }
+
+    /**
+     * Experience per million coins.
+     *
+     * Per coin the ratio is a number like 0.000000052, which no column can show and
+     * nobody can compare at a glance. Per million it is 0.05 against 0.03, which is
+     * the same ordering in a form you can read.
+     *
+     * @param {number} experience - The bonus, as a percentage
+     * @param {number} price - What it costs
+     * @returns {number|null} Null when unpriced, which must not sort above a number
+     */
+    function experiencePerMillion(experience, price) {
+        if (!(price > 0) || !(experience > 0)) return null;
+        return (experience / price) * 1_000_000;
+    }
+
+    /**
+     * Split a family into what beats what you are wearing and what does not.
+     *
+     * Both halves are worth showing. The downgrades are not there to be bought —
+     * they are there because seeing that a charm two tiers down is a tenth of the
+     * price is how you decide the top tier is not worth it.
+     *
+     * @param {Array<Object>} rows - Charms with an `experience`
+     * @param {number} equippedExperience - What the worn charm grants
+     * @returns {{upgrades: Array<Object>, downgrades: Array<Object>}}
+     */
+    function splitByUpgrade(rows, equippedExperience) {
+        const worn = Number(equippedExperience) || 0;
+        return {
+            // Equal counts as an upgrade: the same bonus for less money is the
+            // trade people are actually looking for
+            upgrades: (rows || []).filter((row) => row && row.experience >= worn),
+            downgrades: (rows || []).filter((row) => row && row.experience < worn),
+        };
+    }
+
+    /**
+     * Order a table of charms by one of its columns.
+     *
+     * @param {Array<Object>} rows - Charm rows
+     * @param {string} column - `name`, `experience`, `price` or `perMillion`
+     * @param {string} [direction] - `asc` or `desc`
+     * @returns {Array<Object>} A new array
+     */
+    function sortCharmRows(rows, column, direction = 'desc') {
+        const sign = direction === 'asc' ? 1 : -1;
+        const tiers = Object.keys(CHARM_TIER_EXPERIENCE);
+
+        const key = (row) => {
+            switch (column) {
+                // By name means by tier and then by enhancement, which is the order
+                // the charms actually come in — alphabetical puts Advanced first
+                case 'name':
+                    return tiers.indexOf(row.tier) * 100 + (row.enhancementLevel || 0);
+                case 'price':
+                    return row.price;
+                case 'perMillion':
+                    return row.experiencePerMillion;
+                default:
+                    return row.experience;
+            }
+        };
+
+        return [...(rows || [])].filter(Boolean).sort((a, b) => {
+            const left = key(a);
+            const right = key(b);
+            // Unpriced rows go last whichever way the column is pointing: they are
+            // the least informative rows, not the best or the worst
+            if (!Number.isFinite(left)) return Number.isFinite(right) ? 1 : 0;
+            if (!Number.isFinite(right)) return -1;
+            return (left - right) * sign;
+        });
+    }
+
+    /**
+     * What a charm is worth against what you already have equipped.
+     *
+     * The number that matters is not a charm's bonus but the bonus it would *add* —
+     * swapping a 5% charm for a 6.5% one buys 1.5%, not 6.5%, and paying for it as
+     * though it bought 6.5% is how people overpay for upgrades.
+     *
+     * @param {Object} candidate - From `charmValue`
+     * @param {Object|null} equipped - From `charmValue`, or null for an empty slot
+     * @returns {{gain: number, gainPerCoin: number|null}}
+     */
+    function upgradeValue(candidate, equipped) {
+        const gain = (candidate?.experience || 0) - (equipped?.experience || 0);
+        const price = candidate?.price || 0;
+
+        return { gain, gainPerCoin: gain > 0 && price > 0 ? gain / price : null };
+    }
+
+    /**
+     * Charm value
+     *
+     * Which charm of the kind you are wearing buys the most experience per coin.
+     *
+     * A charm grants a percentage bonus to one skill's experience, scaling with tier
+     * and enhancement level. Price scales with neither in any orderly way, so the
+     * best charm to buy is neither the highest tier nor the cheapest — it is
+     * whichever gives the most bonus per coin, and that is a division across six
+     * tiers and twenty enhancement levels that nobody does in their head.
+     *
+     * ## Within one focus, not across all of them
+     *
+     * A melee charm and a brewing charm are not alternatives to each other. Ranking
+     * every charm in the game together produces a list of things you do not want
+     * with the one you do want somewhere in it, which is what this panel did before:
+     * it opened on Basic Brewing, Basic Tailoring and Basic Cooking while the
+     * character was wearing a Grandmaster Melee.
+     *
+     * So the panel is scoped to the **family** of the equipped charm — the same
+     * focus at every tier and every enhancement level the market is selling.
+     *
+     * The arithmetic is in `utils/charm-value.js` with tests. This module reads the
+     * market and the equipped charm and draws.
+     *
+     * The model is QCharm's, from MWI Combat Suite by Frotty (MIT) — see
+     * `third-party/mwi-combat-suite/` and `docs/THIRD-PARTY-LICENSES.md`. The code is
+     * Toolasha's own.
+     */
+
+
+    /**
+     * Where the game keeps the equipped charm.
+     *
+     * An **item location**, not an equipment type. `characterEquipment` is keyed by
+     * `/item_locations/…` — asking it for `/equipment_types/charm` returns undefined
+     * every time, which is why this panel reported an empty charm slot while a
+     * Grandmaster Melee Charm was sitting in it.
+     */
+    const CHARM_SLOT = '/item_locations/charm';
+
+    /** The enhancement levels the game allows, which is what the market is scanned over */
+    const MAX_ENHANCEMENT$1 = 20;
+
+    /**
+     * What every charm is, for the purpose of enhancement scaling.
+     *
+     * Stated rather than looked up. `getItemDetails` misses a tier the game has not
+     * described to this session, and a miss there does not fail — it silently
+     * returns the 1× default and reports a +20 charm as scaling like a sword.
+     */
+    const CHARM_DETAILS = { equipmentDetail: { type: '/equipment_types/charm' } };
+
+    /** Which column the table is ordered by, remembered while the panel is open */
+    let sortColumn = 'perMillion';
+    let sortDirection = 'desc';
+
+    /**
+     * Which sections are folded open.
+     *
+     * Held outside the draw, because the draw is where it would be lost: the panel
+     * rebuilds its whole body every few seconds, so a section whose state lived in
+     * the DOM would spring back to its default on the next refresh — folding one
+     * away and watching it reappear three seconds later, over and over.
+     *
+     * @type {Object<string, boolean>}
+     */
+    let sectionOpen = {};
+
+    const FOLDS_KEY = 'charmPanelFolds';
+
+    // Not read at module scope: IndexedDB opens after the libraries evaluate, so a
+    // read here reliably returns the default and reliably logs that it could not
+    loadWhenReady(FOLDS_KEY, 'settings', (saved) => Object.assign(sectionOpen, saved), 'the charm panel folds');
+
+    /** Remember a fold across sessions, since a panel you keep refolding is a chore */
+    async function saveFolds() {
+        try {
+            await storage.setJSON(FOLDS_KEY, sectionOpen, 'settings');
+        } catch (error) {
+            console.error('[CharmValue] Saving the panel folds failed:', error);
+        }
+    }
+
+    /**
+     * One charm at one enhancement level, valued.
+     *
+     * @param {string} itemHrid - The charm
+     * @param {number} enhancementLevel - How enhanced
+     * @param {number} price - Its ask, or 0 when nobody is selling it
+     * @returns {Object|null} Null when it is not a charm this knows
+     */
+    function charmRow(itemHrid, enhancementLevel, price) {
+        const tier = charmTier(itemHrid);
+        const base = CHARM_TIER_EXPERIENCE[tier];
+        if (!(base > 0)) return null;
+
+        const experience = base * enhancementMultipliers_js.getEnhancementMultiplier(CHARM_DETAILS, enhancementLevel);
+
+        return {
+            itemHrid,
+            tier,
+            enhancementLevel,
+            experience,
+            price,
+            experiencePerMillion: experiencePerMillion(experience, price),
+            name: charmDisplayName(itemHrid),
+        };
+    }
+
+    /**
+     * The charm currently in the slot.
+     * @returns {Object|null} From `charmRow`
+     */
+    function equippedCharm() {
+        const worn = dataManager.getEquipment?.()?.get?.(CHARM_SLOT);
+        if (!worn?.itemHrid) return null;
+
+        const enhancementLevel = worn.enhancementLevel || 0;
+        const ask = marketData_js.getItemPrices(worn.itemHrid, enhancementLevel)?.ask || 0;
+        return charmRow(worn.itemHrid, enhancementLevel, ask || shopPrice(worn.itemHrid, enhancementLevel));
+    }
+
+    /**
+     * Every charm of the equipped kind that the market is selling.
+     *
+     * One row per enhancement level rather than one per charm: a Master +3 and a
+     * Master +5 are different purchases at different prices, and which of them is
+     * worth it is the whole question.
+     *
+     * @returns {Array<Object>} From `charmRow`, unsorted
+     */
+    function familyRows() {
+        const worn = dataManager.getEquipment?.()?.get?.(CHARM_SLOT);
+        const family = charmFamily(worn?.itemHrid);
+        if (!family.length) return [];
+
+        const rows = [];
+        for (const itemHrid of family) {
+            let sold = false;
+            for (let level = 0; level <= MAX_ENHANCEMENT$1; level++) {
+                const ask = marketData_js.getItemPrices(itemHrid, level)?.ask;
+                if (!(ask > 0)) continue;
+
+                const built = charmRow(itemHrid, level, ask);
+                if (built) {
+                    rows.push(built);
+                    sold = true;
+                }
+            }
+            // A tier nobody is selling still gets a line: knowing the master charm
+            // has no listings is an answer, and a missing row reads as an oversight
+            // rather than as an empty market. The trainee tier is never listed and
+            // is not unpriced either — the shop sells it at a fixed price.
+            if (!sold) {
+                const built = charmRow(itemHrid, 0, shopPrice(itemHrid, 0));
+                if (built) rows.push(built);
+            }
+        }
+        return rows;
+    }
+
+    /**
+     * A block with a heading that folds it away.
+     *
+     * @param {HTMLElement} body - Where it goes
+     * @param {Object} definition - What section this is
+     * @param {string} definition.id - Stable key the fold is remembered under. Not
+     *   the title: the titles carry the equipped bonus, so they change under you
+     * @param {string} definition.title - Heading
+     * @param {string} definition.accent - Heading colour
+     * @param {boolean} [definition.defaultOpen] - How it starts, the first time only
+     * @returns {HTMLElement} The contents, to append rows to
+     */
+    function section(body, { id, title, accent, defaultOpen = true }) {
+        const open = sectionOpen[id] ?? defaultOpen;
+
+        const card = simplePanel_js.panelCard(body, undefined, accent);
+        card.style.padding = '0';
+
+        const header = document.createElement('div');
+        Object.assign(header.style, {
+            color: accent,
+            fontWeight: 'bold',
+            cursor: 'pointer',
+            padding: '6px 9px',
+            userSelect: 'none',
+        });
+        header.dataset.section = id;
+
+        const content = document.createElement('div');
+        Object.assign(content.style, { padding: '0 9px 7px', display: open ? 'block' : 'none' });
+
+        header.textContent = `${open ? '▼' : '▶'} ${title}`;
+        header.addEventListener('click', () => {
+            // Recorded before it is drawn, so the next refresh finds the choice
+            // rather than the default
+            sectionOpen[id] = !open;
+            saveFolds();
+            charmPanel.render();
+        });
+
+        card.append(header, content);
+        return content;
+    }
+
+    /** One row of the charm table's grid */
+    function tableRow() {
+        const line = document.createElement('div');
+        Object.assign(line.style, {
+            display: 'grid',
+            gridTemplateColumns: '22px minmax(0, 1fr) 30px 54px 70px 50px',
+            gap: '6px',
+            alignItems: 'center',
+            padding: '2px 0',
+        });
+        return line;
+    }
+
+    /**
+     * @param {string} text - What it says
+     * @param {string} [color] - Ink
+     * @returns {HTMLElement}
+     */
+    function cell(text, color) {
+        const span = document.createElement('span');
+        span.textContent = text;
+        Object.assign(span.style, { textAlign: 'right', whiteSpace: 'nowrap' });
+        if (color) span.style.color = color;
+        return span;
+    }
+
+    /**
+     * The table's clickable heading row.
+     * @param {Function} redraw - Called after the ordering changes
+     * @returns {HTMLElement}
+     */
+    function tableHeading(redraw) {
+        const heading = tableRow();
+        Object.assign(heading.style, {
+            color: 'rgba(232, 236, 245, 0.5)',
+            borderBottom: '1px solid rgba(255, 255, 255, 0.10)',
+            paddingBottom: '3px',
+        });
+
+        const sortable = (label, column) => {
+            const span = cell(sortColumn === column ? `${label} ${sortDirection === 'asc' ? '▲' : '▼'}` : label);
+            span.style.cursor = 'pointer';
+            span.dataset.column = column;
+            span.addEventListener('click', () => {
+                if (sortColumn === column) sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+                else {
+                    sortColumn = column;
+                    // A name reads best from the bottom tier up; every figure reads
+                    // best largest first, because that is where the answer is
+                    sortDirection = column === 'name' ? 'asc' : 'desc';
+                }
+                redraw();
+            });
+            return span;
+        };
+
+        const name = sortable('Name', 'name');
+        name.style.textAlign = 'left';
+
+        heading.append(
+            document.createElement('span'),
+            name,
+            cell('Enh'),
+            sortable('Exp%', 'experience'),
+            sortable('Ask', 'price'),
+            sortable('Exp/M', 'perMillion')
+        );
+        heading.title = 'Exp/M is the bonus per million coins — the ordering that answers "what should I buy".';
+        return heading;
+    }
+
+    /**
+     * @param {Object} charm - From `charmRow`
+     * @param {Object|null} worn - The equipped charm
+     * @returns {HTMLElement}
+     */
+    function charmLine(charm, worn) {
+        const line = tableRow();
+        const isWorn = worn && charm.itemHrid === worn.itemHrid && charm.enhancementLevel === worn.enhancementLevel;
+        if (isWorn) {
+            line.style.background = 'rgba(201, 160, 255, 0.14)';
+            line.style.borderRadius = '3px';
+        }
+
+        const icon = overlayFormat_js.itemIcon(charm.itemHrid, 18);
+        overlayFormat_js.linkToMarketplace(icon, charm.itemHrid, marketplaceTabs_js.navigateToMarketplace);
+
+        const name = document.createElement('span');
+        name.textContent = charm.name;
+        Object.assign(name.style, { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
+        overlayFormat_js.linkToMarketplace(name, charm.itemHrid, marketplaceTabs_js.navigateToMarketplace);
+
+        const gain = worn ? upgradeValue(charm, worn).gain : 0;
+        line.title =
+            `${charm.name} +${charm.enhancementLevel}: +${charm.experience.toFixed(2)}% experience` +
+            (charm.price > 0 ? ` for ${formatters_js.formatWithSeparator(Math.round(charm.price))}.` : ', nobody selling.') +
+            (isWorn
+                ? '\nThis is the one you are wearing.'
+                : worn
+                  ? `\nAgainst yours that is ${gain > 0 ? '+' : ''}${gain.toFixed(2)}%.`
+                  : '');
+
+        line.append(
+            icon,
+            name,
+            cell(String(charm.enhancementLevel)),
+            cell(`${charm.experience.toFixed(2)}%`, overlayFormat_js.ROW_COLORS.good),
+            cell(charm.price > 0 ? formatters_js.formatKMB(charm.price) : 'no data', charm.price > 0 ? overlayFormat_js.ROW_COLORS.gold : overlayFormat_js.ROW_COLORS.dim),
+            cell(
+                charm.experiencePerMillion === null ? '—' : charm.experiencePerMillion.toFixed(2),
+                charm.experiencePerMillion === null ? overlayFormat_js.ROW_COLORS.dim : overlayFormat_js.ROW_COLORS.accent
+            )
+        );
+        return line;
+    }
+
+    /**
+     * The tier table and the enhancement curve.
+     *
+     * Every figure in the panel comes out of these two and neither is visible
+     * anywhere in the game, so a bonus that looks wrong is otherwise unarguable.
+     *
+     * @param {HTMLElement} body - Where it goes
+     */
+    function drawGuide(body) {
+        const content = section(body, {
+            id: 'guide',
+            title: 'Charm EXP Guide',
+            accent: '#c9a0ff',
+            defaultOpen: false,
+        });
+
+        const chips = (entries) => {
+            const wrap = document.createElement('div');
+            Object.assign(wrap.style, { display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '4px' });
+
+            for (const text of entries) {
+                const chip = document.createElement('span');
+                chip.textContent = text;
+                Object.assign(chip.style, {
+                    background: 'rgba(255, 255, 255, 0.06)',
+                    border: '1px solid rgba(255, 255, 255, 0.10)',
+                    borderRadius: '3px',
+                    padding: '2px 7px',
+                    fontSize: '11px',
+                });
+                wrap.appendChild(chip);
+            }
+            content.appendChild(wrap);
+        };
+
+        chips(
+            Object.entries(CHARM_TIER_EXPERIENCE).map(([tier, base]) => `${tier[0].toUpperCase()}${tier.slice(1)} ${base}%`)
+        );
+
+        // Derived from the game's own curve rather than a copied table, so an update
+        // to enhancement scaling moves this with every figure below it
+        const levels = [];
+        for (let level = 0; level <= MAX_ENHANCEMENT$1; level++) {
+            levels.push(`+${level}: ${enhancementMultipliers_js.getEnhancementMultiplier(CHARM_DETAILS, level).toFixed(2)}x`);
+        }
+        chips(levels);
+    }
+
+    /**
+     * Every tier of the charm you are wearing, and what each would cost.
+     */
+    const charmPanel = simplePanel_js.createPanel({
+        id: 'charmPanel',
+        title: 'Charms',
+        size: { width: 430, height: 480 },
+        accent: '#c9a0ff',
+        draw: (body) => {
+            const worn = equippedCharm();
+            if (!worn) {
+                body.appendChild(simplePanel_js.panelNote('No charm equipped.'));
+                body.appendChild(
+                    simplePanel_js.panelNote('The panel compares the charm you are wearing against every other tier of the same kind.')
+                );
+                return;
+            }
+
+            drawGuide(body);
+
+            const rows = familyRows();
+            const { upgrades, downgrades } = splitByUpgrade(rows, worn.experience);
+            const current = `${worn.experience.toFixed(2)}%`;
+
+            for (const [id, title, group, defaultOpen] of [
+                ['upgrades', `Charm Upgrades (${current})`, upgrades, true],
+                ['downgrades', `Charm Downgrades (${current})`, downgrades, false],
+            ]) {
+                if (!group.length) continue;
+
+                const content = section(body, { id, title, accent: '#c9a0ff', defaultOpen });
+                content.appendChild(tableHeading(() => charmPanel.render()));
+                for (const charm of sortCharmRows(group, sortColumn, sortDirection)) {
+                    content.appendChild(charmLine(charm, worn));
+                }
+            }
+
+            if (!rows.length) body.appendChild(simplePanel_js.panelNote('No prices for this charm family yet.'));
+        },
+    });
+
+    overlayRows_js.registerRow({
+        key: 'charmValue',
+        empty: 'No charms held',
+        name: 'Charm Value',
+        defaultSize: { width: 230, height: 30 },
+        render: (container) => {
+            const worn = equippedCharm();
+            // The best buy within the family, which is the only comparison worth
+            // making — a brewing charm is not an alternative to a melee one
+            const upgrades = splitByUpgrade(familyRows(), worn?.experience || 0).upgrades;
+            const best = sortCharmRows(upgrades, 'perMillion', 'desc').find((charm) => charm.price > 0);
+            if (!best) return overlayFormat_js.blank(container);
+
+            const upgrade = upgradeValue(best, worn);
+
+            overlayFormat_js.row(container, [
+                { icon: best.itemHrid, size: 18 },
+                { text: best.name, color: overlayFormat_js.ROW_COLORS.dim, ellipsis: true },
+                { text: `+${best.experience.toFixed(1)}%`, color: overlayFormat_js.ROW_COLORS.good },
+                { text: formatters_js.formatKMB(best.price), color: overlayFormat_js.ROW_COLORS.gold },
+            ]);
+            container.title =
+                `${best.name} +${best.enhancementLevel} is the best experience per coin in your charm family: ` +
+                `+${best.experience.toFixed(2)}% for ${formatters_js.formatWithSeparator(Math.round(best.price))}.` +
+                (worn
+                    ? upgrade.gain > 0
+                        ? `\nOver your ${worn.name} +${worn.enhancementLevel} that is +${upgrade.gain.toFixed(2)}% gained.`
+                        : `\nYour ${worn.name} is already at least as good.`
+                    : '\nNothing in the charm slot.') +
+                '\nDouble-click for the whole family.';
+        },
+        onOpen: () => charmPanel.toggle(),
+    });
 
     /**
      * Inventory Sort Module
@@ -26775,7 +33309,9 @@ self.onmessage = function (e) {
          */
         async loadSettings() {
             try {
-                const settings = await storage.getJSON('inventorySort', 'settings');
+                // Read on initialize, and initialize runs again after a character
+                // switch, so the key is always the current character's
+                const settings = await readScoped('inventorySort', 'settings', null, { migrate: 'adopt' });
                 if (settings && settings.mode) {
                     this.currentMode = settings.mode;
                 }
@@ -26789,7 +33325,7 @@ self.onmessage = function (e) {
          */
         saveSettings() {
             try {
-                storage.setJSON(
+                writeScoped(
                     'inventorySort',
                     {
                         mode: this.currentMode,
@@ -27903,6 +34439,2008 @@ self.onmessage = function (e) {
     };
 
     /**
+     * Chest history import and export.
+     *
+     * A chest ledger is only worth keeping if it survives — a new browser, a second
+     * machine, or a move from whichever script you were using before. All three are
+     * the same problem: read someone else's shape of the same facts, and write ours
+     * in a shape that can be read back.
+     *
+     * Kept pure and apart from the tracker because an import that silently drops
+     * half a ledger looks exactly like an import that worked. Every conversion here
+     * reports what it could not translate rather than skipping quietly.
+     */
+
+    /**
+     * Our own export, which is the tally plus enough context to read it later.
+     *
+     * Item counts only — no prices. Prices are a property of the market on the day
+     * you exported, and baking them in would make an old file re-import as a ledger
+     * priced in last month's money.
+     *
+     * @param {Object} tally - `{ [chestHrid]: { opened, loot, last } }`
+     * @param {Object} settings - Valuation settings to carry along
+     * @param {string} [player] - Whose ledger this is, for the reader's benefit
+     * @returns {Object} The exportable object
+     */
+    function toExport(tally, settings, player = '') {
+        return {
+            format: 'toolasha-treasure',
+            version: 1,
+            player,
+            exportedAt: new Date().toISOString(),
+            settings: { ...settings },
+            chests: { ...tally },
+        };
+    }
+
+    /**
+     * Read our own export back.
+     * @param {Object} json - Parsed file
+     * @returns {{tally: Object, settings: Object}|null} Null when it is not ours
+     */
+    function fromToolashaExport(json) {
+        if (json?.format !== 'toolasha-treasure' || !json.chests) return null;
+        return { tally: json.chests, settings: json.settings || {} };
+    }
+
+    /**
+     * Read a TReasure export from MWI Combat Suite.
+     *
+     * Its shape is richer than ours — every entry carries the name, unit price and
+     * total value as they stood at export — but the only durable facts are the
+     * counts. The rest is re-derived from today's market, so it is dropped rather
+     * than trusted.
+     *
+     * @param {Object} json - Parsed file
+     * @returns {{tally: Object, settings: Object}|null} Null when it is not TReasure's
+     */
+    function fromTreasureExport(json) {
+        if (!json?.chests || json.format === 'toolasha-treasure') return null;
+
+        const sample = Object.values(json.chests)[0];
+        if (!sample?.total?.loot) return null;
+
+        const tally = {};
+        for (const [chestHrid, chest] of Object.entries(json.chests)) {
+            const loot = {};
+            for (const [itemHrid, entry] of Object.entries(chest.total?.loot || {})) {
+                // Entries are objects there and bare counts here
+                loot[itemHrid] = typeof entry === 'number' ? entry : entry?.count || 0;
+            }
+
+            const lastLoot = {};
+            for (const [itemHrid, entry] of Object.entries(chest.last?.loot || {})) {
+                lastLoot[itemHrid] = typeof entry === 'number' ? entry : entry?.count || 0;
+            }
+
+            tally[chestHrid] = {
+                opened: chest.total?.opened || 0,
+                loot,
+                last: { opened: chest.last?.opened || 0, loot: lastLoot },
+            };
+        }
+
+        // Their names for the same two choices
+        const settings = {};
+        if (json.settings?.useMirrorValue) settings.capeValue = json.settings.useMirrorValue;
+        if (json.settings?.useCowbell0 !== undefined) settings.valueCowbells = !json.settings.useCowbell0;
+
+        return { tally, settings };
+    }
+
+    /**
+     * Read Edible Tools' chest data out of its own storage shape.
+     *
+     * It keys everything by **display name** rather than hrid, in the language the
+     * game was running in, so translating it needs a name index built from the
+     * current game data. Anything that does not match is reported rather than
+     * dropped in silence — a chest whose name has since changed would otherwise
+     * vanish without trace.
+     *
+     * @param {Object} chestData - The `开箱数据` object for one player
+     * @param {Object<string, string>} nameToHrid - Item display name → hrid
+     * @returns {{tally: Object, unmatched: string[]}}
+     */
+    function fromEdibleTools(chestData, nameToHrid) {
+        const tally = {};
+        const unmatched = [];
+
+        for (const [chestName, chest] of Object.entries(chestData || {})) {
+            const chestHrid = nameToHrid[chestName];
+            if (!chestHrid) {
+                unmatched.push(chestName);
+                continue;
+            }
+
+            const loot = {};
+            for (const [itemName, item] of Object.entries(chest?.获得物品 || {})) {
+                const itemHrid = nameToHrid[itemName];
+                if (!itemHrid) {
+                    unmatched.push(itemName);
+                    continue;
+                }
+                loot[itemHrid] = item?.数量 || 0;
+            }
+
+            tally[chestHrid] = {
+                opened: chest?.总计开箱数量 || 0,
+                loot,
+                // It keeps no record of the most recent opening, and inventing one
+                // from the total would report a single opening of hundreds of chests
+                last: { opened: 0, loot: {} },
+            };
+        }
+
+        return { tally, unmatched };
+    }
+
+    /**
+     * Find Edible Tools' data for the current character in its localStorage blob.
+     * @param {Object} stored - Parsed `Edible_Tools` value
+     * @param {string|number} characterId - Current character
+     * @param {string} characterName - Current character's name
+     * @returns {Object|null} The `开箱数据` object, or null
+     */
+    function findEdibleToolsData(stored, characterId, characterName) {
+        const byPlayer = stored?.Chest_Open_Data;
+        if (!byPlayer) return null;
+
+        const byId = byPlayer[characterId] || byPlayer[String(characterId)];
+        if (byId?.开箱数据 && Object.keys(byId.开箱数据).length) return byId.开箱数据;
+
+        // Falling back to the name, because the id it stored may predate a move
+        // between accounts on the same browser
+        for (const entry of Object.values(byPlayer)) {
+            if (entry?.玩家昵称 === characterName && Object.keys(entry?.开箱数据 || {}).length) {
+                return entry.开箱数据;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Combine an imported ledger with the one already held.
+     *
+     * `replace` is the honest default for a file that came from this same tool on
+     * another machine — the two are the same ledger, and adding them together would
+     * double it. `append` is for merging genuinely separate histories, and only ever
+     * adds counts, never the `last` opening, which belongs to whichever ledger saw
+     * it most recently.
+     *
+     * @param {Object} current - The tally now
+     * @param {Object} incoming - The tally being imported
+     * @param {string} mode - `'replace'` or `'append'`
+     * @returns {Object} A new tally
+     */
+    function mergeTally(current, incoming, mode = 'replace') {
+        if (mode !== 'append') return { ...incoming };
+
+        const merged = { ...current };
+        for (const [chestHrid, entry] of Object.entries(incoming || {})) {
+            const existing = merged[chestHrid];
+            if (!existing) {
+                merged[chestHrid] = entry;
+                continue;
+            }
+
+            const loot = { ...existing.loot };
+            for (const [itemHrid, count] of Object.entries(entry.loot || {})) {
+                loot[itemHrid] = (loot[itemHrid] || 0) + count;
+            }
+            merged[chestHrid] = {
+                opened: (existing.opened || 0) + (entry.opened || 0),
+                loot,
+                last: existing.last || entry.last,
+            };
+        }
+        return merged;
+    }
+
+    /**
+     * Treasure Tracker
+     *
+     * Keeps a ledger of every chest you open, and shows whether they paid out.
+     *
+     * Toolasha already prices a chest before you open it, in tooltips and in net
+     * worth. That is a claim about the long run. This is the record of whether the
+     * long run has turned up: how many you have opened, what came out, and what the
+     * drop tables said should have.
+     *
+     * The tracking runs whenever the feature is on, whether or not the panel is
+     * open — a ledger you have to remember to start is a ledger with nothing in it
+     * when you finally want to read it. Only the drawing waits for the panel.
+     *
+     * The arithmetic is in `utils/chest-tally.js`. This module listens, stores, and
+     * draws.
+     *
+     * The idea is TReasure's, from MWI Combat Suite by Frotty (MIT) — see
+     * `third-party/mwi-combat-suite/` and `docs/THIRD-PARTY-LICENSES.md`. The panel
+     * is Toolasha's own.
+     */
+
+
+    /**
+     * The ledger and the panel's preferences.
+     *
+     * Both are scoped per character — the chests one character opened are not the
+     * other's, and the value settings are a per-character judgement — and resolved
+     * at each read and write, since the user switches characters without reloading.
+     * The pre-scoping global values are adopted by the main character once.
+     */
+    const STORAGE_KEY$1 = 'treasureTally';
+    const SETTINGS_KEY = 'treasureSettings';
+    const ADOPT_LEGACY = { migrate: 'adopt' };
+    const PANEL_ID = 'toolasha-treasure-panel';
+    const POPUP_ID = 'toolasha-treasure-popup';
+    /** Where each of the two is remembered; they are moved and sized independently */
+    const PANEL_GEOMETRY_KEY = 'treasurePanel';
+    const POPUP_GEOMETRY_KEY = 'treasurePopup';
+    /** What the ledger opens at before anyone has resized it */
+    const DEFAULT_PANEL = { width: 720, height: 560 };
+    /** How small the panel may be dragged — never wider than the phone it is on */
+    const MIN_PANEL = { width: 320, height: 200 };
+    /** A control a finger can hit, per the usual 32px floor */
+    const TOUCH_TARGET = 32;
+    /** Header space kept clear on the right, so nothing flows under the close button */
+    const CLOSE_GUTTER = { pointer: 28, touch: TOUCH_TARGET + 6 };
+    /** The game's own dialog, which the popup wants to sit beside */
+    const LOOT_DIALOG_SELECTOR = '[class*="Modal_modal"]:not([class*="Modal_modalContainer"])';
+    /** Gap between the two, and how far off a screen edge the popup may not go */
+    const DIALOG_GAP = 12;
+    const EDGE_MARGIN = 8;
+    /**
+     * The dialog is rendered by React in response to the same message that brings us
+     * the loot, so it is reliably absent at the moment we are told about it. These
+     * bound how long to keep looking.
+     */
+    const DIALOG_TRIES = 12;
+    const DIALOG_RETRY_MS = 60;
+
+    const COLORS = {
+        background: 'rgba(8, 10, 20, 0.96)',
+        headerBg: 'rgba(30, 22, 8, 0.8)',
+        border: 'rgba(255, 207, 92, 0.35)',
+        text: '#e8e6df',
+        textDim: 'rgba(232, 230, 223, 0.55)',
+        accent: '#ffcf5c',
+        good: '#4ade80',
+        bad: '#f87171',
+    };
+
+    /** Beyond this far from expectation, a chest is worth remarking on */
+    const NOTABLE_RATIO = 0.05;
+
+    /**
+     * How to value an item the market will not price.
+     *
+     * Capes, quivers and cloaks are untradable, so there is no market answer and any
+     * figure is a judgement. `token` prices one at what its tokens would otherwise
+     * have bought, `mirror` at a Mirror of Protection, `zero` says it is worth
+     * nothing to you. The choice moves a chest's verdict a long way, which is why it
+     * is a setting rather than a constant.
+     */
+    const CAPE_VALUE_CYCLE = { token: 'mirror', mirror: 'zero', zero: 'token' };
+    const CAPE_VALUE_LABEL = { token: 'Token value', mirror: 'Mirror value', zero: 'No value' };
+
+    const MIRROR_HRID = '/items/mirror_of_protection';
+    const COWBELL_HRID = '/items/cowbell';
+    const COWBELL_BAG_HRID = '/items/bag_of_10_cowbells';
+    const COWBELLS_PER_BAG = 10;
+    /** The bag's own market tax, which you pay to turn cowbells into coins */
+    const COWBELL_BAG_TAX = 0.18;
+
+    const DEFAULT_SETTINGS = {
+        capeValue: 'token',
+        valueCowbells: true,
+        hiddenChests: [],
+        popupPinned: false,
+        sortMode: 'luck',
+    };
+
+    /**
+     * How a chest's return reads against expectation.
+     * @param {number|null} ratio - actual ÷ expected, or null with nothing opened
+     * @returns {{text: string, color: string}}
+     */
+    function formatReturn(ratio) {
+        if (ratio === null || ratio === undefined) return { text: '—', color: COLORS.textDim };
+
+        const percent = (ratio - 1) * 100;
+        const sign = percent >= 0 ? '+' : '';
+        const text = `${sign}${percent.toFixed(1)}%`;
+
+        if (percent > NOTABLE_RATIO * 100) return { text, color: COLORS.good };
+        if (percent < -NOTABLE_RATIO * 100) return { text, color: COLORS.bad };
+        return { text, color: COLORS.textDim };
+    }
+
+    /**
+     * An item hrid as a readable name, falling back to the hrid's own last segment
+     * so an item the game data does not know about still reads as something.
+     * @param {string} itemHrid - Item
+     * @returns {string} Name
+     */
+    function itemName(itemHrid) {
+        const details = dataManager.getItemDetails?.(itemHrid);
+        if (details?.name) return details.name;
+        return itemHrid.replace('/items/', '').replace(/_/g, ' ');
+    }
+
+    /**
+     * A count small enough that rounding it would say the wrong thing.
+     *
+     * A rare owed 0.002 of itself per chest rounds to zero, which reads as the chest
+     * owing you nothing rather than a one-in-five-hundred chance.
+     *
+     * @param {number} count - Expected count
+     * @returns {string} Readable count
+     */
+    function smallCount(count) {
+        if (count >= 10) return formatters_js.formatLargeNumber(Math.round(count));
+        if (count >= 1) return count.toFixed(2);
+        if (count >= 0.001) return count.toFixed(3);
+        return count.toExponential(1);
+    }
+
+    /**
+     * Below this, an expected count rounds to nothing on the row.
+     *
+     * Two decimals is what the row shows, so anything under 0.005 would print as
+     * "0.00 expected" — a line claiming the chest owed you nothing, which is both
+     * wrong and the least interesting thing on screen.
+     */
+    const NEGLIGIBLE_EXPECTED = 0.005;
+
+    /**
+     * Drop the rows that say nothing.
+     *
+     * A chest's drop table runs to thirty-odd entries, most of them equipment at
+     * rates so long that a lifetime of opening owes you a hundredth of one. Listed,
+     * they read "0, 0.00 expected, -100%" — three figures agreeing that nothing
+     * happened, pushing the rows that did happen off the bottom.
+     *
+     * Anything that actually dropped is kept however unlikely it was, because that
+     * is precisely the row worth seeing.
+     *
+     * @param {Array<Object>} items - From `chestPerformance`
+     * @returns {Array<Object>} The ones worth a line
+     */
+    function worthShowing(items) {
+        return (items || []).filter(
+            (item) => (item.actualCount || 0) > 0 || (item.expectedCount || 0) >= NEGLIGIBLE_EXPECTED
+        );
+    }
+
+    /**
+     * Which side of the book loot is being valued at, as a word.
+     *
+     * Toolasha prices through the profit pricing mode rather than pinning to bid,
+     * so this is a setting rather than a constant — and a figure whose basis is not
+     * stated cannot be compared with anybody else's.
+     *
+     * @returns {string} `bid`, `ask` or `average`
+     */
+    function pricingBasis() {
+        return marketData_js.getPricingMode('profit', 'sell');
+    }
+
+    /** The tallest a freshly-opened popup is allowed to be */
+    const POPUP_MAX_HEIGHT = 560;
+
+    /**
+     * Turn a content-sized popup into one with a height of its own.
+     *
+     * A chest with thirty drop-table rows makes a popup taller than the screen, and
+     * the rows that matter are the ones off the bottom — so it has to be capped. It
+     * used to be capped with `max-height`, which was the bug: the resize grip writes
+     * `height`, and a `max-height` sitting above it means dragging the corner
+     * downwards changes a number that nothing renders. The popup could be made
+     * wider and never taller.
+     *
+     * Measuring once and writing the result as a plain height caps it just the same
+     * and leaves `height` as the only thing deciding how tall it is.
+     *
+     * @param {HTMLElement} popup - Already in the document, so it can be measured
+     * @param {number} [viewportHeight] - The window, for tests
+     * @returns {number} The height it was given
+     */
+    function capHeightToWindow(popup, viewportHeight = window.innerHeight) {
+        const natural = popup.offsetHeight || popup.getBoundingClientRect().height;
+        const height = Math.min(natural, POPUP_MAX_HEIGHT, Math.round(viewportHeight * 0.7));
+        popup.style.height = `${height}px`;
+        return height;
+    }
+
+    class TreasureTracker {
+        constructor() {
+            this.isInitialized = false;
+            this.tally = {};
+            this.lootOpenedHandler = null;
+            this.panel = null;
+            this.contentEl = null;
+            this.headerEl = null;
+            this.expanded = new Set();
+            this.isDragging = false;
+            this.popup = null;
+            this._dialogRetry = null;
+            this.settings = { ...DEFAULT_SETTINGS };
+            this.configMode = false;
+        }
+
+        async initialize() {
+            if (this.isInitialized) return;
+            if (!config.getSetting('treasureTracker')) return;
+            this.isInitialized = true;
+
+            this.tally = (await readScoped(STORAGE_KEY$1, 'settings', {}, ADOPT_LEGACY)) || {};
+            const saved = await readScoped(SETTINGS_KEY, 'settings', null, ADOPT_LEGACY);
+            if (saved) this.settings = { ...DEFAULT_SETTINGS, ...saved };
+
+            // A panel reopened at start-up is created before this runs, so it drew
+            // the whole chest list against an empty ledger and read "Nothing opened
+            // yet" until it was closed and opened again. It is a no-op when the
+            // panel is not up, which is the usual case.
+            this._render();
+
+            this.lootOpenedHandler = (data) => this._onLootOpened(data);
+            webSocketHook.on('loot_opened', this.lootOpenedHandler);
+        }
+
+        disable() {
+            if (this.lootOpenedHandler) {
+                webSocketHook.off('loot_opened', this.lootOpenedHandler);
+                this.lootOpenedHandler = null;
+            }
+            this._removePanel();
+            this._removePopup();
+            // The ledger is one character's. Dropped so the re-initialize that
+            // follows a character switch reads the arriving character's, rather
+            // than saving this one's under their key on the next chest.
+            this.tally = {};
+            this.settings = { ...DEFAULT_SETTINGS };
+            this.isInitialized = false;
+        }
+
+        /**
+         * Record an opening and redraw if anyone is looking.
+         * @param {Object} data - `loot_opened` message
+         */
+        _onLootOpened(data) {
+            const chestHrid = data?.openedItem?.itemHrid;
+            if (!chestHrid) return;
+
+            this.tally = chestTally_js.recordOpening(this.tally, chestHrid, data.openedItem.count || 1, data.gainedItems);
+            this._save();
+            if (this.panel) this._render();
+            if (config.getSetting('treasureTracker_popup')) this._showOpening(chestHrid);
+        }
+
+        /**
+         * Show what the opening that just happened paid, against what it owed.
+         *
+         * Beside the game's own "Opened Loot" dialog, because that dialog answers
+         * "what did I get" and leaves the only interesting question — "was that
+         * good?" — to a feeling. The counts are the same ones on screen; the second
+         * line under each is what the drop table said to expect.
+         *
+         * @param {string} chestHrid - What was opened
+         */
+        _showOpening(chestHrid) {
+            const entry = this.tally[chestHrid];
+            if (!entry?.last) return;
+
+            const dropTable = dataManager.getInitClientData()?.openableLootDropMap?.[chestHrid];
+            const opening = chestTally_js.chestPerformance(entry.last, dropTable, this._priceOf());
+            const lifetime = chestTally_js.chestPerformance(entry, dropTable, this._priceOf());
+
+            this._removePopup();
+            this.popup = this._buildPopup(chestHrid, opening, lifetime);
+            document.body.appendChild(this.popup);
+            panelZIndex_js.registerFloatingPanel(this.popup);
+            capHeightToWindow(this.popup);
+
+            // Size is always remembered; where it goes is not, unless you have
+            // pinned it by moving it. Asking for the position back regardless was
+            // most of why the popup stopped appearing beside the chest dialog — a
+            // stale position was reapplied on every opening, and if the dialog was
+            // not found within the retries the popup simply stayed there.
+            //
+            // Placed after the size is back rather than before, because placement
+            // measures the popup and a width applied afterwards would move the edge
+            // it was measured against.
+            const pinned = this.settings.popupPinned;
+            panelGeometry_js.restoreGeometry(this.popup, POPUP_GEOMETRY_KEY, { width: 260, height: 120 }, { position: pinned }).then(() => {
+                // The height fits the chest being shown, not the chest the popup was
+                // once resized on. capHeightToWindow already sized it to its content
+                // above; restoring a stored height on top of that clipped every
+                // chest with more rows than the one the resize happened on. Width is
+                // the half of a resize worth keeping, and it changes how rows wrap —
+                // so the height is re-fitted after the width lands.
+                if (this.popup) {
+                    this.popup.style.height = '';
+                    capHeightToWindow(this.popup);
+                }
+                if (!pinned) this._placeBesideDialog(0);
+            });
+        }
+
+        /**
+         * Put the popup beside the game's Opened Loot dialog.
+         *
+         * The two are read together — the game's counts on the left, whether they
+         * were good on the right — so a popup pinned to a screen corner makes you
+         * look back and forth across the whole window.
+         *
+         * Measured after mounting, because the height depends on how many items the
+         * chest paid out — and retried, because the dialog is rendered from the same
+         * message that brings us the loot and is reliably not there yet on the first
+         * look. Falls back to the top-right corner once the retries run out, which
+         * is what happens when a chest is opened by a route that raises no dialog.
+         *
+         * @param {number} tries - How many attempts have been made
+         */
+        _placeBesideDialog(tries) {
+            if (!this.popup) return;
+
+            const dialog = document.querySelector(LOOT_DIALOG_SELECTOR);
+            // Not up yet — the message that told us about the loot is the same one
+            // React is still rendering the dialog from
+            if (!dialog || !dialog.getBoundingClientRect().width) {
+                if (tries >= DIALOG_TRIES) return;
+                const retry = setTimeout(() => this._placeBesideDialog(tries + 1), DIALOG_RETRY_MS);
+                this._dialogRetry = retry;
+                return;
+            }
+
+            const anchor = dialog.getBoundingClientRect();
+            const self = this.popup.getBoundingClientRect();
+            if (!self.width) return;
+
+            // To the right of the dialog, unless that would run off screen, in which
+            // case the left side has the room
+            const rightOf = anchor.right + DIALOG_GAP;
+            const leftOf = anchor.left - self.width - DIALOG_GAP;
+            const fitsRight = rightOf + self.width <= window.innerWidth - EDGE_MARGIN;
+            const left = fitsRight ? rightOf : Math.max(leftOf, EDGE_MARGIN);
+
+            // Top-aligned with the dialog, nudged up only if the popup is the taller
+            // of the two and would otherwise hang off the bottom
+            const maxTop = window.innerHeight - self.height - EDGE_MARGIN;
+            const top = Math.max(EDGE_MARGIN, Math.min(anchor.top, maxTop));
+
+            Object.assign(this.popup.style, { left: `${left}px`, top: `${top}px`, right: 'auto' });
+        }
+
+        _save() {
+            writeScoped(STORAGE_KEY$1, this.tally, 'settings').catch((error) => {
+                console.error('[TreasureTracker] Saving the chest tally failed:', error);
+            });
+        }
+
+        /**
+         * Open the panel, or raise it if it is already up.
+         * @param {Object} [options] - `remember: false` when reopening at start-up,
+         *   so restoring a panel is not itself recorded as opening one
+         */
+        show({ remember = true } = {}) {
+            if (remember) panelGeometry_js.saveOpenState(PANEL_GEOMETRY_KEY, true);
+            if (this.panel && document.body.contains(this.panel)) {
+                panelZIndex_js.bringPanelToFront(this.panel);
+                return;
+            }
+            this._createPanel();
+        }
+
+        /** Close it, and stop reopening it */
+        hide() {
+            panelGeometry_js.saveOpenState(PANEL_GEOMETRY_KEY, false);
+            this._removePanel();
+        }
+
+        /** Open if closed, close if open */
+        toggle() {
+            if (this.panel && document.body.contains(this.panel)) this.hide();
+            else this.show();
+        }
+
+        /**
+         * Reopen if the page was left with this panel up.
+         *
+         * The panel only; the chest popup is deliberately not restored. It is a
+         * reaction to opening something, and a popup about a chest opened yesterday
+         * reappearing on load would be a stale answer to a question nobody asked.
+         */
+        restore() {
+            panelGeometry_js.reopenIfLeftOpen(PANEL_GEOMETRY_KEY, () => this.show({ remember: false }));
+        }
+
+        /**
+         * The rows to draw, and their totals.
+         * @returns {{rows: Array<Object>, totals: Object}}
+         */
+        _summary() {
+            const dropTables = dataManager.getInitClientData()?.openableLootDropMap || {};
+            const rows = chestTally_js.summariseTally(this.tally, dropTables, this._priceOf());
+            // Totals are taken before sorting, because they are the same figures
+            // whichever way the rows are ordered
+            const totals = chestTally_js.tallyTotals(rows);
+            return { rows: chestTally_js.sortSummary(rows, this.settings.sortMode, itemName), totals };
+        }
+
+        /**
+         * The one price source both the ledger and the popup read through, so a
+         * chest cannot look lucky merely because two views priced it differently.
+         * @returns {Function} `(itemHrid) => number|null`
+         */
+        _priceOf() {
+            return (itemHrid) => {
+                // Coins are the base currency and never appear on the market
+                if (itemHrid === '/items/coin') return 1;
+                if (itemHrid === COWBELL_HRID) return this._cowbellValue();
+
+                const market = marketData_js.getItemPrice(itemHrid, { context: 'profit', side: 'sell' });
+                if (market > 0) return market;
+
+                // No market answer: an untradable reward, which is a judgement call
+                return this._untradableValue(itemHrid);
+            };
+        }
+
+        /**
+         * What a cowbell is worth, if anything.
+         *
+         * Cowbells are not tradable; bags of ten are. So the value of one is a bag's
+         * price less the tax you pay selling it, split ten ways — the same route
+         * `expected-value-calculator.js` takes.
+         *
+         * @returns {number|null} Coins per cowbell, or null when they are not counted
+         */
+        _cowbellValue() {
+            if (!this.settings.valueCowbells) return null;
+
+            const bag = marketData_js.getItemPrice(COWBELL_BAG_HRID, { context: 'profit', side: 'sell' });
+            if (!(bag > 0)) return null;
+            return (bag * (1 - COWBELL_BAG_TAX)) / COWBELLS_PER_BAG;
+        }
+
+        /**
+         * What an untradable reward is worth, under the current setting.
+         *
+         * Read from the game's own shop data rather than a hardcoded price list, so
+         * a shop change does not quietly leave the figure a version behind.
+         *
+         * @param {string} itemHrid - The item
+         * @returns {number|null} A value, or null to leave it out of the comparison
+         */
+        _untradableValue(itemHrid) {
+            const mode = this.settings.capeValue;
+            if (mode === 'zero') return null;
+            if (mode === 'mirror') return marketData_js.getItemPrice(MIRROR_HRID, { context: 'profit', side: 'sell' }) || null;
+
+            // Token value: what the tokens it costs would otherwise have bought
+            const data = dataManager.getInitClientData();
+            const shop = data?.shopItemDetailMap || {};
+            const entry = Object.values(shop).find((item) => item.itemHrid === itemHrid);
+            const cost = entry?.costs?.[0];
+
+            if (cost?.count) {
+                const perToken = tokenValuation_js.calculateDungeonTokenValue(cost.itemHrid);
+                return perToken > 0 ? perToken * cost.count : null;
+            }
+
+            // The labyrinth keeps its own shop under its own map, and the scrolls a
+            // combat chest drops are in it and nowhere else. Without this they price
+            // at nothing and vanish from the contents rather than showing a value —
+            // which is what "the ported Treasure is missing the scrolls" was.
+            return tokenValuation_js.labyrinthRewardValue(itemHrid, data?.labyrinthShopItemDetailMap, (hrid) =>
+                marketData_js.getItemPrice(hrid, { context: 'profit', side: 'sell' })
+            );
+        }
+
+        _saveSettings() {
+            writeScoped(SETTINGS_KEY, this.settings, 'settings').catch((error) => {
+                console.error('[TreasureTracker] Saving treasure settings failed:', error);
+            });
+        }
+
+        /**
+         * The item sprite sheet the game is on today.
+         *
+         * Read off any icon already on the page rather than pinned, because the URL
+         * carries a build hash the game regenerates.
+         * @returns {string} Sprite URL, or '' if none is on screen yet
+         */
+        _spriteUrl() {
+            if (this._sprite) return this._sprite;
+            const use = document.querySelector('svg use[href*="items_sprite"]');
+            this._sprite = use?.getAttribute('href')?.split('#')[0] || '';
+            return this._sprite;
+        }
+
+        /**
+         * @param {string} itemHrid - Item to draw
+         * @param {number} size - Pixels
+         * @returns {SVGElement|HTMLElement} An icon, or a spacer if the sheet is unknown
+         */
+        _icon(itemHrid, size = 18) {
+            const sprite = this._spriteUrl();
+            if (!sprite) {
+                const spacer = document.createElement('span');
+                spacer.style.width = `${size}px`;
+                return spacer;
+            }
+            const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+            svg.setAttribute('width', String(size));
+            svg.setAttribute('height', String(size));
+            svg.style.flex = '0 0 auto';
+            const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+            use.setAttribute('href', `${sprite}#${itemHrid.split('/').pop()}`);
+            svg.appendChild(use);
+            return svg;
+        }
+
+        /**
+         * Build the just-opened popup.
+         * @param {string} chestHrid - What was opened
+         * @param {Object} opening - Performance of this opening
+         * @param {Object} lifetime - Performance of every opening of this chest
+         * @returns {HTMLElement} The popup
+         */
+        _buildPopup(chestHrid, opening, lifetime) {
+            const popup = document.createElement('div');
+            popup.id = POPUP_ID;
+            Object.assign(popup.style, {
+                position: 'fixed',
+                top: '80px',
+                right: '40px',
+                zIndex: String(config.Z_FLOATING_PANEL),
+                width: '288px',
+                background: COLORS.background,
+                border: `1px solid ${COLORS.border}`,
+                borderRadius: '8px',
+                boxShadow: '0 8px 32px rgba(0, 0, 0, 0.6)',
+                color: COLORS.text,
+                fontSize: '11px',
+                display: 'flex',
+                flexDirection: 'column',
+                overflow: 'hidden',
+            });
+
+            const touch = isMobileMode();
+            const header = document.createElement('div');
+            Object.assign(header.style, {
+                display: 'flex',
+                alignItems: 'center',
+                // The same treatment the panel's header has, for the same reason:
+                // the title is a chest name and some of them are long, so on a
+                // narrow screen a title pushed against a close button in the flow
+                // is a close button pushed off the end.
+                flexWrap: 'wrap',
+                gap: '8px',
+                padding: '7px 8px 7px 11px',
+                // Room kept clear on the right for the close button, which sits
+                // outside the flow below
+                paddingRight: `${touch ? CLOSE_GUTTER.touch : CLOSE_GUTTER.pointer}px`,
+                position: 'relative',
+                background: COLORS.headerBg,
+                borderBottom: `1px solid ${COLORS.border}`,
+                cursor: 'move',
+                userSelect: 'none',
+            });
+            const title = document.createElement('span');
+            title.textContent = `Treasure — ${itemName(chestHrid)}`;
+            title.style.fontWeight = 'bold';
+            title.style.color = COLORS.accent;
+            header.appendChild(title);
+
+            // Out of the flow entirely and pinned to the popup's top right corner,
+            // so the way out of it is in the same place whatever the title does
+            const closeBtn = this._headerButton('✕', () => this._removePopup());
+            closeBtn.title = 'Close';
+            Object.assign(closeBtn.style, { position: 'absolute', top: '3px', right: '4px' });
+            if (touch) {
+                Object.assign(closeBtn.style, {
+                    minWidth: `${TOUCH_TARGET}px`,
+                    minHeight: `${TOUCH_TARGET}px`,
+                    fontSize: '16px',
+                });
+            }
+            header.appendChild(closeBtn);
+            popup.appendChild(header);
+
+            const body = document.createElement('div');
+            // Scrolls rather than grows, so a chest that paid out twenty items does
+            // not make a popup taller than the window
+            Object.assign(body.style, { padding: '6px 9px 8px', flex: '1', overflow: 'auto', minHeight: '0' });
+            popup.appendChild(body);
+
+            const subtitle = document.createElement('div');
+            subtitle.textContent = `Last opening (×${opening.opened})`;
+            subtitle.style.color = COLORS.accent;
+            subtitle.style.marginBottom = '3px';
+            body.appendChild(subtitle);
+
+            const verdict = formatReturn(opening.ratio);
+            const summary = document.createElement('div');
+            Object.assign(summary.style, { display: 'flex', justifyContent: 'space-between', marginBottom: '7px' });
+            // The side of the book the figure is on, said out loud, as TReasure
+            // does. Toolasha prices loot through the profit pricing mode rather than
+            // always at bid, so the same chest can be worth 45.44K here and 43.1K
+            // there — and without the word there is no way to tell that apart from
+            // one of them being wrong.
+            const paid = document.createElement('span');
+            paid.textContent = formatters_js.formatLargeNumber(Math.round(opening.actualValue));
+            paid.style.color = verdict.color;
+            const basis = document.createElement('span');
+            basis.textContent = ` ${pricingBasis()}`;
+            basis.style.color = COLORS.textDim;
+            basis.title =
+                'Which side of the market these values are taken from. ' +
+                'Set by the profit pricing mode in Toolasha’s settings.';
+            paid.appendChild(basis);
+            const pct = document.createElement('span');
+            pct.textContent = verdict.text;
+            pct.style.color = verdict.color;
+            summary.appendChild(paid);
+            summary.appendChild(pct);
+            body.appendChild(summary);
+
+            for (const item of worthShowing(opening.items)) body.appendChild(this._openingRow(item));
+
+            const total = document.createElement('div');
+            Object.assign(total.style, {
+                display: 'flex',
+                justifyContent: 'space-between',
+                borderTop: `1px solid ${COLORS.border}`,
+                marginTop: '7px',
+                paddingTop: '6px',
+            });
+            const lifeVerdict = formatReturn(lifetime.ratio);
+            const totalLabel = document.createElement('span');
+            totalLabel.textContent = `All ${lifetime.opened} opened`;
+            const totalValue = document.createElement('span');
+            totalValue.textContent = `${formatters_js.formatLargeNumber(Math.round(lifetime.actualValue))} · ${lifeVerdict.text}`;
+            totalValue.style.color = lifeVerdict.color;
+            total.appendChild(totalLabel);
+            total.appendChild(totalValue);
+            body.appendChild(total);
+
+            const full = document.createElement('button');
+            full.textContent = 'View full stats';
+            Object.assign(full.style, {
+                marginTop: '8px',
+                width: '100%',
+                padding: '5px',
+                background: 'rgba(255, 207, 92, 0.12)',
+                border: `1px solid ${COLORS.border}`,
+                borderRadius: '4px',
+                color: COLORS.accent,
+                cursor: 'pointer',
+                fontSize: '12px',
+            });
+            full.addEventListener('click', (event) => {
+                // The popup stays. It is the thing you were reading when you decided
+                // you wanted more, and closing it to answer that is taking away the
+                // question along with it.
+                event.stopPropagation();
+                this.show();
+            });
+            body.appendChild(full);
+
+            // Moving it says "here, for now" — it no longer flips the
+            // follows-the-dialog setting, which lives in the settings gear alone.
+            // Moving-to-pin read as the popup silently changing its own setting:
+            // one nudge and it stopped following the chest dialog with nothing on
+            // screen saying why. The position is still saved, so a popup that *is*
+            // pinned keeps opening where it was last put.
+            this._detachPopupDrag = floatingPanel_js.makeDraggable(popup, header, (position) => {
+                panelGeometry_js.saveGeometry(POPUP_GEOMETRY_KEY, { left: parseFloat(position.left), top: parseFloat(position.top) });
+            });
+            this._detachPopupResize = floatingPanel_js.makeResizable(popup, {
+                minWidth: 240,
+                minHeight: 120,
+                onResize: (size) => panelGeometry_js.saveGeometry(POPUP_GEOMETRY_KEY, size),
+            });
+
+            // Dismissed by clicking away from it, the way the game's own loot dialog
+            // and MCS's treasure pane both behave. Deferred by a tick so the click
+            // that *opened* it does not immediately close it again.
+            //
+            // Pinning does not disable this, though it used to. The two are separate
+            // questions — pinning says where the popup opens, not that it should
+            // stay on screen — and conflating them meant that pinning it once, which
+            // for a while a single click on its header was enough to do, silently
+            // took the dismissal away as well.
+            this._onOutsideClick = (event) => {
+                if (!this.popup || this.popup.contains(event.target)) return;
+                // The full-stats panel is this popup's own offspring; clicking in it
+                // is not clicking away
+                if (this.panel?.contains(event.target)) return;
+                this._removePopup();
+            };
+            const arm = setTimeout(() => document.addEventListener('mousedown', this._onOutsideClick, true), 0);
+            this._popupArm = arm;
+
+            return popup;
+        }
+
+        /**
+         * One item: what came out on top, what was owed underneath.
+         *
+         * Two lines rather than one because the comparison is the point — a count on
+         * its own says nothing, and putting expected beside actual on a single line
+         * makes eight of them unreadable.
+         *
+         * @param {Object} item - From `chestPerformance`
+         * @returns {HTMLElement} The row
+         */
+        _openingRow(item) {
+            const row = document.createElement('div');
+            Object.assign(row.style, { display: 'flex', gap: '6px', alignItems: 'flex-start', padding: '1px 0' });
+            if (item.unpriced) {
+                row.title =
+                    'Nothing will price this, so it counts towards neither side of the total — but the count against ' +
+                    'what was owed still holds, and that is what the percentage here is.';
+            }
+            row.appendChild(this._icon(item.itemHrid));
+
+            const columns = document.createElement('div');
+            Object.assign(columns.style, { flex: '1', display: 'flex', flexDirection: 'column', lineHeight: '1.35' });
+
+            // Value where there is a price, counts where there is not. An item
+            // nothing will price still has a drop rate, and "four when you were owed
+            // two and a quarter" is the same fact whether or not the market has an
+            // opinion — it is only the *total* it cannot join.
+            const ratio = item.unpriced
+                ? item.expectedCount > 0
+                    ? item.actualCount / item.expectedCount
+                    : null
+                : item.expectedValue > 0
+                  ? item.actualValue / item.expectedValue
+                  : null;
+            const verdict = formatReturn(ratio);
+
+            const actual = document.createElement('div');
+            Object.assign(actual.style, { display: 'flex', justifyContent: 'space-between', gap: '6px' });
+            const actualCount = document.createElement('span');
+            actualCount.textContent = formatters_js.formatLargeNumber(item.actualCount);
+            const actualValue = document.createElement('span');
+            // An item nothing can price gets a row and no figure. A dash says "this
+            // came out and is not counted"; a zero would say the chest gave you
+            // something worthless, which is a different and wrong claim.
+            actualValue.textContent = item.unpriced ? '—' : formatters_js.formatLargeNumber(Math.round(item.actualValue));
+            actualValue.style.color = item.unpriced ? COLORS.textDim : COLORS.good;
+            actualValue.style.marginLeft = 'auto';
+            const diff = document.createElement('span');
+            diff.textContent = verdict.text;
+            diff.style.color = verdict.color;
+            diff.style.minWidth = '62px';
+            diff.style.textAlign = 'right';
+            actual.appendChild(actualCount);
+            actual.appendChild(actualValue);
+            actual.appendChild(diff);
+
+            const expected = document.createElement('div');
+            Object.assign(expected.style, {
+                display: 'flex',
+                justifyContent: 'space-between',
+                gap: '6px',
+                color: COLORS.textDim,
+            });
+            const expectedCount = document.createElement('span');
+            // Small expectations are the interesting ones — a rare owed 0.02 of
+            // itself rounds to nothing and would read as owing zero
+            expectedCount.textContent =
+                item.expectedCount < 10 ? item.expectedCount.toFixed(2) : formatters_js.formatLargeNumber(Math.round(item.expectedCount));
+            const expectedValue = document.createElement('span');
+            expectedValue.textContent = item.unpriced ? 'no price' : formatters_js.formatLargeNumber(Math.round(item.expectedValue));
+            if (item.unpriced) expectedValue.style.color = COLORS.textDim;
+            expectedValue.style.marginLeft = 'auto';
+            const word = document.createElement('span');
+            word.textContent = 'expected';
+            word.style.minWidth = '62px';
+            word.style.textAlign = 'right';
+            expected.appendChild(expectedCount);
+            expected.appendChild(expectedValue);
+            expected.appendChild(word);
+
+            columns.appendChild(actual);
+            columns.appendChild(expected);
+            row.appendChild(columns);
+            return row;
+        }
+
+        _removePopup() {
+            clearTimeout(this._dialogRetry);
+            this._dialogRetry = null;
+            clearTimeout(this._popupArm);
+            this._popupArm = null;
+            if (this._onOutsideClick) {
+                document.removeEventListener('mousedown', this._onOutsideClick, true);
+                this._onOutsideClick = null;
+            }
+            this._detachPopupDrag?.();
+            this._detachPopupDrag = null;
+            this._detachPopupResize?.();
+            this._detachPopupResize = null;
+            if (!this.popup) return;
+            panelZIndex_js.unregisterFloatingPanel(this.popup);
+            this.popup.remove();
+            this.popup = null;
+        }
+
+        _createPanel() {
+            this.panel = document.createElement('div');
+            this.panel.id = PANEL_ID;
+            Object.assign(this.panel.style, {
+                position: 'fixed',
+                top: '80px',
+                right: '80px',
+                zIndex: String(config.Z_FLOATING_PANEL),
+                // Clamped so the first open on a phone is not wider than the screen
+                width: `min(${DEFAULT_PANEL.width}px, 92vw)`,
+                height: `min(${DEFAULT_PANEL.height}px, 80vh)`,
+                background: COLORS.background,
+                border: `1px solid ${COLORS.border}`,
+                borderRadius: '8px',
+                boxShadow: '0 8px 32px rgba(0, 0, 0, 0.6)',
+                color: COLORS.text,
+                fontSize: '13px',
+                display: 'flex',
+                flexDirection: 'column',
+                overflow: 'hidden',
+            });
+
+            this.panel.appendChild(this._createHeader());
+
+            this.contentEl = document.createElement('div');
+            Object.assign(this.contentEl.style, { padding: '8px 10px', overflow: 'auto', flex: '1' });
+            this.panel.appendChild(this.contentEl);
+
+            this._detachDrag = floatingPanel_js.makeDraggable(this.panel, this.headerEl, (position) => {
+                panelGeometry_js.saveGeometry(PANEL_GEOMETRY_KEY, { left: parseFloat(position.left), top: parseFloat(position.top) });
+            });
+            this._detachResize = floatingPanel_js.makeResizable(this.panel, {
+                minWidth: MIN_PANEL.width,
+                minHeight: MIN_PANEL.height,
+                onResize: (size) => panelGeometry_js.saveGeometry(PANEL_GEOMETRY_KEY, size),
+            });
+
+            document.body.appendChild(this.panel);
+            panelZIndex_js.registerFloatingPanel(this.panel);
+            // The minimum is what the clamp is allowed to shrink a restored panel
+            // to, so a 420 that no phone can honour is a minimum that hands the
+            // panel back wider than the screen
+            panelGeometry_js.restoreGeometry(this.panel, PANEL_GEOMETRY_KEY, MIN_PANEL);
+            this._render();
+        }
+
+        _createHeader() {
+            const touch = isMobileMode();
+            const header = document.createElement('div');
+            Object.assign(header.style, {
+                display: 'flex',
+                alignItems: 'center',
+                // The controls wrap onto a second line rather than pushing each
+                // other off the side. On a 400px phone the row — title, two value
+                // chips, gear, sort picker — was wider than the panel, and the one
+                // thing it pushed off the end was the close button.
+                flexWrap: 'wrap',
+                gap: '6px',
+                cursor: 'move',
+                padding: '7px 8px 7px 11px',
+                // Room kept clear on the right for the close button, which sits
+                // outside the flow below
+                paddingRight: `${touch ? CLOSE_GUTTER.touch : CLOSE_GUTTER.pointer}px`,
+                position: 'relative',
+                background: COLORS.headerBg,
+                borderBottom: `1px solid ${COLORS.border}`,
+                userSelect: 'none',
+            });
+            this.headerEl = header;
+
+            const title = document.createElement('span');
+            title.textContent = 'Treasure';
+            title.style.fontWeight = 'bold';
+            title.style.color = COLORS.accent;
+            title.style.marginRight = '4px';
+
+            // Both toggles change what every figure in the panel means, so they sit
+            // in the header showing their current state rather than hidden behind
+            // the gear
+            this.capeBtn = this._toggleButton(
+                () => CAPE_VALUE_LABEL[this.settings.capeValue],
+                'Untradable rewards — capes, quivers, cloaks — have no market price. ' +
+                    'Value them at what their tokens would have bought, at a Mirror of Protection, or at nothing.',
+                () => {
+                    this.settings.capeValue = CAPE_VALUE_CYCLE[this.settings.capeValue] || 'token';
+                    this._saveSettings();
+                    this._refreshToggles();
+                    this._render();
+                }
+            );
+
+            this.cowbellBtn = this._toggleButton(
+                () => (this.settings.valueCowbells ? 'Cowbells counted' : 'Cowbells at zero'),
+                'Cowbells are not tradable; bags of ten are. Counted, one is worth a bag less tax, split ten ways.',
+                () => {
+                    this.settings.valueCowbells = !this.settings.valueCowbells;
+                    this._saveSettings();
+                    this._refreshToggles();
+                    this._render();
+                }
+            );
+
+            const gear = this._headerButton('⚙', () => {
+                this.configMode = !this.configMode;
+                gear.style.background = this.configMode ? 'rgba(255, 207, 92, 0.25)' : 'none';
+                this._render();
+            });
+            gear.title = 'Show or hide chests, and import or export your history';
+
+            const picker = this._sortPicker();
+            // Pushed to the right of whichever line it lands on, which is what the
+            // old flex-1 spacer did on the one line there used to be
+            picker.style.marginLeft = 'auto';
+
+            // Out of the flow entirely and pinned to the panel's top right corner:
+            // whatever the other controls do at whatever width, the way out of the
+            // panel is in the same place and on screen.
+            const closeBtn = this._headerButton('✕', () => this.hide());
+            closeBtn.title = 'Close';
+            Object.assign(closeBtn.style, {
+                position: 'absolute',
+                top: '3px',
+                right: '4px',
+            });
+            if (touch) {
+                Object.assign(closeBtn.style, {
+                    minWidth: `${TOUCH_TARGET}px`,
+                    minHeight: `${TOUCH_TARGET}px`,
+                    fontSize: '16px',
+                });
+            }
+
+            header.append(title, this.capeBtn, this.cowbellBtn, gear, picker, closeBtn);
+            this._refreshToggles();
+            return header;
+        }
+
+        /**
+         * How the chest list is ordered.
+         *
+         * In the header rather than above the list because the header is built once,
+         * and a `<select>` rebuilt by the panel's redraw would shut its own dropdown
+         * under the pointer.
+         *
+         * @returns {HTMLSelectElement}
+         */
+        _sortPicker() {
+            const picker = document.createElement('select');
+            picker.title =
+                'How to order the chests. Luck answers "which one let me down"; ' +
+                'the alphabet answers "where is the one I am looking for".';
+            Object.assign(picker.style, {
+                background: 'rgba(255, 255, 255, 0.06)',
+                border: `1px solid ${COLORS.border}`,
+                borderRadius: '3px',
+                color: COLORS.textDim,
+                cursor: 'pointer',
+                fontSize: '10px',
+                padding: '2px 4px',
+                maxWidth: '130px',
+            });
+
+            for (const mode of chestTally_js.SORT_MODES) {
+                const option = document.createElement('option');
+                option.value = mode.key;
+                option.textContent = mode.label;
+                picker.appendChild(option);
+            }
+            // Its value is set by `_refreshToggles`, along with the other header
+            // controls, because the settings arrive after the header is built
+            this.sortPicker = picker;
+
+            // The header is what you drag the panel by, so a pointer that came down
+            // on the picker must not also start a drag
+            picker.addEventListener('mousedown', (event) => event.stopPropagation());
+            picker.addEventListener('change', () => {
+                this.settings.sortMode = picker.value;
+                this._saveSettings();
+                this._render();
+            });
+            return picker;
+        }
+
+        /**
+         * A header control that shows what it is currently set to.
+         *
+         * The label is a function rather than a string because these are cycled
+         * rather than pressed, and a button that does not say where it landed leaves
+         * you clicking through to find out.
+         *
+         * @param {Function} label - Returns the current label
+         * @param {string} title - Hover explanation
+         * @param {Function} onClick - Handler
+         * @returns {HTMLButtonElement}
+         */
+        _toggleButton(label, title, onClick) {
+            const button = document.createElement('button');
+            button.title = title;
+            Object.assign(button.style, {
+                background: 'rgba(255, 255, 255, 0.06)',
+                border: `1px solid ${COLORS.border}`,
+                borderRadius: '3px',
+                color: COLORS.textDim,
+                cursor: 'pointer',
+                fontSize: '10px',
+                padding: '2px 7px',
+                whiteSpace: 'nowrap',
+            });
+            button._label = label;
+            button.addEventListener('click', (event) => {
+                event.stopPropagation();
+                onClick();
+            });
+            return button;
+        }
+
+        /** Put the current setting back on the face of each toggle */
+        _refreshToggles() {
+            for (const button of [this.capeBtn, this.cowbellBtn]) {
+                if (!button?._label) continue;
+                button.textContent = button._label();
+                // Dimmed when the setting means "count this as nothing", so the
+                // panel says at a glance that something is being left out
+                const counting = !/zero|No value/.test(button.textContent);
+                button.style.color = counting ? COLORS.accent : COLORS.textDim;
+                button.style.opacity = counting ? '1' : '0.7';
+            }
+
+            // The header is built once, and a panel reopened at start-up builds it
+            // before the settings have come back from storage — so it sat there
+            // claiming "Token value / Cowbells counted / Luck" whatever you had
+            // actually chosen, until it was closed and opened again.
+            if (this.sortPicker && this.sortPicker !== document.activeElement) {
+                const known = chestTally_js.SORT_MODES.some((mode) => mode.key === this.settings.sortMode);
+                this.sortPicker.value = known ? this.settings.sortMode : 'luck';
+            }
+        }
+
+        /**
+         * The gear panel: which chests to show, and moving history in or out.
+         * @returns {HTMLElement}
+         */
+        _configSection() {
+            const section = document.createElement('div');
+            Object.assign(section.style, {
+                padding: '7px 8px',
+                marginBottom: '6px',
+                background: 'rgba(255, 207, 92, 0.07)',
+                border: `1px solid ${COLORS.border}`,
+                borderRadius: '4px',
+            });
+
+            const hint = document.createElement('div');
+            hint.textContent = 'Click 👁 to show or hide a chest. Hidden chests are still tracked.';
+            hint.style.color = COLORS.accent;
+            hint.style.marginBottom = '6px';
+            hint.style.fontSize = '11px';
+            section.appendChild(hint);
+
+            const buttons = document.createElement('div');
+            Object.assign(buttons.style, { display: 'flex', gap: '6px', flexWrap: 'wrap' });
+
+            buttons.appendChild(this._actionButton('Export', () => this._exportHistory()));
+            buttons.appendChild(this._actionButton('Import', () => this._importHistory()));
+            buttons.appendChild(this._actionButton('Import from Edible Tools', () => this._importEdibleTools()));
+
+            // Always here, saying which way it is set. It used to appear only while
+            // the popup was pinned, so pressing it made the button itself disappear
+            // — which reads as the button breaking rather than as the setting
+            // changing.
+            const pin = this._actionButton(
+                this.settings.popupPinned ? 'Popup stays where you put it' : 'Popup follows the chest dialog',
+                () => {
+                    this.settings.popupPinned = !this.settings.popupPinned;
+                    this._saveSettings();
+                    // Unpinning forgets where it was put, but not how big it was —
+                    // dropping the size too would be an unasked-for second change
+                    if (!this.settings.popupPinned) panelGeometry_js.clearPosition(POPUP_GEOMETRY_KEY);
+                    this._render();
+                }
+            );
+            pin.title =
+                'The popup normally opens beside the game’s Opened Loot dialog. ' +
+                'Dragging it says "stay here" instead; this puts it back to following.';
+            buttons.appendChild(pin);
+
+            const wipe = this._actionButton('Delete all history', async () => {
+                const confirmed = await choiceDialog_js.askChoice({
+                    title: 'Delete all chest history',
+                    message: 'Every chest opening recorded so far. This cannot be undone.',
+                    choices: [
+                        { value: 'delete', label: 'Delete everything', tone: 'danger' },
+                        { value: null, label: 'Cancel' },
+                    ],
+                });
+                if (!confirmed) return;
+
+                this.tally = chestTally_js.resetTally(this.tally);
+                this._save();
+                this._render();
+            });
+            wipe.style.color = COLORS.bad;
+            wipe.style.marginLeft = 'auto';
+            buttons.appendChild(wipe);
+
+            section.appendChild(buttons);
+            return section;
+        }
+
+        /**
+         * @param {string} text - Label
+         * @param {Function} onClick - Handler
+         * @returns {HTMLButtonElement}
+         */
+        _actionButton(text, onClick) {
+            const button = document.createElement('button');
+            button.textContent = text;
+            Object.assign(button.style, {
+                background: 'rgba(255, 255, 255, 0.06)',
+                border: `1px solid ${COLORS.border}`,
+                borderRadius: '3px',
+                color: COLORS.text,
+                cursor: 'pointer',
+                fontSize: '11px',
+                padding: '3px 8px',
+            });
+            button.addEventListener('click', (event) => {
+                event.stopPropagation();
+                onClick();
+            });
+            return button;
+        }
+
+        /** Write the ledger to a file */
+        _exportHistory() {
+            try {
+                const file = toExport(this.tally, this.settings, settingsStorage.currentCharacterName || '');
+                const blob = new Blob([JSON.stringify(file, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = `toolasha-treasure-${new Date().toISOString().slice(0, 10)}.json`;
+                link.click();
+                URL.revokeObjectURL(url);
+            } catch (error) {
+                console.error('[TreasureTracker] Export failed:', error);
+                window.alert('Could not write the export file.');
+            }
+        }
+
+        /** Read a ledger from a file, ours or TReasure's */
+        _importHistory() {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = 'application/json,.json';
+
+            input.addEventListener('change', async () => {
+                const file = input.files?.[0];
+                if (!file) return;
+
+                try {
+                    const json = JSON.parse(await file.text());
+                    // Ours first, since a TReasure file is anything with chests and
+                    // ours would otherwise be read by the looser reader
+                    const read = fromToolashaExport(json) || fromTreasureExport(json);
+                    if (!read) {
+                        window.alert('That file is not a Toolasha or TReasure chest export.');
+                        return;
+                    }
+
+                    const chests = Object.keys(read.tally).length;
+                    const mode = await this._askImportMode(`Import ${chests} chest${chests === 1 ? '' : 's'}.`);
+                    if (!mode) return;
+
+                    this.tally = mergeTally(this.tally, read.tally, mode);
+                    if (Object.keys(read.settings || {}).length) {
+                        this.settings = { ...this.settings, ...read.settings };
+                        this._saveSettings();
+                        this._refreshToggles();
+                    }
+                    this._save();
+                    this._render();
+                } catch (error) {
+                    console.error('[TreasureTracker] Import failed:', error);
+                    window.alert('Could not read that file.');
+                }
+            });
+            input.click();
+        }
+
+        /**
+         * Ask what to do with an imported ledger.
+         *
+         * Three answers, and three buttons. Squeezing them into OK and Cancel means a
+         * sentence explaining which is which, which has to be read twice and can
+         * still be read wrong — and reading it wrong overwrites a history that took
+         * months to accumulate.
+         *
+         * @param {string} message - What is about to be imported
+         * @returns {Promise<string|null>} `'append'`, `'replace'`, or null to do nothing
+         */
+        async _askImportMode(message) {
+            return choiceDialog_js.askChoice({
+                title: 'Import chest history',
+                message,
+                choices: [
+                    { value: 'append', label: 'Add', hint: 'Add these counts to what you already have', tone: 'primary' },
+                    {
+                        value: 'replace',
+                        label: 'Replace',
+                        hint: 'Throw away your history and use the file',
+                        tone: 'danger',
+                    },
+                    { value: null, label: 'Cancel', hint: 'Leave your history alone' },
+                ],
+            });
+        }
+
+        /** Read Edible Tools' chest history out of its own storage */
+        async _importEdibleTools() {
+            try {
+                const raw = window.localStorage.getItem('Edible_Tools');
+                if (!raw) {
+                    window.alert('No Edible Tools data found in this browser.');
+                    return;
+                }
+
+                const found = findEdibleToolsData(
+                    JSON.parse(raw),
+                    dataManager.getCurrentCharacterId?.(),
+                    settingsStorage.currentCharacterName
+                );
+                if (!found) {
+                    window.alert('Edible Tools is installed, but has no chest history for this character.');
+                    return;
+                }
+
+                // It keys everything by display name, so the translation needs an
+                // index built from the game data as it stands today
+                const itemDetails = dataManager.getInitClientData()?.itemDetailMap || {};
+                const nameToHrid = {};
+                for (const [hrid, detail] of Object.entries(itemDetails)) {
+                    if (detail?.name) nameToHrid[detail.name] = hrid;
+                }
+
+                const { tally, unmatched } = fromEdibleTools(found, nameToHrid);
+                const chests = Object.keys(tally).length;
+                if (!chests) {
+                    window.alert('None of the Edible Tools entries matched an item this game knows about.');
+                    return;
+                }
+
+                const warning = unmatched.length
+                    ? `\n\n${unmatched.length} name${unmatched.length === 1 ? '' : 's'} could not be matched and will be left out:\n` +
+                      unmatched.slice(0, 8).join(', ')
+                    : '';
+                const mode = await this._askImportMode(
+                    `Import ${chests} chest${chests === 1 ? '' : 's'} from Edible Tools.${warning}`
+                );
+                if (!mode) return;
+
+                this.tally = mergeTally(this.tally, tally, mode);
+                this._save();
+                this._render();
+            } catch (error) {
+                console.error('[TreasureTracker] Edible Tools import failed:', error);
+                window.alert('Could not read the Edible Tools data.');
+            }
+        }
+
+        /**
+         * @param {string} text - Label
+         * @param {Function} onClick - Handler
+         * @returns {HTMLButtonElement}
+         */
+        _headerButton(text, onClick) {
+            const button = document.createElement('button');
+            button.textContent = text;
+            Object.assign(button.style, {
+                background: 'none',
+                border: 'none',
+                color: COLORS.text,
+                cursor: 'pointer',
+                fontSize: '14px',
+                padding: '2px 6px',
+                borderRadius: '3px',
+            });
+            button.addEventListener('mouseover', () => (button.style.background = 'rgba(255, 207, 92, 0.15)'));
+            button.addEventListener('mouseout', () => (button.style.background = 'none'));
+            button.addEventListener('click', (event) => {
+                event.stopPropagation();
+                onClick();
+            });
+            return button;
+        }
+
+        _removePanel() {
+            this._stopWaiting();
+            this._detachDrag?.();
+            this._detachDrag = null;
+            this._detachResize?.();
+            this._detachResize = null;
+            if (!this.panel) return;
+            panelZIndex_js.unregisterFloatingPanel(this.panel);
+            this.panel.remove();
+            this.panel = null;
+            this.contentEl = null;
+            this.headerEl = null;
+            this.sortPicker = null;
+        }
+
+        _render() {
+            if (!this.contentEl) return;
+            // The header carries settings too, and they arrive from storage after
+            // it is built
+            this._refreshToggles();
+            this.contentEl.replaceChildren();
+
+            const { rows, totals } = this._summary();
+            if (!rows.length) {
+                const empty = document.createElement('div');
+                empty.style.color = COLORS.textDim;
+                empty.style.padding = '8px 2px';
+                // Reached only before the game's data has loaded — the list is
+                // every chest in the game, not only the ones you have opened
+                empty.textContent = 'Waiting for the game to send its chest data…';
+                this.contentEl.appendChild(empty);
+
+                // And look again shortly. A panel reopened at start-up is drawn
+                // before the game has sent anything, and nothing else redraws it —
+                // so the message stayed up for the rest of the session and read as
+                // a panel that had stopped working.
+                this._waitForChestData();
+                return;
+            }
+            this._stopWaiting();
+
+            if (this.configMode) this.contentEl.appendChild(this._configSection());
+            this.contentEl.appendChild(this._totalsRow(totals));
+
+            const hidden = new Set(this.settings.hiddenChests || []);
+            for (const row of rows) {
+                // Hidden chests stay in the ledger and in the totals; they are only
+                // kept off a list that would otherwise be forty rows long
+                if (!this.configMode && hidden.has(row.chestHrid)) continue;
+                this.contentEl.appendChild(this._chestRow(row, hidden.has(row.chestHrid)));
+            }
+        }
+
+        /**
+         * Draw again once the game has sent its chest data.
+         *
+         * A timer rather than an event, because the drop tables arrive with the
+         * client data rather than with a message of their own, and the one event
+         * that would do — `character_initialized` — has usually already fired by the
+         * time a restored panel asks. It stops itself the moment there is something
+         * to draw, and when the panel closes.
+         */
+        _waitForChestData() {
+            if (this._dataWait) return;
+            this._dataWait = setInterval(() => {
+                if (!this.contentEl) return this._stopWaiting();
+                if (this._summary().rows.length) this._render();
+            }, 1000);
+        }
+
+        _stopWaiting() {
+            clearInterval(this._dataWait);
+            this._dataWait = null;
+        }
+
+        /**
+         * @param {Object} totals - From `tallyTotals`
+         * @returns {HTMLElement}
+         */
+        _totalsRow(totals) {
+            const wrapper = document.createElement('div');
+            Object.assign(wrapper.style, {
+                display: 'flex',
+                justifyContent: 'space-between',
+                padding: '6px 4px 8px',
+                borderBottom: `1px solid ${COLORS.border}`,
+                marginBottom: '6px',
+                fontWeight: 'bold',
+            });
+
+            const left = document.createElement('span');
+            left.textContent = totals.opened ? `${totals.opened} chests opened` : 'Nothing opened yet';
+
+            const right = document.createElement('span');
+            const verdict = formatReturn(totals.ratio);
+            right.style.color = verdict.color;
+            right.textContent = `${formatters_js.formatLargeNumber(Math.round(totals.actualValue))} of ${formatters_js.formatLargeNumber(
+            Math.round(totals.expectedValue)
+        )} — ${verdict.text}`;
+
+            wrapper.appendChild(left);
+            wrapper.appendChild(right);
+            return wrapper;
+        }
+
+        /**
+         * One chest: a header that reads like the game's own item lines, and the
+         * three-column breakdown underneath when expanded.
+         *
+         * @param {Object} row - From `summariseTally`
+         * @param {boolean} isHidden - Whether it is currently hidden from the list
+         * @returns {HTMLElement}
+         */
+        _chestRow(row, isHidden = false) {
+            const wrapper = document.createElement('div');
+            wrapper.style.marginBottom = '2px';
+
+            const untouched = !row.opened;
+
+            const header = document.createElement('div');
+            Object.assign(header.style, {
+                display: 'flex',
+                alignItems: 'center',
+                gap: '7px',
+                padding: '4px 5px',
+                cursor: 'pointer',
+                borderRadius: '3px',
+                background: 'rgba(255, 255, 255, 0.03)',
+            });
+            header.addEventListener('mouseover', () => (header.style.background = 'rgba(255, 255, 255, 0.08)'));
+            header.addEventListener('mouseout', () => (header.style.background = 'rgba(255, 255, 255, 0.03)'));
+
+            const isExpanded = this.expanded.has(row.chestHrid);
+            const caret = this._span(isExpanded ? '−' : '+');
+            caret.style.color = COLORS.accent;
+            caret.style.width = '9px';
+
+            const name = document.createElement('span');
+            name.style.fontWeight = 'bold';
+            name.append(itemName(row.chestHrid) + ' ');
+            // What one chest is worth on average, beside its name — the figure the
+            // rest of the row is measured against
+            const ev = this._span(`(${formatters_js.formatLargeNumber(Math.round(row.perChestValue))})`);
+            ev.style.color = COLORS.textDim;
+            ev.style.fontWeight = 'normal';
+            name.appendChild(ev);
+
+            const count = this._span(row.opened ? `×${row.opened}` : '');
+            count.style.color = COLORS.textDim;
+            count.style.marginLeft = 'auto';
+
+            const verdict = formatReturn(row.ratio);
+            const diff = this._span(verdict.text);
+            diff.style.color = verdict.color;
+            diff.style.minWidth = '58px';
+            diff.style.textAlign = 'right';
+
+            const reset = document.createElement('button');
+            reset.textContent = 'Reset';
+            Object.assign(reset.style, {
+                background: 'rgba(255, 255, 255, 0.06)',
+                border: `1px solid ${COLORS.border}`,
+                borderRadius: '3px',
+                color: COLORS.textDim,
+                cursor: 'pointer',
+                fontSize: '10px',
+                padding: '1px 6px',
+            });
+            reset.title = `Forget every ${itemName(row.chestHrid)} opening`;
+            reset.addEventListener('click', (event) => {
+                // Without this the click also toggles the row it sits in
+                event.stopPropagation();
+                if (!window.confirm(`Forget all ${row.opened} ${itemName(row.chestHrid)} openings?`)) return;
+                this.tally = chestTally_js.resetTally(this.tally, row.chestHrid);
+                this._save();
+                this._render();
+            });
+
+            // A chest you have never opened has no verdict to show and nothing to
+            // reset; it is here to be looked up, so it is dimmed rather than
+            // decorated with empty controls
+            if (untouched) {
+                header.style.opacity = '0.65';
+                header.append(caret, this._icon(row.chestHrid, 16), name, count);
+            } else {
+                header.append(caret, this._icon(row.chestHrid, 16), name, count, diff, reset);
+            }
+
+            if (this.configMode) {
+                header.style.opacity = isHidden ? '0.45' : '1';
+                header.appendChild(this._visibilityButton(row.chestHrid, isHidden));
+            }
+
+            header.addEventListener('click', () => {
+                // In config mode the row is a thing to show or hide, not to expand
+                if (this.configMode) return;
+                if (this.expanded.has(row.chestHrid)) this.expanded.delete(row.chestHrid);
+                else this.expanded.add(row.chestHrid);
+                this._render();
+            });
+
+            wrapper.appendChild(header);
+            if (isExpanded && !this.configMode) wrapper.appendChild(this._itemBreakdown(row));
+            return wrapper;
+        }
+
+        /**
+         * The eye that shows or hides one chest.
+         *
+         * Hiding only affects the list. The chest is still tracked and still counted
+         * in the totals — a hidden chest that stopped being recorded would make the
+         * ledger quietly wrong rather than merely shorter.
+         *
+         * @param {string} chestHrid - The chest
+         * @param {boolean} isHidden - Its current state
+         * @returns {HTMLButtonElement}
+         */
+        _visibilityButton(chestHrid, isHidden) {
+            const button = document.createElement('button');
+            button.textContent = isHidden ? '🚫' : '👁';
+            button.title = isHidden ? 'Show this chest in the list' : 'Hide this chest from the list';
+            Object.assign(button.style, {
+                background: isHidden ? 'rgba(120, 60, 60, 0.35)' : 'rgba(60, 140, 90, 0.35)',
+                border: `1px solid ${COLORS.border}`,
+                borderRadius: '3px',
+                cursor: 'pointer',
+                fontSize: '11px',
+                padding: '1px 6px',
+                marginLeft: '6px',
+            });
+            button.addEventListener('click', (event) => {
+                event.stopPropagation();
+                const hidden = new Set(this.settings.hiddenChests || []);
+                if (hidden.has(chestHrid)) hidden.delete(chestHrid);
+                else hidden.add(chestHrid);
+
+                this.settings = { ...this.settings, hiddenChests: [...hidden] };
+                this._saveSettings();
+                this._render();
+            });
+            return button;
+        }
+
+        /**
+         * The three views of one chest, side by side.
+         *
+         * Last opening, every opening, and what was owed — read across a row rather
+         * than down a column, because the question is always "how does this compare
+         * with that" and one column alone cannot answer it. The item order is shared
+         * by all three, so a row means the same item in each.
+         *
+         * @param {Object} row - From `summariseTally`, carrying the chest hrid
+         * @returns {HTMLElement}
+         */
+        _itemBreakdown(row) {
+            const dropTable = dataManager.getInitClientData()?.openableLootDropMap?.[row.chestHrid];
+            const { last, total, items } = chestTally_js.chestBreakdown(this.tally[row.chestHrid], dropTable, this._priceOf());
+
+            const wrap = document.createElement('div');
+            Object.assign(wrap.style, {
+                padding: '5px 5px 8px',
+                background: 'rgba(0, 0, 0, 0.25)',
+                borderRadius: '0 0 3px 3px',
+                // Every figure is a number in a column; proportional digits make
+                // columns of them jitter as the values change
+                fontVariantNumeric: 'tabular-nums',
+            });
+
+            wrap.appendChild(
+                this._headerBand([
+                    `LAST (×${last.opened || 0})`,
+                    `TOTAL (×${total.opened})`,
+                    `EXPECTED (×1 / ×${total.opened})`,
+                ])
+            );
+            wrap.appendChild(this._summaryBand(last, total));
+
+            for (const item of items) wrap.appendChild(this._breakdownRow(item));
+            return wrap;
+        }
+
+        /**
+         * @param {string[]} titles - Three column titles
+         * @returns {HTMLElement}
+         */
+        _headerBand(titles) {
+            const band = this._threeColumns();
+            Object.assign(band.style, { fontSize: '10px', fontWeight: 'bold', color: '#7fb3ff', padding: '1px 0' });
+            for (const title of titles) {
+                const cell = document.createElement('div');
+                cell.textContent = title;
+                cell.style.textAlign = 'center';
+                band.appendChild(cell);
+            }
+            return band;
+        }
+
+        /**
+         * The verdict under each column title.
+         * @param {Object} last - Performance of the last opening
+         * @param {Object} total - Performance of every opening
+         * @returns {HTMLElement}
+         */
+        _summaryBand(last, total) {
+            const band = this._threeColumns();
+            Object.assign(band.style, {
+                fontSize: '11px',
+                borderBottom: `1px solid ${COLORS.border}`,
+                paddingBottom: '4px',
+                marginBottom: '3px',
+            });
+
+            const cells = [
+                { value: last.actualValue, ratio: last.ratio },
+                { value: total.actualValue, ratio: total.ratio },
+                { value: total.expectedValue, ratio: null },
+            ];
+            for (const { value, ratio } of cells) {
+                const verdict = formatReturn(ratio);
+                const cell = document.createElement('div');
+                cell.style.textAlign = 'center';
+                cell.style.color = ratio === null ? COLORS.textDim : verdict.color;
+                cell.textContent =
+                    ratio === null
+                        ? formatters_js.formatLargeNumber(Math.round(value))
+                        : `${formatters_js.formatLargeNumber(Math.round(value))} (${verdict.text})`;
+                band.appendChild(cell);
+            }
+            return band;
+        }
+
+        /**
+         * The outer three-column frame every band shares, so the titles, the summary
+         * and every item line stack in the same places.
+         * @returns {HTMLElement}
+         */
+        _threeColumns() {
+            const el = document.createElement('div');
+            Object.assign(el.style, {
+                display: 'grid',
+                gridTemplateColumns: '1fr 1fr 1.35fr',
+                gap: '10px',
+                alignItems: 'center',
+            });
+            return el;
+        }
+
+        /**
+         * One item across all three columns.
+         * @param {Object} item - From `chestBreakdown`
+         * @returns {HTMLElement}
+         */
+        _breakdownRow(item) {
+            const rowEl = this._threeColumns();
+            Object.assign(rowEl.style, { fontSize: '11px', padding: '1px 0' });
+
+            rowEl.appendChild(this._actualCell(item, item.lastCount, item.lastValue, item.lastRatio));
+            rowEl.appendChild(this._actualCell(item, item.totalCount, item.totalValue, item.totalRatio));
+            rowEl.appendChild(this._expectedCell(item));
+            return rowEl;
+        }
+
+        /**
+         * What dropped, what it was worth, and how that compares.
+         *
+         * A fixed sub-grid rather than flex, so counts, values and percentages line
+         * up down the column instead of drifting with the width of the number above.
+         *
+         * @param {Object} item - The item, for its icon
+         * @param {number} count - What dropped
+         * @param {number} value - What it was worth
+         * @param {number|null} ratio - Against expectation
+         * @returns {HTMLElement}
+         */
+        _actualCell(item, count, value, ratio) {
+            const cell = document.createElement('div');
+            Object.assign(cell.style, {
+                display: 'grid',
+                gridTemplateColumns: '15px 1fr 1fr 54px',
+                gap: '4px',
+                alignItems: 'center',
+            });
+
+            const verdict = formatReturn(ratio);
+            const countEl = this._span(formatters_js.formatLargeNumber(count));
+            const valueEl = this._span(value > 0 ? formatters_js.formatLargeNumber(Math.round(value)) : '');
+            valueEl.style.color = COLORS.good;
+            valueEl.style.textAlign = 'right';
+            const diffEl = this._span(ratio === null ? '' : verdict.text);
+            diffEl.style.color = verdict.color;
+            diffEl.style.textAlign = 'right';
+
+            cell.append(this._icon(item.itemHrid, 13), countEl, valueEl, diffEl);
+            return cell;
+        }
+
+        /**
+         * What one chest owed, and what the whole run owed.
+         * @param {Object} item - From `chestBreakdown`
+         * @returns {HTMLElement}
+         */
+        _expectedCell(item) {
+            const cell = document.createElement('div');
+            Object.assign(cell.style, {
+                display: 'grid',
+                gridTemplateColumns: '1fr 1fr 8px 1fr 1fr',
+                gap: '4px',
+                alignItems: 'center',
+                color: COLORS.textDim,
+            });
+
+            const perChest = this._span(smallCount(item.expectedPerChest));
+            const perChestValue = this._span(formatters_js.formatLargeNumber(Math.round(item.expectedPerChestValue)));
+            perChestValue.style.textAlign = 'right';
+            const divider = this._span('|');
+            divider.style.textAlign = 'center';
+            const overall = this._span(smallCount(item.expectedTotal));
+            overall.style.textAlign = 'right';
+            const overallValue = this._span(formatters_js.formatLargeNumber(Math.round(item.expectedTotalValue)));
+            overallValue.style.textAlign = 'right';
+
+            cell.append(perChest, perChestValue, divider, overall, overallValue);
+            return cell;
+        }
+
+        /**
+         * @param {string} text - Content
+         * @returns {HTMLElement}
+         */
+        _span(text) {
+            const span = document.createElement('span');
+            span.textContent = text;
+            span.style.whiteSpace = 'nowrap';
+            span.style.overflow = 'hidden';
+            span.style.textOverflow = 'ellipsis';
+            return span;
+        }
+    }
+
+    const treasureTracker = new TreasureTracker();
+
+    // Reopen if the page was left with the panel up. At module scope rather than in
+    // `initialize`, because the feature's initialize is gated on a setting and the
+    // panel outliving a refresh is not the same question as the tracker running.
+    treasureTracker.restore();
+
+    // Registered at module scope so the overlay has the row whether or not this
+    // feature has started yet. It draws nothing until a chest has been opened.
+    overlayRows_js.registerRow({
+        key: 'treasure',
+        empty: 'No chests opened',
+        name: 'Treasure',
+        defaultSize: { width: 200, height: 30 },
+        render: (container) => {
+            if (!treasureTracker.isInitialized) return overlayFormat_js.blank(container);
+
+            const { totals } = treasureTracker._summary();
+            if (!totals.opened) return overlayFormat_js.blank(container);
+
+            const verdict = formatReturn(totals.ratio);
+            overlayFormat_js.row(container, [
+                // The chest itself rather than the overlay's generic chest glyph:
+                // this tile is about chests specifically, and the item art says so
+                // at a glance where a symbol has to be learned
+                { icon: 'large_treasure_chest', size: 16 },
+                { text: `${formatters_js.formatLargeNumber(totals.opened)} chests`, color: overlayFormat_js.ROW_COLORS.dim },
+                { text: verdict.text, color: verdict.color, bold: true, push: true },
+            ]);
+            container.title = `${formatters_js.formatLargeNumber(Math.round(totals.difference))} against expectation over every chest opened.`;
+        },
+        onOpen: () => treasureTracker.toggle(),
+    });
+
+    /**
      * Tooltip Observer
      * Centralized observer for tooltip/popper appearances
      * Any feature can subscribe to be notified when tooltips appear
@@ -28457,6 +36995,10 @@ self.onmessage = function (e) {
     flex-shrink: 0;
 }
 .toolasha-ct-section-header:hover .toolasha-ct-section-actions { display: flex; }
+/* No hover on a touchscreen — actions hidden behind it would not exist there */
+@media (pointer: coarse) {
+    .toolasha-ct-section-actions { display: flex; }
+}
 .toolasha-ct-node-btn {
     background: none;
     border: none;
@@ -28512,7 +37054,7 @@ self.onmessage = function (e) {
     position: fixed;
     inset: 0;
     background: rgba(0,0,0,0.6);
-    z-index: 9999;
+    z-index: ${panelZIndex_js.PANEL_Z_CAP + 1};
     display: flex;
     align-items: center;
     justify-content: center;
@@ -28522,7 +37064,7 @@ self.onmessage = function (e) {
     border: 1px solid #444;
     border-radius: 8px;
     padding: 16px;
-    width: 380px;
+    width: min(380px, 92vw);
     max-height: 80vh;
     display: flex;
     flex-direction: column;
@@ -31341,7 +39883,7 @@ self.onmessage = function (e) {
             top: calc(100% + 4px);
             left: 0;
             width: 100%;
-            z-index: 9999;
+            z-index: ${config.Z_POPUP};
             flex-direction: column;
             background: var(--color-surface, #1e1e2e);
             border: 1px solid rgba(255,255,255,0.15);
@@ -31511,6 +40053,4027 @@ self.onmessage = function (e) {
     };
 
     /**
+     * Room skills
+     *
+     * Which skill's artwork stands for a house room.
+     *
+     * A room is recognised by its skill far faster than by its name — a sword says
+     * Dojo before "Dojo" has been read, a milk bottle says Dairy Barn — and the game
+     * has artwork for every skill but none for a room. JHouse makes the same
+     * association; this is its map.
+     *
+     * Hardcoded because the room detail the game sends does not carry the link. A
+     * room the game adds and this does not know falls back to its own name, which
+     * finds no sprite and draws a spacer: a missing icon rather than a wrong one.
+     *
+     * Pure data and one lookup, on purpose. Both panels that draw rooms — the Houses
+     * panel and the equipment savings row — used to carry their own copy of this,
+     * because the module the first one lives in does work at import time and the
+     * second one could not afford to pull that in for a map of seventeen strings.
+     * Nothing here runs at import, so there is nothing left to avoid.
+     */
+
+    /** Room name (the tail of its hrid) → the skill whose sprite stands for it */
+    const ROOM_SKILLS = {
+        dairy_barn: 'milking',
+        garden: 'foraging',
+        log_shed: 'woodcutting',
+        forge: 'cheesesmithing',
+        workshop: 'crafting',
+        sewing_parlor: 'tailoring',
+        kitchen: 'cooking',
+        brewery: 'brewing',
+        laboratory: 'alchemy',
+        observatory: 'enhancing',
+        dining_room: 'stamina',
+        library: 'intelligence',
+        dojo: 'attack',
+        armory: 'defense',
+        gym: 'melee',
+        archery_range: 'ranged',
+        mystical_study: 'magic',
+    };
+
+    /**
+     * The skill sprite that stands for a room.
+     * @param {string} houseRoomHrid - The room, e.g. `/house_rooms/dojo`
+     * @returns {string} The skill sprite's id, or the room's own name when it is not
+     *   one this knows
+     */
+    function roomSkill(houseRoomHrid) {
+        const key = String(houseRoomHrid || '')
+            .split('/')
+            .pop();
+        return ROOM_SKILLS[key] || key;
+    }
+
+    /**
+     * Equipment savings
+     *
+     * How far you are from affording the piece you want, and when you will be.
+     *
+     * ## The cost is not the price
+     *
+     * An upgrade costs the asking price of the thing you want **minus what the piece
+     * it replaces is worth**, because you sell the old one. Reading the ask alone
+     * overstates every upgrade by the value of the gear you are already wearing,
+     * which for a late-game slot is most of the price.
+     *
+     * That is only true if you actually sell it. Somebody keeping the old piece for
+     * a second loadout is paying the full ask, so the trade-in is a mode rather than
+     * an assumption — `noSell` turns it off.
+     *
+     * ## Unpriced is not free
+     *
+     * A target nobody is selling has no cost, not a cost of nothing. Treating it as
+     * zero would report it as already affordable, which is the most misleading thing
+     * this could possibly say. Those come back null and are counted separately in a
+     * total, so a total is never quietly a lower bound.
+     *
+     * ## Levels are bought too
+     *
+     * An ability level is a purchase like any other: so many books at what the
+     * market wants for them. It is a savings goal in every way that matters here,
+     * so it lives on the same list — and, because a sim run refines its own estimate
+     * every time it is asked, adding a goal for an ability that already has one
+     * replaces it rather than stacking a second guess beside the first.
+     *
+     * The one thing a level has that a sword does not is a way of being *finished*
+     * without being bought: you can read the books over a week of drops and arrive
+     * anyway. So a goal is checked against the level the character is actually at,
+     * and says so, rather than sitting on the list forever.
+     *
+     * The goals live in the same stored record as the gear, under `abilities`, which
+     * is why the loading and saving of that record is here rather than in the panel:
+     * two writers of one key lose each other's edits. A record written before this
+     * existed simply has no `abilities` key and loads exactly as it did.
+     *
+     * ## So are rooms
+     *
+     * A house room level is the same shape of purchase again — a pile of materials
+     * at what the market wants for them, plus the coins the level asks for outright
+     * — and it is finishable without being bought in exactly the same way, by
+     * building it. So rooms sit beside abilities under `houses`, keyed by room and
+     * capped at the level the game stops at, and a record written before they
+     * existed has no `houses` key either.
+     *
+     * The model is EWatch's, from MWI Combat Suite by Frotty (MIT) — see
+     * `third-party/mwi-combat-suite/` and `docs/THIRD-PARTY-LICENSES.md`. The code is
+     * Toolasha's own.
+     */
+
+
+    /** The one record the whole feature is stored in, per character */
+    const STORAGE_KEY = 'equipmentSavings';
+
+    /**
+     * What one upgrade actually costs.
+     *
+     * @param {Object} input - What it needs
+     * @param {number|null} input.targetAsk - The asking price of the piece you want
+     * @param {number} [input.equippedBid] - What the piece it replaces would fetch
+     * @param {boolean} [input.noSell] - Keeping the old piece, so no trade-in
+     * @returns {number|null} Coins needed, or null when the target has no price
+     */
+    function upgradeCost({ targetAsk, equippedBid = 0, noSell = false }) {
+        if (!(targetAsk > 0)) return null;
+        if (noSell) return targetAsk;
+
+        // Never negative: an upgrade cheaper than what you are wearing costs
+        // nothing, and a negative cost would make a progress bar meaningless
+        return Math.max(0, targetAsk - (Number(equippedBid) || 0));
+    }
+
+    /**
+     * What the materials for one craft come to.
+     *
+     * An upgrade recipe has two halves the game keeps apart: the **inputs**, which
+     * are consumed, and the **upgrade item**, which is the piece being upgraded. For
+     * somebody who already owns the base piece — the usual reason to craft rather
+     * than buy — only the inputs are a purchase, and the finished item's ask is
+     * irrelevant. A Furious Spear you already hold becomes a Refined one for the
+     * price of the shards.
+     *
+     * Any unpriced input makes the whole thing unpriced. A recipe totalled from the
+     * ingredients it could price is a lower bound wearing a total's clothes, and
+     * here it would report a cheaper craft than is possible.
+     *
+     * @param {Object} input - What it needs
+     * @param {Array<{itemHrid: string, count: number}>} input.inputItems - The recipe
+     * @param {Function} input.priceOf - `(itemHrid) => number|null`
+     * @param {number} [input.outputCount] - How many one action makes
+     * @param {boolean} [input.haveBase] - Whether the piece being upgraded is already owned
+     * @param {number} [input.upgradeAsk] - What the piece being upgraded costs, if not
+     * @returns {number|null} Coins for one finished item, or null when it cannot be priced
+     */
+    function craftCost({ inputItems, priceOf, outputCount = 1, haveBase = true, upgradeAsk = 0 }) {
+        if (!inputItems?.length) return null;
+
+        let total = 0;
+        for (const input of inputItems) {
+            const price = priceOf(input.itemHrid);
+            if (!(price > 0)) return null;
+            total += price * (input.count || 0);
+        }
+
+        // The base piece is only a cost if it has to be bought
+        if (!haveBase) {
+            if (!(upgradeAsk > 0)) return null;
+            total += upgradeAsk;
+        }
+
+        const made = outputCount > 0 ? outputCount : 1;
+        return total / made;
+    }
+
+    /**
+     * How far along the saving is.
+     *
+     * @param {number|null} cost - From `upgradeCost`
+     * @param {number} coins - What you have
+     * @returns {{fraction: number|null, affordable: boolean, needed: number|null}}
+     *   `fraction` is capped at 1 — a bar cannot say more than full — while `needed`
+     *   is what is actually left, which is the figure worth reading
+     */
+    function savingsProgress(cost, coins) {
+        if (cost === null) return { fraction: null, affordable: false, needed: null };
+
+        const held = Number(coins) || 0;
+        // Nothing to save for is already there, rather than a division by zero
+        if (cost <= 0) return { fraction: 1, affordable: true, needed: 0 };
+
+        return {
+            fraction: Math.min(1, held / cost),
+            affordable: held >= cost,
+            needed: Math.max(0, cost - held),
+        };
+    }
+
+    /**
+     * How long the rest of it takes at what you are earning.
+     *
+     * @param {number|null} needed - Coins still to find
+     * @param {number} perDay - Income per day
+     * @returns {number|null} Seconds, or null when it cannot be said
+     */
+    function timeToAffordSeconds(needed, perDay) {
+        if (needed === null || !(needed > 0)) return 0;
+        // Not infinity: no income is not "never", it is nothing to divide by. A
+        // figure would be a claim about the future that this cannot make.
+        if (!(perDay > 0)) return null;
+
+        return (needed / perDay) * 86400;
+    }
+
+    /**
+     * The whole shopping list at once.
+     *
+     * @param {Array<{cost: number|null}>} watches - Priced watches
+     * @returns {{cost: number, unpriced: number}} `unpriced` is how many targets it
+     *   could not include, which is the difference between a total and a lower bound
+     *   presented as one
+     */
+    function totalSavings(watches) {
+        let cost = 0;
+        let unpriced = 0;
+
+        for (const watch of watches || []) {
+            if (!watch) continue;
+            if (watch.cost === null) unpriced++;
+            else cost += watch.cost;
+        }
+        return { cost, unpriced };
+    }
+
+    /**
+     * The order a savings list reads best in.
+     *
+     * Nearest to done first, because that is the next thing that happens and the
+     * only entry you might act on today. Insertion order says nothing at all, and
+     * cost order buries the piece you are two days from behind one you are two
+     * months from.
+     *
+     * Affordable ones lead — they are done, and a list that hides its finished
+     * entries at the bottom makes you hunt for good news. Unpriced ones go last:
+     * they have no progress to sort by, and putting them anywhere else implies one.
+     *
+     * @param {Array<Object>} targets - Costed targets
+     * @returns {Array<Object>} A new array
+     */
+    function orderTargets(targets) {
+        const rank = (target) => (target.cost === null ? 2 : target.affordable ? 0 : 1);
+
+        return [...(targets || [])].filter(Boolean).sort((a, b) => {
+            if (rank(a) !== rank(b)) return rank(a) - rank(b);
+            if (rank(a) === 2) return (a.name || '').localeCompare(b.name || '');
+            // Within a band, the one furthest along leads
+            return (b.fraction || 0) - (a.fraction || 0);
+        });
+    }
+
+    /**
+     * The item that levels an ability, which is the thing the market has a price for.
+     *
+     * @param {string} abilityHrid - e.g. `/abilities/fierce_aura`
+     * @returns {string} e.g. `/items/fierce_aura`
+     */
+    function abilityBookHrid(abilityHrid) {
+        return String(abilityHrid || '').replace('/abilities/', '/items/');
+    }
+
+    /** The level the game stops a house room at, and so the highest a goal can ask for */
+    const MAX_HOUSE_ROOM_LEVEL = 8;
+
+    /** A name out of an hrid, for when nothing better was supplied */
+    const prettyName = (hrid) =>
+        String(hrid || '')
+            .split('/')
+            .pop()
+            .replace(/_/g, ' ')
+            .replace(/\b\w/g, (letter) => letter.toUpperCase());
+
+    /**
+     * How an ability goal reads: the ability and the level, e.g. `Fierce Aura Lv46`.
+     *
+     * Exported so a caller with a better name for the ability than its hrid still
+     * produces the same shape of label, rather than each one inventing its own.
+     *
+     * @param {string} abilityHrid - The ability
+     * @param {number} targetLevel - The level being saved for
+     * @param {string} [name] - A nicer name for the ability, if one is known
+     * @returns {string}
+     */
+    function abilityGoalLabel(abilityHrid, targetLevel, name = '') {
+        return goalLabel(abilityHrid, targetLevel, name);
+    }
+
+    /**
+     * How a house room goal reads: the room and the level, e.g. `Mystical Study Lv5`.
+     *
+     * @param {string} houseRoomHrid - The room
+     * @param {number} targetLevel - The level being saved for
+     * @param {string} [name] - A nicer name for the room, if one is known
+     * @returns {string}
+     */
+    function houseGoalLabel(houseRoomHrid, targetLevel, name = '') {
+        return goalLabel(houseRoomHrid, targetLevel, name);
+    }
+
+    /**
+     * The shape both labels take: a name and the level it is going to.
+     *
+     * @param {string} hrid - The ability or the room
+     * @param {number} targetLevel - The level being saved for
+     * @param {string} name - A nicer name, if one is known
+     * @returns {string}
+     */
+    function goalLabel(hrid, targetLevel, name) {
+        return `${name || prettyName(hrid)} Lv${Math.max(0, Math.floor(Number(targetLevel) || 0))}`;
+    }
+
+    /**
+     * Whether a goal has already happened.
+     *
+     * A goal the character has read their way past is done, not pending: leaving it
+     * on the list at full price is the same lie as pricing an unlisted item at zero,
+     * pointed the other way.
+     *
+     * @param {{targetLevel: number}} goal - The goal
+     * @param {number} currentLevel - Where the ability is now
+     * @returns {boolean}
+     */
+    function abilityGoalReached(goal, currentLevel) {
+        return goalReached(goal, currentLevel);
+    }
+
+    /**
+     * Whether a room has already been built to the level being saved for.
+     *
+     * The same test as an ability's, for the same reason: a room you built out of
+     * materials you already had was never bought, and a goal that cannot notice
+     * that sits on the list at full price forever.
+     *
+     * @param {{targetLevel: number}} goal - The goal
+     * @param {number} currentLevel - Where the room is now
+     * @returns {boolean}
+     */
+    function houseGoalReached(goal, currentLevel) {
+        return goalReached(goal, currentLevel);
+    }
+
+    /**
+     * @param {{targetLevel: number}} goal - The goal
+     * @param {number} currentLevel - Where it is now
+     * @returns {boolean}
+     */
+    function goalReached(goal, currentLevel) {
+        const target = Math.max(0, Math.floor(Number(goal?.targetLevel) || 0));
+        if (!(target > 0)) return false;
+
+        return (Number(currentLevel) || 0) >= target;
+    }
+
+    /**
+     * The ability goals, keyed by ability hrid.
+     *
+     * One goal per ability rather than a list: "get Fierce Aura to 46" and "get
+     * Fierce Aura to 51" are the same intention measured twice, and a list would
+     * show both and total both.
+     */
+    let goals = {};
+
+    /**
+     * The house room goals, keyed by room hrid, for the same reason: one goal per
+     * room, because "get the Dojo to 6" and "get the Dojo to 8" are one intention.
+     */
+    let rooms = {};
+
+    /** The rest of the stored record — the gear side, which this module only carries */
+    let record = {};
+
+    /** Whether the stored record has been read since the last character change */
+    let loaded = false;
+
+    /**
+     * One stored goal, with everything it must have and nothing it must not.
+     *
+     * @param {string} hrid - The ability or the room the goal is about
+     * @param {Object} goal - What was handed over or read back
+     * @param {number} [cap] - The highest level the game allows, when there is one
+     * @returns {Object}
+     */
+    function normalizeGoal(hrid, goal, cap = 0) {
+        let targetLevel = Math.max(0, Math.floor(Number(goal?.targetLevel) || 0));
+        // A goal above what the game allows is not a goal, it is a typo — and left
+        // alone it would be costed for levels that cannot be built and never reached
+        if (cap > 0) targetLevel = Math.min(cap, targetLevel);
+
+        // Explicitly, because `Number(null)` is 0 and an unpriced goal recorded as
+        // costing nothing reports itself as already affordable
+        const raw = goal?.cost === null || goal?.cost === undefined || goal?.cost === '' ? null : Number(goal.cost);
+        const cost = Number.isFinite(raw) && raw >= 0 ? raw : null;
+
+        return {
+            targetLevel,
+            cost,
+            label: String(goal?.label || goalLabel(hrid, targetLevel, '')),
+            updatedAt: Number(goal?.updatedAt) || 0,
+        };
+    }
+
+    /**
+     * Write the record back: the gear side as the panel last left it, the goals as
+     * they are now. One writer, so neither side can drop the other's edits.
+     *
+     * @returns {Promise<boolean>} Whether it was written
+     */
+    async function write() {
+        try {
+            return await writeScoped(STORAGE_KEY, { ...record, abilities: { ...goals }, houses: { ...rooms } }, 'settings');
+        } catch (error) {
+            console.error('[EquipmentSavings] Saving the savings record failed:', error);
+            return false;
+        }
+    }
+
+    /**
+     * Read the whole savings record, keeping the level goals and handing back the
+     * rest.
+     *
+     * The goals are absorbed rather than returned because this module owns them from
+     * here on; the caller gets the gear side it owns, and a record written before
+     * ability or house goals existed simply has no `abilities` or `houses` key and
+     * comes back untouched.
+     *
+     * @returns {Promise<Object|null>} The record without the goals, or null when
+     *   nothing has been stored for this character
+     */
+    async function loadSavingsRecord() {
+        try {
+            await storage.ready;
+            const saved = await readScoped(STORAGE_KEY, 'settings', null, { migrate: 'adopt' });
+
+            const rest = { ...(saved || {}) };
+            goals = {};
+            for (const [abilityHrid, goal] of Object.entries(rest.abilities || {})) {
+                if (!abilityHrid || !goal || typeof goal !== 'object') continue;
+                goals[abilityHrid] = normalizeGoal(abilityHrid, goal);
+            }
+            delete rest.abilities;
+
+            rooms = {};
+            for (const [houseRoomHrid, goal] of Object.entries(rest.houses || {})) {
+                if (!houseRoomHrid || !goal || typeof goal !== 'object') continue;
+                rooms[houseRoomHrid] = normalizeGoal(houseRoomHrid, goal, MAX_HOUSE_ROOM_LEVEL);
+            }
+            delete rest.houses;
+
+            record = rest;
+            loaded = true;
+            return saved ? rest : null;
+        } catch (error) {
+            console.error('[EquipmentSavings] Reading the savings record failed:', error);
+            loaded = true;
+            return null;
+        }
+    }
+
+    /**
+     * Store the gear side of the record.
+     *
+     * @param {Object} gear - The panel's own state
+     * @returns {Promise<boolean>} Whether it was written
+     */
+    async function saveSavingsRecord(gear) {
+        record = { ...(gear || {}) };
+        // Never from the caller: the goals below are the only copy that is current
+        delete record.abilities;
+        delete record.houses;
+        return write();
+    }
+
+    /** Read the record once, for a caller that arrived before the panel did */
+    async function ensureLoaded() {
+        if (!loaded) await loadSavingsRecord();
+    }
+
+    /**
+     * Save towards a level of an ability.
+     *
+     * Idempotent per ability: a second call for an ability already on the list
+     * replaces its target and its cost, because the caller is usually a sim run that
+     * has just costed the same intention more accurately than the last one did.
+     *
+     * @param {Object} goal - The goal
+     * @param {string} goal.abilityHrid - e.g. `/abilities/fierce_aura`
+     * @param {number} goal.targetLevel - The level being saved for
+     * @param {number|null} goal.cost - Coins for the books, or null when unpriced
+     * @param {string} [goal.label] - How it should read, e.g. `Fierce Aura Lv46`
+     * @returns {Promise<void>}
+     */
+    async function addAbilityGoal({ abilityHrid, targetLevel, cost, label } = {}) {
+        if (!abilityHrid) return;
+        await ensureLoaded();
+
+        goals[abilityHrid] = normalizeGoal(abilityHrid, { targetLevel, cost, label, updatedAt: Date.now() });
+        await write();
+    }
+
+    /**
+     * Stop saving for a level.
+     * @param {string} abilityHrid - The ability
+     * @returns {Promise<void>}
+     */
+    async function removeAbilityGoal(abilityHrid) {
+        await ensureLoaded();
+        if (!goals[abilityHrid]) return;
+
+        delete goals[abilityHrid];
+        await write();
+    }
+
+    /**
+     * Every ability goal, as a list.
+     * @returns {Array<{abilityHrid: string, targetLevel: number, cost: number|null, label: string}>}
+     */
+    function abilityGoals() {
+        return Object.entries(goals).map(([abilityHrid, goal]) => ({ abilityHrid, ...goal }));
+    }
+
+    /**
+     * Save towards a level of a house room.
+     *
+     * Idempotent per room, as an ability goal is per ability: a second call for a
+     * room already on the list replaces its target and its cost rather than putting
+     * a second guess beside the first, because the caller is usually something that
+     * has just costed the same intention more accurately.
+     *
+     * @param {Object} goal - The goal
+     * @param {string} goal.houseRoomHrid - e.g. `/house_rooms/mystical_study`
+     * @param {number} goal.targetLevel - The level being saved for, capped at the game's own
+     * @param {number|null} goal.cost - Coins for the build, or null when unpriced
+     * @param {string} [goal.label] - How it should read, e.g. `Mystical Study Lv5`
+     * @returns {Promise<void>}
+     */
+    async function addHouseGoal({ houseRoomHrid, targetLevel, cost, label } = {}) {
+        if (!houseRoomHrid) return;
+        await ensureLoaded();
+
+        rooms[houseRoomHrid] = normalizeGoal(
+            houseRoomHrid,
+            { targetLevel, cost, label, updatedAt: Date.now() },
+            MAX_HOUSE_ROOM_LEVEL
+        );
+        await write();
+    }
+
+    /**
+     * Stop saving for a room level.
+     * @param {string} houseRoomHrid - The room
+     * @returns {Promise<void>}
+     */
+    async function removeHouseGoal(houseRoomHrid) {
+        await ensureLoaded();
+        if (!rooms[houseRoomHrid]) return;
+
+        delete rooms[houseRoomHrid];
+        await write();
+    }
+
+    /**
+     * Every house room goal, as a list.
+     * @returns {Array<{houseRoomHrid: string, targetLevel: number, cost: number|null, label: string}>}
+     */
+    function houseGoals() {
+        return Object.entries(rooms).map(([houseRoomHrid, goal]) => ({ houseRoomHrid, ...goal }));
+    }
+
+    /**
+     * Equipment Savings
+     *
+     * The gear you are saving for, and when you will have it.
+     *
+     * Wanting a piece of equipment is a savings problem, and the game gives you no
+     * help with it at all: the price is on one screen, your coins on another, and
+     * what you earn per day nowhere. So the question people actually ask — "can I
+     * afford the sword yet, and if not, when" — is answered by opening the market,
+     * squinting, and subtracting in your head, several times a day, for weeks.
+     *
+     * ## What an upgrade costs is not what it is priced at
+     *
+     * You sell the piece it replaces. The cost is the target's ask **less** the bid
+     * on what you are wearing, which for a late-game slot is most of the price —
+     * reading the ask alone can double the figure. Somebody keeping the old piece
+     * for a second loadout pays the full ask, so the trade-in is the **Keep old
+     * gear** switch rather than an assumption baked into the number.
+     *
+     * ## The ladder
+     *
+     * A target nobody sells is a run at the anvil, and the cheapest run starts from
+     * the best copy you own — which is the one you are wearing. That number is
+     * honest and it is also a bet with your kit: a failure takes the equipped piece
+     * down or away. So the card carries the ladder beside it: the same target
+     * reached from your *second*-best copy, or from a base you buy or make when
+     * there is no second copy, leaving what you fight in untouched.
+     *
+     * ## Levels are on the list too
+     *
+     * "Fierce Aura to 46" is a savings goal in every way a sword is: a pile of books
+     * at what the market wants for them, against the coins you have. So ability
+     * levels sit on the same list — added by hand from the panel, or handed over by
+     * a sim run that has just costed one — and a goal you have read your way past
+     * says so rather than sitting there at full price forever.
+     *
+     * A house room is the same again: "Mystical Study to 5" is the coins each level
+     * asks for outright plus the materials it wants, at what the market would charge
+     * to go and buy them. Rooms get their own set of cards beside the levels, and a
+     * room you have since built says Reached rather than staying on the bill.
+     *
+     * ## Everything, not just each thing
+     *
+     * A slot at a time answers the wrong question when you want three pieces. The
+     * Everything row is the whole list against your coins, because that is the plan
+     * you are actually saving towards.
+     *
+     * The arithmetic is in `utils/equipment-savings.js` with tests. This module
+     * reads the market, the character and the income, and draws.
+     *
+     * The model is EWatch's, from MWI Combat Suite by Frotty (MIT) — see
+     * `third-party/mwi-combat-suite/` and `docs/THIRD-PARTY-LICENSES.md`. The code is
+     * Toolasha's own.
+     */
+
+
+    const MENU_BUTTON_CLASS = 'toolasha-savings-button';
+    const MENU_BUTTON_SETTING = 'equipmentSavings_menuButton';
+
+    /** The enhancement levels the game allows, which is what the picker offers */
+    const MAX_ENHANCEMENT = 20;
+
+    /**
+     * The colour the house cards are drawn in.
+     *
+     * A third colour rather than the abilities' purple: the two sets sit under one
+     * another and a reader scrolling past should be able to tell which list they are
+     * in without reading the heading.
+     */
+    const HOUSE_ACCENT = '#f59e0b';
+
+    /**
+     * The slots EWatch lists, in its order.
+     *
+     * A row per slot rather than a row per target, because the question is "what is
+     * this slot going to be" — a slot with nothing watched is still worth a line
+     * saying what is in it and inviting a target, which a list of targets alone
+     * cannot do.
+     */
+    const SLOTS = [
+        'body',
+        'charm',
+        'earrings',
+        'feet',
+        'hands',
+        'head',
+        'legs',
+        'main_hand',
+        'neck',
+        'off_hand',
+        'pouch',
+        'ring',
+        'trinket',
+        'back',
+    ];
+
+    /** A slot's name as a heading */
+    const slotLabel = (slot) => slot.replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
+
+    /**
+     * The list, and how it is being read.
+     *
+     * At module scope and persisted, because the overlay tile reads it while the
+     * panel is closed, which is most of the time.
+     *
+     * `targets` is keyed by item hrid rather than by slot: you can be saving for two
+     * rings, and a slot-keyed list would silently drop one.
+     */
+    const state = { targets: {}, noSell: false, marketValue: true, selected: null, locked: false };
+
+    /**
+     * The picker's own state, which is not worth persisting — it is a form.
+     *
+     * `ability*` is the second picker's and `house*` the third's: which one, what
+     * level, and a cost only used when the market cannot supply one.
+     */
+    const editing = {
+        itemHrid: '',
+        enhancementLevel: 0,
+        slot: '',
+        abilityHrid: '',
+        abilityLevel: 0,
+        abilityCost: '',
+        addingAbility: false,
+        houseRoomHrid: '',
+        houseLevel: 0,
+        houseCost: '',
+        addingHouse: false,
+    };
+
+    // Kept asking until the database opens: it is opened after the libraries are
+    // evaluated, so a read at module scope always returns the default and the list
+    // looks like it forgot everything. It waits for a character too: gear targets
+    // belong to the character wearing the gear, so the key it reads is theirs.
+    //
+    // The read goes through `utils/equipment-savings.js`, which keeps the ability
+    // goals out of the state below and hands back the gear side. Two writers of one
+    // key lose each other's edits, so there is only the one.
+    async function reload() {
+        try {
+            const saved = await loadSavingsRecord();
+            Object.assign(
+                state,
+                { targets: {}, noSell: false, marketValue: true, selected: null, locked: false },
+                saved || {}
+            );
+        } catch (error) {
+            console.error('[EquipmentSavings] Reading the equipment savings list failed:', error);
+        }
+    }
+
+    reload();
+    // Module-scope state outlives the feature's own re-initialisation on a switch
+    dataManager.on('character_initialized', reload);
+    dataManager.on('character_switched', reload);
+
+    /** Write the list back, without making anybody wait for it */
+    function persist() {
+        saveSavingsRecord({ ...state }).catch((error) =>
+            console.error('[EquipmentSavings] Saving the list failed:', error)
+        );
+    }
+
+    /**
+     * @param {string} itemHrid - The item
+     * @returns {boolean} Whether it is being saved for
+     */
+    function isTargeted(itemHrid) {
+        return Boolean(state.targets[itemHrid]);
+    }
+
+    /**
+     * Start saving for a piece.
+     *
+     * @param {string} itemHrid - The item
+     * @param {number} [enhancementLevel] - Which enhancement of it
+     */
+    function watchTarget(itemHrid, enhancementLevel = 0) {
+        if (!itemHrid) return;
+        // `noSell` and `craft` start unset rather than false, so a target follows
+        // the panel's switch until it is told otherwise — one of them differing is
+        // the exception, not the rule
+        state.targets[itemHrid] = { enhancementLevel: Number(enhancementLevel) || 0 };
+        persist();
+    }
+
+    /**
+     * Whether one target trades in the piece it replaces.
+     *
+     * Per target because it genuinely differs: the sword you are replacing gets
+     * sold, and the second ring you are buying replaces nothing you would part
+     * with. Unset means "whatever the panel says", which is what most of them want.
+     *
+     * @param {string} itemHrid - The target
+     * @returns {boolean}
+     */
+    function targetNoSell(itemHrid) {
+        return state.targets[itemHrid]?.noSell ?? state.noSell;
+    }
+
+    /**
+     * Cycle one target between following the panel, selling, and not selling.
+     * @param {string} itemHrid - The target
+     */
+    function cycleTargetNoSell(itemHrid) {
+        const target = state.targets[itemHrid];
+        if (!target) return;
+
+        // Follows → sells → keeps → follows
+        if (target.noSell === undefined) target.noSell = false;
+        else if (target.noSell === false) target.noSell = true;
+        else delete target.noSell;
+        persist();
+    }
+
+    /** @param {string} itemHrid - Whether this target is being crafted rather than bought */
+    function isCrafting(itemHrid) {
+        return Boolean(state.targets[itemHrid]?.craft);
+    }
+
+    /**
+     * Whether this target is being saved for along the ladder rather than the
+     * direct run.
+     *
+     * The two paths cost different amounts and take different lengths of time, so
+     * which one you have decided on is what the bar should be filling against —
+     * saving towards a figure you have already ruled out is the same as having no
+     * figure. Stored on the target, since one piece can be worth the risk and
+     * another not.
+     *
+     * @param {string} itemHrid - The target
+     * @returns {boolean}
+     */
+    function isLaddering(itemHrid) {
+        return state.targets[itemHrid]?.mode === 'ladder';
+    }
+
+    /**
+     * Cost this target along the ladder instead of the direct run, or back again.
+     * @param {string} itemHrid - The target
+     */
+    function toggleLaddering(itemHrid) {
+        const target = state.targets[itemHrid];
+        if (!target) return;
+
+        if (target.mode === 'ladder') delete target.mode;
+        else target.mode = 'ladder';
+        persist();
+    }
+
+    /** @param {string} itemHrid - Craft it rather than buy it, or stop */
+    function toggleCrafting(itemHrid) {
+        const target = state.targets[itemHrid];
+        if (!target) return;
+
+        if (target.craft) delete target.craft;
+        else target.craft = true;
+        persist();
+    }
+
+    /** @param {string} itemHrid - Stop saving for this */
+    function unwatchTarget(itemHrid) {
+        delete state.targets[itemHrid];
+        persist();
+    }
+
+    /** @param {boolean} noSell - Keep the old piece rather than trading it in */
+    function setNoSell(noSell) {
+        state.noSell = Boolean(noSell);
+        persist();
+    }
+
+    /** @param {boolean} counting - Count outstanding orders as spendable */
+    function setCountingMarketOrders(counting) {
+        state.marketValue = Boolean(counting);
+        persist();
+    }
+
+    /**
+     * Whether a price fetch is in flight.
+     *
+     * Shown rather than hidden: a Refresh button that does nothing visible for a
+     * second is a button people press four times.
+     */
+    let refreshing = false;
+
+    /** Fetch prices again, and redraw when they land */
+    async function refreshMarket() {
+        if (refreshing) return;
+        refreshing = true;
+        equipmentSavingsPanel.render();
+
+        try {
+            await marketAPI.fetch(true);
+        } catch (error) {
+            console.error('[EquipmentSavings] Refreshing the market failed:', error);
+        } finally {
+            refreshing = false;
+            equipmentSavingsPanel.render();
+        }
+    }
+
+    /** @param {boolean} locked - Lock the panel back to its reading shape */
+    function setLocked(locked) {
+        state.locked = Boolean(locked);
+        // A picker left open under a slot that is about to disappear
+        editing.slot = '';
+        editing.itemHrid = '';
+        persist();
+    }
+
+    /**
+     * Pin which target the tile and the header carry.
+     *
+     * Pinned rather than derived, because the tile's own answer is "the nearest
+     * one", and the thing somebody is actually saving for is often not the cheapest
+     * — the eye is how you say so.
+     *
+     * @param {string|null} itemHrid - Which target
+     */
+    function selectTarget(itemHrid) {
+        state.selected = state.selected === itemHrid ? null : itemHrid;
+        persist();
+    }
+
+    /**
+     * Where the character's abilities actually are.
+     *
+     * The learned list rather than the equipped kit: a goal is worth having for a
+     * book you own but are not fighting with, and reading the kit would report it at
+     * level 0 and quote the whole path again.
+     *
+     * @returns {Map<string, {level: number, experience: number}>}
+     */
+    function learnedAbilityLevels() {
+        const learned = dataManager.getLearnedAbilities?.() || [];
+        return new Map(
+            learned
+                .filter((entry) => entry?.abilityHrid)
+                .map((entry) => [
+                    entry.abilityHrid,
+                    { level: Math.floor(Number(entry.level) || 0), experience: Number(entry.experience) || 0 },
+                ])
+        );
+    }
+
+    /**
+     * An ability's name as the game gives it, rather than as its hrid spells it.
+     * @param {string} abilityHrid - The ability
+     * @returns {string}
+     */
+    function abilityName(abilityHrid) {
+        return dataManager.getInitClientData?.()?.abilityDetailMap?.[abilityHrid]?.name || '';
+    }
+
+    /**
+     * What the books to a level would cost today, when the market can say.
+     *
+     * The same costing the sim's upgrade advisor uses — books at the market price,
+     * from where the ability actually is, and null rather than zero when nobody is
+     * selling the book. A manual goal is then estimated by the same arithmetic that
+     * a sim-made one arrives with, so the two are comparable on the list.
+     *
+     * @param {string} abilityHrid - The ability
+     * @param {number} targetLevel - The level being saved for
+     * @returns {number|null} Coins, or null when the book has no listing
+     */
+    function abilityBookCost(abilityHrid, targetLevel) {
+        if (!abilityHrid || !(targetLevel > 0)) return null;
+
+        const owned = learnedAbilityLevels().get(abilityHrid) || null;
+        const level = owned?.level || 0;
+        if (level >= targetLevel) return 0;
+
+        // The experience on a book already read is a position within its level, not
+        // the floor of it — those books count towards the next one
+        const floorXp = dataManager.getInitClientData?.()?.levelExperienceTable?.[level] || 0;
+        const total = abilityCostCalculator_js.explainAbilityLevelUpCost(abilityHrid, level, owned?.experience ?? floorXp, targetLevel)?.total;
+
+        return Number.isFinite(total) ? Math.max(0, total) : null;
+    }
+
+    /**
+     * Every ability goal, against the level it is at and the coins you have.
+     *
+     * @returns {Array<Object>} `{abilityHrid, itemHrid, name, targetLevel, currentLevel, done, cost, ...}`
+     */
+    function watchedAbilityGoals() {
+        const coins = spendable();
+        const perDay = incomePerDay();
+        const levels = learnedAbilityLevels();
+
+        const goals = abilityGoals().map((goal) => {
+            const currentLevel = levels.get(goal.abilityHrid)?.level || 0;
+            const done = abilityGoalReached(goal, currentLevel);
+            // A goal already reached costs nothing more, whatever it was costed at
+            // when it went on the list
+            const cost = done ? 0 : (goal.cost ?? null);
+            const progress = savingsProgress(cost, coins);
+
+            return {
+                abilityHrid: goal.abilityHrid,
+                // The book, so the icon and the marketplace link have something to
+                // point at — an ability itself is not a tradeable thing
+                itemHrid: abilityBookHrid(goal.abilityHrid),
+                name: goal.label || abilityGoalLabel(goal.abilityHrid, goal.targetLevel, abilityName(goal.abilityHrid)),
+                targetLevel: goal.targetLevel,
+                currentLevel,
+                done,
+                ability: true,
+                enhancementLevel: 0,
+                cost,
+                ...progress,
+                seconds: timeToAffordSeconds(progress.needed, perDay),
+            };
+        });
+
+        return orderTargets(goals);
+    }
+
+    /**
+     * Save towards a level of an ability, from the panel.
+     *
+     * @param {string} abilityHrid - The ability
+     * @param {number} targetLevel - The level wanted
+     * @param {number|null} [cost] - Coins, when the market cannot be asked
+     * @returns {Promise<void>}
+     */
+    async function watchAbility(abilityHrid, targetLevel, cost = undefined) {
+        if (!abilityHrid || !(targetLevel > 0)) return;
+
+        const priced = cost === undefined ? abilityBookCost(abilityHrid, targetLevel) : cost;
+        await addAbilityGoal({
+            abilityHrid,
+            targetLevel,
+            cost: priced,
+            label: abilityGoalLabel(abilityHrid, targetLevel, abilityName(abilityHrid)),
+        });
+    }
+
+    /**
+     * Stop saving for a level of an ability.
+     * @param {string} abilityHrid - The ability
+     * @returns {Promise<void>}
+     */
+    async function unwatchAbility(abilityHrid) {
+        await removeAbilityGoal(abilityHrid);
+    }
+
+    /**
+     * Where the character's rooms actually are.
+     *
+     * @returns {Map<string, number>} Room hrid → the level it is built to
+     */
+    function houseRoomLevels() {
+        const built = dataManager.getHouseRooms?.() || new Map();
+        return new Map(
+            [...built.entries()].map(([houseRoomHrid, room]) => [
+                houseRoomHrid,
+                Math.max(0, Math.floor(Number(room?.level) || 0)),
+            ])
+        );
+    }
+
+    /**
+     * A room's name as the game gives it, rather than as its hrid spells it.
+     * @param {string} houseRoomHrid - The room
+     * @returns {string}
+     */
+    function houseRoomName(houseRoomHrid) {
+        return dataManager.getInitClientData?.()?.houseRoomDetailMap?.[houseRoomHrid]?.name || '';
+    }
+
+    /**
+     * What building a room up to a level would cost today.
+     *
+     * The same basis the sim's upgrade advisor costs a house upgrade on: every level
+     * from the one the room is at up to the target, coins in the list at face value
+     * and materials at what it would cost to go and buy them. A material nobody is
+     * selling makes the whole goal unpriced rather than cheap — a total that quietly
+     * leaves out its most expensive line is worse than no total.
+     *
+     * @param {string} houseRoomHrid - The room
+     * @param {number} targetLevel - The level being built to
+     * @returns {number|null} Coins, or null when some part of it has no price
+     */
+    function houseUpgradeCost(houseRoomHrid, targetLevel) {
+        if (!houseRoomHrid || !(targetLevel > 0)) return null;
+
+        const currentLevel = houseRoomLevels().get(houseRoomHrid) || 0;
+        if (currentLevel >= targetLevel) return 0;
+
+        const costs = dataManager.getInitClientData?.()?.houseRoomDetailMap?.[houseRoomHrid]?.upgradeCostsMap;
+        if (!costs) return null;
+
+        let total = 0;
+        for (let level = currentLevel + 1; level <= targetLevel; level++) {
+            // Keyed by number in the payload and by string once it has been through
+            // storage, and a missing level is a level this cannot price
+            const materials = costs[level] ?? costs[String(level)];
+            if (!Array.isArray(materials) || !materials.length) return null;
+
+            for (const material of materials) {
+                const count = Number(material?.count) || 0;
+                if (!material?.itemHrid || count <= 0) continue;
+
+                // Coins have no order book: they are worth exactly themselves
+                if (material.itemHrid === '/items/coin') {
+                    total += count;
+                    continue;
+                }
+
+                const ask = marketData_js.getItemPrices(material.itemHrid, 0)?.ask;
+                if (!(ask > 0)) return null;
+                total += ask * count;
+            }
+        }
+        return total;
+    }
+
+    /**
+     * Every house room goal, against the level the room is at and the coins you have.
+     *
+     * @returns {Array<Object>} `{houseRoomHrid, skill, name, targetLevel, currentLevel, done, cost, ...}`
+     */
+    function watchedHouseGoals() {
+        const coins = spendable();
+        const perDay = incomePerDay();
+        const levels = houseRoomLevels();
+
+        const goals = houseGoals().map((goal) => {
+            const currentLevel = levels.get(goal.houseRoomHrid) || 0;
+            const done = houseGoalReached(goal, currentLevel);
+            // A room already built costs nothing more, whatever it was costed at
+            // when it went on the list
+            const cost = done ? 0 : (goal.cost ?? null);
+            const progress = savingsProgress(cost, coins);
+
+            return {
+                houseRoomHrid: goal.houseRoomHrid,
+                // A room is built rather than bought, so there is no item to point
+                // the marketplace at — the skill's artwork stands in for the icon
+                itemHrid: '',
+                skill: roomSkill(goal.houseRoomHrid),
+                name: goal.label || houseGoalLabel(goal.houseRoomHrid, goal.targetLevel, houseRoomName(goal.houseRoomHrid)),
+                targetLevel: goal.targetLevel,
+                currentLevel,
+                done,
+                house: true,
+                enhancementLevel: 0,
+                cost,
+                ...progress,
+                seconds: timeToAffordSeconds(progress.needed, perDay),
+            };
+        });
+
+        return orderTargets(goals);
+    }
+
+    /**
+     * Save towards a level of a house room, from the panel.
+     *
+     * @param {string} houseRoomHrid - The room
+     * @param {number} targetLevel - The level wanted, capped at the one the game builds to
+     * @param {number|null} [cost] - Coins, when the market cannot be asked
+     * @returns {Promise<void>}
+     */
+    async function watchHouse(houseRoomHrid, targetLevel, cost = undefined) {
+        if (!houseRoomHrid || !(targetLevel > 0)) return;
+
+        const wanted = Math.min(MAX_HOUSE_ROOM_LEVEL, Math.floor(Number(targetLevel) || 0));
+        const priced = cost === undefined ? houseUpgradeCost(houseRoomHrid, wanted) : cost;
+        await addHouseGoal({
+            houseRoomHrid,
+            targetLevel: wanted,
+            cost: priced,
+            label: houseGoalLabel(houseRoomHrid, wanted, houseRoomName(houseRoomHrid)),
+        });
+    }
+
+    /**
+     * Stop saving for a level of a house room.
+     * @param {string} houseRoomHrid - The room
+     * @returns {Promise<void>}
+     */
+    async function unwatchHouse(houseRoomHrid) {
+        await removeHouseGoal(houseRoomHrid);
+    }
+
+    /**
+     * Coins in hand.
+     *
+     * Straight off the character's items rather than out of the net worth figure:
+     * net worth is recalculated on a schedule and includes everything you own, and
+     * a savings bar has to move when you spend, not when a worker next runs.
+     *
+     * @returns {number}
+     */
+    function coinsHeld() {
+        // Filtered to the inventory location, as every other reader of this list
+        // does. `getInventory` returns every character item — equipped pieces,
+        // listings, everything — and coins turn up under more than one of them, so
+        // an unfiltered `find` picks up a figure that is not what you can spend.
+        const items = dataManager.getInventory?.() || [];
+        const coin = items.find(
+            (item) => item.itemHrid === '/items/coin' && item.itemLocationHrid === '/item_locations/inventory'
+        );
+        return coin?.count || 0;
+    }
+
+    /** Hours of net worth history considered when combat has nothing to say */
+    const NETWORTH_TREND_HOURS = 48;
+
+    /** The shortest window the net worth trend will be trusted over */
+    const NETWORTH_MIN_SPAN_HOURS = 6;
+
+    /** The fewest points the net worth trend needs to be a trend rather than two dots */
+    const NETWORTH_MIN_POINTS = 3;
+
+    /**
+     * A day's income, read off a net worth series rather than measured directly.
+     *
+     * Theil-Sen — the median of every pairwise slope — rather than a line through
+     * the two endpoints or a least-squares fit: both are dragged hard by a single
+     * sell-off landing near an end of the window, and a sell-off inside the
+     * window is exactly the case this has to survive. The median of every pair
+     * shrugs off a handful of outliers without needing to know which points they
+     * are, at the cost of being quadratic in the point count — fine for the
+     * couple of dozen hourly snapshots a 48h window actually holds.
+     *
+     * @param {Array<{t: number, total: number}>} points - Chronological, oldest first
+     * @returns {number|null} Coins per day, or null when the window is too thin to trust
+     */
+    function trendPerDay(points) {
+        if (!Array.isArray(points) || points.length < NETWORTH_MIN_POINTS) return null;
+
+        const spanHours = (points[points.length - 1].t - points[0].t) / 3_600_000;
+        if (!(spanHours >= NETWORTH_MIN_SPAN_HOURS)) return null;
+
+        const slopes = [];
+        for (let i = 0; i < points.length; i++) {
+            for (let j = i + 1; j < points.length; j++) {
+                const dt = points[j].t - points[i].t;
+                // Same-timestamp points — the compaction in networth-history.js can
+                // leave a run collapsed to its first and last — contribute nothing
+                // a slope can use
+                if (!(dt > 0)) continue;
+                slopes.push(((points[j].total - points[i].total) / dt) * 86_400_000);
+            }
+        }
+        if (!slopes.length) return null;
+
+        slopes.sort((a, b) => a - b);
+        const mid = Math.floor(slopes.length / 2);
+        return slopes.length % 2 ? slopes[mid] : (slopes[mid - 1] + slopes[mid]) / 2;
+    }
+
+    /**
+     * The net worth trend, for when combat has nothing to say.
+     *
+     * `total` rather than `gold` and `inventory` on their own: buying a piece of
+     * gear or a house room moves coins into an asset the same session it leaves
+     * the purse, and a coins-only read would count that as a pause in income it
+     * never was. `total` nets the transfer out and is left with what combat and
+     * skilling actually added, which is the same reason it is the figure the
+     * history chart leads with.
+     *
+     * @returns {number|null} Coins per day, or null when there is nothing to trust yet
+     */
+    function networthIncomePerDay() {
+        const series = networthHistory.recentSeries?.(NETWORTH_TREND_HOURS) || [];
+        const perDay = trendPerDay(series);
+        // A shrinking net worth is not an income to divide a shortfall by — it is
+        // the same "nothing rather than a guess" the combat reading follows below
+        return perDay > 0 ? perDay : null;
+    }
+
+    /**
+     * What the character makes in a day, read off the combat stats.
+     *
+     * Nothing rather than a guess when combat has not run: dividing by an
+     * invented income would produce a confident arrival date.
+     *
+     * @returns {number|null}
+     */
+    function combatIncomePerDay() {
+        const combat = window.Toolasha?.Combat;
+        const data = combat?.combatStatsDataCollector?.getLatestData?.();
+        const player = data?.players?.find((entry) => entry.isCurrentPlayer);
+        if (!player) return null;
+
+        // `durationSeconds` is the field the collector publishes. Reaching for
+        // `startTime`/`endTime` — which it does not have — made this
+        // `Date.now() - Date.now()`, so every run was zero seconds long, every rate
+        // divided by nothing, and the panel said "No income data" forever.
+        const seconds = data.durationSeconds || 0;
+        if (!(seconds > 0)) return null;
+
+        // `dailyProfit` is `{ask, bid}`, not a number — the two sides of the book,
+        // which is the same Lazy/Mid distinction the Combat Profit panel draws.
+        // Compared as a number it is NaN, so this returned null however long the run
+        // had been, on top of the duration being read from a field that is not there.
+        const stats = combat?.combatStatsCalculator?.calculatePlayerStats?.(player, seconds);
+        const profit = state.noSell ? stats?.dailyProfit?.ask : stats?.dailyProfit?.bid;
+        return profit > 0 ? profit : null;
+    }
+
+    /**
+     * What the character makes in a day, and where the figure came from.
+     *
+     * Combat first, because it is a direct measurement of the session actually
+     * being played. When nothing has fought recently — a skiller, or the first
+     * minute after a reload — the combat source has nothing to say, and the panel
+     * used to go dark rather than say anything at all. The net worth trend stands
+     * in for it: slower and noisier, since market swings and one-off purchases
+     * are in there too, but it is the only other place in the script that knows
+     * anything about income, and a rough answer beats none for telling whether a
+     * purchase is a week away or a year.
+     *
+     * @returns {{perDay: number|null, source: ('combat'|'networth'|null)}}
+     */
+    function incomeEstimate() {
+        const combat = combatIncomePerDay();
+        if (combat !== null) return { perDay: combat, source: 'combat' };
+
+        const trend = networthIncomePerDay();
+        if (trend !== null) return { perDay: trend, source: 'networth' };
+
+        return { perDay: null, source: null };
+    }
+
+    /**
+     * What the character makes in a day.
+     *
+     * @returns {number|null}
+     */
+    function incomePerDay() {
+        return incomeEstimate().perDay;
+    }
+
+    /**
+     * What the game calls an item, for a list that stores only hrids.
+     * @param {string} itemHrid - The item
+     * @returns {string}
+     */
+    function nameOf(itemHrid) {
+        return (
+            dataManager.getItemDetails?.(itemHrid)?.name ||
+            String(itemHrid || '')
+                .split('/')
+                .pop()
+                .replace(/_/g, ' ')
+        );
+    }
+
+    /**
+     * The piece currently in the slot this target would fill.
+     *
+     * By equipment type rather than by name, since that is what a target replaces —
+     * and the equipment map is keyed by item **location**, which is not the same
+     * string as the type.
+     *
+     * @param {string} itemHrid - The target
+     * @returns {Object|null} The worn item, or null for an empty slot
+     */
+    function wornRivalOf(itemHrid) {
+        const type = dataManager.getItemDetails?.(itemHrid)?.equipmentDetail?.type;
+        if (!type) return null;
+
+        const location = `/item_locations/${type.split('/').pop()}`;
+        return dataManager.getEquipment?.()?.get?.(location) || null;
+    }
+
+    /**
+     * What is tied up in market orders.
+     *
+     * Sell orders are counted at what they will pay after tax and buy orders at the
+     * coins already handed over, both of which are money you have — just not money
+     * you can spend this second. Whether it counts is the switch.
+     *
+     * @returns {number}
+     */
+    function marketOrderValue() {
+        const totals = window.Toolasha?.Market?.marketOrderTotals?.calculateTotals?.();
+        if (!totals) return 0;
+        return (totals.sellOrders || 0) + (totals.buyOrders || 0) + (totals.unclaimed || 0);
+    }
+
+    /**
+     * Coins a purchase can actually draw on.
+     *
+     * @returns {number}
+     */
+    function spendable() {
+        return coinsHeld() + (state.marketValue ? marketOrderValue() : 0);
+    }
+
+    /**
+     * The recipe that makes a piece, if the game has one.
+     *
+     * Found by looking for the action that outputs it rather than from a table, so a
+     * recipe added by an update is priced rather than missed.
+     *
+     * @param {string} itemHrid - The finished piece
+     * @returns {Object|null} `{inputItems, upgradeItemHrid, outputCount}`
+     */
+    function recipeFor(itemHrid) {
+        const actions = dataManager.getInitClientData?.()?.actionDetailMap || {};
+
+        for (const [actionHrid, action] of Object.entries(actions)) {
+            const output = action?.outputItems?.find((entry) => entry.itemHrid === itemHrid);
+            if (!output) continue;
+
+            // Artisan tea takes a fraction off every input, so a recipe priced at
+            // its printed cost is priced for somebody else's tea. The game's own
+            // panel says 88.9 shards where the recipe says 100; quoting the 100 is
+            // an eleven per cent overcharge on every craft this card prices.
+            const saved = artisanBonus(action);
+
+            return {
+                actionHrid,
+                artisan: saved,
+                inputItems: (action.inputItems || []).map((input) => ({
+                    ...input,
+                    count: (input.count || 0) * (1 - saved),
+                })),
+                upgradeItemHrid: action.upgradeItemHrid || null,
+                outputCount: output.count || 1,
+            };
+        }
+        return null;
+    }
+
+    /**
+     * What fraction of a recipe's inputs the tea saves.
+     *
+     * Through the shared calculator, which resolves the loadout for the action's
+     * own skill — so it is the tea you would be brewing under, not whatever is in
+     * the slots while you are out fighting.
+     *
+     * @param {Object} action - The action detail
+     * @returns {number} 0 to 1
+     */
+    function artisanBonus(action) {
+        try {
+            return materialCalculator_js.calculateArtisanBonus(action) || 0;
+        } catch (error) {
+            console.error('[EquipmentSavings] Reading the artisan bonus failed:', error);
+            return 0;
+        }
+    }
+
+    /**
+     * Whether the piece a recipe upgrades is already in hand.
+     *
+     * Worn counts as owned — an upgrade consumes the piece you are wearing just as
+     * happily as one in the bag, and that is the usual case here.
+     *
+     * @param {string} itemHrid - The piece the recipe consumes
+     * @returns {boolean}
+     */
+    function ownsBase(itemHrid) {
+        if (!itemHrid) return true;
+        return (dataManager.getInventory?.() || []).some((item) => item.itemHrid === itemHrid && (item.count || 0) > 0);
+    }
+
+    /**
+     * What taking a piece you already own from one enhancement level to another costs.
+     *
+     * Capes, quivers and the rest of the untradable gear cannot be bought at any
+     * level, so "save up for a +7 cape" is not a purchase at all — it is a run at
+     * the anvil, and what it costs is the expected materials and protections that
+     * run consumes. Pricing it at a market ask reports nothing, because there is no
+     * ask, which is why an untradable target read as unpriced forever.
+     *
+     * Expected rather than typical: the Markov model gives the mean attempts to
+     * reach a level, which is the only figure a savings bar can honestly fill
+     * against. A particular run will cost more or less and there is nothing to be
+     * done about that.
+     *
+     * @param {string} itemHrid - The piece
+     * @param {number} targetLevel - Enhancement level being aimed at
+     * @param {number} startLevel - What it is now
+     * @returns {number|null} Coins, or null when the run cannot be modelled
+     */
+    function enhancementCost(itemHrid, targetLevel, startLevel = 0) {
+        if (!(targetLevel > startLevel) || targetLevel > MAX_ENHANCEMENT) return null;
+
+        const calculator = window.Toolasha?.Utils?.enhancementCalculator?.calculateEnhancement;
+        // The character's own gear, skill and teas — not `getEnhancingParams`,
+        // which hands back the simulator's manual settings unless auto-detect
+        // happens to be on, and those default to a fully kitted enhancer. Costing
+        // your cape at somebody else's bench quotes a run you cannot make.
+        const params = window.Toolasha?.Utils?.enhancementConfig?.getAutoDetectedParams?.();
+        const details = dataManager.getItemDetails?.(itemHrid);
+        if (!calculator || !params || !details) return null;
+
+        // Priced at the ask, falling back to what the vendor pays for anything the
+        // market has no answer for
+        const priceOf = (hrid) =>
+            hrid === '/items/coin' ? 1 : marketData_js.getItemPrices(hrid, 0)?.ask || dataManager.getItemDetails?.(hrid)?.sellPrice || 0;
+
+        let materials = 0;
+        for (const cost of details.enhancementCosts || []) {
+            materials += (cost.count || 0) * priceOf(cost.itemHrid);
+        }
+        if (!(materials > 0)) return null;
+
+        const protection = cheapestProtection(itemHrid, priceOf);
+
+        try {
+            // Falling all the way back to +0 on every failure is what "no
+            // protection" means, and past about +5 it is ruinous — nobody enhances
+            // that way, so costing it that way would report a number no player
+            // would ever pay. The run to price is the cheapest of the protect-from
+            // choices, which is the same search the enhancement display makes.
+            //
+            // From +2 whatever the run starts at, not from the start level. A
+            // protect-from below where you begin is not a wasted setting: the first
+            // failure drops you *below* the start, and from there the protection is
+            // what stops the next one sending you to +0. Bounding the search at the
+            // start level forbade the cheap strategies to exactly the runs that
+            // start high — so a +5 → +7 run could only protect from +5 while a
+            // +4 → +7 run was allowed to protect from +4, and the card reported
+            // that starting lower was cheaper. It is the same 2-to-target search
+            // the enhancement tooltip and the standalone library make.
+            const strategies = [0];
+            if (protection.price > 0) {
+                for (let from = 2; from <= targetLevel; from++) strategies.push(from);
+            }
+
+            let best = null;
+            for (const protectFrom of strategies) {
+                const run = calculator({
+                    enhancingLevel: params.enhancingLevel || 0,
+                    toolBonus: params.toolBonus || 0,
+                    speedBonus: params.speedBonus || 0,
+                    itemLevel: details.itemLevel || 0,
+                    targetLevel,
+                    startLevel,
+                    protectFrom,
+                    blessedTea: Boolean(params.teas?.blessed),
+                    guzzlingBonus: params.guzzlingBonus || 1,
+                });
+
+                const total = run.attempts * materials + (run.protectionCount || 0) * protection.price;
+                if (best === null || total < best) best = total;
+            }
+
+            return best > 0 ? best : null;
+        } catch (error) {
+            console.error('[EquipmentSavings] Costing an enhancement run failed:', error);
+            return null;
+        }
+    }
+
+    /**
+     * The cheapest thing that will absorb a failed enhancement.
+     *
+     * The Mirror of Protection works on anything; some pieces name their own
+     * protections. The piece itself protects too, but a target the market will not
+     * sell has no second copy to buy, which is precisely the case this exists for.
+     *
+     * @param {string} itemHrid - The piece being enhanced
+     * @param {Function} priceOf - Prices one item hrid
+     * @returns {{itemHrid: string|null, price: number}}
+     */
+    function cheapestProtection(itemHrid, priceOf) {
+        const details = dataManager.getItemDetails?.(itemHrid);
+        const options = ['/items/mirror_of_protection', ...(details?.protectionItemHrids || [])];
+
+        let best = { itemHrid: null, price: 0 };
+        for (const hrid of options) {
+            const price = priceOf(hrid);
+            if (price > 0 && (!best.price || price < best.price)) best = { itemHrid: hrid, price };
+        }
+        return best;
+    }
+
+    /**
+     * The best enhancement of a piece already in hand, if any.
+     *
+     * The inventory covers worn pieces too, which is the case that matters: the
+     * cape you are enhancing is the one on your back. Null rather than zero when
+     * none is owned, because "have a +0" and "have none" are different starting
+     * points for a run.
+     *
+     * @param {string} itemHrid - The piece
+     * @returns {number|null} Its enhancement level, or null when none is held
+     */
+    function highestOwnedLevel(itemHrid) {
+        let best = null;
+        for (const item of dataManager.getInventory?.() || []) {
+            if (item.itemHrid !== itemHrid || !(item.count > 0)) continue;
+            const level = item.enhancementLevel || 0;
+            if (best === null || level > best) best = level;
+        }
+        return best;
+    }
+
+    /**
+     * The copy you would enhance instead of the one you are wearing.
+     *
+     * Enhancing your only copy puts your kit on the table: a failure drops it back
+     * to +0, or destroys it outright when there is nothing protecting it, and you
+     * fight in whatever the loss left you until you have built it back. The ladder
+     * is what people do instead — leave the equipped piece where it is and take a
+     * second copy up, so a bust costs the spare rather than the gear you are using.
+     *
+     * The *second*-best copy, not the best: the best one is the one on your back,
+     * which the direct cost already counts from. Two copies at the same level are
+     * two copies, so a stack of two +3s ladders from +3.
+     *
+     * @param {string} itemHrid - The piece
+     * @returns {{level: number, spare: boolean}} `spare` is false when there is no
+     *   second copy at all, and the ladder has to start from one you get hold of
+     */
+    function ladderStart(itemHrid) {
+        const levels = [];
+        for (const item of dataManager.getInventory?.() || []) {
+            if (item.itemHrid !== itemHrid || !(item.count > 0)) continue;
+            const level = item.enhancementLevel || 0;
+            levels.push(level);
+            // A stack of two is two copies, and the second one is the spare
+            if (item.count > 1) levels.push(level);
+        }
+        if (levels.length < 2) return { level: 0, spare: false };
+
+        levels.sort((a, b) => b - a);
+        return { level: levels[1], spare: true };
+    }
+
+    /**
+     * What a fresh base costs, bought or made, whichever is cheaper.
+     *
+     * Both are read through the same helpers the rest of the panel prices with, so
+     * a ladder quoted here and a target quoted below cannot disagree. The craft
+     * reading treats an upgrade base already in the bag as free, as every other
+     * craft figure in this panel does — for a ladder that is the second copy you
+     * were going to spend anyway, and it is the same number the card above shows.
+     *
+     * @param {string} itemHrid - The piece
+     * @returns {{price: number, crafted: boolean}} Zero when nowhere sells or makes one
+     */
+    function freshBasePrice(itemHrid) {
+        const market = basePrice(itemHrid);
+
+        const recipe = recipeFor(itemHrid);
+        const made = recipe?.inputItems?.length ? craftMaterialsCost(itemHrid, recipe) : null;
+        if (made !== null && made > 0 && (!(market > 0) || made < market)) return { price: made, crafted: true };
+
+        return { price: market, crafted: false };
+    }
+
+    /**
+     * The ladder alternative, costed, or nothing when there is no ladder to climb.
+     *
+     * Null rather than a zero when the spare is already at the target: there is
+     * nothing to enhance, you simply wear it, and a line saying "0" would read as a
+     * free upgrade. `enhancementCost` returns null for that on its own, because a
+     * run that starts at or above where it is going is not a run.
+     *
+     * @param {string} itemHrid - The piece
+     * @param {number} enhancementLevel - The level being aimed at
+     * @returns {{cost: number, fromLevel: number, spare: boolean, base: number, crafted: boolean}|null}
+     */
+    function ladderOption(itemHrid, enhancementLevel) {
+        const { level, spare } = ladderStart(itemHrid);
+        const fromLevel = spare ? level : 0;
+
+        const run = enhancementCost(itemHrid, enhancementLevel, fromLevel);
+        if (run === null) return null;
+
+        const base = spare ? { price: 0, crafted: false } : freshBasePrice(itemHrid);
+        // No spare and nowhere to get one: there is no second copy to ladder with,
+        // and quoting the run alone would price a piece you cannot start from
+        if (!spare && !(base.price > 0)) return null;
+
+        return { cost: run + base.price, fromLevel, spare, base: base.price, crafted: base.crafted };
+    }
+
+    /**
+     * What a +0 of something costs, from wherever it can actually be got.
+     *
+     * The market first, then the shops. Capes are drops and shop lines and are
+     * never listed, so a market-only reading reports that a cape cannot be bought
+     * at any price — which would make "buy a base and enhance it" look impossible
+     * for exactly the pieces that path exists to serve.
+     *
+     * @param {string} itemHrid - The piece
+     * @returns {number} Coins, or 0 when nowhere sells it
+     */
+    function basePrice(itemHrid) {
+        const ask = marketData_js.getItemPrices(itemHrid, 0)?.ask || 0;
+        if (ask > 0) return ask;
+
+        const data = dataManager.getInitClientData?.() || {};
+        const shops = [data.shopItemDetailMap, data.taskShopItemDetailMap, data.labyrinthShopItemDetailMap];
+        return tokenValuation_js.shopPurchasePrice(itemHrid, shops, (hrid) => marketData_js.getItemPrices(hrid, 0)?.ask || 0) || 0;
+    }
+
+    /**
+     * What one target costs, bought or crafted.
+     *
+     * @param {string} itemHrid - The target
+     * @param {number} enhancementLevel - Which enhancement
+     * @returns {{cost: number|null, ask: number, crafted: boolean, recipe: Object|null}}
+     */
+    function costOf(itemHrid, enhancementLevel) {
+        const ask = marketData_js.getItemPrices(itemHrid, enhancementLevel)?.ask || 0;
+        const worn = wornRivalOf(itemHrid);
+        const wornBid = worn ? marketData_js.getItemPrices(worn.itemHrid, worn.enhancementLevel || 0)?.bid || 0 : 0;
+        const noSell = targetNoSell(itemHrid);
+
+        // Nobody is selling this one at this level — which is usually not a piece
+        // you cannot have, but a piece you enhance to. Capes are the plain case:
+        // the market carries +0s and nothing above, so "save for a +7" is a run at
+        // the anvil starting from the one already on your back, not a purchase at a
+        // price that does not exist. Gating this on the item being untradable was
+        // wrong — a cape is perfectly tradable at +0, and the target still has no
+        // ask, which is why the whole path never fired.
+        if (!ask) {
+            const held = highestOwnedLevel(itemHrid);
+            // Buying a base to enhance is only a path when a base can be bought at
+            // all — and for a cape that is the token shop rather than the market
+            const baseAsk = held === null ? basePrice(itemHrid) : 0;
+
+            if (held !== null || baseAsk > 0) {
+                const run = enhancementCost(itemHrid, enhancementLevel, held ?? 0);
+                if (run !== null) {
+                    // Enhancing the piece you are wearing has nothing to trade in:
+                    // it is the same piece, and it goes on your back either way
+                    const tradeIn = worn?.itemHrid === itemHrid || noSell ? 0 : wornBid;
+                    const direct = Math.max(0, run + baseAsk - tradeIn);
+                    // The safe way round the same run, priced beside it
+                    const ladder = ladderOption(itemHrid, enhancementLevel);
+                    // The mode stays stored even when the ladder is not currently
+                    // there to climb — sell the spare and the card falls back to
+                    // the direct run rather than to no figure, and buying another
+                    // spare puts it back the way you left it
+                    const laddering = Boolean(ladder) && isLaddering(itemHrid);
+
+                    return {
+                        cost: laddering ? ladder.cost : direct,
+                        mode: laddering ? 'ladder' : 'direct',
+                        // Whichever one is not the basis is still worth a line, so
+                        // the card always carries both
+                        direct,
+                        ask: 0,
+                        crafted: false,
+                        enhancing: true,
+                        fromLevel: held ?? 0,
+                        ownsBase: held !== null,
+                        ladder,
+                        recipe: null,
+                    };
+                }
+            }
+        }
+
+        if (!isCrafting(itemHrid)) {
+            return {
+                cost: upgradeCost({ targetAsk: ask, equippedBid: wornBid, noSell }),
+                ask,
+                crafted: false,
+                recipe: null,
+            };
+        }
+
+        // Crafting prices the materials instead of the finished piece, which for an
+        // upgrade you already hold the base of is a completely different figure —
+        // a Furious Spear you own becomes a Refined one for the price of the shards
+        const recipe = recipeFor(itemHrid);
+        const materials = craftMaterialsCost(itemHrid, recipe);
+
+        if (materials === null) return { cost: null, ask, crafted: true, recipe };
+        // The trade-in still applies: crafting the replacement does not stop you
+        // selling the piece it replaces
+        return {
+            cost: noSell ? materials : Math.max(0, materials - wornBid),
+            ask,
+            crafted: true,
+            recipe,
+        };
+    }
+
+    /**
+     * What making one costs, through the crafting planner where it is available.
+     *
+     * The planner is the better answer by a distance: it costs each ingredient at
+     * whichever of buying and making it is cheaper, recursively, which is what
+     * anybody actually does. Pricing the inputs at their asks assumes every one is
+     * bought, and for a chain of refinements that overstates the total badly.
+     *
+     * It lives in the actions bundle, so it is reached through the global rather
+     * than imported — importing it would copy the whole model into this bundle. When
+     * it is not there, the flat reading of the recipe is used instead and says so.
+     *
+     * @param {string} itemHrid - The finished piece
+     * @param {Object|null} recipe - From `recipeFor`
+     * @returns {number|null} Coins for one, or null when it cannot be priced
+     */
+    function craftMaterialsCost(itemHrid, recipe) {
+        const planner = window.Toolasha?.Actions?.craftingPlanCalculator?.computeBestCraftingPlan;
+
+        if (planner && recipe?.inputItems?.length) {
+            try {
+                // The base piece is not a cost when it is already in the bag, and the
+                // planner has no way to know that — so it is priced without it and
+                // the plan for the inputs alone is what is asked for
+                let total = 0;
+                for (const input of recipe.inputItems) {
+                    const plan = planner(input.itemHrid, input.count || 0, 'ask');
+                    if (!plan || !Number.isFinite(plan.totalCost)) return null;
+                    total += plan.totalCost;
+                }
+
+                if (recipe.upgradeItemHrid && !ownsBase(recipe.upgradeItemHrid)) {
+                    const base = planner(recipe.upgradeItemHrid, 1, 'ask');
+                    if (!base || !Number.isFinite(base.totalCost)) return null;
+                    total += base.totalCost;
+                }
+
+                return total / (recipe.outputCount > 0 ? recipe.outputCount : 1);
+            } catch (error) {
+                console.error('[EquipmentSavings] The crafting planner failed, falling back to material asks:', error);
+            }
+        }
+
+        return craftCost({
+            inputItems: recipe?.inputItems,
+            priceOf: (hrid) => marketData_js.getItemPrices(hrid, 0)?.ask || 0,
+            outputCount: recipe?.outputCount,
+            haveBase: ownsBase(recipe?.upgradeItemHrid),
+            upgradeAsk: recipe?.upgradeItemHrid ? marketData_js.getItemPrices(recipe.upgradeItemHrid, 0)?.ask || 0 : 0,
+        });
+    }
+
+    /**
+     * Every target, costed against what you are wearing and what you have.
+     *
+     * @returns {Array<Object>} `{itemHrid, name, enhancementLevel, ask, cost, ...}`
+     */
+    function watchedTargets() {
+        const coins = spendable();
+        const perDay = incomePerDay();
+
+        const targets = Object.entries(state.targets).map(([itemHrid, target]) => {
+            const enhancementLevel = target.enhancementLevel || 0;
+            const {
+                cost,
+                ask,
+                crafted,
+                recipe,
+                enhancing,
+                fromLevel,
+                ownsBase: holdsBase,
+                ladder,
+                direct,
+                mode,
+            } = costOf(itemHrid, enhancementLevel);
+
+            const worn = wornRivalOf(itemHrid);
+            const wornBid = worn ? marketData_js.getItemPrices(worn.itemHrid, worn.enhancementLevel || 0)?.bid || 0 : 0;
+            const progress = savingsProgress(cost, coins);
+
+            return {
+                itemHrid,
+                name: nameOf(itemHrid),
+                enhancementLevel,
+                ask,
+                crafted,
+                enhancing: Boolean(enhancing),
+                ownsBase: Boolean(holdsBase),
+                fromLevel: fromLevel || 0,
+                ladder: ladder || null,
+                direct: direct ?? null,
+                // Which of the two paths every figure below is counted along
+                mode: mode || 'direct',
+                recipe,
+                noSell: targetNoSell(itemHrid),
+                ownNoSell: target.noSell !== undefined,
+                worn: worn ? { ...worn, name: nameOf(worn.itemHrid), bid: wornBid } : null,
+                cost,
+                ...progress,
+                seconds: timeToAffordSeconds(progress.needed, perDay),
+            };
+        });
+
+        // Nearest to done first: that is the next thing that happens, and the only
+        // entry you might act on today
+        return orderTargets(targets);
+    }
+
+    /** @returns {Object} The whole list against your coins */
+    function everything() {
+        const targets = watchedTargets();
+        const abilities = watchedAbilityGoals();
+        const houses = watchedHouseGoals();
+        // A level already reached is not part of what is left to save for, and
+        // totalling it would keep the plan expensive after it got cheaper
+        const outstanding = [...targets, ...abilities.filter((goal) => !goal.done), ...houses.filter((goal) => !goal.done)];
+
+        const { cost, unpriced } = totalSavings(outstanding);
+        const progress = savingsProgress(outstanding.length ? cost : null, spendable());
+
+        return {
+            targets,
+            abilities,
+            houses,
+            cost,
+            unpriced,
+            ...progress,
+            seconds: timeToAffordSeconds(progress.needed, incomePerDay()),
+        };
+    }
+
+    /**
+     * Every piece of equipment the game has, grouped by the slot it fills.
+     *
+     * From the item map rather than from a list, so a piece added by an update can be
+     * saved for rather than being missing until somebody notices.
+     *
+     * @returns {Array<{type: string, items: Array<{itemHrid: string, name: string}>}>}
+     */
+    function equipmentBySlot() {
+        const itemDetailMap = dataManager.getInitClientData?.()?.itemDetailMap || {};
+        const groups = new Map();
+
+        for (const [itemHrid, details] of Object.entries(itemDetailMap)) {
+            const type = details?.equipmentDetail?.type;
+            if (!type) continue;
+
+            if (!groups.has(type)) groups.set(type, []);
+            groups.get(type).push({ itemHrid, name: details.name || itemHrid });
+        }
+
+        return [...groups.entries()]
+            .map(([type, items]) => ({
+                type,
+                label: type.split('/').pop().replace(/_/g, ' '),
+                items: items.sort((a, b) => a.name.localeCompare(b.name)),
+            }))
+            .sort((a, b) => a.label.localeCompare(b.label));
+    }
+
+    /**
+     * EWatch's picker, opened under the slot it belongs to.
+     *
+     * The item menu can only offer what you are holding, which is exactly the wrong
+     * set — the thing you are saving for is by definition something you do not have.
+     * So the panel needs a way in of its own, and it belongs under the slot rather
+     * than at the top: the question is "what is going in this slot", and a picker
+     * somewhere else makes you carry the slot in your head.
+     *
+     * A list box rather than a dropdown, as EWatch uses. A dropdown over three
+     * hundred items is a scroll you cannot see the shape of, and it closes every
+     * time anything redraws.
+     *
+     * @param {string} slot - The slot being filled
+     * @returns {HTMLElement}
+     */
+    function slotPicker(slot) {
+        const card = document.createElement('div');
+        Object.assign(card.style, {
+            borderLeft: '2px solid #6495ed',
+            background: 'rgba(255, 255, 255, 0.03)',
+            borderRadius: '3px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '5px',
+            padding: '7px',
+        });
+
+        const heading = document.createElement('div');
+        Object.assign(heading.style, { display: 'flex', alignItems: 'center', gap: '8px' });
+
+        const label = document.createElement('span');
+        label.textContent = 'Compare with:';
+        Object.assign(label.style, { color: 'rgba(232, 236, 245, 0.6)', flex: '1', fontSize: '11px' });
+
+        const watch = document.createElement('button');
+        watch.textContent = '\u{1F441} Watch';
+        watch.dataset.pickAdd = 'true';
+        Object.assign(watch.style, {
+            background: 'rgba(255, 207, 92, 0.18)',
+            border: '1px solid #ffcf5c',
+            borderRadius: '3px',
+            color: '#ffcf5c',
+            cursor: 'pointer',
+            fontSize: '11px',
+            padding: '2px 10px',
+        });
+        watch.disabled = !editing.itemHrid;
+        watch.style.opacity = editing.itemHrid ? '1' : '0.4';
+        watch.addEventListener('click', () => {
+            if (!editing.itemHrid) return;
+            watchTarget(editing.itemHrid, editing.enhancementLevel);
+            editing.itemHrid = '';
+            editing.enhancementLevel = 0;
+            editing.slot = '';
+            equipmentSavingsPanel.render();
+        });
+
+        heading.append(label, watch);
+        card.appendChild(heading);
+
+        const list = document.createElement('select');
+        list.dataset.pickItem = 'true';
+        // A list box, not a dropdown: the shape of the list is visible and nothing
+        // can close it
+        list.size = 10;
+        Object.assign(list.style, {
+            background: 'rgba(0, 0, 0, 0.35)',
+            border: '1px solid rgba(255, 255, 255, 0.12)',
+            borderRadius: '3px',
+            color: '#e8ecf5',
+            fontSize: '11px',
+            padding: '2px',
+            width: '100%',
+        });
+
+        const blank = document.createElement('option');
+        blank.value = '';
+        blank.textContent = '-- Select Item --';
+        list.appendChild(blank);
+
+        const group = equipmentBySlot().find((entry) => entry.type.split('/').pop() === slot);
+        for (const item of group?.items || []) {
+            const option = document.createElement('option');
+            option.value = item.itemHrid;
+            option.textContent = item.name;
+            option.selected = item.itemHrid === editing.itemHrid;
+            list.appendChild(option);
+        }
+        list.addEventListener('change', () => {
+            editing.itemHrid = list.value;
+            equipmentSavingsPanel.render();
+        });
+        // A keystroke in a list should not also be a game hotkey
+        list.addEventListener('keydown', (event) => event.stopPropagation());
+        card.appendChild(list);
+
+        card.appendChild(enhancementButtons());
+        if (editing.itemHrid) card.appendChild(costPreview(editing.itemHrid, editing.enhancementLevel));
+        return card;
+    }
+
+    /**
+     * A button per enhancement level, tinted where the market has one.
+     *
+     * The tint is the useful part: most levels of most items have never been listed,
+     * and knowing which ones exist is half of choosing a target.
+     *
+     * @returns {HTMLElement}
+     */
+    function enhancementButtons() {
+        const wrap = document.createElement('div');
+        Object.assign(wrap.style, { display: 'flex', flexWrap: 'wrap', gap: '3px' });
+
+        for (let level = 0; level <= MAX_ENHANCEMENT; level++) {
+            const ask = editing.itemHrid ? marketData_js.getItemPrices(editing.itemHrid, level)?.ask || 0 : 0;
+            const sold = ask > 0;
+            const chosen = level === editing.enhancementLevel && Boolean(editing.itemHrid);
+
+            const button = document.createElement('button');
+            button.textContent = `+${level}`;
+            button.dataset.pickLevel = String(level);
+            Object.assign(button.style, {
+                background: sold ? 'rgba(74, 222, 128, 0.22)' : 'rgba(255, 255, 255, 0.05)',
+                border: `1px solid ${chosen ? '#e8ecf5' : sold ? '#4ade80' : 'rgba(255, 255, 255, 0.10)'}`,
+                borderRadius: '3px',
+                color: sold ? '#e8ecf5' : 'rgba(232, 236, 245, 0.35)',
+                cursor: 'pointer',
+                fontSize: '10px',
+                fontWeight: chosen ? 'bold' : 'normal',
+                padding: '2px 6px',
+            });
+            button.title = sold
+                ? `${formatters_js.formatWithSeparator(Math.round(ask))} to buy.`
+                : 'Nobody is selling this one — it would have to be enhanced up to.';
+            button.addEventListener('click', () => {
+                editing.enhancementLevel = level;
+                equipmentSavingsPanel.render();
+            });
+            wrap.appendChild(button);
+        }
+        return wrap;
+    }
+
+    /**
+     * What the piece being picked would cost, before it is committed to.
+     *
+     * @param {string} itemHrid - The piece
+     * @param {number} enhancementLevel - Which enhancement
+     * @returns {HTMLElement}
+     */
+    function costPreview(itemHrid, enhancementLevel) {
+        // The same costing the watched cards use, rather than a second reading of
+        // the ask. Pricing the preview separately meant it could only ever offer a
+        // purchase — a +7 cape previewed as "nobody is selling this one" and then
+        // watched perfectly well, which is a preview saying the opposite of what
+        // the panel was about to do.
+        const { cost, ask, crafted, enhancing, fromLevel, ladder } = costOf(itemHrid, enhancementLevel);
+        const progress = savingsProgress(cost, spendable());
+        const seconds = timeToAffordSeconds(progress.needed, incomePerDay());
+
+        const wrap = document.createElement('div');
+        Object.assign(wrap.style, { display: 'flex', flexDirection: 'column', gap: '2px', fontSize: '11px' });
+
+        const title = document.createElement('div');
+        title.textContent =
+            `${nameOf(itemHrid)}${enhancementLevel ? ` +${enhancementLevel}` : ''}` +
+            (cost === null ? '' : `  ${formatters_js.formatKMB(cost)} needed`);
+        Object.assign(title.style, { color: overlayFormat_js.ROW_COLORS.gold, fontWeight: 'bold' });
+        wrap.appendChild(title);
+
+        if (cost === null) {
+            const none = document.createElement('div');
+            none.textContent = 'Nobody is selling this one, and it cannot be reached at the anvil either.';
+            none.style.color = 'rgba(232, 236, 245, 0.5)';
+            wrap.appendChild(none);
+            return wrap;
+        }
+
+        if (enhancing) {
+            wrap.appendChild(
+                priceLine(`Enhance +${fromLevel} → +${enhancementLevel}`, 'Enhancement Cost', overlayFormat_js.ROW_COLORS.gold)
+            );
+            if (ladder) wrap.appendChild(ladderLine(ladder, enhancementLevel));
+        } else {
+            wrap.appendChild(
+                priceLine(crafted ? 'Materials:' : 'Lowest Ask:', formatters_js.formatWithSeparator(Math.round(ask)), overlayFormat_js.ROW_COLORS.gold)
+            );
+        }
+        wrap.appendChild(
+            priceLine(
+                'Difference:',
+                `+${formatters_js.formatWithSeparator(Math.round(cost))}`,
+                cost > 0 ? overlayFormat_js.ROW_COLORS.bad : overlayFormat_js.ROW_COLORS.good
+            )
+        );
+        wrap.appendChild(
+            priceLine(
+                'Time:',
+                progress.affordable ? 'Affordable' : seconds === null ? '--' : overlayFormat_js.shortDuration(seconds),
+                overlayFormat_js.ROW_COLORS.accent
+            )
+        );
+        return wrap;
+    }
+
+    /**
+     * How a source of `incomeEstimate` reads in the panel.
+     * @param {'combat'|'networth'|null} source - Where the figure came from
+     * @returns {string}
+     */
+    function sourceLabel(source) {
+        return source === 'combat' ? 'combat session' : `networth trend, ${NETWORTH_TREND_HOURS}h`;
+    }
+
+    /**
+     * A switch that reads as on or off rather than as a checkbox.
+     *
+     * EWatch's own shape: the state is the button, in the colour of what it means,
+     * because these two change what every figure below them says and a tickbox is
+     * easy to leave in the wrong position without noticing.
+     *
+     * @param {string} label - What it controls
+     * @param {boolean} on - Its state
+     * @param {Function} onChange - `(next) => void`
+     * @param {string} title - What it does
+     * @returns {HTMLElement}
+     */
+    function toggle(label, on, onChange, title) {
+        const button = document.createElement('button');
+        button.textContent = `${label} ${on ? 'On' : 'Off'}`;
+        button.dataset.toggle = label;
+        Object.assign(button.style, {
+            background: on ? 'rgba(74, 222, 128, 0.18)' : 'rgba(248, 113, 113, 0.18)',
+            border: `1px solid ${on ? '#4ade80' : '#f87171'}`,
+            borderRadius: '3px',
+            color: on ? '#4ade80' : '#f87171',
+            cursor: 'pointer',
+            fontSize: '11px',
+            padding: '2px 9px',
+        });
+        button.title = title;
+        button.addEventListener('click', () => onChange(!on));
+        return button;
+    }
+
+    /**
+     * The one target the header watches, said large.
+     *
+     * @param {Object} target - From `watchedTargets`
+     * @returns {HTMLElement}
+     */
+    function headline(target) {
+        const card = document.createElement('div');
+        Object.assign(card.style, { display: 'flex', flexDirection: 'column', gap: '4px' });
+
+        const line = document.createElement('div');
+        Object.assign(line.style, { display: 'flex', alignItems: 'center', gap: '7px' });
+
+        // A room has no item to draw or to open, so it is headlined by the artwork
+        // of the skill it boosts instead
+        const icon = target.house ? overlayFormat_js.skillIcon(target.skill, 20) : overlayFormat_js.itemIcon(target.itemHrid, 20);
+        overlayFormat_js.linkToMarketplace(icon, target.itemHrid, marketplaceTabs_js.navigateToMarketplace);
+
+        const name = document.createElement('span');
+        name.textContent = target.enhancementLevel ? `${target.name} +${target.enhancementLevel}` : target.name;
+        Object.assign(name.style, {
+            color: overlayFormat_js.ROW_COLORS.gold,
+            fontWeight: 'bold',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+        });
+
+        const cost = document.createElement('span');
+        cost.textContent = target.cost === null ? 'no price' : formatters_js.formatKMB(target.cost);
+        cost.style.color = target.cost === null ? overlayFormat_js.ROW_COLORS.bad : overlayFormat_js.ROW_COLORS.neutral;
+        // Which run the headline is quoting, because the two figures differ by a
+        // lot and a number with no path attached is the wrong one half the time
+        cost.title =
+            target.mode === 'ladder'
+                ? `Along the ladder, from your +${target.ladder?.fromLevel ?? 0} copy.`
+                : target.enhancing
+                  ? `The direct run, from your +${target.fromLevel} copy.`
+                  : '';
+
+        const eta = document.createElement('span');
+        eta.textContent = target.affordable ? 'Affordable' : target.seconds === null ? '--' : overlayFormat_js.shortDuration(target.seconds);
+        Object.assign(eta.style, {
+            color: target.affordable ? overlayFormat_js.ROW_COLORS.good : 'rgba(232, 236, 245, 0.6)',
+            marginLeft: 'auto',
+            fontSize: '11px',
+        });
+
+        line.append(icon, name);
+        if (target.mode === 'ladder') {
+            const tag = document.createElement('span');
+            tag.textContent = 'ladder';
+            Object.assign(tag.style, { color: overlayFormat_js.ROW_COLORS.accent, fontSize: '10px', flex: '0 0 auto' });
+            tag.title = 'This one is being costed along the ladder rather than the direct run.';
+            line.appendChild(tag);
+        }
+        line.append(cost, eta);
+
+        card.append(line, progressBar(target.fraction));
+        return card;
+    }
+
+    /**
+     * EWatch's own eye, open or crossed out.
+     *
+     * The open one is the emoji; the closed one is drawn, because there is no
+     * crossed-out-eye emoji that renders the same on every platform — the nearest
+     * candidates are sunglasses and a monkey covering its face, both of which say
+     * something else entirely. A stroked path says one thing everywhere.
+     *
+     * @param {boolean} watching - Whether this is the pinned one
+     * @returns {Node}
+     */
+    function eyeIcon(watching) {
+        if (watching) return document.createTextNode('\u{1F441}\uFE0F');
+
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.setAttribute('width', '14');
+        svg.setAttribute('height', '14');
+        svg.setAttribute('viewBox', '0 0 24 24');
+        svg.setAttribute('fill', 'none');
+        svg.setAttribute('stroke', '#999');
+        svg.setAttribute('stroke-width', '2');
+        svg.setAttribute('stroke-linecap', 'round');
+        svg.setAttribute('stroke-linejoin', 'round');
+        svg.style.flex = '0 0 auto';
+
+        for (const d of [
+            'M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94',
+            'M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19',
+            'M14.12 14.12a3 3 0 1 1-4.24-4.24',
+        ]) {
+            const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            path.setAttribute('d', d);
+            svg.appendChild(path);
+        }
+
+        const slash = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        slash.setAttribute('x1', '1');
+        slash.setAttribute('y1', '1');
+        slash.setAttribute('x2', '23');
+        slash.setAttribute('y2', '23');
+        svg.appendChild(slash);
+
+        return svg;
+    }
+
+    /**
+     * A bar reading coins saved against coins needed.
+     * @param {number|null} fraction - Saved ÷ needed
+     * @returns {HTMLElement}
+     */
+    function progressBar(fraction) {
+        const track = document.createElement('div');
+        Object.assign(track.style, {
+            flex: '1',
+            height: '5px',
+            background: 'rgba(255, 255, 255, 0.12)',
+            borderRadius: '3px',
+            overflow: 'hidden',
+        });
+
+        const fill = document.createElement('div');
+        Object.assign(fill.style, {
+            height: '100%',
+            width: `${((fraction ?? 0) * 100).toFixed(2)}%`,
+            // Full means you can go and buy it, which is worth a different colour
+            // from "getting there"
+            background: fraction >= 1 ? '#4ade80' : '#6495ed',
+            transition: 'width 0.3s',
+        });
+
+        track.appendChild(fill);
+        return track;
+    }
+
+    /**
+     * One target: what it is, what it costs, how far along, and how long.
+     *
+     * @param {Object} target - From `watchedTargets`
+     * @returns {HTMLElement}
+     */
+    function targetCard(target) {
+        const watching = state.selected === target.itemHrid;
+
+        const card = document.createElement('div');
+        Object.assign(card.style, {
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '3px',
+            padding: '6px 7px',
+            borderRadius: '3px',
+            // The one the header carries reads blue, the rest gold, as EWatch's do
+            borderLeft: `2px solid ${watching ? '#6495ed' : '#ffcf5c'}`,
+            background: watching ? 'rgba(100, 149, 237, 0.10)' : 'rgba(255, 207, 92, 0.06)',
+        });
+
+        const heading = document.createElement('div');
+        Object.assign(heading.style, { display: 'flex', alignItems: 'center', gap: '7px' });
+
+        // EWatch's eye: which of several targets the header carries. Open on the one
+        // being watched, closed on the rest.
+        const eye = document.createElement('button');
+        eye.dataset.watchEye = target.itemHrid;
+        eye.replaceChildren(eyeIcon(watching));
+        Object.assign(eye.style, {
+            background: watching ? 'rgba(100, 149, 237, 0.30)' : 'rgba(100, 100, 100, 0.20)',
+            border: `1px solid ${watching ? '#6495ed' : '#666'}`,
+            borderRadius: '3px',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            lineHeight: '1',
+            padding: '3px 5px',
+        });
+        eye.title = watching ? 'Shown at the top of the panel.' : 'Show this one at the top of the panel.';
+        eye.addEventListener('click', () => {
+            selectTarget(target.itemHrid);
+            equipmentSavingsPanel.render();
+        });
+
+        const icon = overlayFormat_js.itemIcon(target.itemHrid, 22);
+        overlayFormat_js.linkToMarketplace(icon, target.itemHrid, marketplaceTabs_js.navigateToMarketplace);
+
+        const name = document.createElement('span');
+        name.textContent = target.enhancementLevel ? `${target.name} +${target.enhancementLevel}` : target.name;
+        Object.assign(name.style, { flex: '1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
+        overlayFormat_js.linkToMarketplace(name, target.itemHrid, marketplaceTabs_js.navigateToMarketplace);
+
+        const cost = document.createElement('span');
+        cost.textContent = target.cost === null ? 'no price' : formatters_js.formatKMB(target.cost);
+        cost.style.color = target.cost === null ? overlayFormat_js.ROW_COLORS.bad : overlayFormat_js.ROW_COLORS.gold;
+        cost.title =
+            target.cost === null
+                ? 'Nobody is selling this, so what it would cost is unknown rather than nothing.'
+                : target.worn
+                  ? `${formatters_js.formatKMB(target.ask)} to buy, less ${formatters_js.formatKMB(target.worn.bid)} for your ${target.worn.name}.`
+                  : `${formatters_js.formatKMB(target.ask)} to buy. Nothing in that slot to trade in.`;
+
+        const remove = document.createElement('button');
+        remove.textContent = '✕';
+        remove.dataset.removeTarget = target.itemHrid;
+        Object.assign(remove.style, {
+            background: 'none',
+            border: 'none',
+            color: 'rgba(232, 236, 245, 0.5)',
+            cursor: 'pointer',
+            fontSize: '12px',
+            padding: '0 2px',
+        });
+        remove.title = 'Stop saving for this.';
+        remove.addEventListener('click', () => {
+            unwatchTarget(target.itemHrid);
+            equipmentSavingsPanel.render();
+        });
+
+        heading.append(eye, icon, name, cost, remove);
+        card.appendChild(heading);
+
+        // Per-target switches, because both genuinely differ per piece: the sword
+        // being replaced gets sold and the second ring replaces nothing, and one
+        // upgrade is worth crafting while another is cheaper to buy outright
+        const perTarget = document.createElement('div');
+        Object.assign(perTarget.style, { display: 'flex', gap: '5px', flexWrap: 'wrap' });
+
+        const sell = document.createElement('button');
+        sell.textContent = target.ownNoSell ? (target.noSell ? 'Keeping' : 'Selling') : 'Follows panel';
+        sell.dataset.targetSell = target.itemHrid;
+        Object.assign(sell.style, {
+            background: 'rgba(255, 255, 255, 0.06)',
+            border: `1px solid ${target.ownNoSell ? '#6495ed' : 'rgba(255, 255, 255, 0.12)'}`,
+            borderRadius: '3px',
+            color: target.ownNoSell ? '#6495ed' : 'rgba(232, 236, 245, 0.55)',
+            cursor: 'pointer',
+            fontSize: '10px',
+            padding: '1px 7px',
+        });
+        sell.title =
+            'Whether the piece this replaces is sold towards it.\n' +
+            'Cycles: follows the panel switch, always sells, always keeps.';
+        sell.addEventListener('click', () => {
+            cycleTargetNoSell(target.itemHrid);
+            equipmentSavingsPanel.render();
+        });
+        perTarget.appendChild(sell);
+
+        if (recipeFor(target.itemHrid)?.inputItems?.length) {
+            const craft = document.createElement('button');
+            craft.textContent = target.crafted ? 'Crafting' : 'Buying';
+            craft.dataset.targetCraft = target.itemHrid;
+            Object.assign(craft.style, {
+                background: target.crafted ? 'rgba(74, 222, 128, 0.18)' : 'rgba(255, 255, 255, 0.06)',
+                border: `1px solid ${target.crafted ? '#4ade80' : 'rgba(255, 255, 255, 0.12)'}`,
+                borderRadius: '3px',
+                color: target.crafted ? '#4ade80' : 'rgba(232, 236, 245, 0.55)',
+                cursor: 'pointer',
+                fontSize: '10px',
+                padding: '1px 7px',
+            });
+            craft.title =
+                'Price the materials rather than the finished piece.\n' +
+                'For an upgrade whose base you already hold, that is only the ingredients.';
+            craft.addEventListener('click', () => {
+                toggleCrafting(target.itemHrid);
+                equipmentSavingsPanel.render();
+            });
+            perTarget.appendChild(craft);
+        }
+
+        // Only where there are two paths to choose between. A target with no second
+        // copy and nowhere to get one has one run and no decision to offer.
+        if (target.enhancing && target.ladder) perTarget.appendChild(ladderButton(target));
+        card.appendChild(perTarget);
+
+        if (target.enhancing) {
+            // The chosen path leads in gold and the other follows in blue, so the
+            // two rows swap places rather than the card losing one of them: the
+            // comparison is the whole point, and only which one the bar is filling
+            // against changes
+            if (target.mode === 'ladder' && target.ladder) {
+                card.appendChild(ladderLine(target.ladder, target.enhancementLevel, true));
+            } else {
+                card.appendChild(
+                    priceLine(
+                        `Enhance +${target.fromLevel} \u2192 +${target.enhancementLevel}`,
+                        target.cost === null ? 'cannot model' : formatters_js.formatWithSeparator(Math.round(target.cost)),
+                        target.cost === null ? overlayFormat_js.ROW_COLORS.bad : overlayFormat_js.ROW_COLORS.gold
+                    )
+                );
+            }
+            card.appendChild(
+                priceLine(
+                    target.ownsBase ? 'Not sold at this level' : 'Buy a +0 and enhance it',
+                    'Enhancement Cost',
+                    'rgba(232, 236, 245, 0.55)'
+                )
+            );
+            if (target.mode === 'ladder' && target.ladder) card.appendChild(directLine(target));
+            else if (target.ladder) card.appendChild(ladderLine(target.ladder, target.enhancementLevel));
+        } else if (target.crafted) {
+            card.appendChild(recipeLines(target));
+            if (target.recipe?.actionHrid) card.appendChild(missingMatsButton(target.recipe.actionHrid));
+        } else if (target.ask > 0) {
+            card.appendChild(priceLine('Ask Price:', formatters_js.formatWithSeparator(Math.round(target.ask)), overlayFormat_js.ROW_COLORS.gold));
+            // What it costs after the trade-in, which is the figure the bar fills
+            // against — the ask alone is not what you have to find
+            card.appendChild(
+                priceLine(
+                    'Difference:',
+                    `+${formatters_js.formatWithSeparator(Math.round(target.cost ?? 0))}`,
+                    target.affordable ? overlayFormat_js.ROW_COLORS.good : overlayFormat_js.ROW_COLORS.bad
+                )
+            );
+        }
+
+        const bar = document.createElement('div');
+        Object.assign(bar.style, { display: 'flex', alignItems: 'center', gap: '7px' });
+        bar.appendChild(progressBar(target.fraction));
+
+        const status = document.createElement('span');
+        status.textContent = statusText(target);
+        Object.assign(status.style, {
+            color: target.affordable ? overlayFormat_js.ROW_COLORS.good : 'rgba(232, 236, 245, 0.6)',
+            fontSize: '11px',
+            flex: '0 0 auto',
+            minWidth: '96px',
+            textAlign: 'right',
+        });
+        bar.appendChild(status);
+
+        card.appendChild(bar);
+        card.appendChild(percentLine(target));
+
+        if (target.seconds !== null && !target.affordable) {
+            const eta = document.createElement('div');
+            eta.textContent = `ETA: ${overlayFormat_js.shortDuration(target.seconds)}`;
+            Object.assign(eta.style, { color: overlayFormat_js.ROW_COLORS.accent, fontSize: '10px', textAlign: 'right' });
+            card.appendChild(eta);
+        }
+        return card;
+    }
+
+    /**
+     * Open the marketplace on what this craft is short of.
+     *
+     * The same button the action panel carries, on the card that is saving towards
+     * the craft — which is where the question "what am I actually missing" gets
+     * asked. It calls the action feature's own handler through the global rather
+     * than rebuilding the marketplace tabs here, so the two cannot drift apart.
+     *
+     * @param {string} actionHrid - The craft
+     * @returns {HTMLElement}
+     */
+    function missingMatsButton(actionHrid) {
+        const button = document.createElement('button');
+        button.textContent = 'Missing Mats Marketplace';
+        Object.assign(button.style, {
+            background: 'linear-gradient(180deg, rgba(91, 141, 239, 0.2) 0%, rgba(91, 141, 239, 0.1) 100%)',
+            border: '1px solid rgba(91, 141, 239, 0.4)',
+            borderRadius: '5px',
+            color: '#e8ecf5',
+            cursor: 'pointer',
+            fontSize: '11px',
+            fontWeight: 'bold',
+            marginTop: '4px',
+            padding: '4px 8px',
+            width: '100%',
+        });
+        button.title = 'Open the marketplace on the materials this craft is short of.';
+
+        button.addEventListener('click', async () => {
+            const open = window.Toolasha?.Actions?.missingMaterialsButton?.openMissingMaterials;
+            if (!open) {
+                button.textContent = 'The action panel feature is off';
+                return;
+            }
+            button.textContent = 'Opening…';
+            try {
+                await open(actionHrid, 1);
+            } catch (error) {
+                console.error('[EquipmentSavings] Opening the missing materials failed:', error);
+                button.textContent = 'Could not open the marketplace';
+            }
+        });
+        return button;
+    }
+
+    /**
+     * What a craft is made of, and what each ingredient comes to.
+     *
+     * Itemised rather than totalled, because the whole reason to craft is that one
+     * ingredient is the expensive one — a total hides which, and that is the thing
+     * worth knowing before committing to it.
+     *
+     * @param {Object} target - A costed target
+     * @returns {HTMLElement}
+     */
+    function recipeLines(target) {
+        const wrap = document.createElement('div');
+        Object.assign(wrap.style, { display: 'flex', flexDirection: 'column', gap: '1px' });
+
+        const recipe = target.recipe;
+        if (!recipe?.inputItems?.length) {
+            wrap.appendChild(priceLine('Materials:', 'no recipe', overlayFormat_js.ROW_COLORS.bad));
+            return wrap;
+        }
+
+        for (const input of recipe.inputItems) {
+            const price = marketData_js.getItemPrices(input.itemHrid, 0)?.ask || 0;
+            const count = input.count || 0;
+            // One decimal once the tea has taken its cut, because the saving is
+            // fractional and 88.9 rounded to 89 hides the very thing being shown
+            const shown = Number.isInteger(count) ? formatters_js.formatWithSeparator(count) : count.toFixed(1);
+            wrap.appendChild(
+                priceLine(
+                    `${shown} × ${nameOf(input.itemHrid)}`,
+                    price > 0 ? formatters_js.formatWithSeparator(Math.round(price * count)) : 'no price',
+                    price > 0 ? overlayFormat_js.ROW_COLORS.gold : overlayFormat_js.ROW_COLORS.bad
+                )
+            );
+        }
+
+        if (recipe.artisan > 0) {
+            wrap.appendChild(
+                priceLine(
+                    'Artisan tea',
+                    `−${(recipe.artisan * 100).toFixed(1)}% materials`,
+                    overlayFormat_js.ROW_COLORS.good,
+                    'From the loadout for this skill, not from whatever is in the slots right now.'
+                )
+            );
+        }
+
+        // Named rather than assumed: whether the base piece is a cost changes the
+        // figure entirely, and it depends on what is in the bag
+        if (recipe.upgradeItemHrid) {
+            const owned = (dataManager.getInventory?.() || []).some(
+                (item) => item.itemHrid === recipe.upgradeItemHrid && (item.count || 0) > 0
+            );
+            wrap.appendChild(
+                priceLine(
+                    `Upgrades ${nameOf(recipe.upgradeItemHrid)}`,
+                    owned ? 'you have one' : 'not owned, counted in',
+                    owned ? overlayFormat_js.ROW_COLORS.good : overlayFormat_js.ROW_COLORS.accent
+                )
+            );
+        }
+
+        wrap.appendChild(
+            priceLine(
+                'Difference:',
+                target.cost === null ? 'no price' : `+${formatters_js.formatWithSeparator(Math.round(target.cost))}`,
+                target.cost === null ? overlayFormat_js.ROW_COLORS.bad : target.affordable ? overlayFormat_js.ROW_COLORS.good : overlayFormat_js.ROW_COLORS.bad
+            )
+        );
+        return wrap;
+    }
+
+    /**
+     * A label and a figure on one line, as EWatch lists Ask Price and Difference.
+     *
+     * @param {string} label - What it is
+     * @param {string} value - What it says
+     * @param {string} color - Ink for the figure
+     * @returns {HTMLElement}
+     */
+    function priceLine(label, value, color, title = '') {
+        const line = document.createElement('div');
+        Object.assign(line.style, { display: 'flex', justifyContent: 'space-between', gap: '8px', fontSize: '11px' });
+        if (title) line.title = title;
+
+        const name = document.createElement('span');
+        name.textContent = label;
+        name.style.color = 'rgba(232, 236, 245, 0.55)';
+
+        const figure = document.createElement('span');
+        figure.textContent = value;
+        Object.assign(figure.style, { color, fontWeight: 'bold', whiteSpace: 'nowrap' });
+
+        line.append(name, figure);
+        return line;
+    }
+
+    /**
+     * The ladder, said beside the cost of enhancing what you are wearing.
+     *
+     * The two figures answer different questions and both are worth having on the
+     * card: the one above is what the target costs if you bet your equipped piece,
+     * this is what it costs if you do not. The ladder is usually dearer — you are
+     * starting lower, and possibly paying for a copy — and that is the price of not
+     * fighting in a +0 for a week if it goes wrong.
+     *
+     * @param {Object} ladder - From `ladderOption`
+     * @param {number} targetLevel - Where the ladder is climbing to
+     * @returns {HTMLElement}
+     */
+    function ladderLine(ladder, targetLevel, chosen = false) {
+        const label = chosen
+            ? ladder.spare
+                ? `Ladder: enhance your +${ladder.fromLevel} copy`
+                : `Ladder: enhance a fresh +0 ${ladder.crafted ? 'you make' : 'you buy'}`
+            : ladder.spare
+              ? `Ladder: enhance your +${ladder.fromLevel} copy instead`
+              : `Ladder: enhance a fresh +0 ${ladder.crafted ? 'you make' : 'you buy'} instead`;
+
+        const why =
+            `Takes a second copy to +${targetLevel} and leaves the one you are wearing alone, so a failed ` +
+            'attempt costs the spare rather than your kit.\n';
+        const how = ladder.spare
+            ? `Counted from the second-best copy you own, at +${ladder.fromLevel}.`
+            : 'You own no second copy, so this starts from one you have to get: ' +
+              `${formatters_js.formatWithSeparator(Math.round(ladder.base))} for a +0 ` +
+              `${ladder.crafted ? 'at the crafting bench' : 'at the market or shop'}, plus the run.`;
+
+        return priceLine(
+            label,
+            formatters_js.formatWithSeparator(Math.round(ladder.cost)),
+            chosen ? overlayFormat_js.ROW_COLORS.gold : overlayFormat_js.ROW_COLORS.accent,
+            why + how + (chosen ? '\nThe bar and the countdown are filling against this one.' : '')
+        );
+    }
+
+    /**
+     * The direct run, said as the alternative when the ladder is the one chosen.
+     *
+     * The mirror of `ladderLine`: whichever path the card is not counting along is
+     * still worth its figure, because the point of the pair is the comparison. The
+     * direct run is dearer in risk rather than in coins — it is your equipped piece
+     * on the table — which is the thing the tooltip has to say, since the number
+     * alone makes it look like the obvious choice.
+     *
+     * @param {Object} target - A costed target
+     * @returns {HTMLElement}
+     */
+    function directLine(target) {
+        const label = target.ownsBase
+            ? `Direct: enhance your +${target.fromLevel} copy instead`
+            : 'Direct: buy a +0 and enhance that instead';
+
+        const why =
+            `Takes the best copy you own to +${target.enhancementLevel}. Cheaper, because it starts higher — and ` +
+            'a failed attempt comes out of the piece you are wearing.';
+
+        return priceLine(label, formatters_js.formatWithSeparator(Math.round(target.direct ?? 0)), overlayFormat_js.ROW_COLORS.accent, why);
+    }
+
+    /**
+     * The switch between costing the direct run and costing the ladder.
+     *
+     * A per-target button beside the sell and craft switches, because it is the
+     * same kind of decision they are: it changes what every figure on the card
+     * means, and it differs piece by piece. Named for the state it is in rather
+     * than for what pressing it does, as its neighbours are.
+     *
+     * @param {Object} target - A costed target
+     * @returns {HTMLElement}
+     */
+    function ladderButton(target) {
+        const on = target.mode === 'ladder';
+
+        const button = document.createElement('button');
+        button.textContent = on ? 'Ladder' : 'Direct';
+        button.dataset.targetLadder = target.itemHrid;
+        Object.assign(button.style, {
+            background: on ? 'rgba(100, 149, 237, 0.22)' : 'rgba(255, 255, 255, 0.06)',
+            border: `1px solid ${on ? '#6495ed' : 'rgba(255, 255, 255, 0.12)'}`,
+            borderRadius: '3px',
+            color: on ? '#6495ed' : 'rgba(232, 236, 245, 0.55)',
+            cursor: 'pointer',
+            fontSize: '10px',
+            padding: '1px 7px',
+        });
+        button.title =
+            'Which run the cost, the bar and the countdown are counted along.\n' +
+            'Direct takes the best copy you own, risking the one you are wearing.\n' +
+            'Ladder takes a second copy up instead and leaves your kit alone.';
+        button.addEventListener('click', () => {
+            toggleLaddering(target.itemHrid);
+            equipmentSavingsPanel.render();
+        });
+        return button;
+    }
+
+    /**
+     * The bar's own figure, to five places.
+     *
+     * Five looks absurd until the target is a two-billion-coin spear, at which point
+     * a bar and a rounded percentage both sit still for a whole evening and the only
+     * thing that says you are getting anywhere is the fifth decimal. EWatch shows
+     * five for exactly this reason.
+     *
+     * @param {Object} target - A costed target
+     * @returns {HTMLElement}
+     */
+    function percentLine(target) {
+        const line = document.createElement('div');
+        line.textContent = target.fraction === null ? '' : `${(target.fraction * 100).toFixed(5)}%`;
+        Object.assign(line.style, {
+            color: target.affordable ? overlayFormat_js.ROW_COLORS.good : overlayFormat_js.ROW_COLORS.accent,
+            fontSize: '10px',
+            textAlign: 'right',
+        });
+        return line;
+    }
+
+    /**
+     * What a bar says beside itself.
+     * @param {Object} target - A costed target
+     * @returns {string}
+     */
+    function statusText(target) {
+        if (target.cost === null) return 'unpriced';
+        if (target.affordable) return 'Affordable';
+
+        // The shortfall rather than the percentage: a percentage of an amount you
+        // have not been told is not a figure you can act on
+        const short = `${formatters_js.formatKMB(target.needed)} to go`;
+        return target.seconds === null ? short : `${short} · ${overlayFormat_js.shortDuration(target.seconds)}`;
+    }
+
+    /**
+     * One slot: what is in it, what it would fetch, and what is being saved for.
+     *
+     * @param {string} slot - e.g. `main_hand`
+     * @param {Array<Object>} targets - From `watchedTargets`
+     * @returns {HTMLElement}
+     */
+    function slotSection(slot, targets) {
+        const wrap = document.createElement('div');
+        wrap.dataset.slot = slot;
+        Object.assign(wrap.style, { display: 'flex', flexDirection: 'column', gap: '3px' });
+
+        const worn = dataManager.getEquipment?.()?.get?.(`/item_locations/${slot}`) || null;
+        const wornBid = worn ? marketData_js.getItemPrices(worn.itemHrid, worn.enhancementLevel || 0)?.bid || 0 : 0;
+
+        // The heading: what is in the slot and what selling it would put towards
+        // the upgrade, which is half the cost of every target below it
+        const heading = document.createElement('div');
+        Object.assign(heading.style, { display: 'flex', alignItems: 'center', gap: '7px', padding: '3px 0' });
+
+        const label = document.createElement('span');
+        label.textContent = `${slotLabel(slot)}:`;
+        Object.assign(label.style, { color: 'rgba(232, 236, 245, 0.6)', minWidth: '76px', fontSize: '11px' });
+
+        const name = document.createElement('span');
+        name.textContent = worn
+            ? `${nameOf(worn.itemHrid)}${worn.enhancementLevel ? ` +${worn.enhancementLevel}` : ''}`
+            : 'Empty';
+        Object.assign(name.style, {
+            flex: '1',
+            color: worn ? overlayFormat_js.ROW_COLORS.neutral : 'rgba(232, 236, 245, 0.4)',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+        });
+
+        const bid = document.createElement('span');
+        bid.textContent = wornBid > 0 ? formatters_js.formatWithSeparator(Math.round(wornBid)) : 'No bid';
+        bid.style.color = wornBid > 0 ? overlayFormat_js.ROW_COLORS.gold : 'rgba(232, 236, 245, 0.4)';
+        bid.title = wornBid > 0 ? 'What selling this would put towards an upgrade.' : 'Nothing bidding on this.';
+
+        heading.append(label, name, bid);
+        wrap.appendChild(heading);
+
+        for (const target of targets.filter((entry) => slotOf(entry.itemHrid) === slot)) {
+            wrap.appendChild(targetCard(target));
+        }
+
+        // The invitation stays whether or not something is already watched: two
+        // rings and two earrings are a real plan, and a slot that stops offering
+        // once it has one target cannot express it
+        wrap.appendChild(emptySlotRow(slot));
+        if (editing.slot === slot) wrap.appendChild(slotPicker(slot));
+        return wrap;
+    }
+
+    /**
+     * The invitation on a slot with nothing watched.
+     *
+     * @param {string} slot - The slot
+     * @returns {HTMLElement}
+     */
+    function emptySlotRow(slot) {
+        const row = document.createElement('div');
+        Object.assign(row.style, {
+            borderLeft: '2px solid rgba(127, 214, 163, 0.5)',
+            background: 'rgba(255, 255, 255, 0.03)',
+            borderRadius: '3px',
+            color: 'rgba(232, 236, 245, 0.45)',
+            cursor: 'pointer',
+            fontSize: '11px',
+            padding: '6px',
+            textAlign: 'center',
+        });
+        row.dataset.watchSlot = slot;
+        row.replaceChildren(eyeIcon(false), document.createTextNode(' Click to watch'));
+        Object.assign(row.style, { display: 'flex', alignItems: 'center', gap: '6px', justifyContent: 'center' });
+        row.title = 'Open the picker with this slot in mind.';
+        row.addEventListener('click', () => {
+            // Clicking the slot whose picker is open closes it, so the invitation
+            // is a switch rather than a one-way door
+            editing.slot = editing.slot === slot ? '' : slot;
+            editing.itemHrid = '';
+            editing.enhancementLevel = 0;
+            equipmentSavingsPanel.render();
+        });
+        return row;
+    }
+
+    /**
+     * One ability goal: the level wanted, what the books come to, and how far along.
+     *
+     * Shaped like a target card rather than like a new kind of row, because it is
+     * the same question — a number of coins you do not have yet — and a reader
+     * scanning the list should not have to learn a second layout to read it.
+     *
+     * @param {Object} goal - From `watchedAbilityGoals`
+     * @returns {HTMLElement}
+     */
+    function abilityCard(goal) {
+        const card = document.createElement('div');
+        Object.assign(card.style, {
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '3px',
+            padding: '6px 7px',
+            borderRadius: '3px',
+            // Green once it has happened, so a finished goal reads as good news
+            // rather than as an entry that has stopped moving
+            borderLeft: `2px solid ${goal.done ? '#4ade80' : '#c084fc'}`,
+            background: goal.done ? 'rgba(74, 222, 128, 0.08)' : 'rgba(192, 132, 252, 0.07)',
+        });
+
+        const heading = document.createElement('div');
+        Object.assign(heading.style, { display: 'flex', alignItems: 'center', gap: '7px' });
+
+        const icon = overlayFormat_js.itemIcon(goal.itemHrid, 22);
+        overlayFormat_js.linkToMarketplace(icon, goal.itemHrid, marketplaceTabs_js.navigateToMarketplace);
+
+        const name = document.createElement('span');
+        name.textContent = goal.name;
+        Object.assign(name.style, { flex: '1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
+        overlayFormat_js.linkToMarketplace(name, goal.itemHrid, marketplaceTabs_js.navigateToMarketplace);
+
+        const cost = document.createElement('span');
+        cost.textContent = goal.done ? 'Reached' : goal.cost === null ? 'no price' : formatters_js.formatKMB(goal.cost);
+        cost.style.color = goal.done ? overlayFormat_js.ROW_COLORS.good : goal.cost === null ? overlayFormat_js.ROW_COLORS.bad : overlayFormat_js.ROW_COLORS.gold;
+        cost.title = goal.done
+            ? `Already at Lv${goal.currentLevel}, so there is nothing left to buy.`
+            : goal.cost === null
+              ? 'Nobody is selling the book, so what the levels would cost is unknown rather than nothing.'
+              : 'The books to this level, at what the market wants for them.';
+
+        const remove = document.createElement('button');
+        remove.textContent = '✕';
+        remove.dataset.removeAbility = goal.abilityHrid;
+        Object.assign(remove.style, {
+            background: 'none',
+            border: 'none',
+            color: 'rgba(232, 236, 245, 0.5)',
+            cursor: 'pointer',
+            fontSize: '12px',
+            padding: '0 2px',
+        });
+        remove.title = 'Stop saving for this level.';
+        remove.addEventListener('click', async () => {
+            await unwatchAbility(goal.abilityHrid);
+            equipmentSavingsPanel.render();
+        });
+
+        heading.append(icon, name, cost, remove);
+        card.appendChild(heading);
+
+        card.appendChild(
+            priceLine(
+                'Level:',
+                `${goal.currentLevel} → ${goal.targetLevel}`,
+                goal.done ? overlayFormat_js.ROW_COLORS.good : 'rgba(232, 236, 245, 0.75)'
+            )
+        );
+
+        const bar = document.createElement('div');
+        Object.assign(bar.style, { display: 'flex', alignItems: 'center', gap: '7px' });
+        bar.appendChild(progressBar(goal.fraction));
+
+        const status = document.createElement('span');
+        status.textContent = goal.done ? `Reached at Lv${goal.currentLevel}` : statusText(goal);
+        Object.assign(status.style, {
+            color: goal.done || goal.affordable ? overlayFormat_js.ROW_COLORS.good : 'rgba(232, 236, 245, 0.6)',
+            fontSize: '11px',
+            flex: '0 0 auto',
+            minWidth: '96px',
+            textAlign: 'right',
+        });
+        bar.appendChild(status);
+        card.appendChild(bar);
+
+        if (!goal.done) card.appendChild(percentLine(goal));
+        return card;
+    }
+
+    /**
+     * The abilities being saved for, and the way to add one.
+     *
+     * @param {HTMLElement} body - The panel body
+     * @param {Array<Object>} goals - From `watchedAbilityGoals`
+     */
+    function abilitySection(body, goals) {
+        const card = simplePanel_js.panelCard(body, 'Ability Levels', '#c084fc');
+
+        for (const goal of goals) card.appendChild(abilityCard(goal));
+
+        if (!goals.length && state.locked) {
+            card.appendChild(simplePanel_js.panelNote('No ability levels being saved for — press Edit to add one.'));
+            return;
+        }
+        // Adding is an editing act, and the panel is a reading list until it is
+        // unlocked. The same switch the slots are behind.
+        if (state.locked) return;
+
+        if (!editing.addingAbility) {
+            const add = document.createElement('button');
+            add.textContent = '+ Add ability level';
+            add.dataset.addAbility = 'true';
+            Object.assign(add.style, {
+                background: 'rgba(192, 132, 252, 0.15)',
+                border: '1px solid #c084fc',
+                borderRadius: '3px',
+                color: '#c084fc',
+                cursor: 'pointer',
+                fontSize: '11px',
+                marginTop: '4px',
+                padding: '3px 9px',
+            });
+            add.title = 'Save towards a level of one of your abilities.';
+            add.addEventListener('click', () => {
+                editing.addingAbility = true;
+                equipmentSavingsPanel.render();
+            });
+            card.appendChild(add);
+            return;
+        }
+
+        card.appendChild(abilityPicker());
+    }
+
+    /**
+     * The abilities a goal can be set for.
+     *
+     * The ones the character has learned lead, because those are the ones with a
+     * level to improve on and the ones a goal is nearly always about. Everything
+     * else follows, so a book you have not bought yet can still be planned for.
+     *
+     * @returns {Array<{abilityHrid: string, name: string, level: number, learned: boolean}>}
+     */
+    function abilityChoices() {
+        const levels = learnedAbilityLevels();
+        const all = dataManager.getInitClientData?.()?.abilityDetailMap || {};
+
+        const named = (abilityHrid) => abilityDetailName(abilityHrid, all);
+        const learned = [...levels.entries()].map(([abilityHrid, owned]) => ({
+            abilityHrid,
+            name: named(abilityHrid),
+            level: owned.level,
+            learned: true,
+        }));
+
+        const rest = Object.keys(all)
+            .filter((abilityHrid) => !levels.has(abilityHrid))
+            .map((abilityHrid) => ({ abilityHrid, name: named(abilityHrid), level: 0, learned: false }));
+
+        const byName = (a, b) => a.name.localeCompare(b.name);
+        return [...learned.sort(byName), ...rest.sort(byName)];
+    }
+
+    /**
+     * One house room goal: the level wanted, what the build comes to, and how far along.
+     *
+     * The same layout as an ability goal's, which is the same layout as a target's:
+     * it is the same question — a number of coins you do not have yet — and a reader
+     * scanning the list should not have to learn a third card to read it.
+     *
+     * @param {Object} goal - From `watchedHouseGoals`
+     * @returns {HTMLElement}
+     */
+    function houseCard(goal) {
+        const card = document.createElement('div');
+        Object.assign(card.style, {
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '3px',
+            padding: '6px 7px',
+            borderRadius: '3px',
+            // Green once it has happened, so a finished goal reads as good news
+            // rather than as an entry that has stopped moving
+            borderLeft: `2px solid ${goal.done ? '#4ade80' : HOUSE_ACCENT}`,
+            background: goal.done ? 'rgba(74, 222, 128, 0.08)' : 'rgba(245, 158, 11, 0.07)',
+        });
+
+        const heading = document.createElement('div');
+        Object.assign(heading.style, { display: 'flex', alignItems: 'center', gap: '7px' });
+
+        const name = document.createElement('span');
+        name.textContent = goal.name;
+        Object.assign(name.style, { flex: '1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
+
+        const cost = document.createElement('span');
+        cost.textContent = goal.done ? 'Reached' : goal.cost === null ? 'no price' : formatters_js.formatKMB(goal.cost);
+        cost.style.color = goal.done ? overlayFormat_js.ROW_COLORS.good : goal.cost === null ? overlayFormat_js.ROW_COLORS.bad : overlayFormat_js.ROW_COLORS.gold;
+        cost.title = goal.done
+            ? `Already built to Lv${goal.currentLevel}, so there is nothing left to buy.`
+            : goal.cost === null
+              ? 'Some material for these levels has no listing, so the build costs an unknown amount rather than nothing.'
+              : 'The coins and the materials for every level up to this one, at what the market wants for them.';
+
+        const remove = document.createElement('button');
+        remove.textContent = '✕';
+        remove.dataset.removeHouse = goal.houseRoomHrid;
+        Object.assign(remove.style, {
+            background: 'none',
+            border: 'none',
+            color: 'rgba(232, 236, 245, 0.5)',
+            cursor: 'pointer',
+            fontSize: '12px',
+            padding: '0 2px',
+        });
+        remove.title = 'Stop saving for this room level.';
+        remove.addEventListener('click', async () => {
+            await unwatchHouse(goal.houseRoomHrid);
+            equipmentSavingsPanel.render();
+        });
+
+        heading.append(overlayFormat_js.skillIcon(goal.skill, 22), name, cost, remove);
+        card.appendChild(heading);
+
+        card.appendChild(
+            priceLine(
+                'Level:',
+                `${goal.currentLevel} → ${goal.targetLevel}`,
+                goal.done ? overlayFormat_js.ROW_COLORS.good : 'rgba(232, 236, 245, 0.75)'
+            )
+        );
+
+        const bar = document.createElement('div');
+        Object.assign(bar.style, { display: 'flex', alignItems: 'center', gap: '7px' });
+        bar.appendChild(progressBar(goal.fraction));
+
+        const status = document.createElement('span');
+        status.textContent = goal.done ? `Reached at Lv${goal.currentLevel}` : statusText(goal);
+        Object.assign(status.style, {
+            color: goal.done || goal.affordable ? overlayFormat_js.ROW_COLORS.good : 'rgba(232, 236, 245, 0.6)',
+            fontSize: '11px',
+            flex: '0 0 auto',
+            minWidth: '96px',
+            textAlign: 'right',
+        });
+        bar.appendChild(status);
+        card.appendChild(bar);
+
+        if (!goal.done) card.appendChild(percentLine(goal));
+        return card;
+    }
+
+    /**
+     * The rooms being saved for, and the way to add one.
+     *
+     * @param {HTMLElement} body - The panel body
+     * @param {Array<Object>} goals - From `watchedHouseGoals`
+     */
+    function houseSection(body, goals) {
+        const card = simplePanel_js.panelCard(body, 'House Levels', HOUSE_ACCENT);
+
+        for (const goal of goals) card.appendChild(houseCard(goal));
+
+        if (!goals.length && state.locked) {
+            card.appendChild(simplePanel_js.panelNote('No house levels being saved for — press Edit to add one.'));
+            return;
+        }
+        // Adding is an editing act, and the panel is a reading list until it is
+        // unlocked. The same switch the slots and the abilities are behind.
+        if (state.locked) return;
+
+        if (!editing.addingHouse) {
+            const add = document.createElement('button');
+            add.textContent = '+ Add house level';
+            add.dataset.addHouse = 'true';
+            Object.assign(add.style, {
+                background: 'rgba(245, 158, 11, 0.15)',
+                border: `1px solid ${HOUSE_ACCENT}`,
+                borderRadius: '3px',
+                color: HOUSE_ACCENT,
+                cursor: 'pointer',
+                fontSize: '11px',
+                marginTop: '4px',
+                padding: '3px 9px',
+            });
+            add.title = 'Save towards a level of one of your house rooms.';
+            add.addEventListener('click', () => {
+                editing.addingHouse = true;
+                equipmentSavingsPanel.render();
+            });
+            card.appendChild(add);
+            return;
+        }
+
+        card.appendChild(housePicker());
+    }
+
+    /**
+     * The rooms a goal can be set for.
+     *
+     * The ones the character has built lead, because those are the ones with a level
+     * to improve on. Everything else follows, so a room you have not started can
+     * still be planned for. A room already at the cap is left out entirely: there is
+     * no level left to save for, and offering one would be offering nothing.
+     *
+     * @returns {Array<{houseRoomHrid: string, name: string, level: number, built: boolean}>}
+     */
+    function houseChoices() {
+        const levels = houseRoomLevels();
+        const all = dataManager.getInitClientData?.()?.houseRoomDetailMap || {};
+
+        const named = (houseRoomHrid) =>
+            all?.[houseRoomHrid]?.name ||
+            houseRoomHrid
+                .split('/')
+                .pop()
+                .replace(/_/g, ' ')
+                .replace(/\b\w/g, (letter) => letter.toUpperCase());
+
+        const rooms = Object.keys(all).map((houseRoomHrid) => ({
+            houseRoomHrid,
+            name: named(houseRoomHrid),
+            level: levels.get(houseRoomHrid) || 0,
+            built: (levels.get(houseRoomHrid) || 0) > 0,
+        }));
+
+        const byName = (a, b) => a.name.localeCompare(b.name);
+        return [
+            ...rooms.filter((room) => room.built && room.level < MAX_HOUSE_ROOM_LEVEL).sort(byName),
+            ...rooms.filter((room) => !room.built).sort(byName),
+        ];
+    }
+
+    /**
+     * The form: which room, to what level, and what that costs.
+     *
+     * The cost is the market's whenever it can price every material, and typed in
+     * when it cannot — refusing the goal because one ingredient has an empty order
+     * book helps nobody.
+     *
+     * @returns {HTMLElement}
+     */
+    function housePicker() {
+        const wrap = document.createElement('div');
+        Object.assign(wrap.style, {
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '5px',
+            marginTop: '5px',
+            borderLeft: `2px solid ${HOUSE_ACCENT}`,
+            background: 'rgba(255, 255, 255, 0.03)',
+            borderRadius: '3px',
+            padding: '7px',
+        });
+
+        const choices = houseChoices();
+        const chosen = choices.find((choice) => choice.houseRoomHrid === editing.houseRoomHrid) || null;
+
+        const list = document.createElement('select');
+        list.dataset.pickHouse = 'true';
+        Object.assign(list.style, {
+            background: 'rgba(0, 0, 0, 0.35)',
+            border: '1px solid rgba(255, 255, 255, 0.12)',
+            borderRadius: '3px',
+            color: '#e8ecf5',
+            fontSize: '11px',
+            padding: '2px',
+            width: '100%',
+        });
+
+        const none = document.createElement('option');
+        none.value = '';
+        none.textContent = '-- Select Room --';
+        list.appendChild(none);
+
+        for (const choice of choices) {
+            const option = document.createElement('option');
+            option.value = choice.houseRoomHrid;
+            option.textContent = choice.built ? `${choice.name} (Lv${choice.level})` : `${choice.name} (not built)`;
+            option.selected = choice.houseRoomHrid === editing.houseRoomHrid;
+            list.appendChild(option);
+        }
+        list.addEventListener('change', () => {
+            editing.houseRoomHrid = list.value;
+            // A level below the one the room is already at is not a goal, so the
+            // form opens on the next one up rather than on zero
+            const at = choices.find((choice) => choice.houseRoomHrid === list.value)?.level || 0;
+            if (editing.houseLevel <= at) editing.houseLevel = Math.min(MAX_HOUSE_ROOM_LEVEL, at + 1);
+            equipmentSavingsPanel.render();
+        });
+        list.addEventListener('keydown', (event) => event.stopPropagation());
+        wrap.appendChild(list);
+
+        const row = document.createElement('div');
+        Object.assign(row.style, { display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' });
+
+        const levelLabel = document.createElement('span');
+        levelLabel.textContent = 'Level:';
+        Object.assign(levelLabel.style, { color: 'rgba(232, 236, 245, 0.6)', fontSize: '11px' });
+
+        const level = document.createElement('input');
+        level.type = 'number';
+        level.min = '1';
+        level.max = String(MAX_HOUSE_ROOM_LEVEL);
+        level.dataset.houseLevel = 'true';
+        level.value = String(editing.houseLevel || '');
+        Object.assign(level.style, {
+            background: 'rgba(0, 0, 0, 0.35)',
+            border: '1px solid rgba(255, 255, 255, 0.12)',
+            borderRadius: '3px',
+            color: '#e8ecf5',
+            fontSize: '11px',
+            padding: '2px 4px',
+            width: '60px',
+        });
+        level.addEventListener('input', () => {
+            // Capped as it is typed: the game stops at MAX_HOUSE_ROOM_LEVEL, and a
+            // goal past it would be costed for levels that cannot be built
+            editing.houseLevel = Math.min(MAX_HOUSE_ROOM_LEVEL, Math.max(0, Math.floor(Number(level.value) || 0)));
+        });
+        // On change rather than on every keystroke: the estimate below is worth
+        // redrawing once the number has settled, not three times while it is typed
+        level.addEventListener('change', () => equipmentSavingsPanel.render());
+        level.addEventListener('keydown', (event) => event.stopPropagation());
+
+        row.append(levelLabel, level);
+
+        const estimate = chosen ? houseUpgradeCost(editing.houseRoomHrid, editing.houseLevel) : null;
+        const priced = estimate !== null;
+
+        const figure = document.createElement('span');
+        figure.style.flex = '1';
+        figure.style.fontSize = '11px';
+        if (!chosen) {
+            figure.textContent = 'Pick a room.';
+            figure.style.color = 'rgba(232, 236, 245, 0.5)';
+        } else if (priced) {
+            figure.textContent = `${formatters_js.formatKMB(estimate)} to build`;
+            figure.style.color = overlayFormat_js.ROW_COLORS.gold;
+            figure.title = 'Every level from where the room is now: coins at face value, materials at the asking price.';
+        } else {
+            figure.textContent = 'Materials unpriced — type a cost';
+            figure.style.color = overlayFormat_js.ROW_COLORS.bad;
+        }
+        row.appendChild(figure);
+        wrap.appendChild(row);
+
+        // Only when the market cannot answer, so the usual case is two fields rather
+        // than three
+        if (chosen && !priced) {
+            const cost = document.createElement('input');
+            cost.type = 'number';
+            cost.min = '0';
+            cost.placeholder = 'Cost in coins';
+            cost.dataset.houseCost = 'true';
+            cost.value = String(editing.houseCost || '');
+            Object.assign(cost.style, {
+                background: 'rgba(0, 0, 0, 0.35)',
+                border: '1px solid rgba(255, 255, 255, 0.12)',
+                borderRadius: '3px',
+                color: '#e8ecf5',
+                fontSize: '11px',
+                padding: '2px 4px',
+                width: '100%',
+            });
+            cost.addEventListener('input', () => {
+                editing.houseCost = cost.value;
+            });
+            cost.addEventListener('keydown', (event) => event.stopPropagation());
+            wrap.appendChild(cost);
+        }
+
+        const buttons = document.createElement('div');
+        Object.assign(buttons.style, { display: 'flex', gap: '6px' });
+
+        const save = document.createElement('button');
+        save.textContent = '\u{1F441} Watch';
+        save.dataset.saveHouse = 'true';
+        Object.assign(save.style, {
+            background: 'rgba(245, 158, 11, 0.18)',
+            border: `1px solid ${HOUSE_ACCENT}`,
+            borderRadius: '3px',
+            color: HOUSE_ACCENT,
+            cursor: 'pointer',
+            fontSize: '11px',
+            padding: '2px 10px',
+        });
+        const ready = Boolean(chosen) && editing.houseLevel > 0;
+        save.disabled = !ready;
+        save.style.opacity = ready ? '1' : '0.4';
+        save.title = 'Add this room level to the savings list.';
+        save.addEventListener('click', async () => {
+            if (!ready) return;
+
+            // Costed here rather than reusing the figure above it: the level field
+            // changes what the goal is worth without redrawing on every keystroke,
+            // so the estimate on screen can be one level behind the one being saved
+            const fresh = houseUpgradeCost(editing.houseRoomHrid, editing.houseLevel);
+            const typed = editing.houseCost === '' ? null : Number(editing.houseCost);
+            await watchHouse(
+                editing.houseRoomHrid,
+                editing.houseLevel,
+                fresh !== null ? fresh : Number.isFinite(typed) ? typed : null
+            );
+            editing.houseRoomHrid = '';
+            editing.houseLevel = 0;
+            editing.houseCost = '';
+            editing.addingHouse = false;
+            equipmentSavingsPanel.render();
+        });
+
+        const cancel = document.createElement('button');
+        cancel.textContent = 'Cancel';
+        Object.assign(cancel.style, {
+            background: 'rgba(255, 255, 255, 0.06)',
+            border: '1px solid rgba(255, 255, 255, 0.12)',
+            borderRadius: '3px',
+            color: 'rgba(232, 236, 245, 0.6)',
+            cursor: 'pointer',
+            fontSize: '11px',
+            padding: '2px 10px',
+        });
+        cancel.addEventListener('click', () => {
+            editing.addingHouse = false;
+            equipmentSavingsPanel.render();
+        });
+
+        buttons.append(save, cancel);
+        wrap.appendChild(buttons);
+        return wrap;
+    }
+
+    /**
+     * An ability's name, from a map already in hand.
+     * @param {string} abilityHrid - The ability
+     * @param {Object} abilityDetailMap - The game's ability map
+     * @returns {string}
+     */
+    function abilityDetailName(abilityHrid, abilityDetailMap) {
+        return (
+            abilityDetailMap?.[abilityHrid]?.name ||
+            abilityHrid
+                .split('/')
+                .pop()
+                .replace(/_/g, ' ')
+                .replace(/\b\w/g, (letter) => letter.toUpperCase())
+        );
+    }
+
+    /**
+     * The form: which ability, to what level, and what that costs.
+     *
+     * The cost is the market's when the book is listed, and typed in when it is not
+     * — a goal nobody is selling the book for still has a price somebody has in
+     * mind, and refusing the goal because the order book is empty helps nobody.
+     *
+     * @returns {HTMLElement}
+     */
+    function abilityPicker() {
+        const wrap = document.createElement('div');
+        Object.assign(wrap.style, {
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '5px',
+            marginTop: '5px',
+            borderLeft: '2px solid #c084fc',
+            background: 'rgba(255, 255, 255, 0.03)',
+            borderRadius: '3px',
+            padding: '7px',
+        });
+
+        const choices = abilityChoices();
+        const chosen = choices.find((choice) => choice.abilityHrid === editing.abilityHrid) || null;
+
+        const list = document.createElement('select');
+        list.dataset.pickAbility = 'true';
+        Object.assign(list.style, {
+            background: 'rgba(0, 0, 0, 0.35)',
+            border: '1px solid rgba(255, 255, 255, 0.12)',
+            borderRadius: '3px',
+            color: '#e8ecf5',
+            fontSize: '11px',
+            padding: '2px',
+            width: '100%',
+        });
+
+        const none = document.createElement('option');
+        none.value = '';
+        none.textContent = '-- Select Ability --';
+        list.appendChild(none);
+
+        for (const choice of choices) {
+            const option = document.createElement('option');
+            option.value = choice.abilityHrid;
+            option.textContent = choice.learned ? `${choice.name} (Lv${choice.level})` : `${choice.name} (not learned)`;
+            option.selected = choice.abilityHrid === editing.abilityHrid;
+            list.appendChild(option);
+        }
+        list.addEventListener('change', () => {
+            editing.abilityHrid = list.value;
+            // A level below the one you are already at is not a goal, so the form
+            // opens on the next one up rather than on zero
+            const at = choices.find((choice) => choice.abilityHrid === list.value)?.level || 0;
+            if (editing.abilityLevel <= at) editing.abilityLevel = at + 1;
+            equipmentSavingsPanel.render();
+        });
+        list.addEventListener('keydown', (event) => event.stopPropagation());
+        wrap.appendChild(list);
+
+        const row = document.createElement('div');
+        Object.assign(row.style, { display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' });
+
+        const levelLabel = document.createElement('span');
+        levelLabel.textContent = 'Level:';
+        Object.assign(levelLabel.style, { color: 'rgba(232, 236, 245, 0.6)', fontSize: '11px' });
+
+        const level = document.createElement('input');
+        level.type = 'number';
+        level.min = '1';
+        level.dataset.abilityLevel = 'true';
+        level.value = String(editing.abilityLevel || '');
+        Object.assign(level.style, {
+            background: 'rgba(0, 0, 0, 0.35)',
+            border: '1px solid rgba(255, 255, 255, 0.12)',
+            borderRadius: '3px',
+            color: '#e8ecf5',
+            fontSize: '11px',
+            padding: '2px 4px',
+            width: '60px',
+        });
+        level.addEventListener('input', () => {
+            editing.abilityLevel = Math.max(0, Math.floor(Number(level.value) || 0));
+        });
+        // On change rather than on every keystroke: the estimate below is worth
+        // redrawing once the number has settled, not three times while it is typed
+        level.addEventListener('change', () => equipmentSavingsPanel.render());
+        level.addEventListener('keydown', (event) => event.stopPropagation());
+
+        row.append(levelLabel, level);
+
+        const estimate = chosen ? abilityBookCost(editing.abilityHrid, editing.abilityLevel) : null;
+        const priced = estimate !== null;
+
+        const figure = document.createElement('span');
+        figure.style.flex = '1';
+        figure.style.fontSize = '11px';
+        if (!chosen) {
+            figure.textContent = 'Pick an ability.';
+            figure.style.color = 'rgba(232, 236, 245, 0.5)';
+        } else if (priced) {
+            figure.textContent = `${formatters_js.formatKMB(estimate)} of books`;
+            figure.style.color = overlayFormat_js.ROW_COLORS.gold;
+            figure.title = 'The books from where the ability is now, at the market price of the book.';
+        } else {
+            figure.textContent = 'Book unpriced — type a cost';
+            figure.style.color = overlayFormat_js.ROW_COLORS.bad;
+        }
+        row.appendChild(figure);
+        wrap.appendChild(row);
+
+        // Only when the market cannot answer, so the usual case is two fields rather
+        // than three
+        if (chosen && !priced) {
+            const cost = document.createElement('input');
+            cost.type = 'number';
+            cost.min = '0';
+            cost.placeholder = 'Cost in coins';
+            cost.dataset.abilityCost = 'true';
+            cost.value = String(editing.abilityCost || '');
+            Object.assign(cost.style, {
+                background: 'rgba(0, 0, 0, 0.35)',
+                border: '1px solid rgba(255, 255, 255, 0.12)',
+                borderRadius: '3px',
+                color: '#e8ecf5',
+                fontSize: '11px',
+                padding: '2px 4px',
+                width: '100%',
+            });
+            cost.addEventListener('input', () => {
+                editing.abilityCost = cost.value;
+            });
+            cost.addEventListener('keydown', (event) => event.stopPropagation());
+            wrap.appendChild(cost);
+        }
+
+        const buttons = document.createElement('div');
+        Object.assign(buttons.style, { display: 'flex', gap: '6px' });
+
+        const save = document.createElement('button');
+        save.textContent = '\u{1F441} Watch';
+        save.dataset.saveAbility = 'true';
+        Object.assign(save.style, {
+            background: 'rgba(192, 132, 252, 0.18)',
+            border: '1px solid #c084fc',
+            borderRadius: '3px',
+            color: '#c084fc',
+            cursor: 'pointer',
+            fontSize: '11px',
+            padding: '2px 10px',
+        });
+        const ready = Boolean(chosen) && editing.abilityLevel > 0;
+        save.disabled = !ready;
+        save.style.opacity = ready ? '1' : '0.4';
+        save.title = 'Add this level to the savings list.';
+        save.addEventListener('click', async () => {
+            if (!ready) return;
+
+            // Costed here rather than reusing the figure above it: the level field
+            // changes what the goal is worth without redrawing on every keystroke,
+            // so the estimate on screen can be one level behind the one being saved
+            const fresh = abilityBookCost(editing.abilityHrid, editing.abilityLevel);
+            const typed = editing.abilityCost === '' ? null : Number(editing.abilityCost);
+            await watchAbility(
+                editing.abilityHrid,
+                editing.abilityLevel,
+                fresh !== null ? fresh : Number.isFinite(typed) ? typed : null
+            );
+            editing.abilityHrid = '';
+            editing.abilityLevel = 0;
+            editing.abilityCost = '';
+            editing.addingAbility = false;
+            equipmentSavingsPanel.render();
+        });
+
+        const cancel = document.createElement('button');
+        cancel.textContent = 'Cancel';
+        Object.assign(cancel.style, {
+            background: 'rgba(255, 255, 255, 0.06)',
+            border: '1px solid rgba(255, 255, 255, 0.12)',
+            borderRadius: '3px',
+            color: 'rgba(232, 236, 245, 0.6)',
+            cursor: 'pointer',
+            fontSize: '11px',
+            padding: '2px 10px',
+        });
+        cancel.addEventListener('click', () => {
+            editing.addingAbility = false;
+            equipmentSavingsPanel.render();
+        });
+
+        buttons.append(save, cancel);
+        wrap.appendChild(buttons);
+        return wrap;
+    }
+
+    /**
+     * Which slot a piece of equipment fills.
+     * @param {string} itemHrid - The piece
+     * @returns {string} e.g. `main_hand`, or '' when it is not equipment
+     */
+    function slotOf(itemHrid) {
+        const type = dataManager.getItemDetails?.(itemHrid)?.equipmentDetail?.type;
+        return type ? type.split('/').pop() : '';
+    }
+
+    /**
+     * The gear you are saving for.
+     */
+    const equipmentSavingsPanel = simplePanel_js.createPanel({
+        id: 'equipmentWatch',
+        title: 'Equipment Watch',
+        size: { width: 420, height: 420 },
+        accent: '#6495ed',
+        draw: (body) => {
+            const plan = everything();
+
+            // The one the header watches, as EWatch's eye picks it: with several
+            // things on the list the one you are actually saving for is the only
+            // figure you want at a glance. Levels are candidates too — a panel with
+            // only ability goals on it would otherwise have no headline at all.
+            const headlines = [...plan.targets, ...plan.abilities, ...plan.houses];
+            const watched =
+                headlines.find((target) => target.itemHrid === state.selected) ||
+                headlines
+                    .filter((target) => target.cost !== null && !target.affordable)
+                    .sort((a, b) => a.needed - b.needed)[0] ||
+                headlines[0];
+            if (watched) body.appendChild(headline(watched));
+
+            const purse = simplePanel_js.panelCard(body, undefined, '#6495ed');
+            Object.assign(purse.style, { flexDirection: 'row', alignItems: 'center', gap: '10px', flexWrap: 'wrap' });
+
+            const coins = document.createElement('span');
+            coins.textContent = `\u{1FA99} ${formatters_js.formatWithSeparator(Math.round(coinsHeld()))}`;
+            Object.assign(coins.style, { color: overlayFormat_js.ROW_COLORS.gold, fontWeight: 'bold' });
+            coins.title = 'Coins in hand.';
+
+            const orders = marketOrderValue();
+            const listed = document.createElement('span');
+            listed.textContent = `\u{1F4E6} ${formatters_js.formatKMB(orders)}`;
+            listed.style.color = orders > 0 ? overlayFormat_js.ROW_COLORS.good : 'rgba(232, 236, 245, 0.5)';
+            listed.title =
+                'Coins tied up in market orders — sell orders at what they will pay after tax, buy orders at what ' +
+                'was handed over, plus anything unclaimed.';
+
+            const { perDay, source } = incomeEstimate();
+            const income = document.createElement('span');
+            income.style.color = perDay === null ? 'rgba(232, 236, 245, 0.5)' : overlayFormat_js.ROW_COLORS.good;
+            income.style.flex = '1';
+            income.textContent =
+                perDay === null
+                    ? 'No income data'
+                    : `${state.noSell ? 'Mid' : 'Lazy'}: ${formatters_js.formatKMB(perDay)}/day (${sourceLabel(source)})`;
+            income.title =
+                perDay === null
+                    ? 'Neither a combat session nor the net worth trend has enough history yet to measure an income.'
+                    : source === 'combat'
+                      ? 'Daily profit from the combat session, which is what the countdowns divide by.\n' +
+                        'Lazy sells into the bids; Mid waits at the asks, which No Sell also assumes.'
+                      : 'No combat session to measure — read instead off the trend in net worth over the last ' +
+                        `${NETWORTH_TREND_HOURS}h.\nSlower and noisier than a combat measurement, but the only ` +
+                        'other figure the script has.';
+
+            purse.append(coins, listed, income);
+
+            // Every figure in the panel is only as current as the prices behind it,
+            // and a saving that has not moved in a day is usually a price that has
+            // not moved rather than a run of bad luck
+            const market = simplePanel_js.panelCard(body, undefined, '#6495ed');
+            Object.assign(market.style, { flexDirection: 'row', alignItems: 'center', gap: '8px' });
+
+            const age = marketAPI.getDataAge?.();
+            const stamp = document.createElement('span');
+            stamp.textContent = age === null ? 'Market Data: never' : `Market Data: ${overlayFormat_js.shortDuration(age / 1000)} old`;
+            Object.assign(stamp.style, { color: 'rgba(232, 236, 245, 0.6)', flex: '1', fontSize: '11px' });
+
+            const refresh = document.createElement('button');
+            refresh.textContent = refreshing ? 'Refreshing…' : '\u{1F504} Refresh';
+            refresh.dataset.marketRefresh = 'true';
+            Object.assign(refresh.style, {
+                background: 'rgba(100, 149, 237, 0.22)',
+                border: '1px solid #6495ed',
+                borderRadius: '3px',
+                color: '#6495ed',
+                cursor: refreshing ? 'default' : 'pointer',
+                fontSize: '11px',
+                padding: '2px 9px',
+            });
+            refresh.disabled = refreshing;
+            refresh.title = 'Fetch prices again rather than waiting for the next scheduled fetch.';
+            refresh.addEventListener('click', refreshMarket);
+
+            market.append(stamp, refresh);
+
+            // EWatch's two switches, each changing what the figures below mean
+            const switches = simplePanel_js.panelCard(body, undefined, '#6495ed');
+            Object.assign(switches.style, { flexDirection: 'row', alignItems: 'center', gap: '8px', flexWrap: 'wrap' });
+
+            const explain = document.createElement('span');
+            explain.textContent = 'Include market orders';
+            Object.assign(explain.style, { color: 'rgba(232, 236, 245, 0.6)', flex: '1', fontSize: '11px' });
+
+            switches.append(
+                explain,
+                toggle(
+                    'Market Value',
+                    state.marketValue,
+                    (on) => {
+                        setCountingMarketOrders(on);
+                        equipmentSavingsPanel.render();
+                    },
+                    'Count coins tied up in market orders as money you have. Off, only coins in hand count.'
+                ),
+                toggle(
+                    'No Sell',
+                    state.noSell,
+                    (on) => {
+                        setNoSell(on);
+                        equipmentSavingsPanel.render();
+                    },
+                    'Pay the full asking price rather than putting the piece it replaces towards it.'
+                )
+            );
+
+            // Locked reads, unlocked edits. The button names what pressing it does.
+            const lock = document.createElement('button');
+            lock.textContent = state.locked ? 'Edit' : 'Lock';
+            lock.dataset.lockToggle = 'true';
+            Object.assign(lock.style, {
+                background: state.locked ? 'rgba(74, 222, 128, 0.18)' : 'rgba(100, 149, 237, 0.22)',
+                border: `1px solid ${state.locked ? '#4ade80' : '#6495ed'}`,
+                borderRadius: '3px',
+                color: state.locked ? '#4ade80' : '#6495ed',
+                cursor: 'pointer',
+                fontSize: '11px',
+                padding: '2px 9px',
+            });
+            lock.title = state.locked
+                ? 'Open every slot so targets can be added and removed.'
+                : 'Put the panel back to the list of what you are saving for.';
+            lock.addEventListener('click', () => {
+                setLocked(!state.locked);
+                equipmentSavingsPanel.render();
+            });
+            switches.appendChild(lock);
+
+            // Two shapes, one switch. Locked is a reading list — what you are saving
+            // for and how far along — which is what the panel is for almost all of
+            // the time. Unlocked opens every slot up so targets can be changed, and
+            // is a great deal longer, which is why it is not the resting state.
+            const list = simplePanel_js.panelCard(body, undefined, '#6495ed');
+
+            const watching = plan.targets.length + plan.abilities.length + plan.houses.length;
+
+            if (state.locked) {
+                if (!watching) {
+                    body.appendChild(
+                        simplePanel_js.panelNote('Nothing being saved for yet — press Edit to open the slots and click one.')
+                    );
+                    return;
+                }
+                for (const target of plan.targets) list.appendChild(targetCard(target));
+            } else {
+                for (const slot of SLOTS) list.appendChild(slotSection(slot, plan.targets));
+
+                // Anything watched whose slot is not in the list above — a slot the
+                // game added, or a piece whose type this does not know. Better an
+                // odd section than a target that silently disappears.
+                const stray = plan.targets.filter((target) => !SLOTS.includes(slotOf(target.itemHrid)));
+                for (const target of stray) list.appendChild(targetCard(target));
+            }
+
+            // Levels, on the same list as the gear: it is the same savings question,
+            // and a plan that answers it for a sword but not for the ability the
+            // sword swings is half a plan
+            abilitySection(body, plan.abilities);
+
+            // And rooms, for the same reason: the Dojo you are saving for is money
+            // that will not be there for the sword
+            houseSection(body, plan.houses);
+
+            if (!watching) return;
+
+            // One at a time answers the wrong question when you want three pieces
+            const all = simplePanel_js.panelCard(body, 'Everything', '#6495ed');
+            const line = document.createElement('div');
+            Object.assign(line.style, { display: 'flex', alignItems: 'center', gap: '7px' });
+            line.appendChild(progressBar(plan.fraction));
+
+            const status = document.createElement('span');
+            status.textContent = statusText(plan);
+            Object.assign(status.style, {
+                color: plan.affordable ? overlayFormat_js.ROW_COLORS.good : 'rgba(232, 236, 245, 0.6)',
+                fontSize: '11px',
+                flex: '0 0 auto',
+                minWidth: '96px',
+                textAlign: 'right',
+            });
+            line.appendChild(status);
+            all.appendChild(line);
+            all.appendChild(percentLine(plan));
+            const pending = plan.abilities.filter((goal) => !goal.done).length;
+            const building = plan.houses.filter((goal) => !goal.done).length;
+            all.appendChild(
+                simplePanel_js.panelNote(
+                    `${formatters_js.formatKMB(plan.cost)} for ${plan.targets.length} pieces` +
+                        (pending ? `, ${pending} ability level${pending === 1 ? '' : 's'}` : '') +
+                        (building ? `, ${building} house level${building === 1 ? '' : 's'}` : '') +
+                        (plan.unpriced ? ` (+${plan.unpriced} unpriced)` : '')
+                )
+            );
+        },
+    });
+
+    /**
+     * Put a Save for button on one item menu.
+     * @param {HTMLElement} actionMenu - The game's `Item_actionMenu` popup
+     */
+    function injectSaveButton(actionMenu) {
+        if (actionMenu.querySelector(`.${MENU_BUTTON_CLASS}`)) return;
+
+        const itemName = actionMenu.querySelector('[class*="Item_name"]')?.textContent?.trim();
+        const hrid = itemName && gameLookups_js.getItemHridFromName(itemName);
+        // Only equipment: saving up for a cheese is not a plan
+        if (!hrid || !dataManager.getItemDetails?.(hrid)?.equipmentDetail) return;
+
+        const level =
+            Number(actionMenu.querySelector('[class*="Item_enhancementLevel"]')?.textContent?.replace('+', '')) || 0;
+
+        const button = document.createElement('button');
+        // The game's own button classes, taken from a button already in this menu,
+        // so it does not look like something bolted on
+        const sibling = actionMenu.querySelector('button');
+        if (sibling) button.className = sibling.className;
+        button.classList.add(MENU_BUTTON_CLASS);
+
+        const label = () => {
+            button.textContent = isTargeted(hrid) ? 'Stop saving' : 'Save for';
+        };
+        label();
+
+        button.addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+
+            if (isTargeted(hrid)) unwatchTarget(hrid);
+            else watchTarget(hrid, level);
+
+            label();
+            // The panel may be open behind the menu, and a list that does not change
+            // when you press the button looks like a button that does nothing
+            if (equipmentSavingsPanel.panel) equipmentSavingsPanel.render();
+        });
+
+        actionMenu.appendChild(button);
+    }
+
+    let detachMenuObserver = null;
+
+    /** Start watching for item menus, if the setting says to */
+    function applyMenuButtonSetting() {
+        const wanted = config.getSetting(MENU_BUTTON_SETTING);
+
+        if (wanted && !detachMenuObserver) {
+            detachMenuObserver = domObserver.onClass('EquipmentSavingsSaveButton', 'Item_actionMenu', injectSaveButton);
+        } else if (!wanted && detachMenuObserver) {
+            detachMenuObserver();
+            detachMenuObserver = null;
+            document.querySelectorAll(`.${MENU_BUTTON_CLASS}`).forEach((button) => button.remove());
+        }
+    }
+
+    var equipmentSavings = {
+        name: 'Equipment Savings',
+        initialize: () => {
+            applyMenuButtonSetting();
+            config.onSettingChange(MENU_BUTTON_SETTING, applyMenuButtonSetting);
+        },
+        cleanup: () => {
+            detachMenuObserver?.();
+            detachMenuObserver = null;
+            document.querySelectorAll(`.${MENU_BUTTON_CLASS}`).forEach((button) => button.remove());
+        },
+    };
+
+    overlayRows_js.registerRow({
+        // EWatch's own tile. One tile, not a second one beside the old name.
+        key: 'equipmentWatch',
+        empty: 'Nothing watched',
+        name: 'Equipment Watch',
+        defaultSize: { width: 240, height: 46 },
+        render: (container) => {
+            const plan = everything();
+            if (!plan.targets.length && !plan.abilities.length && !plan.houses.length) return overlayFormat_js.blank(container);
+
+            // Gear and levels together: the tile answers "what is next", and a level
+            // you are three days from is the answer as readily as a sword is
+            const entries = [...plan.targets, ...plan.abilities, ...plan.houses];
+
+            // The pinned one if the eye has picked one, and otherwise the nearest,
+            // because that is the next thing that happens. The pin matters: the
+            // thing somebody is saving for is often not the cheapest, and a tile
+            // that always shows the cheapest cannot be told otherwise.
+            const pinned = entries.find((target) => target.itemHrid === state.selected && target.cost !== null);
+            const next =
+                pinned ||
+                entries
+                    .filter((target) => target.cost !== null && !target.affordable)
+                    .sort((a, b) => a.needed - b.needed)[0];
+            const shown = next || plan;
+
+            // Two lines: the piece and the figures, then a bar under them. The bar is
+            // what a savings tile is for — a figure says where you are and a bar says
+            // it at a glance, which is all a tile has time for.
+            container.replaceChildren();
+            Object.assign(container.style, {
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'center',
+                gap: '3px',
+                lineHeight: '1.3',
+                overflow: 'hidden',
+            });
+
+            const top = document.createElement('div');
+            overlayFormat_js.drawLine(top, [
+                shown.house
+                    ? { icon: shown.skill, sheet: 'skills', size: 18 }
+                    : shown.itemHrid
+                      ? { icon: shown.itemHrid, size: 18 }
+                      : { text: '\u{1F3AF}', color: overlayFormat_js.ROW_COLORS.dim },
+                {
+                    // With the enhancement, because a Plate Body and a Plate Body +10
+                    // are different purchases at very different prices, and the tile
+                    // naming only the first is naming the wrong one
+                    text: next
+                        ? `${next.name}${next.enhancementLevel ? ` +${next.enhancementLevel}` : ''}`
+                        : 'All affordable',
+                    color: next ? overlayFormat_js.ROW_COLORS.gold : overlayFormat_js.ROW_COLORS.good,
+                    bold: true,
+                    ellipsis: true,
+                },
+                // A pinned target you can already afford shows "0" and "0s" if it is
+                // treated like one you are still saving for, which reads as broken
+                // rather than as done
+                next?.affordable
+                    ? { text: 'Affordable', color: overlayFormat_js.ROW_COLORS.good, push: true }
+                    : next
+                      ? { text: formatters_js.formatKMB(next.needed), color: overlayFormat_js.ROW_COLORS.neutral, push: true }
+                      : { text: formatters_js.formatKMB(plan.cost), color: overlayFormat_js.ROW_COLORS.good, push: true },
+                next && !next.affordable && next.seconds !== null
+                    ? { text: overlayFormat_js.shortDuration(next.seconds), color: overlayFormat_js.ROW_COLORS.gold }
+                    : null,
+            ]);
+            container.appendChild(top);
+
+            const fraction = next ? next.fraction : plan.fraction;
+            if (fraction !== null && fraction !== undefined) {
+                const line = document.createElement('div');
+                Object.assign(line.style, { display: 'flex', alignItems: 'center', gap: '6px' });
+                line.appendChild(progressBar(fraction));
+
+                const percent = document.createElement('span');
+                percent.textContent = `${(fraction * 100).toFixed(1)}%`;
+                Object.assign(percent.style, {
+                    color: fraction >= 1 ? overlayFormat_js.ROW_COLORS.good : overlayFormat_js.ROW_COLORS.dim,
+                    flex: '0 0 auto',
+                    fontSize: '90%',
+                });
+                line.appendChild(percent);
+                container.appendChild(line);
+            }
+
+            container.title =
+                (next
+                    ? `${next.name}${next.enhancementLevel ? ` +${next.enhancementLevel}` : ''} ` +
+                      `${pinned ? 'is pinned' : 'is the nearest'}: ` +
+                      (next.affordable
+                          ? `affordable now at ${formatters_js.formatWithSeparator(Math.round(next.cost))}.`
+                          : `${formatters_js.formatWithSeparator(Math.round(next.needed))} to go of ` +
+                            `${formatters_js.formatWithSeparator(Math.round(next.cost))}.`)
+                    : 'Everything on the list is affordable now.') +
+                `\n${plan.targets.length} pieces` +
+                (plan.abilities.length ? `, ${plan.abilities.length} ability levels` : '') +
+                (plan.houses.length ? `, ${plan.houses.length} house levels` : '') +
+                `, ${formatters_js.formatKMB(plan.cost)} altogether.` +
+                (plan.unpriced ? `\n${plan.unpriced} of them have no market price.` : '') +
+                '\nDouble-click for the whole list.';
+        },
+        onOpen: () => equipmentSavingsPanel.toggle(),
+    });
+
+    /**
      * Market Library
      * Market, inventory, and economy features
      *
@@ -31545,6 +44108,8 @@ self.onmessage = function (e) {
         listingMarkers,
         marketplaceBadgeFilter,
         marketHistoryPanel,
+        marketHistoryAPI,
+        marketHistoryData,
         philoCalculator,
         tradeHistory,
         tradeHistoryDisplay,
@@ -31556,14 +44121,30 @@ self.onmessage = function (e) {
         inventorySort,
         inventoryBadgePrices,
         dungeonTokenTooltips: dungeonTokenTooltips$1,
+        treasureTracker,
+        abilityBookPanel,
+        watchlist,
+        watchlistPanel,
         autoAllButton: autoAllButton$1,
         inventoryCategoryTotals,
         customTabsFeature: customTabsFeature$1,
+        equipmentSavings,
+        equipmentSavingsPanel,
         marketplaceShortcuts,
         sellQueue,
         milkywayMarketLink,
+        gatheringProfit,
+        productionProfit,
+    };
+
+    // Why the sidebar's Marketplace badge is or is not showing. The feature's only
+    // output is the absence of a badge, which looks the same as the setting being
+    // off, the game not badging, and every listing still working.
+    toolashaRoot.Debug = {
+        ...(toolashaRoot.Debug || {}),
+        marketBadge: () => marketplaceBadgeFilter.describe(),
     };
 
     console.log('[Toolasha] Market library loaded');
 
-})(Toolasha.Core.config, Toolasha.Core.dataManager, Toolasha.Core.domObserver, Toolasha.Core.marketAPI, Toolasha.Utils.houseEfficiency, Toolasha.Utils.efficiency, Toolasha.Utils.bonusRevenueCalculator, Toolasha.Utils.enhancementCalculator, Toolasha.Utils.formatters, Toolasha.Utils.marketData, Toolasha.Utils.teaParser, Toolasha.Utils.profitConstants, Toolasha.Utils.profitHelpers, Toolasha.Utils.buffParser, Toolasha.Utils.equipmentParser, Toolasha.Utils.actionCalculator, Toolasha.Utils.tokenValuation, Toolasha.Utils.enhancementConfig, Toolasha.Utils.dom, Toolasha.Utils.materialCalculator, Toolasha.Utils.timerRegistry, Toolasha.Core.storage, Toolasha.Utils.cleanupRegistry, Toolasha.Utils.domObserverHelpers, Toolasha.Utils.reactInput, Toolasha.Utils.enhancementMultipliers, Toolasha.Core.webSocketHook, Toolasha.Utils.abilityCalc, Toolasha.Utils.houseCostCalculator);
+})(Toolasha.Core.config, Toolasha.Core.dataManager, Toolasha.Core.domObserver, Toolasha.Core.marketAPI, Toolasha.Utils.houseEfficiency, Toolasha.Utils.efficiency, Toolasha.Utils.bonusRevenueCalculator, Toolasha.Utils.enhancementCalculator, Toolasha.Utils.enhancementConfig, Toolasha.Utils.profitConstants, Toolasha.Utils.formatters, Toolasha.Utils.marketData, Toolasha.Utils.teaParser, Toolasha.Utils.profitHelpers, Toolasha.Utils.buffParser, Toolasha.Utils.equipmentParser, Toolasha.Utils.actionCalculator, Toolasha.Utils.tokenValuation, Toolasha.Utils.evWorkerManager, Toolasha.Utils.dom, Toolasha.Utils.materialCalculator, Toolasha.Utils.gameLookups, Toolasha.Utils.timerRegistry, Toolasha.Core.storage, Toolasha.Utils.cleanupRegistry, Toolasha.Utils.domObserverHelpers, Toolasha.Utils.marketplaceTabs, Toolasha.Utils.reactInput, Toolasha.Utils.panelZIndex, Toolasha.Utils.floatingPanel, Toolasha.Utils.panelGeometry, Toolasha.Utils.overlayFormat, Toolasha.Utils.overlayRows, Toolasha.Core.webSocketHook, Toolasha.Utils.toast, Toolasha.Utils.enhancementMultipliers, Toolasha.Utils.performanceMonitor, Toolasha.Utils.abilityCalc, Toolasha.Utils.houseCostCalculator, Toolasha.Utils.networthWorkerManager, Toolasha.Utils.marketplaceAutofill, Toolasha.Utils.skillHistory, Toolasha.Utils.abilityBooks, Toolasha.Utils.simplePanel, Toolasha.Core.settingsStorage, Toolasha.Utils.chestTally, Toolasha.Utils.choiceDialog);

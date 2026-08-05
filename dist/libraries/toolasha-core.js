@@ -1,7 +1,7 @@
 /**
  * Toolasha Core Library
  * Core infrastructure and API clients
- * Version: 2.88.0
+ * Version: 2.89.0
  * License: CC-BY-NC-SA-4.0
  */
 
@@ -14,6 +14,44 @@
      * Provides debounced writes to reduce I/O operations
      */
 
+    /**
+     * Soft per-store key-count budgets.
+     *
+     * Not a limit the database enforces — nothing here refuses a write. It is the
+     * number above which a store has stopped being a rolling window and started
+     * being a leak, which is a thing worth saying in a diagnostic report before the
+     * quota says it for us. Only stores that grow with play are listed; anything
+     * absent is unbudgeted and simply reported without a verdict.
+     *
+     * Three of these budgets were raised when their recorders stopped keeping their
+     * history in one key and started keeping it in one record per time bucket (see
+     * `utils/chunked-history.js`). The key count went up and the bytes written per
+     * event went down by two or three orders of magnitude, which is the trade the
+     * budget is here to permit rather than to flag — a store of many small records
+     * is not the leak this number looks for.
+     */
+    const STORE_KEY_BUDGETS = {
+        settings: 500,
+        // Per character: ~25 item-level detail snapshots plus one series record per
+        // calendar month, capped by a year of full retention beneath the thinning
+        networthHistory: 600,
+        // Per character: one record per hour of play, and the log keeps 500 entries,
+        // so a few dozen live records at a time plus the calibration keys
+        lootLogHistory: 500,
+        guildHistory: 80,
+        leaderboardHistory: 80,
+        xpHistory: 200,
+        // Three trackers (transmute, decompose, coinify), one record per day each
+        // has sessions on, per character
+        alchemyHistory: 1500,
+        dungeonRuns: 600,
+        unifiedRuns: 600,
+        teamRuns: 600,
+        combatStats: 200,
+        queueSnapshots: 80,
+        marketListings: 2000,
+    };
+
     class Storage {
         constructor() {
             this.db = null;
@@ -21,10 +59,39 @@
             this.dbName = 'ToolashaDB';
             this.dbVersion = 17; // Bumped for leaderboardHistory store
             this.saveDebounceTimers = new Map(); // Per-key debounce timers
-            this.pendingWrites = new Map(); // Per-key pending write data: {value, storeName}
+            this.pendingWrites = new Map(); // Per-key pending write data: {value, storeName, resolvers, generation}
+            this._writeGeneration = new Map(); // Per-key monotonic generation counter, for write ownership
             this.SAVE_DEBOUNCE_DELAY = 3000; // 3 seconds
             this._reconnecting = false; // Guard against concurrent reconnection attempts
             this._dbNulledReason = null; // Track why db was last set to null
+
+            /**
+             * Whether a write has failed for want of space.
+             *
+             * The failure mode this exists to end is silent: a recorder appends to
+             * an array, hands it to `set()`, the transaction aborts on quota, and
+             * the feature goes on believing it is recording. Recorders read this
+             * and stand down instead — see `isQuotaExceeded()`.
+             */
+            this.quotaExceeded = false;
+            this._quotaExceededAt = null;
+            this._quotaFailures = 0;
+            this._lastQuotaTarget = null; // {key, storeName} of the write that failed
+            this._quotaListeners = new Set();
+            this._lastEstimate = null; // Cached navigator.storage.estimate() result
+
+            /**
+             * Resolves once `initialize` has run, either way.
+             *
+             * Anything reading at module scope needs this. Features are initialized
+             * long after the libraries load, so a module-scope read lands before the
+             * database is open, gets the default back, and has no way to know the
+             * difference between "not stored" and "not asked yet" — which is how
+             * every remembered panel quietly forgot itself.
+             */
+            this.ready = new Promise((resolve) => {
+                this._markReady = resolve;
+            });
         }
 
         /**
@@ -35,10 +102,12 @@
             try {
                 await this.openDatabase();
                 this.available = true;
+                this._markReady(true);
                 return true;
             } catch (error) {
                 console.error('[Storage] Initialization failed:', error);
                 this.available = false;
+                this._markReady(false);
                 return false;
             }
         }
@@ -241,28 +310,203 @@
          */
         async _saveToIndexedDB(key, value, storeName) {
             return new Promise((resolve, _reject) => {
+                let settled = false;
+                /**
+                 * Resolve once, whichever of request/transaction reports first.
+                 * A quota failure fires both `request.onerror` and the transaction's
+                 * abort, and a promise that resolves twice hides the second one.
+                 * @param {boolean} success - Whether the write landed
+                 * @param {*} error - The error to classify, if it did not
+                 */
+                const settle = (success, error) => {
+                    if (settled) return;
+                    settled = true;
+                    if (!success && this._isQuotaError(error)) {
+                        this._handleQuotaExceeded(key, storeName, error);
+                    }
+                    resolve(success);
+                };
+
                 try {
                     const transaction = this.db.transaction([storeName], 'readwrite');
                     const store = transaction.objectStore(storeName);
                     const request = store.put(value, key);
 
                     request.onsuccess = () => {
-                        resolve(true);
+                        settle(true, null);
                     };
 
                     request.onerror = () => {
                         console.error(`[Storage] Failed to save key ${key}:`, request.error);
-                        resolve(false);
+                        settle(false, request.error);
+                    };
+
+                    // A quota failure aborts the whole transaction; without this the
+                    // only signal is a request error the browser may not deliver
+                    transaction.onabort = () => {
+                        console.error(`[Storage] Save transaction aborted for key ${key}:`, transaction.error);
+                        settle(false, transaction.error);
                     };
                 } catch (error) {
                     console.error(`[Storage] Save transaction failed for key ${key}:`, error);
-                    resolve(false);
+                    settle(false, error);
                 }
             });
         }
 
         /**
+         * Whether an error is the browser saying "no room".
+         *
+         * Chromium throws `QuotaExceededError`, Firefox has historically used
+         * `NS_ERROR_DOM_QUOTA_REACHED`, and legacy DOMException code 22 covers the
+         * rest — all three mean the same thing to everything upstream of here.
+         * @param {*} error - Error from a failed request or transaction
+         * @returns {boolean} True when the failure was a space failure
+         * @private
+         */
+        _isQuotaError(error) {
+            if (!error) return false;
+            const name = error.name || '';
+            if (name === 'QuotaExceededError' || name === 'NS_ERROR_DOM_QUOTA_REACHED') return true;
+            if (error.code === 22) return true;
+            return /quota|storage is full|not enough space/i.test(error.message || '');
+        }
+
+        /**
+         * Record that storage is full and tell anyone who asked to be told.
+         * @param {string} key - The key whose write failed
+         * @param {string} storeName - The store it was going to
+         * @param {*} error - The originating error
+         * @private
+         */
+        _handleQuotaExceeded(key, storeName, error) {
+            this._quotaFailures += 1;
+            this._lastQuotaTarget = { key, storeName };
+            const firstTime = !this.quotaExceeded;
+            this.quotaExceeded = true;
+            this._quotaExceededAt = Date.now();
+
+            console.error(`[Storage] Quota exceeded writing ${storeName}:${key} — recording will stand down:`, error);
+
+            // Refresh the numbers so whatever shows this can say how full "full" is
+            this.estimate();
+
+            if (!firstTime) return;
+            for (const listener of this._quotaListeners) {
+                try {
+                    listener({ key, storeName, at: this._quotaExceededAt, estimate: this._lastEstimate });
+                } catch (listenerError) {
+                    console.error('[Storage] Quota listener failed:', listenerError);
+                }
+            }
+        }
+
+        /**
+         * Whether writes are currently failing for want of space.
+         *
+         * Recorders of bulky history — loot log, networth snapshots, enhancement
+         * sessions — check this before building a payload and skip the work when it
+         * is true, so a full disk costs one failed write rather than one per event.
+         * @returns {boolean} True while storage is known to be full
+         */
+        isQuotaExceeded() {
+            return this.quotaExceeded;
+        }
+
+        /**
+         * Be told, once, the first time a write fails for space.
+         * @param {Function} listener - Called with {key, storeName, at, estimate}
+         * @returns {Function} Unsubscribe
+         */
+        onQuotaExceeded(listener) {
+            if (typeof listener !== 'function') return () => {};
+            this._quotaListeners.add(listener);
+            return () => this._quotaListeners.delete(listener);
+        }
+
+        /**
+         * Forget that storage was full, so recorders resume.
+         *
+         * Called automatically after a successful delete, since deleting is the one
+         * thing that makes the original failure untrue.
+         */
+        clearQuotaState() {
+            this.quotaExceeded = false;
+            this._lastQuotaTarget = null;
+        }
+
+        /**
+         * How much of the origin's storage is used, per the browser.
+         *
+         * `navigator.storage.estimate()` is an estimate in the literal sense —
+         * padded, and quota is what the browser is willing to give rather than what
+         * is free on disk. Good enough to tell "comfortable" from "about to fail",
+         * which is the only distinction anything here draws.
+         * @returns {Promise<{usage: number|null, quota: number|null, percent: number|null, at: number}|null>}
+         *   The estimate, or null where the API is unavailable
+         */
+        async estimate() {
+            try {
+                if (typeof navigator === 'undefined' || !navigator.storage?.estimate) return null;
+                const { usage, quota } = await navigator.storage.estimate();
+                this._lastEstimate = {
+                    usage: usage ?? null,
+                    quota: quota ?? null,
+                    percent: usage != null && quota ? (usage / quota) * 100 : null,
+                    at: Date.now(),
+                };
+                return this._lastEstimate;
+            } catch (error) {
+                console.error('[Storage] Storage estimate failed:', error);
+                return null;
+            }
+        }
+
+        /**
+         * The last estimate taken, without taking another.
+         * @returns {Object|null} Cached estimate, or null if none has been taken
+         */
+        lastEstimate() {
+            return this._lastEstimate;
+        }
+
+        /**
+         * Key counts per store, against their soft budgets.
+         *
+         * Counting keys is one `getAllKeys()` per store and never touches a value,
+         * which is why this is affordable at all — a byte-accurate size would mean
+         * reading and serializing the entire database.
+         * @param {Array<string>} [storeNames] - Restrict to these stores; defaults to all
+         * @returns {Promise<Array<{storeName: string, keys: number, budget: number|null, over: boolean}>>}
+         *   One row per store, over-budget rows first
+         */
+        async budgetReport(storeNames) {
+            const names = storeNames ?? (await this.listStores());
+            const rows = [];
+
+            for (const storeName of names) {
+                const keys = await this.getAllKeys(storeName);
+                const budget = STORE_KEY_BUDGETS[storeName] ?? null;
+                rows.push({
+                    storeName,
+                    keys: keys.length,
+                    budget,
+                    over: budget !== null && keys.length > budget,
+                });
+            }
+
+            rows.sort((a, b) => Number(b.over) - Number(a.over) || b.keys - a.keys);
+            return rows;
+        }
+
+        /**
          * Internal: Debounced save
+         *
+         * The entry is removed from pendingWrites only after a confirmed success, and
+         * only if no newer write has claimed the slot in the meantime. A failed write —
+         * a dropped connection, an aborted transaction, a full disk — requeues the value
+         * without a timer, so the next flushAll() or the next write to the same key
+         * retries it instead of the value being lost.
          * @private
          */
         _debouncedSave(key, value, storeName) {
@@ -271,7 +515,9 @@
             const existing = this.pendingWrites.get(timerKey);
             const resolvers = existing?.resolvers || [];
 
-            this.pendingWrites.set(timerKey, { value, storeName, resolvers });
+            const generation = (this._writeGeneration.get(timerKey) || 0) + 1;
+            this._writeGeneration.set(timerKey, generation);
+            this.pendingWrites.set(timerKey, { value, storeName, resolvers, generation });
 
             if (this.saveDebounceTimers.has(timerKey)) {
                 clearTimeout(this.saveDebounceTimers.get(timerKey));
@@ -281,17 +527,48 @@
                 resolvers.push(resolve);
 
                 const timer = setTimeout(async () => {
-                    const pending = this.pendingWrites.get(timerKey);
-                    this.pendingWrites.delete(timerKey);
                     this.saveDebounceTimers.delete(timerKey);
 
-                    let success = false;
-                    if (pending) {
-                        success = await this._saveToIndexedDB(key, pending.value, pending.storeName);
+                    const pending = this.pendingWrites.get(timerKey);
+                    if (!pending || pending.generation !== generation) {
+                        // A newer write owns this slot — its timer persists the value and
+                        // resolves every caller coalesced into it, including ours.
+                        return;
                     }
 
-                    for (const r of pending?.resolvers || []) {
-                        r(success);
+                    // Take ownership: remove from the queue before attempting the save so a
+                    // concurrent newer write can claim the slot cleanly.
+                    this.pendingWrites.delete(timerKey);
+
+                    const success = await this._saveToIndexedDB(key, pending.value, pending.storeName);
+
+                    if (!success) {
+                        if (!this.pendingWrites.has(timerKey)) {
+                            // Requeue without a timer so the value survives for the next
+                            // flushAll() or the next debounced write to this key. This is also
+                            // what makes a quota failure recoverable: once space is freed, the
+                            // retry writes the value that would otherwise have been dropped.
+                            //
+                            // The requeued entry carries no resolvers: two dozen callers await
+                            // storage.set(), and holding their promises open until some later
+                            // flush would hang them for the rest of the session. They are told
+                            // the write failed now; the value is retried regardless.
+                            this.pendingWrites.set(timerKey, {
+                                value: pending.value,
+                                storeName: pending.storeName,
+                                resolvers: [],
+                                generation: pending.generation,
+                            });
+                        }
+
+                        for (const r of pending.resolvers) {
+                            r(false);
+                        }
+                        return;
+                    }
+
+                    for (const r of pending.resolvers) {
+                        r(true);
                     }
                 }, this.SAVE_DEBOUNCE_DELAY);
 
@@ -359,6 +636,9 @@
                     const request = store.delete(key);
 
                     request.onsuccess = () => {
+                        // Deleting is the one operation that makes "storage is full"
+                        // untrue, so it is where standing-down recorders are let up
+                        this.clearQuotaState();
                         resolve(true);
                     };
 
@@ -460,6 +740,77 @@
         }
 
         /**
+         * List every object store name currently defined in the database.
+         * @returns {Promise<Array<string>>} Array of store names
+         */
+        async listStores() {
+            if (!this.db) {
+                console.warn('[Storage] Database not available, cannot list stores');
+                return [];
+            }
+
+            return Array.from(this.db.objectStoreNames);
+        }
+
+        /**
+         * Write multiple key/value pairs to a store in a single immediate transaction.
+         *
+         * Bypasses debouncing entirely. Debounced `set()` schedules one timer per key,
+         * so writing hundreds of keys serially through it would mean hundreds of pending
+         * timers (or hundreds of sequential `immediate` writes). This does it in one
+         * readwrite transaction instead — use it for bulk operations like restore/import.
+         * @param {string} storeName - Object store name
+         * @param {Record<string, *>} entries - Map of key → value to write
+         * @returns {Promise<number>} Number of entries successfully written
+         */
+        async putAll(storeName, entries) {
+            if (!this.db) {
+                console.warn(`[Storage] Database not available, cannot bulk write to store: ${storeName}`);
+                return 0;
+            }
+
+            const keys = Object.keys(entries || {});
+            if (keys.length === 0) {
+                return 0;
+            }
+
+            return new Promise((resolve) => {
+                try {
+                    const transaction = this.db.transaction([storeName], 'readwrite');
+                    const store = transaction.objectStore(storeName);
+                    const written = [];
+
+                    for (const key of keys) {
+                        const request = store.put(entries[key], key);
+                        request.onsuccess = () => {
+                            written.push(key);
+                        };
+                        request.onerror = () => {
+                            console.error(`[Storage] Failed to bulk-write key ${key} to ${storeName}:`, request.error);
+                            if (this._isQuotaError(request.error)) {
+                                this._handleQuotaExceeded(key, storeName, request.error);
+                            }
+                        };
+                    }
+
+                    transaction.oncomplete = () => {
+                        resolve(written.length);
+                    };
+                    transaction.onerror = () => {
+                        console.error(`[Storage] Bulk write transaction failed for store ${storeName}:`, transaction.error);
+                        if (this._isQuotaError(transaction.error)) {
+                            this._handleQuotaExceeded(keys[0], storeName, transaction.error);
+                        }
+                        resolve(written.length);
+                    };
+                } catch (error) {
+                    console.error(`[Storage] Bulk write transaction failed for store ${storeName}:`, error);
+                    resolve(0);
+                }
+            });
+        }
+
+        /**
          * Force immediate save of all pending debounced writes
          */
         async flushAll() {
@@ -471,15 +822,27 @@
             }
             this.saveDebounceTimers.clear();
 
-            // Now execute all pending writes immediately and resolve their Promises
+            // Snapshot the pending writes rather than clearing the map upfront: an entry is
+            // only removed once its write is confirmed, so a failure here leaves the value
+            // queued for the next flush instead of discarding it.
             const writes = Array.from(this.pendingWrites.entries());
-            this.pendingWrites.clear();
 
             for (const [timerKey, pending] of writes) {
+                // Skip if a newer write has already replaced this entry.
+                if (this.pendingWrites.get(timerKey) !== pending) continue;
+
                 const colonIndex = timerKey.indexOf(':');
                 const key = timerKey.substring(colonIndex + 1);
 
                 const success = await this._saveToIndexedDB(key, pending.value, pending.storeName);
+
+                if (success) {
+                    // Only remove if no newer write claimed the slot while we were writing.
+                    if (this.pendingWrites.get(timerKey) === pending) {
+                        this.pendingWrites.delete(timerKey);
+                    }
+                }
+
                 for (const r of pending.resolvers || []) {
                     r(success);
                 }
@@ -504,6 +867,7 @@
                 }
             }
             this.pendingWrites.clear();
+            this._writeGeneration.clear();
         }
 
         /**
@@ -566,6 +930,11 @@
                 lastNullReason: this._dbNulledReason,
                 pendingWrites: this.pendingWrites.size,
                 activeTimers: this.saveDebounceTimers.size,
+                quotaExceeded: this.quotaExceeded,
+                quotaExceededAt: this._quotaExceededAt,
+                quotaFailures: this._quotaFailures,
+                lastQuotaTarget: this._lastQuotaTarget,
+                estimate: this._lastEstimate,
             };
         }
     }
@@ -597,6 +966,38 @@
             title: 'General Settings',
             icon: '⚙️',
             settings: {
+                whatsNew_showPopup: {
+                    id: 'whatsNew_showPopup',
+                    label: "Show what's new after an update",
+                    type: 'checkbox',
+                    default: true,
+                    help:
+                        'Once per new version, shows what changed and lists any new settings with live switches — ' +
+                        'so an update never quietly rearranges things.',
+                },
+                whatsNew_newDefaultsOff: {
+                    id: 'whatsNew_newDefaultsOff',
+                    label: 'New settings start turned off',
+                    type: 'checkbox',
+                    default: false,
+                    help:
+                        'When an update introduces a new on-by-default switch, keep it off until you turn it on ' +
+                        'yourself. Numbers and dropdowns keep their defaults — only behaviour switches are held back.',
+                },
+                mobileMode: {
+                    id: 'mobileMode',
+                    label: 'Mobile mode',
+                    type: 'select',
+                    default: 'auto',
+                    options: [
+                        { value: 'auto', label: 'Auto-detect' },
+                        { value: 'on', label: 'On' },
+                        { value: 'off', label: 'Off' },
+                    ],
+                    help:
+                        'Adjusts for touch screens: bigger resize grips, panels sized to the viewport. Auto-detect keys ' +
+                        'on whether the primary pointer is a finger, which a touchscreen laptop can override here.',
+                },
                 chatCommands: {
                     id: 'chatCommands',
                     label: 'Enable chat commands (/item, /wiki, /market)',
@@ -616,7 +1017,7 @@
                     label: 'Chat: Clickable names in announcements',
                     type: 'checkbox',
                     default: true,
-                    help: 'Makes the player name in system announcements (e.g. "Az0r has reached level 150 Magic!") clickable — clicking it fills "/profile name" into the chat input.',
+                    help: 'Makes the player name in system announcements (e.g. "PlayerName has reached level 150 Magic!" or "PlayerName has joined the guild!") clickable — clicking it fills "/profile name" into the chat input.',
                 },
                 chat_popOut: {
                     id: 'chat_popOut',
@@ -811,17 +1212,12 @@
             title: 'Action Panel',
             icon: '📄',
             settings: {
-                actionPanel_totalTime: {
-                    id: 'actionPanel_totalTime',
-                    label: 'Action panel: Total time, times to reach target level, exp/hour',
-                    type: 'checkbox',
-                    default: true,
-                },
                 actionPanel_totalTime_quickInputs: {
                     id: 'actionPanel_totalTime_quickInputs',
                     label: 'Action panel: Quick input buttons (hours, count presets, Max)',
                     type: 'checkbox',
                     default: true,
+                    requiresRefresh: true,
                 },
                 actionPanel_quickInputs_countPresets: {
                     id: 'actionPanel_quickInputs_countPresets',
@@ -881,6 +1277,7 @@
                     label: 'Action panel: Show total required and missing materials',
                     type: 'checkbox',
                     default: true,
+                    requiresRefresh: true,
                     help: 'Displays total materials needed and shortfall when entering quantity',
                 },
                 actionPanel_enhanceMatLimitProtections: {
@@ -989,6 +1386,13 @@
             title: 'Missing Materials & Crafting Plan',
             icon: '🛒',
             settings: {
+                actionPanelLayout: {
+                    id: 'actionPanelLayout',
+                    label: 'Keep the action panel on screen',
+                    type: 'checkbox',
+                    default: true,
+                    help: 'Stops the action detail panel growing past the window: it scrolls instead, and the Queue and Start buttons stay pinned to the bottom rather than falling off it. Also tightens the spacing of the added sections.',
+                },
                 actions_missingMaterialsButton: {
                     id: 'actions_missingMaterialsButton',
                     label: 'Show "Missing Mats Marketplace" button on production panels',
@@ -1077,6 +1481,69 @@
             title: 'Loot Log',
             icon: '📦',
             settings: {
+                treasureTracker_popup: {
+                    id: 'treasureTracker_popup',
+                    label: "Treasure Tracker: Pop up what an opening paid, beside the game's loot dialog",
+                    type: 'checkbox',
+                    default: true,
+                    help: "The game's Opened Loot dialog says what you got; this says whether it was good, item by item, against what the drop table owed",
+                },
+                treasureTracker: {
+                    id: 'treasureTracker',
+                    label: 'Treasure Tracker: Record chest openings and compare against expected value',
+                    type: 'checkbox',
+                    default: true,
+                    help: 'Tracks what every chest you open actually paid out against what its drop table says it owes. Open the panel from the Treasure button on the settings page',
+                },
+                watchlist: {
+                    id: 'watchlist',
+                    label: "Watchlist: Track chosen items, a zone's drops, or a chest's contents",
+                    type: 'checkbox',
+                    default: true,
+                    help: 'A list of items with what you hold and what it is worth. Tick a combat zone to add everything it drops, or a chest to add everything it contains. Tracked items get a dot in the inventory, and anything the vendor pays more for than the market is flagged. Open it from the Watchlist overlay row',
+                },
+                watchlist_menuButton: {
+                    id: 'watchlist_menuButton',
+                    label: 'Watchlist: Add a Track button to the item menu in your inventory',
+                    type: 'checkbox',
+                    default: false,
+                    help: 'Puts a Track / Untrack button beside Sell when you click an inventory item. Off by default because it changes a menu you use for other things — the Watchlist panel has the same switch',
+                },
+                watchlist_inventoryDots: {
+                    id: 'watchlist_inventoryDots',
+                    label: 'Watchlist: Dot tracked items in the inventory',
+                    type: 'checkbox',
+                    default: true,
+                    help: 'Puts a small dot in the corner of every inventory tile holding a tracked item. The point of a watchlist is knowing what is on it while you are looking at your inventory rather than while you are looking at the list — but it is one more mark on a busy grid, so it can be turned off. The Watchlist panel has the same switch',
+                },
+                equipmentSavings_menuButton: {
+                    id: 'equipmentSavings_menuButton',
+                    label: 'Equipment Savings: Add a Save for button to the item menu',
+                    type: 'checkbox',
+                    default: false,
+                    help: 'Puts a Save for / Stop saving button beside Sell when you click a piece of equipment, which is how a target gets onto the Equipment Savings list. Off by default because it changes a menu you use for other things',
+                },
+                combatText_floating: {
+                    id: 'combatText_floating',
+                    label: 'Floating Combat Text: Damage numbers over the units taking them',
+                    type: 'checkbox',
+                    default: false,
+                    help: 'A health bar tells you the state, not the event — "did that hit for 400 or 4,000" is a question a number answers and a bar does not',
+                },
+                combatText_scrolling: {
+                    id: 'combatText_scrolling',
+                    label: 'Scrolling Combat Text: Keep a log of recent hits',
+                    type: 'checkbox',
+                    default: false,
+                    help: 'Adds a Combat Log overlay row with the last few hits, for anything that went past too fast to read',
+                },
+                manaTracker: {
+                    id: 'manaTracker',
+                    label: 'Mana Tracker: Count what your abilities cost per fight',
+                    type: 'checkbox',
+                    default: true,
+                    help: 'Mana is the constraint nobody watches — it shows up only as the moment an ability does not fire. Adds a Mana/fight overlay row',
+                },
                 lootLogStats: {
                     id: 'lootLogStats',
                     label: 'Loot Log Statistics',
@@ -1215,6 +1682,27 @@
                     default: true,
                     help: 'Shows the optimal enhancement path cost breakdown when hovering over enhanced (+1 to +20) items',
                 },
+                itemTooltip_enhancementProRates: {
+                    id: 'itemTooltip_enhancementProRates',
+                    label: 'Quote enhancement predictions at pro rates instead of your stats',
+                    type: 'checkbox',
+                    default: false,
+                    help: 'Prices the enhancement path and milestones as a top-end enhancer (level 140, Observatory 8, ultra + blessed tea, +13 Celestial enhancer, +10 gear) instead of your own gear and level. Also toggled from the "Yours / Pro" chip on the tooltip section header, or by pressing P while the tooltip is open.',
+                },
+                itemTooltip_enhancingHourlyRate: {
+                    id: 'itemTooltip_enhancingHourlyRate',
+                    label: 'Target hourly rate for enhancing (e.g. 50m)',
+                    type: 'text',
+                    default: '',
+                    help: 'Adds a minimum sell price to the enhancement tooltip that covers total cost plus this rate for time spent. Leave blank to disable.',
+                },
+                itemTooltip_enhancingHourlyRateTax: {
+                    id: 'itemTooltip_enhancingHourlyRateTax',
+                    label: 'Include marketplace tax in minimum sell price',
+                    type: 'checkbox',
+                    default: false,
+                    help: 'Accounts for the 2% marketplace seller tax so listing at minimum sell still nets your target rate after tax',
+                },
                 itemTooltip_pinTop: {
                     id: 'itemTooltip_pinTop',
                     label: 'Pin tooltips to top-center of screen',
@@ -1255,13 +1743,6 @@
                     label: 'Show enhancement simulator calculations',
                     type: 'checkbox',
                     default: true,
-                },
-                enhanceSim_showConsumedItemsDetail: {
-                    id: 'enhanceSim_showConsumedItemsDetail',
-                    label: 'Enhancement tooltips: Show detailed breakdown for consumed items',
-                    type: 'checkbox',
-                    default: false,
-                    help: "When enabled, shows base/materials/protection breakdown for each consumed item in Philosopher's Mirror calculations",
                 },
                 enhanceSim_baseItemCraftingCost: {
                     id: 'enhanceSim_baseItemCraftingCost',
@@ -1703,10 +2184,10 @@
                     id: 'market_listingPricePrecision',
                     label: 'Market: Listing price decimal precision',
                     type: 'number',
-                    default: 2,
+                    default: 1,
                     min: 0,
                     max: 4,
-                    help: 'Number of decimal places to show for listing prices',
+                    help: 'Decimal places for the abbreviated Top Order and Total prices on My Listings (e.g. 1.2M vs 1.23M)',
                 },
                 market_showListingAge: {
                     id: 'market_showListingAge',
@@ -1868,17 +2349,17 @@
             settings: {
                 networth: {
                     id: 'networth',
-                    label: 'Top right: Show gold count',
+                    label: 'Net worth tracking (and gold count in the header)',
                     type: 'checkbox',
                     default: true,
-                    help: 'Displays your current gold count next to Total Level in the page header',
+                    help: 'Master switch for the net worth calculator. Displays your current gold count next to Total Level in the page header; the inventory breakdown, history chart, and overlay rows below all need this on to have data',
                 },
                 invWorth: {
                     id: 'invWorth',
                     label: 'Below inventory: Show net worth breakdown',
                     type: 'checkbox',
                     default: true,
-                    help: 'Shows total net worth with a per-category breakdown (equipment, inventory, listings, houses, abilities) below the inventory panel',
+                    help: 'Shows total net worth with a per-category breakdown (equipment, inventory, listings, houses, abilities) below the inventory panel. Requires net worth tracking to be enabled above',
                 },
                 invSort: {
                     id: 'invSort',
@@ -2093,6 +2574,7 @@
                     label: 'Left sidebar: Show remaining XP to next level',
                     type: 'checkbox',
                     default: true,
+                    requiresRefresh: true,
                     help: 'Displays how much XP needed to reach the next level under skill progress bars',
                 },
                 skillRemainingXP_blackBorder: {
@@ -2108,6 +2590,14 @@
                     type: 'checkbox',
                     default: true,
                 },
+                drinkTimer: {
+                    id: 'drinkTimer',
+                    label: 'Drink timer: Show remaining drink supply time in skill panels',
+                    type: 'checkbox',
+                    default: true,
+                    requiresRefresh: true,
+                    help: 'Shows how long your drink stock lasts and whether it covers the queued actions. This switch existed internally but was never in the settings panel, so the feature could not be turned off.',
+                },
                 drinkTimer_warningThreshold: {
                     id: 'drinkTimer_warningThreshold',
                     label: 'Drink timer: warning threshold (hours)',
@@ -2120,6 +2610,7 @@
                     label: 'Skilling Simulator/Optimizer: Enable Optimizer tab in character panel',
                     type: 'checkbox',
                     default: true,
+                    requiresRefresh: true,
                 },
             },
         },
@@ -2128,6 +2619,43 @@
             title: 'Combat Features',
             icon: '⚔️',
             settings: {
+                damageTracker: {
+                    id: 'damageTracker',
+                    label: 'Damage Tracker: Attribute damage per player and per ability',
+                    type: 'checkbox',
+                    default: true,
+                    help: 'The game attributes nothing, so the caster is worked out from whose mana fell each tick. Feeds the Damage panel behind the DPS tile',
+                },
+                damageTakenTracker: {
+                    id: 'damageTakenTracker',
+                    label: 'Damage Taken Tracker: What is hitting you, and for how much',
+                    type: 'checkbox',
+                    default: true,
+                    help: 'Damage taken against health regenerated, broken out per monster and per wave with hit ranges. Feeds the Deaths panel behind the deaths/hr tile',
+                },
+                combatRecorder_autoStart: {
+                    id: 'combatRecorder_autoStart',
+                    label: 'Auto-record combat on load',
+                    type: 'checkbox',
+                    default: false,
+                    help: 'Starts the combat recorder the moment the page loads and writes the file out on its own, then switches itself back off. The Record button in the Damage panel cannot capture the first seconds of a session, which is exactly when a reload lands mid-fight and the client never sees what it is fighting. Turn it on again for each recording you want',
+                },
+                combatRecorder_autoStartSeconds: {
+                    id: 'combatRecorder_autoStartSeconds',
+                    label: 'Auto-record length (seconds)',
+                    type: 'number',
+                    default: 60,
+                    min: 10,
+                    max: 600,
+                    help: 'How long the automatic recording runs before it saves itself',
+                },
+                replayCheck: {
+                    id: 'replayCheck',
+                    label: 'Sim Accuracy: Replay recorded fights against the simulator',
+                    type: 'checkbox',
+                    default: true,
+                    help: 'Derives damage dealt, damage taken and fight length from a recorded fight, runs the simulator for the same zone, and reports the deviation with a sampling-noise margin. Feeds the Sim Accuracy overlay row and the panel behind it',
+                },
                 combatScore: {
                     id: 'combatScore',
                     label: 'Profile panel: Show gear score',
@@ -2215,7 +2743,7 @@
                     min: 0.1,
                     max: 10,
                     step: 0.5,
-                    help: 'How tightly a room clear chance is pinned down before its sim stops, in percentage points either side. A settled room reaches it in a few hundred fights and a close one needs thousands, so the work goes where the answer is still in doubt (lower = more accurate, slower)',
+                    help: "A room's sim keeps fighting until its clear chance is pinned to within this many percentage points either side — the 95% confidence interval has to fit inside ±this before the run is allowed to stop. A settled room gets there in a few hundred fights and a close one needs thousands, so the work goes where the answer is still in doubt (lower = tighter interval, more fights, slower)",
                 },
                 labyrinthRecommendSimHours: {
                     id: 'labyrinthRecommendSimHours',
@@ -2241,7 +2769,7 @@
                     id: 'labyrinthPathUnknownMode',
                     label: 'Labyrinth: Path treats unrevealed rooms as',
                     type: 'select',
-                    default: 'clearable',
+                    default: 'shroud',
                     options: [
                         { value: 'clearable', label: 'Clearable (optimistic)' },
                         { value: 'shroud', label: 'Needing a shroud (pessimistic)' },
@@ -2257,7 +2785,7 @@
                     min: 0,
                     max: 20,
                     step: 1,
-                    help: 'Beacons the beacon planner places, sited to reveal the most rooms on the way to the exit — 0 instead finds the fewest that cover a revealed path there',
+                    help: 'Beacons the beacon planner places on the floor in view, sited to cover a revealed path to the exit first, a second independent route next, and the most rooms with what is left — 0 uses the fewest that cover a path, which every new floor resets to',
                 },
                 labyrinthSkipEditAutofill: {
                     id: 'labyrinthSkipEditAutofill',
@@ -2277,7 +2805,7 @@
                     id: 'labyrinthLiveCombatSim',
                     label: 'Labyrinth: Replay the live fight for a better clear chance',
                     type: 'checkbox',
-                    default: true,
+                    default: false,
                     help: 'Replays the fight in progress hundreds of times from its current health and remaining time, instead of extrapolating from how fast health is being lost. Slower but far more accurate, since it runs the real combat engine',
                 },
                 labyrinthRoomLogs: {
@@ -2316,6 +2844,38 @@
                     type: 'checkbox',
                     default: true,
                     help: 'Displays encounters/hour, revenue, experience rates when returning from combat',
+                },
+                combatDropLuck: {
+                    id: 'combatDropLuck',
+                    label: 'Combat Drop Luck: Show how lucky a session was on return',
+                    type: 'checkbox',
+                    default: true,
+                    help: "Puts the session's drop value in the distribution of everything those battles could have paid, as a percentile. Skips dungeons, which pay from a reward table rather than per monster",
+                },
+                combatDps: {
+                    id: 'combatDps',
+                    label: 'Combat DPS: Measure damage per second during a run',
+                    type: 'checkbox',
+                    default: true,
+                    help: "Infers damage from health lost between combat ticks, since the game sends no damage figure. Overkill is not counted, and in a party it is the whole party's damage — nothing on the wire says who struck",
+                },
+                portraitDps: {
+                    id: 'portraitDps',
+                    label: 'Portrait DPS: Show each character’s damage on their battle portrait',
+                    type: 'checkbox',
+                    default: false,
+                    help: "Draws the run's DPS and total damage over each character in the battle panel, matched by name. Off by default because the portraits are already busy with health and mana",
+                },
+                portraitDpsPosition: {
+                    id: 'portraitDpsPosition',
+                    label: 'Portrait DPS: Where to put it',
+                    type: 'select',
+                    default: 'above',
+                    options: [
+                        { value: 'above', label: 'Above the portrait' },
+                        { value: 'below', label: 'Below the portrait' },
+                    ],
+                    help: 'Above sits over the name; below sits under the ability bar',
                 },
                 combatSim: {
                     id: 'combatSim',
@@ -2401,7 +2961,17 @@
                     default: 0,
                     min: 0,
                     max: 32,
-                    help: 'Maximum Web Worker threads for simulations (0 = auto, uses all available cores)',
+                    help: 'Maximum Web Worker threads for simulations (0 = auto: 4, or fewer on a smaller machine)',
+                },
+                combatSim_uncapThreads: {
+                    id: 'combatSim_uncapThreads',
+                    label: 'Combat Simulator: Ignore the thread caps',
+                    type: 'checkbox',
+                    default: false,
+                    help:
+                        'Max threads is normally clamped to your core count, and an analysis runs at most 6 simulations ' +
+                        'at once — each one holds its own copy of the game data, and the tab running the game needs a ' +
+                        'core too. Turn this on to take the number above literally.',
                 },
                 labSim_keepReplacedGear: {
                     id: 'labSim_keepReplacedGear',
@@ -2534,6 +3104,7 @@
                     label: 'Track task reroll costs',
                     type: 'checkbox',
                     default: true,
+                    requiresRefresh: true,
                     help: 'Tracks how much gold/cowbells spent rerolling each task (EXPERIMENTAL - may cause UI freezing)',
                 },
                 taskMapIndex: {
@@ -2556,12 +3127,27 @@
                     default: false,
                     help: 'Shows which dungeons contain the monster (requires Task Icons enabled)',
                 },
+                taskSorter: {
+                    id: 'taskSorter',
+                    label: 'Task sorter: Sort tasks by skill type',
+                    type: 'checkbox',
+                    default: true,
+                    requiresRefresh: true,
+                    help: 'Adds the sort button and sorting machinery to the task panel. This switch existed internally but was never in the settings panel, so the feature could not be turned off.',
+                },
                 taskSorter_autoSort: {
                     id: 'taskSorter_autoSort',
                     label: 'Automatically sort tasks when opening task panel',
                     type: 'checkbox',
                     default: false,
                     help: 'Automatically sorts tasks by skill type when you open the task panel',
+                },
+                taskSorter_sortAfterRead: {
+                    id: 'taskSorter_sortAfterRead',
+                    label: 'Sort tasks after reading new ones',
+                    type: 'checkbox',
+                    default: false,
+                    help: 'Sorts the board again once you press Read, since new tasks always arrive at the end',
                 },
                 taskSorter_hideButton: {
                     id: 'taskSorter_hideButton',
@@ -2631,6 +3217,17 @@
                     default: true,
                     help: 'Highlights tasks you want to reroll with a red border and reminder badge. Configure per-character via the target icon in the task panel.',
                 },
+                taskBulkReroll: {
+                    id: 'taskBulkReroll',
+                    label: 'Task bulk reroll stepper',
+                    type: 'checkbox',
+                    default: false,
+                    help:
+                        'Adds a stepper button to the task panel header that performs one reroll (or one discard, once a ' +
+                        'task is at its reroll limit) per click, always previewing the next action on its label. It spends ' +
+                        'real rerolls — coins first, then cowbells — and respects reroll protection and your configured ' +
+                        'cost limits. Protected and completed tasks are left alone.',
+                },
             },
         },
 
@@ -2638,6 +3235,70 @@
             title: 'UI & Appearance',
             icon: '🎨',
             settings: {
+                accountView: {
+                    id: 'accountView',
+                    label: 'Account view: All characters on one screen',
+                    type: 'checkbox',
+                    default: true,
+                    help:
+                        'A single panel covering the whole account rather than the character you happen to be logged in ' +
+                        'as: combined networth with each character’s share of it, per-character status (what each one is ' +
+                        'doing, how long is left, whether anything is idle). Reads the data each character has already ' +
+                        'recorded, so a character shows up once it has been played with Toolasha running.',
+                },
+                overlayPanel: {
+                    id: 'overlayPanel',
+                    label: 'Overlay Panel: One floating panel other features add a row to',
+                    type: 'checkbox',
+                    default: true,
+                    help: 'A configurable overlay. Open it from the Overlay tab beside Inventory, then use the gear to choose which rows show and in what order. Rows appear as features gain them. Its ⇲ button docks it below the character tabs, where it takes its own space instead of covering the game',
+                },
+                overlayTabButton: {
+                    id: 'overlayTabButton',
+                    label: 'Overlay tab button',
+                    type: 'checkbox',
+                    default: true,
+                    help: 'Adds an Overlay switch to the character tabs, beside Inventory and before Optimizer, so the overlay can be shown and hidden without opening settings. Needs the Overlay Panel above',
+                },
+                commandPalette: {
+                    id: 'commandPalette',
+                    label: 'Command palette (Ctrl+K)',
+                    type: 'checkbox',
+                    default: true,
+                    requiresRefresh: true,
+                    help: 'Ctrl+K (or Cmd+K) opens a search box listing every panel, every overlay row, every saved overlay layout and every setting by name — arrow keys and Enter to choose, Escape to dismiss. Ignored while you are typing in chat or any other input',
+                },
+                goalPlanner: {
+                    id: 'goalPlanner',
+                    label: 'Goal Planner: Ordered steps, cost and time to reach a goal',
+                    type: 'checkbox',
+                    default: true,
+                    requiresRefresh: true,
+                    help:
+                        'A floating panel (Ctrl+K → Goal Planner) that turns a goal — 500M coins, Sinister Cape +10, ' +
+                        'Enhancing 110, Observatory 8 — into the ordered steps to get there, each with its own cost and ' +
+                        'time. Composes the calculators the rest of the script already uses: buy-versus-craft, the ' +
+                        'enhancement path optimiser on your own stats, profit and experience per hour, house upgrade ' +
+                        'costs. Press Refresh to re-price against the current market; steps you have since satisfied ' +
+                        'come back struck through rather than disappearing',
+                },
+                ironCowFarm: {
+                    // Display name is "Iron Bell Farming"; the setting id is kept as
+                    // ironCowFarm since settings persist by id and renaming it would
+                    // drop an existing user's saved preference.
+                    id: 'ironCowFarm',
+                    label: 'Iron Bell Farming: The cowbell-farming plan, and what it earns',
+                    type: 'checkbox',
+                    default: true,
+                    requiresRefresh: true,
+                    help:
+                        'A floating panel (Ctrl+K → Iron Bell Farming) holding the standard iron-cow route to farming gold ' +
+                        'for cowbells — the skills to level, the jewelry to craft, then the endless Star Fruit → ' +
+                        'decompose → coinify loop — with each stage ticking itself off against your own levels, gear ' +
+                        'and house. Costs the loop from your actual rates through the gathering and alchemy ' +
+                        'calculators, and converts it to bells per hour, per day and per week at the current cowbell ' +
+                        'price. All its gold is coinify output, never a market sale, because an iron cow cannot sell',
+                },
                 draggableModals: {
                     id: 'draggableModals',
                     label: 'Draggable modals',
@@ -2809,6 +3470,17 @@
                     max: 100,
                     help: 'Height of the inventory/equipment panel beside the fight, as a percentage of the window. Set it taller to see more inventory at once, shorter to give the fight room. 0 leaves the height the game picks',
                 },
+                welcomeBackValue: {
+                    id: 'welcomeBackValue',
+                    label: 'Welcome Back modal: What the time offline was worth',
+                    type: 'checkbox',
+                    default: true,
+                    help:
+                        'Adds one line to the game’s Welcome Back modal valuing what you gained and what got consumed ' +
+                        'while you were away — net coins, coins per hour offline and XP per hour — priced at market ' +
+                        'using the pricing mode from the Market settings. Items with no market price are left out of ' +
+                        'the total and counted instead, and the line is not drawn at all if nothing could be priced.',
+                },
             },
         },
 
@@ -2854,6 +3526,45 @@
                         { key: '{name}', label: 'Player Name', description: 'The name of the unsigned guild member' },
                     ],
                 },
+                guildTrialsInfo: {
+                    id: 'guildTrialsInfo',
+                    label: 'Guild Trials: Show rates, pace and payout on the In Progress tab',
+                    type: 'checkbox',
+                    default: true,
+                    help:
+                        'Measures the pool fill rate or party DPS off the trial cards and adds the ETA to clear the ' +
+                        'current tier, how many tiers the hour is on pace for, the next tier’s projected size, and the ' +
+                        'Guild Points and token payout the week’s tiers are worth.',
+                },
+                guildTrialAutoRecord: {
+                    id: 'guildTrialAutoRecord',
+                    label: 'Guild Trials: Record a trial automatically when one starts',
+                    type: 'checkbox',
+                    default: true,
+                    help:
+                        'Starts a recording session by itself when a trial fight is seen or the In Progress tab ' +
+                        'shows a live reading, so the whole hour is captured without having to press anything. ' +
+                        'The Record button on the trials block starts and stops one by hand either way.',
+                },
+                guildTrialsBuildersHallBonus: {
+                    id: 'guildTrialsBuildersHallBonus',
+                    label: 'Guild Trials: Builders Hall bonus override (%)',
+                    type: 'number',
+                    default: 0,
+                    help:
+                        'Guild Points are Base × (1 + Builders Hall bonus). Leave at 0 to read it from the game once ' +
+                        'the guild Buildings tab has been opened; set it here if your guild knows the number and the ' +
+                        'game does not expose it.',
+                },
+                guildTrialsTreasuryBonus: {
+                    id: 'guildTrialsTreasuryBonus',
+                    label: 'Guild Trials: Treasury bonus override (%)',
+                    type: 'number',
+                    default: 0,
+                    help:
+                        'Token payouts are 0.5 × TotalBasePoints × (1 + Treasury bonus). Leave at 0 to read it from ' +
+                        'the game once the guild Buildings tab has been opened.',
+                },
                 guildMembersActivityTab: {
                     id: 'guildMembersActivityTab',
                     label: 'Guild Members: Show Activity column on',
@@ -2894,6 +3605,23 @@
                     default: true,
                     help: 'Shows 24-hour average XP/hr tracked by Toolasha (Contributions tab).',
                 },
+                guildTokenCreditRate: {
+                    id: 'guildTokenCreditRate',
+                    label: 'Guild Shop: Guild credits received per guild token',
+                    type: 'number',
+                    default: 1,
+                    min: 0,
+                    help:
+                        'Guild tokens are never listed on the market, so they are priced through the Guild Shop ' +
+                        'exchange instead: credits per token × the gold value of a credit, taking whichever credit ' +
+                        'colour yields the most gold. This number is now the last resort. Opening a Guild Shop ' +
+                        'exchange dialog with a Guild Token selected reads that colour’s real rate off the screen ' +
+                        'and remembers it, and client data wins over even that — so in normal play the live rate is ' +
+                        'what gets used and this setting is never consulted. It only stands in before any dialog ' +
+                        'has been opened, and every figure derived from it is labelled “assumed rate”. Run ' +
+                        'Toolasha.debug.tokenExchange() in the console to see every colour’s rate and which one was ' +
+                        'picked. Set to 0 to leave tokens unpriced, as they were before.',
+                },
                 guildCreditValue: {
                     id: 'guildCreditValue',
                     label: 'Guild Shop: Show gold cost per credit table',
@@ -2914,6 +3642,27 @@
                     type: 'checkbox',
                     default: true,
                     help: 'Adds a shrine upgrade planner to the guild credit exchange panel, showing total credit and token costs to upgrade from your current level to a target level.',
+                },
+                guildRoster: {
+                    id: 'guildRoster',
+                    label: 'Guild Roster: Contribution shares and gone-quiet flags',
+                    type: 'checkbox',
+                    default: true,
+                    help: 'Adds a Guild Roster overlay tile and panel showing each member’s share of the XP actually observed over 7 and 30 days, who has gone quiet against their own weekly rate, and a guild level projection. Uses the XP the Guild XP Tracker has already recorded.',
+                },
+            },
+        },
+
+        insights: {
+            title: 'Insights',
+            icon: '🔍',
+            settings: {
+                insights_calibration: {
+                    id: 'insights_calibration',
+                    label: 'Prediction Calibration: Check profit forecasts against finished runs',
+                    type: 'checkbox',
+                    default: true,
+                    help: 'Records what the profit calculators predicted for an action beside what the loot log says the run actually paid, and flags skills where the forecast is persistently off. Adds a Prediction Calibration overlay tile and panel.',
                 },
             },
         },
@@ -2956,12 +3705,151 @@
             title: 'Notifications',
             icon: '🔔',
             settings: {
-                notifiEmptyAction: {
-                    id: 'notifiEmptyAction',
-                    label: 'Browser notification when action queue is empty',
+                notifications_browserEnabled: {
+                    id: 'notifications_browserEnabled',
+                    label: 'Allow desktop notifications',
                     type: 'checkbox',
                     default: false,
-                    help: 'Only works when the game page is open',
+                    help: 'Master switch for the desktop-notification channel. Ticking this asks the browser for permission — the ask happens here rather than at page load, because a prompt nobody expects is usually dismissed and a dismissed prompt is remembered. With this off, or permission refused, notifications still arrive as an in-page toast when the tab is visible and as a ❗ on the tab title when it is not.',
+                },
+                notifiEmptyAction: {
+                    id: 'notifiEmptyAction',
+                    label: 'Notify when the current character queue is empty',
+                    type: 'checkbox',
+                    default: false,
+                    help: 'Keys on the action queue going from having actions to having none, as reported by the game over the websocket. Covers only the character you are logged in as, and only while the game page is open.',
+                },
+                notifications_consumableLow: {
+                    id: 'notifications_consumableLow',
+                    label: 'Notify when drinks are running low',
+                    type: 'checkbox',
+                    default: false,
+                    help: 'Fires when the soonest drink to run out falls below the "Drink timer: warning threshold (hours)" setting — the same crossing that turns the drink timer amber. Once per crossing, and it re-arms when you restock above the threshold. Requires the Drink Timer feature, and reads the drink slots of the skill you are currently performing plus any skill panel you have open.',
+                },
+                notifications_marketListingFilled: {
+                    id: 'notifications_marketListingFilled',
+                    label: 'Notify when a market listing finishes',
+                    type: 'checkbox',
+                    default: false,
+                    help: 'Keys on the count of finished listings going up — an order that filled completely, or a cancelled one holding a refund. An order still partly filling is not counted, because collecting it achieves nothing. Same rule as the Marketplace badge filter, and works whether or not that filter is on.',
+                },
+                notifications_otherCharacterIdle: {
+                    id: 'notifications_otherCharacterIdle',
+                    label: 'Notify when another character has run out of queue',
+                    type: 'checkbox',
+                    default: false,
+                    help: 'Projected, not observed. Each other character queue is captured when you switch away from it, and this fires once that much time has elapsed — it cannot see a character while you are not logged into it, so anything queued there from elsewhere is invisible to it. Characters with an unbounded action queued are skipped, and a character is announced again only after you next switch away from it.',
+                },
+                notifications_labyrinthRunFinished: {
+                    id: 'notifications_labyrinthRunFinished',
+                    label: 'Notify when a labyrinth run finishes',
+                    type: 'checkbox',
+                    default: false,
+                    help: 'Keys on the run going from active to not active, as the server reports it — so it covers every ending: cleared out, ended on a lost fight, or exited on purpose. It does not say which, because the payload does not: there is no outcome or reason field on a labyrinth message, so the alert reports the deepest floor the run reached and leaves it at that. Once per run.',
+                },
+                notifications_combatDeath: {
+                    id: 'notifications_combatDeath',
+                    label: 'Notify when you die in combat',
+                    type: 'checkbox',
+                    default: false,
+                    help: 'Keys on the server’s own death count for your character going up between battles — your deaths only, not the party’s. One message per cooldown rather than one per death, so a zone that is killing you repeatedly says so once and the total in the message tells you how bad it got. Deaths that happened before you switched this on are not announced.',
+                },
+                notifications_enhancementTarget: {
+                    id: 'notifications_enhancementTarget',
+                    label: 'Notify when an item reaches its enhancement target',
+                    type: 'checkbox',
+                    default: false,
+                    help: 'Reads the “enhance until +N” you set in the game’s own enhancing panel, and the level the item is at after each attempt — so it works whether or not the Enhancement Tracker is on. Nothing is announced when no target is set, since there is no ending to announce. Once per item and target, re-arming when that item is seen below the target again.',
+                },
+                notifications_trialStarting: {
+                    id: 'notifications_trialStarting',
+                    label: 'Notify when a guild trial is about to start',
+                    type: 'checkbox',
+                    default: false,
+                    help: 'The guild panel states the next trial’s schedule (“Scheduled Wed 04:00 PM 2h 24m”). This announces it once the countdown is inside the lead time below, and again the moment the trial actually starts. The countdown is only read while the guild panel is open — no socket message carries a trial schedule.',
+                },
+                notifications_trialStartLeadMinutes: {
+                    id: 'notifications_trialStartLeadMinutes',
+                    label: 'Guild trial warning lead time (minutes)',
+                    type: 'number',
+                    default: 10,
+                    min: 1,
+                    max: 120,
+                    help: 'How long before a scheduled guild trial to announce it.',
+                },
+                notifications_trialResults: {
+                    id: 'notifications_trialResults',
+                    label: 'Notify when a guild trial finishes, with what it paid',
+                    type: 'checkbox',
+                    default: false,
+                    help: 'Announces the Guild Points banked and the token payout — every eligible member’s share and a participant’s — as soon as the guild panel reports the cycle complete.',
+                },
+                notifications_taskSlotsFull: {
+                    id: 'notifications_taskSlotsFull',
+                    label: 'Notify before your task slots fill up',
+                    type: 'checkbox',
+                    default: false,
+                    help: 'A task that arrives with no free slot is simply not given — there is no queue behind the board. This projects when the last free slot fills, from the server’s own slot cap, task cooldown and last-task time, so it works with the task panel closed. It is a projection, not an observation: it assumes the cadence holds and that nothing frees a slot in the meantime, and it can only be as fresh as the last message the game sent this tab. Completing, claiming or discarding a task moves the deadline and re-arms the warning. A board that is already full says so once.',
+                },
+                notifications_taskSlotsLeadHours: {
+                    id: 'notifications_taskSlotsLeadHours',
+                    label: 'Task slots warning lead time (hours)',
+                    type: 'number',
+                    default: 8,
+                    min: 1,
+                    max: 48,
+                    help: 'How long before the last free task slot fills to warn you — enough notice to claim or clear something. Default: 8.',
+                },
+                notifications_communityBuffExpiring: {
+                    id: 'notifications_communityBuffExpiring',
+                    label: 'Notify before a community buff expires',
+                    type: 'checkbox',
+                    default: false,
+                    help: 'Reads the expiry the server sends with each community buff, so the warning is timed off the real end of the buff rather than a countdown read from the screen. Fires once per expiry; a donation that extends a buff pushes the expiry out and arms the warning again for the new one. Use the per-buff switches below to pick which ones you care about.',
+                },
+                notifications_communityBuffLeadMinutes: {
+                    id: 'notifications_communityBuffLeadMinutes',
+                    label: 'Community buff warning: minutes ahead',
+                    type: 'number',
+                    default: 15,
+                    min: 5,
+                    max: 120,
+                    help: 'How many minutes before a community buff’s actual expiry to warn you — enough notice to get to the Cowbell Store and donate. Default: 15.',
+                },
+                notifications_communityBuff_experience: {
+                    id: 'notifications_communityBuff_experience',
+                    label: 'Community buff: Experience',
+                    type: 'checkbox',
+                    default: true,
+                    help: 'Include the Experience community buff in the expiry warning. Only has an effect while "Notify before a community buff expires" is on.',
+                },
+                notifications_communityBuff_gatheringQuantity: {
+                    id: 'notifications_communityBuff_gatheringQuantity',
+                    label: 'Community buff: Gathering Quantity',
+                    type: 'checkbox',
+                    default: true,
+                    help: 'Include the Gathering Quantity community buff in the expiry warning. Only has an effect while "Notify before a community buff expires" is on.',
+                },
+                notifications_communityBuff_productionEfficiency: {
+                    id: 'notifications_communityBuff_productionEfficiency',
+                    label: 'Community buff: Production Efficiency',
+                    type: 'checkbox',
+                    default: true,
+                    help: 'Include the Production Efficiency community buff in the expiry warning. Only has an effect while "Notify before a community buff expires" is on.',
+                },
+                notifications_communityBuff_enhancingSpeed: {
+                    id: 'notifications_communityBuff_enhancingSpeed',
+                    label: 'Community buff: Enhancing Speed',
+                    type: 'checkbox',
+                    default: true,
+                    help: 'Include the Enhancing Speed community buff in the expiry warning. Only has an effect while "Notify before a community buff expires" is on.',
+                },
+                notifications_communityBuff_combatDropQuantity: {
+                    id: 'notifications_communityBuff_combatDropQuantity',
+                    label: 'Community buff: Combat Drop Quantity',
+                    type: 'checkbox',
+                    default: true,
+                    help: 'Include the Combat Drop Quantity community buff in the expiry warning. Only has an effect while "Notify before a community buff expires" is on.',
                 },
             },
         },
@@ -3200,7 +4088,104 @@
                 },
             },
         },
+
+        sync: {
+            title: 'Cross-Device Sync',
+            icon: '☁️',
+            settings: {
+                sync_enabled: {
+                    id: 'sync_enabled',
+                    label: 'Enable cross-device sync (GitHub gist)',
+                    type: 'checkbox',
+                    default: false,
+                    help:
+                        'Carries your Toolasha data between browsers through one private GitHub gist that you own. ' +
+                        'Nothing goes to any server of ours, and nothing is sent until you press Push or turn on ' +
+                        'automatic sync below.',
+                },
+                sync_token: {
+                    id: 'sync_token',
+                    label: 'GitHub personal access token',
+                    type: 'password',
+                    default: '',
+                    placeholder: 'ghp_… or github_pat_…',
+                    help:
+                        'Needs the "gist" scope and nothing else — a classic token with only that box ticked, or a ' +
+                        'fine-grained token with Gists set to read and write. SECURITY: the token is stored in this ' +
+                        "browser's local database in plain text, exactly like every other setting, and any script or " +
+                        'extension that can read this page can read it. Use a token that can only touch gists, and revoke ' +
+                        'it at github.com/settings/tokens if you stop using sync. It is never written into the synced ' +
+                        'payload, so pulling on another device will not plant it there.',
+                },
+                sync_passphrase: {
+                    id: 'sync_passphrase',
+                    label: 'Sync passphrase (optional encryption)',
+                    type: 'password',
+                    default: '',
+                    placeholder: 'Leave empty to sync unencrypted',
+                    help:
+                        'When set, the gist holds AES-256 ciphertext instead of readable JSON, so the data is useless to ' +
+                        'anyone who gets the gist URL, the token, or your GitHub account. Enter the SAME passphrase on ' +
+                        'every device that shares the gist; there is no recovery — a forgotten passphrase means pushing ' +
+                        'fresh from a device that still has the data. Like the token, the passphrase is stored in this ' +
+                        "browser's local database in plain text, so it hides the gist from GitHub-side readers, not from " +
+                        'extensions that can already read this page. It is never uploaded.',
+                },
+                sync_scope: {
+                    id: 'sync_scope',
+                    label: 'What to sync',
+                    type: 'select',
+                    default: 'settings',
+                    options: [
+                        { value: 'settings', label: 'Settings only' },
+                        { value: 'everything', label: 'Everything (settings + all tracked history)' },
+                    ],
+                    help:
+                        'Settings only is small and fast. Everything also carries dungeon runs, XP history, loot logs and ' +
+                        'the rest — the same contents as "Back Up Everything" — which on a played-in account can be many ' +
+                        'megabytes and is split across several files inside the gist.',
+                },
+                sync_auto: {
+                    id: 'sync_auto',
+                    label: 'Sync automatically',
+                    type: 'checkbox',
+                    default: false,
+                    help:
+                        'Pulls once shortly after the page loads if the gist is newer than what this device last synced, ' +
+                        'and pushes every 15 minutes if anything changed. When both sides have changed you are asked ' +
+                        'which one wins rather than the older copy being overwritten quietly.',
+                },
+            },
+        },
     };
+
+    /**
+     * Get all setting IDs in order
+     * @returns {string[]} Array of setting IDs
+     */
+    function getAllSettingIds() {
+        const ids = [];
+        for (const group of Object.values(settingsGroups)) {
+            for (const settingId of Object.keys(group.settings)) {
+                ids.push(settingId);
+            }
+        }
+        return ids;
+    }
+
+    /**
+     * Get a setting definition by ID
+     * @param {string} settingId - Setting ID
+     * @returns {Object|null} Setting definition or null
+     */
+    function getSettingDefinition(settingId) {
+        for (const group of Object.values(settingsGroups)) {
+            if (group.settings[settingId]) {
+                return group.settings[settingId];
+            }
+        }
+        return null;
+    }
 
     /**
      * Settings Storage Module
@@ -3216,6 +4201,36 @@
     function isBooleanType(type) {
         return type === 'checkbox' || type === 'checkboxWithButton';
     }
+
+    /**
+     * Schema defaults that changed after release, and the value they changed from.
+     *
+     * A changed schema default only reaches a fresh install. The saved map is
+     * written whole — every setting the schema had at save time is in it, chosen or
+     * not — so an existing user holds the *old* default as an explicit stored
+     * value, and the merge below faithfully restores it forever. That is right for
+     * a setting the user actually picked and wrong for one they never touched, and
+     * storage cannot tell the two apart.
+     *
+     * So each entry is rewritten exactly once, guarded by a persisted flag: an old
+     * default is nudged to the new one on the first load that sees it, and after
+     * that the user's value is theirs. Someone who deliberately re-picks the old
+     * value keeps it, because the flag has already been set.
+     *
+     * `from` is the value being replaced — anything else stays put, since a user
+     * who chose a third option was never sitting on the old default.
+     */
+    const DEFAULT_REWRITES = [
+        // Replaying the live fight runs the real combat engine hundreds of times
+        // mid-fight; it should be opt-in rather than something every player pays for
+        { id: 'labyrinthLiveCombatSim', field: 'isTrue', from: true, to: false },
+        // Routing unrevealed rooms as clearable sends players through rooms that
+        // turn out to need a shroud they did not bring
+        { id: 'labyrinthPathUnknownMode', field: 'value', from: 'clearable', to: 'shroud' },
+    ];
+
+    /** Bump the suffix when a new batch is added to DEFAULT_REWRITES */
+    const DEFAULT_REWRITE_FLAG_KEY = 'settings_default_rewrites_v1';
 
     class SettingsStorage {
         constructor() {
@@ -3250,6 +4265,23 @@
         }
 
         /**
+         * The setting IDs the *previous* build saved, before any merging.
+         *
+         * The saved map is written whole, so its keys are a fingerprint of the
+         * schema of whatever script wrote it — including the upstream fork, which
+         * uses the same storage keys. Diffing the current schema against this is
+         * how a first run tells "arrived from another build of Toolasha, with
+         * settings worth respecting" from "genuinely fresh install".
+         *
+         * @returns {Promise<Array<string>|null>} Stored IDs, or null when nothing
+         *   has ever been saved
+         */
+        async storedSettingIds() {
+            const saved = await storage.getJSON(this.getCharacterStorageKey(), this.storageArea, null);
+            return saved ? Object.keys(saved) : null;
+        }
+
+        /**
          * Load all settings from storage
          * Merges saved values with defaults from settings-schema
          * @returns {Promise<Object>} Settings map
@@ -3271,6 +4303,8 @@
                 // Add character to known characters list
                 await this.addToKnownCharacters(this.currentCharacterId, this.currentCharacterName);
             }
+
+            saved = await this.applyDefaultRewrites(saved, characterKey);
 
             const settings = {};
 
@@ -3337,6 +4371,47 @@
             }
 
             return settings;
+        }
+
+        /**
+         * Rewrite stored values still sitting on a superseded schema default, once.
+         *
+         * See DEFAULT_REWRITES for why this is needed at all. The flag is stored
+         * per character, beside that character's settings, so each save file is
+         * nudged exactly once — and is set even when there is nothing to rewrite
+         * (a fresh install, which already has the new defaults), so a later change
+         * of mind is never second-guessed.
+         *
+         * @param {Object|null} saved - The stored settings map, or null when none
+         * @param {string} characterKey - Storage key the map was loaded from
+         * @returns {Promise<Object|null>} The map to merge, rewrites applied
+         */
+        async applyDefaultRewrites(saved, characterKey) {
+            const flagKey = `${DEFAULT_REWRITE_FLAG_KEY}_${characterKey}`;
+            try {
+                if (await storage.get(flagKey, this.storageArea, false)) return saved;
+
+                let next = saved;
+                for (const { id, field, from, to } of DEFAULT_REWRITES) {
+                    const entry = saved?.[id];
+                    if (!entry || entry[field] !== from) continue;
+                    // Copy rather than mutate the loaded map, so a caller holding
+                    // the same object does not see it change underneath them
+                    next = next === saved ? { ...saved } : next;
+                    next[id] = { ...entry, [field]: to };
+                }
+
+                if (next !== saved) {
+                    await storage.setJSON(characterKey, next, this.storageArea, true);
+                }
+                await storage.set(flagKey, true, this.storageArea, true);
+                return next;
+            } catch (error) {
+                // A failed rewrite must not cost the user their settings; the flag
+                // stays unset, so the next load tries again
+                console.error('[SettingsStorage] Default rewrite failed:', error);
+                return saved;
+            }
         }
 
         /**
@@ -3683,7 +4758,6 @@
             }
 
             this.wrapWebSocketConstructor();
-            this.wrapWebSocketPrototype();
 
             // Capture hook instance for closure
             const hookInstance = this;
@@ -3720,65 +4794,6 @@
             Object.defineProperty(pageMessageEvent.prototype, 'data', dataProperty);
 
             this.isHooked = true;
-        }
-
-        /**
-         * Wrap WebSocket prototype handlers to intercept message events
-         */
-        wrapWebSocketPrototype() {
-            const targetWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
-            if (typeof targetWindow === 'undefined' || !targetWindow.WebSocket || !targetWindow.WebSocket.prototype) {
-                return;
-            }
-
-            const hookInstance = this;
-            const proto = targetWindow.WebSocket.prototype;
-
-            if (!proto.__toolashaPatched) {
-                const originalAddEventListener = proto.addEventListener;
-                proto.addEventListener = function toolashaAddEventListener(type, listener, options) {
-                    if (type === 'message' && typeof listener === 'function') {
-                        const wrappedListener = function toolashaMessageListener(event) {
-                            if (!hookInstance.isMessageEventProcessed(event) && typeof event?.data === 'string') {
-                                hookInstance.markMessageEventProcessed(event);
-                                hookInstance.processMessage(event.data);
-                            }
-                            return listener.call(this, event);
-                        };
-
-                        wrappedListener.__toolashaOriginal = listener;
-                        return originalAddEventListener.call(this, type, wrappedListener, options);
-                    }
-
-                    return originalAddEventListener.call(this, type, listener, options);
-                };
-
-                const originalOnMessage = Object.getOwnPropertyDescriptor(proto, 'onmessage');
-                if (originalOnMessage && originalOnMessage.set) {
-                    Object.defineProperty(proto, 'onmessage', {
-                        configurable: true,
-                        get: originalOnMessage.get,
-                        set(handler) {
-                            if (typeof handler !== 'function') {
-                                return originalOnMessage.set.call(this, handler);
-                            }
-
-                            const wrappedHandler = function toolashaOnMessage(event) {
-                                if (!hookInstance.isMessageEventProcessed(event) && typeof event?.data === 'string') {
-                                    hookInstance.markMessageEventProcessed(event);
-                                    hookInstance.processMessage(event.data);
-                                }
-                                return handler.call(this, event);
-                            };
-
-                            wrappedHandler.__toolashaOriginal = handler;
-                            return originalOnMessage.set.call(this, wrappedHandler);
-                        },
-                    });
-                }
-
-                proto.__toolashaPatched = true;
-            }
         }
 
         /**
@@ -3820,8 +4835,8 @@
 
                 // Only subclass native WebSocket constructors. Third-party wrappers
                 // (other userscripts replacing window.WebSocket) are passed through
-                // as-is — Toolasha still intercepts via MessageEvent.data hook and
-                // WebSocket.prototype patches.
+                // as-is — Toolasha still intercepts via the MessageEvent.data hook,
+                // which also attaches the per-socket listener on first read.
                 const isNative = /\[native code\]/.test(Function.prototype.toString.call(OriginalWebSocket));
                 if (!isNative) {
                     hookInstance.currentWebSocket = OriginalWebSocket;
@@ -3936,6 +4951,12 @@
                 messageType === 'market_listings_updated' ||
                 messageType === 'profile_shared' ||
                 messageType === 'battle_consumable_ability_updated' ||
+                // Equipping and unequipping the same ability produce messages whose
+                // first 100 characters are identical — type, character id and the
+                // opening ability hrid fill the window, and the slotNumber that says
+                // which way it went sits past it. Hashing them would drop the second
+                // and leave the equipped kit stuck on the first.
+                messageType === 'abilities_updated' ||
                 messageType === 'battle_unit_fetched' ||
                 // Consecutive combat ticks can open with identical text — same type,
                 // same battle, same unit ids — and differ only in hitpoints further
@@ -3943,11 +4964,22 @@
                 messageType === 'battle_updated' ||
                 messageType === 'action_type_consumable_slots_updated' ||
                 messageType === 'consumable_buffs_updated' ||
+                // Two donations to the same buff in a row produce messages whose
+                // first 100 characters are identical — type, buff id and hrid fill
+                // the window, and the changed expireTime/level sit past it — so the
+                // content hash would drop the extension and expiry alerts would
+                // fire against a stale clock
+                messageType === 'community_buffs_updated' ||
                 messageType === 'character_info_updated' ||
                 messageType === 'labyrinth_updated' ||
                 messageType === 'loadouts_updated' ||
                 messageType === 'setting_updated' ||
                 messageType === 'labyrinth_room_progress' ||
+                // Opening the same chest twice in a row produces two messages whose
+                // first 100 characters are identical — same type, same chest, same
+                // count — so the content hash would drop the second and the treasure
+                // ledger would undercount every repeat opening
+                messageType === 'loot_opened' ||
                 messageType === 'leaderboard_updated';
 
             if (!skipDedup) {
@@ -3965,14 +4997,16 @@
                 if (this.processedMessages.size > 100) {
                     this.cleanupProcessedMessages();
                 }
-            } else if (messageType === 'action_completed') {
-                // action_completed bypasses the content-hash dedup (Gabriel's fix, commit 1007215)
-                // but the WebSocket prototype wrapper can fire two listeners for the same physical
-                // message object. The WeakSet guard catches same-object duplicates, but if two
-                // independent listeners each receive a distinct MessageEvent wrapping the same
-                // payload, both pass the WeakSet check and processMessage is called twice.
+            } else if (messageType === 'action_completed' || messageType === 'loot_opened') {
+                // action_completed and loot_opened bypass the content-hash dedup (Gabriel's fix,
+                // commit 1007215, and the treasure ledger respectively). The WeakSet guard catches
+                // the same MessageEvent object reaching both remaining interception paths, but two
+                // distinct MessageEvents wrapping the same payload (e.g. another userscript
+                // re-dispatching, or a game reconnect replay) would both pass the WeakSet check and
+                // call processMessage twice.
                 // Use a short 50ms TTL keyed on full message content to collapse these duplicates.
-                // Two genuine consecutive action_completed messages are always seconds apart.
+                // Two genuine consecutive messages of either type are far enough apart that a
+                // byte-identical repeat inside 50ms is a duplicate rather than a second event.
                 const now = Date.now();
                 if (this.recentActionCompleted.has(message)) {
                     return; // Duplicate from second listener — skip
@@ -3993,8 +5027,10 @@
                 // Save critical data to GM storage for Combat Sim export
                 this.saveCombatSimData(parsedMessageType, message);
 
-                // Call registered handlers for this message type
-                const handlers = this.messageHandlers.get(parsedMessageType) || [];
+                // Call registered handlers for this message type. Snapshot the array:
+                // a handler that off()s itself mid-dispatch would otherwise shift the
+                // list under the loop and skip the next handler.
+                const handlers = [...(this.messageHandlers.get(parsedMessageType) || [])];
 
                 for (const handler of handlers) {
                     try {
@@ -4010,7 +5046,7 @@
                 }
 
                 // Call wildcard handlers (receive all messages)
-                const wildcardHandlers = this.messageHandlers.get('*') || [];
+                const wildcardHandlers = [...(this.messageHandlers.get('*') || [])];
                 for (const handler of wildcardHandlers) {
                     try {
                         const result = handler(data);
@@ -4032,6 +5068,15 @@
          * Save combat sim data for export (cross-domain via GM storage + IndexedDB).
          * Character/client/battle data is saved to GM storage so the Shykai sim page can read it.
          * Profile shares are saved to IndexedDB for cross-session persistence.
+         *
+         * Every GM-bridged payload written here is also stamped with an ownership marker —
+         * `{characterId, characterName, writtenAt}` — written to a namespaced *sibling* key
+         * (`${key}_meta`) rather than wrapped around the payload itself. That keeps the raw
+         * payload key byte-for-byte identical to what it always was, which matters because the
+         * external Shykai combat sim page reads these exact GM keys directly (see the
+         * cross-domain fallback comments on the keys below) — wrapping the payload would break
+         * it. See combat-sim-integration.js / combat-sim-export.js for the read-side guard that
+         * checks this stamp before trusting a GM-bridged value.
          * @param {string} messageType - Message type
          * @param {string} message - Raw message JSON string
          */
@@ -4040,9 +5085,23 @@
             try {
                 // Save character/client/battle data to GM storage for cross-domain Shykai access
                 if (hasGM && messageType === 'init_character_data') {
+                    // The writer's own character id/name must be read from THIS message, not from
+                    // dataManager: saveCombatSimData runs before dataManager's own init_character_data
+                    // handler (see processMessage), so dataManager.getCurrentCharacterId() would still
+                    // report the *previous* character during a character switch.
+                    try {
+                        const parsedCharacter = JSON.parse(message);
+                        if (parsedCharacter.character?.id) {
+                            this.bridgeCharacterId = parsedCharacter.character.id;
+                            this.bridgeCharacterName = parsedCharacter.character.name || null;
+                        }
+                    } catch {
+                        /* ignore — meta write below falls back to the last known bridge character */
+                    }
                     setTimeout(() => {
                         try {
                             GM_setValue('toolasha_init_character_data', message);
+                            this.writeBridgeMeta('toolasha_init_character_data_meta');
                         } catch {
                             /* ignore */
                         }
@@ -4051,6 +5110,7 @@
                     setTimeout(() => {
                         try {
                             GM_setValue('toolasha_init_client_data', message);
+                            this.writeBridgeMeta('toolasha_init_client_data_meta');
                         } catch {
                             /* ignore */
                         }
@@ -4059,6 +5119,7 @@
                     setTimeout(() => {
                         try {
                             GM_setValue('toolasha_new_battle', message);
+                            this.writeBridgeMeta('toolasha_new_battle_meta');
                         } catch {
                             /* ignore */
                         }
@@ -4105,6 +5166,7 @@
                     if (hasGM) {
                         try {
                             GM_setValue('toolasha_profile_list', JSON.stringify(profileList));
+                            this.writeBridgeMeta('toolasha_profile_list_meta');
                         } catch {
                             /* ignore */
                         }
@@ -4112,6 +5174,31 @@
                 }
             } catch (error) {
                 console.error('[WebSocket] Failed to save Combat Sim data:', error);
+            }
+        }
+
+        /**
+         * Stamp a GM-bridged combat sim key with who wrote it and when, under a namespaced sibling
+         * meta key (e.g. 'toolasha_init_character_data_meta'). Kept separate from the payload key so
+         * the external Shykai sim page, which reads the raw payload key directly, is unaffected.
+         * Uses the character last seen via init_character_data on this tab (`this.bridgeCharacterId` /
+         * `this.bridgeCharacterName`) since that is the only writer identity reliably available
+         * synchronously at write time.
+         * @param {string} metaKey - Namespaced meta key to write, e.g. 'toolasha_init_character_data_meta'
+         */
+        writeBridgeMeta(metaKey) {
+            if (typeof GM_setValue === 'undefined') return;
+            try {
+                GM_setValue(
+                    metaKey,
+                    JSON.stringify({
+                        characterId: this.bridgeCharacterId || null,
+                        characterName: this.bridgeCharacterName || null,
+                        writtenAt: Date.now(),
+                    })
+                );
+            } catch {
+                /* ignore */
             }
         }
 
@@ -4246,7 +5333,7 @@
         }
 
         emitSocketEvent(eventType, event, socket) {
-            const handlers = this.socketEventHandlers.get(eventType) || [];
+            const handlers = [...(this.socketEventHandlers.get(eventType) || [])];
             for (const handler of handlers) {
                 try {
                     handler(event, socket);
@@ -4423,6 +5510,359 @@
     const connectionState = new ConnectionState();
 
     /**
+     * Character ability reconciliation.
+     *
+     * The equipped kit is not something the client is ever handed whole after login.
+     * `init_character_data` carries `combatUnit.combatAbilities` once, and from then
+     * on the server sends deltas: `abilities_updated` with an `endCharacterAbilities`
+     * array where `slotNumber > 0` means "this ability now sits in that slot" and
+     * `slotNumber <= 0` means "this ability is no longer equipped". Only the rows
+     * that changed are sent, so the update has to be applied against the current
+     * list rather than replacing it.
+     *
+     * Two things make a naive merge wrong, and both are what leaves a stale kit on
+     * screen after the labyrinth (which swaps loadouts between rooms):
+     *
+     * - An unequip is a row, not an absence. Dropping rows whose `slotNumber` is 0
+     *   instead of removing the matching ability leaves the old ability equipped.
+     * - A slot holds one ability. When a new ability claims a slot, whatever was in
+     *   that slot has to leave even if the server did not bother to say so.
+     *
+     * The helpers are pure so the message sequence can be replayed in a test.
+     */
+
+    /**
+     * The learned-ability list with an update applied.
+     *
+     * This is the list that carries experience, so entries are merged field by field
+     * rather than replaced — an update that only reports a level must not erase the
+     * experience already known for that ability.
+     *
+     * @param {Array<Object>} owned - Current `characterAbilities` (not mutated)
+     * @param {Array<Object>} updates - `endCharacterAbilities` from the message
+     * @returns {Array<Object>} New list
+     */
+    function mergeOwnedAbilities(owned, updates) {
+        const next = (Array.isArray(owned) ? owned : []).map((entry) => ({ ...entry }));
+        if (!Array.isArray(updates)) return next;
+
+        for (const update of updates) {
+            const hrid = update?.abilityHrid;
+            if (!hrid) continue;
+
+            const index = next.findIndex((entry) => entry?.abilityHrid === hrid);
+            if (index !== -1) {
+                next[index] = { ...next[index], ...update };
+            } else {
+                next.push({ ...update });
+            }
+        }
+
+        return next;
+    }
+
+    /**
+     * The equipped kit with an `endCharacterAbilities` delta applied.
+     *
+     * An update with no `slotNumber` at all is treated as progress on an ability
+     * that is already equipped, never as an equip: `action_completed` reports
+     * experience the same way and appending those rows would fill the kit with
+     * abilities the character is not actually using.
+     *
+     * Ordering is left alone unless every surviving entry carries a slot number, in
+     * which case the array is sorted by it. The initial list from
+     * `init_character_data` may not number its slots, and inventing numbers for it
+     * would risk colliding with the server's own numbering — so entries already
+     * present keep their position and new ones are appended.
+     *
+     * @param {Array<Object>} current - Current `combatUnit.combatAbilities` (not mutated)
+     * @param {Array<Object>} updates - `endCharacterAbilities` from the message
+     * @returns {Array<Object>} New equipped list
+     */
+    function reconcileEquippedAbilities(current, updates) {
+        let next = (Array.isArray(current) ? current : [])
+            .filter((entry) => entry?.abilityHrid)
+            .map((entry) => ({ ...entry }));
+
+        if (!Array.isArray(updates)) return next;
+
+        for (const update of updates) {
+            const hrid = update?.abilityHrid;
+            if (!hrid) continue;
+
+            const slot = Number(update.slotNumber);
+            const hasSlot = Number.isFinite(slot);
+            const index = next.findIndex((entry) => entry.abilityHrid === hrid);
+
+            // An explicit non-positive slot is an unequip, and is the only thing
+            // that ever removes an ability from the kit
+            if (hasSlot && !(slot > 0)) {
+                if (index !== -1) next.splice(index, 1);
+                continue;
+            }
+
+            if (index !== -1) {
+                next[index] = { ...next[index], ...update };
+            } else if (hasSlot && slot > 0) {
+                next.push({ ...update });
+            } else {
+                // Progress on an ability that is not equipped — nothing to do here
+                continue;
+            }
+
+            // One ability per slot: whatever else claimed this one has been displaced
+            if (hasSlot && slot > 0) {
+                next = next.filter((entry) => entry.abilityHrid === hrid || Number(entry.slotNumber) !== slot);
+            }
+        }
+
+        const allSlotted = next.every((entry) => Number(entry.slotNumber) > 0);
+        if (allSlotted) {
+            next.sort((a, b) => Number(a.slotNumber) - Number(b.slotNumber));
+        }
+
+        return next;
+    }
+
+    /**
+     * Level and experience applied to a kit without touching which abilities are in it.
+     *
+     * `action_completed` reports ability experience during a fight. Those rows are
+     * progress only — running them through the slot reconciler would let an
+     * experience tick reshuffle the kit.
+     *
+     * @param {Array<Object>} current - Current equipped list (not mutated)
+     * @param {Array<Object>} updates - `endCharacterAbilities` from the message
+     * @returns {Array<Object>} New equipped list, same abilities in the same order
+     */
+    function applyAbilityProgress(current, updates) {
+        const next = (Array.isArray(current) ? current : []).map((entry) => ({ ...entry }));
+        if (!Array.isArray(updates)) return next;
+
+        for (const update of updates) {
+            const hrid = update?.abilityHrid;
+            if (!hrid) continue;
+
+            const index = next.findIndex((entry) => entry?.abilityHrid === hrid);
+            if (index === -1) continue;
+
+            if (update.level !== undefined) next[index].level = update.level;
+            if (update.experience !== undefined) next[index].experience = update.experience;
+        }
+
+        return next;
+    }
+
+    /**
+     * The kit the server says it is fighting with, from a `new_battle` message.
+     *
+     * This is the one place the equipped list arrives whole rather than as a delta,
+     * which makes it the backstop for any ability change that reached the client
+     * through a message shape nothing here recognises.
+     *
+     * @param {Object} battle - `new_battle` message
+     * @param {Object} [identity]
+     * @param {string|number} [identity.characterId] - Own character id
+     * @param {string} [identity.characterName] - Own character name
+     * @returns {Array<Object>|null} Equipped abilities, or null when the message is not about us
+     */
+    function equippedAbilitiesFromBattle(battle, { characterId, characterName } = {}) {
+        const players = Array.isArray(battle?.players) ? battle.players : [];
+        if (players.length === 0) return null;
+
+        const me = players.find(
+            (player) =>
+                (characterId !== null && characterId !== undefined && player?.character?.id === characterId) ||
+                (characterName && player?.character?.name === characterName)
+        );
+
+        const abilities = me?.combatDetails?.combatAbilities;
+        if (!Array.isArray(abilities)) return null;
+
+        return abilities.filter((entry) => entry?.abilityHrid).map((entry) => ({ ...entry }));
+    }
+
+    /**
+     * Whether two equipped kits differ in anything worth telling a listener about.
+     * @param {Array<Object>} a - One kit
+     * @param {Array<Object>} b - The other
+     * @returns {boolean} True when the abilities or their levels differ
+     */
+    function abilityKitsDiffer(a, b) {
+        const signature = (list) =>
+            (Array.isArray(list) ? list : [])
+                .map((entry) => `${entry?.abilityHrid}@${entry?.level ?? 0}`)
+                .sort()
+                .join('|');
+        return signature(a) !== signature(b);
+    }
+
+    /**
+     * Guild shrine levels, kept past the message that carried them.
+     *
+     * Two maps decide what the combat sim can say about a shrine upgrade:
+     *
+     * - `characterGuildBuffMap` — the levels *this character* has bought in each
+     *   guild buff, which is the "current level" every upgrade row steps from.
+     * - `guildBuildingLevelMap` — the levels *the guild* has built each shrine to,
+     *   which caps how far members are allowed to buy.
+     *
+     * Neither is reliably present at login. They ride along on guild traffic, which
+     * for most sessions means they arrive only once the guild panel has been opened
+     * — and never at all for a player who does not open it. Without them the upgrade
+     * advisor cannot tell "the shrine is not built" from "nobody told us", so it
+     * says so instead of guessing, and every shrine row reads as unknown.
+     *
+     * So whatever does arrive is written down, keyed per character, with the time it
+     * was captured. On the next login the levels are hydrated from that record until
+     * a live message replaces them, and `capturedAt` lets a caller say how old the
+     * reading is rather than presenting it as current.
+     *
+     * The message type is deliberately not part of this: the maps are matched by
+     * shape wherever they appear, because which message carries them has changed
+     * before and the cost of looking is two property reads.
+     */
+
+
+    /** Object store the records live in — shared with the guild XP history */
+    const STORE_NAME = 'guildHistory';
+
+    /** Key prefix; the character id is appended so alts do not share a reading */
+    const KEY_PREFIX = 'guildShrineLevels';
+
+    /**
+     * Storage key for a character's shrine record.
+     * @param {string|number|null} characterId - Character id, or null before it is known
+     * @returns {string} Storage key
+     */
+    function guildShrineStorageKey(characterId) {
+        return `${KEY_PREFIX}_${characterId ?? 'default'}`;
+    }
+
+    /**
+     * Whether a value is a usable map object (and not an array or null).
+     * @param {*} value - Candidate
+     * @returns {boolean} True when it can be read as an hrid → entry map
+     */
+    function isMapObject(value) {
+        return !!value && typeof value === 'object' && !Array.isArray(value);
+    }
+
+    /**
+     * Count of entries in a map, tolerating anything that is not one.
+     * @param {*} value - Candidate map
+     * @returns {number} Number of keys, or 0
+     */
+    function mapSize(value) {
+        return isMapObject(value) ? Object.keys(value).length : 0;
+    }
+
+    /**
+     * Pull guild shrine levels out of a WebSocket message, whatever its type.
+     *
+     * A map is only reported when the message actually carries that key: an absent
+     * `guildBuildingLevelMap` must not be read as "the guild has built nothing", or
+     * a message about buff purchases would erase the building levels beside them.
+     *
+     * @param {Object} message - Parsed WebSocket message
+     * @returns {{characterGuildBuffMap: (Object|undefined), guildBuildingLevelMap: (Object|undefined), guildId: (string|number|null)}|null}
+     *   The maps present in the message, or null when it carries neither
+     */
+    function extractGuildShrineData(message) {
+        if (!message || typeof message !== 'object') return null;
+
+        // Fast path. This runs against every message on the socket, including the
+        // battle ticks that arrive several times a second, so anything that is
+        // plainly not guild traffic leaves before a single object is allocated.
+        if (
+            message.characterGuildBuffMap === undefined &&
+            message.guildBuildingLevelMap === undefined &&
+            message.guild === undefined &&
+            message.characterGuild === undefined &&
+            message.guildInfo === undefined
+        ) {
+            return null;
+        }
+
+        // Nested carriers as well as the top level — the same maps have been seen
+        // hanging off the guild object rather than beside it
+        const sources = [message, message.guild, message.characterGuild, message.guildInfo];
+
+        let characterGuildBuffMap;
+        let guildBuildingLevelMap;
+        let guildId = null;
+
+        for (const source of sources) {
+            if (!isMapObject(source)) continue;
+
+            if (characterGuildBuffMap === undefined && isMapObject(source.characterGuildBuffMap)) {
+                characterGuildBuffMap = source.characterGuildBuffMap;
+            }
+            if (guildBuildingLevelMap === undefined && isMapObject(source.guildBuildingLevelMap)) {
+                guildBuildingLevelMap = source.guildBuildingLevelMap;
+            }
+            if (guildId === null) {
+                guildId = source.guildID ?? source.guildId ?? (source === message ? null : source.id) ?? null;
+            }
+        }
+
+        if (characterGuildBuffMap === undefined && guildBuildingLevelMap === undefined) return null;
+
+        return { characterGuildBuffMap, guildBuildingLevelMap, guildId };
+    }
+
+    /**
+     * Read a character's persisted shrine record.
+     * @param {string|number|null} characterId - Character id
+     * @returns {Promise<Object|null>} The record, or null when there is none
+     */
+    async function loadGuildShrineLevels(characterId) {
+        try {
+            if (typeof storage?.getJSON !== 'function') return null;
+            const record = await storage.getJSON(guildShrineStorageKey(characterId), STORE_NAME, null);
+            if (!record || typeof record !== 'object') return null;
+            return record;
+        } catch (error) {
+            console.error('[GuildShrineStore] Failed to load guild shrine levels:', error);
+            return null;
+        }
+    }
+
+    /**
+     * Write a character's shrine record.
+     *
+     * A record with nothing in either map is not written: it would replace a real
+     * earlier reading with the absence of one.
+     *
+     * @param {string|number|null} characterId - Character id
+     * @param {Object} record - `{characterGuildBuffMap, guildBuildingLevelMap, guildId, capturedAt}`
+     * @returns {Promise<boolean>} True when something was written
+     */
+    async function saveGuildShrineLevels(characterId, record) {
+        try {
+            if (typeof storage?.setJSON !== 'function') return false;
+            if (mapSize(record?.characterGuildBuffMap) === 0 && mapSize(record?.guildBuildingLevelMap) === 0) {
+                return false;
+            }
+
+            await storage.setJSON(
+                guildShrineStorageKey(characterId),
+                {
+                    characterGuildBuffMap: record.characterGuildBuffMap || {},
+                    guildBuildingLevelMap: record.guildBuildingLevelMap || {},
+                    guildId: record.guildId ?? null,
+                    capturedAt: record.capturedAt || Date.now(),
+                },
+                STORE_NAME
+            );
+            return true;
+        } catch (error) {
+            console.error('[GuildShrineStore] Failed to save guild shrine levels:', error);
+            return false;
+        }
+    }
+
+    /**
      * Merge market listing updates into the current list.
      * @param {Array} currentListings - Existing market listings.
      * @param {Array} updatedListings - Updated listings from WebSocket.
@@ -4522,6 +5962,10 @@
             this.actionTypeDrinkSlotsMap = new Map(); // Action type HRID -> array of drink items
             this.characterGuildBuffMap = {}; // Guild buff HRID -> {guildBuffHrid, level}
             this.guildBuildingLevelMap = {}; // Building/shrine HRID -> level
+            this.guildShrineCapturedAt = null; // When the shrine levels above were read off the wire
+            this.guildShrineHydrated = false; // True while those levels come from storage rather than a live message
+            this.guildShrineHydration = null; // In-flight hydration, for callers that want to wait
+            this.guildShrineGuildId = null; // Guild the persisted shrine levels belong to
             this.monsterSortIndexMap = new Map(); // Monster HRID -> combat zone sortIndex
             this.bossMonsterHrids = new Set(); // Monster HRIDs that appear in bossSpawns
             this.battleData = null; // Current battle data (for Combat Sim export on Steam)
@@ -4721,6 +6165,10 @@
                     this.personalActionTypeBuffsMap = {};
                     this.characterGuildBuffMap = {};
                     this.guildBuildingLevelMap = {};
+                    this.guildShrineCapturedAt = null;
+                    this.guildShrineHydrated = false;
+                    this.guildShrineHydration = null;
+                    this.guildShrineGuildId = null;
                     this.battleData = null;
 
                     // Reset switching flag (cleanup complete, ready for re-init)
@@ -4762,6 +6210,17 @@
                 // Load guild buff levels and shrine/building levels
                 this.characterGuildBuffMap = data.characterGuildBuffMap || {};
                 this.guildBuildingLevelMap = data.guildBuildingLevelMap || {};
+                if (mapSize(this.characterGuildBuffMap) > 0 || mapSize(this.guildBuildingLevelMap) > 0) {
+                    this.guildShrineCapturedAt = Date.now();
+                    this.guildShrineHydrated = false;
+                }
+
+                // Login usually carries no shrine levels at all — they ride on guild
+                // traffic that may never arrive this session. Fill the gap from the
+                // last reading so the upgrade advisor has something to answer with;
+                // a live message later overwrites it. Not awaited, so a slow
+                // IndexedDB cannot hold up feature initialization.
+                this.guildShrineHydration = this.hydrateGuildShrineLevels();
 
                 // Clear switching flag
                 this.isCharacterSwitching = false;
@@ -4840,7 +6299,36 @@
                     }
                 }
 
+                // Ability experience ticks during a fight. Progress only — the kit
+                // itself is never reshuffled from here (see character-abilities.js)
+                if (Array.isArray(data.endCharacterAbilities) && this.characterData) {
+                    this.characterData.characterAbilities = mergeOwnedAbilities(
+                        this.characterData.characterAbilities,
+                        data.endCharacterAbilities
+                    );
+                    if (this.characterData.combatUnit) {
+                        this.characterData.combatUnit.combatAbilities = applyAbilityProgress(
+                            this.characterData.combatUnit.combatAbilities,
+                            data.endCharacterAbilities
+                        );
+                    }
+                }
+
                 this.emit('action_completed', data);
+            });
+
+            // Handle abilities_updated (equip, unequip, level up)
+            //
+            // Nothing applied these before, so `combatUnit.combatAbilities` was
+            // frozen at whatever login reported and every ability change since was
+            // invisible to the combat sim. That is most visible around the
+            // labyrinth, which equips a loadout per room and restores on exit:
+            // equipment tracked those swaps because items_updated was handled, and
+            // abilities did not because this message was not.
+            this.webSocketHook.on('abilities_updated', (data) => {
+                if (this.applyAbilityUpdates(data.endCharacterAbilities)) {
+                    this.emit('abilities_updated', data);
+                }
             });
 
             // Handle items_updated (inventory/equipment changes)
@@ -4916,6 +6404,17 @@
                 this.emit('buffs_updated', data);
             });
 
+            // Handle community_buffs_updated (anyone donating changes levels and
+            // expiry). Without this, every community buff level reads as it was at
+            // login — the tea optimizer, efficiency and profit calculators all go
+            // quietly stale as the server buff moves.
+            this.webSocketHook.on('community_buffs_updated', (data) => {
+                if (this.characterData && Array.isArray(data.communityBuffs)) {
+                    this.characterData.communityBuffs = data.communityBuffs;
+                }
+                this.emit('community_buffs_updated', data);
+            });
+
             // Handle personal_buffs_updated (seal buffs from Labyrinth)
             this.webSocketHook.on('personal_buffs_updated', (data) => {
                 if (data.personalActionTypeBuffsMap) {
@@ -4948,6 +6447,31 @@
             this.webSocketHook.on('new_battle', (data) => {
                 // Store battle data (includes party consumables)
                 this.battleData = data;
+
+                // The only message that carries the equipped kit whole rather than
+                // as a delta, so it is the backstop: whatever the labyrinth did to
+                // the loadout, the first battle after it settles the question.
+                const fromBattle = equippedAbilitiesFromBattle(data, {
+                    characterId: this.currentCharacterId,
+                    characterName: this.currentCharacterName,
+                });
+                if (fromBattle && fromBattle.length > 0) {
+                    const previous = this.characterData?.combatUnit?.combatAbilities;
+                    if (this.setEquippedAbilities(fromBattle) && abilityKitsDiffer(previous, fromBattle)) {
+                        this.emit('abilities_updated', {
+                            endCharacterAbilities: fromBattle,
+                            source: 'new_battle',
+                        });
+                    }
+                }
+            });
+
+            // Guild shrine levels arrive on whichever message the server attaches
+            // them to, and usually only once the guild panel has been opened. They
+            // are matched by shape rather than by message type so a rename upstream
+            // cannot quietly stop the capture — the check is two property reads.
+            this.webSocketHook.on('*', (data) => {
+                this.captureGuildShrineData(data);
             });
 
             // Handle character_info_updated (task slot changes, cooldown timestamps, etc.)
@@ -5030,6 +6554,187 @@
         }
 
         /**
+         * Apply an `endCharacterAbilities` delta to both ability views.
+         *
+         * The learned list (`characterAbilities`, which carries experience) and the
+         * equipped kit (`combatUnit.combatAbilities`) are updated from the same
+         * message, because a level-up and an equip arrive in the same shape and a
+         * reader of one must not see a state the other has moved past.
+         *
+         * @param {Array<Object>} updates - `endCharacterAbilities` from the message
+         * @returns {boolean} True when something was applied
+         */
+        applyAbilityUpdates(updates) {
+            if (!this.characterData || !Array.isArray(updates) || updates.length === 0) return false;
+
+            this.characterData.characterAbilities = mergeOwnedAbilities(this.characterData.characterAbilities, updates);
+
+            if (!this.characterData.combatUnit) {
+                this.characterData.combatUnit = {};
+            }
+            this.characterData.combatUnit.combatAbilities = reconcileEquippedAbilities(
+                this.characterData.combatUnit.combatAbilities,
+                updates
+            );
+
+            return true;
+        }
+
+        /**
+         * Replace the equipped kit outright with a list the server sent whole.
+         * @param {Array<Object>} abilities - Equipped abilities, in slot order
+         * @returns {boolean} True when the kit was replaced
+         */
+        setEquippedAbilities(abilities) {
+            if (!this.characterData || !Array.isArray(abilities)) return false;
+
+            if (!this.characterData.combatUnit) {
+                this.characterData.combatUnit = {};
+            }
+            this.characterData.combatUnit.combatAbilities = abilities.map((entry) => ({ ...entry }));
+            this.characterData.characterAbilities = mergeOwnedAbilities(this.characterData.characterAbilities, abilities);
+
+            return true;
+        }
+
+        /**
+         * The abilities currently equipped, in slot order.
+         *
+         * This is the authoritative read for anything that asks "what is this
+         * character fighting with" — it reflects every ability message applied since
+         * login, not just the state login reported.
+         *
+         * @returns {Array<Object>} Copies of the equipped ability entries
+         */
+        getEquippedAbilities() {
+            const equipped = this.characterData?.combatUnit?.combatAbilities;
+            return Array.isArray(equipped) ? equipped.map((entry) => ({ ...entry })) : [];
+        }
+
+        /**
+         * Every ability the character has learned, with level and experience.
+         * @returns {Array<Object>} Copies of the learned ability entries
+         */
+        getLearnedAbilities() {
+            const owned = this.characterData?.characterAbilities;
+            return Array.isArray(owned) ? owned.map((entry) => ({ ...entry })) : [];
+        }
+
+        /**
+         * Take guild shrine levels off any message that happens to carry them.
+         * @param {Object} data - Parsed WebSocket message
+         * @returns {boolean} True when live state changed
+         */
+        captureGuildShrineData(data) {
+            const captured = extractGuildShrineData(data);
+            if (!captured) return false;
+
+            let changed = false;
+            if (captured.characterGuildBuffMap !== undefined) {
+                this.characterGuildBuffMap = captured.characterGuildBuffMap;
+                changed = true;
+            }
+            if (captured.guildBuildingLevelMap !== undefined) {
+                this.guildBuildingLevelMap = captured.guildBuildingLevelMap;
+                changed = true;
+            }
+            if (!changed) return false;
+
+            this.guildShrineCapturedAt = Date.now();
+            this.guildShrineHydrated = false;
+            this.guildShrineGuildId = captured.guildId ?? this.guildShrineGuildId ?? null;
+            this.persistGuildShrineLevels();
+            this.emit('guild_shrine_levels_updated', {
+                capturedAt: this.guildShrineCapturedAt,
+                fromStorage: false,
+            });
+
+            return true;
+        }
+
+        /**
+         * Write the current shrine levels down so the next session starts with them.
+         * @returns {Promise<boolean>} True when a record was written
+         */
+        async persistGuildShrineLevels() {
+            return saveGuildShrineLevels(this.currentCharacterId, {
+                characterGuildBuffMap: this.characterGuildBuffMap,
+                guildBuildingLevelMap: this.guildBuildingLevelMap,
+                guildId: this.guildShrineGuildId ?? null,
+                capturedAt: this.guildShrineCapturedAt || Date.now(),
+            });
+        }
+
+        /**
+         * Fill empty shrine levels from the last persisted reading.
+         *
+         * Only the maps that are still empty are filled, and only if a live message
+         * has not landed while the read was in flight — a stale reading is worth
+         * having when there is nothing, and worth nothing when there is something.
+         *
+         * @returns {Promise<boolean>} True when anything was hydrated
+         */
+        async hydrateGuildShrineLevels() {
+            try {
+                if (mapSize(this.characterGuildBuffMap) > 0 && mapSize(this.guildBuildingLevelMap) > 0) {
+                    return false;
+                }
+
+                const record = await loadGuildShrineLevels(this.currentCharacterId);
+                if (!record) return false;
+
+                let filled = false;
+                if (mapSize(this.characterGuildBuffMap) === 0 && mapSize(record.characterGuildBuffMap) > 0) {
+                    this.characterGuildBuffMap = record.characterGuildBuffMap;
+                    filled = true;
+                }
+                if (mapSize(this.guildBuildingLevelMap) === 0 && mapSize(record.guildBuildingLevelMap) > 0) {
+                    this.guildBuildingLevelMap = record.guildBuildingLevelMap;
+                    filled = true;
+                }
+                if (!filled) return false;
+
+                this.guildShrineCapturedAt = record.capturedAt || null;
+                this.guildShrineHydrated = true;
+                this.guildShrineGuildId = record.guildId ?? null;
+                this.emit('guild_shrine_levels_updated', {
+                    capturedAt: this.guildShrineCapturedAt,
+                    fromStorage: true,
+                });
+                return true;
+            } catch (error) {
+                console.error('[DataManager] Failed to hydrate guild shrine levels:', error);
+                return false;
+            }
+        }
+
+        /**
+         * When the guild shrine levels currently in memory were read off the wire.
+         * @returns {number|null} Epoch milliseconds, or null when none have ever been seen
+         */
+        getGuildShrineCapturedAt() {
+            return this.guildShrineCapturedAt;
+        }
+
+        /**
+         * Whether the shrine levels in memory came from storage rather than this session.
+         * @returns {boolean} True when hydrated from a persisted reading
+         */
+        isGuildShrineHydrated() {
+            return this.guildShrineHydrated;
+        }
+
+        /**
+         * Wait for the startup hydration of guild shrine levels, if one is running.
+         * @returns {Promise<void>} Resolves once hydration has settled
+         */
+        async whenGuildShrineLevelsReady() {
+            if (this.guildShrineHydration) {
+                await this.guildShrineHydration;
+            }
+        }
+
+        /**
          * Get static game data
          * @returns {Object} Init client data (items, actions, monsters, etc.)
          */
@@ -5054,6 +6759,7 @@
                 myMarketListings: this.characterData?.myMarketListings || [],
                 characterHouseRoomMap: Object.fromEntries(this.characterHouseRooms),
                 characterAbilities: this.characterData?.characterAbilities || [],
+                combatAbilities: this.getEquippedAbilities(),
                 abilityCombatTriggersMap: this.characterData?.abilityCombatTriggersMap || {},
             };
         }
@@ -5573,7 +7279,11 @@
          * @param {*} data - Event data
          */
         emit(event, data) {
-            const listeners = this.eventListeners.get(event) || [];
+            // Snapshot at emit time. Lifecycle listeners commonly unregister themselves
+            // during character_switching; iterating the live array would shift entries and
+            // deterministically skip the next cleanup handler. Deferred events must also not
+            // be delivered to listeners that subscribed after the event was emitted.
+            const listeners = [...(this.eventListeners.get(event) || [])];
 
             // Only character_switching must run immediately (cleanup phase)
             // character_switched can be deferred - it just schedules re-init anyway
@@ -6144,6 +7854,15 @@
          * @param {*} defaultValue - Default value if key doesn't exist
          * @returns {*} Setting value
          */
+        /**
+         * The setting IDs the previous build saved — see settingsStorage.
+         * Exposed here because config already crosses the bundle boundary.
+         * @returns {Promise<Array<string>|null>}
+         */
+        async storedSettingIds() {
+            return settingsStorage.storedSettingIds();
+        }
+
         getSettingValue(key, defaultValue = null) {
             const setting = this.settingsMap[key];
             if (!setting) {
@@ -6476,10 +8195,23 @@
 
     const WINDOW_MS = 5000;
 
+    /**
+     * When the script started, as the clock the rest of the timings are quoted
+     * against. `performance.now()` is already relative to page navigation, but the
+     * userscript runs at document-start and the difference matters when the
+     * question is "what happened before my feature got a turn".
+     */
+    const BOOT_AT = typeof performance !== 'undefined' ? performance.now() : 0;
+
     class PerformanceMonitor {
         constructor() {
             this.measurements = new Map();
             this.snapshots = new Map();
+            // Named moments on the startup timeline, in the order they happened
+            this.marks = [];
+            // Work that a snapshot was made of, broken into its parts
+            this.spans = new Map();
+            this.bootAt = BOOT_AT;
             this.windowMs = WINDOW_MS;
             this.enabled = false;
             this._onVisibilityChange = () => {
@@ -6506,11 +8238,90 @@
 
         /**
          * Store a one-time snapshot measurement that persists beyond the rolling window
+         *
+         * `startedAt` is what makes a startup trace readable: a feature that took six
+         * seconds is one fact, and whether it took them at second two or second
+         * fourteen is a different one — and only the second says what else was
+         * waiting behind it.
+         *
          * @param {string} name - Metric name
          * @param {number} durationMs - Duration in milliseconds
+         * @param {number} [startedAt] - Milliseconds since boot when it began
          */
-        snapshot(name, durationMs) {
-            this.snapshots.set(name, { duration: durationMs, time: Date.now() });
+        snapshot(name, durationMs, startedAt) {
+            this.snapshots.set(name, {
+                duration: durationMs,
+                time: Date.now(),
+                startedAt: startedAt ?? this.sinceBoot() - durationMs,
+            });
+        }
+
+        /** @returns {number} Milliseconds since the script started */
+        sinceBoot() {
+            return (typeof performance !== 'undefined' ? performance.now() : 0) - this.bootAt;
+        }
+
+        /**
+         * Note that something happened, and when.
+         *
+         * Marks answer the question a list of durations cannot: where did the gaps
+         * go. Half of a slow start is usually spent waiting — for IndexedDB, for the
+         * game's own data to arrive — and waiting shows up in nobody's duration.
+         *
+         * @param {string} name - What happened, e.g. `storage:open`
+         * @param {Object} [detail] - Anything worth carrying alongside
+         */
+        mark(name, detail = null) {
+            this.marks.push({ name, at: this.sinceBoot(), detail });
+        }
+
+        /**
+         * Time a part of something already being timed.
+         *
+         * A feature that takes six seconds is a question, not an answer. Spans are
+         * how the answer gets recorded — which call inside it was the six seconds —
+         * and they are always on, because the run worth profiling is the one that
+         * already happened.
+         *
+         * @param {string} name - Parent metric, e.g. `init:networth`
+         * @param {string} part - What this piece is, e.g. `recalculate`
+         * @returns {Function} Call it when the piece is done
+         */
+        startSpan(name, part) {
+            const startedAt = this.sinceBoot();
+            return () => {
+                const duration = this.sinceBoot() - startedAt;
+                if (!this.spans.has(name)) this.spans.set(name, []);
+                this.spans.get(name).push({ part, duration, startedAt });
+                return duration;
+            };
+        }
+
+        /**
+         * Run a function, recording how long its part took.
+         *
+         * @param {string} name - Parent metric
+         * @param {string} part - What this piece is
+         * @param {Function} fn - The work
+         * @returns {*} Whatever the work returned
+         */
+        async span(name, part, fn) {
+            const end = this.startSpan(name, part);
+            try {
+                return await fn();
+            } finally {
+                end();
+            }
+        }
+
+        /** @returns {Array<Object>} The parts of one metric, longest first */
+        getSpans(name) {
+            return [...(this.spans.get(name) || [])].sort((a, b) => b.duration - a.duration);
+        }
+
+        /** @returns {Array<Object>} Every mark, in the order they happened */
+        getMarks() {
+            return [...this.marks].sort((a, b) => a.at - b.at);
         }
 
         /**
@@ -6620,6 +8431,9 @@
         reset() {
             this.measurements.clear();
             this.snapshots.clear();
+            this.spans.clear();
+            // Marks are the startup trace and cannot be taken again without a
+            // reload, so resetting the rolling stats leaves them alone
         }
     }
 
@@ -6639,7 +8453,7 @@
             this.handlers = [];
             this.isObserving = false;
             this.debounceTimers = new Map(); // Track debounce timers per handler
-            this.debouncedElements = new Map(); // Track pending elements per handler
+            this.debouncedLatest = new Map(); // Latest {node, mutation} per handler — O(1) retention
             this.DEFAULT_DEBOUNCE_DELAY = 50; // 50ms default delay
         }
 
@@ -6702,11 +8516,10 @@
             const handlerName = handler.name;
             const delay = handler.debounceDelay || this.DEFAULT_DEBOUNCE_DELAY;
 
-            // Store element for batched processing
-            if (!this.debouncedElements.has(handlerName)) {
-                this.debouncedElements.set(handlerName, []);
-            }
-            this.debouncedElements.get(handlerName).push({ node, mutation });
+            // Only the newest node/mutation is ever handed to the callback, so overwrite
+            // rather than append: under churn faster than the debounce delay the timer never
+            // fires, and an array would retain every intermediate node and MutationRecord.
+            this.debouncedLatest.set(handlerName, { node, mutation });
 
             // Clear existing timer
             if (this.debounceTimers.has(handlerName)) {
@@ -6715,21 +8528,18 @@
 
             // Set new timer
             const timer = setTimeout(() => {
-                const elements = this.debouncedElements.get(handlerName) || [];
-                this.debouncedElements.delete(handlerName);
+                const latest = this.debouncedLatest.get(handlerName);
+                this.debouncedLatest.delete(handlerName);
                 this.debounceTimers.delete(handlerName);
 
-                // Process all collected elements
-                // For most handlers, we only need to process the last element
-                // (e.g., task list updated multiple times, we only care about final state)
-                if (elements.length > 0) {
-                    const lastElement = elements[elements.length - 1];
+                // Only the final state matters (e.g. a task list rewritten several times)
+                if (latest) {
                     if (performanceMonitor.enabled) {
                         const start = performance.now();
-                        handler.callback(lastElement.node, lastElement.mutation);
+                        handler.callback(latest.node, latest.mutation);
                         performanceMonitor.record(`dom:${handler.name}`, performance.now() - start);
                     } else {
-                        handler.callback(lastElement.node, lastElement.mutation);
+                        handler.callback(latest.node, latest.mutation);
                     }
                 }
             }, delay);
@@ -6749,7 +8559,7 @@
             // Clear all debounce timers
             this.debounceTimers.forEach((timer) => clearTimeout(timer));
             this.debounceTimers.clear();
-            this.debouncedElements.clear();
+            this.debouncedLatest.clear();
 
             this.isObserving = false;
         }
@@ -6782,7 +8592,7 @@
                     if (this.debounceTimers.has(name)) {
                         clearTimeout(this.debounceTimers.get(name));
                         this.debounceTimers.delete(name);
-                        this.debouncedElements.delete(name);
+                        this.debouncedLatest.delete(name);
                     }
                 }
             };
@@ -6862,15 +8672,21 @@
 
     /**
      * Initialize all enabled features
-     * @returns {Promise<void>}
+     *
+     * Returns what failed rather than only logging it. An initializer that throws
+     * used to reach the player as a feature that is simply absent, with the reason
+     * in a console nobody has open; the caller needs the list to be able to say so.
+     *
+     * @returns {Promise<Array<{key: string, name: string, reason: string}>>} Failures, in registry order
      */
     async function initializeFeatures() {
         // Block feature initialization during character switch
         if (dataManager.getIsCharacterSwitching()) {
-            return;
+            return [];
         }
 
         const errors = [];
+        performanceMonitor.mark('features:start', { registered: featureRegistry.length });
 
         for (const feature of featureRegistry) {
             try {
@@ -6884,22 +8700,27 @@
                 // initializers land in this try/catch even when the registry
                 // entry forgot to set the async flag (awaiting sync undefined
                 // is harmless).
-                const start = performance.now();
+                const startedAt = performanceMonitor.sinceBoot();
                 await feature.initialize();
-                performanceMonitor.snapshot(`init:${feature.key}`, performance.now() - start);
+                performanceMonitor.snapshot(`init:${feature.key}`, performanceMonitor.sinceBoot() - startedAt, startedAt);
             } catch (error) {
                 errors.push({
-                    feature: feature.name,
-                    error: error.message,
+                    key: feature.key,
+                    name: feature.name,
+                    reason: `Initialization threw: ${error.message}`,
                 });
                 console.error(`[Toolasha] Failed to initialize ${feature.name}:`, error);
             }
         }
 
+        performanceMonitor.mark('features:done', { failed: errors.length });
+
         // Log errors if any occurred
         if (errors.length > 0) {
             console.error(`[Toolasha] ${errors.length} feature(s) failed to initialize`, errors);
         }
+
+        return errors;
     }
 
     /**
@@ -7067,10 +8888,19 @@
 
     /**
      * Retry initialization for specific features
+     *
+     * Reports back what is still broken afterwards, so a caller can tell the
+     * difference between a feature that recovered on the second attempt — the
+     * common case, where the game panel it anchors to had not been drawn yet — and
+     * one that is genuinely not coming up. Only the second is worth interrupting
+     * anybody about.
+     *
      * @param {Array<Object>} failedFeatures - Array of failed feature objects
-     * @returns {Promise<void>}
+     * @returns {Promise<Array<{key: string, name: string, reason: string}>>} Those still failing
      */
     async function retryFailedFeatures(failedFeatures) {
+        const stillFailed = [];
+
         for (const failed of failedFeatures) {
             const feature = getFeature(failed.key);
             if (!feature) continue;
@@ -7083,12 +8913,24 @@
                     const healthResult = feature.healthCheck();
                     if (healthResult === false) {
                         console.warn(`[Toolasha] ${feature.name} retry completed but health check still fails`);
+                        stillFailed.push({
+                            key: feature.key,
+                            name: feature.name,
+                            reason: 'Retried, but its health check still fails',
+                        });
                     }
                 }
             } catch (error) {
                 console.error(`[Toolasha] ${feature.name} retry failed:`, error);
+                stillFailed.push({
+                    key: feature.key,
+                    name: feature.name,
+                    reason: `Retry threw: ${error.message}`,
+                });
             }
         }
+
+        return stillFailed;
     }
 
     /**
@@ -7846,6 +9688,8 @@
         featureRegistry: featureRegistry$1,
         settingsStorage,
         settingsGroups,
+        getAllSettingIds,
+        getSettingDefinition,
         tooltipObserver,
         profileManager: {
             setCurrentProfile,

@@ -1,11 +1,11 @@
 /**
  * Toolasha Actions Library
  * Production, gathering, and alchemy features
- * Version: 2.88.0
+ * Version: 2.89.0
  * License: CC-BY-NC-SA-4.0
  */
 
-(function (dataManager, config, domObserver, enhancementConfig_js, enhancementCalculator_js, profitConstants_js, formatters_js, marketAPI, domObserverHelpers_js, bonusRevenueCalculator_js, marketData_js, efficiency_js, profitHelpers_js, profitCalculator, uiComponents_js, actionPanelHelper_js, webSocketHook, storage, dom_js, timerRegistry_js, teaParser_js, alchemyProfitCalculator, actionCalculator_js, cleanupRegistry_js, buffParser_js, equipmentParser_js, experienceParser_js, reactInput_js, experienceCalculator_js, materialCalculator_js, expectedValueCalculator) {
+(function (dataManager, config, domObserver, enhancementConfig_js, enhancementCalculator_js, profitConstants_js, formatters_js, marketAPI, domObserverHelpers_js, gatheringProfit_js, productionProfit_js, uiComponents_js, actionPanelHelper_js, profitHelpers_js, webSocketHook, storage, scrollBuffValues_js, marketData_js, dom_js, timerRegistry_js, gameLookups_js, teaParser_js, profitCalculator, alchemyProfitCalculator, actionCalculator_js, efficiency_js, cleanupRegistry_js, buffParser_js, equipmentParser_js, experienceParser_js, reactInput_js, experienceCalculator_js, materialCalculator_js, marketplaceAutofill_js, marketplaceTabs_js, panelZIndex_js, expectedValueCalculator, bonusRevenueCalculator_js, combatSimUI, toast_js, shoppingList_js, itemNavigation_js, floatingPanel_js, panelGeometry_js, marketHistoryAPI, marketHistoryData_js, overlayRows_js, overlayFormat_js) {
     'use strict';
 
     /**
@@ -1176,413 +1176,6 @@
     }
 
     /**
-     * Gathering Profit Calculator
-     *
-     * Calculates comprehensive profit/hour for gathering actions (Foraging, Woodcutting, Milking) including:
-     * - All drop table items at market prices
-     * - Drink consumption costs
-     * - Equipment speed bonuses
-     * - Efficiency buffs (level, house, tea, equipment)
-     * - Gourmet tea bonus items (production skills only)
-     * - Market tax (2%)
-     */
-
-
-    /**
-     * Cache for processing action conversions (inputItemHrid → conversion data)
-     * Built once per game data load to avoid O(n) searches through action map
-     */
-    let processingConversionCache = null;
-
-    /**
-     * Build processing conversion cache from game data
-     * @param {Object} gameData - Game data from dataManager
-     * @returns {Map} Map of inputItemHrid → {actionHrid, outputItemHrid, conversionRatio}
-     */
-    function buildProcessingConversionCache(gameData) {
-        const cache = new Map();
-        const validProcessingTypes = [
-            '/action_types/cheesesmithing', // Milk → Cheese conversions
-            '/action_types/crafting', // Log → Lumber conversions
-            '/action_types/tailoring', // Cotton/Flax/Bamboo/Cocoon/Radiant → Fabric conversions
-        ];
-
-        for (const [actionHrid, action] of Object.entries(gameData.actionDetailMap)) {
-            if (!validProcessingTypes.includes(action.type)) {
-                continue;
-            }
-
-            const inputItem = action.inputItems?.[0];
-            const outputItem = action.outputItems?.[0];
-
-            if (inputItem && outputItem) {
-                cache.set(inputItem.itemHrid, {
-                    actionHrid: actionHrid,
-                    outputItemHrid: outputItem.itemHrid,
-                    conversionRatio: inputItem.count,
-                });
-            }
-        }
-
-        return cache;
-    }
-
-    /**
-     * Calculate comprehensive profit for a gathering action
-     * @param {string} actionHrid - Action HRID (e.g., "/actions/foraging/asteroid_belt")
-     * @returns {Object|null} Profit data or null if not applicable
-     */
-    async function calculateGatheringProfit(actionHrid) {
-        const gameData = dataManager.getInitClientData();
-        const actionDetail = gameData.actionDetailMap[actionHrid];
-
-        if (!actionDetail) {
-            return null;
-        }
-
-        // Only process gathering actions (Foraging, Woodcutting, Milking) with drop tables
-        if (!profitConstants_js.GATHERING_TYPES.includes(actionDetail.type)) {
-            return null;
-        }
-
-        if (!actionDetail.dropTable) {
-            return null; // No drop table - nothing to calculate
-        }
-
-        // Build processing conversion cache once (lazy initialization)
-        if (!processingConversionCache) {
-            processingConversionCache = buildProcessingConversionCache(gameData);
-        }
-
-        const getCachedPrice = profitHelpers_js.createPriceCache(marketData_js.getItemPrice);
-
-        // Note: Market API is pre-loaded by caller (max-produceable.js)
-        // No need to check or fetch here
-
-        const effCtx = efficiency_js.getActionEfficiencyContext(actionDetail, { isProduction: false, gameData });
-
-        const {
-            equipment,
-            drinkSlots,
-            drinkConcentration,
-            actionTime: actualTimePerActionSec,
-            speedBonus,
-            gourmetBonus,
-            processingBonus,
-            equipmentEfficiency,
-            equipmentEfficiencyItems,
-            houseEfficiency,
-            teaEfficiency,
-            achievementEfficiency,
-            personalEfficiency,
-            totalGathering,
-            gatheringDetails,
-            efficiencyBreakdown,
-            efficiencyMultiplier,
-        } = effCtx;
-
-        const { totalEfficiency, levelEfficiency } = efficiencyBreakdown;
-        const {
-            gatheringTea = 0,
-            communityGathering = 0,
-            achievementGathering = 0,
-            personalGathering = 0,
-        } = gatheringDetails ?? {};
-
-        const teaCostData = profitHelpers_js.calculateTeaCostsPerHour({
-            drinkSlots,
-            drinkConcentration,
-            itemDetailMap: gameData.itemDetailMap,
-            getItemPrice: getCachedPrice,
-        });
-        const drinkCostPerHour = teaCostData.totalCostPerHour;
-        const drinkCosts = teaCostData.costs.map((tea) => ({
-            name: tea.itemName,
-            priceEach: tea.pricePerDrink,
-            drinksPerHour: tea.drinksPerHour,
-            costPerHour: tea.totalCost,
-            missingPrice: tea.missingPrice,
-        }));
-
-        const actionsPerHour = profitHelpers_js.calculateActionsPerHour(actualTimePerActionSec);
-
-        // Calculate revenue from drop table
-        // Processing happens PER ACTION (before efficiency multiplies the count)
-        // So we calculate per-action outputs, then multiply by actionsPerHour and efficiency
-        let baseRevenuePerHour = 0;
-        let gourmetRevenueBonus = 0;
-        let gourmetRevenueBonusPerAction = 0;
-        let processingRevenueBonus = 0; // Track extra revenue from Processing Tea
-        let processingRevenueBonusPerAction = 0; // Per-action processing revenue
-        const processingConversions = []; // Track conversion details for display
-        const baseOutputs = []; // Baseline outputs (before gourmet and processing)
-        const gourmetBonuses = []; // Gourmet bonus outputs (display-only)
-        const dropTable = actionDetail.dropTable;
-
-        for (const drop of dropTable) {
-            const rawPrice = getCachedPrice(drop.itemHrid, { context: 'profit', side: 'sell' });
-            const rawPriceMissing = rawPrice === null;
-            const resolvedRawPrice = rawPriceMissing ? 0 : rawPrice;
-            // Apply gathering quantity bonus to drop amounts
-            const baseAvgAmount = (drop.minCount + drop.maxCount) / 2;
-            const avgAmountPerAction = baseAvgAmount * (1 + totalGathering);
-
-            // Check if this item has a Processing Tea conversion (using cache for O(1) lookup)
-            // Processing Tea only applies to: Milk→Cheese, Log→Lumber, Cotton/Flax/Bamboo/Cocoon/Radiant→Fabric
-            const conversionData = processingConversionCache.get(drop.itemHrid);
-            const processedItemHrid = conversionData?.outputItemHrid || null;
-            conversionData?.actionHrid || null;
-
-            // Per-action calculations (efficiency will be applied when converting to items per hour)
-            let rawPerAction = 0;
-            let processedPerAction = 0;
-
-            const rawItemName = gameData.itemDetailMap[drop.itemHrid]?.name || 'Unknown';
-            const baseItemsPerHour = actionsPerHour * drop.dropRate * avgAmountPerAction * efficiencyMultiplier;
-            const baseItemsPerAction = drop.dropRate * avgAmountPerAction;
-            const baseRevenuePerAction = baseItemsPerAction * resolvedRawPrice;
-            const baseRevenueLine = baseItemsPerHour * resolvedRawPrice;
-            baseRevenuePerHour += baseRevenueLine;
-
-            baseOutputs.push({
-                itemHrid: drop.itemHrid,
-                name: rawItemName,
-                itemsPerHour: baseItemsPerHour,
-                itemsPerAction: baseItemsPerAction,
-                dropRate: drop.dropRate,
-                priceEach: resolvedRawPrice,
-                revenuePerHour: baseRevenueLine,
-                revenuePerAction: baseRevenuePerAction,
-                missingPrice: rawPriceMissing,
-            });
-
-            if (processedItemHrid && processingBonus > 0) {
-                // Get conversion ratio from cache (e.g., 1 Milk → 1 Cheese)
-                const conversionRatio = conversionData.conversionRatio;
-
-                // Processing Tea check happens per action:
-                // If procs (processingBonus% chance): Convert to processed + leftover
-                const processedIfProcs = Math.floor(avgAmountPerAction / conversionRatio);
-                const rawLeftoverIfProcs = avgAmountPerAction % conversionRatio;
-
-                // If doesn't proc: All stays raw
-                const rawIfNoProc = avgAmountPerAction;
-
-                // Expected value per action
-                processedPerAction = processingBonus * processedIfProcs;
-                rawPerAction = processingBonus * rawLeftoverIfProcs + (1 - processingBonus) * rawIfNoProc;
-
-                const processedPrice = getCachedPrice(processedItemHrid, { context: 'profit', side: 'sell' });
-                const processedPriceMissing = processedPrice === null;
-                const resolvedProcessedPrice = processedPriceMissing ? 0 : processedPrice;
-
-                const processedItemsPerHour = actionsPerHour * drop.dropRate * processedPerAction * efficiencyMultiplier;
-                const processedItemsPerAction = drop.dropRate * processedPerAction;
-
-                // Track processing details
-                const processedItemName = gameData.itemDetailMap[processedItemHrid]?.name || 'Unknown';
-
-                // Value gain per conversion = cheese value - cost of milk used
-                const costOfMilkUsed = conversionRatio * resolvedRawPrice;
-                const valueGainPerConversion = resolvedProcessedPrice - costOfMilkUsed;
-                const revenueFromConversion = processedItemsPerHour * valueGainPerConversion;
-                const rawConsumedPerHour = processedItemsPerHour * conversionRatio;
-                const rawConsumedPerAction = processedItemsPerAction * conversionRatio;
-
-                processingRevenueBonus += revenueFromConversion;
-                processingRevenueBonusPerAction += processedItemsPerAction * valueGainPerConversion;
-                processingConversions.push({
-                    rawItem: rawItemName,
-                    processedItem: processedItemName,
-                    valueGain: valueGainPerConversion,
-                    conversionsPerHour: processedItemsPerHour,
-                    conversionsPerAction: processedItemsPerAction,
-                    rawConsumedPerHour,
-                    rawConsumedPerAction,
-                    rawPriceEach: resolvedRawPrice,
-                    processedPriceEach: resolvedProcessedPrice,
-                    revenuePerHour: revenueFromConversion,
-                    revenuePerAction: processedItemsPerAction * valueGainPerConversion,
-                    missingPrice: rawPriceMissing || processedPriceMissing,
-                });
-            } else {
-                // No processing - simple calculation
-                rawPerAction = avgAmountPerAction;
-            }
-
-            // Gourmet tea bonus (only for production skills, not gathering)
-            if (gourmetBonus > 0) {
-                const totalPerAction = rawPerAction + processedPerAction;
-                const bonusPerAction = totalPerAction * (gourmetBonus / 100);
-                const bonusItemsPerHour = actionsPerHour * drop.dropRate * bonusPerAction * efficiencyMultiplier;
-                const bonusItemsPerAction = drop.dropRate * bonusPerAction;
-
-                // Use weighted average price for gourmet bonus
-                if (processedItemHrid && processingBonus > 0) {
-                    const processedPrice = getCachedPrice(processedItemHrid, { context: 'profit', side: 'sell' });
-                    const processedPriceMissing = processedPrice === null;
-                    const resolvedProcessedPrice = processedPriceMissing ? 0 : processedPrice;
-                    const weightedPrice =
-                        (rawPerAction * resolvedRawPrice + processedPerAction * resolvedProcessedPrice) /
-                        (rawPerAction + processedPerAction);
-                    const bonusRevenue = bonusItemsPerHour * weightedPrice;
-                    gourmetRevenueBonus += bonusRevenue;
-                    gourmetRevenueBonusPerAction += bonusItemsPerAction * weightedPrice;
-                    gourmetBonuses.push({
-                        name: rawItemName,
-                        itemsPerHour: bonusItemsPerHour,
-                        itemsPerAction: bonusItemsPerAction,
-                        dropRate: drop.dropRate,
-                        priceEach: weightedPrice,
-                        revenuePerHour: bonusRevenue,
-                        revenuePerAction: bonusItemsPerAction * weightedPrice,
-                        missingPrice: rawPriceMissing || processedPriceMissing,
-                    });
-                } else {
-                    const bonusRevenue = bonusItemsPerHour * resolvedRawPrice;
-                    gourmetRevenueBonus += bonusRevenue;
-                    gourmetRevenueBonusPerAction += bonusItemsPerAction * resolvedRawPrice;
-                    gourmetBonuses.push({
-                        name: rawItemName,
-                        itemsPerHour: bonusItemsPerHour,
-                        itemsPerAction: bonusItemsPerAction,
-                        dropRate: drop.dropRate,
-                        priceEach: resolvedRawPrice,
-                        revenuePerHour: bonusRevenue,
-                        revenuePerAction: bonusItemsPerAction * resolvedRawPrice,
-                        missingPrice: rawPriceMissing,
-                    });
-                }
-            }
-        }
-
-        // Calculate bonus revenue from essence and rare find drops
-        const bonusRevenue = bonusRevenueCalculator_js.calculateBonusRevenue(actionDetail, actionsPerHour, equipment, gameData.itemDetailMap);
-
-        // Apply efficiency multiplier to bonus revenue (efficiency repeats the action, including bonus rolls)
-        const efficiencyBoostedBonusRevenue = bonusRevenue.totalBonusRevenue * efficiencyMultiplier;
-
-        const revenuePerHour =
-            baseRevenuePerHour + gourmetRevenueBonus + processingRevenueBonus + efficiencyBoostedBonusRevenue;
-
-        const hasMissingPrices =
-            drinkCosts.some((drink) => drink.missingPrice) ||
-            baseOutputs.some((output) => output.missingPrice) ||
-            gourmetBonuses.some((output) => output.missingPrice) ||
-            processingConversions.some((conversion) => conversion.missingPrice) ||
-            (bonusRevenue?.hasMissingPrices ?? false);
-
-        // Calculate market tax (2% of gross revenue)
-        const marketTax = revenuePerHour * profitConstants_js.MARKET_TAX;
-
-        // Calculate net profit (revenue - market tax - drink costs)
-        const profitPerHour = revenuePerHour - marketTax - drinkCostPerHour;
-
-        return {
-            profitPerHour,
-            profitPerAction: profitHelpers_js.calculateProfitPerAction(profitPerHour, actionsPerHour * efficiencyMultiplier), // Profit per action
-            profitPerDay: profitHelpers_js.calculateProfitPerDay(profitPerHour), // Profit per day
-            revenuePerHour,
-            drinkCostPerHour,
-            drinkCosts, // Array of individual drink costs {name, priceEach, costPerHour}
-            actionsPerHour, // Base actions per hour (without efficiency)
-            baseOutputs, // Display-only base outputs {name, itemsPerHour, dropRate, priceEach, revenuePerHour}
-            gourmetBonuses, // Display-only gourmet bonus outputs
-            totalEfficiency, // Total efficiency percentage
-            efficiencyMultiplier, // Efficiency as multiplier (1 + totalEfficiency / 100)
-            speedBonus,
-            bonusRevenue, // Essence and rare find details
-            gourmetBonus, // Gourmet bonus percentage
-            processingBonus, // Processing Tea chance (as decimal)
-            processingRevenueBonus, // Extra revenue from Processing conversions
-            processingConversions, // Array of conversion details {rawItem, processedItem, valueGain}
-            processingRevenueBonusPerAction, // Processing bonus per action
-            gourmetRevenueBonus, // Gourmet bonus revenue per hour
-            gourmetRevenueBonusPerAction, // Gourmet bonus revenue per action
-            gatheringQuantity: totalGathering, // Total gathering quantity bonus (as decimal) - renamed for display consistency
-            totalGathering, // Alias used by formatProfitDisplay
-            hasMissingPrices,
-            pricingMode: config.getSettingValue('profitCalc_pricingMode', 'hybrid'), // Pricing mode for display
-            // Top-level gathering breakdown for formatProfitDisplay
-            gatheringTea,
-            communityGathering,
-            achievementGathering,
-            personalGathering,
-            details: {
-                levelEfficiency,
-                houseEfficiency,
-                teaEfficiency,
-                equipmentEfficiency,
-                equipmentEfficiencyItems,
-                achievementEfficiency,
-                personalEfficiency,
-                gourmetBonus,
-                communityBuffQuantity: communityGathering, // Community Buff component (as decimal)
-                gatheringTeaBonus: gatheringTea, // Gathering Tea component (as decimal)
-                achievementGathering: achievementGathering, // Achievement Tier component (as decimal)
-                personalGathering: personalGathering, // Personal buff (seal) component (as decimal)
-            },
-        };
-    }
-
-    /**
-     * Production Profit Calculator
-     *
-     * Calculates comprehensive profit/hour for production actions (Brewing, Cooking, Crafting, Tailoring, Cheesesmithing)
-     * Reuses existing profit calculator from tooltip system.
-     */
-
-
-    /**
-     * Action types for production skills (5 skills)
-     */
-    const PRODUCTION_TYPES$7 = [
-        '/action_types/brewing',
-        '/action_types/cooking',
-        '/action_types/cheesesmithing',
-        '/action_types/crafting',
-        '/action_types/tailoring',
-    ];
-
-    /**
-     * Calculate comprehensive profit for a production action
-     * @param {string} actionHrid - Action HRID (e.g., "/actions/brewing/efficiency_tea")
-     * @returns {Object|null} Profit data or null if not applicable
-     */
-    async function calculateProductionProfit(actionHrid) {
-        const gameData = dataManager.getInitClientData();
-        const actionDetail = gameData.actionDetailMap[actionHrid];
-
-        if (!actionDetail) {
-            return null;
-        }
-
-        // Only process production actions with outputs
-        if (!PRODUCTION_TYPES$7.includes(actionDetail.type)) {
-            return null;
-        }
-
-        if (!actionDetail.outputItems || actionDetail.outputItems.length === 0) {
-            return null; // No output - nothing to calculate
-        }
-
-        // Note: Market API is pre-loaded by caller (max-produceable.js)
-        // No need to check or fetch here
-
-        // Get output item HRID
-        const outputItemHrid = actionDetail.outputItems[0].itemHrid;
-
-        // Reuse existing profit calculator (does all the heavy lifting)
-        const profitData = await profitCalculator.calculateProfit(outputItemHrid);
-
-        if (!profitData) {
-            return null;
-        }
-
-        return profitData;
-    }
-
-    /**
      * Loadout Snapshot
      *
      * Listens for `loadouts_updated` WebSocket messages to capture all loadout configurations
@@ -1640,6 +1233,53 @@
         const enhancementLevel = !lastPart.startsWith('/') ? parseInt(lastPart, 10) || 0 : 0;
 
         return { itemLocationHrid, itemHrid, enhancementLevel };
+    }
+
+    /**
+     * The best enhancement level owned of every item, from the inventory.
+     *
+     * Equipped pieces are in `characterItems` alongside the loose ones, so this
+     * covers what is worn as well as what is in the bag — which is what "highest
+     * owned" means to the game.
+     *
+     * @param {Array<Object>} [items] - Defaults to the live inventory
+     * @returns {Map<string, number>} Item hrid → highest enhancement level owned
+     */
+    function highestOwnedEnhancements(items) {
+        const inventory = dataManager.characterItems || dataManager.characterData?.characterItems || [];
+        const highest = new Map();
+        for (const item of inventory) {
+            if (!item?.itemHrid || !(item.count > 0)) continue;
+            const level = item.enhancementLevel || 0;
+            if (!highest.has(item.itemHrid) || level > highest.get(item.itemHrid)) {
+                highest.set(item.itemHrid, level);
+            }
+        }
+        return highest;
+    }
+
+    /**
+     * What one slot of a loadout is really wearing.
+     *
+     * A loadout pinned with "use exact enhancement" wears what it says. Every other
+     * loadout wears the best copy owned, so a stored level is a stale reading of
+     * that rather than a fact — it is the level at the moment the loadout was last
+     * saved, and enhancing the item since does not rewrite it.
+     *
+     * Never lower than what is stored: an inventory that has not arrived yet is an
+     * empty map, and dropping a known +10 to 0 on the strength of it would be worse
+     * than the staleness this is here to fix.
+     *
+     * @param {Object} snapshot - The loadout
+     * @param {Object} equip - One entry of `snapshot.equipment`
+     * @param {Map<string, number>} owned - From `highestOwnedEnhancements`
+     * @returns {number} Enhancement level
+     */
+    function resolveEnhancementLevel(snapshot, equip, owned) {
+        const stored = equip?.enhancementLevel || 0;
+        if (snapshot?.useExactEnhancement) return stored;
+        const highest = owned?.get(equip?.itemHrid);
+        return highest === undefined ? stored : Math.max(stored, highest);
     }
 
     /**
@@ -1734,9 +1374,11 @@
             // UI, so storage is always the source of snapshots at startup.
             if (Object.keys(this.snapshots).length === 0) {
                 const storageKey = getStorageKey$1();
-                // NOTE: getCurrentCharacterId() may be null at this point (before init_character_data
-                // arrives), so getStorageKey() may return 'loadout_snapshots_default'. We will reload
-                // from the correct key once character_initialized fires.
+                // NOTE: getCurrentCharacterId() is set by the time this runs, because
+                // features are initialized from inside the character_initialized
+                // handler — so the key here is already character-scoped. The listener
+                // below cannot correct it if it ever were not: that event has already
+                // fired and will only come again on a character switch.
                 this.snapshots = (await storage.getJSON(storageKey, 'settings', null)) || {};
 
                 // Fallback for Steam users: if storage is also empty, bootstrap from
@@ -1881,6 +1523,29 @@
         }
 
         /**
+         * The equipment a loadout would actually put on, at the levels it would
+         * actually wear.
+         *
+         * A snapshot's stored enhancement level is only the truth for a loadout
+         * pinned with "use exact enhancement". The default is the other way round —
+         * the game equips the **highest copy you own** — and the wearable hash the
+         * snapshot is parsed from routinely carries 0, or a level from before the
+         * last enhancement. Reading it literally reports a refined cape at +0 while
+         * the character is wearing it at +10, and every number computed from that
+         * loadout is quietly wrong in the same direction.
+         *
+         * @param {Object} snapshot - From `snapshots` / `getAllSnapshots`
+         * @returns {Array<{itemHrid: string, enhancementLevel: number, itemLocationHrid: string}>}
+         */
+        resolveEquipment(snapshot) {
+            const owned = highestOwnedEnhancements();
+            return (snapshot?.equipment || []).map((equip) => ({
+                ...equip,
+                enhancementLevel: resolveEnhancementLevel(snapshot, equip, owned),
+            }));
+        }
+
+        /**
          * Get the name and default status of the saved loadout being used for a given action type.
          * Returns an object with name and isDefault, or null if no snapshot exists or feature is disabled.
          * @param {string} actionTypeHrid
@@ -2007,23 +1672,6 @@
     const scrollSimulator = new ScrollSimulator();
 
     /**
-     * Scroll Buff Values
-     * Hardcoded buff definitions for Labyrinth scrolls (formerly "Seals").
-     * The game JSON has no consumableDetail for scroll items — values sourced from item descriptions.
-     */
-
-
-    const SCROLL_BUFF_ITEMS = {
-        '/buff_types/efficiency': 'seal_of_efficiency',
-        '/buff_types/gathering': 'seal_of_gathering',
-        '/buff_types/wisdom': 'seal_of_wisdom',
-        '/buff_types/action_speed': 'seal_of_action_speed',
-        '/buff_types/rare_find': 'seal_of_rare_find',
-        '/buff_types/processing': 'seal_of_processing',
-        '/buff_types/gourmet': 'seal_of_gourmet',
-    };
-
-    /**
      * Profit Display Functions
      *
      * Handles displaying profit calculations in action panels for:
@@ -2035,13 +1683,19 @@
     const getMissingPriceIndicator = (isMissing) => (isMissing ? ' ⚠' : '');
     const formatMissingLabel = (isMissing, value) => (isMissing ? '-- ⚠' : value);
 
+    // Superscript marker for figures priced from the user's own custom price override rather
+    // than the live market — kept as one helper so gathering and production stay consistent.
+    const OVERRIDE_TITLE = 'Uses your custom price override';
+    const getOverrideIndicatorHtml = (isOverridden) =>
+        isOverridden ? `<sup title="${OVERRIDE_TITLE}" style="cursor: help;">✱</sup>` : '';
+
     let _spriteUrl = null;
     function scrollSpriteHtml$1(buffTypeHrid, size = 14) {
         if (_spriteUrl === null) {
             const el = document.querySelector('use[href*="items_sprite"]');
             _spriteUrl = el ? el.getAttribute('href').split('#')[0] : '';
         }
-        const itemSuffix = SCROLL_BUFF_ITEMS[buffTypeHrid];
+        const itemSuffix = scrollBuffValues_js.SCROLL_BUFF_ITEMS[buffTypeHrid];
         if (!_spriteUrl || !itemSuffix) return '';
         return (
             `<svg width="${size}" height="${size}" style="vertical-align:middle;margin-right:3px">` +
@@ -2119,7 +1773,7 @@
 
     async function renderGatheringProfit(panel, actionHrid, dropTableSelector, gatheringActionType) {
         // Calculate profit
-        const profitData = await calculateGatheringProfit(actionHrid);
+        const profitData = await gatheringProfit_js.calculateGatheringProfit(actionHrid);
         if (!profitData) {
             console.error('❌ Gathering profit calculation failed for:', actionHrid);
             return;
@@ -2177,7 +1831,8 @@
                 const line = document.createElement('div');
                 line.style.marginLeft = '8px';
                 const missingPriceNote = getMissingPriceIndicator(output.missingPrice);
-                line.textContent = `• ${output.name} (Base): ${output.itemsPerHour.toFixed(decimals)}/hr @ ${formatters_js.formatWithSeparator(output.priceEach)}${missingPriceNote} each → ${formatters_js.formatLargeNumber(Math.round(output.revenuePerHour))}/hr`;
+                const overrideNote = getOverrideIndicatorHtml(marketData_js.isPriceOverridden(output.itemHrid, 0, 'sell'));
+                line.innerHTML = `• ${output.name} (Base): ${output.itemsPerHour.toFixed(decimals)}/hr @ ${formatters_js.formatWithSeparator(output.priceEach)}${missingPriceNote}${overrideNote} each → ${formatters_js.formatLargeNumber(Math.round(output.revenuePerHour))}/hr`;
                 primaryDropsContent.appendChild(line);
             }
         }
@@ -2527,7 +2182,8 @@
         const gatheringLoadoutLabel = gatheringSnapshotInfo
             ? `${gatheringSnapshotInfo.name}${gatheringSnapshotInfo.isDefault ? ' (Default)' : ''}`
             : 'Equipped';
-        modeDiv.textContent = `Pricing Mode: ${modeLabel}  •  Loadout: ${gatheringLoadoutLabel}`;
+        const priceAge = marketData_js.getPriceAgeString();
+        modeDiv.textContent = `Pricing Mode: ${modeLabel}  •  Loadout: ${gatheringLoadoutLabel}${priceAge ? `  •  ${priceAge}` : ''}`;
         topLevelContent.appendChild(modeDiv);
 
         const detailedBreakdownSection = uiComponents_js.createCollapsibleSection(
@@ -2690,7 +2346,7 @@
 
     async function renderProductionProfit(panel, actionHrid, dropTableSelector, productionActionType) {
         // Calculate profit
-        const profitData = await calculateProductionProfit(actionHrid);
+        const profitData = await productionProfit_js.calculateProductionProfit(actionHrid);
         if (!profitData) {
             console.error('❌ Production profit calculation failed for:', actionHrid);
             return;
@@ -2796,13 +2452,14 @@
         const baseOutputMissingNote = getMissingPriceIndicator(
             profitData.outputPriceMissing || profitData.outputPriceEstimated
         );
-        baseOutputLine.textContent = `• ${profitData.itemName} (Base): ${profitData.itemsPerHour.toFixed(2)}/hr @ ${formatters_js.formatWithSeparator(Math.round(profitData.outputPrice))}${baseOutputMissingNote} each → ${formatters_js.formatLargeNumber(Math.round(profitData.itemsPerHour * profitData.outputPrice))}/hr`;
+        const baseOutputOverrideNote = getOverrideIndicatorHtml(marketData_js.isPriceOverridden(profitData.itemHrid, 0, 'sell'));
+        baseOutputLine.innerHTML = `• ${profitData.itemName} (Base): ${profitData.itemsPerHour.toFixed(2)}/hr @ ${formatters_js.formatWithSeparator(Math.round(profitData.outputPrice))}${baseOutputMissingNote}${baseOutputOverrideNote} each → ${formatters_js.formatLargeNumber(Math.round(profitData.itemsPerHour * profitData.outputPrice))}/hr`;
         primaryOutputContent.appendChild(baseOutputLine);
 
         if (profitData.gourmetBonusItems > 0) {
             const gourmetLine = document.createElement('div');
             gourmetLine.style.marginLeft = '8px';
-            gourmetLine.textContent = `• ${profitData.itemName} (Gourmet +${formatters_js.formatPercentage(profitData.gourmetBonus, 1)}): ${profitData.gourmetBonusItems.toFixed(2)}/hr @ ${formatters_js.formatWithSeparator(Math.round(profitData.outputPrice))}${baseOutputMissingNote} each → ${formatters_js.formatLargeNumber(Math.round(profitData.gourmetBonusItems * profitData.outputPrice))}/hr`;
+            gourmetLine.innerHTML = `• ${profitData.itemName} (Gourmet +${formatters_js.formatPercentage(profitData.gourmetBonus, 1)}): ${profitData.gourmetBonusItems.toFixed(2)}/hr @ ${formatters_js.formatWithSeparator(Math.round(profitData.outputPrice))}${baseOutputMissingNote}${baseOutputOverrideNote} each → ${formatters_js.formatLargeNumber(Math.round(profitData.gourmetBonusItems * profitData.outputPrice))}/hr`;
             primaryOutputContent.appendChild(gourmetLine);
         }
 
@@ -2924,10 +2581,10 @@
                 }
 
                 const missingPriceNote = getMissingPriceIndicator(material.missingPrice);
-                const customPriceNote = material.customPrice ? ' *' : '';
-                materialText += ` @ ${formatters_js.formatWithSeparator(Math.round(material.askPrice))}${missingPriceNote}${customPriceNote} → ${formatters_js.formatLargeNumber(Math.round(material.totalCost * profitData.actionsPerHour * efficiencyMultiplier))}/hr`;
+                const overrideNote = getOverrideIndicatorHtml(material.customPrice);
+                materialText += ` @ ${formatters_js.formatWithSeparator(Math.round(material.askPrice))}${missingPriceNote}${overrideNote} → ${formatters_js.formatLargeNumber(Math.round(material.totalCost * profitData.actionsPerHour * efficiencyMultiplier))}/hr`;
 
-                line.textContent = materialText;
+                line.innerHTML = materialText;
                 materialCostsContent.appendChild(line);
             }
         }
@@ -2951,9 +2608,10 @@
             for (const tea of profitData.teaCosts) {
                 const line = document.createElement('div');
                 line.style.marginLeft = '8px';
-                // Tea structure: { itemName, pricePerDrink, drinksPerHour, totalCost }
+                // Tea structure: { itemHrid, itemName, pricePerDrink, drinksPerHour, totalCost }
                 const missingPriceNote = getMissingPriceIndicator(tea.missingPrice);
-                line.textContent = `• ${tea.itemName}: ${tea.drinksPerHour.toFixed(2)}/hr @ ${formatters_js.formatWithSeparator(Math.round(tea.pricePerDrink))}${missingPriceNote} → ${formatters_js.formatLargeNumber(Math.round(tea.totalCost))}/hr`;
+                const overrideNote = getOverrideIndicatorHtml(marketData_js.isPriceOverridden(tea.itemHrid, 0, 'buy'));
+                line.innerHTML = `• ${tea.itemName}: ${tea.drinksPerHour.toFixed(2)}/hr @ ${formatters_js.formatWithSeparator(Math.round(tea.pricePerDrink))}${missingPriceNote}${overrideNote} → ${formatters_js.formatLargeNumber(Math.round(tea.totalCost))}/hr`;
                 teaCostsContent.appendChild(line);
             }
         }
@@ -3168,7 +2826,8 @@
         const productionLoadoutLabel = productionSnapshotInfo
             ? `${productionSnapshotInfo.name}${productionSnapshotInfo.isDefault ? ' (Default)' : ''}`
             : 'Equipped';
-        modeDiv.textContent = `Pricing Mode: ${modeLabel}  •  Loadout: ${productionLoadoutLabel}`;
+        const priceAge = marketData_js.getPriceAgeString();
+        modeDiv.textContent = `Pricing Mode: ${modeLabel}  •  Loadout: ${productionLoadoutLabel}${priceAge ? `  •  ${priceAge}` : ''}`;
         topLevelContent.appendChild(modeDiv);
 
         const detailedBreakdownSection = uiComponents_js.createCollapsibleSection(
@@ -5476,114 +5135,330 @@
     const actionFilter = new ActionFilter();
 
     /**
-     * Game Data Lookup Utilities
-     *
-     * Centralized functions for resolving display names to HRIDs.
-     * Handles the ★ ↔ (R) refined item display name difference between
-     * test server and live server.
+     * Enhancement XP Calculations
+     * Based on Ultimate Enhancement Tracker formulas
      */
 
 
     /**
-     * Generate alternate display names to handle ★ ↔ (R) refined item naming.
-     * @param {string} name - Original display name
-     * @returns {string[]} Array of alternate names to try (may be empty)
-     */
-    function getRefinedNameVariants(name) {
-        const variants = [];
-        if (name.includes('★')) {
-            variants.push(name.replace(/\s*★/, ' (R)'));
-        }
-        if (name.includes('(R)')) {
-            variants.push(name.replace(/\s*\(R\)/, ' ★'));
-        }
-        return variants;
-    }
-
-    /**
-     * Find an action HRID from its display name.
-     * Tries exact match first, then ★ ↔ (R) variants for refined items.
-     * @param {string} actionName - Display name of the action
-     * @returns {string|null} Action HRID or null if not found
-     */
-    function getActionHridFromName(actionName) {
-        const gameData = dataManager.getInitClientData();
-        if (!gameData?.actionDetailMap) {
-            return null;
-        }
-
-        // Try exact match first
-        for (const [hrid, detail] of Object.entries(gameData.actionDetailMap)) {
-            if (detail.name === actionName) {
-                return hrid;
-            }
-        }
-
-        // Try ★ ↔ (R) variants for refined items
-        for (const variant of getRefinedNameVariants(actionName)) {
-            for (const [hrid, detail] of Object.entries(gameData.actionDetailMap)) {
-                if (detail.name === variant) {
-                    return hrid;
-                }
-            }
-        }
-
-        return null;
-    }
-
-    /**
-     * Find an item HRID from its display name.
-     * Tries exact match first, then ★ ↔ (R) variants for refined items.
-     * @param {string} itemName - Display name of the item
-     * @returns {string|null} Item HRID or null if not found
-     */
-    function getItemHridFromName(itemName) {
-        const gameData = dataManager.getInitClientData();
-        if (!gameData?.itemDetailMap) {
-            return null;
-        }
-
-        // Try exact match first
-        for (const [hrid, detail] of Object.entries(gameData.itemDetailMap)) {
-            if (detail.name === itemName) {
-                return hrid;
-            }
-        }
-
-        // Try ★ ↔ (R) variants for refined items
-        for (const variant of getRefinedNameVariants(itemName)) {
-            for (const [hrid, detail] of Object.entries(gameData.itemDetailMap)) {
-                if (detail.name === variant) {
-                    return hrid;
-                }
-            }
-        }
-
-        return null;
-    }
-
-    /**
-     * Get the coin cost of an item from the in-game shop.
-     * Returns 0 if the item is not available in the shop or not purchasable with coins.
+     * Get base item level from item HRID
      * @param {string} itemHrid - Item HRID
-     * @returns {number} Coin cost, or 0 if not available in shop
+     * @returns {number} Base item level
      */
-    function getShopCoinCost(itemHrid) {
-        const gameData = dataManager.getInitClientData();
-        if (!gameData?.shopItemDetailMap) return 0;
+    function getBaseItemLevel(itemHrid) {
+        try {
+            const gameData = dataManager.getInitClientData();
+            const itemData = gameData?.itemDetailMap?.[itemHrid];
 
-        for (const shopItem of Object.values(gameData.shopItemDetailMap)) {
-            if (shopItem.itemHrid === itemHrid) {
-                if (shopItem.costs && shopItem.costs.length > 0) {
-                    const coinCost = shopItem.costs.find((cost) => cost.itemHrid === '/items/coin');
-                    if (coinCost) {
-                        return coinCost.count;
+            if (itemData?.itemLevel) {
+                return itemData.itemLevel;
+            }
+
+            return 0;
+        } catch {
+            return 0;
+        }
+    }
+
+    /**
+     * Get wisdom buff percentage from all sources
+     * Reads from dataManager.characterData (NOT localStorage)
+     * @returns {number} Wisdom buff as decimal (e.g., 0.20 for 20%)
+     */
+    function getWisdomBuff() {
+        try {
+            // Use dataManager for character data (NOT localStorage)
+            const charData = dataManager.characterData;
+            if (!charData) return 0;
+
+            let totalFlatBoost = 0;
+
+            // 1. Community Buffs
+            const communityEnhancingBuffs = charData.communityActionTypeBuffsMap?.['/action_types/enhancing'];
+            if (Array.isArray(communityEnhancingBuffs)) {
+                communityEnhancingBuffs.forEach((buff) => {
+                    if (buff.typeHrid === '/buff_types/wisdom') {
+                        totalFlatBoost += buff.flatBoost || 0;
+                    }
+                });
+            }
+
+            // 2. Equipment Buffs
+            const equipmentEnhancingBuffs = charData.equipmentActionTypeBuffsMap?.['/action_types/enhancing'];
+            if (Array.isArray(equipmentEnhancingBuffs)) {
+                equipmentEnhancingBuffs.forEach((buff) => {
+                    if (buff.typeHrid === '/buff_types/wisdom') {
+                        totalFlatBoost += buff.flatBoost || 0;
+                    }
+                });
+            }
+
+            // 3. House Buffs
+            const houseEnhancingBuffs = charData.houseActionTypeBuffsMap?.['/action_types/enhancing'];
+            if (Array.isArray(houseEnhancingBuffs)) {
+                houseEnhancingBuffs.forEach((buff) => {
+                    if (buff.typeHrid === '/buff_types/wisdom') {
+                        totalFlatBoost += buff.flatBoost || 0;
+                    }
+                });
+            }
+
+            // 4. Guild Buffs
+            const guildEnhancingBuffs = charData.guildActionTypeBuffsMap?.['/action_types/enhancing'];
+            if (Array.isArray(guildEnhancingBuffs)) {
+                guildEnhancingBuffs.forEach((buff) => {
+                    if (buff.typeHrid === '/buff_types/wisdom') {
+                        totalFlatBoost += buff.flatBoost || 0;
+                    }
+                });
+            }
+
+            // 5. Consumable Buffs (from wisdom tea, etc.)
+            const consumableEnhancingBuffs = charData.consumableActionTypeBuffsMap?.['/action_types/enhancing'];
+            if (Array.isArray(consumableEnhancingBuffs)) {
+                consumableEnhancingBuffs.forEach((buff) => {
+                    if (buff.typeHrid === '/buff_types/wisdom') {
+                        totalFlatBoost += buff.flatBoost || 0;
+                    }
+                });
+            }
+
+            // 5. Achievement Buffs
+            totalFlatBoost += dataManager.getAchievementBuffFlatBoost('/action_types/enhancing', '/buff_types/wisdom');
+
+            // Return as decimal (flatBoost is already in decimal form, e.g., 0.2 for 20%)
+            return totalFlatBoost;
+        } catch {
+            return 0;
+        }
+    }
+
+    /**
+     * Calculate XP gained from successful enhancement
+     * Formula: 1.4 × (1 + wisdom) × enhancementMultiplier × (10 + baseItemLevel)
+     * @param {number} previousLevel - Enhancement level before success
+     * @param {string} itemHrid - Item HRID
+     * @returns {number} XP gained
+     */
+    function calculateSuccessXP(previousLevel, itemHrid) {
+        const baseLevel = getBaseItemLevel(itemHrid);
+        const wisdomBuff = getWisdomBuff();
+
+        // Special handling for enhancement level 0 (base items)
+        const enhancementMultiplier =
+            previousLevel === 0
+                ? 1.0 // Base value for unenhanced items
+                : previousLevel + 1; // Normal progression
+
+        return Math.floor(1.4 * (1 + wisdomBuff) * enhancementMultiplier * (10 + baseLevel));
+    }
+
+    /**
+     * Calculate XP gained from failed enhancement
+     * Formula: 10% of success XP
+     * @param {number} previousLevel - Enhancement level that failed
+     * @param {string} itemHrid - Item HRID
+     * @returns {number} XP gained
+     */
+    function calculateFailureXP(previousLevel, itemHrid) {
+        return Math.floor(calculateSuccessXP(previousLevel, itemHrid) * 0.1);
+    }
+
+    /**
+     * Calculate enhancing action time from the game's buff maps
+     * Reads the pre-computed action_speed flatBoost values from all buff sources
+     * and adds level advantage, matching the game's actual speed calculation
+     * @param {string} itemHrid - Item HRID being enhanced
+     * @returns {number} Per-action time in seconds
+     */
+    function getEnhancingActionTime(itemHrid) {
+        try {
+            const charData = dataManager.characterData;
+            if (!charData) return 12;
+
+            // Get base time from game data
+            const actionDetails = dataManager.getActionDetails('/actions/enhancing/enhance');
+            const baseTime = actionDetails?.baseTimeCost ? actionDetails.baseTimeCost / 1e9 : 12;
+
+            // Get enhancing skill level
+            const enhancingSkill = charData.characterSkills?.find((s) => s.skillHrid === '/skills/enhancing');
+            const baseLevel = enhancingSkill?.level || 1;
+
+            // Get tea level bonus from consumable buff map
+            let teaLevelBonus = 0;
+            const consumableBuffs = charData.consumableActionTypeBuffsMap?.['/action_types/enhancing'];
+            if (Array.isArray(consumableBuffs)) {
+                for (const buff of consumableBuffs) {
+                    if (buff.typeHrid === '/buff_types/enhancing_level') {
+                        teaLevelBonus = buff.flatBoost || 0;
                     }
                 }
             }
+
+            // Sum action_speed flatBoost from ALL buff sources (equipment, house, community, tea)
+            let totalSpeedBuff = 0;
+
+            const buffMaps = [
+                charData.equipmentActionTypeBuffsMap,
+                charData.houseActionTypeBuffsMap,
+                charData.guildActionTypeBuffsMap,
+                charData.communityActionTypeBuffsMap,
+                charData.consumableActionTypeBuffsMap,
+            ];
+
+            for (const buffMap of buffMaps) {
+                const enhancingBuffs = buffMap?.['/action_types/enhancing'];
+                if (!Array.isArray(enhancingBuffs)) continue;
+
+                for (const buff of enhancingBuffs) {
+                    if (buff.typeHrid === '/buff_types/action_speed') {
+                        totalSpeedBuff += buff.flatBoost || 0;
+                    }
+                }
+            }
+
+            // Add personal buffs (Labyrinth seals)
+            totalSpeedBuff += dataManager.getPersonalBuffFlatBoost('/action_types/enhancing', '/buff_types/action_speed');
+
+            // Add level advantage: (effectiveLevel - itemLevel) / 100
+            const effectiveLevel = baseLevel + teaLevelBonus;
+            const itemLevel = getBaseItemLevel(itemHrid);
+            if (effectiveLevel > itemLevel) {
+                totalSpeedBuff += (effectiveLevel - itemLevel) / 100;
+            }
+
+            return Math.max(profitConstants_js.MIN_ACTION_TIME_SECONDS, baseTime / (1 + totalSpeedBuff));
+        } catch {
+            return 12;
+        }
+    }
+
+    /**
+     * Calculate enhancement predictions using character stats
+     * @param {string} itemHrid - Item HRID being enhanced
+     * @param {number} startLevel - Starting enhancement level
+     * @param {number} targetLevel - Target enhancement level
+     * @param {number} protectFrom - Level to start using protection
+     * @returns {Object|null} Prediction data or null if cannot calculate
+     */
+    function calculateEnhancementPredictions(itemHrid, startLevel, targetLevel, protectFrom) {
+        try {
+            // Get item level
+            const itemLevel = getBaseItemLevel(itemHrid);
+
+            // Use getEnhancingParams() for all character stats (level, speed, success, teas, etc.)
+            const params = enhancementConfig_js.getEnhancingParams();
+
+            // Check for blessed tea
+            const hasBlessed = params.teas?.blessed || false;
+
+            // Per-action time from the game's buff maps (authoritative source), handed to the
+            // calculator as an override so the prediction and anything reading result.totalTime
+            // later work off one time base instead of two that can disagree.
+            const perActionTime = getEnhancingActionTime(itemHrid);
+
+            // Calculate predictions (Markov chain for attempts, protections, success rates)
+            const result = enhancementCalculator_js.calculateEnhancement({
+                enhancingLevel: params.enhancingLevel,
+                houseLevel: params.houseLevel,
+                toolBonus: params.toolBonus,
+                speedBonus: params.speedBonus,
+                itemLevel,
+                targetLevel,
+                startLevel,
+                protectFrom,
+                blessedTea: hasBlessed,
+                guzzlingBonus: params.guzzlingBonus,
+                blessedTeaBonus: params.blessedTeaBonus,
+                perActionTimeOverride: perActionTime,
+            });
+
+            if (!result) {
+                return null;
+            }
+
+            return {
+                expectedAttempts: Math.round(result.attemptsRounded),
+                expectedProtections: Math.round(result.protectionCount),
+                expectedTime: result.totalTime,
+                perActionTime: result.perActionTime,
+                successMultiplier: result.successMultiplier,
+                successRates: result.successRates,
+                // Recorded with the prediction, so a session opened days later still says which
+                // stats it was predicted against
+                paramsNote: enhancementConfig_js.describeParamsSource(params),
+            };
+        } catch {
+            return null;
+        }
+    }
+
+    /**
+     * Which stats an enhancement prediction is quoting.
+     *
+     * The same "+0 → +N" table means two different things depending on whose bench it describes:
+     * what this character would spend, or what a top-end enhancer would. Both are worth seeing —
+     * one is the player's real cost, the other is roughly what the listing in front of them cost
+     * whoever made it — but a number that does not say which one it is is worse than either.
+     *
+     * This module owns that choice: the persisted toggle, the params each side resolves to, and the
+     * chip the tooltip prints so the answer is always on screen next to the numbers.
+     */
+
+
+    /** Setting the toggle persists to. Mirrored in the settings panel under Item Tooltips. */
+    const PRO_RATES_SETTING = 'itemTooltip_enhancementProRates';
+
+    /**
+     * Whether enhancement predictions are currently quoting the pro kit rather than the player.
+     * @returns {boolean} True when pro rates are active
+     */
+    function isProRatesActive() {
+        return config.getSetting(PRO_RATES_SETTING) === true;
+    }
+
+    /**
+     * The enhancing parameters a tooltip for this item should be computed with.
+     *
+     * Untradeable items are never somebody else's listing — the player is the only one who can be
+     * enhancing them — so they are always quoted from the character's own stats.
+     *
+     * @param {string} itemHrid - Item the tooltip is describing
+     * @returns {Object} Enhancement parameters, tagged with `paramsSource`
+     */
+    function getTooltipEnhancementParams(itemHrid) {
+        const itemDetails = dataManager.getInitClientData()?.itemDetailMap?.[itemHrid];
+        const isTradeable = itemDetails?.isTradable !== false;
+
+        if (!isTradeable) {
+            return enhancementConfig_js.getAutoDetectedParams();
+        }
+        if (isProRatesActive()) {
+            return enhancementConfig_js.getProRatesParams();
+        }
+        return enhancementConfig_js.getEnhancingParams();
+    }
+
+    /**
+     * Name the source of a set of parameters, for display beside the numbers they produced.
+     * @param {Object} params - Result of getTooltipEnhancementParams() or getEnhancingParams()
+     * @returns {{kind: 'pro'|'manual'|'yours', label: string, detail: string|null}} Chip content
+     */
+    function describeEnhancementSource(params) {
+        if (params?.paramsSource === 'pro') {
+            return {
+                kind: 'pro',
+                label: 'Pro',
+                detail: 'Pro rates: enhancing 140, Observatory 8, ultra + blessed tea, +13 Celestial enhancer, +10 gear',
+            };
         }
 
-        return 0;
+        const overrides = enhancementConfig_js.describeParamsSource(params);
+        if (overrides) {
+            return { kind: 'manual', label: 'Manual', detail: overrides };
+        }
+
+        return { kind: 'yours', label: 'Yours', detail: null };
     }
 
     /**
@@ -5598,6 +5473,9 @@
      */
 
     const toolashaConfig = config;
+
+    /** What a mirror plan combines its leaves with */
+    const MIRROR_HRID = '/items/philosophers_mirror';
 
     const _costCache = new Map();
     const _chainTimeCache = new Map();
@@ -5671,12 +5549,16 @@
         const targetCosts = new Array(currentEnhancementLevel + 1);
         const targetTimes = new Array(currentEnhancementLevel + 1);
         const targetAttempts = new Array(currentEnhancementLevel + 1);
+        // Kept alongside the attempts because a mirror plan's protection bill is the sum over the
+        // levels it actually builds, and there is nowhere else that number survives
+        const targetProtections = new Array(currentEnhancementLevel + 1);
         targetCosts[0] = toolashaConfig.isFeatureEnabled('enhanceSim_baseItemCraftingCost')
             ? Math.min(getProductionCost(itemHrid) || Infinity, marketData_js.getItemPrices(itemHrid, 0)?.ask || Infinity) ||
               getRealisticBaseItemPrice(itemHrid)
             : getRealisticBaseItemPrice(itemHrid); // Level 0: base item
         targetTimes[0] = 0; // Level 0: no time needed
         targetAttempts[0] = 0; // Level 0: no attempts needed
+        targetProtections[0] = 0; // Level 0: nothing to protect
 
         for (let level = 1; level <= currentEnhancementLevel; level++) {
             const resultsForLevel = allResults[level - 1];
@@ -5689,26 +5571,30 @@
             targetCosts[level] = minResult.totalCost;
             targetTimes[level] = minResult.totalTime;
             targetAttempts[level] = minResult.expectedAttempts;
+            targetProtections[level] = minResult.protectionCount || 0;
         }
 
-        const mirrorTargetCosts = targetCosts;
-        const mirrorTargetTimes = targetTimes;
-        const mirrorTargetAttempts = targetAttempts;
+        // Snapshot the pre-mirror numbers before the mirror pass rewrites targetCosts in place.
+        // These arrays used to be aliases of the same array, so the "traditional" cost of a level
+        // silently became its mirror cost the moment the pass touched it.
+        const traditionalCosts = [...targetCosts];
+        const traditionalTimes = [...targetTimes];
+        const traditionalAttempts = [...targetAttempts];
+        const traditionalProtections = [...targetProtections];
 
         // Step 3: Apply Philosopher's Mirror optimization (single pass, in-place)
         // Like Enhancelator lines 456-465
-        const mirrorPrice = getRealisticBaseItemPrice('/items/philosophers_mirror');
-        let mirrorStartLevel = null;
+        const mirrorPrice = getRealisticBaseItemPrice(MIRROR_HRID);
+        const usedMirror = new Array(currentEnhancementLevel + 1).fill(false);
 
         if (mirrorPrice > 0) {
-            for (let level = 3; level <= currentEnhancementLevel; level++) {
+            // +2 is reachable by mirroring a +0 and a +1, so it belongs in the search as well
+            for (let level = 2; level <= currentEnhancementLevel; level++) {
                 const traditionalCost = targetCosts[level];
                 const mirrorCost = targetCosts[level - 2] + targetCosts[level - 1] + mirrorPrice;
 
                 if (mirrorCost < traditionalCost) {
-                    if (mirrorStartLevel === null) {
-                        mirrorStartLevel = level;
-                    }
+                    usedMirror[level] = true;
                     targetCosts[level] = mirrorCost;
                 }
             }
@@ -5726,21 +5612,27 @@
             curr.totalCost < best.totalCost ? curr : best
         );
 
+        // Which levels the finished plan actually mirrors is a question about the path back from
+        // the target, not about the first level where mirroring happened to look cheap. A level
+        // that mirrors but is never reached from the target contributes nothing.
+        const mirrorPlan = expandMirrorPlan(currentEnhancementLevel, usedMirror);
+
         let optimalStrategy;
 
-        if (mirrorStartLevel !== null) {
+        if (mirrorPlan.mirrorCount > 0) {
             // Mirror was used - build mirror-optimized result
             optimalStrategy = buildMirrorOptimizedResult(
                 itemHrid,
                 currentEnhancementLevel,
-                mirrorStartLevel,
+                mirrorPlan,
+                traditionalCosts,
+                traditionalTimes,
+                traditionalAttempts,
+                traditionalProtections,
                 targetCosts,
-                itemHrid,
-                mirrorTargetCosts,
-                mirrorTargetTimes,
-                mirrorTargetAttempts,
                 optimalTraditional,
-                mirrorPrice);
+                mirrorPrice
+            );
         } else {
             // No mirror used - return traditional result
             optimalStrategy = {
@@ -5763,6 +5655,12 @@
                 totalCost: optimalTraditional.totalCost,
                 usedMirror: false,
                 mirrorStartLevel: null,
+                materialBill: buildMaterialBill({
+                    materials: optimalTraditional.materialBreakdown,
+                    protectionItemHrid: optimalTraditional.protectionItemHrid,
+                    protectionCount: optimalTraditional.protectionCount,
+                    protectionUnitPrice: optimalTraditional.protectionAskPrice,
+                }),
             };
         }
 
@@ -5780,18 +5678,20 @@
                 protectFrom: optimalStrategy.protectFrom,
                 blessedTea: config.teas.blessed,
                 guzzlingBonus: config.guzzlingBonus,
+                blessedTeaBonus: config.blessedTeaBonus,
             });
 
             if (xpCalc && xpCalc.visitCounts && xpCalc.totalTime > 0) {
-                const wisdomDecimal = (config.experienceBonus || 0) / 100;
-                const xpBaseLevel = itemDetails.level || itemDetails.equipmentDetail?.levelRequirements?.[0]?.level || 0;
+                // Same XP formula the tracker and the XPH calculator use. The old inline copy read
+                // itemDetails.level, which enhanceable equipment does not have, so it fell through
+                // to a level-requirement lookup and produced a different number for the same item.
                 let totalXP = 0;
                 for (let i = 0; i < currentEnhancementLevel; i++) {
                     const visits = xpCalc.visitCounts[i];
+                    if (!visits) continue;
                     const successRate = xpCalc.successRates[i].actualRate / 100;
-                    const enhMult = i === 0 ? 1.0 : i + 1;
-                    const successXP = Math.floor(1.4 * (1 + wisdomDecimal) * enhMult * (10 + xpBaseLevel));
-                    const failXP = Math.floor(successXP * 0.1);
+                    const successXP = calculateSuccessXP(i, itemHrid);
+                    const failXP = calculateFailureXP(i, itemHrid);
                     totalXP += visits * (successRate * successXP + (1 - successRate) * failXP);
                 }
                 xpPerHour = Math.round((totalXP / xpCalc.totalTime) * 3600);
@@ -5809,6 +5709,10 @@
             allStrategies: [optimalStrategy], // Only return optimal
             xpPerHour,
             totalExpectedXP,
+            // Carried through so the tooltip can say whose stats these numbers describe: the
+            // character's own, a hand-entered set, or the pro kit
+            enhancementParams: config,
+            paramsNote: describeEnhancementSource(config).detail,
         };
     }
 
@@ -5828,9 +5732,12 @@
                 protectFrom,
                 blessedTea: config.teas.blessed,
                 guzzlingBonus: config.guzzlingBonus,
+                blessedTeaBonus: config.blessedTeaBonus,
             };
 
-            // Calculate enhancement statistics
+            // Calculate enhancement statistics. The matrix inversion is the expensive part of a
+            // strategy, and the cost pass needs exactly the same numbers, so it is handed the
+            // result rather than inverting an identical matrix a second time.
             const result = enhancementCalculator_js.calculateEnhancement(params);
 
             if (!result || typeof result.attempts !== 'number' || typeof result.totalTime !== 'number') {
@@ -5839,7 +5746,7 @@
             }
 
             // Calculate costs
-            const costs = calculateTotalCost(itemHrid, targetLevel, protectFrom, config);
+            const costs = calculateTotalCost(itemHrid, targetLevel, protectFrom, config, result);
 
             return {
                 expectedAttempts: result.attempts,
@@ -5853,74 +5760,201 @@
     }
 
     /**
-     * Build mirror-optimized result with Fibonacci quantities
+     * Walk the mirror DP back from the target level to the items the plan actually builds.
+     *
+     * The DP decides mirror-or-not level by level, and those decisions are not necessarily a clean
+     * run: +6 can mirror while +5 does not. Assuming a contiguous block from the first mirrored
+     * level and expanding it with Fibonacci quantities invents items the plan never buys. Walking
+     * the decisions backwards from the target instead yields exactly the leaves it does buy.
+     *
+     * @param {number} targetLevel - Level the plan is building
+     * @param {boolean[]} usedMirror - Per-level mirror decisions from the DP
+     * @returns {{leaves: Array<{level: number, quantity: number}>, mirrorCount: number,
+     *   mirrorStartLevel: number|null}} Leaves are levels bought traditionally, highest first
+     * @private
+     */
+    function expandMirrorPlan(targetLevel, usedMirror) {
+        const need = new Array(targetLevel + 1).fill(0);
+        need[targetLevel] = 1;
+
+        let mirrorCount = 0;
+        let mirrorStartLevel = null;
+
+        // High to low: a level is only expanded once every demand for it is known
+        for (let level = targetLevel; level >= 2; level--) {
+            const quantity = need[level];
+            if (!quantity || !usedMirror[level]) continue;
+
+            mirrorCount += quantity;
+            mirrorStartLevel = level; // Lowest mirrored level reached, since we descend
+            need[level - 1] += quantity;
+            need[level - 2] += quantity;
+            need[level] = 0;
+        }
+
+        const leaves = [];
+        for (let level = targetLevel; level >= 0; level--) {
+            if (need[level] > 0) {
+                leaves.push({ level, quantity: need[level] });
+            }
+        }
+
+        return { leaves, mirrorCount, mirrorStartLevel };
+    }
+
+    /**
+     * What a chosen path expects to consume, item by item.
+     *
+     * The path optimiser has always returned totals — so many coins in materials —
+     * which is enough to compare two strategies and not enough to go and buy them.
+     * This is the same arithmetic said as a list, so anything holding a plan can put
+     * it on the marketplace.
+     *
+     * **Every count is an expectation, not a bill.** Enhancing is a Markov chain:
+     * the attempt counts these quantities are multiplied out from are the *expected*
+     * number of attempts along the path, and a real run will take more or fewer.
+     * Buying exactly this list is buying the mean, which is the right order of
+     * magnitude and the wrong number to be surprised by.
+     *
+     * @param {Object} parts - The pieces of a strategy
+     * @param {Array<Object>} [parts.materials] - `materialBreakdown` rows, already multiplied by attempts
+     * @param {number} [parts.materialMultiplier=1] - Scales the rows, for a plan that runs the
+     *   same per-attempt bill a different number of times (a mirror plan's leaves)
+     * @param {string} [parts.protectionItemHrid] - What the plan protects with
+     * @param {number} [parts.protectionCount=0] - Expected protections consumed
+     * @param {number} [parts.protectionUnitPrice=0] - Price of one
+     * @param {number} [parts.mirrorCount=0] - Philosopher's Mirrors the plan combines
+     * @param {number} [parts.mirrorPrice=0] - Price of one
+     * @param {string} [parts.baseItemHrid] - Base item, for a plan that consumes more than the one
+     *   copy its owner is assumed to be holding
+     * @param {number} [parts.baseCount=0] - How many base copies the plan consumes
+     * @param {number} [parts.baseUnitPrice=0] - Price of one
+     * @returns {Array<{itemHrid: string, name: string, count: number, unitPrice: number,
+     *   totalCost: number, kind: string}>} The bill, materials first; `kind` is one of
+     *   `material`, `protection`, `mirror`, `base`
+     * @private
+     */
+    function buildMaterialBill({
+        materials = [],
+        materialMultiplier = 1,
+        protectionItemHrid = null,
+        protectionCount = 0,
+        protectionUnitPrice = 0,
+        mirrorCount = 0,
+        mirrorPrice = 0,
+        baseItemHrid = null,
+        baseCount = 0,
+        baseUnitPrice = 0,
+    } = {}) {
+        const gameData = dataManager.getInitClientData();
+        const nameOf = (hrid) => gameData?.itemDetailMap?.[hrid]?.name || hrid;
+
+        const bill = [];
+
+        for (const material of materials || []) {
+            const count = (material.totalQuantity || 0) * materialMultiplier;
+            if (!(count > 0)) continue;
+            bill.push({
+                itemHrid: material.itemHrid,
+                name: material.name || nameOf(material.itemHrid),
+                count,
+                unitPrice: material.unitPrice || 0,
+                totalCost: (material.unitPrice || 0) * count,
+                kind: 'material',
+            });
+        }
+
+        if (protectionItemHrid && protectionCount > 0) {
+            bill.push({
+                itemHrid: protectionItemHrid,
+                name: nameOf(protectionItemHrid),
+                count: protectionCount,
+                unitPrice: protectionUnitPrice,
+                totalCost: protectionUnitPrice * protectionCount,
+                kind: 'protection',
+            });
+        }
+
+        if (mirrorCount > 0) {
+            bill.push({
+                itemHrid: MIRROR_HRID,
+                name: nameOf(MIRROR_HRID),
+                count: mirrorCount,
+                unitPrice: mirrorPrice,
+                totalCost: mirrorPrice * mirrorCount,
+                kind: 'mirror',
+            });
+        }
+
+        if (baseItemHrid && baseCount > 0) {
+            bill.push({
+                itemHrid: baseItemHrid,
+                name: nameOf(baseItemHrid),
+                count: baseCount,
+                unitPrice: baseUnitPrice,
+                totalCost: baseUnitPrice * baseCount,
+                kind: 'base',
+            });
+        }
+
+        return bill;
+    }
+
+    /**
+     * Build mirror-optimized result from an expanded plan
+     * @param {string} itemHrid - Item being enhanced
+     * @param {number} targetLevel - Target enhancement level
+     * @param {Object} plan - Result of expandMirrorPlan()
+     * @param {number[]} traditionalCosts - Pre-mirror cost per level
+     * @param {number[]} traditionalTimes - Pre-mirror time per level
+     * @param {number[]} traditionalAttempts - Pre-mirror attempts per level
+     * @param {number[]} traditionalProtections - Pre-mirror protections consumed per level
+     * @param {number[]} targetCosts - Post-mirror cost per level
+     * @param {Object} optimalTraditional - Best non-mirror strategy for the target level
+     * @param {number} mirrorPrice - Price of one Philosopher's Mirror
      * @private
      */
     function buildMirrorOptimizedResult(
         itemHrid,
         targetLevel,
-        mirrorStartLevel,
+        plan,
+        traditionalCosts,
+        traditionalTimes,
+        traditionalAttempts,
+        traditionalProtections,
         targetCosts,
-        consumedItemHrid,
-        mirrorTargetCosts,
-        mirrorTargetTimes,
-        mirrorTargetAttempts,
         optimalTraditional,
-        mirrorPrice,
-        _config
+        mirrorPrice
     ) {
-        const gameData = dataManager.getInitClientData();
-        gameData.itemDetailMap[itemHrid];
+        const { leaves, mirrorCount, mirrorStartLevel } = plan;
 
-        // Calculate Fibonacci quantities for consumed items
-        const n = targetLevel - mirrorStartLevel;
-        const numLowerTier = fib(n); // Quantity of (mirrorStartLevel - 2) items
-        const numUpperTier = fib(n + 1); // Quantity of (mirrorStartLevel - 1) items
-        const numMirrors = mirrorFib(n); // Quantity of Philosopher's Mirrors
+        // Every leaf is a level the plan buys outright, so it is priced at its traditional cost
+        const consumedItems = leaves.map(({ level, quantity }) => ({
+            level,
+            quantity,
+            costEach: traditionalCosts[level],
+            totalCost: quantity * traditionalCosts[level],
+        }));
 
-        const lowerTierLevel = mirrorStartLevel - 2;
-        const upperTierLevel = mirrorStartLevel - 1;
+        const consumedItemsCost = consumedItems.reduce((sum, item) => sum + item.totalCost, 0);
+        const totalMirrorsCost = mirrorCount * mirrorPrice;
 
-        // Get cost of one item at each level from mirrorTargetCosts (base item for refined items)
-        const costLowerTier = mirrorTargetCosts[lowerTierLevel];
-        const costUpperTier = mirrorTargetCosts[upperTierLevel];
+        // Mirror combinations are instant, so only the leaves cost time and attempts
+        const totalTime = leaves.reduce((sum, { level, quantity }) => sum + quantity * traditionalTimes[level], 0);
+        const totalAttempts = leaves.reduce((sum, { level, quantity }) => sum + quantity * traditionalAttempts[level], 0);
+        const totalProtections = leaves.reduce(
+            (sum, { level, quantity }) => sum + quantity * (traditionalProtections[level] || 0),
+            0
+        );
 
-        // Get time to make one item at each level from mirrorTargetTimes
-        const timeLowerTier = mirrorTargetTimes[lowerTierLevel];
-        const timeUpperTier = mirrorTargetTimes[upperTierLevel];
+        // Every leaf starts from its own base copy — a mirror plan for +10 buys several items and
+        // combines them, which is the fact a totals-only answer hides and a shopping list cannot
+        const totalBaseItems = leaves.reduce((sum, { quantity }) => sum + quantity, 0);
 
-        // Get attempts to make one item at each level from mirrorTargetAttempts
-        const attemptsLowerTier = mirrorTargetAttempts[lowerTierLevel];
-        const attemptsUpperTier = mirrorTargetAttempts[upperTierLevel];
-
-        // Calculate total costs for consumed items and mirrors
-        const totalLowerTierCost = numLowerTier * costLowerTier;
-        const totalUpperTierCost = numUpperTier * costUpperTier;
-        const totalMirrorsCost = numMirrors * mirrorPrice;
-
-        // Calculate total time for mirror strategy
-        // Time = (numLowerTier × time per lower tier) + (numUpperTier × time per upper tier)
-        // Mirror combinations are instant (no additional time)
-        const totalTime = numLowerTier * timeLowerTier + numUpperTier * timeUpperTier;
-
-        // Calculate total attempts for mirror strategy
-        const totalAttempts = numLowerTier * attemptsLowerTier + numUpperTier * attemptsUpperTier;
-
-        // Build consumed items array for display
-        const consumedItems = [
-            {
-                level: lowerTierLevel,
-                quantity: numLowerTier,
-                costEach: costLowerTier,
-                totalCost: totalLowerTierCost,
-            },
-            {
-                level: upperTierLevel,
-                quantity: numUpperTier,
-                costEach: costUpperTier,
-                totalCost: totalUpperTierCost,
-            },
-        ];
+        // The per-attempt material bill is the same at every level, so the target-level strategy's
+        // breakdown (which is already multiplied by *its* attempts) scales to the plan's attempts
+        const materialMultiplier =
+            optimalTraditional.expectedAttempts > 0 ? totalAttempts / optimalTraditional.expectedAttempts : 0;
 
         // For mirror phase: ONLY consumed items + mirrors
         // The consumed item costs from targetCosts already include base/materials/protection
@@ -5936,40 +5970,91 @@
             protectionCost: 0, // Not applicable for mirror phase
             protectionItemHrid: null,
             protectionCount: 0,
-            consumedItemsCost: totalLowerTierCost + totalUpperTierCost,
+            consumedItemsCost,
             philosopherMirrorCost: totalMirrorsCost,
             totalCost: targetCosts[targetLevel], // Use recursive formula result for consistency
             mirrorStartLevel: mirrorStartLevel,
             usedMirror: true,
             traditionalCost: optimalTraditional.totalCost,
             consumedItems: consumedItems,
-            mirrorCount: numMirrors,
-            consumedItemHrid: consumedItemHrid,
+            mirrorCount: mirrorCount,
+            consumedItemHrid: itemHrid,
+            materialBill: buildMaterialBill({
+                materials: optimalTraditional.materialBreakdown,
+                materialMultiplier,
+                protectionItemHrid: optimalTraditional.protectionItemHrid || getCheapestProtectionPrice(itemHrid)?.itemHrid,
+                protectionCount: totalProtections,
+                protectionUnitPrice:
+                    optimalTraditional.protectionAskPrice || getCheapestProtectionPrice(itemHrid)?.price || 0,
+                mirrorCount,
+                mirrorPrice,
+                baseItemHrid: itemHrid,
+                baseCount: totalBaseItems,
+                baseUnitPrice: traditionalCosts[0],
+            }),
         };
+    }
+
+    /**
+     * Fixed price for untradeable trainee charms, which have no market listing.
+     */
+    const TRAINEE_CHARM_PRICE = 250000;
+
+    /**
+     * Price one enhancement material.
+     *
+     * Three callers used to each carry their own copy of these rules — trainee charms are
+     * untradeable and priced flat, coins are worth their face value, and a market quote with one
+     * side missing borrows the side that exists — and they had already drifted apart. This is the
+     * single answer all of them ask.
+     *
+     * @param {string} itemHrid - Material item HRID
+     * @param {'ask'|'bid'} [side='ask'] - Which side of the book to price against
+     * @returns {number} Unit price in coins, or 0 when nothing is known about the item
+     */
+    function getEnhancementMaterialPrice(itemHrid, side = 'ask') {
+        if (!itemHrid) return 0;
+
+        // Untradeable: no market listing exists, so use the fixed value on both sides
+        if (itemHrid.startsWith('/items/trainee_')) {
+            return TRAINEE_CHARM_PRICE;
+        }
+        if (itemHrid === '/items/coin') {
+            return 1;
+        }
+
+        const marketPrice = marketData_js.getItemPrices(itemHrid, 0);
+        if (marketPrice) {
+            let ask = marketPrice.ask;
+            let bid = marketPrice.bid;
+
+            // Match MCS behavior: when only one side is quoted, both sides use it
+            if (ask > 0 && bid < 0) bid = ask;
+            if (bid > 0 && ask < 0) ask = bid;
+
+            const price = side === 'bid' ? bid : ask;
+            if (price > 0) return price;
+        }
+
+        // Fallback: production cost, then NPC sell price
+        const gameData = dataManager.getInitClientData();
+        const materialDetail = gameData?.itemDetailMap?.[itemHrid];
+        return getProductionCost(itemHrid, side) || materialDetail?.sellPrice || 0;
     }
 
     /**
      * Calculate total cost for enhancement path
      * Matches original MWI Tools v25.0 cost calculation
+     * @param {string} itemHrid - Item HRID
+     * @param {number} targetLevel - Target enhancement level
+     * @param {number} protectFrom - Protection threshold
+     * @param {Object} config - Enhancement configuration
+     * @param {Object} pathResult - Markov result for this strategy, already computed by the caller
      * @private
      */
-    function calculateTotalCost(itemHrid, targetLevel, protectFrom, config) {
+    function calculateTotalCost(itemHrid, targetLevel, protectFrom, config, pathResult) {
         const gameData = dataManager.getInitClientData();
         const itemDetails = gameData.itemDetailMap[itemHrid];
-        const itemLevel = itemDetails.itemLevel || 1;
-
-        // Calculate total attempts for full path (0 to targetLevel)
-        const pathResult = enhancementCalculator_js.calculateEnhancement({
-            enhancingLevel: config.enhancingLevel,
-            houseLevel: config.houseLevel,
-            toolBonus: config.toolBonus || 0,
-            speedBonus: config.speedBonus || 0,
-            itemLevel,
-            targetLevel,
-            protectFrom,
-            blessedTea: config.teas.blessed,
-            guzzlingBonus: config.guzzlingBonus,
-        });
 
         // Calculate per-action material cost (same for all enhancement levels)
         // enhancementCosts is a flat array of materials needed per attempt
@@ -5978,39 +6063,8 @@
         if (itemDetails.enhancementCosts) {
             for (const material of itemDetails.enhancementCosts) {
                 const materialDetail = gameData.itemDetailMap[material.itemHrid];
-                let price;
-                let bidPrice = 0;
-
-                // Special case: Trainee charms have fixed 250k price (untradeable)
-                if (material.itemHrid.startsWith('/items/trainee_')) {
-                    price = 250000;
-                    bidPrice = 250000;
-                } else if (material.itemHrid === '/items/coin') {
-                    price = 1; // Coins have face value of 1
-                    bidPrice = 1;
-                } else {
-                    const marketPrice = marketData_js.getItemPrices(material.itemHrid, 0);
-                    if (marketPrice) {
-                        let ask = marketPrice.ask;
-                        let bid = marketPrice.bid;
-
-                        // Match MCS behavior: if one price is positive and other is negative, use positive for both
-                        if (ask > 0 && bid < 0) {
-                            bid = ask;
-                        }
-                        if (bid > 0 && ask < 0) {
-                            ask = bid;
-                        }
-
-                        // MCS uses just ask for material prices
-                        price = ask;
-                        bidPrice = bid;
-                    } else {
-                        // Fallback: production cost, then NPC sell price
-                        price = getProductionCost(material.itemHrid, 'ask') || materialDetail?.sellPrice || 0;
-                        bidPrice = getProductionCost(material.itemHrid, 'bid') || materialDetail?.sellPrice || 0;
-                    }
-                }
+                const price = getEnhancementMaterialPrice(material.itemHrid, 'ask');
+                const bidPrice = getEnhancementMaterialPrice(material.itemHrid, 'bid');
                 perActionCost += price * material.count;
 
                 const totalQuantity = material.count * pathResult.attempts;
@@ -6212,6 +6266,46 @@
     }
 
     /**
+     * Get total crafting chain time for an item's upgrade path (recursive).
+     * Sums base action times through the upgrade item chain, stopping when market is cheaper.
+     * @param {string} itemHrid - Item HRID to get production chain time for
+     * @returns {number} Total chain time in seconds (base times, no speed bonuses applied)
+     */
+    function getProductionChainTime(itemHrid) {
+        if (_chainTimeCache.has(itemHrid)) return _chainTimeCache.get(itemHrid);
+        const result = _computeProductionChainTime(itemHrid);
+        _chainTimeCache.set(itemHrid, result);
+        return result;
+    }
+
+    function _computeProductionChainTime(itemHrid) {
+        const gameData = dataManager.getInitClientData();
+        if (!gameData?.actionDetailMap) return 0;
+
+        let action = null;
+        for (const act of Object.values(gameData.actionDetailMap)) {
+            if (act.outputItems?.[0]?.itemHrid === itemHrid) {
+                action = act;
+                break;
+            }
+        }
+
+        if (!action || !action.baseTimeCost) return 0;
+
+        let totalTime = action.baseTimeCost / 1e9;
+
+        if (action.upgradeItemHrid) {
+            const marketPrice = marketData_js.getItemPrice(action.upgradeItemHrid, { mode: 'ask' }) || 0;
+            const craftPrice = getProductionCost(action.upgradeItemHrid, 'ask');
+            if (craftPrice > 0 && (marketPrice === 0 || craftPrice < marketPrice)) {
+                totalTime += getProductionChainTime(action.upgradeItemHrid);
+            }
+        }
+
+        return totalTime;
+    }
+
+    /**
      * Get cheapest protection item price
      * Tests: item itself, mirror of protection, and specific protection items
      * @private
@@ -6243,33 +6337,6 @@
             price: cheapestPrice === Infinity ? 0 : cheapestPrice,
             itemHrid: cheapestItemHrid,
         };
-    }
-
-    /**
-     * Fibonacci calculation for item quantities (from Enhancelator)
-     * @private
-     */
-    function fib(n) {
-        let a = 1,
-            b = 1;
-        for (let i = 2; i <= n; i++) {
-            [a, b] = [b, a + b];
-        }
-        return b;
-    }
-
-    /**
-     * Mirror Fibonacci calculation for mirror quantities (from Enhancelator)
-     * @private
-     */
-    function mirrorFib(n) {
-        if (n === 0) return 1;
-        let a = 1,
-            b = 2;
-        for (let i = 2; i <= n; i++) {
-            [a, b] = [b, a + b + 1];
-        }
-        return b;
     }
 
     /**
@@ -6594,7 +6661,7 @@
         }
 
         const actionName = dom_js.getOriginalText(actionNameElement);
-        const actionHrid = getActionHridFromName(actionName);
+        const actionHrid = gameLookups_js.getActionHridFromName(actionName);
 
         if (!actionHrid) {
             return;
@@ -6802,7 +6869,7 @@
 
         // Find the item HRID from the name
         const gameData = dataManager.getInitClientData();
-        const itemHrid = getItemHridFromName(itemName);
+        const itemHrid = gameLookups_js.getItemHridFromName(itemName);
 
         if (!itemHrid) {
             return;
@@ -7087,151 +7154,76 @@
     const tooltipObserver = new TooltipObserver();
 
     /**
-     * Enhancement XP Calculations
-     * Based on Ultimate Enhancement Tracker formulas
+     * Alchemy coin fees.
+     *
+     * The game charges gold to run an alchemy action, and that charge is nowhere in
+     * the game's data: `actionDetails.coinCost` is 0 for every `/actions/alchemy/*`
+     * action, and nothing the websocket reports records the fee that was actually
+     * paid (the decompose tracker drops the coin entry from `endCharacterItems`
+     * outright). Both formulas below are reverse-engineered, and this module is the
+     * one place that states them so the callers cannot drift apart again.
      */
 
+    /** Alchemy types billed by item level: (10 + itemLevel) × 5 per item */
+    const LEVEL_PRICED_TYPES = new Set(['decompose', 'unrefine']);
 
     /**
-     * Get base item level from item HRID
-     * @param {string} itemHrid - Item HRID
-     * @returns {number} Base item level
+     * Coinify is not billed at all — the item is the input and coins are the output,
+     * so there is no separate gold fee to pay. Every other coinify site in the repo
+     * already assumed this (the profit calculator hardcodes `coinCost = 0`, the action
+     * planner and the gold summary both skip coinify outright); only the coinify history
+     * viewer charged the transmute fee, which overstated every session's cost. The rule
+     * lives here now so the sites cannot disagree again.
      */
-    function getBaseItemLevel(itemHrid) {
-        try {
-            const gameData = dataManager.getInitClientData();
-            const itemData = gameData?.itemDetailMap?.[itemHrid];
+    const FREE_TYPES = new Set(['coinify']);
 
-            if (itemData?.itemLevel) {
-                return itemData.itemLevel;
-            }
+    /**
+     * Coin fee for one alchemy action, including the item's bulk multiplier.
+     *
+     * Three families:
+     *  - decompose / unrefine — `(10 + itemLevel) * 5` per item
+     *  - transmute — `max(50, floor(sellPrice / 5))` per item
+     *  - coinify — free (see FREE_TYPES)
+     *
+     * Decompose used `max(50, floor(sellPrice / 5))` in the history viewer while
+     * every other decompose site used the item-level formula. Nothing in the repo
+     * can adjudicate that — the fee is absent from game data and unrecorded in
+     * session history — so the item-level formula won, being the one the other
+     * decompose sites and upstream already agreed on.
+     *
+     * @param {Object|null|undefined} itemDetails - Item details from dataManager
+     * @param {'decompose'|'unrefine'|'transmute'|'coinify'} alchemyType - Which alchemy action
+     * @param {number} [bulkMultiplierOverride] - Bulk size to bill at, for history callers that
+     *   recorded the multiplier in effect at the time rather than the item's current one
+     * @returns {number} Coin fee per action, or 0 when the item is unknown
+     */
+    function getAlchemyCoinCost(itemDetails, alchemyType, bulkMultiplierOverride) {
+        if (!itemDetails) return 0;
+        if (FREE_TYPES.has(alchemyType)) return 0;
 
-            return 0;
-        } catch {
-            return 0;
+        const bulkMultiplier = itemDetails.alchemyDetail?.bulkMultiplier || 1;
+
+        if (LEVEL_PRICED_TYPES.has(alchemyType)) {
+            const itemLevel = itemDetails.itemLevel || 1;
+            return (10 + itemLevel) * 5 * bulkMultiplier;
         }
+
+        const sellPrice = itemDetails.sellPrice || 0;
+        return Math.max(50, Math.floor(sellPrice / 5)) * bulkMultiplier;
     }
 
     /**
-     * Calculate enhancing action time from the game's buff maps
-     * Reads the pre-computed action_speed flatBoost values from all buff sources
-     * and adds level advantage, matching the game's actual speed calculation
-     * @param {string} itemHrid - Item HRID being enhanced
-     * @returns {number} Per-action time in seconds
+     * Which alchemy type an action hrid names, for callers holding an action rather
+     * than a panel selection.
+     * @param {string} actionHrid - e.g. `/actions/alchemy/decompose`
+     * @returns {string|null} The alchemy type, or null when the hrid is not alchemy
      */
-    function getEnhancingActionTime(itemHrid) {
-        try {
-            const charData = dataManager.characterData;
-            if (!charData) return 12;
-
-            // Get base time from game data
-            const actionDetails = dataManager.getActionDetails('/actions/enhancing/enhance');
-            const baseTime = actionDetails?.baseTimeCost ? actionDetails.baseTimeCost / 1e9 : 12;
-
-            // Get enhancing skill level
-            const enhancingSkill = charData.characterSkills?.find((s) => s.skillHrid === '/skills/enhancing');
-            const baseLevel = enhancingSkill?.level || 1;
-
-            // Get tea level bonus from consumable buff map
-            let teaLevelBonus = 0;
-            const consumableBuffs = charData.consumableActionTypeBuffsMap?.['/action_types/enhancing'];
-            if (Array.isArray(consumableBuffs)) {
-                for (const buff of consumableBuffs) {
-                    if (buff.typeHrid === '/buff_types/enhancing_level') {
-                        teaLevelBonus = buff.flatBoost || 0;
-                    }
-                }
-            }
-
-            // Sum action_speed flatBoost from ALL buff sources (equipment, house, community, tea)
-            let totalSpeedBuff = 0;
-
-            const buffMaps = [
-                charData.equipmentActionTypeBuffsMap,
-                charData.houseActionTypeBuffsMap,
-                charData.guildActionTypeBuffsMap,
-                charData.communityActionTypeBuffsMap,
-                charData.consumableActionTypeBuffsMap,
-            ];
-
-            for (const buffMap of buffMaps) {
-                const enhancingBuffs = buffMap?.['/action_types/enhancing'];
-                if (!Array.isArray(enhancingBuffs)) continue;
-
-                for (const buff of enhancingBuffs) {
-                    if (buff.typeHrid === '/buff_types/action_speed') {
-                        totalSpeedBuff += buff.flatBoost || 0;
-                    }
-                }
-            }
-
-            // Add personal buffs (Labyrinth seals)
-            totalSpeedBuff += dataManager.getPersonalBuffFlatBoost('/action_types/enhancing', '/buff_types/action_speed');
-
-            // Add level advantage: (effectiveLevel - itemLevel) / 100
-            const effectiveLevel = baseLevel + teaLevelBonus;
-            const itemLevel = getBaseItemLevel(itemHrid);
-            if (effectiveLevel > itemLevel) {
-                totalSpeedBuff += (effectiveLevel - itemLevel) / 100;
-            }
-
-            return Math.max(profitConstants_js.MIN_ACTION_TIME_SECONDS, baseTime / (1 + totalSpeedBuff));
-        } catch {
-            return 12;
+    function getAlchemyTypeFromActionHrid(actionHrid) {
+        if (!actionHrid) return null;
+        for (const type of ['decompose', 'unrefine', 'transmute', 'coinify']) {
+            if (actionHrid.includes(type)) return type;
         }
-    }
-
-    /**
-     * Calculate enhancement predictions using character stats
-     * @param {string} itemHrid - Item HRID being enhanced
-     * @param {number} startLevel - Starting enhancement level
-     * @param {number} targetLevel - Target enhancement level
-     * @param {number} protectFrom - Level to start using protection
-     * @returns {Object|null} Prediction data or null if cannot calculate
-     */
-    function calculateEnhancementPredictions(itemHrid, startLevel, targetLevel, protectFrom) {
-        try {
-            // Get item level
-            const itemLevel = getBaseItemLevel(itemHrid);
-
-            // Use getEnhancingParams() for all character stats (level, speed, success, teas, etc.)
-            const params = enhancementConfig_js.getEnhancingParams();
-
-            // Check for blessed tea
-            const hasBlessed = params.teas?.blessed || false;
-
-            // Calculate predictions (Markov chain for attempts, protections, success rates)
-            const result = enhancementCalculator_js.calculateEnhancement({
-                enhancingLevel: params.enhancingLevel,
-                houseLevel: params.houseLevel,
-                toolBonus: params.toolBonus,
-                speedBonus: params.speedBonus,
-                itemLevel,
-                targetLevel,
-                startLevel,
-                protectFrom,
-                blessedTea: hasBlessed,
-                guzzlingBonus: params.guzzlingBonus,
-            });
-
-            if (!result) {
-                return null;
-            }
-
-            // Calculate per-action time from the game's buff maps (authoritative source)
-            // instead of the hardcoded formula in calculateEnhancement
-            const perActionTime = getEnhancingActionTime(itemHrid);
-
-            return {
-                expectedAttempts: Math.round(result.attemptsRounded),
-                expectedProtections: Math.round(result.protectionCount),
-                expectedTime: perActionTime * result.attempts,
-                perActionTime,
-                successMultiplier: result.successMultiplier,
-            };
-        } catch {
-            return null;
-        }
+        return null;
     }
 
     /**
@@ -7477,6 +7469,7 @@
          * @param {HTMLElement} tooltipContent - The QueuedActions_queuedActionsTooltip container
          */
         injectQueueTimesTooltip(tooltipContent) {
+            if (!config.getSetting('actionQueue')) return;
             try {
                 const currentActions = dataManager.getCurrentActions();
                 if (!currentActions || currentActions.length === 0) return;
@@ -7876,11 +7869,20 @@
                 return; // Already created and still in the DOM
             }
             this.displayElement = null;
+            this.profitElement = null;
 
-            const orphan = document.getElementById('mwi-action-time-display');
-            if (orphan) {
-                orphan.remove();
-            }
+            // Remove any orphaned copies of our injected elements before creating fresh ones.
+            // The game can swap out the action-name subtree in a way that drops one of our two
+            // tracked siblings from `this` without removing it from the live DOM (e.g. only the
+            // time-display node gets torn down while the profit node survives elsewhere) — a
+            // plain `this.profitElement = document.createElement(...)` reassignment would then
+            // orphan the old node, leaving two "#mwi-action-profit-display" elements on the page
+            // showing stale-vs-fresh data (same rate, different "remaining", since the queue moved
+            // on between the two renders). Querying by data attribute — rather than
+            // getElementById, which only ever returns the first match — guarantees every stray
+            // duplicate is cleared, keying the idempotent injection so exactly one of each exists.
+            document.querySelectorAll('[data-mwi-action-bar-widget="time"]').forEach((el) => el.remove());
+            document.querySelectorAll('[data-mwi-action-bar-widget="profit"]').forEach((el) => el.remove());
 
             const actionNameContainer = document.querySelector('div[class*="Header_actionName"]');
             if (!actionNameContainer) {
@@ -7893,6 +7895,7 @@
             // Create display element
             this.displayElement = document.createElement('div');
             this.displayElement.id = 'mwi-action-time-display';
+            this.displayElement.setAttribute('data-mwi-action-bar-widget', 'time');
             this.displayElement.style.cssText = `
             font-size: 0.9em;
             color: var(--text-color-secondary, ${config.COLOR_TEXT_SECONDARY});
@@ -7908,6 +7911,7 @@
             // Create profit element (below time display)
             this.profitElement = document.createElement('div');
             this.profitElement.id = 'mwi-action-profit-display';
+            this.profitElement.setAttribute('data-mwi-action-bar-widget', 'profit');
             this.profitElement.style.cssText = `
             font-size: 0.9em;
             color: var(--text-color-secondary, ${config.COLOR_TEXT_SECONDARY});
@@ -9051,9 +9055,16 @@
                         limitType = `material:${alchItemHrid}`;
                     }
 
-                    if (actionDetails.coinCost && actionDetails.coinCost > 0) {
+                    // Alchemy coin fees are not in the game's action data — actionDetails.coinCost
+                    // is 0 for every alchemy action, so gold could never be the limiting material.
+                    // The formulas live in utils/alchemy-fees.js, shared with every other fee site.
+                    const alchemyType = getAlchemyTypeFromActionHrid(actionDetails.hrid);
+                    const alchemyCoinCost =
+                        alchemyType && alchemyType !== 'coinify' ? getAlchemyCoinCost(alchItemDetails, alchemyType) : 0;
+
+                    if (alchemyCoinCost > 0) {
                         const availableGold = byHrid['/items/coin'] || 0;
-                        const maxFromGold = Math.floor(availableGold / actionDetails.coinCost);
+                        const maxFromGold = Math.floor(availableGold / alchemyCoinCost);
                         if (maxFromGold < minLimit) {
                             minLimit = maxFromGold;
                             limitType = 'gold';
@@ -9251,6 +9262,10 @@
          * @param {HTMLElement} queueMenu - Queue menu container element
          */
         injectQueueTimes(queueMenu) {
+            // The setting this section is named for; the value rows are created in
+            // here too, so off means the queue is left entirely untouched
+            if (!config.getSetting('actionQueue')) return;
+
             // Track if we need to reconnect observer at the end
             let shouldReconnectObserver = false;
 
@@ -9764,11 +9779,15 @@
             }
 
             if (!profitData) {
-                const gatheringProfit = await calculateGatheringProfit(action.actionHrid);
+                const gatheringProfit = await gatheringProfit_js.calculateGatheringProfit(action.actionHrid);
                 if (gatheringProfit) {
                     profitData = gatheringProfit;
                 } else if (actionDetails.outputItems?.[0]?.itemHrid) {
-                    profitData = await profitCalculator.calculateProfit(actionDetails.outputItems[0].itemHrid);
+                    // Named, because the panel is showing one action: without it the calculator
+                    // could answer about a different recipe that happens to yield the same item
+                    profitData = await profitCalculator.calculateProfit(actionDetails.outputItems[0].itemHrid, {
+                        actionHrid: action.actionHrid,
+                    });
                 }
             }
 
@@ -9876,11 +9895,13 @@
                 }
 
                 if (!profitData) {
-                    const gatheringProfit = await calculateGatheringProfit(actionHrid);
+                    const gatheringProfit = await gatheringProfit_js.calculateGatheringProfit(actionHrid);
                     if (gatheringProfit) {
                         profitData = gatheringProfit;
                     } else if (actionDetails.outputItems?.[0]?.itemHrid) {
-                        profitData = await profitCalculator.calculateProfit(actionDetails.outputItems[0].itemHrid);
+                        profitData = await profitCalculator.calculateProfit(actionDetails.outputItems[0].itemHrid, {
+                            actionHrid,
+                        });
                     }
                 }
 
@@ -10053,6 +10074,13 @@
         _tick() {
             this.rafId = requestAnimationFrame(() => this._tick());
 
+            // The readout shows tenths of a second, so ~10 redraws a second is all
+            // it can display — running the getComputedStyle work at 60–120fps just
+            // burns battery on style recalculation
+            const now = performance.now();
+            if (this._lastTickAt && now - this._lastTickAt < 100) return;
+            this._lastTickAt = now;
+
             if (!this.textEl || !this.textEl.isConnected || !this.totalTime) return;
 
             const span = this.textEl.querySelector('span');
@@ -10139,7 +10167,7 @@
             const el = document.querySelector('use[href*="items_sprite"]');
             _qibSpriteUrl = el ? el.getAttribute('href').split('#')[0] : '';
         }
-        const itemSuffix = SCROLL_BUFF_ITEMS[buffTypeHrid];
+        const itemSuffix = scrollBuffValues_js.SCROLL_BUFF_ITEMS[buffTypeHrid];
         if (!_qibSpriteUrl || !itemSuffix) return '';
         return (
             `<svg width="${size}" height="${size}" style="vertical-align:middle;margin-right:3px">` +
@@ -10951,7 +10979,7 @@
          * @returns {Object|null} Action details or null if not found
          */
         getActionDetailsByName(actionName, gameData) {
-            const hrid = getActionHridFromName(actionName);
+            const hrid = gameLookups_js.getActionHridFromName(actionName);
             if (!hrid) {
                 return null;
             }
@@ -11874,7 +11902,7 @@
 
             const actionName = nameElement.textContent.trim();
 
-            return getActionHridFromName(actionName);
+            return gameLookups_js.getActionHridFromName(actionName);
         }
 
         /**
@@ -12141,6 +12169,21 @@
                 return;
             }
 
+            // Pin feature is off (no pin element is ever created), but the display already
+            // exists — this is a sort-triggered re-insertion, not a fresh panel. Re-register
+            // and return without calling triggerSort() again; otherwise every re-insertion
+            // appends a duplicate display and re-triggers the sort, looping forever.
+            if (existingDisplay && !config.getSetting('actions_pinnedPage')) {
+                this.actionElements.set(actionPanel, {
+                    actionHrid,
+                    displayElement: existingDisplay,
+                    pinElement: null,
+                });
+                this.scheduleStatsLayoutSync(actionPanel, existingDisplay);
+                this.getResizeObserver().observe(existingDisplay);
+                return;
+            }
+
             // Make sure the action panel has relative positioning
             if (actionPanel.style.position !== 'relative' && actionPanel.style.position !== 'absolute') {
                 actionPanel.style.position = 'relative';
@@ -12384,11 +12427,11 @@
 
             if (actionDetails) {
                 if (GATHERING_TYPES$2.includes(actionDetails.type)) {
-                    const profitData = await calculateGatheringProfit(data.actionHrid);
+                    const profitData = await gatheringProfit_js.calculateGatheringProfit(data.actionHrid);
                     profitPerHour = profitData?.profitPerHour || null;
                     hasMissingPrices = profitData?.hasMissingPrices || false;
                 } else if (PRODUCTION_TYPES$5.includes(actionDetails.type)) {
-                    const profitData = await calculateProductionProfit(data.actionHrid);
+                    const profitData = await productionProfit_js.calculateProductionProfit(data.actionHrid);
                     profitPerHour = profitData?.profitPerHour || null;
                     hasMissingPrices = profitData?.hasMissingPrices || false;
                     outputPriceEstimated = profitData?.outputPriceEstimated || false;
@@ -13165,7 +13208,7 @@
                 .join('')
                 .trim();
 
-            return getActionHridFromName(actionName);
+            return gameLookups_js.getActionHridFromName(actionName);
         }
 
         /**
@@ -13184,7 +13227,7 @@
             const { skipRender = false } = options;
 
             // Calculate profit/hr
-            const profitData = await calculateGatheringProfit(data.actionHrid);
+            const profitData = await gatheringProfit_js.calculateGatheringProfit(data.actionHrid);
             const profitPerHour = profitData?.profitPerHour || null;
             const hasMissingPrices = profitData?.hasMissingPrices || false;
 
@@ -13884,7 +13927,7 @@
                 .map((node) => node.textContent)
                 .join('')
                 .trim();
-            return getActionHridFromName(actionName);
+            return gameLookups_js.getActionHridFromName(actionName);
         }
 
         cleanup() {
@@ -13903,377 +13946,6 @@
     }
 
     const requiredMaterials = new RequiredMaterials();
-
-    /**
-     * Marketplace Buy Modal Autofill Utility
-     * Provides shared functionality for auto-filling quantity in marketplace buy modals
-     * Used by missing materials features (actions, houses, etc.)
-     */
-
-
-    /**
-     * Find the quantity input in the buy modal
-     * For equipment items, there are multiple number inputs (enhancement level + quantity)
-     * We need to find the correct one by checking parent containers for label text
-     * @param {HTMLElement} modal - Modal container element
-     * @returns {HTMLInputElement|null} Quantity input element or null
-     */
-    function findQuantityInput(modal) {
-        // Get all number inputs in the modal
-        const allInputs = Array.from(modal.querySelectorAll('input[type="number"]'));
-
-        if (allInputs.length === 0) {
-            return null;
-        }
-
-        if (allInputs.length === 1) {
-            // Only one input - must be quantity
-            return allInputs[0];
-        }
-
-        // Multiple inputs - identify by checking CLOSEST parent first
-        // Strategy 1: Check each parent level individually, prioritizing closer parents
-        // This prevents matching on the outermost container that has all text
-        for (let level = 0; level < 4; level++) {
-            for (let i = 0; i < allInputs.length; i++) {
-                const input = allInputs[i];
-                let parent = input.parentElement;
-
-                // Navigate to the specific level
-                for (let j = 0; j < level && parent; j++) {
-                    parent = parent.parentElement;
-                }
-
-                if (!parent) continue;
-
-                const text = parent.textContent;
-
-                // At this specific level, check if it contains "Quantity" but NOT "Enhancement Level"
-                if (text.includes('Quantity') && !text.includes('Enhancement Level')) {
-                    return input;
-                }
-            }
-        }
-
-        // Strategy 2: Exclude inputs that have "Enhancement Level" in close parents (level 0-2)
-        for (let i = 0; i < allInputs.length; i++) {
-            const input = allInputs[i];
-            let parent = input.parentElement;
-            let isEnhancementInput = false;
-
-            // Check only the first 3 levels (not the outermost container)
-            for (let j = 0; j < 3 && parent; j++) {
-                const text = parent.textContent;
-
-                if (text.includes('Enhancement Level') && !text.includes('Quantity')) {
-                    isEnhancementInput = true;
-                    break;
-                }
-
-                parent = parent.parentElement;
-            }
-
-            if (!isEnhancementInput) {
-                return input;
-            }
-        }
-
-        // Fallback: Return first input and log warning
-        console.warn('[MarketplaceAutofill] Could not definitively identify quantity input, using first input');
-        return allInputs[0];
-    }
-
-    /**
-     * Handle buy modal appearance and auto-fill quantity if available
-     * @param {HTMLElement} modal - Modal container element
-     * @param {number|null} activeQuantity - Static quantity to auto-fill (null if using pending fn)
-     * @param {Function|null} pendingCalculation - Lazy fn that returns current quantity (takes priority)
-     */
-    function handleBuyModal(modal, activeQuantity, pendingCalculation) {
-        // Resolve quantity: prefer lazy recalculation over stored static value
-        const quantity = pendingCalculation ? pendingCalculation() : activeQuantity;
-
-        // Check if we have a quantity to fill
-        if (!quantity || quantity <= 0) {
-            return;
-        }
-
-        // Check if this is a "Buy Now" modal
-        const header = modal.querySelector('div[class*="MarketplacePanel_header"]');
-        if (!header) {
-            return;
-        }
-
-        const headerText = header.textContent.trim();
-        if (!headerText.includes('Buy Now') && !headerText.includes('Buy Listing')) {
-            return;
-        }
-
-        // Find the quantity input - need to be specific to avoid enhancement level input
-        const quantityInput = findQuantityInput(modal);
-        if (!quantityInput) {
-            return;
-        }
-
-        // Set the quantity value
-        const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-        nativeInputValueSetter.call(quantityInput, quantity.toString());
-
-        // Trigger input event to notify React
-        const inputEvent = new Event('input', { bubbles: true });
-        quantityInput.dispatchEvent(inputEvent);
-    }
-
-    /**
-     * Create an autofill manager instance
-     * Manages storing quantity to autofill and observing buy modals
-     * @param {string} observerId - Unique ID for this observer (e.g., 'MissingMats-Actions')
-     * @returns {Object} Autofill manager with methods: setQuantity, setPendingCalculation, clearQuantity, initialize, cleanup
-     */
-    function createAutofillManager(observerId) {
-        let activeQuantity = null;
-        let pendingCalculation = null;
-        let observerUnregister = null;
-
-        return {
-            /**
-             * Set a static quantity to auto-fill in the next buy modal
-             * @param {number} quantity - Quantity to auto-fill
-             */
-            setQuantity(quantity) {
-                activeQuantity = quantity;
-                pendingCalculation = null;
-            },
-
-            /**
-             * Set a lazy calculation function that is called each time a buy modal opens.
-             * Takes priority over setQuantity — quantity is recomputed fresh on every modal open,
-             * so subsequent purchases within the same session always autofill the remaining needed amount.
-             * @param {Function} fn - Function returning the current quantity to fill
-             */
-            setPendingCalculation(fn) {
-                pendingCalculation = fn;
-                activeQuantity = null;
-            },
-
-            /**
-             * Clear the stored quantity (cancel autofill)
-             */
-            clearQuantity() {
-                activeQuantity = null;
-                pendingCalculation = null;
-            },
-
-            /**
-             * Get the current active quantity
-             * @returns {number|null} Current quantity or null
-             */
-            getQuantity() {
-                return pendingCalculation ? pendingCalculation() : activeQuantity;
-            },
-
-            /**
-             * Initialize buy modal observer
-             * Sets up watching for buy modals to appear and auto-fills them
-             */
-            initialize() {
-                observerUnregister = domObserver.onClass(observerId, 'Modal_modalContainer', (modal) => {
-                    handleBuyModal(modal, activeQuantity, pendingCalculation);
-                    // Clear static quantity after use (one-shot) — pendingCalculation persists intentionally
-                    if (activeQuantity !== null && !pendingCalculation) {
-                        activeQuantity = null;
-                    }
-                });
-            },
-
-            /**
-             * Cleanup observer
-             * Stops watching for buy modals and clears quantity
-             */
-            cleanup() {
-                if (observerUnregister) {
-                    observerUnregister();
-                    observerUnregister = null;
-                }
-                activeQuantity = null;
-                pendingCalculation = null;
-            },
-        };
-    }
-
-    /**
-     * Marketplace Custom Tabs Utility
-     * Provides shared functionality for creating and managing custom marketplace tabs
-     * Used by missing materials features (actions, houses, etc.)
-     */
-
-
-    /**
-     * Create a custom material tab for the marketplace
-     * @param {Object} material - Material data object
-     * @param {string} material.itemHrid - Item HRID
-     * @param {string} material.itemName - Display name for the item
-     * @param {number} material.missing - Amount missing (0 if sufficient)
-     * @param {number} [material.queued=0] - Amount reserved by queue
-     * @param {boolean} material.isTradeable - Whether item can be traded
-     * @param {HTMLElement} referenceTab - Tab element to clone structure from
-     * @param {Function} onClickCallback - Callback when tab is clicked, receives (e, material)
-     * @returns {HTMLElement} Created tab element
-     */
-    function createMaterialTab(material, referenceTab, onClickCallback) {
-        // Clone reference tab structure
-        const tab = referenceTab.cloneNode(true);
-
-        // Mark as custom tab for later identification
-        tab.setAttribute('data-mwi-custom-tab', 'true');
-        tab.setAttribute('data-item-hrid', material.itemHrid);
-        tab.setAttribute('data-missing-quantity', material.missing.toString());
-
-        // Color coding:
-        // - Red: Missing materials (missing > 0)
-        // - Green: Sufficient materials (missing = 0)
-        // - Gray: Not tradeable
-        let statusColor;
-        let statusText;
-
-        if (!material.isTradeable) {
-            statusColor = '#888888'; // Gray - not tradeable
-            statusText = 'Not Tradeable';
-        } else if (material.missing > 0) {
-            statusColor = '#ef4444'; // Red - missing materials
-            // Show queued amount if any materials are reserved by queue
-            const queuedText = material.queued > 0 ? ` (${formatters_js.formatWithSeparator(material.queued)} Q'd)` : '';
-            statusText = `Missing: ${formatters_js.formatWithSeparator(material.missing)}${queuedText}`;
-        } else {
-            statusColor = '#4ade80'; // Green - sufficient materials
-            statusText = `Sufficient (${formatters_js.formatWithSeparator(material.required)})`;
-        }
-
-        // Update text content
-        const badgeSpan = tab.querySelector('[class*="TabsComponent_badge"]');
-        if (badgeSpan) {
-            // Title case: capitalize first letter of each word
-            const titleCaseName = material.itemName
-                .split(' ')
-                .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
-                .join(' ');
-
-            badgeSpan.innerHTML = `
-            <div style="text-align: center;">
-                <div>${titleCaseName}</div>
-                <div style="font-size: 0.75em; color: ${statusColor};">
-                    ${statusText}
-                </div>
-            </div>
-        `;
-        }
-
-        // Gray out if not tradeable
-        if (!material.isTradeable) {
-            tab.style.opacity = '0.5';
-            tab.style.cursor = 'not-allowed';
-        }
-
-        // Remove selected state
-        tab.classList.remove('Mui-selected');
-        tab.setAttribute('aria-selected', 'false');
-        tab.setAttribute('tabindex', '-1');
-
-        // Add click handler
-        tab.addEventListener('click', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-
-            if (!material.isTradeable) {
-                // Not tradeable - do nothing
-                return;
-            }
-
-            // Call the provided callback
-            if (onClickCallback) {
-                onClickCallback(e, material);
-            }
-        });
-
-        return tab;
-    }
-
-    /**
-     * Remove all custom material tabs from the marketplace
-     */
-    function removeMaterialTabs() {
-        const customTabs = document.querySelectorAll('[data-mwi-custom-tab="true"]');
-        customTabs.forEach((tab) => tab.remove());
-    }
-
-    /**
-     * Setup marketplace cleanup observer
-     * Watches for marketplace panel removal and calls cleanup callback
-     * @param {Function} onCleanup - Callback when marketplace closes, receives no args
-     * @param {Array} tabsArray - Array reference to track tabs (will be checked for length)
-     * @returns {Function} Unregister function to stop observing
-     */
-    function setupMarketplaceCleanupObserver(onCleanup, tabsArray) {
-        let pollInterval = null;
-
-        function poll() {
-            if (!tabsArray || tabsArray.length === 0) return;
-
-            // If custom tabs were removed from DOM, clean up
-            const hasCustomTabsInDOM = tabsArray.some((tab) => document.body.contains(tab));
-            if (!hasCustomTabsInDOM) {
-                if (onCleanup) onCleanup();
-                return;
-            }
-
-            // If marketplace panel is hidden (navigated away), clean up
-            const marketplacePanel = document.querySelector('.MarketplacePanel_marketplacePanel__21b7o');
-            const subPanelContainer = marketplacePanel?.closest('.MainPanel_subPanelContainer__1i-H9');
-            if (subPanelContainer && getComputedStyle(subPanelContainer).display === 'none') {
-                if (onCleanup) onCleanup();
-            }
-        }
-
-        pollInterval = setInterval(poll, 1000);
-
-        return () => {
-            if (pollInterval) {
-                clearInterval(pollInterval);
-                pollInterval = null;
-            }
-        };
-    }
-
-    /**
-     * Get game object via React fiber
-     * @returns {Object|null} Game component instance
-     */
-    function getGameObject$2() {
-        const rootEl = document.getElementById('root');
-        const rootFiber = rootEl?._reactRootContainer?.current || rootEl?._reactRootContainer?._internalRoot?.current;
-        if (!rootFiber) return null;
-
-        function find(fiber) {
-            if (!fiber) return null;
-            if (fiber.stateNode?.handleGoToMarketplace) return fiber.stateNode;
-            return find(fiber.child) || find(fiber.sibling);
-        }
-
-        return find(rootFiber);
-    }
-
-    /**
-     * Navigate to marketplace for a specific item
-     * @param {string} itemHrid - Item HRID to navigate to
-     * @param {number} enhancementLevel - Enhancement level (default 0)
-     */
-    function navigateToMarketplace(itemHrid, enhancementLevel = 0) {
-        const game = getGameObject$2();
-        if (game?.handleGoToMarketplace) {
-            game.handleGoToMarketplace(itemHrid, enhancementLevel);
-        }
-        // Silently fail if game API unavailable - feature still provides value without auto-navigation
-    }
 
     /**
      * Missing Materials Marketplace Button
@@ -14296,7 +13968,7 @@
     let storedNumActions = 0;
     let storedEnhancementContext = null;
     const timerRegistry = timerRegistry_js.createTimerRegistry();
-    const autofillManager$1 = createAutofillManager('MissingMats-Actions');
+    const autofillManager$1 = marketplaceAutofill_js.createAutofillManager('MissingMats-Actions');
 
     /**
      * Enhancement panel debounce timeout
@@ -14318,7 +13990,7 @@
      * Initialize missing materials button feature
      */
     function initialize$1() {
-        cleanupObserver$1 = setupMarketplaceCleanupObserver(handleMarketplaceCleanup, currentMaterialsTabs);
+        cleanupObserver$1 = marketplaceTabs_js.setupMarketplaceCleanupObserver(handleMarketplaceCleanup, currentMaterialsTabs);
         autofillManager$1.initialize();
 
         // Watch for production action panels appearing
@@ -14506,7 +14178,7 @@
             .map((node) => node.textContent)
             .join('')
             .trim();
-        return getActionHridFromName(actionName);
+        return gameLookups_js.getActionHridFromName(actionName);
     }
 
     /**
@@ -14746,6 +14418,7 @@
         button.disabled = disabled;
         button.style.cssText = `
         width: 100%;
+        box-sizing: border-box;
         padding: 10px 16px;
         margin: 8px 0 16px 0;
         background: linear-gradient(180deg, rgba(91, 141, 239, 0.2) 0%, rgba(91, 141, 239, 0.1) 100%);
@@ -14869,6 +14542,7 @@
         button.title = disabled && numActions <= 0 ? 'Enter a quantity to check missing materials' : '';
         button.style.cssText = `
         width: 100%;
+        box-sizing: border-box;
         padding: 10px 16px;
         margin: 8px 0 16px 0;
         background: linear-gradient(180deg, rgba(91, 141, 239, 0.2) 0%, rgba(91, 141, 239, 0.1) 100%);
@@ -14980,7 +14654,7 @@
 
         for (let i = 0; i < maxAttempts; i++) {
             // Check for marketplace panel by looking for tabs container
-            const tabsContainer = document.querySelector('.MuiTabs-flexContainer[role="tablist"]');
+            const tabsContainer = marketplaceTabs_js.visibleTabsContainer();
             if (tabsContainer) {
                 // Verify it's the marketplace tabs (has "Market Listings" tab)
                 const hasMarketListings = Array.from(tabsContainer.children).some((btn) =>
@@ -15014,7 +14688,7 @@
             autofillManager$1.setPendingCalculation(() => {
                 return parseInt(tabRef.tab?.getAttribute('data-missing-quantity') || '0', 10);
             });
-            navigateToMarketplace(mat.itemHrid, 0);
+            marketplaceTabs_js.navigateToMarketplace(mat.itemHrid, 0);
         };
     }
 
@@ -15166,7 +14840,7 @@
      * @param {Object|null} strategyInfo - Auto-calculated protection strategy info
      */
     function createMissingMaterialTabs(missingMaterials, strategyInfo = null) {
-        const tabsContainer = document.querySelector('.MuiTabs-flexContainer[role="tablist"]');
+        const tabsContainer = marketplaceTabs_js.visibleTabsContainer();
 
         if (!tabsContainer) {
             console.error('[MissingMats] Tabs container not found');
@@ -15174,7 +14848,7 @@
         }
 
         // Remove any existing custom tabs first (preserve stored context — we're recreating, not leaving)
-        removeMaterialTabs();
+        marketplaceTabs_js.removeMaterialTabs();
         currentMaterialsTabs.length = 0;
 
         // Get reference tab for cloning (use "My Listings" as template)
@@ -15216,7 +14890,7 @@
         for (const material of missingMaterials) {
             const tabRef = { tab: null };
             const handler = makeMaterialClickHandler(tabRef);
-            const tab = createMaterialTab(material, referenceTab, handler);
+            const tab = marketplaceTabs_js.createMaterialTab(material, referenceTab, handler);
             tabRef.tab = tab;
             tabsContainer.appendChild(tab);
             currentMaterialsTabs.push(tab);
@@ -15370,7 +15044,7 @@
      * Called by the marketplace cleanup observer
      */
     function handleMarketplaceCleanup() {
-        removeMaterialTabs();
+        marketplaceTabs_js.removeMaterialTabs();
         currentMaterialsTabs.length = 0; // Clear without reassigning (preserves observer reference)
 
         // Clean up inventory listener
@@ -15386,9 +15060,26 @@
         autofillManager$1.clearQuantity();
     }
 
+    /**
+     * Open the marketplace on the materials an action is short of.
+     *
+     * The same thing the button in the action panel does, reachable from anywhere.
+     * Equipment Watch wants it for a craft it is saving towards, and that card is
+     * in another bundle — so this is the seam rather than a second implementation
+     * of the tab-building, which is where the two would drift apart.
+     *
+     * @param {string} actionHrid - The action whose inputs are wanted
+     * @param {number} [numActions] - How many of it
+     * @returns {Promise<void>}
+     */
+    async function openMissingMaterials(actionHrid, numActions = 1) {
+        await handleMissingMaterialsClick(actionHrid, numActions);
+    }
+
     var missingMaterialsButton = {
         initialize: initialize$1,
         cleanup: cleanup$1,
+        openMissingMaterials,
     };
 
     /**
@@ -15409,20 +15100,6 @@
     const UI_ID$2 = 'mwi-budget-calculator';
 
     /**
-     * Parse a KMB shorthand string to a number.
-     * e.g. "50m" → 50000000, "1.5b" → 1500000000, "100k" → 100000
-     * @param {string} str
-     * @returns {number} Parsed value, or NaN if invalid
-     */
-    function parseKMB(str) {
-        const s = str.trim().toLowerCase();
-        const match = s.match(/^(\d+\.?\d*)\s*([kmb]?)$/);
-        if (!match) return NaN;
-        const multipliers = { k: 1e3, m: 1e6, b: 1e9 };
-        return parseFloat(match[1]) * (multipliers[match[2]] || 1);
-    }
-
-    /**
      * Get action HRID from panel element.
      * @param {HTMLElement} panel
      * @returns {string|null}
@@ -15435,7 +15112,7 @@
             .map((n) => n.textContent)
             .join('')
             .trim();
-        return getActionHridFromName(actionName);
+        return gameLookups_js.getActionHridFromName(actionName);
     }
 
     /**
@@ -15524,7 +15201,7 @@
         overlay.style.cssText = `
         position: fixed; inset: 0;
         background: rgba(0,0,0,0.75);
-        z-index: 99999;
+        z-index: ${panelZIndex_js.PANEL_Z_CAP + 1};
         display: flex; align-items: center; justify-content: center;
     `;
 
@@ -15743,7 +15420,11 @@
         _createUI(panel) {
             const wrapper = document.createElement('div');
             wrapper.id = UI_ID$2;
-            wrapper.style.cssText = 'display:flex; align-items:center; gap:6px; margin: 4px 0 8px 0; padding: 0 0;';
+            wrapper.style.cssText =
+                'display:flex; align-items:center; gap:6px; margin: 4px 0 8px 0; padding: 0 0;' +
+                // The row may not outgrow the column it sits in; the Calculate
+                // button was hanging past the edge of the action panel
+                'box-sizing:border-box; max-width:100%;';
 
             const input = document.createElement('input');
             input.type = 'text';
@@ -15793,7 +15474,7 @@
                 const raw = input.value.trim();
                 if (!raw) return;
 
-                const budget = parseKMB(raw);
+                const budget = formatters_js.parseKMB(raw);
                 if (isNaN(budget) || budget <= 0) {
                     input.style.borderColor = '#c0392b';
                     const t = setTimeout(() => {
@@ -15957,7 +15638,7 @@
                 buyPrice = marketPrice;
             }
         }
-        const shopCost = getShopCoinCost(itemHrid);
+        const shopCost = gameLookups_js.getShopCoinCost(itemHrid);
         if (shopCost > 0 && (buyPrice === null || shopCost < buyPrice)) {
             buyPrice = shopCost;
         }
@@ -16246,6 +15927,11 @@
         };
     }
 
+    var craftingPlanCalculator = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        computeBestCraftingPlan: computeBestCraftingPlan
+    });
+
     /**
      * Cost Summary
      * Compact 4-line cost comparison block for production action panels.
@@ -16303,7 +15989,7 @@
             .map((n) => n.textContent)
             .join('')
             .trim();
-        return getActionHridFromName(actionName);
+        return gameLookups_js.getActionHridFromName(actionName);
     }
 
     function updatePanel(panel, value) {
@@ -16409,6 +16095,11 @@
         container.style.cssText = `
         margin: 8px 0 16px 0;
         padding: 10px 14px;
+        /* Without this the padding and border are added to a full-width block,
+           so the card renders thirty pixels wider than the column holding it —
+           which is what put a horizontal scrollbar across the action panel */
+        box-sizing: border-box;
+        max-width: 100%;
         background: linear-gradient(180deg, rgba(91, 141, 239, 0.12) 0%, rgba(91, 141, 239, 0.05) 100%);
         border: 1px solid rgba(91, 141, 239, 0.3);
         border-radius: 8px;
@@ -16481,6 +16172,188 @@
     };
 
     /**
+     * Action panel layout
+     *
+     * Making the action detail modal fit on a screen.
+     *
+     * The game's panel was designed for the game's own contents: a name, the
+     * inputs, the outputs and two buttons. This script adds most of a second
+     * panel's worth on top — missing materials, a cost summary, a budget box,
+     * action speed, level progress, the crafting plan, profitability — and the
+     * modal grows to fit all of it. Past a certain recipe it grows taller than the
+     * window, and what falls off the bottom is the **Start Now** button, which is
+     * the one thing the panel exists to press.
+     *
+     * ## What this does
+     *
+     * Three things, all CSS:
+     *
+     * - **The modal stops growing at the height of the window.** It is the panel
+     *   that scrolls after that, not the page, so the close button and the title
+     *   stay where they are instead of drifting off the top.
+     * - **The buttons stick to the bottom of the panel.** They are the panel's
+     *   verbs — queue this, start this — and having to scroll to reach a verb is
+     *   the failure everything else here is downstream of. Position only: the strip
+     *   is left the colour the game gives it.
+     * - **The added sections are tightened.** Eight pixels above and below seven
+     *   collapsible sections is over a hundred pixels of nothing, which is most of
+     *   a section on its own.
+     *
+     * ## Why CSS and not layout code
+     *
+     * Everything here is the game's own markup, which changes when the game
+     * changes. A stylesheet that stops matching leaves the panel exactly as it was
+     * before; layout code that stops matching leaves it broken. `:has()` narrows
+     * every modal rule to modals that actually contain an action panel, so nothing
+     * here reaches the marketplace or the settings dialogs.
+     */
+
+
+    const STYLE_ID$1 = 'toolasha-action-panel-layout';
+
+    /** Room for the modal's own chrome — its padding and the close button */
+    const CHROME_PX = 96;
+
+    const CSS$1 = `
+    /* Only modals holding an action panel. The marketplace and the settings
+       dialogs share these class names and want none of this. */
+    [class*="Modal_modal__"]:has([class*="SkillActionDetail_skillActionDetail"]) {
+        max-height: calc(100vh - 24px);
+    }
+
+    [class*="Modal_modal__"]:has([class*="SkillActionDetail_skillActionDetail"])
+        [class*="Modal_modalContent"] {
+        min-height: 0;
+        overflow: hidden;
+    }
+
+    /* The panel is the scroller. Contained overscroll so reaching the bottom of
+       it does not then start scrolling the page behind the modal.
+
+       Horizontal overflow is hidden as a backstop only. The real cause was
+       blocks built without box-sizing — a full-width card plus fourteen pixels
+       of padding a side is a card wider than its column — and those are fixed
+       where they are built rather than clipped here. */
+    [class*="SkillActionDetail_skillActionDetail"] {
+        max-height: calc(100vh - ${CHROME_PX}px);
+        overflow-y: auto;
+        overflow-x: hidden;
+        overscroll-behavior: contain;
+        /* Reserve the gutter whether or not the bar is showing. Without it the
+           vertical scrollbar appears *after* the layout has been worked out and
+           takes its width out of the column, so every row that was exactly as
+           wide as the column is now wider than it — which is a horizontal
+           scrollbar, caused by the vertical one. */
+        scrollbar-gutter: stable;
+    }
+
+    /* The scrollbar is left as the game draws it. Recolouring it was chasing
+       the wrong thing anyway: the horizontal bar was never a styling problem
+       but a width one, fixed where the oversized blocks are built. */
+
+    /* So is the buttons strip. Pinning it needed no colour of its own, and
+       three rounds of "there is a box round the buttons" were all this script
+       painting one: first a themed variable that came out blue, then a dark
+       literal that came out black — a filled band across the foot of every
+       skilling action panel, sat directly under the last row of content. The
+       strip is positioned here and nothing more; whatever the game puts behind
+       the buttons is what shows. */
+
+    /* The containers between the modal and the panel scroll nothing of their
+       own — the panel is the scroller — so any bar they show is the same
+       artefact one level up */
+    [class*="Modal_modal__"]:has([class*="SkillActionDetail_skillActionDetail"]),
+    [class*="Modal_modal__"]:has([class*="SkillActionDetail_skillActionDetail"])
+        [class*="Modal_modalContent"],
+    [class*="Modal_modal__"]:has([class*="SkillActionDetail_skillActionDetail"])
+        [class*="SkillActionDetail_content"] {
+        overflow-x: hidden;
+    }
+
+    /* Nothing inside the panel may be wider than the panel — at any depth, not
+       just the rows sitting directly in it. The Cost Summary card is inserted
+       beside the item requirements rather than at the top level, so a rule for
+       direct children walked straight past it.
+
+       The panel is a column of rows. A row wider than its column is always the
+       bug rather than the intent, so this is safe to state once for everything
+       rather than hunted one element at a time. */
+    [class*="SkillActionDetail_skillActionDetail"] * {
+        max-width: 100%;
+        box-sizing: border-box;
+    }
+
+    /* The actual overflow, and it was never one of the blocks.
+
+       The panel's body is a two-column grid — a label like "Requires" beside a
+       value — and everything this script adds goes into the value column. A
+       grid item defaults to a minimum width of auto, which means it refuses to be
+       narrower than its own longest unbreakable content. So the column takes
+       whatever "Missing Mats Marketplace" and "Direct recipe cost   5.7M" ask
+       for, the grid becomes wider than the panel, and the panel scrolls
+       sideways. Every block inside measures exactly the column's width, which
+       is why they all looked innocent: they were sized correctly, to a column
+       that was itself too wide.
+
+       Allowing those items to shrink is what lets the grid fit its panel. */
+    [class*="SkillActionDetail_skillActionDetail"],
+    [class*="SkillActionDetail_skillActionDetail"] [class*="SkillActionDetail_info"],
+    [class*="SkillActionDetail_skillActionDetail"] [class*="SkillActionDetail_value"],
+    [class*="SkillActionDetail_skillActionDetail"] [class*="SkillActionDetail_content"],
+    [class*="SkillActionDetail_skillActionDetail"] > * {
+        min-width: 0;
+    }
+
+    /* Queue and Start, always reachable. Sticky rather than fixed so it belongs
+       to the panel and moves with a dragged modal.
+
+       Position and nothing else — see above for why this strip paints no
+       background and draws no line of its own. */
+    [class*="SkillActionDetail_skillActionDetail"] [class*="SkillActionDetail_buttonsContainer"] {
+        position: sticky;
+        bottom: 0;
+        z-index: 2;
+        margin-top: 4px;
+        /* The container measures a fraction of a pixel wider than the panel it
+           sits in — 321.883 against 320 — which is enough overflow to summon a
+           horizontal scrollbar across the bottom of the panel. Clipping the
+           panel alone does not help while the child is still asking for width
+           it cannot have. */
+        max-width: 100%;
+        box-sizing: border-box;
+    }
+
+    /* Ours, tightened. Seven sections at eight pixels a side is a section's
+       worth of empty space. */
+    [class*="SkillActionDetail_skillActionDetail"] .mwi-collapsible-section {
+        margin-top: 2px;
+        margin-bottom: 2px;
+    }
+    [class*="SkillActionDetail_skillActionDetail"] .mwi-section-header {
+        padding: 1px 0;
+    }
+    [class*="SkillActionDetail_skillActionDetail"] #mwi-missing-mats-button {
+        margin: 4px 0 6px 0;
+        padding: 6px 12px;
+    }
+`;
+
+    const actionPanelLayout = {
+        initialize() {
+            if (!config.getSetting('actionPanelLayout')) return;
+            dom_js.addStyles(CSS$1, STYLE_ID$1);
+        },
+
+        disable() {
+            dom_js.removeStyles(STYLE_ID$1);
+        },
+
+        cleanup() {
+            dom_js.removeStyles(STYLE_ID$1);
+        },
+    };
+
+    /**
      * Crafting Plan Display
      * Renders the buy-vs-craft decision tree in action panels.
      * Shows a summary comparison plus a shopping list of materials to buy.
@@ -16497,7 +16370,7 @@
     ];
     const craftingPlanTabs = [];
     let cleanupObserver = null;
-    const autofillManager = createAutofillManager('CraftingPlan');
+    const autofillManager = marketplaceAutofill_js.createAutofillManager('CraftingPlan');
 
     const PRODUCTION_TYPES$1 = [
         '/action_types/brewing',
@@ -16520,7 +16393,7 @@
             .map((n) => n.textContent)
             .join('')
             .trim();
-        return getActionHridFromName(actionName);
+        return gameLookups_js.getActionHridFromName(actionName);
     }
 
     /**
@@ -16939,7 +16812,7 @@
 
                 // Wait for marketplace to appear
                 for (let i = 0; i < 50; i++) {
-                    const tabsContainer = document.querySelector('.MuiTabs-flexContainer[role="tablist"]');
+                    const tabsContainer = marketplaceTabs_js.visibleTabsContainer();
                     if (tabsContainer) {
                         const hasMarketListings = Array.from(tabsContainer.children).some((btn) =>
                             btn.textContent.includes('Market Listings')
@@ -17044,10 +16917,10 @@
      * @param {Array} missingMaterials - Array of { itemHrid, itemName, missing, required, isTradeable }
      */
     function createCraftingPlanTabs(missingMaterials) {
-        const tabsContainer = document.querySelector('.MuiTabs-flexContainer[role="tablist"]');
+        const tabsContainer = marketplaceTabs_js.visibleTabsContainer();
         if (!tabsContainer) return;
 
-        removeMaterialTabs();
+        marketplaceTabs_js.removeMaterialTabs();
         craftingPlanTabs.length = 0;
 
         const referenceTab = Array.from(tabsContainer.children).find((btn) => btn.textContent.includes('My Listings'));
@@ -17061,16 +16934,16 @@
                 autofillManager.setPendingCalculation(() => {
                     return parseInt(tabRef.tab?.getAttribute('data-missing-quantity') || '0', 10);
                 });
-                navigateToMarketplace(material.itemHrid, 0);
+                marketplaceTabs_js.navigateToMarketplace(material.itemHrid, 0);
             };
-            const tab = createMaterialTab(material, referenceTab, handler);
+            const tab = marketplaceTabs_js.createMaterialTab(material, referenceTab, handler);
             tabRef.tab = tab;
             tabsContainer.appendChild(tab);
             craftingPlanTabs.push(tab);
         }
 
         if (!cleanupObserver) {
-            cleanupObserver = setupMarketplaceCleanupObserver(() => {
+            cleanupObserver = marketplaceTabs_js.setupMarketplaceCleanupObserver(() => {
                 craftingPlanTabs.length = 0;
             }, craftingPlanTabs);
         }
@@ -17202,6 +17075,209 @@
             craftingPlanDisplay.disable();
         },
     };
+
+    /**
+     * Craft Arbitrage Adapter
+     *
+     * A read-only view of "what would one of these cost *me* to make", for callers
+     * outside this bundle that want to compare a craft against a market price.
+     *
+     * The distinction it exists to protect is that a crafting cost is personal. Two
+     * characters looking at the same recipe on the same day pay different amounts:
+     * artisan tea removes materials, efficiency gives free actions, gear and house
+     * levels change the action time. A generic "recipe cost" computed from the
+     * market alone is the wrong number for everybody. So every figure here comes
+     * from `computeBestCraftingPlan` and `calculateActionStats` against the logged-in
+     * character, and the caller is handed the skill and level behind it so it can
+     * say whose cost it is showing.
+     *
+     * Nothing here mutates game state, places actions, or writes storage — it reads
+     * the plan and reports it.
+     *
+     * Published as `window.Toolasha.Actions.craftArbitrage`; see src/libraries/actions.js.
+     */
+
+
+    /**
+     * Which action produces which item, built once per game-data object.
+     *
+     * The plan calculator scans the whole action map for every item it costs, which
+     * is fine for one tooltip and quadratic for a caller sweeping the market. The
+     * index is keyed off the identity of `actionDetailMap` itself, so a reload that
+     * replaces the game data invalidates it without any explicit cache-busting.
+     */
+    const productionCache = { source: null, index: null };
+
+    /**
+     * @returns {Map<string, {actionHrid: string, action: Object, outputCount: number}>|null}
+     */
+    function productionIndex() {
+        const actionMap = dataManager.getInitClientData()?.actionDetailMap;
+        if (!actionMap) return null;
+        if (productionCache.source === actionMap) return productionCache.index;
+
+        const index = new Map();
+        for (const [actionHrid, action] of Object.entries(actionMap)) {
+            if (!action?.outputItems) continue;
+            for (const output of action.outputItems) {
+                // First writer wins, which is what the plan calculator's own scan
+                // does — the two must agree or the cost and the action disagree
+                if (!output?.itemHrid || index.has(output.itemHrid)) continue;
+                index.set(output.itemHrid, { actionHrid, action, outputCount: output.count || 1 });
+            }
+        }
+
+        productionCache.source = actionMap;
+        productionCache.index = index;
+        return index;
+    }
+
+    /**
+     * Seconds of game time one unit of output takes this character.
+     *
+     * Efficiency is a chance at a free repeat, so it divides the time rather than
+     * adding output, and an action yielding several units divides it again.
+     *
+     * @param {string} actionHrid - Action HRID
+     * @param {Object} action - Action detail
+     * @param {number} outputCount - Units produced per action
+     * @param {Map} [cache] - Per-sweep cache keyed by actionHrid
+     * @returns {number|null} Seconds per output unit, or null when the stats cannot be read
+     */
+    function secondsPerUnitFor(actionHrid, action, outputCount, cache) {
+        if (cache?.has(actionHrid)) return cache.get(actionHrid);
+
+        let seconds = null;
+        try {
+            const gameData = dataManager.getInitClientData();
+            const stats = actionCalculator_js.calculateActionStats(action, {
+                skills: dataManager.getSkills(),
+                equipment: dataManager.getEquipment(),
+                itemDetailMap: gameData?.itemDetailMap,
+                actionHrid,
+            });
+            const efficiency = efficiency_js.calculateEfficiencyMultiplier(stats?.totalEfficiency);
+            if (Number.isFinite(stats?.actionTime) && efficiency > 0 && outputCount > 0) {
+                seconds = stats.actionTime / efficiency / outputCount;
+            }
+        } catch (error) {
+            console.error('[CraftArbitrage] Could not read action stats:', error);
+        }
+
+        cache?.set(actionHrid, seconds);
+        return seconds;
+    }
+
+    /**
+     * What one unit of an item costs this character to make.
+     *
+     * `unitCost` is always the cost of *crafting* the root, with each material below
+     * it priced at whichever of buying and crafting is cheaper. `strategy` is the
+     * separate question of whether crafting the root is worth doing at all: 'buy'
+     * means the market already sells it for less than the materials cost, so the row
+     * is a flip rather than a craft. Both are reported because collapsing them would
+     * either hide unprofitable recipes or quote a market price as a crafting cost.
+     *
+     * @param {string} itemHrid - Item to cost
+     * @param {Object} [options] - Costing options
+     * @param {string} [options.mode='ask'] - Pricing mode for material lookups
+     * @param {Map} [options.memo] - Shared unit-cost memo, for costing many items at once
+     * @param {Map} [options.actionStats] - Shared action-stats cache, same purpose
+     * @returns {Object|null} { itemHrid, unitCost, strategy, actionHrid, actionsNeeded,
+     *   secondsPerUnit, skillHrid, requiredLevel, inputs } — null when the item has no
+     *   recipe, the game data is not loaded, or a material has no obtainable price.
+     *   `actionsNeeded` and each input's `quantityPerUnit` are per unit of output and
+     *   may be fractional; `inputs` carries the material list so a caller can check
+     *   what the materials themselves can actually supply.
+     */
+    function describeCraft(itemHrid, options = {}) {
+        if (!itemHrid) return null;
+
+        const index = productionIndex();
+        const production = index?.get(itemHrid);
+        if (!production) return null;
+
+        const { mode = 'ask', memo = new Map(), actionStats } = options;
+        const { actionHrid, action, outputCount } = production;
+
+        let plan;
+        try {
+            plan = computeBestCraftingPlan(itemHrid, 1, mode, new Set(), memo, 0);
+        } catch (error) {
+            console.error(`[CraftArbitrage] Could not plan ${itemHrid}:`, error);
+            return null;
+        }
+
+        // `craftCost` is filled in even when the plan settles on buying, which is
+        // exactly the case this reports on. A material with no price propagates as
+        // Infinity rather than as a free ingredient, so it is rejected here.
+        const unitCost = plan?.craftCost;
+        if (!Number.isFinite(unitCost) || unitCost <= 0) return null;
+
+        const perUnit = outputCount > 0 ? 1 / outputCount : 1;
+        const inputs = (action.inputItems || []).map((input) => ({
+            itemHrid: input.itemHrid,
+            quantityPerUnit: (input.count || 1) * perUnit,
+        }));
+        if (action.upgradeItemHrid) {
+            inputs.push({ itemHrid: action.upgradeItemHrid, quantityPerUnit: perUnit });
+        }
+
+        return {
+            itemHrid,
+            unitCost,
+            strategy: plan.strategy,
+            actionHrid,
+            actionsNeeded: perUnit,
+            secondsPerUnit: secondsPerUnitFor(actionHrid, action, outputCount, actionStats),
+            skillHrid: action.levelRequirement?.skillHrid ?? null,
+            requiredLevel: action.levelRequirement?.level ?? 0,
+            inputs,
+        };
+    }
+
+    /**
+     * Cost many items in one pass.
+     *
+     * Sharing the memo is the whole point: the recipe graph overlaps heavily, so
+     * costing the market item by item re-derives the same sub-materials hundreds of
+     * times. The memo is safe to share here because nothing forces a decision at the
+     * root — every item is costed the same way whether it is asked for directly or
+     * reached as somebody's ingredient.
+     *
+     * @param {Array<string>} itemHrids - Items to cost
+     * @param {Object} [options] - Same options as describeCraft, minus the caches
+     * @returns {Map<string, Object>} itemHrid → describeCraft result, skipping items with none
+     */
+    function describeCrafts(itemHrids, options = {}) {
+        const memo = options.memo ?? new Map();
+        const actionStats = options.actionStats ?? new Map();
+        const results = new Map();
+
+        for (const itemHrid of itemHrids || []) {
+            if (results.has(itemHrid)) continue;
+            const described = describeCraft(itemHrid, { ...options, memo, actionStats });
+            if (described) results.set(itemHrid, described);
+        }
+
+        return results;
+    }
+
+    /**
+     * Whether an item has a recipe at all, without costing it.
+     * @param {string} itemHrid - Item HRID
+     * @returns {boolean}
+     */
+    function isCraftable(itemHrid) {
+        return Boolean(itemHrid && productionIndex()?.has(itemHrid));
+    }
+
+    var craftArbitrage = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        describeCraft: describeCraft,
+        describeCrafts: describeCrafts,
+        isCraftable: isCraftable
+    });
 
     /**
      * Alchemy Profit Calculator Module
@@ -17536,20 +17612,8 @@
                 const equipment = dataManager.getEquipment();
                 const actionTypeHrid = '/action_types/alchemy';
 
-                // Parse equipment rare find bonuses
-                let equipmentRareFind = 0;
-                for (const slot of equipment) {
-                    if (!slot || !slot.itemHrid) continue;
-
-                    const itemDetail = gameData.itemDetailMap[slot.itemHrid];
-                    if (!itemDetail?.noncombatStats?.rareFind) continue;
-
-                    const enhancementLevel = slot.enhancementLevel || 0;
-                    const enhancementBonus = this.getEnhancementBonus(enhancementLevel);
-                    const slotMultiplier = this.getSlotMultiplier(itemDetail.equipmentType);
-
-                    equipmentRareFind += itemDetail.noncombatStats.rareFind * (1 + enhancementBonus * slotMultiplier);
-                }
+                // Parse equipment rare find bonuses (alchemyRareFind + skillingRareFind, enhancement-scaled)
+                const equipmentRareFind = equipmentParser_js.parseRareFindBonus(equipment, actionTypeHrid, gameData.itemDetailMap);
 
                 // Get achievement rare find bonus (Veteran tier: +2%)
                 const achievementRareFind =
@@ -17581,20 +17645,8 @@
 
                 const equipment = dataManager.getEquipment();
 
-                // Parse equipment essence find bonuses
-                let equipmentEssenceFind = 0;
-                for (const slot of equipment) {
-                    if (!slot || !slot.itemHrid) continue;
-
-                    const itemDetail = gameData.itemDetailMap[slot.itemHrid];
-                    if (!itemDetail?.noncombatStats?.essenceFind) continue;
-
-                    const enhancementLevel = slot.enhancementLevel || 0;
-                    const enhancementBonus = this.getEnhancementBonus(enhancementLevel);
-                    const slotMultiplier = this.getSlotMultiplier(itemDetail.equipmentType);
-
-                    equipmentEssenceFind += itemDetail.noncombatStats.essenceFind * (1 + enhancementBonus * slotMultiplier);
-                }
+                // Parse equipment essence find bonuses (skillingEssenceFind, enhancement-scaled)
+                const equipmentEssenceFind = equipmentParser_js.parseEssenceFindBonus(equipment, gameData.itemDetailMap);
 
                 return {
                     total: equipmentEssenceFind / 100, // Convert to decimal
@@ -19734,7 +19786,7 @@
             popup.className = 'mwi-tea-recommendation-popup';
             popup.style.cssText = `
             position: absolute;
-            z-index: 10000;
+            z-index: ${panelZIndex_js.PANEL_Z_CAP};
             background: #1a1a1a;
             border: 1px solid ${config.COLOR_BORDER};
             border-radius: 8px;
@@ -20356,7 +20408,7 @@
             popup.className = 'mwi-tea-recommendation-popup';
             popup.style.cssText = `
             position: absolute;
-            z-index: 10000;
+            z-index: ${panelZIndex_js.PANEL_Z_CAP};
             background: #1a1a1a;
             border: 1px solid ${config.COLOR_BORDER};
             border-radius: 8px;
@@ -20517,7 +20569,7 @@
             popup.className = 'mwi-tea-recommendation-popup';
             popup.style.cssText = `
             position: absolute;
-            z-index: 10000;
+            z-index: ${panelZIndex_js.PANEL_Z_CAP};
             background: #1a1a1a;
             border: 1px solid ${config.COLOR_WARNING};
             border-radius: 8px;
@@ -20598,7 +20650,12 @@
             let hasDragged = false;
             let startX, startY, initialX, initialY;
 
-            handle.addEventListener('mousedown', (e) => {
+            // Pointer events so a finger works too; mousedown never fires on a
+            // touchscreen, and touch-action:none stops the browser claiming the
+            // gesture for scrolling
+            handle.style.touchAction = 'none';
+
+            handle.addEventListener('pointerdown', (e) => {
                 isDragging = true;
                 hasDragged = false;
                 startX = e.clientX;
@@ -20609,7 +20666,7 @@
                 e.preventDefault();
             });
 
-            const onMouseMove = (e) => {
+            const onPointerMove = (e) => {
                 if (!isDragging) return;
 
                 hasDragged = true;
@@ -20620,7 +20677,7 @@
                 element.style.top = `${initialY + dy}px`;
             };
 
-            const onMouseUp = () => {
+            const onPointerUp = () => {
                 if (isDragging) {
                     isDragging = false;
                     handle.style.cursor = 'grab';
@@ -20635,12 +20692,14 @@
                 }
             };
 
-            document.addEventListener('mousemove', onMouseMove);
-            document.addEventListener('mouseup', onMouseUp);
+            document.addEventListener('pointermove', onPointerMove);
+            document.addEventListener('pointerup', onPointerUp);
+            document.addEventListener('pointercancel', onPointerUp);
 
             this.dragCleanup = () => {
-                document.removeEventListener('mousemove', onMouseMove);
-                document.removeEventListener('mouseup', onMouseUp);
+                document.removeEventListener('pointermove', onPointerMove);
+                document.removeEventListener('pointerup', onPointerUp);
+                document.removeEventListener('pointercancel', onPointerUp);
                 this.dragCleanup = null;
             };
         }
@@ -20897,7 +20956,7 @@
             if (!nameEl) return;
 
             const actionName = nameEl.textContent.trim();
-            const actionHrid = getActionHridFromName(actionName);
+            const actionHrid = gameLookups_js.getActionHridFromName(actionName);
             if (!actionHrid) return;
 
             const actionDetails = dataManager.getActionDetails(actionHrid);
@@ -20975,7 +21034,7 @@
                 .map((n) => n.textContent)
                 .join('')
                 .trim();
-            return getActionHridFromName(name);
+            return gameLookups_js.getActionHridFromName(name);
         }
 
         disable() {
@@ -21137,6 +21196,73 @@
             formatted = formatters_js.numberFormatter(value);
         }
         return formatted;
+    }
+
+    /**
+     * How long ago, in the roughest terms that are still true.
+     * @param {number|null} timestamp - Epoch milliseconds
+     * @param {number} [now] - Epoch milliseconds to measure from
+     * @returns {string} e.g. `3d ago`, or '' when there is no timestamp
+     */
+    function formatAge(timestamp, now = Date.now()) {
+        if (!timestamp) return '';
+        const minutes = Math.max(0, Math.round((now - timestamp) / 60000));
+        if (minutes < 60) return `${minutes}m ago`;
+        const hours = Math.round(minutes / 60);
+        if (hours < 48) return `${hours}h ago`;
+        return `${Math.round(hours / 24)}d ago`;
+    }
+
+    /**
+     * The last all-zones simulation, as rows this table can rank.
+     *
+     * Combat is the one thing the pinned list could never answer — a zone is not a
+     * pinnable action, so "is fighting worth more than milking right now" had no
+     * page to be asked on. A finished simulation already knows, and this is the
+     * shape it has to be in to sit beside a gathering action.
+     *
+     * Rows carry when they were measured and whether the gear has moved since,
+     * because a profit figure from a loadout you no longer wear is not wrong so much
+     * as about somebody else.
+     *
+     * @param {Object|null} snapshot - From `combatSimUI.loadAllZonesSnapshot`
+     * @param {string|null} currentFingerprint - From `combatSimUI.currentGearFingerprint`
+     * @returns {Array<Object>} Rows in the same shape as a pinned action
+     */
+    function combatZoneRows(snapshot, currentFingerprint) {
+        if (!snapshot || !Array.isArray(snapshot.zones)) return [];
+
+        // Only a mismatch between two known signatures means anything: an unsigned
+        // run, or a character whose gear cannot be read, is not evidence of change
+        const gearChanged = Boolean(
+            snapshot.fingerprint && currentFingerprint && snapshot.fingerprint !== currentFingerprint
+        );
+
+        return snapshot.zones
+            .filter((zone) => zone?.zoneHrid)
+            .map((zone) => {
+                const tier = zone.difficultyTier ?? 0;
+                const zoneName = zone.zoneName || zone.zoneHrid.split('/').pop().replace(/_/g, ' ');
+
+                return {
+                    // Namespaced by tier: one zone is several rows, and they must not
+                    // collide with each other or with a pinned action's own key
+                    actionHrid: `${zone.zoneHrid}|T${tier}`,
+                    baseActionHrid: zone.zoneHrid,
+                    name: `${zoneName} T${tier}`,
+                    skill: 'Combat',
+                    type: '/action_types/combat',
+                    outputItemHrid: null,
+                    // Not a level requirement in the sense the column means — a zone
+                    // asks for gear, not a number — so it sorts with the unknowns
+                    level: null,
+                    profitPerHour: Number.isFinite(zone.profitPerHour) ? zone.profitPerHour : null,
+                    expPerHour: Number.isFinite(zone.xpPerHour) ? zone.xpPerHour : null,
+                    source: 'combat-sim',
+                    simulatedAt: snapshot.savedAt ?? null,
+                    gearChanged,
+                };
+            });
     }
 
     class PinnedActionsPage {
@@ -21333,11 +21459,33 @@
                 });
             }
 
+            await this.loadSimulatedCombatZones();
+
             if (!this.itemsSpriteUrl) {
                 this.itemsSpriteUrl = await assetManifest.getSpriteUrl('items');
             }
 
             this.renderTable();
+        }
+
+        /**
+         * Add the last all-zones simulation's zones to the list.
+         *
+         * Read from storage rather than from the simulator panel, so the rows are
+         * here on a fresh page load with the panel never opened — which is the only
+         * way this is worth anything, since nobody re-runs a ten-minute simulation
+         * to decide what to do next.
+         */
+        async loadSimulatedCombatZones() {
+            try {
+                const snapshot = await combatSimUI.loadAllZonesSnapshot();
+                if (!snapshot) return;
+
+                const fingerprint = await combatSimUI.currentGearFingerprint();
+                this.allActions.push(...combatZoneRows(snapshot, fingerprint));
+            } catch (error) {
+                console.error('[PinnedActionsPage] Loading simulated combat zones failed:', error);
+            }
         }
 
         /**
@@ -21606,9 +21754,9 @@
 
                 row.innerHTML = `
                 <span style="display: flex; align-items: center; justify-content: center;">${iconHtml}</span>
-                <span style="font-weight: 500; text-align: left;">${action.name}</span>
+                <span style="font-weight: 500; text-align: left;">${action.name}${this.provenanceHtml(action)}</span>
                 <span style="color: #aaa; font-size: 0.9em; text-align: left;">${action.skill}</span>
-                <span style="color: #aaa; text-align: left;">${action.level}</span>
+                <span style="color: #aaa; text-align: left;">${action.level ?? '—'}</span>
                 <span style="text-align: right; color: ${profitColor};">
                     ${profitPrefix}${formatCompact(action.profitPerHour)}
                 </span>
@@ -21644,6 +21792,32 @@
         }
 
         /**
+         * Where a simulated row's numbers came from, and whether to believe them.
+         *
+         * A pinned action's figures are computed from the market this second; a
+         * combat zone's are from whenever the simulation was run, in whatever was
+         * being worn then. Saying so is the difference between a comparison and a
+         * trap.
+         *
+         * @param {Object} action - A row from `getFilteredSorted`
+         * @returns {string} HTML, empty for rows computed live
+         */
+        provenanceHtml(action) {
+            if (action.source !== 'combat-sim') return '';
+
+            const age = formatAge(action.simulatedAt);
+            const simulated = age
+                ? `<span style="color: #666; font-size: 0.8em; margin-left: 6px;" title="From the last all-zones simulation">sim ${age}</span>`
+                : '';
+            const stale = action.gearChanged
+                ? `<span style="color: #d9a441; font-size: 0.8em; margin-left: 6px;"
+                title="Your equipment has changed since this zone was simulated — re-run the all-zones simulation for current numbers">gear changed since</span>`
+                : '';
+
+            return `${simulated}${stale}`;
+        }
+
+        /**
          * Render the materials tab (per-production-action material breakdown)
          */
         async renderMaterialsTab() {
@@ -21658,7 +21832,8 @@
             }
 
             const actions = this.getFilteredSorted();
-            const productionActions = actions.filter((a) => !GATHERING_TYPES.includes(a.type));
+            // Simulated combat zones consume no materials and have no recipe to walk
+            const productionActions = actions.filter((a) => !GATHERING_TYPES.includes(a.type) && a.source !== 'combat-sim');
 
             if (productionActions.length === 0) {
                 const empty = document.createElement('div');
@@ -21914,10 +22089,10 @@
                 } else {
                     const isGathering = GATHERING_TYPES.includes(details.type);
                     if (isGathering) {
-                        const profitData = await calculateGatheringProfit(actionHrid);
+                        const profitData = await gatheringProfit_js.calculateGatheringProfit(actionHrid);
                         profitPerHour = profitData?.profitPerHour ?? null;
                     } else {
-                        const profitData = await calculateProductionProfit(actionHrid);
+                        const profitData = await productionProfit_js.calculateProductionProfit(actionHrid);
                         profitPerHour = profitData?.profitPerHour ?? null;
                     }
 
@@ -22164,6 +22339,370 @@
     const pinnedActionsPage = new PinnedActionsPage();
 
     /**
+     * Notification Service
+     *
+     * One place that decides *how* the player gets told something, so the features
+     * that know *what* to tell them do not each grow their own half of a
+     * notification system.
+     *
+     * The game is an idle game, which means the interesting moments happen while
+     * you are not looking. Three channels cover the ways you can not be looking:
+     *
+     * - **Browser notification** — the tab is hidden, so the only surface left is
+     *   the desktop. Gated behind its own setting *and* the browser's permission,
+     *   because an unprompted permission dialog is the fastest way to have every
+     *   notification from this script blocked forever.
+     * - **Tab title flash** — also for a hidden tab, and the fallback when
+     *   permission was never given. A prefixed title is visible in the tab strip
+     *   without any permission at all, and it is restored the moment you come back.
+     * - **Toast** — the tab is visible, so a desktop notification would be noise
+     *   over a window you are already looking at. The shared toast stack says it
+     *   in-page instead.
+     *
+     * ## Why the de-duplication is here and not in the callers
+     *
+     * Every producer is a *predicate over state that keeps being re-evaluated* —
+     * the drink panel redraws on every inventory change, the market badge refreshes
+     * on every listing message. Each of them could hold its own "did I already say
+     * this" flag, and each would get it subtly wrong. A cooldown per event key,
+     * held once, means a producer can be as trigger-happy as its data is noisy and
+     * the player still hears it once.
+     *
+     * ## Why the state is on `globalThis`
+     *
+     * The production build splits the script into per-area bundles, and only
+     * modules listed in the rollup config's shared maps are single copies. A module
+     * under `src/features/` is not one of those, so the market bundle, the actions
+     * bundle and the UI bundle each get their own copy of this file. Sharing the
+     * cooldown map and the "already watching settings" flag through a global means
+     * the copies behave as one service, which is what matters — the alternative is
+     * three permission prompts and three independent cooldowns.
+     */
+
+
+    /** What a flashed tab title is prefixed with; stripped again on focus */
+    const TITLE_FLASH_PREFIX = '❗ ';
+
+    /** The same event may not be announced twice inside this window */
+    const DEFAULT_COOLDOWN_MS = 10 * 60 * 1000;
+
+    /** How long a desktop notification sits there before closing itself */
+    const BROWSER_NOTIFICATION_TTL_MS = 8000;
+
+    /** Title on a desktop notification when the caller does not give one */
+    const DEFAULT_TITLE = 'Milky Way Idle';
+
+    /**
+     * The settings whose being switched **on** is a user gesture we can ask for
+     * notification permission inside.
+     *
+     * This list is the whole reason permission is not requested at page load: a
+     * prompt nobody asked for is usually dismissed, and a dismissed prompt is
+     * remembered. Ticking "notify me" is the one moment the player has said yes to
+     * being notified, so it is the only moment worth spending the prompt on.
+     */
+    const NOTIFICATION_SETTING_KEYS = [
+        'notifications_browserEnabled',
+        'notifications_consumableLow',
+        'notifications_marketListingFilled',
+        'notifications_otherCharacterIdle',
+        'notifications_communityBuffExpiring',
+        'notifications_labyrinthRunFinished',
+        'notifications_combatDeath',
+        'notifications_enhancementTarget',
+        'notifications_trialStarting',
+        'notifications_trialResults',
+        'notifications_taskSlotsFull',
+        'notifiEmptyAction',
+    ];
+
+    /** Where the cross-bundle state lives; see the module comment */
+    const GLOBAL_STATE_KEY = '__toolashaNotificationState';
+
+    /**
+     * The one piece of state every copy of this module shares.
+     * @returns {{lastFired: Map<string, number>, watching: boolean}}
+     */
+    function sharedState() {
+        const host = typeof globalThis === 'undefined' ? {} : globalThis;
+        if (!host[GLOBAL_STATE_KEY]) {
+            host[GLOBAL_STATE_KEY] = { lastFired: new Map(), watching: false };
+        }
+        return host[GLOBAL_STATE_KEY];
+    }
+
+    /**
+     * Whether the player can currently see the page.
+     *
+     * `document.hidden` rather than focus: a tab that is visible but behind another
+     * window still shows toasts fine, and a desktop notification for something you
+     * can see on screen is the annoying kind.
+     *
+     * @returns {boolean} True when the page is not being displayed
+     */
+    function isPageHidden() {
+        if (typeof document === 'undefined') return false;
+        return document.hidden === true || document.visibilityState === 'hidden';
+    }
+
+    class NotificationService {
+        constructor() {
+            /** Overridable so tests do not have to wait ten minutes */
+            this.cooldownMs = DEFAULT_COOLDOWN_MS;
+            /** Undoes the focus/visibility listeners while a title is flashed */
+            this.unwatchFocus = null;
+        }
+
+        /** @returns {Map<string, number>} eventKey → when it last went out */
+        get lastFired() {
+            return sharedState().lastFired;
+        }
+
+        /**
+         * Tell the player something, once.
+         *
+         * @param {string} eventKey - Identity of the thing being announced. The same
+         *   key is silent until its cooldown expires, so it should name the *event*
+         *   ("market-listing-filled") and not the message text
+         * @param {string} message - Plain text; what actually happened
+         * @param {Object} [options] - Options
+         * @param {string} [options.title] - Desktop notification title
+         * @param {number} [options.cooldownMs] - Override the de-duplication window
+         * @returns {{fired: boolean, channels: string[], reason?: string}} What went out, and where
+         */
+        notify(eventKey, message, { title = DEFAULT_TITLE, cooldownMs = this.cooldownMs } = {}) {
+            if (!eventKey || !message) {
+                return { fired: false, channels: [], reason: 'nothing to say' };
+            }
+
+            const now = Date.now();
+            const last = this.lastFired.get(eventKey);
+            if (last !== undefined && now - last < cooldownMs) {
+                return { fired: false, channels: [], reason: 'cooldown' };
+            }
+
+            const channels = [];
+            try {
+                if (isPageHidden()) {
+                    if (this.sendBrowserNotification(message, title)) channels.push('browser');
+                    if (this.flashTitle()) channels.push('title');
+                } else if (this.showInPage(message)) {
+                    channels.push('toast');
+                }
+            } catch (error) {
+                console.error('[NotificationService] Failed to deliver notification:', error);
+            }
+
+            // Only a delivered message starts the clock. Burning the cooldown on a
+            // notification that reached no channel — permission refused, no DOM yet
+            // — would silence the next attempt, which is the one that might work
+            if (!channels.length) {
+                return { fired: false, channels, reason: 'no channel available' };
+            }
+
+            this.lastFired.set(eventKey, now);
+            return { fired: true, channels };
+        }
+
+        /**
+         * The desktop channel.
+         * @param {string} message - Body text
+         * @param {string} title - Notification title
+         * @returns {boolean} Whether one was actually shown
+         */
+        sendBrowserNotification(message, title) {
+            if (!config.getSetting('notifications_browserEnabled')) return false;
+            if (typeof Notification === 'undefined') return false;
+            if (Notification.permission !== 'granted') return false;
+
+            const notification = new Notification(title, {
+                body: message,
+                icon: 'https://www.milkywayidle.com/favicon.ico',
+                // Same tag for everything we send: a stack of desktop notifications
+                // for one game is worse than the newest replacing the last
+                tag: 'toolasha',
+                requireInteraction: false,
+            });
+
+            notification.onclick = () => {
+                window.focus();
+                notification.close();
+            };
+            notification.onerror = (error) => {
+                console.error('[NotificationService] Notification error:', error);
+            };
+
+            setTimeout(() => notification.close(), BROWSER_NOTIFICATION_TTL_MS);
+            return true;
+        }
+
+        /**
+         * The in-page channel.
+         * @param {string} message - What to say
+         * @returns {boolean} Whether a toast went up
+         */
+        showInPage(message) {
+            return !!toast_js.showToast(message, { kind: 'warn', duration: 10000 });
+        }
+
+        /**
+         * Mark the tab title, and arrange for it to be unmarked.
+         *
+         * Prefixing rather than replacing, because the game writes its own title and
+         * whatever it says is still worth reading — and checking for the prefix
+         * first means several notifications in a row leave one mark, not five.
+         *
+         * @returns {boolean} Whether the title now carries the mark
+         */
+        flashTitle() {
+            if (typeof document === 'undefined') return false;
+
+            const current = document.title || '';
+            if (!current.startsWith(TITLE_FLASH_PREFIX)) {
+                document.title = TITLE_FLASH_PREFIX + current;
+            }
+            this._watchForReturn();
+            return true;
+        }
+
+        /**
+         * Put the title back the way the game left it.
+         *
+         * Strips the prefix rather than restoring a remembered string: the game
+         * rewrites its own title while you are away, and restoring what it said an
+         * hour ago would show a stale action name.
+         */
+        restoreTitle() {
+            if (typeof document === 'undefined') return;
+
+            const current = document.title || '';
+            if (current.startsWith(TITLE_FLASH_PREFIX)) {
+                document.title = current.slice(TITLE_FLASH_PREFIX.length);
+            }
+            this.unwatchFocus?.();
+            this.unwatchFocus = null;
+        }
+
+        /** Listen for the player coming back, once per flash */
+        _watchForReturn() {
+            if (this.unwatchFocus || typeof window === 'undefined') return;
+
+            const onReturn = () => {
+                if (!isPageHidden()) this.restoreTitle();
+            };
+            window.addEventListener('focus', onReturn);
+            document.addEventListener('visibilitychange', onReturn);
+            this.unwatchFocus = () => {
+                window.removeEventListener('focus', onReturn);
+                document.removeEventListener('visibilitychange', onReturn);
+            };
+        }
+
+        /**
+         * Ask for notification permission, and only from a user gesture.
+         *
+         * @returns {Promise<boolean>} Whether notifications may now be sent
+         */
+        async requestPermission() {
+            if (typeof Notification === 'undefined') {
+                console.warn('[NotificationService] Browser notifications are not supported here');
+                return false;
+            }
+            if (Notification.permission === 'granted') return true;
+            // A refusal is permanent until the player changes it in the browser, and
+            // asking again does nothing but throw
+            if (Notification.permission === 'denied') return false;
+
+            try {
+                return (await Notification.requestPermission()) === 'granted';
+            } catch (error) {
+                console.warn('[NotificationService] Permission request failed:', error);
+                return false;
+            }
+        }
+
+        /**
+         * Ask for permission whenever a notification setting is switched on.
+         *
+         * This is the whole of the "do not prompt at page load" fix. It runs at
+         * import time rather than from a feature's `initialize`, because every
+         * notification setting defaults to off — so the feature that would have
+         * installed the hook is exactly the feature that is not running yet.
+         */
+        watchSettings() {
+            const state = sharedState();
+            if (state.watching) return;
+            state.watching = true;
+
+            for (const key of NOTIFICATION_SETTING_KEYS) {
+                config.onSettingChange(key, (enabled) => {
+                    if (enabled) this.requestPermission();
+                });
+            }
+        }
+
+        /** Forget every cooldown and put the title back. For teardown and for tests. */
+        reset() {
+            this.lastFired.clear();
+            this.restoreTitle();
+            this.cooldownMs = DEFAULT_COOLDOWN_MS;
+        }
+    }
+
+    const notificationService = new NotificationService();
+
+    // Side effect at module scope, deliberately: see `watchSettings`
+    notificationService.watchSettings();
+
+    /**
+     * Notification Predicates
+     *
+     * The "has something actually happened" half of each notification, kept apart
+     * from the feature that observes it.
+     *
+     * Every producer watches a value that is recomputed constantly — the finished
+     * listing count refreshes on each market message, the drink panel redraws on
+     * each inventory change — so "the value is bad" is never the question. The
+     * question is always "is it *newly* bad", and that is a two-argument function
+     * over the previous observation and the current one. Written as such it can be
+     * tested without a DOM, a websocket or a clock, which is the only reason these
+     * are separate files at all.
+     */
+
+
+    /**
+     * Whether a countdown has just fallen below its warning threshold.
+     *
+     * A state machine with one bit, because the interesting event is the *crossing*
+     * and the value crosses once but is observed thousands of times. `armed` means
+     * "the last thing seen was healthy, so a dip below counts as news"; going back
+     * above the threshold — a restock — re-arms it, which is what makes the second
+     * time you run low as loud as the first.
+     *
+     * The initial state is armed on purpose: opening the game to a supply that is
+     * already below the threshold is worth one message. The service's cooldown is
+     * what stops that becoming a message per redraw.
+     *
+     * @param {Object} input - Current observation
+     * @param {boolean} input.armed - Whether a dip would count as news
+     * @param {number} input.secondsLeft - Time remaining on the soonest consumable
+     * @param {number} input.thresholdSeconds - Where the warning starts
+     * @returns {{fire: boolean, armed: boolean}} Whether to say something, and the next state
+     */
+    function thresholdCrossing({ armed, secondsLeft, thresholdSeconds }) {
+        // An unmeasurable countdown is not a crossing in either direction — leave
+        // the state exactly as it was rather than re-arming on a missing reading
+        if (!Number.isFinite(secondsLeft) || !(thresholdSeconds > 0)) {
+            return { fire: false, armed };
+        }
+
+        if (secondsLeft > thresholdSeconds) {
+            return { fire: false, armed: true };
+        }
+        return { fire: armed === true, armed: false };
+    }
+
+    /**
      * Action context resolver
      *
      * Returns the equipment and active drinks to use when predicting an action's
@@ -22186,10 +22725,27 @@
 
 
     /**
+     * The loadout store that actually has the loadouts in it.
+     *
+     * In the multi-bundle build every bundle that imports this file gets its own
+     * copy of the snapshot singleton, and only the Combat one has `initialize`
+     * called on it — the others never read storage, so they answer "no loadout" to
+     * everything and every caller quietly falls back to whatever is worn right now.
+     * The global is the initialized one. The bundled copy is the dev build, where
+     * there is only ever one.
+     *
+     * @returns {Object} The snapshot store
+     */
+    function loadouts$1() {
+        return (typeof window !== 'undefined' && window.Toolasha?.Combat?.loadoutSnapshot) || loadoutSnapshot;
+    }
+
+    /**
      * @param {string} actionTypeHrid - e.g. "/action_types/cooking"
      * @returns {{equipment: Map, drinks: Array}}
      */
     function resolveActionContext(actionTypeHrid) {
+        const loadoutSnapshot = loadouts$1();
         const rawDrinks =
             loadoutSnapshot.getSnapshotDrinksForSkill(actionTypeHrid) ?? dataManager.getActionDrinkSlots(actionTypeHrid);
 
@@ -22331,6 +22887,15 @@
         constructor() {
             this.initialized = false;
             this.observers = [];
+            /**
+             * actionTypeHrid -> whether a dip below the threshold would be news.
+             *
+             * Per action type rather than one flag, because woodcutting and cooking
+             * have different drinks and running low on one says nothing about the
+             * other. An unseen type is armed, so the first sighting of a low supply
+             * is announced.
+             */
+            this.drinkAlertArmed = new Map();
         }
 
         initialize() {
@@ -22355,7 +22920,14 @@
             );
             this.observers.push(unregisterEnhancing);
 
-            const onUpdate = () => this._updateAllPanels();
+            const onUpdate = () => {
+                this._updateAllPanels();
+                // The panels only cover what is on screen, and the whole point of a
+                // notification is that you are not looking at the screen — so the
+                // skill actually being performed is checked whether or not its panel
+                // happens to be open
+                this._checkCurrentActionDrinks();
+            };
             dataManager.on('consumables_updated', onUpdate);
             dataManager.on('items_updated', onUpdate);
             this.observers.push(() => {
@@ -22396,6 +22968,8 @@
             const thresholdSeconds = config.getSettingValue('drinkTimer_warningThreshold', 24) * SECONDS_PER_HOUR;
             const queueSeconds = calculateQueueTimeSeconds(actionTypeHrid);
 
+            this._checkDrinkThreshold(actionTypeHrid, drinks, thresholdSeconds);
+
             const wrapper = document.createElement('div');
             wrapper.className = 'mwi-drink-timer';
             wrapper.style.cssText = 'padding: 3px 8px 4px; font-size: 11px; line-height: 1.5;';
@@ -22425,6 +22999,61 @@
             }
 
             slotsEl.insertAdjacentElement('afterend', wrapper);
+        }
+
+        /**
+         * The action type the character is actually working on, if any.
+         *
+         * The first queued action, because that is the one being performed — the
+         * rest are waiting, and their drinks are not being drunk yet.
+         *
+         * @returns {string|null} An action type hrid, or null when idle
+         */
+        _currentActionTypeHrid() {
+            const current = dataManager.getCurrentActions?.()?.[0];
+            if (!current?.actionHrid) return null;
+            return dataManager.getActionDetails(current.actionHrid)?.type ?? null;
+        }
+
+        /** Evaluate the running skill's drinks, whether or not its panel is open */
+        _checkCurrentActionDrinks() {
+            if (!config.getSetting('notifications_consumableLow')) return;
+
+            const actionTypeHrid = this._currentActionTypeHrid();
+            if (!actionTypeHrid || actionTypeHrid === '/action_types/combat') return;
+
+            const thresholdSeconds = config.getSettingValue('drinkTimer_warningThreshold', 24) * SECONDS_PER_HOUR;
+            this._checkDrinkThreshold(actionTypeHrid, calculateDrinkRemainingSeconds(actionTypeHrid), thresholdSeconds);
+        }
+
+        /**
+         * Announce a drink supply that has just fallen under the warning threshold.
+         *
+         * The soonest one, because a skill stops when its first drink runs out and
+         * not when its average one does. The crossing itself is decided by a pure
+         * predicate; all this does is hold the per-skill bit that predicate needs
+         * and turn its answer into a sentence.
+         *
+         * @param {string} actionTypeHrid - Which skill's drinks these are
+         * @param {Array<{name: string, totalSeconds: number}>} drinks - Remaining time per drink
+         * @param {number} thresholdSeconds - Where the warning starts
+         */
+        _checkDrinkThreshold(actionTypeHrid, drinks, thresholdSeconds) {
+            if (!config.getSetting('notifications_consumableLow')) return;
+            if (!drinks?.length) return;
+
+            const soonest = drinks.reduce((min, drink) => (drink.totalSeconds < min.totalSeconds ? drink : min));
+            const armed = this.drinkAlertArmed.get(actionTypeHrid) ?? true;
+            const next = thresholdCrossing({ armed, secondsLeft: soonest.totalSeconds, thresholdSeconds });
+
+            this.drinkAlertArmed.set(actionTypeHrid, next.armed);
+            if (!next.fire) return;
+
+            const skill = actionTypeHrid.split('/').pop().replace(/_/g, ' ');
+            notificationService.notify(
+                `consumable-low:${actionTypeHrid}`,
+                `${soonest.name} runs out in ${this._formatTime(soonest.totalSeconds)} (${skill})`
+            );
         }
 
         /**
@@ -22459,6 +23088,7 @@
             this.observers.forEach((fn) => fn());
             this.observers = [];
             document.querySelectorAll('.mwi-drink-timer').forEach((el) => el.remove());
+            this.drinkAlertArmed.clear();
             this.initialized = false;
         }
     }
@@ -23942,24 +24572,119 @@
     const alchemyProfitDisplay = new AlchemyProfitDisplay();
 
     /**
-     * Alchemy Best Items
-     * Shows a ranked table of all eligible items by profit/hr or XP/hr
-     * for the active alchemy type (Coinify, Decompose, Transmute).
+     * Every alchemy action this character could run, costed.
+     *
+     * ## Why this file exists
+     *
+     * There were two alchemy "profit" surfaces and neither could answer "what does
+     * alchemy pay per hour?":
+     *
+     * - `alchemy-profit.js` reads the open panel — success rate out of
+     *   `SkillActionDetail_successRate`, inputs and drops out of the drop table,
+     *   the catalyst out of its slot, the tea duration off a React fiber. It
+     *   describes *one* action, the one you are looking at, and only while you are
+     *   looking at it.
+     * - `alchemy-best-items.js` does the enumeration properly — it walks
+     *   `itemDetailMap`, checks eligibility per alchemy type and asks the real
+     *   calculator about each item — but that loop lived as a method on a class
+     *   that owns a modal, so nothing without a DOM could call it.
+     *
+     * The loop is the valuable part, so it moved here. `alchemy-best-items.js` now
+     * calls {@link rankAlchemyType} for its table and this module is what the goal
+     * planner asks for gold rates, which means the table and the planner cannot
+     * drift apart the way two copies of a loop would.
+     *
+     * ## Nothing here does profit arithmetic
+     *
+     * Every gold figure is `alchemy-profit-calculator.js`'s, taken off its result
+     * unmodified — including the coin fee, which that calculator already subtracts
+     * inside `computeNetProfit` via `utils/alchemy-fees.js` (and which is zero for
+     * coinify, by the rule stated in that file). `starfruit-loop.js` is the
+     * precedent for driving those calculators without a panel open; this is the
+     * same trick applied to the whole item list rather than to three actions.
+     *
+     * The one piece of arithmetic here is experience per action, which the game
+     * does not publish for alchemy and which three surfaces reverse-engineered
+     * separately. {@link getAlchemyBaseXP} is the copy the ranking table has always
+     * used, moved rather than rewritten.
+     *
+     * ## Item level gates nothing; it only hurts
+     *
+     * Alchemy has no per-item level requirement. Working above your level is
+     * allowed and is punished with a success-rate penalty
+     * (`getUnderLevelPenalty` in the calculator, `0.9 / itemLevel` per level
+     * short). So an under-levelled item is not filtered out — it is quoted with the
+     * penalty already inside its rate and flagged `underLevelled`, which is the
+     * honest answer: it is a thing you can do, it just pays badly.
+     *
+     * The *action* is gated, and that gate is real: an alchemy level below
+     * `/actions/alchemy/<type>`'s requirement means the character cannot start that
+     * action at all, and the whole type drops out.
+     *
+     * ## Per hour is not the whole truth, and for alchemy it is barely half of it
+     *
+     * Every alchemy action eats one copy of the item it is run on. So a rate here
+     * is only real while there are copies: decomposing a Sundering Crossbow ★ may
+     * be worth 850M in seven seconds, which is 437 *billion* an hour, and that
+     * number describes a world in which you have five hundred crossbows. You have
+     * one.
+     *
+     * {@link alchemyGoldRates} therefore ships a `sustainable` cap alongside every
+     * rate — how much gold that item can produce in total before the stack is gone
+     * — and the planner spends it as a one-off before moving down the ranking.
+     *
+     * The cap counts **stock on hand only**. Buying more input off the market and
+     * running it through is genuinely possible and genuinely unbounded in theory,
+     * but the bound in practice is order-book depth, and the game only sends a book
+     * for the one item the marketplace is open on — there is no way to ask about
+     * three hundred items without three hundred round trips. Own stock is the
+     * conservative reading, and every rate says that is what it is.
      */
 
 
+    /** The three alchemy actions an item can be put through */
     const ALCHEMY_TYPES = ['coinify', 'decompose', 'transmute'];
 
-    const CATALYST_LABELS = {
-        '/items/catalyst_of_coinification': 'Coinify',
-        '/items/catalyst_of_decomposition': 'Decompose',
-        '/items/catalyst_of_transmutation': 'Transmute',
-        '/items/prime_catalyst': 'Prime',
+    const ALCHEMY_SKILL = '/skills/alchemy';
+
+    /** Which calculator method answers for which type */
+    const CALCULATOR_METHOD = {
+        coinify: 'calculateCoinifyProfit',
+        decompose: 'calculateDecomposeProfit',
+        transmute: 'calculateTransmuteProfit',
+    };
+
+    /** The action each type is, for anything that identifies a rate by its action */
+    const ACTION_HRID = {
+        coinify: '/actions/alchemy/coinify',
+        decompose: '/actions/alchemy/decompose',
+        transmute: '/actions/alchemy/transmute',
+    };
+
+    const TYPE_LABEL = {
+        coinify: 'Coinify',
+        decompose: 'Decompose',
+        transmute: 'Transmute',
     };
 
     /**
+     * How many alchemy rates the planner is handed.
+     *
+     * The full ranking is a few hundred rows and the planner only ever shows the
+     * winner plus a handful of alternatives, so everything past this is weight
+     * carried for nothing.
+     */
+    const PLANNER_RATE_LIMIT = 12;
+
+    /** The last aggregate, and the state it was computed against */
+    let rateCache = { fingerprint: null, rates: null };
+
+    /**
      * Get base XP for an alchemy action type and item level
-     * (mirrors alchemy-profit-display.js getAlchemyBaseXP)
+     * (the same copy `alchemy-profit-display.js` shows on the panel)
+     * @param {string} actionType - 'coinify', 'decompose', or 'transmute'
+     * @param {number} itemLevel - Item level from itemDetailMap
+     * @returns {number} Base XP before the wisdom multiplier
      */
     function getAlchemyBaseXP(actionType, itemLevel) {
         switch (actionType) {
@@ -23976,17 +24701,311 @@
 
     /**
      * Calculate expected XP per action for an item
+     * @param {string} actionType - 'coinify', 'decompose', or 'transmute'
+     * @param {number} itemLevel - Item level from itemDetailMap
+     * @param {number} successRate - Success rate as a decimal in [0, 1]
+     * @returns {number} Expected XP per action, blending the full and failed-action awards
      */
     function calcXpPerAction(actionType, itemLevel, successRate) {
         const baseXP = getAlchemyBaseXP(actionType, itemLevel);
         if (baseXP === 0) return 0;
 
-        const xpData = experienceParser_js.calculateExperienceMultiplier('/skills/alchemy', '/action_types/alchemy');
+        const xpData = experienceParser_js.calculateExperienceMultiplier(ALCHEMY_SKILL, '/action_types/alchemy');
         const fullXP = baseXP * xpData.totalMultiplier;
 
         // Expected value: success gives full XP, failure gives 10%
         return successRate * fullXP + (1 - successRate) * fullXP * 0.1;
     }
+
+    /** What every alchemy rate says about where its ceiling came from */
+    const OWN_STOCK_NOTE = 'own stock only — market depth is not counted';
+
+    const INVENTORY_LOCATION$1 = '/item_locations/inventory';
+
+    /**
+     * How many unenhanced copies of an item are in the bag.
+     *
+     * Unenhanced because that is what these rates are costed for — `rankAlchemyType`
+     * asks the calculator about enhancement level 0 — and inventory only because a
+     * cape on your back is not an input to anything.
+     *
+     * @param {Array<Object>} inventory - From `dataManager.getInventory()`
+     * @returns {Map<string, number>} Item hrid → count held
+     */
+    function stockByItem(inventory) {
+        const held = new Map();
+        for (const item of inventory || []) {
+            if (!item?.itemHrid) continue;
+            if (item.itemLocationHrid !== INVENTORY_LOCATION$1) continue;
+            if (item.enhancementLevel) continue;
+            if (!(item.count > 0)) continue;
+            held.set(item.itemHrid, (held.get(item.itemHrid) || 0) + item.count);
+        }
+        return held;
+    }
+
+    /**
+     * The character's alchemy level.
+     * @returns {number} Level, or 1 when skills are unavailable
+     */
+    function alchemyLevel() {
+        const skill = (dataManager.getSkills() || []).find((entry) => entry.skillHrid === ALCHEMY_SKILL);
+        return skill?.level ?? 1;
+    }
+
+    /**
+     * Whether an item can go through a given alchemy action at all.
+     *
+     * The same three checks the calculator makes before it will answer, restated
+     * here so the enumeration can skip an item without paying for a calculator call
+     * that is going to return null.
+     *
+     * @param {string} type - 'coinify' | 'decompose' | 'transmute'
+     * @param {Object} itemDetails - Item details from itemDetailMap
+     * @returns {boolean} Whether the action applies
+     */
+    function isEligible(type, itemDetails) {
+        const detail = itemDetails?.alchemyDetail;
+        if (!detail) return false;
+        if (type === 'coinify') return detail.isCoinifiable === true;
+        if (type === 'decompose') return Boolean(detail.decomposeItems);
+        if (type === 'transmute') return Boolean(detail.transmuteDropTable);
+        return false;
+    }
+
+    /**
+     * Whether the character's alchemy level allows starting an action at all.
+     * @param {string} type - 'coinify' | 'decompose' | 'transmute'
+     * @param {Object} gameData - init_client_data
+     * @param {number} level - The character's alchemy level
+     * @returns {boolean} Whether the action can be started
+     */
+    function actionUnlocked(type, gameData, level) {
+        const requirement = gameData?.actionDetailMap?.[ACTION_HRID[type]]?.levelRequirement;
+        if (!requirement?.skillHrid) return true;
+        if (requirement.skillHrid !== ALCHEMY_SKILL) return true;
+        return level >= (requirement.level || 1);
+    }
+
+    /**
+     * Every item this alchemy action can be run on, costed through the real calculator.
+     *
+     * Unsorted and unfiltered, because the two callers want different orders: the
+     * table sorts by whichever column is selected and shows losses on purpose,
+     * while the planner only wants what pays.
+     *
+     * @param {string} type - 'coinify' | 'decompose' | 'transmute'
+     * @returns {Array<Object>} One entry per eligible item
+     */
+    function rankAlchemyType(type) {
+        const gameData = dataManager.getInitClientData();
+        if (!gameData?.itemDetailMap) return [];
+
+        const level = alchemyLevel();
+        if (!actionUnlocked(type, gameData, level)) return [];
+
+        const method = CALCULATOR_METHOD[type];
+        if (!method) return [];
+
+        const results = [];
+        for (const [itemHrid, itemDetails] of Object.entries(gameData.itemDetailMap)) {
+            if (!isEligible(type, itemDetails)) continue;
+
+            let profitData;
+            try {
+                // Transmute takes no enhancement level — the item goes in as it is
+                profitData =
+                    type === 'transmute'
+                        ? alchemyProfitCalculator[method](itemHrid)
+                        : alchemyProfitCalculator[method](itemHrid, 0);
+            } catch {
+                continue;
+            }
+            if (!profitData) continue;
+
+            const itemLevel = itemDetails.itemLevel || 1;
+            const xpPerAction = calcXpPerAction(type, itemLevel, profitData.successRate);
+
+            results.push({
+                action: type,
+                actionHrid: ACTION_HRID[type],
+                itemHrid,
+                name: itemDetails.name,
+                itemLevel,
+                itemPrice: marketData_js.getItemPrice(itemHrid, { context: 'profit', side: 'buy' }) || 0,
+                profitPerHour: profitData.profitPerHour,
+                xpPerHour: profitData.actionsPerHour * xpPerAction,
+                catalyst: profitData.winningCatalystHrid || null,
+                // Item level is a penalty, not a gate — see the module doc
+                requiresLevel: itemLevel,
+                underLevelled: level < itemLevel,
+                profitData,
+            });
+        }
+
+        return results;
+    }
+
+    /**
+     * A digest of everything a rate depends on that is not the market.
+     *
+     * Alchemy profit moves with the alchemy level (the under-level penalty), the
+     * teas in the slots (success rate and cost) and the gear (speed, efficiency,
+     * rare and essence find). Any of those changing has to invalidate the cache;
+     * nothing else in the character does.
+     *
+     * Since the rates began carrying a stock cap, the bag does too — decomposing
+     * the last crossbow has to stop the rate being offered, and a cached answer
+     * from before it went would go on offering it. Counted rather than digested:
+     * one number over the inventory is cheap, and any consumption moves it.
+     *
+     * @param {number} priceStamp - When the caller's market data was fetched
+     * @returns {string} A cache key
+     */
+    function stateFingerprint(priceStamp) {
+        const level = alchemyLevel();
+
+        const inventory = dataManager.getInventory() || [];
+        const stock = `${inventory.length}:${inventory.reduce((sum, item) => sum + (item?.count || 0), 0)}`;
+
+        const drinks = (dataManager.getActionDrinkSlots('/action_types/alchemy') || [])
+            .map((slot) => slot?.itemHrid || 'empty')
+            .join(',');
+
+        const equipment = dataManager.getEquipment();
+        const gear = equipment
+            ? Array.from(equipment.values())
+                  .map((item) => `${item?.itemHrid || ''}+${item?.enhancementLevel || 0}`)
+                  .sort()
+                  .join(',')
+            : '';
+
+        return `${level}|${priceStamp}|${drinks}|${gear}|${stock}`;
+    }
+
+    /**
+     * What alchemy pays per hour, best first, in the shape the planner ranks.
+     *
+     * Memoised on the character state and the caller's price stamp, because the
+     * ranking is three passes over `itemDetailMap` and the planner asks for it on
+     * every refresh — including refreshes that happen because a *house* level
+     * changed and cannot have moved an alchemy rate.
+     *
+     * Each rate carries a `sustainable` cap: alchemy eats one copy of its item per
+     * action, so what the method is worth in total is the margin times what is in
+     * the bag. An item with none left is not offered at all — a rate you cannot
+     * start once is not a rate, and it is exactly the kind that tops the ranking.
+     *
+     * @param {Object} [options] - Options
+     * @param {number} [options.priceStamp=0] - When the market data behind the prices was fetched
+     * @param {number} [options.limit=PLANNER_RATE_LIMIT] - How many rates to keep
+     * @returns {Array<Object>} `{actionHrid, label, goldPerHour, sustainable, kind, ...}`, best first
+     */
+    function alchemyGoldRates({ priceStamp = 0, limit = PLANNER_RATE_LIMIT } = {}) {
+        const fingerprint = stateFingerprint(priceStamp);
+        if (rateCache.fingerprint === fingerprint && rateCache.rates) return rateCache.rates;
+
+        const stock = stockByItem(dataManager.getInventory());
+
+        const rates = [];
+        for (const type of ALCHEMY_TYPES) {
+            let ranked;
+            try {
+                ranked = rankAlchemyType(type);
+            } catch (error) {
+                console.error(`[AlchemyRankings] Ranking ${type} failed:`, error);
+                continue;
+            }
+
+            for (const entry of ranked) {
+                if (!(entry.profitPerHour > 0)) continue;
+
+                const units = stock.get(entry.itemHrid) || 0;
+                if (units <= 0) continue;
+
+                // The calculator's own per-action margin, which already carries the
+                // tea, catalyst and coin-fee arithmetic — dividing the hourly figure
+                // here would be a second opinion about the same number
+                const goldPerUnit = Number(entry.profitData?.profitPerAction);
+                const perUnit = Number.isFinite(goldPerUnit) && goldPerUnit > 0 ? goldPerUnit : 0;
+                if (!perUnit) continue;
+
+                const name = entry.name || entry.itemHrid.split('/').pop();
+
+                // What the method has to sell, and what it costs to start one.
+                //
+                // Neither is used here — both are for the goal planner, which bounds
+                // a rate by how fast its output actually trades and refuses to
+                // recommend a method whose inputs cost more than the character has.
+                // They are attached at the point the rate is built because this is
+                // where the calculator's own answer is still in scope; re-deriving
+                // them later would be a second opinion about the same numbers.
+                const sells = (entry.profitData?.dropRevenues || [])
+                    .filter((drop) => drop?.itemHrid && Number(drop.dropsPerHour) > 0)
+                    .map((drop) => ({
+                        itemHrid: drop.itemHrid,
+                        name: drop.itemName || null,
+                        unitsPerHour: Number(drop.dropsPerHour) || 0,
+                    }));
+                // The item itself is already in the bag — that is what the cap below
+                // counts — so starting costs only the catalyst and the drinks
+                const upfrontCost = Math.max(
+                    0,
+                    (Number(entry.profitData?.costPerAttempt) || 0) - (Number(entry.profitData?.materialCost) || 0)
+                );
+
+                rates.push({
+                    actionHrid: entry.actionHrid,
+                    sells,
+                    upfrontCost,
+                    label: `${TYPE_LABEL[type]} ${name}`,
+                    goldPerHour: entry.profitPerHour,
+                    kind: 'alchemy',
+                    action: type,
+                    itemHrid: entry.itemHrid,
+                    itemName: entry.name,
+                    requiresLevel: entry.requiresLevel,
+                    underLevelled: entry.underLevelled,
+                    xpPerHour: entry.xpPerHour,
+                    catalyst: entry.catalyst,
+                    sustainable: {
+                        gold: perUnit * units,
+                        goldPerUnit: perUnit,
+                        units,
+                        unitLabel: name,
+                        verb: TYPE_LABEL[type],
+                        source: 'inventory',
+                        note: OWN_STOCK_NOTE,
+                    },
+                });
+            }
+        }
+
+        rates.sort((a, b) => b.goldPerHour - a.goldPerHour);
+        const kept = rates.slice(0, limit);
+        rateCache = { fingerprint, rates: kept };
+        return kept;
+    }
+
+    /**
+     * Alchemy Best Items
+     * Shows a ranked table of all eligible items by profit/hr or XP/hr
+     * for the active alchemy type (Coinify, Decompose, Transmute).
+     *
+     * The ranking itself is not here. Walking `itemDetailMap`, deciding what each
+     * alchemy action applies to and asking the profit calculator about every one of
+     * them is exactly what the goal planner needs too, so it lives in
+     * `alchemy-rankings.js` and this file is the table that draws it. What remains
+     * here is presentation: which tab is open, the filters, the sort, the modal.
+     */
+
+
+    const CATALYST_LABELS = {
+        '/items/catalyst_of_coinification': 'Coinify',
+        '/items/catalyst_of_decomposition': 'Decompose',
+        '/items/catalyst_of_transmutation': 'Transmute',
+        '/items/prime_catalyst': 'Prime',
+    };
 
     /**
      * Check whether any mutation added nodes that are, contain, or sit under a tablist.
@@ -24131,59 +25150,16 @@
 
         /**
          * Calculate rankings for a given alchemy type
+         *
+         * Delegated whole to `alchemy-rankings.js` — the table and the goal planner
+         * have to agree about what alchemy pays, and the only way to guarantee that
+         * is for there to be one loop.
+         *
          * @param {string} alchemyType - 'coinify', 'decompose', or 'transmute'
-         * @returns {Array} Sorted array of item results
+         * @returns {Array} Array of item results, in itemDetailMap order
          */
         calculateRankings(alchemyType) {
-            const gameData = dataManager.getInitClientData();
-            if (!gameData?.itemDetailMap) return [];
-
-            const results = [];
-            const calcMethod =
-                alchemyType === 'coinify'
-                    ? 'calculateCoinifyProfit'
-                    : alchemyType === 'decompose'
-                      ? 'calculateDecomposeProfit'
-                      : 'calculateTransmuteProfit';
-
-            for (const [itemHrid, itemDetails] of Object.entries(gameData.itemDetailMap)) {
-                if (!itemDetails.alchemyDetail) continue;
-
-                // Check eligibility for this alchemy type (match calculator's checks)
-                if (alchemyType === 'coinify' && !itemDetails.alchemyDetail.isCoinifiable) continue;
-                if (alchemyType === 'decompose' && !itemDetails.alchemyDetail.decomposeItems) continue;
-                if (alchemyType === 'transmute' && !itemDetails.alchemyDetail.transmuteDropTable) continue;
-
-                let profitData;
-                try {
-                    if (alchemyType === 'transmute') {
-                        profitData = alchemyProfitCalculator[calcMethod](itemHrid);
-                    } else {
-                        profitData = alchemyProfitCalculator[calcMethod](itemHrid, 0);
-                    }
-                } catch {
-                    continue;
-                }
-
-                if (!profitData) continue;
-
-                const itemLevel = itemDetails.itemLevel || 1;
-                const xpPerAction = calcXpPerAction(alchemyType, itemLevel, profitData.successRate);
-                const xpPerHour = profitData.actionsPerHour * xpPerAction;
-
-                results.push({
-                    itemHrid,
-                    name: itemDetails.name,
-                    itemLevel,
-                    itemPrice: marketData_js.getItemPrice(itemHrid, { context: 'profit', side: 'buy' }) || 0,
-                    profitPerHour: profitData.profitPerHour,
-                    xpPerHour,
-                    catalyst: profitData.winningCatalystHrid || null,
-                    profitData,
-                });
-            }
-
-            return results;
+            return rankAlchemyType(alchemyType);
         }
 
         /**
@@ -24476,7 +25452,7 @@
             // Update tab styling
             this.modal.querySelectorAll('[data-mwi-type-tab]').forEach((tab) => {
                 const isActive = tab.getAttribute('data-mwi-type-tab') === this.currentType;
-                tab.style.background = isActive ? config.SCRIPT_COLOR_PRIMARY : 'transparent';
+                tab.style.background = isActive ? config.COLOR_ACCENT : 'transparent';
             });
 
             // Update sort button styling
@@ -24537,7 +25513,7 @@
                 nameLink.style.cssText = 'color: #93c5fd; cursor: pointer; text-decoration: underline;';
                 nameLink.addEventListener('click', (e) => {
                     e.stopPropagation();
-                    navigateToMarketplace(item.itemHrid);
+                    marketplaceTabs_js.navigateToMarketplace(item.itemHrid);
                 });
                 nameTd.appendChild(nameLink);
                 row.appendChild(nameTd);
@@ -24638,7 +25614,7 @@
             link.style.cssText = 'color: #93c5fd; cursor: pointer; text-decoration: underline;';
             link.addEventListener('click', (e) => {
                 e.stopPropagation();
-                navigateToMarketplace(itemHrid);
+                marketplaceTabs_js.navigateToMarketplace(itemHrid);
             });
             return link;
         }
@@ -25006,6 +25982,428 @@
     }
 
     /**
+     * Consent gate for the adopt-once migration.
+     *
+     * Legacy account-wide data is never silently claimed by whichever character
+     * logs in first. The first time an adoptable value is found, one modal asks
+     * which character should inherit the pre-scoping data; until the user
+     * confirms, every legacy value stays where it is. The heuristics (game mode,
+     * test names, networth history) only choose which character the dialog
+     * preselects.
+     *
+     * The decision is stored account-wide under `adoptionTargetCharacterId` and
+     * can be reopened from the console via `Toolasha.debug.chooseDataOwner()`.
+     */
+
+    const DECISION_KEY = 'adoptionTargetCharacterId';
+
+    /** undefined = not read yet, null = undecided, string = chosen character id. */
+    let cachedDecision;
+
+    /** One prompt per session, shared by every concurrent readScoped call. */
+    let promptPromise = null;
+
+    /**
+     * The character chosen to inherit legacy data, or null while undecided.
+     * @returns {Promise<string|null>} Chosen character id
+     */
+    async function getAdoptionTargetId() {
+        if (cachedDecision === undefined) {
+            cachedDecision = await storage.get(DECISION_KEY, 'settings', null);
+        }
+        return cachedDecision;
+    }
+
+    /**
+     * Record the choice.
+     * @param {string} id - Character id that inherits legacy data
+     * @returns {Promise<void>}
+     */
+    async function setAdoptionTargetId(id) {
+        cachedDecision = id;
+        await storage.set(DECISION_KEY, id, 'settings', true);
+    }
+
+    /**
+     * Show the choose-a-character dialog (once per session).
+     *
+     * Fire-and-forget from data paths: callers must not await this before
+     * returning a fallback, or a modal would block feature initialization.
+     * @param {{recommendedId?: string|null}} [options] - Which character to preselect
+     * @returns {Promise<string|null>} The chosen id, or null for "not now"
+     */
+    function requestAdoptionConsent(options = {}) {
+        if (promptPromise) return promptPromise;
+        if (typeof document === 'undefined' || !document.body) return Promise.resolve(null);
+
+        promptPromise = (async () => {
+            try {
+                const names = (await storage.get('accountCharacterNames', 'settings', null)) || {};
+                const currentId = dataManager.getCurrentCharacterId();
+                const currentName = dataManager.getCurrentCharacterName?.() || '';
+                const known = { ...names };
+                if (currentId && !known[currentId]) known[currentId] = currentName || String(currentId);
+                const recommended = options.recommendedId || currentId;
+                const chosen = await showDialog(known, recommended, currentId);
+                if (chosen) await setAdoptionTargetId(chosen);
+                return chosen;
+            } catch (error) {
+                console.error('[AdoptionConsent] Prompt failed:', error);
+                return null;
+            }
+        })();
+        return promptPromise;
+    }
+
+    /**
+     * The dialog itself. Resolves with a character id or null for "not now".
+     * @param {Record<string, string>} characters - id → display name
+     * @param {string|null} recommendedId - Preselected id
+     * @param {string|null} currentId - The logged-in character, labeled as such
+     * @returns {Promise<string|null>} Choice
+     */
+    function showDialog(characters, recommendedId, currentId) {
+        return new Promise((resolve) => {
+            const overlay = document.createElement('div');
+            // Above every panel tier — this blocks a data migration, nothing may cover it
+            overlay.style.cssText =
+                'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:2147483600; ' +
+                'display:flex; align-items:center; justify-content:center;';
+
+            const ids = Object.keys(characters);
+            const rows = ids
+                .map((id) => {
+                    const checked = id === recommendedId ? ' checked' : '';
+                    const who = `${characters[id]}${id === currentId ? ' (this character)' : ''}`;
+                    return (
+                        `<label style="display:block; margin:4px 0; cursor:pointer;">` +
+                        `<input type="radio" name="mwi-adopt-target" value="${id}"${checked}> ${who}</label>`
+                    );
+                })
+                .join('');
+
+            const card = document.createElement('div');
+            card.style.cssText =
+                'background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:8px; ' +
+                'padding:16px 20px; max-width:420px; font-size:13px; line-height:1.5;';
+            card.innerHTML =
+                `<div style="font-weight:700; font-size:14px; margin-bottom:8px;">Toolasha — who owns the saved data?</div>` +
+                `<div style="color:#aaa; margin-bottom:10px;">Saved data from before per-character scoping was found ` +
+                `(watchlist, savings targets, trackers, panel state…). Choose which character should inherit it — ` +
+                `nothing moves until you confirm.</div>` +
+                rows +
+                `<div style="margin-top:12px; display:flex; gap:8px; justify-content:flex-end;">` +
+                `<button id="mwi-adopt-later" style="background:#333; color:#ccc; border:1px solid #555; border-radius:4px; padding:4px 12px; cursor:pointer;">Not now</button>` +
+                `<button id="mwi-adopt-confirm" style="background:#4a6fdc; color:#fff; border:none; border-radius:4px; padding:4px 12px; cursor:pointer;">Confirm</button>` +
+                `</div>` +
+                `<div style="color:#777; margin-top:8px; font-size:11px;">Applies as data is next read; reload to apply everywhere. ` +
+                `Reopen later with Toolasha.debug.chooseDataOwner().</div>`;
+
+            overlay.appendChild(card);
+            document.body.appendChild(overlay);
+
+            const done = (value) => {
+                overlay.remove();
+                resolve(value);
+            };
+            card.querySelector('#mwi-adopt-confirm').addEventListener('click', () => {
+                const picked = card.querySelector('input[name="mwi-adopt-target"]:checked');
+                done(picked ? picked.value : null);
+            });
+            card.querySelector('#mwi-adopt-later').addEventListener('click', () => done(null));
+        });
+    }
+
+    /**
+     * Append-only history, stored as records rather than as one array.
+     *
+     * ## The write amplification this exists to end
+     *
+     * A recorder that keeps its history in a single key does the same three things
+     * on every event: read the whole array, push one entry, write the whole array
+     * back. The cost of recording one loot drop is therefore the size of every loot
+     * drop already recorded, and it grows for as long as the player keeps playing —
+     * which is the shape of every quota failure this script has had. The loot log
+     * rewrote five hundred entries per `loot_log_updated`; the alchemy trackers
+     * rewrote every session ever, immediately, on every completed action.
+     *
+     * Splitting the array over several keys makes the write proportional to what
+     * changed instead of to what is kept. A new entry lands in one record; the other
+     * records are untouched, so IndexedDB never sees them.
+     *
+     * ## Chunks, not one key per entry
+     *
+     * A key per entry would make every write minimal, and would also put a thousand
+     * keys per character into a store whose soft budget is measured in hundreds (see
+     * `STORE_KEY_BUDGETS` in `core/storage.js`). Grouping entries by the hour, day or
+     * month they belong to keeps both numbers small: the record written is the
+     * current bucket, which holds the handful of entries recorded since the bucket
+     * opened, and the key count grows with calendar time rather than with events.
+     *
+     * ## What the callers keep
+     *
+     * Nothing above this changes shape. A recorder still holds its history as one
+     * array, still hands the whole array to `save()`, and still gets the whole array
+     * back from `load()`. The diff against the last known state is what turns a
+     * whole-array save into a one-record write, so the call sites did not have to
+     * learn about chunking to stop paying for it.
+     *
+     * ## Migration, and what happens when the disk is full
+     *
+     * The legacy single-array key is split on the first read and then deleted. If
+     * the split cannot be written — which on a full disk is exactly when it matters —
+     * the legacy key is left alone and the recorder keeps using it. A migration that
+     * bricked the history the moment storage filled up would be worse than the write
+     * amplification it was meant to fix.
+     */
+
+
+    /**
+     * The character ids a set of record keys names.
+     *
+     * Record keys are `<prefix>_<characterId>_<chunkId>`, so the id is the segment
+     * between the prefix and the next underscore. Character ids are alphanumeric
+     * (see `NETWORTH_SERIES_RE` in `utils/character-key.js`), which is what makes
+     * that split unambiguous.
+     *
+     * @param {Array<string>} keys - Keys from one store
+     * @param {string} prefix - The record prefix including its trailing underscore
+     * @returns {Array<string>} Character ids, in key order, deduplicated
+     */
+    function idsFromRecordKeys(keys, prefix) {
+        const ids = [];
+        const seen = new Set();
+        for (const key of keys || []) {
+            if (typeof key !== 'string' || !key.startsWith(prefix)) continue;
+            const rest = key.slice(prefix.length);
+            const end = rest.indexOf('_');
+            if (end <= 0) continue;
+            const id = rest.slice(0, end);
+            if (seen.has(id)) continue;
+            seen.add(id);
+            ids.push(id);
+        }
+        return ids;
+    }
+
+    /**
+     * Every record key in a store belonging to one character.
+     *
+     * @param {Array<string>} keys - Keys from one store
+     * @param {string} prefix - The record prefix, without its trailing underscore
+     * @param {string} charId - Whose records to pick out
+     * @returns {Array<string>} Matching keys, in chunk-id order
+     */
+    function recordKeysFor(keys, prefix, charId) {
+        const scoped = `${prefix}_${charId}_`;
+        return (keys || []).filter((key) => typeof key === 'string' && key.startsWith(scoped)).sort();
+    }
+
+    /**
+     * Per-character storage key helpers.
+     *
+     * Character-specific state stored under a bare key leaks between characters —
+     * the market cow's watchlist shows up on the iron cow. Every feature that
+     * persists per-character state should build its key through {@link characterKey}
+     * and read through {@link readScoped}, which also handles one-time adoption of
+     * the legacy global value.
+     *
+     * Adoption policy: a legacy global value almost always belongs to the account's
+     * main character. It is adopted (moved to the scoped key, legacy deleted) only
+     * by an adoption candidate — a non-ironcow character which, when several
+     * characters have networth history, owns the longest series. Other characters
+     * simply start clean and leave the legacy value in place for the main to claim.
+     */
+
+    const NETWORTH_SERIES_RE = /^networth_[0-9a-zA-Z]+$/;
+
+    /**
+     * The networth series after it was split into one record per month.
+     *
+     * A migrated character has no `networth_<id>` key at all, so the length
+     * comparison below would see nothing and let every character adopt — including
+     * the alts the policy exists to keep out.
+     */
+    const NETWORTH_RECORD_PREFIX = 'networthSeries';
+
+    /** Per-character memo of the adoption decision, reset only on reload. */
+    const adoptionDecisions = new Map();
+
+    /**
+     * A storage key scoped to the character now logged in.
+     *
+     * Uses the codebase's dominant `${base}_${charId}` idiom with a `'default'`
+     * fallback before login, so account-view suffix parsing keeps working.
+     * @param {string} base - The unscoped key
+     * @returns {string} `base_<characterId>`, or `base_default` before login
+     */
+    function characterKey(base) {
+        return `${base}_${dataManager.getCurrentCharacterId() || 'default'}`;
+    }
+
+    /**
+     * How many networth points one character has recorded, either way it is stored.
+     *
+     * The pre-migration single key wins where it exists: its presence is what says
+     * the split has not happened, so any records beside it are a half-finished
+     * migration rather than the series.
+     *
+     * @param {Array<string>} keys - Every key in the networth store
+     * @param {string} id - Whose series
+     * @returns {Promise<number>} Points recorded
+     */
+    async function networthSeriesLength(keys, id) {
+        const legacy = await storage.get(`networth_${id}`, 'networthHistory', null);
+        if (Array.isArray(legacy) && legacy.length > 0) return legacy.length;
+
+        let length = 0;
+        for (const key of recordKeysFor(keys, NETWORTH_RECORD_PREFIX, id)) {
+            const chunk = await storage.get(key, 'networthHistory', null);
+            if (Array.isArray(chunk)) length += chunk.length;
+        }
+        return length;
+    }
+
+    /**
+     * Whether the given character should inherit legacy (pre-scoping) global data.
+     *
+     * Iron cow characters never adopt — the legacy value was almost certainly
+     * written by the market character. When several characters have networth
+     * history, only the one with the longest series adopts. On any failure the
+     * check errs toward adopting, so a solo-character install migrates cleanly.
+     * @param {string} charId - The character considering adoption
+     * @returns {Promise<boolean>} True when this character may claim legacy data
+     */
+    async function isAdoptionCandidate(charId) {
+        if (adoptionDecisions.has(charId)) {
+            return adoptionDecisions.get(charId);
+        }
+
+        let decision = true;
+        try {
+            // Same signal MCS reads: character.gameMode. 'standard' is the market
+            // character; 'ironcow' and 'legacy_ironcow' never adopt.
+            const gameMode = dataManager.getCurrentCharacterGameMode();
+            const name =
+                typeof dataManager.getCurrentCharacterName === 'function'
+                    ? dataManager.getCurrentCharacterName() || ''
+                    : '';
+            if (typeof gameMode === 'string' && gameMode.includes('ironcow')) {
+                decision = false;
+            } else if (/test/i.test(name)) {
+                // A test character is never the main, whatever its history says.
+                decision = false;
+            } else {
+                const keys = await storage.getAllKeys('networthHistory');
+                const ids = new Set([
+                    ...keys
+                        .filter((key) => typeof key === 'string' && NETWORTH_SERIES_RE.test(key))
+                        .map((key) => key.slice('networth_'.length)),
+                    ...idsFromRecordKeys(keys, `${NETWORTH_RECORD_PREFIX}_`),
+                ]);
+
+                if (ids.size > 0 && !ids.has(charId)) {
+                    // Someone on this account has recorded history and this
+                    // character has none — it is not the main. Skipping the
+                    // comparison here is what once let a fresh alt adopt
+                    // everything just by logging in first.
+                    decision = false;
+                } else if (ids.size > 1) {
+                    let bestId = null;
+                    let bestLength = -1;
+                    for (const id of ids) {
+                        const length = await networthSeriesLength(keys, id);
+                        if (length > bestLength) {
+                            bestLength = length;
+                            bestId = id;
+                        }
+                    }
+                    decision = bestId === null || bestId === charId;
+                }
+            }
+        } catch (error) {
+            console.error('[CharacterKey] Adoption check failed, adopting by default:', error);
+            decision = true;
+        }
+
+        adoptionDecisions.set(charId, decision);
+        return decision;
+    }
+
+    /**
+     * Read a per-character key, migrating any legacy global value exactly once.
+     *
+     * Looks up `characterKey(base)` first. When absent and the legacy bare `base`
+     * key exists, either adopts it (moves it to this character's key and deletes
+     * the legacy copy — main character only, see module doc) or discards it
+     * (deletes the legacy copy and starts clean), per `options.migrate`.
+     *
+     * Discard is for state derived from one character's gear or sim results, where
+     * inheriting another character's data is worse than starting empty.
+     * @param {string} base - The unscoped key
+     * @param {string} [storeName] - Object store name (default: 'settings')
+     * @param {*} [defaultValue] - Value returned when neither key exists
+     * @param {{migrate?: 'adopt'|'discard'}} [options] - Legacy migration mode (default: 'adopt')
+     * @returns {Promise<*>} The stored value or default
+     */
+    async function readScoped(base, storeName = 'settings', defaultValue = null, options = {}) {
+        const { migrate = 'adopt' } = options;
+
+        const scopedKey = characterKey(base);
+        const scoped = await storage.get(scopedKey, storeName, null);
+        if (scoped !== null) {
+            return scoped;
+        }
+
+        const legacy = await storage.get(base, storeName, null);
+        if (legacy === null) {
+            return defaultValue;
+        }
+
+        if (migrate === 'discard') {
+            await storage.delete(base, storeName);
+            return defaultValue;
+        }
+
+        const charId = dataManager.getCurrentCharacterId();
+        if (!charId) {
+            return defaultValue;
+        }
+
+        // Adoption is user-confirmed, never automatic. The heuristics only pick
+        // which character the dialog preselects.
+        const targetId = await getAdoptionTargetId();
+        if (targetId === null) {
+            // Fire-and-forget: awaiting a modal here would hang feature init.
+            isAdoptionCandidate(charId).then(
+                (candidate) => requestAdoptionConsent({ recommendedId: candidate ? charId : null }),
+                () => requestAdoptionConsent({})
+            );
+            return defaultValue;
+        }
+        if (targetId !== charId) {
+            // Leave the legacy value in place for the chosen character to claim.
+            return defaultValue;
+        }
+
+        await storage.set(scopedKey, legacy, storeName, true);
+        await storage.delete(base, storeName);
+        return legacy;
+    }
+
+    /**
+     * Write a value under this character's scoped key.
+     * @param {string} base - The unscoped key
+     * @param {*} value - Value to store
+     * @param {string} [storeName] - Object store name (default: 'settings')
+     * @param {boolean} [immediate] - Skip write debouncing
+     * @returns {Promise<boolean>} Success status
+     */
+    async function writeScoped(base, value, storeName = 'settings', immediate = false) {
+        return storage.set(characterKey(base), value, storeName, immediate);
+    }
+
+    /**
      * Alchemy Item Pins
      *
      * Pin the items you alchemize to the front of the picker, per action.
@@ -25128,6 +26526,11 @@
     .${PINNED_CLASS} .${PIN_CLASS} { opacity: 1; color: #ffcf5c; }
     .${PINNED_CLASS} { outline: 1px solid rgba(255, 207, 92, 0.55); outline-offset: -1px; border-radius: 4px; }
     .${TILE_CLASS} { position: relative; }
+    /* No hover on a touchscreen: pins hidden behind it would simply not exist.
+       Always visible there, and sized for a finger rather than a cursor. */
+    @media (pointer: coarse) {
+        .${PIN_CLASS} { opacity: 1; width: 32px; height: 32px; font-size: 14px; }
+    }
 `;
 
     class AlchemyItemPins {
@@ -25146,7 +26549,9 @@
             if (!config.getSetting('alchemyItemPins')) return;
             this.isInitialized = true;
 
-            this.pins = (await storage.getJSON(STORAGE_KEY, 'settings', {})) || {};
+            // Read here rather than at import, so a character switch — which
+            // re-initialises the feature — picks up that character's own pins
+            this.pins = (await readScoped(STORAGE_KEY, 'settings', {}, { migrate: 'adopt' })) || {};
 
             this.styleEl = document.createElement('style');
             this.styleEl.id = STYLE_ID;
@@ -25288,7 +26693,7 @@
 
             this.pins = togglePin(this.pins, action, itemHrid);
             this.apply();
-            storage.setJSON(STORAGE_KEY, this.pins, 'settings').catch((error) => {
+            writeScoped(STORAGE_KEY, this.pins, 'settings').catch((error) => {
                 console.error('[AlchemyItemPins] Saving pins failed:', error);
             });
         }
@@ -27184,6 +28589,4513 @@
     };
 
     /**
+     * Goal Planner engine
+     *
+     * You say where you want to end up; this says what to do first.
+     *
+     * Every number here already exists somewhere in Toolasha — the enhancement
+     * Markov chain, the buy-vs-craft comparison, the profit-per-hour calculators,
+     * the house upgrade costs. What none of them can answer on their own is the
+     * ordinary question a player actually has: *"I want Sinister Cape +10 — what
+     * does that cost me, and in what order?"* Answering it means putting four
+     * calculators end to end and admitting that the third one's bill has to be paid
+     * out of the first one's income.
+     *
+     * ## Why this module is pure
+     *
+     * Nothing here reads the game, the market or the DOM. Everything arrives in a
+     * context object — levels, coins, prices, and a handful of provider functions
+     * that wrap the real calculators (see `goal-planner-context.js`). That split is
+     * not tidiness: the interesting behaviour is *the choice between two costed
+     * options*, and a choice is only testable when the fixture can put its thumb on
+     * the scale. "Buying the base is cheaper than crafting it" and "crafting it is
+     * cheaper" are the same code down two price fixtures, and there is no way to
+     * write the second test against a live market.
+     *
+     * ## Steps carry their prerequisites
+     *
+     * A plan is not a list, it is a partial order. Coins have to be earned before
+     * they are spent, and a craft that needs Crafting 70 has to wait for Crafting
+     * 70. Each step names the steps it waits on and {@link orderSteps} flattens
+     * that into the sequence to read top to bottom, so the ordering rule lives in
+     * one place rather than in four `push()` calls that happen to be in the right
+     * order today.
+     *
+     * ## Satisfied steps are marked, not dropped
+     *
+     * A plan re-costed against a character who has since bought the base item
+     * should show the acquisition step struck through, not silently one step
+     * shorter. The struck-through step is the evidence the plan is the same plan.
+     *
+     * ## A rate is only a rate while its inputs last
+     *
+     * The single largest source of nonsense a planner can produce is treating a
+     * one-shot margin as an hourly income. Decomposing a Sundering Crossbow ★ you
+     * happen to own might net 850M in seven seconds; extrapolated that is 437
+     * *billion* an hour, and a funding step that quotes it tells you a 900M goal
+     * takes seven seconds. It does — once. You own one crossbow.
+     *
+     * So every rate may carry a {@link https://en.wikipedia.org/wiki/Working_capital
+     * sustainability cap}: `rate.sustainable.gold` is the most gold that method can
+     * produce before the thing it consumes runs out. {@link planEarnings} then
+     * spends the shortfall down the ranking — take the best rate up to its cap,
+     * then the next — so a plan reads "decompose the one crossbow you have, then
+     * grind" rather than "decompose crossbows for seven seconds". A rate with no
+     * cap (gathering, production, combat: their inputs are gathered or bought at
+     * ask) is unbounded and covers whatever is left in one leg.
+     *
+     * A leg that cannot last {@link RATE_HORIZON_HOURS} is not described as a rate
+     * at all, because "per hour" is a claim about an hour. It is described as what
+     * it is: a fixed number of units for a fixed number of coins.
+     *
+     * ## And you only own the crossbow once
+     *
+     * The cap above is per plan, and a player has several. Two goals planned
+     * independently will both decompose the same crossbow, both spend the same coins
+     * in hand, and between them promise 1.7B out of an 851M item. Each plan is right
+     * and the pair is nonsense.
+     *
+     * So {@link planGoals} runs the goals through a {@link createResourceLedger
+     * ledger}: goals are planned in the order they are shown, each one against what
+     * the ones above it have already claimed. The first goal takes the crossbow, the
+     * second sees a rate with nothing left and falls through to the next-best method
+     * — which is exactly what the sustainability cap already does when a stack runs
+     * out, so there is one fallback rule rather than two.
+     *
+     * A silent re-rank would be worse than the bug, though. "Milk a Cow" appearing
+     * where "Decompose Sundering Crossbow ★" was reads as the planner changing its
+     * mind. So the step that lost its inputs says who took them:
+     * *Sundering Crossbow ★ already spent by 'Cheesesmithing 108'*.
+     */
+
+
+    /** The goal kinds this version plans, and what to call them */
+    const GOAL_TYPES = {
+        gold: 'Gold target',
+        equipment: 'Equipment target',
+        skill: 'Skill level target',
+        house: 'House room target',
+    };
+
+    /** Highest enhancement level the game allows */
+    const MAX_ENHANCEMENT_LEVEL = 20;
+    /** Highest house room level the game allows */
+    const MAX_HOUSE_LEVEL = 8;
+
+    /**
+     * How long a method has to last before "per hour" is a fair way to say it.
+     *
+     * Quoting X/hr for something whose inputs are gone in seven seconds is the bug
+     * this number exists to prevent. Under an hour a leg is described as the fixed
+     * thing it is — so many units, so many coins, once.
+     */
+    const RATE_HORIZON_HOURS = 1;
+
+    /** How many legs a step's own sentence names before it says "then more" */
+    const LEGS_IN_SENTENCE = 2;
+
+    let idCounter = 0;
+
+    /**
+     * A finite number, or a fallback.
+     * @param {*} value - Anything
+     * @param {number} [fallback] - Returned when `value` is not a usable number
+     * @returns {number} A finite number
+     */
+    function num(value, fallback = 0) {
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? parsed : fallback;
+    }
+
+    /**
+     * Clamp to a range, defaulting when the value is unusable.
+     * @param {*} value - Anything
+     * @param {number} min - Lower bound
+     * @param {number} max - Upper bound
+     * @param {number} fallback - Used when the value is not a number
+     * @returns {number} An integer in [min, max]
+     */
+    function clampInt(value, min, max, fallback) {
+        const parsed = Math.round(Number(value));
+        if (!Number.isFinite(parsed)) return fallback;
+        return Math.min(max, Math.max(min, parsed));
+    }
+
+    /**
+     * Call a context provider without letting it take the plan down with it.
+     *
+     * The providers wrap live calculators that reach the market and the game's own
+     * data, and any one of them can be missing an answer. A goal whose enhancement
+     * provider throws should lose its enhancement step and say so, not lose the
+     * whole plan.
+     *
+     * @param {Object} context - The planning context
+     * @param {string} name - Provider name on the context
+     * @param {Array} args - Arguments to pass
+     * @param {*} fallback - Returned on absence or failure
+     * @returns {*} The provider's answer, or the fallback
+     */
+    function ask(context, name, args = [], fallback = null) {
+        const provider = context?.[name];
+        if (typeof provider !== 'function') return fallback;
+        try {
+            const answer = provider(...args);
+            return answer === undefined ? fallback : answer;
+        } catch (error) {
+            console.error(`[GoalPlanner] Context provider ${name} failed:`, error);
+            return fallback;
+        }
+    }
+
+    /**
+     * Coins with a sign, as a step description says them.
+     * @param {number} value - Coins
+     * @returns {string} e.g. "12.5M"
+     */
+    function coins(value) {
+        return formatters_js.formatKMB(Math.round(num(value))) ?? '0';
+    }
+
+    /**
+     * Build a plan step.
+     * @param {Object} spec - Step fields; see the module doc for the shape
+     * @returns {Object} A step
+     */
+    function makeStep(spec) {
+        return {
+            id: spec.id,
+            kind: spec.kind,
+            description: spec.description,
+            goldDelta: num(spec.goldDelta),
+            timeHours: spec.timeHours === null ? null : num(spec.timeHours),
+            prerequisites: Array.isArray(spec.prerequisites) ? [...spec.prerequisites] : [],
+            details: spec.details || {},
+            done: Boolean(spec.done),
+            progress: spec.progress || null,
+        };
+    }
+
+    /**
+     * Flatten a step graph into the order to do it in.
+     *
+     * Kahn's algorithm, kept stable on insertion order so two steps that do not
+     * depend on each other stay in the order the planner emitted them — a plan that
+     * reshuffles its own middle between two identical refreshes reads as broken
+     * even when it is correct. Prerequisites naming a step that is not in the list
+     * are ignored rather than treated as unsatisfiable; a cycle (which the planners
+     * cannot currently produce) degrades to insertion order rather than dropping
+     * steps on the floor.
+     *
+     * @param {Array<Object>} steps - Steps in emission order
+     * @returns {Array<Object>} The same steps, in dependency order
+     */
+    function orderSteps(steps) {
+        const list = Array.isArray(steps) ? steps.filter(Boolean) : [];
+        const byId = new Map(list.map((step) => [step.id, step]));
+
+        const remaining = new Map();
+        for (const step of list) {
+            remaining.set(
+                step.id,
+                step.prerequisites.filter((id) => byId.has(id) && id !== step.id)
+            );
+        }
+
+        const ordered = [];
+        const placed = new Set();
+
+        let progressed = true;
+        while (progressed && placed.size < list.length) {
+            progressed = false;
+            for (const step of list) {
+                if (placed.has(step.id)) continue;
+                if (remaining.get(step.id).some((id) => !placed.has(id))) continue;
+                ordered.push(step);
+                placed.add(step.id);
+                progressed = true;
+            }
+        }
+
+        // A cycle would leave steps unplaced; keep them rather than lose them
+        for (const step of list) {
+            if (!placed.has(step.id)) ordered.push(step);
+        }
+
+        return ordered;
+    }
+
+    /**
+     * What the outstanding part of a plan costs.
+     *
+     * Steps already satisfied are excluded from the totals but kept in the plan:
+     * the point of a total is what is left to do, and the point of a struck-through
+     * step is that it used to be part of it.
+     *
+     * @param {Array<Object>} steps - The plan's steps
+     * @returns {Object} `{goldEarn, goldSpend, netGold, timeHours, timeKnown, stepsDone, stepCount}`
+     */
+    function summarize(steps) {
+        const list = Array.isArray(steps) ? steps : [];
+        let goldEarn = 0;
+        let goldSpend = 0;
+        let timeHours = 0;
+        let timeKnown = true;
+        let stepsDone = 0;
+
+        for (const step of list) {
+            if (step.done) {
+                stepsDone += 1;
+                continue;
+            }
+            if (step.goldDelta > 0) goldEarn += step.goldDelta;
+            else goldSpend += -step.goldDelta;
+            if (step.timeHours === null) timeKnown = false;
+            else timeHours += step.timeHours;
+        }
+
+        return {
+            goldEarn,
+            goldSpend,
+            netGold: goldEarn - goldSpend,
+            timeHours,
+            timeKnown,
+            stepsDone,
+            stepCount: list.length,
+        };
+    }
+
+    /**
+     * Turn whatever was stored or typed into a goal the planners can read.
+     *
+     * Returns null rather than a half-built goal: a stored goal whose item no
+     * longer exists should disappear from the list, not plan itself into a step
+     * costing NaN coins.
+     *
+     * @param {Object} raw - A goal from storage or the creation form
+     * @returns {Object|null} A normalised goal, or null when it cannot be one
+     */
+    function normalizeGoal(raw) {
+        if (!raw || typeof raw !== 'object') return null;
+        const type = raw.type;
+        if (!GOAL_TYPES[type]) return null;
+
+        idCounter += 1;
+        const base = {
+            id: typeof raw.id === 'string' && raw.id ? raw.id : `goal-${type}-${Date.now()}-${idCounter}`,
+            type,
+            createdAt: num(raw.createdAt, Date.now()),
+        };
+
+        switch (type) {
+            case 'gold': {
+                const amount = Math.max(0, num(raw.amount));
+                return amount > 0 ? { ...base, amount } : null;
+            }
+            case 'equipment': {
+                if (typeof raw.itemHrid !== 'string' || !raw.itemHrid) return null;
+                return {
+                    ...base,
+                    itemHrid: raw.itemHrid,
+                    enhancementLevel: clampInt(raw.enhancementLevel, 0, MAX_ENHANCEMENT_LEVEL, 0),
+                };
+            }
+            case 'skill': {
+                if (typeof raw.skillHrid !== 'string' || !raw.skillHrid) return null;
+                const targetLevel = clampInt(raw.targetLevel, 1, 200, 0);
+                return targetLevel > 0 ? { ...base, skillHrid: raw.skillHrid, targetLevel } : null;
+            }
+            case 'house': {
+                if (typeof raw.roomHrid !== 'string' || !raw.roomHrid) return null;
+                const targetLevel = clampInt(raw.targetLevel, 1, MAX_HOUSE_LEVEL, 0);
+                return targetLevel > 0 ? { ...base, roomHrid: raw.roomHrid, targetLevel } : null;
+            }
+            default:
+                return null;
+        }
+    }
+
+    /**
+     * The activity that earns the most, out of what the character can actually do.
+     *
+     * "Can actually do" now includes having something left to do it with: a rate
+     * whose cap has already been spent to zero — no crossbows left to decompose —
+     * is not an option, and offering it as the top of the ranking is the whole bug.
+     *
+     * @param {Object} context - The planning context
+     * @returns {{rates: Array<Object>, best: Object|null}} All rates and the winner
+     */
+    function goldRates(context) {
+        const rates = ask(context, 'goldRates', [], []) || [];
+        const usable = rates.filter((rate) => rate && num(rate.goldPerHour) > 0 && sustainableGold(rate) > 0);
+        usable.sort((a, b) => num(b.goldPerHour) - num(a.goldPerHour));
+        return { rates: usable, best: usable[0] || null };
+    }
+
+    /**
+     * The most gold a method can produce before what it consumes runs out.
+     *
+     * A rate that says nothing about its inputs is unbounded, which is the right
+     * default: gathering consumes nothing, and production and combat buy their
+     * inputs at ask inside the same margin they report. Only a method that eats
+     * something you own — alchemy eats the item itself — has a ceiling.
+     *
+     * @param {Object} rate - A gold rate
+     * @returns {number} Coins, or `Infinity` when nothing limits it
+     */
+    function sustainableGold(rate) {
+        const cap = rate?.sustainable;
+        if (!cap || cap.unbounded) return Number.POSITIVE_INFINITY;
+        const gold = Number(cap.gold);
+        return Number.isFinite(gold) ? Math.max(0, gold) : Number.POSITIVE_INFINITY;
+    }
+
+    /**
+     * A key that means "the same method" across two goals' plans.
+     *
+     * Rates arrive from four providers and none of them carries an id. What makes
+     * two rates the same *resource* is the action and the item it eats — alchemy
+     * quotes many rates against one action hrid, so the item has to be in the key —
+     * and the label is a last resort for anything that has neither.
+     *
+     * @param {Object} rate - A gold rate
+     * @returns {string} A key, stable for as long as the rate is
+     */
+    function rateKey(rate) {
+        if (!rate) return '';
+        return [rate.kind || '', rate.actionHrid || '', rate.itemHrid || '', rate.label || ''].join('|');
+    }
+
+    /**
+     * What one method has left, once the goals above have taken their share.
+     *
+     * The ledger is deliberately not clever. It allocates greedily down the goal
+     * list — the order the goals are displayed in, which is the order the player put
+     * them in — and each goal simply plans against the remainder. There is no
+     * attempt to find the allocation that minimises total time across goals: that is
+     * a different and much larger question, and an answer nobody can check by
+     * reading it is worse here than an answer that is obviously "the top goal wins".
+     *
+     * Two resources are contested:
+     *
+     * - **windfall inputs** — a rate with a finite `sustainable.gold` eats something
+     *   out of the bag, and there is only one bagful;
+     * - **coins in hand** — a plan that spends 30M of your 50M leaves 20M, not 50M,
+     *   for the plan below it. A *gold* goal claims what it is holding towards its
+     *   target for the same reason: you cannot both keep 500M and spend it.
+     *
+     * @param {number} startingGold - Coins in hand before any goal has claimed any
+     * @returns {{view: Function, record: Function}} A ledger
+     */
+    function createResourceLedger(startingGold = 0) {
+        /** @type {Map<string, Object>} rate key → what has been taken from it, and by whom */
+        const claims = new Map();
+        /** @type {Array<{title: string, gold: number}>} coins committed, and to what */
+        const goldClaims = [];
+        let goldClaimed = 0;
+
+        /**
+         * The same rate, with what earlier goals took already gone from its ceiling.
+         * @param {Object} rate - A gold rate
+         * @returns {Object} The rate, or a copy of it with a smaller cap
+         */
+        function afterClaims(rate) {
+            const cap = sustainableGold(rate);
+            // Nothing limits it, so nothing can be taken from it
+            if (!Number.isFinite(cap)) return rate;
+
+            const claim = claims.get(rateKey(rate));
+            if (!claim || !(claim.claimed > 0)) return rate;
+
+            const remaining = Math.max(0, cap - claim.claimed);
+            const goldPerUnit = num(rate.sustainable?.goldPerUnit);
+            return {
+                ...rate,
+                sustainable: {
+                    ...rate.sustainable,
+                    gold: remaining,
+                    ...(goldPerUnit > 0 ? { units: remaining / goldPerUnit } : {}),
+                },
+            };
+        }
+
+        return {
+            /**
+             * The context the next goal plans against.
+             *
+             * The decorated rate list is built once per goal rather than once per
+             * call: `goldRates` is asked twice or three times inside one plan, and
+             * re-deriving it each time would turn the ledger into a cost that scales
+             * with how many providers happen to ask.
+             *
+             * @param {Object} context - The planning context
+             * @returns {Object} A context with the remainder in it
+             */
+            view(context) {
+                let decorated = null;
+                let unaffordable = [];
+
+                /**
+                 * The rates this goal can both reach and *afford to start*.
+                 *
+                 * A method whose inputs have to be bought is not available to
+                 * somebody who cannot buy them, however well it pays. The planner
+                 * recommended one — the failure being fixed here is a recommendation
+                 * the player literally cannot act on — so a rate whose cost to run
+                 * once exceeds the coins left after the goals above have claimed
+                 * theirs is not offered, and says why rather than vanishing.
+                 *
+                 * One action's worth, not an hour's: the question is whether you can
+                 * start, and a method you can start you can compound into.
+                 * @returns {void}
+                 */
+                function build() {
+                    const available = Math.max(0, startingGold - goldClaimed);
+                    const affordable = [];
+                    unaffordable = [];
+
+                    for (const rate of ask(context, 'goldRates', [], []) || []) {
+                        const claimed = afterClaims(rate);
+                        const upfront = num(claimed.upfrontCost);
+                        if (upfront > available) {
+                            unaffordable.push({
+                                label: claimed.label || 'that method',
+                                goldPerHour: num(claimed.goldPerHour),
+                                upfront,
+                                available,
+                            });
+                            continue;
+                        }
+                        affordable.push(claimed);
+                    }
+                    decorated = affordable;
+                }
+
+                return {
+                    ...context,
+                    gold: Math.max(0, startingGold - goldClaimed),
+                    goldRates: () => {
+                        if (!decorated) build();
+                        return decorated;
+                    },
+                    capitalBlocks: () => {
+                        if (!decorated) build();
+                        return unaffordable.map((entry) => ({ ...entry }));
+                    },
+                    // What the planner needs to say *why* a rate it would have used is
+                    // not on offer. Read only by the steps that do the earning.
+                    rateClaims: () =>
+                        [...claims.values()].map((claim) => ({
+                            label: claim.label,
+                            goldPerHour: claim.goldPerHour,
+                            claimed: claim.claimed,
+                            remaining: Math.max(0, claim.cap - claim.claimed),
+                            goals: [...claim.goals],
+                        })),
+                    goldClaims: () => goldClaims.map((claim) => ({ ...claim })),
+                };
+            },
+
+            /**
+             * Take what a finished plan spends out of the pot.
+             *
+             * Read off the plan rather than returned by the planners, because the
+             * legs are already the record of what was consumed and a second channel
+             * for the same fact is a second thing to keep in step.
+             *
+             * @param {Object} plan - A plan from {@link planGoal}
+             */
+            record(plan) {
+                if (!plan) return;
+
+                for (const step of plan.steps || []) {
+                    if (step.done) continue;
+                    for (const leg of step.details?.legs || []) {
+                        const cap = sustainableGold(leg?.rate);
+                        if (!Number.isFinite(cap) || !(num(leg.gold) > 0)) continue;
+
+                        const key = rateKey(leg.rate);
+                        const claim = claims.get(key) || {
+                            // The cap as the *first* goal to reach it saw it, which is the
+                            // whole cap: later goals see a decorated copy, so reading the
+                            // cap off them would ratchet it down twice
+                            cap,
+                            label: leg.rate.sustainable?.unitLabel || leg.rate.itemName || leg.rate.label || 'that method',
+                            goldPerHour: num(leg.rate.goldPerHour),
+                            claimed: 0,
+                            goals: [],
+                        };
+                        claim.claimed += num(leg.gold);
+                        if (!claim.goals.includes(plan.title)) claim.goals.push(plan.title);
+                        claims.set(key, claim);
+                    }
+                }
+
+                const available = Math.max(0, startingGold - goldClaimed);
+                // A gold goal holds coins rather than spending them, and holding is
+                // just as exclusive: the same 50M cannot be both kept and spent
+                const wanted = plan.type === 'gold' ? num(plan.goal?.amount) : num(plan.totals?.goldSpend);
+                const used = Math.min(available, wanted);
+                if (used > 0) {
+                    goldClaimed += used;
+                    goldClaims.push({ title: plan.title, gold: used });
+                }
+            },
+        };
+    }
+
+    /**
+     * What an earning step should say about the goals above it.
+     *
+     * Only about methods that would otherwise have won. A crossbow already spent by
+     * the goal above is worth a line on a step that is now milking cows; a spent
+     * stack that was never going to beat the method actually chosen is noise.
+     *
+     * @param {Object} context - The planning context, as decorated by the ledger
+     * @param {Object|null} best - The rate this step is actually using
+     * @returns {Array<string>} Notes, in claim order
+     */
+    function ledgerNotes(context, best) {
+        const notes = [];
+        const floor = num(best?.goldPerHour);
+
+        for (const claim of ask(context, 'rateClaims', [], []) || []) {
+            // `>=` rather than `>`: a stack that is only *partly* spent is still the
+            // rate this step is using, and "500M of it left here" is the whole point
+            if (!(num(claim.goldPerHour) >= floor)) continue;
+            const who = claim.goals.map((title) => `'${title}'`).join(' and ');
+            notes.push(
+                claim.remaining > 0
+                    ? `${claim.label} partly spent by ${who} — ${coins(claim.remaining)} of it left here`
+                    : `${claim.label} already spent by ${who}`
+            );
+        }
+
+        const committed = (ask(context, 'goldClaims', [], []) || []).filter((claim) => num(claim.gold) > 0);
+        if (committed.length) {
+            const total = committed.reduce((sum, claim) => sum + num(claim.gold), 0);
+            const who = committed.map((claim) => `'${claim.title}'`).join(' and ');
+            notes.push(`${coins(total)} of your coins is already committed to ${who}`);
+        }
+
+        // Same shape as a spent stack: a cap with a reason. A method you cannot
+        // start is the one thing worse than a method that runs out, because the
+        // plan reads as though you could begin it today.
+        for (const blocked of ask(context, 'capitalBlocks', [], []) || []) {
+            if (!(num(blocked.goldPerHour) >= floor)) continue;
+            notes.push(
+                `${blocked.label} needs ~${coins(blocked.upfront)} upfront to start — you have ${coins(blocked.available)}`
+            );
+        }
+
+        return notes;
+    }
+
+    /**
+     * How one leg of an earning plan says itself.
+     *
+     * Two sentences, and which one is used is the whole point. A method that can be
+     * run for {@link RATE_HORIZON_HOURS} is an income and is quoted per hour. One
+     * that cannot is a windfall and is quoted as the thing you actually do —
+     * "Decompose 1 Sundering Crossbow ★ (+851.2M one-off)" — because there is no
+     * hour in which you earn 437.9B, and printing that number is worse than
+     * printing nothing.
+     *
+     * The test is on the *method*, not on this leg: a windfall reads as a windfall
+     * whether it is the only leg or the first of three.
+     *
+     * @param {Object} leg - From {@link planEarnings}
+     * @returns {string} A phrase
+     */
+    function describeLeg(leg) {
+        const rate = leg?.rate || {};
+        const cap = rate.sustainable || {};
+
+        // A bound the number was already reduced by belongs beside the number. A
+        // reader who sees 1.2M/hr for a method they know is worth billions will
+        // assume the planner is broken unless it says what it took off.
+        const bounds = (rate.limits || []).map((limit) => limit?.note).filter(Boolean);
+        const because = bounds.length ? ` — ${bounds.join(', ')}` : '';
+
+        if (leg?.oneOff) {
+            const noun = cap.unitLabel || rate.itemName || rate.label || 'unit';
+            const units = leg.units > 0 ? `${formatters_js.formatKMB(Math.ceil(leg.units))} ` : '';
+            const what = cap.verb ? `${cap.verb} ${units}${noun}` : `${units}${noun}`.trim() || rate.label;
+            return `${what} (+${coins(leg.gold)} one-off)${because}`;
+        }
+
+        const label = rate.label || 'an unnamed activity';
+        const rest = leg?.exhausts ? `, for ${coins(leg.gold)}` : '';
+        return `${label} at ${coins(rate.goldPerHour)}/hr${rest}${because}`;
+    }
+
+    /**
+     * How a shortfall actually gets earned, best method first, each until it runs dry.
+     *
+     * Greedy down the ranking, which is right because the legs do not interact:
+     * decomposing what you own does not make milking pay less, so taking the
+     * highest-paying method first and moving on when it is exhausted is optimal for
+     * total time as well as obvious to read.
+     *
+     * @param {Array<Object>} rates - Gold rates, any order
+     * @param {number} amount - Coins to raise
+     * @returns {{legs: Array<Object>, gold: number, hours: number|null, covered: boolean}}
+     *   The legs in order, what they raise between them, how long that takes, and
+     *   whether they cover the amount at all
+     */
+    function planEarnings(rates, amount) {
+        const wanted = Math.max(0, num(amount));
+        const usable = (Array.isArray(rates) ? rates : [])
+            .filter((rate) => rate && num(rate.goldPerHour) > 0 && sustainableGold(rate) > 0)
+            .sort((a, b) => num(b.goldPerHour) - num(a.goldPerHour));
+
+        const legs = [];
+        let remaining = wanted;
+        let hours = 0;
+
+        for (const rate of usable) {
+            if (remaining <= 0) break;
+
+            const cap = sustainableGold(rate);
+            const gold = Math.min(remaining, cap);
+            const perHour = num(rate.goldPerHour);
+            const legHours = perHour > 0 ? gold / perHour : 0;
+            const goldPerUnit = num(rate.sustainable?.goldPerUnit);
+            const exhausts = Number.isFinite(cap) && gold >= cap;
+
+            // How long the method could be run for if you wanted the whole of it.
+            //
+            // *This* is what decides whether "per hour" is a fair way to say it, and
+            // it used to be `exhausts && legHours < horizon` — which only fired when
+            // the leg drained the stack. A goal that needed 877.9M of a charm stack
+            // worth 900M did not drain it, so the one-off rule never applied and the
+            // step read "Master Tailoring Charm at 134.3B/hr" beside a duration of
+            // 24 seconds. Whether a fallback leg happens to follow says nothing
+            // about whether the first leg is an income.
+            const capHours = Number.isFinite(cap) && perHour > 0 ? cap / perHour : Number.POSITIVE_INFINITY;
+
+            legs.push({
+                rate,
+                gold,
+                hours: legHours,
+                units: goldPerUnit > 0 ? gold / goldPerUnit : null,
+                exhausts,
+                // A method whose entire remaining stock is gone inside an hour is a
+                // windfall however much of it this leg draws; a method that never
+                // runs out is an income however short this slice of it is
+                oneOff: capHours < RATE_HORIZON_HOURS,
+            });
+
+            remaining -= gold;
+            hours += legHours;
+
+            // An uncapped method covers everything after it; nothing below it in
+            // the ranking can improve on that
+            if (!Number.isFinite(cap)) break;
+        }
+
+        return {
+            legs,
+            gold: wanted - remaining,
+            hours: remaining > 0 ? null : hours,
+            covered: remaining <= 0 && wanted > 0,
+        };
+    }
+
+    /**
+     * The legs of an earning plan, as one line of a step description.
+     * @param {Object} plan - From {@link planEarnings}
+     * @returns {string} e.g. "Decompose 1 Crossbow ★ (+851.2M one-off), then Milk a Cow at 12.4M/hr"
+     */
+    function describeEarning(plan) {
+        const named = plan.legs.slice(0, LEGS_IN_SENTENCE).map(describeLeg);
+        const extra = plan.legs.length - named.length;
+        if (extra > 0) named.push(`${extra} more method${extra === 1 ? '' : 's'}`);
+        return named.join(', then ');
+    }
+
+    /**
+     * The funding step a plan needs, if it needs one.
+     *
+     * A plan that spends more than the character holds is not wrong, it is
+     * incomplete: the missing part is the grind that pays for it, and leaving it
+     * out is what makes a "12M" price tag look affordable to somebody with 3M. The
+     * step becomes a prerequisite of everything that spends, so it sorts to the top
+     * on its own rather than by being pushed first.
+     *
+     * @param {Object} context - The planning context
+     * @param {number} spend - Coins the rest of the plan spends
+     * @param {Array<string>} spenderIds - Steps that do the spending
+     * @returns {{step: Object|null, warnings: Array<string>}} The step, if needed
+     */
+    function fundingStep(context, spend, spenderIds) {
+        const have = num(context?.gold);
+        const shortfall = Math.max(0, spend - have);
+        if (shortfall <= 0) return { step: null, warnings: [] };
+
+        const { best, rates } = goldRates(context);
+        const earning = planEarnings(rates, shortfall);
+        const warnings = [];
+        if (!best) {
+            warnings.push('No earning rate could be measured, so the time to raise the shortfall is unknown.');
+        } else if (!earning.covered) {
+            warnings.push(
+                `Nothing you can do covers the whole ${coins(shortfall)} — the methods ranked here run out of ` +
+                    `what they consume after ${coins(earning.gold)}.`
+            );
+        }
+
+        const step = makeStep({
+            id: 'fund',
+            kind: 'earn',
+            description: earning.legs.length
+                ? `Earn ${coins(shortfall)} more coins — ${describeEarning(earning)}`
+                : `Earn ${coins(shortfall)} more coins`,
+            goldDelta: shortfall,
+            timeHours: earning.hours,
+            details: {
+                have,
+                spend,
+                shortfall,
+                rate: best || null,
+                legs: earning.legs,
+                covered: earning.covered,
+                alternatives: rates.slice(0, 5),
+                spenders: spenderIds,
+                ledgerNotes: ledgerNotes(context, best),
+            },
+            progress: { current: have, target: spend, ratio: spend > 0 ? Math.min(1, have / spend) : 1 },
+        });
+
+        return { step, warnings };
+    }
+
+    /**
+     * Attach the funding step to everything that spends, and return the full list.
+     * @param {Object|null} funding - From {@link fundingStep}
+     * @param {Array<Object>} steps - The spending steps
+     * @returns {Array<Object>} Steps including the funding step, wired up
+     */
+    function withFunding(funding, steps) {
+        if (!funding) return steps;
+        for (const step of steps) {
+            if (step.goldDelta < 0 && !step.done) step.prerequisites.push(funding.id);
+        }
+        return [funding, ...steps];
+    }
+
+    /**
+     * Plan "have N coins".
+     * @param {Object} goal - A normalised gold goal
+     * @param {Object} context - The planning context
+     * @returns {{steps: Array<Object>, warnings: Array<string>, satisfied: boolean}}
+     */
+    function planGoldGoal(goal, context) {
+        const have = num(context?.gold);
+        const target = num(goal.amount);
+        const shortfall = Math.max(0, target - have);
+        const satisfied = shortfall <= 0;
+
+        const { best, rates } = goldRates(context);
+        const earning = planEarnings(rates, shortfall);
+        const warnings = [];
+        if (!satisfied && !best) {
+            warnings.push('No earning rate could be measured — train a gathering or production skill first.');
+        } else if (!satisfied && !earning.covered) {
+            warnings.push(
+                `Nothing you can do covers the whole ${coins(shortfall)} — the methods ranked here run out of ` +
+                    `what they consume after ${coins(earning.gold)}.`
+            );
+        }
+
+        const step = makeStep({
+            id: 'earn',
+            kind: 'earn',
+            description: satisfied
+                ? `Already holding ${coins(have)} coins`
+                : earning.legs.length
+                  ? `Earn ${coins(shortfall)} coins — ${describeEarning(earning)}`
+                  : `Earn ${coins(shortfall)} coins`,
+            goldDelta: satisfied ? 0 : shortfall,
+            timeHours: satisfied ? 0 : earning.hours,
+            details: {
+                target,
+                have,
+                shortfall,
+                rate: best || null,
+                legs: satisfied ? [] : earning.legs,
+                covered: earning.covered,
+                alternatives: rates.slice(0, 5),
+                ledgerNotes: satisfied ? [] : ledgerNotes(context, best),
+            },
+            done: satisfied,
+            progress: { current: Math.min(have, target), target, ratio: target > 0 ? Math.min(1, have / target) : 1 },
+        });
+
+        return { steps: [step], warnings, satisfied };
+    }
+
+    /** Coins cannot be bought off the marketplace, so they never belong on a shopping list */
+    const COIN_HRID$2 = '/items/coin';
+
+    /**
+     * What an enhancement run would have you buy, as a list somebody can shop from.
+     *
+     * The path optimiser's bill is an *expectation*: the counts come out of the same
+     * Markov chain the cost does, so they are the mean of a distribution rather than
+     * a number of trips to the marketplace. Rounded up here because you cannot buy
+     * 41.3 charms, and labelled as an estimate wherever it is offered.
+     *
+     * One base copy is dropped, because the plan already has a step that buys or
+     * already holds it. That matters for a mirrored path, whose bill names several
+     * copies — the plan really does need all of them, and the enhance step is where
+     * the extras belong.
+     *
+     * @param {Object|null} run - An enhancement run from the `enhance` provider
+     * @returns {Array<{itemHrid: string, name: string, count: number}>} What to buy, or an empty list
+     */
+    function enhancementShoppingList(run) {
+        const bill = Array.isArray(run?.materialBill) ? run.materialBill : [];
+
+        const list = [];
+        for (const line of bill) {
+            if (!line?.itemHrid || line.itemHrid === COIN_HRID$2) continue;
+            const count = line.kind === 'base' ? num(line.count) - 1 : num(line.count);
+            if (!(count > 0)) continue;
+            list.push({
+                itemHrid: line.itemHrid,
+                name: line.name || line.itemHrid.split('/').pop(),
+                count: Math.ceil(count),
+            });
+        }
+        return list;
+    }
+
+    /**
+     * Plan "own this item at +N".
+     *
+     * Two decisions, in order. The base item is bought or crafted, whichever the
+     * current book says is cheaper — and that answer flips with the market, which
+     * is exactly why it is re-asked on every refresh rather than decided once. Then
+     * the enhancement run, costed from the player's own bench unless they have
+     * asked to see a professional's.
+     *
+     * @param {Object} goal - A normalised equipment goal
+     * @param {Object} context - The planning context
+     * @returns {{steps: Array<Object>, warnings: Array<string>, satisfied: boolean}}
+     */
+    function planEquipmentGoal(goal, context) {
+        const { itemHrid } = goal;
+        const target = num(goal.enhancementLevel);
+        const name = ask(context, 'itemName', [itemHrid], null) || itemHrid.split('/').pop();
+        const owned = num(ask(context, 'ownedEnhancementLevel', [itemHrid], -1), -1);
+
+        const warnings = [];
+        if (owned >= target) {
+            return {
+                steps: [
+                    makeStep({
+                        id: 'own',
+                        kind: 'acquire',
+                        description: `Already own ${name}${target > 0 ? ` +${target}` : ''}`,
+                        done: true,
+                    }),
+                ],
+                warnings,
+                satisfied: true,
+            };
+        }
+
+        const steps = [];
+        const haveBase = owned >= 0;
+
+        // --- The base item -----------------------------------------------------
+        const acquisition = ask(context, 'acquire', [itemHrid], null);
+        if (!haveBase && !acquisition) {
+            warnings.push(`No price or recipe could be found for ${name}, so its cost is unknown.`);
+        }
+
+        // A craft the character cannot yet perform is a level goal hiding inside an
+        // equipment goal; it has to be said out loud or the plan quotes a cost for
+        // something that cannot be started.
+        const requires = Array.isArray(acquisition?.requires) ? acquisition.requires : [];
+        const unmet = [];
+        for (const requirement of requires) {
+            const current = num(ask(context, 'skill', [requirement.skillHrid], null)?.level, 0);
+            if (current < num(requirement.level)) unmet.push({ ...requirement, current });
+        }
+
+        const trainIds = [];
+        if (!haveBase && acquisition?.strategy === 'craft') {
+            for (const requirement of unmet) {
+                const id = `train-${requirement.skillHrid.split('/').pop()}`;
+                trainIds.push(id);
+                const skillLabel = ask(context, 'skillName', [requirement.skillHrid], null) || requirement.skillHrid;
+                const sub = planSkillGoal(
+                    { skillHrid: requirement.skillHrid, targetLevel: requirement.level },
+                    context,
+                    id
+                );
+                warnings.push(...sub.warnings);
+                // Only the training step: the funding this plan needs is worked out
+                // once at the end, over everything it spends rather than per sub-plan
+                const trainStep = sub.steps.find((step) => step.kind === 'train');
+                if (!trainStep) continue;
+                trainStep.prerequisites = [];
+                trainStep.description = `Reach ${skillLabel} ${requirement.level} to craft ${name}`;
+                steps.push(trainStep);
+            }
+        }
+
+        if (!haveBase) {
+            const cost = num(acquisition?.totalCost, num(acquisition?.unitCost));
+            const strategy = acquisition?.strategy === 'craft' ? 'Craft' : 'Buy';
+            const rival =
+                acquisition?.strategy === 'craft'
+                    ? acquisition?.buyPrice != null
+                        ? `buying would cost ${coins(acquisition.buyPrice)}`
+                        : 'it cannot be bought'
+                    : acquisition?.craftCost != null
+                      ? `crafting would cost ${coins(acquisition.craftCost)}`
+                      : 'it has no recipe';
+
+            steps.push(
+                makeStep({
+                    id: 'base',
+                    kind: 'acquire',
+                    description: `${strategy} ${name} for ${coins(cost)} — ${rival}`,
+                    goldDelta: -cost,
+                    timeHours: num(acquisition?.timeHours),
+                    prerequisites: trainIds,
+                    // The name rides along so anything that offers to go and buy
+                    // this can say what it is buying without re-deriving it
+                    details: { itemHrid, itemName: name, ...(acquisition || {}) },
+                })
+            );
+        } else {
+            steps.push(
+                makeStep({
+                    id: 'base',
+                    kind: 'acquire',
+                    description: `Already hold ${name}${owned > 0 ? ` +${owned}` : ''}`,
+                    done: true,
+                    details: { itemHrid, ownedEnhancementLevel: owned },
+                })
+            );
+        }
+
+        // --- The enhancement run -----------------------------------------------
+        if (target > 0) {
+            const startLevel = Math.max(0, owned);
+            const run = ask(context, 'enhance', [{ itemHrid, targetLevel: target, startLevel }], null);
+            if (!run) {
+                warnings.push(`${name} could not be costed to +${target} — it may not be enhanceable.`);
+            }
+
+            // The path calculator quotes a total that already contains a base item;
+            // this plan buys that separately, so counting it here would charge for
+            // it twice.
+            const runCost = Math.max(0, num(run?.totalCost) - num(run?.baseCost));
+            const bill = enhancementShoppingList(run);
+            steps.push(
+                makeStep({
+                    id: 'enhance',
+                    kind: 'enhance',
+                    description: run
+                        ? `Enhance ${name} +${startLevel} → +${target} — ${Math.round(num(run.attempts))} attempts, ` +
+                          `${coins(runCost)} in materials${run.protectFrom > 0 ? ` (protect from +${run.protectFrom})` : ''}`
+                        : `Enhance ${name} +${startLevel} → +${target}`,
+                    goldDelta: -runCost,
+                    timeHours: run ? num(run.totalTimeSeconds) / 3600 : null,
+                    prerequisites: ['base'],
+                    details: { itemHrid, startLevel, targetLevel: target, ...(run || {}), shoppingList: bill },
+                })
+            );
+        }
+
+        const spend = steps.reduce((sum, step) => (step.done ? sum : sum + Math.max(0, -step.goldDelta)), 0);
+        const { step: funding, warnings: fundingWarnings } = fundingStep(
+            context,
+            spend,
+            steps.filter((step) => step.goldDelta < 0).map((step) => step.id)
+        );
+        warnings.push(...fundingWarnings);
+
+        return { steps: withFunding(funding, steps), warnings, satisfied: false };
+    }
+
+    /**
+     * Plan "get this skill to level N".
+     *
+     * The action is chosen on experience per hour among what the level already
+     * allows, and the climb is handed to `calculateMultiLevelProgress` rather than
+     * divided out by hand — efficiency rises a point per level as you go, so a flat
+     * division overstates the grind by more the longer it is.
+     *
+     * @param {Object} goal - A normalised skill goal
+     * @param {Object} context - The planning context
+     * @param {string} [stepId] - Step id to use, for a training step embedded in another plan
+     * @returns {{steps: Array<Object>, warnings: Array<string>, satisfied: boolean}}
+     */
+    function planSkillGoal(goal, context, stepId = 'train') {
+        const { skillHrid } = goal;
+        const target = num(goal.targetLevel);
+        const label = ask(context, 'skillName', [skillHrid], null) || skillHrid.split('/').pop();
+        const state = ask(context, 'skill', [skillHrid], null) || {};
+        const level = num(state.level, 1);
+        const experience = num(state.experience);
+
+        const warnings = [];
+        if (level >= target) {
+            return {
+                steps: [
+                    makeStep({
+                        id: stepId,
+                        kind: 'train',
+                        description: `${label} is already ${level}`,
+                        done: true,
+                        details: { skillHrid, level, targetLevel: target },
+                        progress: { current: level, target, ratio: 1 },
+                    }),
+                ],
+                warnings,
+                satisfied: true,
+            };
+        }
+
+        const rates = (ask(context, 'xpRates', [skillHrid], []) || []).filter(
+            (rate) => rate && num(rate.xpPerHour) > 0 && num(rate.requiredLevel, 1) <= level
+        );
+        rates.sort((a, b) => num(b.xpPerHour) - num(a.xpPerHour));
+        const best = rates[0] || null;
+
+        const table = Array.isArray(context?.levelExperienceTable) ? context.levelExperienceTable : null;
+        if (!best) warnings.push(`No ${label} action could be costed at this level.`);
+        if (!table) warnings.push('The game has not sent the experience table yet, so the grind cannot be timed.');
+
+        let timeHours = null;
+        let actionsNeeded = null;
+        if (best && table) {
+            if (best.flatRate) {
+                // Enhancing gains no efficiency repeats as it levels, so the
+                // level-by-level climb below would quietly shorten the grind
+                const remaining = Math.max(0, num(table[target]) - experience);
+                timeHours = num(best.xpPerHour) > 0 ? remaining / num(best.xpPerHour) : null;
+                actionsNeeded = num(best.xpPerAction) > 0 ? remaining / num(best.xpPerAction) : null;
+            } else {
+                const progress = experienceCalculator_js.calculateMultiLevelProgress(
+                    level,
+                    experience,
+                    target,
+                    num(best.totalEfficiency),
+                    num(best.actionTime),
+                    num(best.xpPerAction),
+                    table
+                );
+                timeHours = num(progress.timeNeeded) / 3600;
+                actionsNeeded = num(progress.actionsNeeded);
+            }
+        }
+
+        // Training is usually not free and occasionally pays; either way it is the
+        // same number, so it rides on the step as a signed delta rather than being
+        // dropped because production skills would make it negative.
+        const goldDelta = timeHours !== null && best ? num(best.goldPerHour) * timeHours : 0;
+
+        // The gold on a training step is a rate multiplied by a duration, and both
+        // are estimates. Naming the rate is what makes an implausible total
+        // attributable — "+523.2M" alone reads as a promise, "+523.2M at 7.4B/hr"
+        // reads as the broken rate it came from.
+        const goldNote = best && goldDelta !== 0 ? `, ${coins(best.goldPerHour)}/hr` : '';
+
+        const step = makeStep({
+            id: stepId,
+            kind: 'train',
+            description: best
+                ? `Train ${label} ${level} → ${target} — ${best.label}` +
+                  (actionsNeeded !== null ? `, ${formatters_js.formatKMB(Math.round(actionsNeeded))} actions` : '') +
+                  goldNote
+                : `Train ${label} ${level} → ${target}`,
+            goldDelta,
+            timeHours,
+            details: {
+                skillHrid,
+                level,
+                targetLevel: target,
+                rate: best,
+                actionsNeeded,
+                alternatives: rates.slice(0, 5),
+            },
+            progress: { current: level, target, ratio: target > 0 ? Math.min(1, level / target) : 1 },
+        });
+
+        const steps = [step];
+        const spend = Math.max(0, -step.goldDelta);
+        const { step: funding, warnings: fundingWarnings } = fundingStep(context, spend, [step.id]);
+        warnings.push(...fundingWarnings);
+
+        return { steps: withFunding(funding, steps), warnings, satisfied: false };
+    }
+
+    /**
+     * Plan "get this house room to level N".
+     * @param {Object} goal - A normalised house goal
+     * @param {Object} context - The planning context
+     * @returns {{steps: Array<Object>, warnings: Array<string>, satisfied: boolean}}
+     */
+    function planHouseGoal(goal, context) {
+        const { roomHrid } = goal;
+        const target = num(goal.targetLevel);
+        const name = ask(context, 'houseRoomName', [roomHrid], null) || roomHrid.split('/').pop();
+        const level = num(ask(context, 'houseLevel', [roomHrid], 0));
+
+        const warnings = [];
+        if (level >= target) {
+            return {
+                steps: [
+                    makeStep({
+                        id: 'build',
+                        kind: 'build',
+                        description: `${name} is already level ${level}`,
+                        done: true,
+                        details: { roomHrid, level, targetLevel: target },
+                        progress: { current: level, target, ratio: 1 },
+                    }),
+                ],
+                warnings,
+                satisfied: true,
+            };
+        }
+
+        const cost = ask(context, 'houseCost', [roomHrid, level, target], null);
+        if (!cost) warnings.push(`The upgrade cost for ${name} could not be read.`);
+
+        const materials = Array.isArray(cost?.materials) ? cost.materials : [];
+        const materialValue = materials.reduce((sum, material) => sum + num(material.totalValue), 0);
+        const coinCost = num(cost?.coins);
+
+        const steps = [];
+
+        if (materials.length) {
+            // Materials the character already holds are not a purchase, and a plan
+            // that bills for them is a plan that sends somebody shopping for what is
+            // already in their bag.
+            const shortfall = materials
+                .map((material) => {
+                    const held = num(ask(context, 'owned', [material.itemHrid], 0));
+                    const missing = Math.max(0, num(material.count) - held);
+                    const unit = num(material.marketPrice, num(material.totalValue) / Math.max(1, num(material.count)));
+                    return { ...material, held, missing, missingValue: missing * unit };
+                })
+                .filter((material) => material.missing > 0);
+
+            const missingValue = shortfall.reduce((sum, material) => sum + material.missingValue, 0);
+
+            steps.push(
+                makeStep({
+                    id: 'materials',
+                    kind: 'acquire',
+                    description: shortfall.length
+                        ? `Buy ${shortfall.length} material${shortfall.length === 1 ? '' : 's'} for ${name} ` +
+                          `${level} → ${target} — ${coins(missingValue)}`
+                        : `Materials for ${name} ${level} → ${target} are already held`,
+                    goldDelta: -missingValue,
+                    done: shortfall.length === 0,
+                    details: { roomHrid, materials: shortfall, allMaterials: materials, fullValue: materialValue },
+                })
+            );
+        }
+
+        steps.push(
+            makeStep({
+                id: 'build',
+                kind: 'build',
+                description: `Upgrade ${name} ${level} → ${target} — ${coins(coinCost)} in coins`,
+                goldDelta: -coinCost,
+                prerequisites: materials.length ? ['materials'] : [],
+                details: {
+                    roomHrid,
+                    fromLevel: level,
+                    toLevel: target,
+                    coins: coinCost,
+                    totalValue: num(cost?.totalValue),
+                },
+                progress: { current: level, target, ratio: target > 0 ? Math.min(1, level / target) : 1 },
+            })
+        );
+
+        const spend = steps.reduce((sum, step) => (step.done ? sum : sum + Math.max(0, -step.goldDelta)), 0);
+        const { step: funding, warnings: fundingWarnings } = fundingStep(
+            context,
+            spend,
+            steps.filter((step) => step.goldDelta < 0).map((step) => step.id)
+        );
+        warnings.push(...fundingWarnings);
+
+        return { steps: withFunding(funding, steps), warnings, satisfied: false };
+    }
+
+    /**
+     * A one-line name for a goal, for the goal list and the plan header.
+     * @param {Object} goal - A normalised goal
+     * @param {Object} [context] - The planning context, for item and skill names
+     * @returns {string} The title
+     */
+    function describeGoal(goal, context = {}) {
+        if (!goal) return 'Unknown goal';
+        switch (goal.type) {
+            case 'gold':
+                return `Have ${coins(goal.amount)} coins`;
+            case 'equipment': {
+                const name = ask(context, 'itemName', [goal.itemHrid], null) || goal.itemHrid.split('/').pop();
+                return `Own ${name}${goal.enhancementLevel > 0 ? ` +${goal.enhancementLevel}` : ''}`;
+            }
+            case 'skill': {
+                const name = ask(context, 'skillName', [goal.skillHrid], null) || goal.skillHrid.split('/').pop();
+                return `${name} ${goal.targetLevel}`;
+            }
+            case 'house': {
+                const name = ask(context, 'houseRoomName', [goal.roomHrid], null) || goal.roomHrid.split('/').pop();
+                return `${name} ${goal.targetLevel}`;
+            }
+            default:
+                return 'Unknown goal';
+        }
+    }
+
+    /**
+     * Plan one goal.
+     *
+     * @param {Object} rawGoal - A goal, normalised or not
+     * @param {Object} context - The planning context; see the module doc
+     * @returns {Object|null} `{goalId, type, title, steps, totals, satisfied, confidence, warnings}`,
+     *   or null when the goal is not one this version can plan
+     */
+    function planGoal(rawGoal, context = {}) {
+        const goal = normalizeGoal(rawGoal);
+        if (!goal) return null;
+
+        let result;
+        try {
+            switch (goal.type) {
+                case 'gold':
+                    result = planGoldGoal(goal, context);
+                    break;
+                case 'equipment':
+                    result = planEquipmentGoal(goal, context);
+                    break;
+                case 'skill':
+                    result = planSkillGoal(goal, context);
+                    break;
+                case 'house':
+                    result = planHouseGoal(goal, context);
+                    break;
+                default:
+                    return null;
+            }
+        } catch (error) {
+            console.error('[GoalPlanner] Planning a goal failed:', error);
+            result = {
+                steps: [],
+                warnings: [`This goal could not be planned: ${error.message}`],
+                satisfied: false,
+            };
+        }
+
+        const steps = orderSteps(result.steps);
+        const totals = summarize(steps);
+
+        return {
+            goalId: goal.id,
+            goal,
+            type: goal.type,
+            title: describeGoal(goal, context),
+            steps,
+            totals,
+            satisfied: Boolean(result.satisfied),
+            confidence: {
+                // Every figure below leans on the order book except a pure level
+                // grind, and even that is priced when it earns or spends
+                priceDependent: true,
+                note:
+                    context?.pricingNote ||
+                    'Costs are priced against the market data now loaded, and move with it. Re-price before committing.',
+                warnings: result.warnings.filter(Boolean),
+            },
+            warnings: result.warnings.filter(Boolean),
+            computedAt: num(context?.now, Date.now()),
+        };
+    }
+
+    /**
+     * Plan a list of goals, sharing one bagful of inputs and one pile of coins between them.
+     *
+     * ## What this costs
+     *
+     * Nothing that shows. The expensive half of a refresh is
+     * `buildPlannerContext` — a few hundred profit calculations to rank every
+     * activity — and that still happens exactly once, before this is called. What
+     * the ledger adds is one pass over the rate list per goal (to subtract what has
+     * been claimed) plus a walk of each finished plan's steps, so replanning N goals
+     * is O(N × rates) on top of the O(N) planning that was already happening. With
+     * the rate list capped in the low hundreds and goal lists in the low tens, that
+     * is microseconds against a refresh measured in seconds.
+     *
+     * Which is why every goal is replanned whenever any goal changes rather than
+     * patched: the plans are no longer independent, and the memoised providers on
+     * the context mean the second pass over the same goals costs almost nothing.
+     *
+     * @param {Array<Object>} goals - Goals, normalised or not, in the order they are displayed
+     * @param {Object} context - The planning context
+     * @returns {Array<Object>} One plan per goal that could be planned
+     */
+    function planGoals(goals, context = {}) {
+        const list = Array.isArray(goals) ? goals : [];
+        const ledger = createResourceLedger(num(context?.gold));
+
+        const plans = [];
+        for (const goal of list) {
+            const plan = planGoal(goal, ledger.view(context));
+            if (!plan) continue;
+            ledger.record(plan);
+            plans.push(plan);
+        }
+        return plans;
+    }
+
+    /**
+     * Where the planner's goals live.
+     *
+     * Goals are per character and nothing else would do: "Enhancing 110" means a
+     * different amount of work to the main than to the iron cow, and a shared list
+     * would show each of them the other's ambitions. Every key goes through
+     * {@link characterKey}'s helpers rather than being written bare, which is the
+     * one thing that keeps that true.
+     *
+     * The *plans* are cached rather than stored in the sense that matters: a plan
+     * is a function of goals and the market, and both move. The snapshot exists so
+     * the panel has something to draw the instant it opens, and is replaced the
+     * moment a refresh finishes. Nothing is ever read back as fact — the progress
+     * you see after a reload is recomputed against the character as they are now.
+     */
+
+
+    /** Unscoped key for the goal list; the real key carries the character id */
+    const GOALS_KEY = 'goalPlannerGoals';
+    /** Unscoped key for the last computed plans */
+    const SNAPSHOT_KEY = 'goalPlannerSnapshot';
+    /** Unscoped key for the combat loadout the all-zones run is judged against */
+    const COMBAT_GEAR_KEY = 'goalPlannerCombatGear';
+
+    /** Nobody needs a hundred goals, and a runaway list is a slow panel */
+    const MAX_GOALS = 40;
+
+    /**
+     * This character's goals.
+     *
+     * Anything that no longer normalises — an item removed from the game, a goal
+     * written by a newer version — is dropped on read rather than carried around as
+     * a row that cannot be planned.
+     *
+     * @returns {Promise<Array<Object>>} Normalised goals, oldest first
+     */
+    async function loadGoals() {
+        try {
+            // 'discard' rather than 'adopt': there is no legacy global list to
+            // inherit, and if one ever appears it belongs to whoever wrote it
+            const stored = await readScoped(GOALS_KEY, 'settings', [], { migrate: 'discard' });
+            if (!Array.isArray(stored)) return [];
+            return stored.map((goal) => normalizeGoal(goal)).filter(Boolean);
+        } catch (error) {
+            console.error('[GoalPlanner] Loading goals failed:', error);
+            return [];
+        }
+    }
+
+    /**
+     * Replace this character's goal list.
+     * @param {Array<Object>} goals - Goals to keep
+     * @returns {Promise<Array<Object>>} What was actually written
+     */
+    async function saveGoals(goals) {
+        const clean = (Array.isArray(goals) ? goals : [])
+            .map((goal) => normalizeGoal(goal))
+            .filter(Boolean)
+            .slice(0, MAX_GOALS);
+        try {
+            await writeScoped(GOALS_KEY, clean, 'settings');
+        } catch (error) {
+            console.error('[GoalPlanner] Saving goals failed:', error);
+        }
+        return clean;
+    }
+
+    /**
+     * Add a goal, ignoring one that is already on the list.
+     *
+     * "Already on the list" is by content rather than by id, because the second
+     * press of Add is a mistake and not a second goal.
+     *
+     * @param {Object} raw - A goal from the creation form
+     * @returns {Promise<Array<Object>>} The new goal list
+     */
+    async function addGoal(raw) {
+        const goal = normalizeGoal(raw);
+        if (!goal) return loadGoals();
+
+        const goals = await loadGoals();
+        const key = (entry) => JSON.stringify({ ...entry, id: null, createdAt: null });
+        if (goals.some((existing) => key(existing) === key(goal))) return goals;
+
+        return saveGoals([...goals, goal]);
+    }
+
+    /**
+     * Drop a goal.
+     * @param {string} goalId - The goal's id
+     * @returns {Promise<Array<Object>>} The new goal list
+     */
+    async function removeGoal(goalId) {
+        const goals = await loadGoals();
+        return saveGoals(goals.filter((goal) => goal.id !== goalId));
+    }
+
+    /**
+     * The last plans computed, for drawing before a refresh finishes.
+     * @returns {Promise<{plans: Array<Object>, computedAt: number}|null>} The snapshot
+     */
+    async function loadSnapshot() {
+        try {
+            const stored = await readScoped(SNAPSHOT_KEY, 'settings', null, { migrate: 'discard' });
+            if (!stored || !Array.isArray(stored.plans)) return null;
+            return stored;
+        } catch (error) {
+            console.error('[GoalPlanner] Loading the last plans failed:', error);
+            return null;
+        }
+    }
+
+    /**
+     * Remember the plans just computed.
+     * @param {Array<Object>} plans - Plans from `planGoals`
+     * @returns {Promise<void>}
+     */
+    async function saveSnapshot(plans) {
+        try {
+            await writeScoped(SNAPSHOT_KEY, { plans: Array.isArray(plans) ? plans : [], computedAt: Date.now() });
+        } catch (error) {
+            console.error('[GoalPlanner] Saving the last plans failed:', error);
+        }
+    }
+
+    /**
+     * What the combat rates are being judged against.
+     *
+     * Two things, and they are stored together because neither is worth a key of
+     * its own:
+     *
+     * - `preferred` — which combat loadout the player picked, when they have more
+     *   than one and none of them is the default. A choice, so it is remembered.
+     * - `baseline` — `{savedAt, signature, name}`: the combat loadout as it stood
+     *   when the planner first saw the all-zones run saved at `savedAt`. This is
+     *   what "your gear has changed since the run" is measured against, because the
+     *   run itself keeps only an opaque digest of the gear it was simulated in and
+     *   the function that produced it lives in another bundle.
+     *
+     * @returns {Promise<{preferred: string|null, baseline: Object|null}>} The record
+     */
+    async function loadCombatGear() {
+        try {
+            const stored = await readScoped(COMBAT_GEAR_KEY, 'settings', null, { migrate: 'discard' });
+            return {
+                preferred: typeof stored?.preferred === 'string' ? stored.preferred : null,
+                baseline: stored?.baseline && Number.isFinite(stored.baseline.savedAt) ? stored.baseline : null,
+            };
+        } catch (error) {
+            console.error('[GoalPlanner] Loading the combat gear record failed:', error);
+            return { preferred: null, baseline: null };
+        }
+    }
+
+    /**
+     * Update part of the combat gear record, leaving the rest alone.
+     * @param {Object} patch - `{preferred}` and/or `{baseline}`
+     * @returns {Promise<{preferred: string|null, baseline: Object|null}>} The new record
+     */
+    async function saveCombatGear(patch) {
+        const current = await loadCombatGear();
+        const next = { ...current, ...(patch || {}) };
+        try {
+            await writeScoped(COMBAT_GEAR_KEY, next, 'settings');
+        } catch (error) {
+            console.error('[GoalPlanner] Saving the combat gear record failed:', error);
+        }
+        return next;
+    }
+
+    /**
+     * Combat income for the planner, out of the last all-zones simulation.
+     *
+     * ## Why a saved run and not a fresh one
+     *
+     * Combat income is not an action rate. It is a drop table against a kill rate
+     * against a death rate, and the only thing in the script that can work it out
+     * is the simulator — which runs every zone at every tier in a worker and takes
+     * minutes. A planner refresh cannot start that, so it reads what the last run
+     * left behind: `combat-sim-ui.js` reduces a finished all-zones run to profit and
+     * experience per hour per zone and stores it per character.
+     *
+     * ## What that means for honesty
+     *
+     * Every other rate the planner quotes is computed against the market as it
+     * stands this second. A combat rate is not: it is a measurement taken at some
+     * point in the past, in whatever gear was worn then, against whatever the drops
+     * were worth then. So it is never quoted bare — the age is part of the label,
+     * the gear is checked, and both a run older than {@link STALE_AFTER_MS} and a
+     * run in different gear are still offered but say so.
+     *
+     * Offered rather than withheld, because a week-old combat figure is a far
+     * better answer to "how do I make 40M" than pretending combat earns nothing —
+     * which is what the planner said before this file existed. Withholding is
+     * reserved for the case where there is nothing at all: no snapshot means no
+     * combat rate and a note telling you which button produces one.
+     *
+     * ## "Different gear" means the combat loadout, not what you have on
+     *
+     * This used to compare the run's gear signature against the gear worn *right
+     * now*, which is the wrong question for anyone who skills. Half the day you are
+     * in a chef's hat, and a chef's hat is not evidence that your combat numbers
+     * have moved — it is evidence that you are cooking. Every refresh in skilling
+     * gear said "taken in different gear, re-run the sim", which is a warning that
+     * fires on the wrong thing and is therefore a warning nobody reads.
+     *
+     * What matters is the loadout you *fight* in: the default loadout for
+     * `/action_types/combat`, or whichever one you picked when several are combat
+     * loadouts and none is the default. {@link combatLoadoutSignature} signs that,
+     * and the flag means what it says — your combat loadout no longer matches the
+     * one the run was measured under.
+     *
+     * ### Measured against a baseline, because the run does not keep its gear
+     *
+     * The all-zones snapshot stores an opaque digest of the party's equipment, and
+     * the function that produces it lives in the simulator bundle and is not
+     * reachable from here. So the comparison is not "sign the loadout and compare
+     * digests" — it is "the loadout now, against the loadout when this run was
+     * first seen", which the planner records itself the first time it meets a run.
+     * That is a weaker claim and an honest one: a loadout edited between the run
+     * finishing and the planner's next refresh is missed, and everything after that
+     * is caught.
+     *
+     * ## Experience is carried but not offered
+     *
+     * The snapshot's `xpPerHour` is the *total* across every combat skill —
+     * `buildAllZonesSnapshot` sums `experienceGained` over the skills before it
+     * stores it. There is no way back from that to "attack experience per hour", so
+     * these rates are not wired into the planner's per-skill experience lookup;
+     * quoting a total against a single skill's goal would overstate it several
+     * times over. The figure rides on each rate for anything that wants to show it.
+     */
+
+
+    /** Older than this and a snapshot is still used, but flagged */
+    const STALE_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
+
+    /** The action type a combat loadout is filed under */
+    const COMBAT_ACTION_TYPE = '/action_types/combat';
+
+    const HOUR_MS = 60 * 60 * 1000;
+    const DAY_MS = 24 * HOUR_MS;
+
+    /** What the planner shows when there is nothing to read */
+    const NO_SNAPSHOT_NOTE =
+        'Combat is not ranked — run an all-zones sim in the Combat Simulator to add combat rates.';
+
+    /**
+     * How long ago, said the way a sentence says it.
+     * @param {number} ageMs - Milliseconds since the run
+     * @returns {string} e.g. "3d ago"
+     */
+    function ageLabel(ageMs) {
+        if (!Number.isFinite(ageMs) || ageMs < 0) return 'at an unknown time';
+        if (ageMs < 60_000) return 'just now';
+        if (ageMs < HOUR_MS) return `${Math.floor(ageMs / 60_000)}m ago`;
+        if (ageMs < DAY_MS) return `${Math.floor(ageMs / HOUR_MS)}h ago`;
+        return `${Math.floor(ageMs / DAY_MS)}d ago`;
+    }
+
+    /**
+     * The loadout store that actually has the loadouts in it.
+     *
+     * In the multi-bundle build every bundle that imports the module gets its own
+     * copy of the singleton and only the Combat one is ever initialised, so the
+     * others answer "no loadout" to everything. The global is the initialised one;
+     * the bundled copy is the dev build, where there is only one. The same idiom
+     * `utils/action-context.js` uses, for the same reason.
+     *
+     * @returns {Object} The snapshot store
+     */
+    function loadouts() {
+        return (typeof window !== 'undefined' && window.Toolasha?.Combat?.loadoutSnapshot) || loadoutSnapshot;
+    }
+
+    /**
+     * Every loadout the character keeps for fighting.
+     *
+     * An "All Skills" loadout counts, because a character with one loadout for
+     * everything fights in it — but it sorts below a loadout filed under combat,
+     * which is a deliberate statement about fighting and a general one is not.
+     *
+     * @returns {Array<Object>} Combat-applicable loadouts, most specific first
+     */
+    function combatLoadouts() {
+        let all = [];
+        try {
+            all = loadouts().getAllSnapshots() || [];
+        } catch (error) {
+            console.error('[GoalPlanner] Reading loadouts failed:', error);
+            return [];
+        }
+
+        return all
+            .filter((snapshot) => snapshot?.actionTypeHrid === COMBAT_ACTION_TYPE || snapshot?.actionTypeHrid === '')
+            .sort((a, b) => {
+                const specific = (snapshot) => (snapshot.actionTypeHrid === COMBAT_ACTION_TYPE ? 0 : 1);
+                if (specific(a) !== specific(b)) return specific(a) - specific(b);
+                if (Boolean(b.isDefault) !== Boolean(a.isDefault)) return b.isDefault ? 1 : -1;
+                return (a.ordinal || 0) - (b.ordinal || 0);
+            });
+    }
+
+    /**
+     * Which loadout the combat rates are judged against.
+     *
+     * The player's own pick wins when they have made one, because the resolution
+     * order below is a guess and a choice is not. Otherwise: a loadout filed under
+     * combat and marked default, then any combat loadout, then the all-skills one —
+     * the same priority `loadout-snapshot.js` uses everywhere else, so the planner
+     * and the profit calculators are looking at the same gear.
+     *
+     * @param {string|null} [preferred] - A loadout name the player chose
+     * @returns {Object|null} The loadout, or null when the character keeps none
+     */
+    function chooseCombatLoadout(preferred = null) {
+        const candidates = combatLoadouts();
+        if (!candidates.length) return null;
+        if (preferred) {
+            const picked = candidates.find((snapshot) => snapshot.name === preferred);
+            if (picked) return picked;
+        }
+        return candidates[0];
+    }
+
+    /**
+     * A loadout's equipment, written down the same way every time.
+     *
+     * Sorted, so slot order cannot make an unchanged loadout look changed, and read
+     * through `resolveEquipment` so that a loadout which wears "the best copy you
+     * own" is signed at the level it would actually wear rather than at whatever
+     * level was stored the last time the loadouts tab was open.
+     *
+     * @param {Object|null} loadout - From {@link chooseCombatLoadout}
+     * @returns {string|null} A signature, or null when there is nothing to sign
+     */
+    function combatLoadoutSignature(loadout) {
+        if (!loadout) return null;
+        let equipment = [];
+        try {
+            equipment = loadouts().resolveEquipment(loadout) || [];
+        } catch (error) {
+            console.error('[GoalPlanner] Resolving a loadout failed:', error);
+            equipment = loadout.equipment || [];
+        }
+
+        const parts = equipment
+            .filter((slot) => slot?.itemHrid)
+            .map((slot) => `${slot.itemLocationHrid}=${slot.itemHrid}+${slot.enhancementLevel || 0}`)
+            .sort();
+        return parts.length ? parts.join(',') : null;
+    }
+
+    /**
+     * The gear worn this second, signed the same way a loadout is.
+     *
+     * The fallback for a character who keeps no loadouts at all: without one there
+     * is no "combat loadout" to compare, and comparing what is worn is the only
+     * signal left. It is the old, wrong-for-skillers test, so it is used only when
+     * the right one is unavailable and the note says which was used.
+     *
+     * @returns {string|null} A signature, or null when equipment is unavailable
+     */
+    function wornSignature() {
+        const equipment = dataManager.getEquipment?.();
+        if (!equipment) return null;
+        const parts = [];
+        for (const [location, item] of equipment) {
+            if (!item?.itemHrid) continue;
+            parts.push(`${item.itemLocationHrid || location}=${item.itemHrid}+${item.enhancementLevel || 0}`);
+        }
+        return parts.length ? parts.sort().join(',') : null;
+    }
+
+    /**
+     * What the gear check has to work with, resolved once.
+     * @param {string|null} [preferred] - A loadout name the player chose
+     * @returns {{name: string|null, signature: string|null, source: string, choices: Array<string>}}
+     *   The loadout used, its signature, whether it came from a loadout or from
+     *   what is worn, and the names a picker could offer
+     */
+    function readCombatLoadout(preferred = null) {
+        const choices = combatLoadouts()
+            .map((snapshot) => snapshot.name)
+            .filter(Boolean);
+        const loadout = chooseCombatLoadout(preferred);
+        if (loadout) {
+            return {
+                name: loadout.name || 'your combat loadout',
+                signature: combatLoadoutSignature(loadout),
+                source: 'loadout',
+                choices,
+            };
+        }
+        return { name: null, signature: wornSignature(), source: 'worn', choices };
+    }
+
+    /**
+     * A zone's name, with its tier when it has one.
+     * @param {Object} zone - A zone row from the snapshot
+     * @returns {string} e.g. "Aqua Planet T2"
+     */
+    function zoneLabel(zone) {
+        const name = zone.zoneName || zone.zoneHrid.split('/').pop().replace(/_/g, ' ');
+        return zone.difficultyTier > 0 ? `${name} T${zone.difficultyTier}` : name;
+    }
+
+    /**
+     * Turn a stored all-zones run into gold rates the planner can rank.
+     *
+     * Pure on purpose: everything that decides whether a rate is offered, what it
+     * is called and how old it is claiming to be is arithmetic over a plain object,
+     * so a test can set the clock and the gear and read the sentence back.
+     *
+     * @param {Object|null} snapshot - From `loadAllZonesSnapshot`
+     * @param {Object} [options] - Options
+     * @param {number} [options.now=Date.now()] - The clock
+     * @param {Object|null} [options.loadout=null] - From {@link readCombatLoadout}
+     * @param {Object|null} [options.baseline=null] - `{savedAt, signature}` recorded when this run was first seen
+     * @returns {{rates: Array<Object>, best: Object|null, status: Object}} Rates best first, and why
+     */
+    function combatRatesFromSnapshot(snapshot, { now = Date.now(), loadout = null, baseline = null } = {}) {
+        const absent = {
+            rates: [],
+            best: null,
+            status: {
+                hasSnapshot: false,
+                savedAt: null,
+                ageMs: null,
+                ageLabel: null,
+                stale: false,
+                gearChanged: false,
+                loadoutName: loadout?.name || null,
+                loadoutSource: loadout?.source || null,
+                note: NO_SNAPSHOT_NOTE,
+            },
+        };
+
+        if (!snapshot || !Array.isArray(snapshot.zones) || !snapshot.zones.length) return absent;
+
+        const savedAt = Number.isFinite(snapshot.savedAt) ? snapshot.savedAt : null;
+        const ageMs = savedAt === null ? null : Math.max(0, now - savedAt);
+        const age = ageMs === null ? 'at an unknown time' : ageLabel(ageMs);
+        const stale = ageMs === null || ageMs > STALE_AFTER_MS;
+
+        // Only a baseline taken against *this* run says anything. One recorded
+        // against an older run is a fact about that run, and reading it here would
+        // report a change the current snapshot already contains.
+        const comparable = Boolean(baseline && savedAt !== null && baseline.savedAt === savedAt && baseline.signature);
+        const gearChanged = Boolean(comparable && loadout?.signature && baseline.signature !== loadout.signature);
+        const gearLabel = loadout?.source === 'loadout' ? `your ${loadout.name} loadout` : 'the gear you wear';
+
+        const flags = [];
+        if (stale) flags.push('stale');
+        if (gearChanged) flags.push('gear changed');
+        const suffix = flags.length ? ` (${flags.join(', ')})` : '';
+
+        const rates = snapshot.zones
+            .filter((zone) => zone?.zoneHrid && Number.isFinite(zone.profitPerHour) && zone.profitPerHour > 0)
+            .map((zone) => ({
+                actionHrid: zone.zoneHrid,
+                label: `${zoneLabel(zone)} — from your all-zones run ${age}${suffix}`,
+                goldPerHour: zone.profitPerHour,
+                kind: 'combat',
+                zoneHrid: zone.zoneHrid,
+                zoneName: zone.zoneName || '',
+                difficultyTier: zone.difficultyTier ?? 0,
+                // Total combat experience across every skill — see the module doc
+                // for why this is not offered as a per-skill rate
+                xpPerHour: Number.isFinite(zone.xpPerHour) ? zone.xpPerHour : 0,
+                source: 'all-zones-sim',
+                savedAt,
+                ageMs,
+                ageLabel: age,
+                stale,
+                gearChanged,
+                // Combat consumes nothing you own that the profit figure has not
+                // already paid for, so there is no ceiling on how long it can be run
+                sustainable: { unbounded: true },
+            }))
+            .sort((a, b) => b.goldPerHour - a.goldPerHour);
+
+        const status = {
+            hasSnapshot: true,
+            savedAt,
+            ageMs,
+            ageLabel: age,
+            stale,
+            gearChanged,
+            gearComparable: comparable,
+            loadoutName: loadout?.name || null,
+            loadoutSource: loadout?.source || null,
+            loadoutChoices: loadout?.choices || [],
+        };
+
+        if (!rates.length) {
+            return {
+                rates: [],
+                best: null,
+                status: {
+                    ...status,
+                    note: `Your all-zones run from ${age} found no zone that turns a profit, so combat is not ranked.`,
+                },
+            };
+        }
+
+        let note = null;
+        if (stale && gearChanged) {
+            note =
+                `Combat rates are from an all-zones run ${age}, and ${gearLabel} has changed since — still ranked, ` +
+                'but re-run the all-zones sim before trusting them.';
+        } else if (stale) {
+            note = `Combat rates are from an all-zones run ${age} — over a week old, so still ranked but worth re-running.`;
+        } else if (gearChanged) {
+            note =
+                `Combat rates are from an all-zones run ${age}, and ${gearLabel} has changed since — ` +
+                're-run the all-zones sim to re-rank them against it.';
+        }
+
+        return { rates, best: rates[0], status: { ...status, note } };
+    }
+
+    /**
+     * The same thing, having gone and read the snapshot and the loadout.
+     *
+     * Recording the baseline is the side effect that makes the gear check possible
+     * at all, and it is deliberately one-way: a baseline is written for a run the
+     * planner has not seen before, and never rewritten for a run it has. Rewriting
+     * would quietly erase the very change the flag exists to report.
+     *
+     * @param {Object} [options] - Options
+     * @param {number} [options.now=Date.now()] - The clock
+     * @param {boolean} [options.compareGear=true] - Whether to check the combat loadout at all
+     * @returns {Promise<{rates: Array<Object>, best: Object|null, status: Object}>} As above
+     */
+    async function loadCombatRates({ now = Date.now(), compareGear = true } = {}) {
+        let snapshot = null;
+        try {
+            snapshot = await combatSimUI.loadAllZonesSnapshot();
+        } catch (error) {
+            console.error('[GoalPlanner] Reading the all-zones snapshot failed:', error);
+        }
+
+        if (!compareGear) return combatRatesFromSnapshot(snapshot, { now });
+
+        let stored = { preferred: null, baseline: null };
+        try {
+            stored = await loadCombatGear();
+        } catch (error) {
+            console.error('[GoalPlanner] Reading the combat gear record failed:', error);
+        }
+
+        const loadout = readCombatLoadout(stored.preferred);
+        const result = combatRatesFromSnapshot(snapshot, { now, loadout, baseline: stored.baseline });
+
+        const savedAt = result.status.savedAt;
+        const unseen = savedAt !== null && stored.baseline?.savedAt !== savedAt;
+        if (unseen && loadout.signature) {
+            await saveCombatGear({ baseline: { savedAt, signature: loadout.signature, name: loadout.name } });
+        }
+
+        return result;
+    }
+
+    /**
+     * How fast a market will actually absorb what a method produces.
+     *
+     * ## The hole this closes
+     *
+     * A gold rate is a claim about *realizing* gold, and every step between the
+     * action and the coins was modelled except the last one: somebody has to buy
+     * what you made. The planner would rank a method at 134.3B/hr because its
+     * outputs are priced at 134.3B/hr of ask, on a book where one unit changes hands
+     * a week. You cannot sell into a market that is not there. The price is real and
+     * the rate is fiction.
+     *
+     * The `sustainable` cap already says "a rate is only a rate while its inputs
+     * last". This is the same sentence about the other end: *a rate is only a rate
+     * while somebody is buying.*
+     *
+     * ## Where the number comes from
+     *
+     * The pooled market history Toolasha already fetches for the history chart. Each
+     * row carries a traded volume, and `buildHistorySeries` already turns rows into
+     * per-day volume with the ask/bid split the chart's tooltip shows. Summing that
+     * over a window and dividing gives units per day, client-side, with no
+     * order-book round trips — the same data the user is looking at when they say
+     * "this thing sells once a week".
+     *
+     * Total volume rather than only the sell-into-bid half: a player selling can
+     * either hit the bid or post an ask and wait to be lifted, and both are units of
+     * that item changing hands. Counting only one side would halve every answer for
+     * no reason.
+     *
+     * ## The two judgement calls, and why
+     *
+     * **You are not the only seller.** {@link LIQUIDITY_SHARE} is the fraction of
+     * observed trade this character is assumed to be able to capture. A quarter is
+     * already aggressive — it says one in every four units traded market-wide is
+     * yours — and anything higher is not a share of the market, it is a claim to
+     * *be* the market. It is deliberately a single constant rather than something
+     * clever about spreads: the point is a sanity bound, and a bound nobody can
+     * explain is worse than a blunt one.
+     *
+     * **A week is the horizon.** {@link LIQUIDITY_HORIZON_DAYS} is how far ahead a
+     * total is allowed to count. A windfall you can only unwind over eight months
+     * is not money the next step of a plan can spend, so what a method is worth is
+     * what it can be turned into inside a week at the pace the book will take.
+     *
+     * ## Absence of data is not data showing absence
+     *
+     * Two different unknowns, and conflating them would either break the planner or
+     * lie to it:
+     *
+     * - **The history is not available** — the pooled-history setting is off, or the
+     *   server did not answer. Nothing is known about any item, so nothing is
+     *   bounded and the panel says out loud that it is not checking. Crushing every
+     *   rate to zero because a third-party server is down would be conservative in
+     *   the same way that unplugging the computer is.
+     * - **The history is available and shows no trades** — that *is* an answer, and
+     *   it is the answer the user is complaining about. It bounds normally, all the
+     *   way to zero if the pool watched the item for a month and saw nothing.
+     */
+
+
+    /** How much history to average over. Long enough that a quiet week is not a verdict. */
+    const LIQUIDITY_WINDOW_DAYS = 30;
+
+    /**
+     * The share of an item's observed trade one character is assumed to be able to take.
+     * See the module doc: a quarter is already a strong claim.
+     */
+    const LIQUIDITY_SHARE = 0.25;
+
+    /** How far ahead a total is allowed to count as realizable */
+    const LIQUIDITY_HORIZON_DAYS = 7;
+
+    /** Coins are not sold on the marketplace, so they never bound anything */
+    const COIN_HRID$1 = '/items/coin';
+
+    /**
+     * One session's answers. The planner asks about the same handful of items on
+     * every replan, and the fetch behind this is a network round trip.
+     * @type {Map<string, Object>}
+     */
+    const cache = new Map();
+
+    /**
+     * How many units of an item change hands in a day.
+     *
+     * @param {string} itemHrid - The item
+     * @param {number} [enhancementLevel=0] - Which variant
+     * @returns {Promise<{itemHrid: string, unitsPerDay: number, days: number, known: boolean}>}
+     *   `known` is false when nothing could be measured — no setting, no server, no
+     *   rows — which is different from a measured zero and must not be treated as one.
+     */
+    async function dailyVolume(itemHrid, enhancementLevel = 0) {
+        const key = `${itemHrid}:${enhancementLevel}`;
+        const cached = cache.get(key);
+        if (cached) return cached;
+
+        const unknown = { itemHrid, unitsPerDay: 0, days: 0, known: false };
+        let answer = unknown;
+
+        try {
+            const rows = await marketHistoryAPI.fetchHistory(itemHrid, enhancementLevel, LIQUIDITY_WINDOW_DAYS);
+            if (Array.isArray(rows) && rows.length) {
+                const series = marketHistoryData_js.buildHistorySeries(rows, LIQUIDITY_WINDOW_DAYS);
+                const traded = series.reduce((sum, point) => sum + (Number(point.volume) || 0), 0);
+
+                // Divided by the span the data covers, not by the number of days it
+                // has a point for. A thing traded on four days out of thirty traded
+                // four times in a month, not four times in four days — counting only
+                // the days something happened is how an item that sells once a week
+                // comes out looking like an item that sells once a day.
+                const first = series[0]?.time || 0;
+                const last = series[series.length - 1]?.time || first;
+                const span = Math.min(LIQUIDITY_WINDOW_DAYS, Math.max(1, (last - first) / 86_400 + 1));
+
+                answer = { itemHrid, unitsPerDay: traded / span, days: span, known: true };
+            }
+        } catch (error) {
+            console.error(`[MarketLiquidity] Reading the history for ${itemHrid} failed:`, error);
+        }
+
+        cache.set(key, answer);
+        return answer;
+    }
+
+    /**
+     * How many units an hour the market will take from you.
+     * @param {{unitsPerDay: number, known: boolean}} volume - From {@link dailyVolume}
+     * @returns {number} Units per hour, or `Infinity` when nothing is known
+     */
+    function absorbablePerHour(volume) {
+        if (!volume?.known) return Number.POSITIVE_INFINITY;
+        return (LIQUIDITY_SHARE * Math.max(0, volume.unitsPerDay)) / 24;
+    }
+
+    /**
+     * A traded volume, said the way somebody looking at a history chart would say it.
+     * @param {{unitsPerDay: number, known: boolean}} volume - From {@link dailyVolume}
+     * @returns {string} e.g. "~1/week", "~340/day"
+     */
+    function describeVelocity(volume) {
+        const perDay = Math.max(0, Number(volume?.unitsPerDay) || 0);
+        if (perDay <= 0) return 'none traded';
+
+        // The largest unit the count still rounds to at least one in. The threshold
+        // is 0.995 rather than 1 because the number arrives as a quotient — an item
+        // that traded four times in twenty-eight days is one a week, and float
+        // arithmetic makes it 0.9999999999999999 of one.
+        const roundsToOne = 0.995;
+        if (perDay >= roundsToOne) return `~${Math.round(perDay)}/day`;
+        const perWeek = perDay * 7;
+        if (perWeek >= roundsToOne) return `~${Math.round(perWeek)}/week`;
+        return `~${Math.round(perDay * 30)}/month`;
+    }
+
+    /**
+     * What the market lets a method actually run at.
+     *
+     * The binding output is the slowest-selling one: running the action faster than
+     * its worst product can be sold does not make coins, it makes a pile. So the
+     * throttle is the minimum over everything the method has to sell.
+     *
+     * @param {Array<{itemHrid: string, unitsPerHour: number}>} sells - What one hour produces
+     * @returns {Promise<{throttle: number, binding: Object|null}>} A multiplier in [0, 1],
+     *   and the output that set it
+     */
+    async function sellThrottle(sells) {
+        let throttle = 1;
+        let binding = null;
+
+        for (const sold of sells || []) {
+            const wanted = Number(sold?.unitsPerHour) || 0;
+            if (!sold?.itemHrid || sold.itemHrid === COIN_HRID$1 || wanted <= 0) continue;
+
+            const volume = await dailyVolume(sold.itemHrid, sold.enhancementLevel || 0);
+            const allowed = absorbablePerHour(volume);
+            if (!Number.isFinite(allowed)) continue;
+
+            const share = Math.min(1, allowed / wanted);
+            if (share < throttle) {
+                throttle = share;
+                binding = { ...sold, volume };
+            }
+        }
+
+        return { throttle, binding };
+    }
+
+    /**
+     * Bound a rate by how fast what it makes can be sold.
+     *
+     * Two bounds from the one measurement, because a rate makes two claims:
+     *
+     * - **the pace** — `goldPerHour` is throttled to what the book will absorb;
+     * - **the total** — a rate that already carries a `sustainable` ceiling has that
+     *   ceiling cut to what the throttled pace can realize inside
+     *   {@link LIQUIDITY_HORIZON_DAYS}. An uncapped method is left uncapped: giving
+     *   gathering a ceiling it never had would be a different bug.
+     *
+     * The rate is copied rather than edited. The ranking is rebuilt on every
+     * refresh out of arrays other features hold, and quietly rewriting one of their
+     * objects is how two surfaces start disagreeing about the same number.
+     *
+     * @param {Object} rate - A gold rate, carrying `sells: [{itemHrid, unitsPerHour}]`
+     * @returns {Promise<Object>} The rate, bounded, with a `limits` note if it was
+     */
+    async function applySellLimit(rate) {
+        const sells = Array.isArray(rate?.sells) ? rate.sells : [];
+        if (!sells.length) return rate;
+
+        const { throttle, binding } = await sellThrottle(sells);
+        if (!(throttle < 1) || !binding) return rate;
+
+        const goldPerHour = Math.max(0, Number(rate.goldPerHour) || 0) * throttle;
+        const limited = {
+            ...rate,
+            goldPerHour,
+            limits: [
+                ...(rate.limits || []),
+                {
+                    kind: 'volume',
+                    note: `limited by market volume (${describeVelocity(binding.volume)})`,
+                    detail:
+                        `${binding.name || binding.itemHrid.split('/').pop()} trades ` +
+                        `${describeVelocity(binding.volume)}, and you are not the only seller.`,
+                    throttle,
+                    itemHrid: binding.itemHrid,
+                },
+            ],
+        };
+
+        // Only a method that already had a ceiling gets a smaller one
+        const ceiling = Number(rate.sustainable?.gold);
+        if (rate.sustainable && !rate.sustainable.unbounded && Number.isFinite(ceiling)) {
+            const realizable = Math.min(ceiling, goldPerHour * LIQUIDITY_HORIZON_DAYS * 24);
+            const goldPerUnit = Number(rate.sustainable.goldPerUnit) || 0;
+            limited.sustainable = {
+                ...rate.sustainable,
+                gold: realizable,
+                ...(goldPerUnit > 0 ? { units: realizable / goldPerUnit } : {}),
+            };
+        }
+
+        return limited;
+    }
+
+    /** Below this, restocking an input is not something you do on demand */
+    const THIN_INPUT_PER_DAY = 1;
+
+    /**
+     * Say when a method's *input* is the thing that barely trades.
+     *
+     * A note rather than a cap, deliberately. What an input costs is already inside
+     * the margin, and a method run on stock you already hold is bounded by that
+     * stock rather than by the book — the `sustainable` ceiling covers it. What the
+     * book does decide is whether you could ever do this *again*, and a plan that
+     * quietly assumes you can restock a once-a-week item is worth one line of doubt.
+     *
+     * @param {Object} rate - A gold rate, whose `itemHrid` is what it consumes
+     * @returns {Promise<Object>} The rate, with a note if its input is thin
+     */
+    async function applyInputNote(rate) {
+        if (!rate?.itemHrid) return rate;
+
+        const volume = await dailyVolume(rate.itemHrid);
+        if (!volume.known || volume.unitsPerDay >= THIN_INPUT_PER_DAY) return rate;
+
+        const name = rate.sustainable?.unitLabel || rate.itemName || rate.itemHrid.split('/').pop();
+        return {
+            ...rate,
+            limits: [
+                ...(rate.limits || []),
+                {
+                    kind: 'input',
+                    note: `restocking ${name} means buying into a ${describeVelocity(volume)} book`,
+                    itemHrid: rate.itemHrid,
+                },
+            ],
+        };
+    }
+
+    /**
+     * Bound every rate in a ranking, and say whether the bounding could happen at all.
+     *
+     * @param {Array<Object>} rates - Gold rates
+     * @returns {Promise<{rates: Array<Object>, measured: boolean}>} The rates, best
+     *   first, and whether any volume figure was available — a run where none was is
+     *   a run where nothing was checked, which the panel has to be able to say
+     */
+    async function applyLiquidityLimits(rates) {
+        const list = Array.isArray(rates) ? rates : [];
+        const bounded = [];
+
+        for (const rate of list) {
+            try {
+                bounded.push(await applyInputNote(await applySellLimit(rate)));
+            } catch (error) {
+                console.error('[MarketLiquidity] Bounding a rate failed:', error);
+                bounded.push(rate);
+            }
+        }
+
+        bounded.sort((a, b) => (Number(b.goldPerHour) || 0) - (Number(a.goldPerHour) || 0));
+        const measured = [...cache.values()].some((entry) => entry.known);
+        return { rates: bounded, measured };
+    }
+
+    /**
+     * House Upgrade Cost Calculator
+     * Calculates material and coin costs for house room upgrades
+     */
+
+
+    class HouseCostCalculator {
+        constructor() {
+            this.isInitialized = false;
+        }
+
+        /**
+         * Initialize the calculator
+         */
+        async initialize() {
+            if (this.isInitialized) return;
+
+            // Ensure market data is loaded (check in-memory first to avoid storage reads)
+            if (!marketAPI.isLoaded()) {
+                await marketAPI.fetch();
+            }
+
+            this.isInitialized = true;
+        }
+
+        /**
+         * Get current level of a house room
+         * @param {string} houseRoomHrid - House room HRID (e.g., "/house_rooms/brewery")
+         * @returns {number} Current level (0-8)
+         */
+        getCurrentRoomLevel(houseRoomHrid) {
+            return dataManager.getHouseRoomLevel(houseRoomHrid);
+        }
+
+        /**
+         * Calculate cost for a single level upgrade
+         * @param {string} houseRoomHrid - House room HRID
+         * @param {number} targetLevel - Target level (1-8)
+         * @returns {Promise<Object>} Cost breakdown
+         */
+        async calculateLevelCost(houseRoomHrid, targetLevel) {
+            const initData = dataManager.getInitClientData();
+            if (!initData || !initData.houseRoomDetailMap) {
+                throw new Error('Game data not loaded');
+            }
+
+            const roomData = initData.houseRoomDetailMap[houseRoomHrid];
+            if (!roomData) {
+                throw new Error(`House room not found: ${houseRoomHrid}`);
+            }
+
+            const upgradeCosts = roomData.upgradeCostsMap[targetLevel];
+            if (!upgradeCosts) {
+                throw new Error(`No upgrade costs for level ${targetLevel}`);
+            }
+
+            // Calculate costs
+            let totalCoins = 0;
+            const materials = [];
+
+            for (const item of upgradeCosts) {
+                if (item.itemHrid === '/items/coin') {
+                    totalCoins = item.count;
+                } else {
+                    const marketPrice = await this.getItemMarketPrice(item.itemHrid);
+                    materials.push({
+                        itemHrid: item.itemHrid,
+                        count: item.count,
+                        marketPrice: marketPrice,
+                        totalValue: marketPrice * item.count,
+                    });
+                }
+            }
+
+            const totalMaterialValue = materials.reduce((sum, m) => sum + m.totalValue, 0);
+
+            return {
+                level: targetLevel,
+                coins: totalCoins,
+                materials: materials,
+                totalValue: totalCoins + totalMaterialValue,
+            };
+        }
+
+        /**
+         * Calculate cumulative cost from current level to target level
+         * @param {string} houseRoomHrid - House room HRID
+         * @param {number} currentLevel - Current level
+         * @param {number} targetLevel - Target level (currentLevel+1 to 8)
+         * @returns {Promise<Object>} Aggregated costs
+         */
+        async calculateCumulativeCost(houseRoomHrid, currentLevel, targetLevel) {
+            if (targetLevel <= currentLevel) {
+                throw new Error('Target level must be greater than current level');
+            }
+
+            if (targetLevel > 8) {
+                throw new Error('Maximum house level is 8');
+            }
+
+            let totalCoins = 0;
+            const materialMap = new Map(); // itemHrid -> {itemHrid, count, marketPrice, totalValue}
+
+            // Aggregate costs across all levels
+            for (let level = currentLevel + 1; level <= targetLevel; level++) {
+                const levelCost = await this.calculateLevelCost(houseRoomHrid, level);
+
+                totalCoins += levelCost.coins;
+
+                // Aggregate materials
+                for (const material of levelCost.materials) {
+                    if (materialMap.has(material.itemHrid)) {
+                        const existing = materialMap.get(material.itemHrid);
+                        existing.count += material.count;
+                        existing.totalValue += material.totalValue;
+                    } else {
+                        materialMap.set(material.itemHrid, { ...material });
+                    }
+                }
+            }
+
+            const materials = Array.from(materialMap.values());
+            const totalMaterialValue = materials.reduce((sum, m) => sum + m.totalValue, 0);
+
+            return {
+                fromLevel: currentLevel,
+                toLevel: targetLevel,
+                coins: totalCoins,
+                materials: materials,
+                totalValue: totalCoins + totalMaterialValue,
+            };
+        }
+
+        /**
+         * Get market price for an item (uses 'ask' price for buying materials)
+         * @param {string} itemHrid - Item HRID
+         * @returns {Promise<number>} Market price
+         */
+        async getItemMarketPrice(itemHrid) {
+            // Use 'ask' mode since house upgrades involve buying materials
+            const price = marketData_js.getItemPrice(itemHrid, { mode: 'ask' });
+
+            if (price === null || price === 0) {
+                // Fallback to vendor price from game data
+                const initData = dataManager.getInitClientData();
+                const itemData = initData?.itemDetailMap?.[itemHrid];
+                return itemData?.sellPrice || 0;
+            }
+
+            return price;
+        }
+
+        /**
+         * Get player's inventory count for an item
+         * @param {string} itemHrid - Item HRID
+         * @returns {number} Item count in inventory
+         */
+        getInventoryCount(itemHrid) {
+            const inventory = dataManager.getInventory();
+            if (!inventory) return 0;
+
+            // Only count items in inventory (not equipped) with no enhancement
+            // Enhanced items and equipped items cannot be used for house construction
+            const item = inventory.find(
+                (i) =>
+                    i.itemHrid === itemHrid &&
+                    i.itemLocationHrid === '/item_locations/inventory' &&
+                    (!i.enhancementLevel || i.enhancementLevel === 0)
+            );
+            return item ? item.count : 0;
+        }
+
+        /**
+         * Get item name from game data
+         * @param {string} itemHrid - Item HRID
+         * @returns {string} Item name
+         */
+        getItemName(itemHrid) {
+            if (itemHrid === '/items/coin') {
+                return 'Gold';
+            }
+
+            const initData = dataManager.getInitClientData();
+            const itemData = initData?.itemDetailMap?.[itemHrid];
+            return itemData?.name || 'Unknown Item';
+        }
+
+        /**
+         * Get house room name from game data
+         * @param {string} houseRoomHrid - House room HRID
+         * @returns {string} Room name
+         */
+        getRoomName(houseRoomHrid) {
+            const initData = dataManager.getInitClientData();
+            const roomData = initData?.houseRoomDetailMap?.[houseRoomHrid];
+            return roomData?.name || 'Unknown Room';
+        }
+    }
+
+    const houseCostCalculator = new HouseCostCalculator();
+
+    /**
+     * The join between the game and the planner.
+     *
+     * `goal-planner.js` decides what to do in what order and knows nothing about
+     * where numbers come from. This module is the other half: it asks the
+     * calculators Toolasha already has, and hands the answers over as plain data
+     * and a handful of synchronous lookups.
+     *
+     * ## Nothing here does arithmetic that lives somewhere else
+     *
+     * Every figure is somebody else's:
+     *
+     * - gold per hour — `gathering-profit.js` / `production-profit.js`, the same
+     *   calculators behind the action panel's profit line; `alchemy-rankings.js`,
+     *   which is the loop behind the Best Items table; and the last all-zones
+     *   simulation, by way of `combat-rates.js`
+     * - experience per hour — `experience-calculator.js`, the one the skill tiles use
+     * - buy versus craft — `crafting-plan-calculator.js`
+     * - an enhancement run — `tooltip-enhancement.js`'s path optimiser, over the
+     *   Markov chain in `utils/enhancement-calculator.js`
+     * - house upgrades — `features/house/house-cost-calculator.js`
+     *
+     * A planner that re-derived any of them would be a second opinion, and two
+     * numbers for the same question is worse than one. The only arithmetic written
+     * here is enhancing experience per hour, which exists in the codebase only
+     * inside the XPH panel's private helper — so the *composition* is repeated
+     * (`calculateEnhancement` → visit counts → `calculateSuccessXP`), never the
+     * formulas.
+     *
+     * ## Rates are precomputed, lookups are not
+     *
+     * Ranking every action the character can do means running the profit
+     * calculators a few hundred times, which is a refresh, not a render. So that
+     * work happens once in {@link buildPlannerContext} and the result rides on the
+     * context as an array. The per-item lookups — a price, a recipe, an enhancement
+     * run — are cheap and lazy, and memoised for the life of one context so a plan
+     * with three steps against the same item asks once.
+     */
+
+
+    const COIN_HRID = '/items/coin';
+    const INVENTORY_LOCATION = '/item_locations/inventory';
+    const ENHANCING_SKILL = '/skills/enhancing';
+
+    /** The enhancement run length the enhancing XP rate is quoted for */
+    const ENHANCING_XP_TARGET_LEVEL = 5;
+    /** How many held items the enhancing XP rate ranks, highest item level first */
+    const ENHANCING_XP_CANDIDATES = 25;
+
+    /**
+     * Coins in hand.
+     *
+     * Only the inventory copy: coins also appear against market listings, and money
+     * committed to a buy order cannot be spent on the next step of a plan.
+     *
+     * @returns {number} Coins
+     */
+    function coinsHeld() {
+        const items = dataManager.getInventory();
+        if (!Array.isArray(items)) return 0;
+        const coin = items.find((item) => item.itemHrid === COIN_HRID && item.itemLocationHrid === INVENTORY_LOCATION);
+        return coin?.count || 0;
+    }
+
+    /**
+     * How many unenhanced copies of an item are in the bag.
+     * @param {string} itemHrid - The item
+     * @returns {number} Count
+     */
+    function heldCount(itemHrid) {
+        const items = dataManager.getInventory();
+        if (!Array.isArray(items)) return 0;
+        let total = 0;
+        for (const item of items) {
+            if (item.itemHrid !== itemHrid) continue;
+            if (item.itemLocationHrid !== INVENTORY_LOCATION) continue;
+            if (item.enhancementLevel) continue;
+            total += item.count || 0;
+        }
+        return total;
+    }
+
+    /**
+     * The best copy of an item the character has, anywhere.
+     *
+     * Equipped counts: a plan for "own Sinister Cape +10" is finished when the cape
+     * is on your back, not when a second one is in the bag.
+     *
+     * @param {string} itemHrid - The item
+     * @returns {number} Highest enhancement level owned, or -1 when there is none
+     */
+    function bestOwnedLevel(itemHrid) {
+        let best = -1;
+
+        const items = dataManager.getInventory();
+        if (Array.isArray(items)) {
+            for (const item of items) {
+                if (item.itemHrid !== itemHrid) continue;
+                if (!(item.count > 0)) continue;
+                best = Math.max(best, item.enhancementLevel || 0);
+            }
+        }
+
+        const equipment = dataManager.getEquipment();
+        if (equipment) {
+            for (const item of equipment.values()) {
+                if (item?.itemHrid !== itemHrid) continue;
+                best = Math.max(best, item.enhancementLevel || 0);
+            }
+        }
+
+        return best;
+    }
+
+    /**
+     * A skill's level and experience.
+     * @param {string} skillHrid - The skill
+     * @returns {{level: number, experience: number}} Its state, or level 1 when unknown
+     */
+    function skillState(skillHrid) {
+        const skill = (dataManager.getSkills() || []).find((entry) => entry.skillHrid === skillHrid);
+        return { level: skill?.level ?? 1, experience: skill?.experience ?? 0 };
+    }
+
+    /**
+     * Title-case a skill or room hrid, for anything the game has not named.
+     * @param {string} hrid - An hrid
+     * @returns {string} A readable name
+     */
+    function humanise(hrid) {
+        return String(hrid || '')
+            .split('/')
+            .pop()
+            .split('_')
+            .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+            .join(' ');
+    }
+
+    /**
+     * What a rate says when nothing limits how long it can be run.
+     *
+     * Frozen and shared: it is the same statement on every gathering, production
+     * and combat rate, and a per-rate copy is weight for nothing.
+     */
+    const UNBOUNDED = Object.freeze({ unbounded: true });
+
+    /**
+     * Whether a profit figure had to guess at what the action costs.
+     *
+     * Only the cost side. A missing *output* price makes a profit understated,
+     * which is a conservative error and still a usable ranking; a missing *input*
+     * price makes it overstated without limit, because the calculators bill an
+     * unpriceable material at nothing.
+     *
+     * @param {Object} profit - A result from the gathering or production calculator
+     * @returns {boolean} Whether something it consumes could not be priced
+     */
+    function costSideIncomplete(profit) {
+        if ((profit?.materialCosts || []).some((material) => material?.missingPrice)) return true;
+        if ((profit?.teaCosts || []).some((tea) => tea?.missingPrice)) return true;
+        if ((profit?.drinkCosts || []).some((drink) => drink?.missingPrice)) return true;
+        return false;
+    }
+
+    /**
+     * Every action the character's levels allow, of a set of types.
+     * @param {Array<string>} types - Action type hrids
+     * @returns {Array<{hrid: string, action: Object}>} Actions the character can start
+     */
+    function availableActions(types) {
+        const gameData = dataManager.getInitClientData();
+        if (!gameData?.actionDetailMap) return [];
+        const skills = dataManager.getSkills() || [];
+        const levels = new Map(skills.map((skill) => [skill.skillHrid, skill.level]));
+
+        const found = [];
+        for (const [hrid, action] of Object.entries(gameData.actionDetailMap)) {
+            if (!types.includes(action.type)) continue;
+            const requirement = action.levelRequirement;
+            if (requirement?.skillHrid) {
+                const level = levels.get(requirement.skillHrid) ?? 1;
+                if (level < (requirement.level || 1)) continue;
+            }
+            found.push({ hrid, action });
+        }
+        return found;
+    }
+
+    /**
+     * What every activity the character can do pays per hour.
+     *
+     * Four sources, ranked against each other on one number:
+     *
+     * - **gathering and production** — the action profit calculators, over every
+     *   action the character's levels allow;
+     * - **alchemy** — `alchemy-rankings.js`, which runs the real alchemy profit
+     *   calculator over every item each of the three actions applies to. The coin
+     *   fee alchemy charges is inside those figures, because the calculator
+     *   subtracts it before it reports a profit;
+     * - **combat** — the last all-zones simulation, which is a measurement rather
+     *   than a live calculation and says its own age in its label.
+     *
+     * Only the first two are returned as a per-action map. Alchemy quotes many
+     * rates against the same three action hrids and combat quotes one per zone, so
+     * folding either into a map keyed by action would either clobber entries or
+     * pair an experience rate with the gold from a different item.
+     *
+     * ## Two kinds of rate, and only one of them has a ceiling
+     *
+     * Gathering, production and combat are marked `unbounded`. Gathering consumes
+     * nothing; production and combat pay for their inputs at ask *inside the margin
+     * they report*, so the margin is repeatable for as long as the market will sell
+     * to you. Alchemy is the exception, and says so for itself — it eats the item
+     * it is run on, and {@link alchemyGoldRates} caps each rate at what is in the
+     * bag.
+     *
+     * ## A cost that could not be priced is not a cost of zero
+     *
+     * A production margin whose material list contains an item with no market
+     * listing is computed as though that material were free, which turns a modest
+     * craft into an eight-figure hourly income. Those rates are dropped rather than
+     * quoted: an unpriceable input makes the *profit* unknown, not large.
+     *
+     * @returns {Promise<{rates: Array<Object>, byAction: Map<string, number>, notes: Array<string>}>}
+     *   Rates best first, gold by action for the skilling rates, and anything the panel should say
+     */
+    async function measureGoldRates() {
+        const rates = [];
+        const byAction = new Map();
+        const notes = [];
+        let unpriceable = 0;
+
+        for (const { hrid, action } of availableActions(profitConstants_js.GATHERING_TYPES)) {
+            try {
+                const profit = await gatheringProfit_js.calculateGatheringProfit(hrid);
+                if (!(profit?.profitPerHour > 0)) continue;
+                if (costSideIncomplete(profit)) {
+                    unpriceable += 1;
+                    continue;
+                }
+                rates.push({
+                    actionHrid: hrid,
+                    label: action.name || humanise(hrid),
+                    goldPerHour: profit.profitPerHour,
+                    kind: 'gathering',
+                    sustainable: UNBOUNDED,
+                    // Gathering consumes nothing, so it needs no capital to start;
+                    // what it sells is its own drop table
+                    upfrontCost: 0,
+                    sells: (profit.baseOutputs || [])
+                        .filter((output) => output?.itemHrid && output.itemsPerHour > 0)
+                        .map((output) => ({
+                            itemHrid: output.itemHrid,
+                            name: output.name || null,
+                            unitsPerHour: output.itemsPerHour,
+                        })),
+                });
+                byAction.set(hrid, profit.profitPerHour);
+            } catch (error) {
+                console.error(`[GoalPlanner] Costing ${hrid} failed:`, error);
+            }
+        }
+
+        for (const { hrid, action } of availableActions(profitConstants_js.PRODUCTION_TYPES)) {
+            try {
+                const profit = await productionProfit_js.calculateProductionProfit(hrid);
+                if (!(profit?.profitPerHour > 0)) continue;
+                if (costSideIncomplete(profit)) {
+                    unpriceable += 1;
+                    continue;
+                }
+                rates.push({
+                    actionHrid: hrid,
+                    label: action.name || humanise(hrid),
+                    goldPerHour: profit.profitPerHour,
+                    kind: 'production',
+                    sustainable: UNBOUNDED,
+                    // One action's materials is what it costs to start crafting
+                    upfrontCost: Math.max(0, Number(profit.totalMaterialCost) || 0),
+                    sells: profit.itemHrid
+                        ? [
+                              {
+                                  itemHrid: profit.itemHrid,
+                                  name: profit.itemName || null,
+                                  unitsPerHour: Number(profit.totalItemsPerHour) || 0,
+                              },
+                          ]
+                        : [],
+                });
+                byAction.set(hrid, profit.profitPerHour);
+            } catch (error) {
+                console.error(`[GoalPlanner] Costing ${hrid} failed:`, error);
+            }
+        }
+
+        if (unpriceable > 0) {
+            notes.push(
+                `${unpriceable} action${unpriceable === 1 ? '' : 's'} could not be ranked: something they consume ` +
+                    'has no market listing, and a cost that cannot be read is not a cost of zero.'
+            );
+        }
+
+        try {
+            rates.push(...alchemyGoldRates({ priceStamp: marketAPI.lastFetchTimestamp || 0 }));
+        } catch (error) {
+            console.error('[GoalPlanner] Ranking alchemy failed:', error);
+            notes.push('Alchemy could not be ranked — see the console.');
+        }
+
+        let combatStatus = null;
+        try {
+            const combat = await loadCombatRates();
+            rates.push(...combat.rates);
+            combatStatus = combat.status;
+            if (combat.status.note) notes.push(combat.status.note);
+        } catch (error) {
+            console.error('[GoalPlanner] Reading combat rates failed:', error);
+            notes.push('Combat could not be ranked — see the console.');
+        }
+
+        // Everything above priced what a method *produces*. This is the last step
+        // between production and coins: somebody has to buy it. A rate whose output
+        // trades once a week cannot be earned at anything like its quoted pace, and
+        // ranking it first is how the planner recommended a method that cannot be run.
+        let liquidity;
+        try {
+            liquidity = await applyLiquidityLimits(rates);
+        } catch (error) {
+            console.error('[GoalPlanner] Bounding rates by market volume failed:', error);
+            liquidity = { rates, measured: false };
+        }
+
+        if (!liquidity.measured) {
+            notes.push(
+                'Market volume is not being checked, so a rate here is what its output is *worth*, not what ' +
+                    'you could sell. Turn on pooled market history to bound methods by how fast they actually trade.'
+            );
+        }
+
+        liquidity.rates.sort((a, b) => b.goldPerHour - a.goldPerHour);
+        return { rates: liquidity.rates, byAction, notes, combatStatus };
+    }
+
+    /**
+     * What each action gives per hour, for one skill.
+     *
+     * Gold is carried alongside experience because a grind is rarely free: a plan
+     * that trains Cheesesmithing to 90 and does not say what it costs is only half
+     * an answer.
+     *
+     * @param {string} skillHrid - The skill
+     * @param {Map<string, number>} goldByAction - Gold per hour, by action
+     * @returns {Array<Object>} Rates, best first
+     */
+    function measureXpRates(skillHrid, goldByAction) {
+        const gameData = dataManager.getInitClientData();
+        if (!gameData?.actionDetailMap) return [];
+
+        const rates = [];
+        for (const [hrid, action] of Object.entries(gameData.actionDetailMap)) {
+            if (action.experienceGain?.skillHrid !== skillHrid) continue;
+            if (!(action.experienceGain.value > 0)) continue;
+
+            try {
+                const experience = experienceCalculator_js.calculateExpPerHour(hrid);
+                if (!experience?.expPerHour) continue;
+                rates.push({
+                    actionHrid: hrid,
+                    label: action.name || humanise(hrid),
+                    requiredLevel: action.levelRequirement?.level || 1,
+                    xpPerHour: experience.expPerHour,
+                    xpPerAction: experience.modifiedXP,
+                    actionTime: experience.actionTime,
+                    totalEfficiency: experience.totalEfficiency,
+                    goldPerHour: goldByAction.get(hrid) || 0,
+                });
+            } catch (error) {
+                console.error(`[GoalPlanner] Rating ${hrid} failed:`, error);
+            }
+        }
+
+        rates.sort((a, b) => b.xpPerHour - a.xpPerHour);
+        return rates;
+    }
+
+    /**
+     * Experience per hour from enhancing, and the item that gives it.
+     *
+     * The one rate the codebase cannot hand over: the XPH panel works it out inside
+     * a private helper, and enhancing has a single action whose experience depends
+     * entirely on what is being enhanced. So the pieces are re-assembled here —
+     * the Markov run, the per-level success and failure experience, the material
+     * bill — from the exported functions that own each of them.
+     *
+     * Ranked over the enhanceable items already in the bag, because those are the
+     * ones that can be started today, and quoted for short `+0 → +5` runs, which is
+     * how enhancing is trained.
+     *
+     * @returns {Array<Object>} Rates, best first
+     */
+    function measureEnhancingRates() {
+        const gameData = dataManager.getInitClientData();
+        if (!gameData?.itemDetailMap) return [];
+
+        const params = getTooltipEnhancementParams('/items/coin');
+        const held = (dataManager.getInventory() || [])
+            .filter((item) => item.itemLocationHrid === INVENTORY_LOCATION && item.count > 0 && !item.enhancementLevel)
+            .map((item) => ({ hrid: item.itemHrid, details: gameData.itemDetailMap[item.itemHrid] }))
+            .filter((entry) => entry.details?.enhancementCosts?.length)
+            .sort((a, b) => (b.details.itemLevel || 0) - (a.details.itemLevel || 0))
+            .slice(0, ENHANCING_XP_CANDIDATES);
+
+        const rates = [];
+        for (const { hrid, details } of held) {
+            try {
+                const run = enhancementCalculator_js.calculateEnhancement({
+                    enhancingLevel: params.enhancingLevel,
+                    houseLevel: params.houseLevel,
+                    toolBonus: params.toolBonus || 0,
+                    speedBonus: params.speedBonus || 0,
+                    itemLevel: details.itemLevel || 0,
+                    targetLevel: ENHANCING_XP_TARGET_LEVEL,
+                    startLevel: 0,
+                    protectFrom: 0,
+                    blessedTea: params.teas?.blessed,
+                    guzzlingBonus: params.guzzlingBonus,
+                    blessedTeaBonus: params.blessedTeaBonus,
+                });
+                if (!run?.visitCounts || !(run.totalTime > 0)) continue;
+
+                let totalXP = 0;
+                for (let level = 0; level < ENHANCING_XP_TARGET_LEVEL; level += 1) {
+                    const visits = run.visitCounts[level];
+                    if (!visits) continue;
+                    const successRate = (run.successRates[level]?.actualRate ?? 0) / 100;
+                    totalXP +=
+                        visits *
+                        (successRate * calculateSuccessXP(level, hrid) +
+                            (1 - successRate) * calculateFailureXP(level, hrid));
+                }
+                if (!(totalXP > 0)) continue;
+
+                let materialPerAttempt = 0;
+                for (const cost of details.enhancementCosts || []) {
+                    materialPerAttempt += (getEnhancementMaterialPrice(cost.itemHrid, 'ask') || 0) * cost.count;
+                }
+
+                const xpPerHour = (totalXP / run.totalTime) * 3600;
+                rates.push({
+                    actionHrid: '/actions/enhancing/enhance',
+                    label: `${details.name || humanise(hrid)} +0 → +${ENHANCING_XP_TARGET_LEVEL}`,
+                    requiredLevel: 1,
+                    xpPerHour,
+                    xpPerAction: totalXP / run.attempts,
+                    actionTime: run.perActionTime,
+                    totalEfficiency: 0,
+                    // Enhancing has no efficiency repeats, so the level-by-level
+                    // climb the skilling calculator models does not apply
+                    flatRate: true,
+                    goldPerHour: -(materialPerAttempt * 3600) / run.perActionTime,
+                });
+            } catch (error) {
+                console.error(`[GoalPlanner] Rating enhancing on ${hrid} failed:`, error);
+            }
+        }
+
+        rates.sort((a, b) => b.xpPerHour - a.xpPerHour);
+        return rates;
+    }
+
+    /**
+     * Buy it or make it, whichever the book says is cheaper right now.
+     * @param {string} itemHrid - The item
+     * @returns {Object|null} `{strategy, totalCost, buyPrice, craftCost, actionHrid, timeHours, requires}`
+     */
+    function acquisitionFor(itemHrid) {
+        const plan = computeBestCraftingPlan(itemHrid, 1, 'ask');
+        if (!plan || !Number.isFinite(plan.totalCost)) return null;
+
+        const requires = [];
+        if (plan.strategy === 'craft' && plan.actionHrid) {
+            const requirement = dataManager.getActionDetails(plan.actionHrid)?.levelRequirement;
+            if (requirement?.skillHrid && requirement.level > 1) {
+                requires.push({ skillHrid: requirement.skillHrid, level: requirement.level });
+            }
+        }
+
+        return {
+            strategy: plan.strategy,
+            totalCost: plan.totalCost,
+            unitCost: plan.unitCost,
+            buyPrice: plan.buyPrice ?? null,
+            craftCost: plan.craftCost ?? null,
+            actionHrid: plan.actionHrid || null,
+            actionsNeeded: plan.actionsNeeded || 0,
+            timeHours: plan.strategy === 'craft' ? (getProductionChainTime(itemHrid) || 0) / 3600 : 0,
+            requires,
+            children: plan.children || [],
+        };
+    }
+
+    /**
+     * What it costs to take an item to a level.
+     *
+     * The path optimiser answers the from-scratch case, including which level to
+     * start protecting from and whether mirroring beats grinding. A character who
+     * already holds a partly enhanced copy is a different chain — one that can fall
+     * back below where it started — so that case is run through the Markov
+     * calculator directly at the protection level the optimiser chose, priced off
+     * the same per-attempt bill.
+     *
+     * @param {Object} request - `{itemHrid, targetLevel, startLevel}`
+     * @returns {Object|null} The run, or null when the item cannot be enhanced
+     */
+    function enhancementRun({ itemHrid, targetLevel, startLevel = 0 }) {
+        const params = getTooltipEnhancementParams(itemHrid);
+        const path = calculateEnhancementPath(itemHrid, targetLevel, params);
+        const strategy = path?.optimalStrategy;
+        if (!strategy) return null;
+
+        const source = describeEnhancementSource(params);
+        const common = {
+            protectFrom: strategy.protectFrom,
+            usedMirror: Boolean(strategy.usedMirror),
+            baseCost: strategy.baseCost,
+            paramsSource: source.kind,
+            paramsNote: source.detail,
+            xpPerHour: path.xpPerHour,
+        };
+
+        if (!(startLevel > 0) || strategy.usedMirror) {
+            return {
+                ...common,
+                attempts: strategy.expectedAttempts,
+                totalTimeSeconds: strategy.totalTime,
+                materialCost: strategy.materialCost,
+                protectionCost: strategy.protectionCost,
+                protectionCount: strategy.protectionCount,
+                totalCost: strategy.totalCost,
+                materialBill: strategy.materialBill || [],
+                fromLevel: 0,
+            };
+        }
+
+        const itemLevel = dataManager.getItemDetails(itemHrid)?.itemLevel || 0;
+        const run = enhancementCalculator_js.calculateEnhancement({
+            enhancingLevel: params.enhancingLevel,
+            houseLevel: params.houseLevel,
+            toolBonus: params.toolBonus || 0,
+            speedBonus: params.speedBonus || 0,
+            itemLevel,
+            targetLevel,
+            startLevel,
+            protectFrom: strategy.protectFrom,
+            blessedTea: params.teas?.blessed,
+            guzzlingBonus: params.guzzlingBonus,
+            blessedTeaBonus: params.blessedTeaBonus,
+        });
+
+        // The per-attempt bill the optimiser already priced, reused rather than
+        // rebuilt so a partial run and a full one cannot disagree about materials
+        const perAttempt = strategy.expectedAttempts > 0 ? strategy.materialCost / strategy.expectedAttempts : 0;
+        const protectionUnit =
+            strategy.protectionCount > 0
+                ? strategy.protectionCost / strategy.protectionCount
+                : getCheapestProtectionPrice(itemHrid)?.price || 0;
+
+        const materialCost = perAttempt * run.attempts;
+        const protectionCost = protectionUnit * run.protectionCount;
+
+        return {
+            ...common,
+            attempts: run.attempts,
+            totalTimeSeconds: run.totalTime,
+            materialCost,
+            protectionCost,
+            protectionCount: run.protectionCount,
+            // baseCost is subtracted by the engine, which buys the base separately;
+            // a run that starts from a copy already held pays for no base at all
+            baseCost: 0,
+            totalCost: materialCost + protectionCost,
+            materialBill: rescaleMaterialBill(strategy.materialBill, {
+                attempts: run.attempts,
+                fromAttempts: strategy.expectedAttempts,
+                protectionCount: run.protectionCount,
+                fromProtectionCount: strategy.protectionCount,
+            }),
+            fromLevel: startLevel,
+        };
+    }
+
+    /**
+     * The optimiser's bill, restated for a run that starts part of the way up.
+     *
+     * Same reasoning as the cost above it: the shorter chain is a different Markov
+     * run but the same per-attempt recipe, so the bill is scaled by the ratio of
+     * attempts rather than rebuilt — a partial run and a full one cannot then
+     * disagree about what an attempt consumes.
+     *
+     * Base and mirror lines are dropped. A character already holding a partly
+     * enhanced copy is not buying it again, and a start above +0 never takes the
+     * mirror branch.
+     *
+     * @param {Array<Object>} bill - `materialBill` from the optimiser's strategy
+     * @param {Object} ratios - `{attempts, fromAttempts, protectionCount, fromProtectionCount}`
+     * @returns {Array<Object>} The rescaled bill
+     */
+    function rescaleMaterialBill(bill, { attempts, fromAttempts, protectionCount, fromProtectionCount }) {
+        if (!Array.isArray(bill)) return [];
+
+        const materialRatio = fromAttempts > 0 ? attempts / fromAttempts : 0;
+        const protectionRatio = fromProtectionCount > 0 ? protectionCount / fromProtectionCount : 0;
+
+        const rescaled = [];
+        for (const line of bill) {
+            if (line.kind === 'base' || line.kind === 'mirror') continue;
+            const ratio = line.kind === 'protection' ? protectionRatio : materialRatio;
+            const count = (line.count || 0) * ratio;
+            if (!(count > 0)) continue;
+            rescaled.push({ ...line, count, totalCost: (line.unitPrice || 0) * count });
+        }
+        return rescaled;
+    }
+
+    /**
+     * Assemble everything the planner needs, once.
+     *
+     * @param {Object} [options] - Options
+     * @param {boolean} [options.measureRates=true] - Rank every activity's income. Off for a
+     *   redraw that only needs names and levels, since the ranking is the expensive part.
+     * @returns {Promise<Object>} A context for `planGoal`
+     */
+    async function buildPlannerContext({ measureRates = true } = {}) {
+        if (!marketAPI.isLoaded?.()) {
+            try {
+                await marketAPI.fetch();
+            } catch (error) {
+                console.error('[GoalPlanner] Loading market data failed:', error);
+            }
+        }
+
+        const gameData = dataManager.getInitClientData();
+        const measured = measureRates
+            ? await measureGoldRates()
+            : { rates: [], byAction: new Map(), notes: [], combatStatus: null };
+        const rates = measured.rates;
+        const goldByAction = measured.byAction;
+
+        const acquisitions = new Map();
+        const runs = new Map();
+        const xpCache = new Map();
+        const houseCosts = new Map();
+
+        return {
+            now: Date.now(),
+            gold: coinsHeld(),
+            levelExperienceTable: gameData?.levelExperienceTable || null,
+            pricingNote: `Priced against market data from ${marketData_js.getPriceAgeString() || 'an unknown time'}. Costs move with the book — re-price before committing.`,
+
+            // What a rate provider wants said out loud: a combat snapshot that is
+            // missing or stale is a fact about the ranking, not a silent omission
+            rateNotes: measured.notes,
+
+            // Which loadout the combat rates were judged against, and what else
+            // could have been picked — the panel offers the choice when there is one
+            combatStatus: measured.combatStatus,
+
+            itemName: (itemHrid) => dataManager.getItemDetails(itemHrid)?.name || humanise(itemHrid),
+            skillName: (skillHrid) => humanise(skillHrid),
+            houseRoomName: (roomHrid) => gameData?.houseRoomDetailMap?.[roomHrid]?.name || humanise(roomHrid),
+
+            skill: skillState,
+            owned: heldCount,
+            ownedEnhancementLevel: bestOwnedLevel,
+            houseLevel: (roomHrid) => dataManager.getHouseRoomLevel(roomHrid),
+
+            goldRates: () => rates,
+
+            xpRates: (skillHrid) => {
+                if (xpCache.has(skillHrid)) return xpCache.get(skillHrid);
+                const measured =
+                    skillHrid === ENHANCING_SKILL ? measureEnhancingRates() : measureXpRates(skillHrid, goldByAction);
+                xpCache.set(skillHrid, measured);
+                return measured;
+            },
+
+            acquire: (itemHrid) => {
+                if (!acquisitions.has(itemHrid)) acquisitions.set(itemHrid, acquisitionFor(itemHrid));
+                return acquisitions.get(itemHrid);
+            },
+
+            enhance: (request) => {
+                const key = `${request.itemHrid}|${request.startLevel || 0}|${request.targetLevel}`;
+                if (!runs.has(key)) runs.set(key, enhancementRun(request));
+                return runs.get(key);
+            },
+
+            // Filled in by withHouseCosts before planning, because the house
+            // calculator is asynchronous and the planner's lookups are not
+            houseCost: (roomHrid, fromLevel, toLevel) => houseCosts.get(`${roomHrid}|${fromLevel}|${toLevel}`) ?? null,
+
+            _houseCosts: houseCosts,
+        };
+    }
+
+    /**
+     * Price the house upgrades a set of goals needs, and fold them into a context.
+     *
+     * Separate from {@link buildPlannerContext} because the house calculator is
+     * asynchronous per level and the planner's lookups are not; pre-resolving only
+     * the rooms actually asked for keeps that from becoming a scan of every room in
+     * the house.
+     *
+     * @param {Object} context - A context from `buildPlannerContext`
+     * @param {Array<Object>} goals - The goals about to be planned
+     * @returns {Promise<Object>} The same context, house costs filled in
+     */
+    async function withHouseCosts(context, goals) {
+        const wanted = (Array.isArray(goals) ? goals : []).filter((goal) => goal?.type === 'house');
+        if (!wanted.length) return context;
+
+        try {
+            await houseCostCalculator.initialize();
+        } catch (error) {
+            console.error('[GoalPlanner] Preparing the house calculator failed:', error);
+        }
+
+        for (const goal of wanted) {
+            const fromLevel = context.houseLevel(goal.roomHrid);
+            const toLevel = Number(goal.targetLevel);
+            if (!(toLevel > fromLevel)) continue;
+
+            const key = `${goal.roomHrid}|${fromLevel}|${toLevel}`;
+            if (context._houseCosts.get(key)) continue;
+            try {
+                const cost = await houseCostCalculator.calculateCumulativeCost(goal.roomHrid, fromLevel, toLevel);
+                const materials = (cost?.materials || []).map((material) => ({
+                    ...material,
+                    name: houseCostCalculator.getItemName(material.itemHrid),
+                }));
+                context._houseCosts.set(key, { ...cost, materials });
+            } catch (error) {
+                console.error(`[GoalPlanner] Costing ${goal.roomHrid} failed:`, error);
+                context._houseCosts.set(key, null);
+            }
+        }
+
+        return context;
+    }
+
+    /**
+     * Goal Planner panel
+     *
+     * A list of what you are working towards, and the ordered steps to get there.
+     *
+     * The panel deliberately does no arithmetic. It collects a goal, hands it to
+     * `goal-planner.js` with a context built from the live calculators, and draws
+     * what comes back — so anything a number here disagrees with the rest of
+     * Toolasha about is a bug in one calculator rather than a second opinion grown
+     * inside a panel.
+     *
+     * ## Refresh is a button, not a timer
+     *
+     * Ranking every activity the character can do means running the profit
+     * calculators a few hundred times. That is not something to do every five
+     * seconds behind somebody's back, and it is not something whose answer changes
+     * minute to minute. So the plan is computed on demand, the market age it was
+     * priced at is printed next to the totals, and the last result is kept so the
+     * panel has something to show the moment it opens.
+     *
+     * *Planning* is not that expensive, though, and the two are now separate.
+     * Adding or removing a goal replans every goal immediately against the context
+     * already priced — which it has to, because the goals share one bagful of
+     * inputs and a removed goal's claims belong to the goals below it. Refresh
+     * remains the only thing that goes back to the market.
+     *
+     * ## Steps that are already done stay on screen
+     *
+     * A plan re-costed after you bought the base item shows that step struck
+     * through rather than one step shorter. Watching steps grey out is the progress
+     * bar; a list that silently gets smaller is just a list you no longer trust.
+     *
+     * ## A step that says "buy 40 materials" can go and buy them
+     *
+     * Toolasha already knows how to send a shopping list to the marketplace: the
+     * missing-materials button does it for an action, `utils/shopping-list.js` does
+     * it for a restock, and both are the same three pieces —
+     * `createMaterialTab`, `createAutofillManager`, `navigateToMarketplace`. A step
+     * that names a purchase gets a button onto whichever of those already fits, so
+     * the planner adds an entry point rather than a fourth implementation of
+     * marketplace tabs.
+     *
+     * The list lives in `utils/` rather than beside the consumables panel because
+     * this panel is in a different bundle from that one, and a copy each meant two
+     * modules with their own tab state fighting over the one marketplace tab bar.
+     */
+
+
+    const PANEL_ID = 'toolasha-goal-planner-panel';
+    const GEOMETRY_KEY = 'goalPlannerPanel';
+    const DEFAULT_PANEL = { width: 560, height: 620 };
+
+    const COLORS = {
+        background: 'rgba(10, 12, 20, 0.97)',
+        headerBg: 'rgba(18, 26, 40, 0.92)',
+        border: 'rgba(120, 170, 255, 0.32)',
+        hairline: 'rgba(255, 255, 255, 0.10)',
+        card: 'rgba(255, 255, 255, 0.04)',
+        text: '#e8ecf5',
+        textDim: 'rgba(232, 236, 245, 0.55)',
+        accent: '#7fb0ff',
+        good: '#7fd6a3',
+        bad: '#f0776c',
+        warn: '#ffb020',
+    };
+
+    /** Which step kind gets which mark, so a plan can be skimmed down its left edge */
+    const KIND_GLYPH = {
+        earn: '⛏',
+        acquire: '🛒',
+        enhance: '✦',
+        train: '📘',
+        build: '🏠',
+    };
+
+    /**
+     * Hours, said the way a plan says them.
+     * @param {number|null} hours - Hours, or null when unknown
+     * @returns {string} e.g. "3h 20m 00s", or "—"
+     */
+    function duration(hours) {
+        if (hours === null || !Number.isFinite(hours)) return '—';
+        if (hours <= 0) return '0s';
+        return formatters_js.timeReadable(Math.round(hours * 3600));
+    }
+
+    /**
+     * Coins, signed the way a step means them.
+     * @param {number} value - Coins; negative spends
+     * @returns {string} e.g. "-12.5M"
+     */
+    function signedCoins(value) {
+        const rounded = Math.round(Number(value) || 0);
+        if (rounded === 0) return '0';
+        return `${rounded > 0 ? '+' : '-'}${formatters_js.formatKMB(Math.abs(rounded))}`;
+    }
+
+    /**
+     * @param {string} text - Cell contents
+     * @param {Object} [style] - Extra styles
+     * @returns {HTMLElement} A span
+     */
+    function span(text, style = {}) {
+        const element = document.createElement('span');
+        element.textContent = text;
+        Object.assign(element.style, style);
+        return element;
+    }
+
+    /**
+     * A small control that looks like the rest of the panel.
+     * @param {string} label - Button text
+     * @param {Function} onClick - Click handler
+     * @param {Object} [style] - Extra styles
+     * @returns {HTMLElement} A button
+     */
+    function button(label, onClick, style = {}) {
+        const element = document.createElement('button');
+        element.type = 'button';
+        element.textContent = label;
+        Object.assign(element.style, {
+            background: 'rgba(255, 255, 255, 0.07)',
+            border: `1px solid ${COLORS.border}`,
+            borderRadius: '3px',
+            color: COLORS.accent,
+            cursor: 'pointer',
+            fontSize: '11px',
+            padding: '2px 8px',
+            ...style,
+        });
+        element.addEventListener('click', (event) => {
+            event.stopPropagation();
+            onClick(event);
+        });
+        return element;
+    }
+
+    /**
+     * @param {Object} [attributes] - `value`, `placeholder`, `type`, `list`, `width`
+     * @returns {HTMLInputElement} An input
+     */
+    function input(attributes = {}) {
+        const element = document.createElement('input');
+        element.type = attributes.type || 'text';
+        if (attributes.placeholder) element.placeholder = attributes.placeholder;
+        if (attributes.value !== undefined) element.value = attributes.value;
+        if (attributes.list) element.setAttribute('list', attributes.list);
+        if (attributes.min !== undefined) element.min = String(attributes.min);
+        if (attributes.max !== undefined) element.max = String(attributes.max);
+        Object.assign(element.style, {
+            background: 'rgba(0, 0, 0, 0.35)',
+            border: `1px solid ${COLORS.hairline}`,
+            borderRadius: '3px',
+            color: COLORS.text,
+            fontSize: '11px',
+            padding: '2px 6px',
+            width: attributes.width || '110px',
+        });
+        return element;
+    }
+
+    /** What an enhancement bill is, said where somebody is about to spend money on it */
+    const EXPECTED_MATERIALS_NOTE = 'expected materials — enhancing is random';
+
+    /**
+     * What a step would have you buy, and which existing machinery buys it.
+     *
+     * Four shapes, and each one already has a home:
+     *
+     * - a craft — the action's inputs, which is exactly what the missing-materials
+     *   button computes and puts on the marketplace, so it is handed the action;
+     * - a list of house materials — a shopping list, which is what the consumables
+     *   restock built its tabs for;
+     * - one item off the market — the degenerate shopping list of one, so it goes
+     *   the same way and arrives with the quantity already filled in;
+     * - an enhancement run — the same list again, from the path optimiser's own
+     *   bill. It is the only one of the four whose counts are an *expectation*
+     *   rather than a requirement, so it says so on the button and again on the tab
+     *   bar it opens: the chain that produced 41.3 attempts will not produce 41.3.
+     *
+     * @param {Object} step - A plan step
+     * @returns {{label: string, title: string, open: Function}|null} The button to draw, if any
+     */
+    function shoppingFor(step) {
+        if (!step || step.done) return null;
+        const details = step.details || {};
+
+        if (step.kind === 'enhance') {
+            const wanted = (details.shoppingList || []).filter((item) => item?.itemHrid && item.count > 0);
+            if (!wanted.length) return null;
+            return {
+                label: 'Buy',
+                title:
+                    `Open the marketplace with tabs for the ${wanted.length} thing` +
+                    `${wanted.length === 1 ? '' : 's'} this run expects to consume. ` +
+                    'Enhancing is random, so these counts are the average of a distribution, not a bill.',
+                open: () => shoppingList_js.openShoppingList(wanted, { heading: `Enhancing: ${EXPECTED_MATERIALS_NOTE}` }),
+            };
+        }
+
+        if (step.kind !== 'acquire') return null;
+
+        const materials = (details.materials || [])
+            .filter((material) => material?.itemHrid && material.missing > 0)
+            .map((material) => ({
+                itemHrid: material.itemHrid,
+                name: material.name || material.itemHrid.split('/').pop(),
+                count: Math.ceil(material.missing),
+            }));
+        if (materials.length) {
+            return {
+                label: 'Buy',
+                title: `Open the marketplace with tabs for all ${materials.length} missing materials.`,
+                open: () => shoppingList_js.openShoppingList(materials),
+            };
+        }
+
+        if (details.strategy === 'craft' && details.actionHrid) {
+            const actions = Math.max(1, Math.ceil(Number(details.actionsNeeded) || 1));
+            return {
+                label: 'Buy mats',
+                title: 'Open the marketplace on what this craft is short of.',
+                open: () => openMissingMaterials(details.actionHrid, actions),
+            };
+        }
+
+        if (details.itemHrid && details.strategy !== 'craft') {
+            const name = details.itemName || details.itemHrid.split('/').pop();
+            return {
+                label: 'Buy',
+                title: 'Open the marketplace on this item, with the quantity filled in.',
+                open: () => shoppingList_js.openShoppingList([{ itemHrid: details.itemHrid, name, count: 1 }]),
+            };
+        }
+
+        return null;
+    }
+
+    /** The one action enhancing has, and therefore the way to the enhancing screen */
+    const ENHANCING_ACTION_HRID = '/actions/enhancing/enhance';
+
+    /**
+     * Where in the game a step would have you go, if anywhere.
+     *
+     * Every step that names an activity already carries the action hrid it was
+     * costed from — the training rate, the earning rate, the craft — so this is a
+     * lookup rather than a search, and it goes through
+     * {@link navigateToAction}, the same `handleGoToAction` the alt-click
+     * navigation and the pinned-actions page use. Nothing new is built for it.
+     *
+     * A step with nowhere to go simply has nowhere to go: upgrading a house room
+     * happens on a screen the game does not navigate to by action hrid, and buying
+     * a base item already has a Buy button that opens the marketplace on it.
+     *
+     * @param {Object} step - A plan step
+     * @returns {{actionHrid: string, title: string}|null} The destination, if there is one
+     */
+    function navigationFor(step) {
+        if (!step || step.done) return null;
+        const details = step.details || {};
+
+        if (step.kind === 'enhance') {
+            return { actionHrid: ENHANCING_ACTION_HRID, title: 'Open the enhancing screen.' };
+        }
+
+        // Training and earning both rank actions and keep the winner; an earning
+        // step that ran out of its best method mid-plan keeps the legs instead, and
+        // the first leg is the one you would start with
+        const actionHrid =
+            details.rate?.actionHrid ||
+            details.legs?.find((leg) => leg?.rate?.actionHrid)?.rate?.actionHrid ||
+            (step.kind === 'acquire' && details.strategy === 'craft' ? details.actionHrid : null);
+
+        if (!actionHrid) return null;
+        return { actionHrid, title: 'Open this action in the game.' };
+    }
+
+    /**
+     * @param {Array<{value: string, label: string}>} options - What can be chosen
+     * @returns {HTMLSelectElement} A select
+     */
+    function select(options) {
+        const element = document.createElement('select');
+        Object.assign(element.style, {
+            background: 'rgba(0, 0, 0, 0.35)',
+            border: `1px solid ${COLORS.hairline}`,
+            borderRadius: '3px',
+            color: COLORS.text,
+            fontSize: '11px',
+            padding: '2px 4px',
+            maxWidth: '200px',
+        });
+        for (const option of options) {
+            const child = document.createElement('option');
+            child.value = option.value;
+            child.textContent = option.label;
+            element.appendChild(child);
+        }
+        return element;
+    }
+
+    class GoalPlannerPanel {
+        constructor() {
+            this.panel = null;
+            this.bodyEl = null;
+            this.statusEl = null;
+            this.goals = [];
+            this.plans = [];
+            /**
+             * The last priced context, kept so adding or removing a goal can replan
+             * without going back to the market. Refresh is what re-prices it.
+             */
+            this.context = null;
+            /** A message the header should keep showing until the next replan clears it */
+            this.notice = null;
+            /** What the rate providers want said — a missing or stale combat snapshot, say */
+            this.rateNotes = [];
+            /** Which combat loadout the rates were judged against, and the alternatives */
+            this.combatStatus = null;
+            this.pricedAt = null;
+            this.busy = false;
+            this.formType = null;
+            this.loaded = null;
+        }
+
+        /**
+         * Open the panel, or raise it if it is already up.
+         * @param {Object} [options] - `remember: false` when reopening at start-up
+         */
+        show({ remember = true } = {}) {
+            if (remember) panelGeometry_js.saveOpenState(GEOMETRY_KEY, true);
+            if (this.panel && document.body.contains(this.panel)) {
+                panelZIndex_js.bringPanelToFront(this.panel);
+                return;
+            }
+            this._create();
+        }
+
+        /**
+         * Put the panel away.
+         * @param {Object} [options] - `remember: false` to close without recording it
+         */
+        hide({ remember = true } = {}) {
+            if (remember) panelGeometry_js.saveOpenState(GEOMETRY_KEY, false);
+            this._remove();
+        }
+
+        toggle() {
+            if (this.panel) this.hide();
+            else this.show();
+        }
+
+        /** Feature-registry entry point: read the goals back and reopen if left open */
+        async initialize() {
+            await this.load();
+            panelGeometry_js.reopenIfLeftOpen(GEOMETRY_KEY, () => this.show({ remember: false }));
+        }
+
+        /** Feature-registry teardown */
+        disable() {
+            this._remove();
+        }
+
+        /**
+         * Read the stored goals and the last plans, once per character.
+         * @returns {Promise<void>}
+         */
+        async load() {
+            this.goals = await loadGoals();
+            const snapshot = await loadSnapshot();
+            if (snapshot) {
+                this.plans = snapshot.plans;
+                this.pricedAt = snapshot.computedAt;
+            }
+            this._render();
+        }
+
+        /**
+         * Re-cost every goal against the market as it stands now.
+         *
+         * The whole plan is recomputed rather than patched: a step is satisfied or
+         * not by the character's present state, and the only way to know which is
+         * to ask again. Steps that have become satisfied come back marked done.
+         *
+         * @returns {Promise<void>}
+         */
+        async refresh() {
+            await this.replan({ reprice: true });
+        }
+
+        /**
+         * Plan every goal again, optionally without going back to the market.
+         *
+         * Two costs, and only one of them is large. Ranking every activity the
+         * character can do — `buildPlannerContext` — is a few hundred profit
+         * calculations and is what the Refresh button is for. Running the goals
+         * through the planner is microseconds, and it is *all* that adding or
+         * removing a goal needs: the prices have not changed since the last
+         * pricing, so re-fetching them to answer "what does this new goal cost"
+         * would be spending seconds to learn nothing.
+         *
+         * So the priced context is kept and reused, with the two things that do
+         * move between clicks refreshed cheaply off the game state: coins in hand,
+         * and the clock. Every goal is replanned rather than only the new one,
+         * because the goals share a bagful of inputs — removing a goal has to give
+         * its claims back to the goals below it, and that is the same loop.
+         *
+         * @param {Object} [options] - Options
+         * @param {boolean} [options.reprice=false] - Rebuild the context from the market first
+         * @returns {Promise<void>}
+         */
+        async replan({ reprice = false } = {}) {
+            if (this.busy) return;
+            this.busy = true;
+            this.notice = null;
+            this._status(reprice ? 'Pricing…' : 'Planning…');
+            try {
+                if (reprice || !this.context) {
+                    this.context = await buildPlannerContext();
+                    this.pricedAt = Date.now();
+                } else {
+                    // The memoised providers and the ranked rates ride along
+                    // unchanged; only what a purchase can be measured against moves
+                    this.context = { ...this.context, gold: coinsHeld(), now: Date.now() };
+                }
+
+                await withHouseCosts(this.context, this.goals);
+                this.plans = planGoals(this.goals, this.context);
+                this.rateNotes = this.context.rateNotes || [];
+                this.combatStatus = this.context.combatStatus || null;
+                await saveSnapshot(this.plans);
+            } catch (error) {
+                console.error('[GoalPlanner] Planning failed:', error);
+                // On `notice` rather than straight to the status line: the redraw in
+                // `finally` rewrites that line, so a message put there directly is
+                // gone before anybody reads it
+                this.notice = reprice ? 'Pricing failed — see the console.' : 'Planning failed — see the console.';
+            } finally {
+                this.busy = false;
+                this._render();
+            }
+        }
+
+        /**
+         * Add a goal and immediately plan it, against the prices already loaded.
+         * @param {Object} raw - A goal from the creation form
+         * @returns {Promise<void>}
+         */
+        async addGoal(raw) {
+            this.goals = await addGoal(raw);
+            this.formType = null;
+            this._render();
+            await this.replan();
+        }
+
+        /**
+         * Drop a goal, and give what it had claimed back to the goals below it.
+         *
+         * Filtering the dead plan out is not enough now that the plans share a
+         * ledger: a goal that was planning around a stack the removed goal had taken
+         * is still planning around it until the allocation is run again.
+         *
+         * @param {string} goalId - The goal's id
+         * @returns {Promise<void>}
+         */
+        async removeGoal(goalId) {
+            this.goals = await removeGoal(goalId);
+            this.plans = this.plans.filter((plan) => plan.goalId !== goalId);
+
+            if (!this.context) {
+                // Nothing has been priced this session, so there is nothing to
+                // reallocate against; saying so beats a silent full market fetch
+                await saveSnapshot(this.plans);
+                this._render();
+                this._status('Removed — press Refresh to price the rest.');
+                return;
+            }
+
+            await this.replan();
+        }
+
+        // -------------------------------------------------------------------------
+        // Panel construction
+        // -------------------------------------------------------------------------
+
+        _create() {
+            this.panel = document.createElement('div');
+            this.panel.id = PANEL_ID;
+            Object.assign(this.panel.style, {
+                position: 'fixed',
+                top: '120px',
+                left: '90px',
+                zIndex: String(config.Z_FLOATING_PANEL),
+                width: `min(${DEFAULT_PANEL.width}px, 94vw)`,
+                height: `min(${DEFAULT_PANEL.height}px, 82vh)`,
+                background: COLORS.background,
+                border: `1px solid ${COLORS.border}`,
+                borderRadius: '8px',
+                boxShadow: '0 8px 32px rgba(0, 0, 0, 0.6)',
+                color: COLORS.text,
+                fontSize: '12px',
+                display: 'flex',
+                flexDirection: 'column',
+                overflow: 'hidden',
+            });
+
+            const header = this._header();
+            this.panel.appendChild(header);
+
+            this.bodyEl = document.createElement('div');
+            Object.assign(this.bodyEl.style, {
+                flex: '1',
+                overflow: 'auto',
+                padding: '8px 10px 12px',
+                fontVariantNumeric: 'tabular-nums',
+            });
+            this.panel.appendChild(this.bodyEl);
+
+            this.detachDrag = floatingPanel_js.makeDraggable(this.panel, header, (position) => {
+                panelGeometry_js.saveGeometry(GEOMETRY_KEY, { left: parseFloat(position.left), top: parseFloat(position.top) });
+            });
+            this.detachResize = floatingPanel_js.makeResizable(this.panel, {
+                minWidth: 400,
+                minHeight: 240,
+                onResize: (size) => panelGeometry_js.saveGeometry(GEOMETRY_KEY, size),
+            });
+
+            document.body.appendChild(this.panel);
+            panelZIndex_js.registerFloatingPanel(this.panel);
+            panelGeometry_js.restoreGeometry(this.panel, GEOMETRY_KEY, { width: 400, height: 240 });
+
+            this._render();
+            // A panel opened before the goals came back from storage would show an
+            // empty list and look like it had lost them
+            if (!this.loaded) this.loaded = this.load();
+        }
+
+        _header() {
+            const header = document.createElement('div');
+            Object.assign(header.style, {
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                cursor: 'move',
+                padding: '7px 8px 7px 11px',
+                background: COLORS.headerBg,
+                borderBottom: `1px solid ${COLORS.border}`,
+                userSelect: 'none',
+                flex: '0 0 auto',
+            });
+
+            const title = span('Goal Planner', { fontWeight: 'bold', color: COLORS.accent });
+
+            this.statusEl = span('', { color: COLORS.textDim, fontSize: '11px' });
+
+            const spacer = document.createElement('div');
+            spacer.style.flex = '1';
+
+            const refresh = button('Refresh', () => this.refresh());
+            refresh.title = 'Re-price every plan against the market data loaded now.';
+
+            const close = button('✕', () => this.hide(), {
+                background: 'none',
+                border: 'none',
+                color: COLORS.text,
+                fontSize: '13px',
+                padding: '2px 4px',
+            });
+
+            header.append(title, this.statusEl, spacer, refresh, close);
+            return header;
+        }
+
+        /**
+         * @param {string} text - What the header's status line says
+         */
+        _status(text) {
+            if (this.statusEl) this.statusEl.textContent = text;
+        }
+
+        // -------------------------------------------------------------------------
+        // Rendering
+        // -------------------------------------------------------------------------
+
+        _render() {
+            if (!this.bodyEl) return;
+            this.bodyEl.replaceChildren();
+
+            this._status(
+                this.notice ||
+                    (this.busy
+                        ? 'Pricing…'
+                        : this.pricedAt
+                          ? `priced ${new Date(this.pricedAt).toLocaleTimeString()}`
+                          : 'not priced yet')
+            );
+
+            this.bodyEl.appendChild(this._addSection());
+
+            // A rate that is missing or old is worth a line: a plan that ranks
+            // gathering first because nobody has ever run an all-zones sim looks
+            // exactly like a plan that ranks gathering first because it wins.
+            for (const note of this.rateNotes || []) {
+                this.bodyEl.appendChild(
+                    span(note, {
+                        display: 'block',
+                        color: COLORS.textDim,
+                        fontSize: '11px',
+                        marginTop: '6px',
+                    })
+                );
+            }
+
+            try {
+                const picker = this._loadoutPicker();
+                if (picker) this.bodyEl.appendChild(picker);
+            } catch (error) {
+                console.error('[GoalPlanner] Drawing the loadout picker failed:', error);
+            }
+
+            if (!this.goals.length) {
+                this.bodyEl.appendChild(
+                    span('No goals yet. Add one above and the planner will work out the order and the bill.', {
+                        display: 'block',
+                        color: COLORS.textDim,
+                        marginTop: '10px',
+                    })
+                );
+                return;
+            }
+
+            const byGoal = new Map(this.plans.map((plan) => [plan.goalId, plan]));
+            for (const goal of this.goals) {
+                try {
+                    this.bodyEl.appendChild(this._goalCard(goal, byGoal.get(goal.id) || null));
+                } catch (error) {
+                    console.error('[GoalPlanner] Drawing a goal failed:', error);
+                    this.bodyEl.appendChild(
+                        span(`${describeGoal(goal)} could not be drawn.`, { display: 'block', color: COLORS.bad })
+                    );
+                }
+            }
+
+            // One fetch priced every card, so the sentence about that fetch belongs
+            // to the panel rather than to each of them
+            const note = this.plans.find((plan) => plan?.confidence?.note)?.confidence?.note;
+            if (note) {
+                this.bodyEl.appendChild(
+                    span(note, {
+                        display: 'block',
+                        color: COLORS.textDim,
+                        fontSize: '11px',
+                        borderTop: `1px solid ${COLORS.hairline}`,
+                        paddingTop: '5px',
+                        marginTop: '2px',
+                    })
+                );
+            }
+        }
+
+        /**
+         * Which loadout the combat rates are judged against.
+         *
+         * Only drawn when the answer is a genuine choice. One combat loadout, or
+         * none, is not a decision worth a control — the resolution order in
+         * `combat-rates.js` settles it and saying so in a note is enough. Two or
+         * more and the planner is guessing, so the guess is offered for correction
+         * and the correction is remembered.
+         *
+         * @returns {HTMLElement|null} The picker, or null when there is nothing to pick
+         */
+        _loadoutPicker() {
+            const status = this.combatStatus;
+            const choices = status?.loadoutChoices || [];
+            if (choices.length < 2) return null;
+
+            const strip = document.createElement('div');
+            Object.assign(strip.style, {
+                display: 'flex',
+                gap: '6px',
+                alignItems: 'center',
+                marginTop: '4px',
+                fontSize: '11px',
+                color: COLORS.textDim,
+            });
+            strip.appendChild(span('Combat rates judged against:'));
+
+            const picker = select(choices.map((name) => ({ value: name, label: name })));
+            picker.value = status.loadoutName || choices[0];
+            picker.title =
+                'Which loadout counts as your combat gear. The "gear changed" warning means this loadout no ' +
+                'longer matches the one the saved run was measured in.';
+            picker.addEventListener('change', async () => {
+                await saveCombatGear({ preferred: picker.value });
+                await this.refresh();
+            });
+            strip.appendChild(picker);
+
+            return strip;
+        }
+
+        /**
+         * The add-a-goal strip, and the form for whichever type is being added.
+         * @returns {HTMLElement} The section
+         */
+        _addSection() {
+            const section = document.createElement('div');
+            section.style.marginBottom = '10px';
+
+            const strip = document.createElement('div');
+            Object.assign(strip.style, { display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' });
+            strip.appendChild(span('Add goal:', { color: COLORS.textDim }));
+
+            for (const [type, label] of Object.entries(GOAL_TYPES)) {
+                const chip = button(label, () => {
+                    this.formType = this.formType === type ? null : type;
+                    this._render();
+                });
+                if (this.formType === type) {
+                    chip.style.background = 'rgba(127, 176, 255, 0.22)';
+                }
+                strip.appendChild(chip);
+            }
+            section.appendChild(strip);
+
+            if (this.formType) {
+                try {
+                    section.appendChild(this._form(this.formType));
+                } catch (error) {
+                    console.error('[GoalPlanner] Drawing the goal form failed:', error);
+                    section.appendChild(span('The form could not be drawn.', { display: 'block', color: COLORS.bad }));
+                }
+            }
+
+            return section;
+        }
+
+        /**
+         * The creation form for one goal type.
+         * @param {string} type - A key of GOAL_TYPES
+         * @returns {HTMLElement} The form
+         */
+        _form(type) {
+            const form = document.createElement('div');
+            Object.assign(form.style, {
+                display: 'flex',
+                gap: '6px',
+                alignItems: 'center',
+                flexWrap: 'wrap',
+                marginTop: '6px',
+                padding: '6px 8px',
+                background: COLORS.card,
+                borderRadius: '4px',
+            });
+
+            const gameData = dataManager.getInitClientData?.() || {};
+
+            if (type === 'gold') {
+                const amount = input({ placeholder: '500M', width: '110px' });
+                form.append(span('Coins:', { color: COLORS.textDim }), amount);
+                form.appendChild(
+                    button('Add', () => {
+                        const value = formatters_js.parseKMB(amount.value) || Number(amount.value);
+                        this.addGoal({ type: 'gold', amount: value });
+                    })
+                );
+                return form;
+            }
+
+            if (type === 'equipment') {
+                const items = Object.entries(gameData.itemDetailMap || {})
+                    .filter(([_hrid, detail]) => detail?.equipmentDetail)
+                    .map(([hrid, detail]) => ({ hrid, name: detail.name || hrid }))
+                    .sort((a, b) => a.name.localeCompare(b.name));
+
+                const listId = 'toolasha-planner-items';
+                const datalist = document.createElement('datalist');
+                datalist.id = listId;
+                for (const item of items) {
+                    const option = document.createElement('option');
+                    option.value = item.name;
+                    datalist.appendChild(option);
+                }
+                form.appendChild(datalist);
+
+                const name = input({ placeholder: 'Sinister Cape', list: listId, width: '160px' });
+                const level = input({ type: 'number', value: '10', min: 0, max: 20, width: '54px' });
+                form.append(span('Item:', { color: COLORS.textDim }), name, span('+', { color: COLORS.textDim }), level);
+                form.appendChild(
+                    button('Add', () => {
+                        const match = items.find((item) => item.name.toLowerCase() === name.value.trim().toLowerCase());
+                        if (!match) {
+                            this._status('No item by that name.');
+                            return;
+                        }
+                        this.addGoal({
+                            type: 'equipment',
+                            itemHrid: match.hrid,
+                            enhancementLevel: Number(level.value),
+                        });
+                    })
+                );
+                return form;
+            }
+
+            if (type === 'skill') {
+                const skills = (dataManager.getSkills?.() || []).map((skill) => ({
+                    value: skill.skillHrid,
+                    label: skill.skillHrid
+                        .split('/')
+                        .pop()
+                        .replace(/^./, (c) => c.toUpperCase()),
+                }));
+                const picker = select(skills.length ? skills : [{ value: '', label: 'No skills loaded' }]);
+                const level = input({ type: 'number', value: '100', min: 1, max: 200, width: '58px' });
+                form.append(
+                    span('Skill:', { color: COLORS.textDim }),
+                    picker,
+                    span('to', { color: COLORS.textDim }),
+                    level
+                );
+                form.appendChild(
+                    button('Add', () => {
+                        if (!picker.value) return;
+                        this.addGoal({ type: 'skill', skillHrid: picker.value, targetLevel: Number(level.value) });
+                    })
+                );
+                return form;
+            }
+
+            const rooms = Object.entries(gameData.houseRoomDetailMap || {})
+                .map(([hrid, detail]) => ({ value: hrid, label: detail?.name || hrid.split('/').pop() }))
+                .sort((a, b) => a.label.localeCompare(b.label));
+            const picker = select(rooms.length ? rooms : [{ value: '', label: 'No rooms loaded' }]);
+            const level = input({ type: 'number', value: '8', min: 1, max: 8, width: '54px' });
+            form.append(span('Room:', { color: COLORS.textDim }), picker, span('to', { color: COLORS.textDim }), level);
+            form.appendChild(
+                button('Add', () => {
+                    if (!picker.value) return;
+                    this.addGoal({ type: 'house', roomHrid: picker.value, targetLevel: Number(level.value) });
+                })
+            );
+            return form;
+        }
+
+        /**
+         * One goal, with its plan below it.
+         * @param {Object} goal - A normalised goal
+         * @param {Object|null} plan - Its plan, when one has been computed
+         * @returns {HTMLElement} The card
+         */
+        _goalCard(goal, plan) {
+            const card = document.createElement('div');
+            Object.assign(card.style, {
+                border: `1px solid ${COLORS.hairline}`,
+                borderRadius: '5px',
+                padding: '7px 9px',
+                marginBottom: '9px',
+                background: COLORS.card,
+            });
+
+            const heading = document.createElement('div');
+            Object.assign(heading.style, {
+                display: 'flex',
+                alignItems: 'baseline',
+                gap: '8px',
+                borderBottom: `1px solid ${COLORS.hairline}`,
+                paddingBottom: '4px',
+                marginBottom: '5px',
+            });
+
+            const title = span(plan?.title || describeGoal(goal), { fontWeight: 'bold', color: COLORS.accent });
+            heading.appendChild(title);
+
+            if (plan) {
+                const done = plan.satisfied || plan.totals.stepsDone === plan.totals.stepCount;
+                heading.appendChild(
+                    span(done ? 'done' : `${plan.totals.stepsDone}/${plan.totals.stepCount} steps`, {
+                        color: done ? COLORS.good : COLORS.textDim,
+                        fontSize: '11px',
+                    })
+                );
+            }
+
+            const spacer = document.createElement('div');
+            spacer.style.flex = '1';
+            heading.appendChild(spacer);
+            heading.appendChild(
+                button('✕', () => this.removeGoal(goal.id), {
+                    background: 'none',
+                    border: 'none',
+                    color: COLORS.textDim,
+                    padding: '0 2px',
+                })
+            );
+            card.appendChild(heading);
+
+            if (!plan) {
+                card.appendChild(span('Not priced yet — press Refresh.', { display: 'block', color: COLORS.textDim }));
+                return card;
+            }
+
+            for (const step of plan.steps) card.appendChild(this._stepRow(step));
+
+            card.appendChild(this._totalsRow(plan));
+
+            for (const warning of plan.confidence.warnings) {
+                card.appendChild(span(`⚠ ${warning}`, { display: 'block', color: COLORS.warn, fontSize: '11px' }));
+            }
+
+            // The pricing note is the same sentence on every card, because every
+            // card was priced by the same fetch. Repeated per goal it was four
+            // copies of one fact taking up more room than some of the plans; it is
+            // drawn once at the foot of the panel instead.
+            return card;
+        }
+
+        /**
+         * One step of a plan, and anything it wants to say underneath.
+         *
+         * The description wraps rather than being cut off at the column edge. It
+         * used to be a nowrap ellipsis with the full text in a `title`, which meant
+         * the only way to read a step was to hover a tooltip that then covered the
+         * two steps below it — a plan you cannot read without hiding the plan.
+         *
+         * @param {Object} step - A plan step
+         * @returns {HTMLElement} The row, or a wrapper when the step has legs
+         */
+        _stepRow(step) {
+            const row = document.createElement('div');
+            Object.assign(row.style, {
+                display: 'grid',
+                gridTemplateColumns: '16px minmax(0, 1fr) 76px 92px',
+                gap: '6px',
+                alignItems: 'baseline',
+                padding: '1px 0',
+                opacity: step.done ? '0.5' : '1',
+            });
+
+            row.appendChild(span(KIND_GLYPH[step.kind] || '•', { color: COLORS.textDim }));
+
+            const label = document.createElement('div');
+            Object.assign(label.style, {
+                minWidth: '0',
+                overflowWrap: 'anywhere',
+                textDecoration: step.done ? 'line-through' : 'none',
+            });
+
+            const description = span(step.description);
+            const destination = navigationFor(step);
+            if (destination) {
+                // A dotted underline rather than a link colour: the accent is already
+                // the goal title's, and a plan whose every other line is blue stops
+                // reading as a plan
+                Object.assign(description.style, {
+                    cursor: 'pointer',
+                    textDecorationLine: 'underline',
+                    textDecorationStyle: 'dotted',
+                    textUnderlineOffset: '2px',
+                    textDecorationColor: COLORS.textDim,
+                });
+                description.title = destination.title;
+                description.addEventListener('click', () => this._goTo(destination));
+            }
+            label.appendChild(description);
+
+            const shopping = shoppingFor(step);
+            if (shopping) {
+                const buy = button(
+                    shopping.label,
+                    () => {
+                        try {
+                            shopping.open();
+                        } catch (error) {
+                            console.error('[GoalPlanner] Opening the marketplace failed:', error);
+                            this._status('The marketplace could not be opened — see the console.');
+                        }
+                    },
+                    { marginLeft: '6px', padding: '0 6px', verticalAlign: 'baseline' }
+                );
+                buy.title = shopping.title;
+                label.appendChild(buy);
+            }
+
+            // The planner has worked out how far along each step already is — 202M
+            // of the 903M, Cheesesmithing 105 of 108 — and until now threw it away.
+            // A hairline is the cheapest way to say it and does not cost a row.
+            const bar = this._progressBar(step);
+            if (bar) label.appendChild(bar);
+            row.appendChild(label);
+
+            row.appendChild(
+                span(step.done ? '' : signedCoins(step.goldDelta), {
+                    textAlign: 'right',
+                    color: step.goldDelta > 0 ? COLORS.good : step.goldDelta < 0 ? COLORS.bad : COLORS.textDim,
+                })
+            );
+            row.appendChild(
+                span(step.done ? 'done' : duration(step.timeHours), { textAlign: 'right', color: COLORS.textDim })
+            );
+
+            const legs = Array.isArray(step.details?.legs) ? step.details.legs : [];
+            const notes = Array.isArray(step.details?.ledgerNotes) ? step.details.ledgerNotes : [];
+            if (step.done || (legs.length < 2 && !notes.length)) return row;
+
+            // More than one method means the first one runs out, and *that* is the
+            // thing worth seeing — a single sentence would have to bury it
+            const wrapper = document.createElement('div');
+            wrapper.appendChild(row);
+            if (legs.length >= 2) for (const leg of legs) wrapper.appendChild(this._legRow(leg));
+
+            // Why a method that would have won is not on offer. Without this the
+            // goal below simply shows a worse rate, which reads as the planner
+            // changing its mind rather than as the goal above having spent the stack.
+            for (const note of notes) wrapper.appendChild(this._noteRow(note));
+            return wrapper;
+        }
+
+        /**
+         * Take the game to where a step points.
+         *
+         * The game's navigation is reached through the React root, which is not
+         * always there — a failure has to say so on the panel rather than in the
+         * console, because from the outside a click that did nothing is
+         * indistinguishable from a click that missed.
+         *
+         * @param {{actionHrid: string}} destination - From {@link navigationFor}
+         */
+        _goTo(destination) {
+            try {
+                if (!itemNavigation_js.navigateToAction(destination.actionHrid)) {
+                    this._status('The game would not navigate there.');
+                }
+            } catch (error) {
+                console.error('[GoalPlanner] Navigating to an action failed:', error);
+                this._status('The game would not navigate there — see the console.');
+            }
+        }
+
+        /**
+         * A line under a step explaining what an earlier goal already took.
+         * @param {string} note - From the planner's resource ledger
+         * @returns {HTMLElement} The row
+         */
+        _noteRow(note) {
+            const row = document.createElement('div');
+            Object.assign(row.style, {
+                display: 'grid',
+                gridTemplateColumns: '16px minmax(0, 1fr)',
+                gap: '6px',
+                alignItems: 'baseline',
+                color: COLORS.textDim,
+                fontSize: '11px',
+            });
+
+            row.appendChild(span(''));
+            const text = document.createElement('div');
+            Object.assign(text.style, { minWidth: '0', overflowWrap: 'anywhere', paddingLeft: '10px' });
+            text.appendChild(span(`↳ ${note}`));
+            row.appendChild(text);
+            return row;
+        }
+
+        /**
+         * How far along a step already is, as a hairline under its description.
+         *
+         * Only where a fraction means something. A step is either done or not, so a
+         * bar at 0% or 100% says nothing the row does not already say and is drawn
+         * as nothing at all.
+         *
+         * @param {Object} step - A plan step
+         * @returns {HTMLElement|null} The bar, or null when there is no progress to show
+         */
+        _progressBar(step) {
+            const ratio = Number(step?.progress?.ratio);
+            if (step.done || !Number.isFinite(ratio) || ratio <= 0 || ratio >= 1) return null;
+
+            const track = document.createElement('div');
+            Object.assign(track.style, {
+                height: '2px',
+                marginTop: '2px',
+                borderRadius: '1px',
+                background: 'rgba(255, 255, 255, 0.08)',
+            });
+
+            const fill = document.createElement('div');
+            Object.assign(fill.style, {
+                height: '100%',
+                width: `${Math.round(ratio * 100)}%`,
+                borderRadius: '1px',
+                background: COLORS.accent,
+            });
+            track.appendChild(fill);
+
+            const { current, target } = step.progress;
+            track.title =
+                Number.isFinite(current) && Number.isFinite(target)
+                    ? `${formatters_js.formatKMB(Math.round(current))} of ${formatters_js.formatKMB(Math.round(target))} — ${Math.round(ratio * 100)}%`
+                    : `${Math.round(ratio * 100)}%`;
+            return track;
+        }
+
+        /**
+         * One method inside an earning step: what it is, what it raises, how long for.
+         * @param {Object} leg - From `planEarnings`
+         * @returns {HTMLElement} The row
+         */
+        _legRow(leg) {
+            const row = document.createElement('div');
+            Object.assign(row.style, {
+                display: 'grid',
+                gridTemplateColumns: '16px minmax(0, 1fr) 76px 92px',
+                gap: '6px',
+                alignItems: 'baseline',
+                padding: '0 0 0 0',
+                color: COLORS.textDim,
+                fontSize: '11px',
+            });
+
+            row.appendChild(span(''));
+            const text = document.createElement('div');
+            Object.assign(text.style, { minWidth: '0', overflowWrap: 'anywhere', paddingLeft: '10px' });
+            text.appendChild(span(`↳ ${describeLeg(leg)}`));
+            row.appendChild(text);
+            row.appendChild(span(signedCoins(leg.gold), { textAlign: 'right' }));
+            row.appendChild(span(duration(leg.hours), { textAlign: 'right' }));
+
+            return row;
+        }
+
+        /**
+         * The bottom line of one plan.
+         *
+         * The number in the coin column is a *net*, and a bare "-202.0M" under a
+         * heading that says "Remaining" reads as a debt rather than as the cost of
+         * finishing. So the row says which two figures it is the difference of, and
+         * the colour follows the sign of the net rather than pretending a plan that
+         * costs money is going wrong.
+         *
+         * @param {Object} plan - A plan
+         * @returns {HTMLElement} The row
+         */
+        _totalsRow(plan) {
+            const row = document.createElement('div');
+            Object.assign(row.style, {
+                display: 'grid',
+                gridTemplateColumns: '16px minmax(0, 1fr) 76px 92px',
+                gap: '6px',
+                alignItems: 'baseline',
+                borderTop: `1px solid ${COLORS.hairline}`,
+                marginTop: '4px',
+                paddingTop: '3px',
+                fontWeight: 'bold',
+            });
+
+            const { goldEarn, goldSpend, netGold, timeKnown, timeHours } = plan.totals;
+            const breakdown =
+                goldEarn > 0 && goldSpend > 0
+                    ? ` — earn ${formatters_js.formatKMB(Math.round(goldEarn))}, spend ${formatters_js.formatKMB(Math.round(goldSpend))}`
+                    : '';
+
+            row.appendChild(span(''));
+            const label = span(plan.satisfied ? 'Already there' : `Left to do${breakdown}`, {
+                overflowWrap: 'anywhere',
+            });
+            label.title = plan.satisfied
+                ? 'Nothing outstanding on this goal.'
+                : 'The steps not yet done: what they earn, what they cost, and the difference. ' +
+                  'A negative net is what finishing this goal costs you overall, not a debt.';
+            row.appendChild(label);
+
+            const net = span(signedCoins(netGold), {
+                textAlign: 'right',
+                color: netGold >= 0 ? COLORS.good : COLORS.bad,
+            });
+            net.title = `Net change in coins: ${signedCoins(netGold)}`;
+            row.appendChild(net);
+
+            row.appendChild(
+                span(timeKnown ? duration(timeHours) : `${duration(timeHours)}+`, {
+                    textAlign: 'right',
+                })
+            );
+
+            return row;
+        }
+
+        _remove() {
+            this.detachDrag?.();
+            this.detachDrag = null;
+            this.detachResize?.();
+            this.detachResize = null;
+
+            if (!this.panel) return;
+            panelZIndex_js.unregisterFloatingPanel(this.panel);
+            this.panel.remove();
+            this.panel = null;
+            this.bodyEl = null;
+            this.statusEl = null;
+        }
+    }
+
+    const goalPlannerPanel = new GoalPlannerPanel();
+
+    /**
+     * Goal Planner overlay row
+     *
+     * The one thing to do next.
+     *
+     * A plan is a list, and a list is a panel — but the reason to have a plan at
+     * all is to answer one question while you are playing, which is "what am I
+     * supposed to be doing". That answer is a single line, and a single line is a
+     * tile.
+     *
+     * ## The head of the list, not the head of the goals
+     *
+     * `orderSteps` has already sorted each plan's steps into the order they can
+     * actually be done in, so the first step that is not `done` is the next thing —
+     * funding steps included, which is the point: "earn 40M" comes before "buy the
+     * trident" because the planner said so, and a tile that skipped to the purchase
+     * would be recommending something you cannot afford.
+     *
+     * Across goals it takes the first plan with work left in it. Goals are held in
+     * the order they were added, so that is the oldest unfinished ambition — which
+     * is the one a list would have you working on.
+     *
+     * ## Nothing is computed or read from storage here
+     *
+     * The planner's panel loads goals and the last plans in `initialize()`, whether
+     * or not it is open, and keeps them on the instance. Re-pricing a plan runs the
+     * whole buy-vs-craft model over the order book, which is not something a tile
+     * redrawn once a second may do; this reads the last plans the panel computed
+     * and says how old they are in the tooltip instead.
+     */
+
+
+    /**
+     * The next step of the first goal that still has one.
+     *
+     * @returns {{plan: Object, step: Object, index: number, remaining: number}|null}
+     *   Null when nothing is planned, or when every plan is finished
+     */
+    function nextGoalStep() {
+        const plans = Array.isArray(goalPlannerPanel?.plans) ? goalPlannerPanel.plans : [];
+
+        for (const plan of plans) {
+            if (plan?.satisfied) continue;
+            const steps = Array.isArray(plan.steps) ? plan.steps : [];
+            const index = steps.findIndex((step) => step && !step.done);
+            if (index < 0) continue;
+
+            return {
+                plan,
+                step: steps[index],
+                index,
+                remaining: steps.filter((step) => step && !step.done).length,
+            };
+        }
+        return null;
+    }
+
+    overlayRows_js.registerRow({
+        key: 'goalNextStep',
+        name: 'Next Goal Step',
+        empty: 'No goals planned',
+        defaultVisible: false,
+        defaultSize: { width: 240, height: 30 },
+        render: (container) => {
+            const goals = Array.isArray(goalPlannerPanel?.goals) ? goalPlannerPanel.goals : [];
+
+            // A player with no goals is not a player whose planner is broken, and
+            // the tile is the only place they would find out the planner exists —
+            // so this is drawn rather than left to the empty-tile machinery, which
+            // would give a dim strip saying nothing but the row's own name
+            if (!goals.length) {
+                overlayFormat_js.row(container, [{ text: 'No goals — click to plan', color: overlayFormat_js.ROW_COLORS.dim, ellipsis: true }]);
+                container.title = 'The goal planner has nothing to plan.\nDouble-click to add a goal.';
+                return;
+            }
+
+            const next = nextGoalStep();
+            if (!next) {
+                overlayFormat_js.row(container, [{ text: 'Every goal is done', color: overlayFormat_js.ROW_COLORS.good, ellipsis: true }]);
+                container.title =
+                    `${goals.length} goal${goals.length === 1 ? '' : 's'}, none with work left.` +
+                    '\nDouble-click for the planner.';
+                return;
+            }
+
+            // The description already carries its own cost — "Buy Blazing Trident
+            // +7 for 310M" — so nothing is appended to it here. Two prices on one
+            // tile, one from the step and one from the plan's total, read as a
+            // disagreement rather than as detail.
+            overlayFormat_js.row(container, [
+                { text: next.step.description || next.plan.title || 'Next step', ellipsis: true },
+                { text: `${next.remaining}`, color: overlayFormat_js.ROW_COLORS.dim, push: true },
+            ]);
+
+            const pricedAt = goalPlannerPanel?.pricedAt;
+            container.title =
+                `${next.plan.title}: step ${next.index + 1} of ${next.plan.steps.length}, ` +
+                `${next.remaining} still to do.\n` +
+                `${next.step.description || ''}` +
+                (pricedAt
+                    ? `\nPriced ${overlayFormat_js.shortDuration((Date.now() - pricedAt) / 1000)} ago; re-price in the planner.`
+                    : '') +
+                '\nDouble-click for the planner.';
+        },
+        onOpen: () => goalPlannerPanel.toggle(),
+    });
+
+    /**
      * Actions Library
      * Production, gathering, and alchemy features
      *
@@ -27211,7 +33123,14 @@
         missingMaterialsButton,
         budgetCalculator,
         costSummary,
+        actionPanelLayout,
         craftingPlan,
+        // Reached by Equipment Watch, which lives in the market bundle: importing
+        // it there would copy the whole recursive costing model into a second bundle
+        craftingPlanCalculator,
+        // The same costing model, narrowed to one read-only question — what would
+        // one of these cost *me* to make — for callers outside this bundle
+        craftArbitrage,
         alchemyProfitDisplay,
         alchemyBestItems,
         alchemyItemPins,
@@ -27220,6 +33139,7 @@
         pinnedActionsPage,
         drinkTimer: drinkTimer$1,
         skillingOptimizer,
+        goalPlanner: goalPlannerPanel,
     };
 
     // Console-driven debug tools, kept out of the feature namespaces because
@@ -27231,4 +33151,4 @@
 
     console.log('[Toolasha] Actions library loaded');
 
-})(Toolasha.Core.dataManager, Toolasha.Core.config, Toolasha.Core.domObserver, Toolasha.Utils.enhancementConfig, Toolasha.Utils.enhancementCalculator, Toolasha.Utils.profitConstants, Toolasha.Utils.formatters, Toolasha.Core.marketAPI, Toolasha.Utils.domObserverHelpers, Toolasha.Utils.bonusRevenueCalculator, Toolasha.Utils.marketData, Toolasha.Utils.efficiency, Toolasha.Utils.profitHelpers, Toolasha.Market.profitCalculator, Toolasha.Utils.uiComponents, Toolasha.Utils.actionPanelHelper, Toolasha.Core.webSocketHook, Toolasha.Core.storage, Toolasha.Utils.dom, Toolasha.Utils.timerRegistry, Toolasha.Utils.teaParser, Toolasha.Market.alchemyProfitCalculator, Toolasha.Utils.actionCalculator, Toolasha.Utils.cleanupRegistry, Toolasha.Utils.buffParser, Toolasha.Utils.equipmentParser, Toolasha.Utils.experienceParser, Toolasha.Utils.reactInput, Toolasha.Utils.experienceCalculator, Toolasha.Utils.materialCalculator, Toolasha.Market.expectedValueCalculator);
+})(Toolasha.Core.dataManager, Toolasha.Core.config, Toolasha.Core.domObserver, Toolasha.Utils.enhancementConfig, Toolasha.Utils.enhancementCalculator, Toolasha.Utils.profitConstants, Toolasha.Utils.formatters, Toolasha.Core.marketAPI, Toolasha.Utils.domObserverHelpers, Toolasha.Market.gatheringProfit, Toolasha.Market.productionProfit, Toolasha.Utils.uiComponents, Toolasha.Utils.actionPanelHelper, Toolasha.Utils.profitHelpers, Toolasha.Core.webSocketHook, Toolasha.Core.storage, Toolasha.Utils.scrollBuffValues, Toolasha.Utils.marketData, Toolasha.Utils.dom, Toolasha.Utils.timerRegistry, Toolasha.Utils.gameLookups, Toolasha.Utils.teaParser, Toolasha.Market.profitCalculator, Toolasha.Market.alchemyProfitCalculator, Toolasha.Utils.actionCalculator, Toolasha.Utils.efficiency, Toolasha.Utils.cleanupRegistry, Toolasha.Utils.buffParser, Toolasha.Utils.equipmentParser, Toolasha.Utils.experienceParser, Toolasha.Utils.reactInput, Toolasha.Utils.experienceCalculator, Toolasha.Utils.materialCalculator, Toolasha.Utils.marketplaceAutofill, Toolasha.Utils.marketplaceTabs, Toolasha.Utils.panelZIndex, Toolasha.Market.expectedValueCalculator, Toolasha.Utils.bonusRevenueCalculator, Toolasha.Sim.combatSimUI, Toolasha.Utils.toast, Toolasha.Utils.shoppingList, Toolasha.Utils.itemNavigation, Toolasha.Utils.floatingPanel, Toolasha.Utils.panelGeometry, Toolasha.Market.marketHistoryAPI, Toolasha.Market.marketHistoryData, Toolasha.Utils.overlayRows, Toolasha.Utils.overlayFormat);

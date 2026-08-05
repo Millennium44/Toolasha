@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Toolasha (Millennium44)
 // @namespace    http://tampermonkey.net/
-// @version      2.88.0
-// @description  Toolasha - Enhanced tools for Milky Way Idle.
+// @version      2.89.0
+// @description  Toolasha (Millennium44 fork) — enhanced tools for Milky Way Idle: combat & labyrinth simulators with upgrade advisors, per-character data, cross-device sync, goal planner, guild tools, overlay, mobile support. Built on work by bot7420, Celasha, Frotty, Q7, jigglymoose, dakonglong, and the combat-sim team — full credits in the listing info.
 // @author       Celasha and Claude, thank you to bot7420, DrDucky, Frotty, Truth_Light, AlphB, qu, and sentientmilk, for providing the basis for a lot of this. Thank you to Miku, Orvel, Jigglymoose, Incinarator, Knerd, and others for their time and help. Thank you to Steez for testing and helping me figure out where I'm wrong! Thank you to Tib for his generous contribution of the Character Cards. Thank you to Sapnas for -deeply- testing and singlehandedly help me improve performance. Special thanks to Zaeter for the name.
 // @license      CC-BY-NC-SA-4.0
 // @run-at       document-start
@@ -12,6 +12,8 @@
 // @grant        GM_addStyle
 // @grant        GM.xmlHttpRequest
 // @grant        GM_xmlhttpRequest
+// @connect      api.github.com
+// @connect      gist.githubusercontent.com
 // @grant        GM_notification
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -19,12 +21,13 @@
 // @require      https://cdnjs.cloudflare.com/ajax/libs/mathjs/12.4.2/math.js
 // @require      https://cdn.jsdelivr.net/npm/chart.js@3.7.0/dist/chart.min.js
 // @require      https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.0.0/dist/chartjs-plugin-datalabels.min.js
-// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@d07e9672a01b4916de702180288f01b58c54436d/dist/libraries/toolasha-core.js
-// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@d07e9672a01b4916de702180288f01b58c54436d/dist/libraries/toolasha-utils.js
-// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@d07e9672a01b4916de702180288f01b58c54436d/dist/libraries/toolasha-market.js
-// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@d07e9672a01b4916de702180288f01b58c54436d/dist/libraries/toolasha-actions.js
-// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@d07e9672a01b4916de702180288f01b58c54436d/dist/libraries/toolasha-combat.js
-// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@d07e9672a01b4916de702180288f01b58c54436d/dist/libraries/toolasha-ui.js
+// @require      https://UPDATE-THIS-URL/toolasha-core.js
+// @require      https://UPDATE-THIS-URL/toolasha-utils.js
+// @require      https://UPDATE-THIS-URL/toolasha-sim.js
+// @require      https://UPDATE-THIS-URL/toolasha-market.js
+// @require      https://UPDATE-THIS-URL/toolasha-actions.js
+// @require      https://UPDATE-THIS-URL/toolasha-combat.js
+// @require      https://UPDATE-THIS-URL/toolasha-ui.js
 // ==/UserScript==
 // Note: Combat Sim auto-import requires Tampermonkey for cross-domain storage. Not available on Steam (use manual clipboard copy/paste instead).
 
@@ -53,9 +56,11 @@
     const UI = window.Toolasha.UI;
 
     // Destructure core modules
-    const { storage, config, webSocketHook, domObserver, dataManager, featureRegistry } = Core;
+    const { storage, config, webSocketHook, domObserver, dataManager, featureRegistry, performanceMonitor } = Core;
 
     const { setupScrollTooltipDismissal } = Utils.dom;
+    const { showToast } = Utils.toast;
+    const { GAME } = Utils.selectors;
 
     /**
      * Detect if running on Combat Simulator page
@@ -65,6 +70,173 @@
         const url = window.location.href;
         // Only work on test Combat Simulator for now
         return url.includes('shykai.github.io/MWICombatSimulatorTest/dist/');
+    }
+
+    /* ------------------------------------------------------------------------- *
+     * Health checks
+     *
+     * `featureRegistry.checkFeatureHealth()` has run since the beginning and has
+     * always found nothing, because it skips any feature without a `healthCheck`
+     * and no feature had one. The registry entry is the right place to put them:
+     * a check belongs to how the feature is wired into the page, not to the module,
+     * and writing them here keeps ~150 feature modules untouched.
+     *
+     * The contract the registry expects, from `checkFeatureHealth`:
+     *
+     *   true   — healthy
+     *   false  — broken; the feature is retried once and then reported
+     *   null   — cannot tell right now; ignored
+     *
+     * The registry has already skipped anything switched off (`customCheck`, or
+     * `config.isFeatureEnabled(key)`) before calling these, so a check never has to
+     * ask whether its own feature is on. It does have to ask about the sub-settings
+     * that gate what gets drawn — `actionBar_enabled` under `actionTimeDisplay`,
+     * for instance — because a feature whose output the player turned off is not a
+     * feature that failed. Those cases return true.
+     *
+     * Every check is the same shape: *given the game has drawn the thing this
+     * feature attaches to, did the feature's own mark appear on it?* No anchor
+     * means the panel is not open, which is not evidence of anything — null. The
+     * predicates, feature by feature:
+     *
+     *   networth              header total-level block exists  → .mwi-networth-header
+     *   marketOrderTotals     header total-level block exists  → .mwi-market-order-totals
+     *   actionTimeDisplay     header action-name block exists  → #mwi-action-time-display
+     *   taskIcons             a task card is on screen         → [data-mwi-task-processed]
+     *   taskStatistics        the Tasks tab strip exists       → .toolasha-task-stats-btn
+     *   overlayTabButton      the tab strip holding Inventory  → #toolasha-overlay-tab
+     *   skillExpPercentage    a nav XP bar with a width        → .mwi-exp-percentage
+     *   skillRemainingXP      a nav XP bar with a label        → .mwi-remaining-xp
+     *   inventoryBadgeManager inventory item containers        → [data-ask-value] on one
+     *   inventoryBadgePrices  an item priced above zero        → .mwi-badge-price-ask/bid
+     *   itemCountDisplay      marketplace item tiles           → .mwi-item-count
+     *   zoneIndices           combat zone tab buttons          → span.script_mapIndex
+     *   combatScore           a profile overview tab is open   → #mwi-combat-score-panel
+     *
+     * None of the above can catch the game renaming its own classes wholesale — an
+     * absent anchor just reads as "null, ignored" everywhere above. `checkAnchorCanaries`
+     * is the separate check for that: a handful of selectors for elements that exist
+     * on any loaded game page no matter which panel is open (the header, the page's
+     * own wrapper, the persistent skill nav bars). It runs once, on the same delay as
+     * the health pass, and reports through the same `UI.healthStatus.reportFailures`
+     * channel with reason "selector missing — game update?".
+     *
+     * `UI.schemaCanary` is the third of these, and the one that looks at neither the
+     * page nor the features but at the game's own data: the top-level maps this
+     * script indexes by literal key, the item and buff-type hrids it matches by
+     * literal string, and the dungeon wave counts it falls back to. Those fail even
+     * more quietly than a selector does — a renamed map is `{}`, a renamed hrid is
+     * `null` — so it runs beside the selector canary and reports through the same
+     * channel with reason "data shape changed — game update?".
+     * ------------------------------------------------------------------------- */
+
+    /**
+     * The shape every check shares: no anchor is no evidence, an anchor without the
+     * mark is a failure.
+     *
+     * @param {string} anchor - Selector for the game element the feature attaches to
+     * @param {string} marker - Selector for what the feature injects
+     * @returns {boolean|null} true healthy, false broken, null undecidable
+     */
+    function injectedInto(anchor, marker) {
+        if (!document.querySelector(anchor)) return null;
+        return Boolean(document.querySelector(marker));
+    }
+
+    /**
+     * A check that only applies while a sub-setting is on.
+     *
+     * A switched-off readout must never read as a broken one — that is the failure
+     * mode that would make the whole health pass noise the moment anybody turned
+     * something off.
+     *
+     * @param {string} setting - Setting key gating the visible output
+     * @param {Function} check - The predicate to run when it is on
+     * @returns {boolean|null} true when the setting is off, else the predicate
+     */
+    function whenSetting(setting, check) {
+        if (!config.getSetting(setting)) return true;
+        return check();
+    }
+
+    /**
+     * The character panel's tab strip, identified by holding an Inventory tab —
+     * every tab strip in the game shares the same classes.
+     * @returns {HTMLElement|null} The strip, or null if it is not drawn
+     */
+    function findCharacterTabList() {
+        for (const list of document.querySelectorAll('[role="tablist"]')) {
+            for (const tab of list.querySelectorAll('[role="tab"]')) {
+                if (tab.textContent.trim() === 'Inventory') return list;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * One list of failures from several, with each feature named once.
+     *
+     * A feature whose initializer threw will usually also fail its health check, and
+     * a toast that says "2 features failed" about one feature is a toast nobody
+     * trusts the next time. The first reason wins, because the throw says more than
+     * "its mark is missing" does.
+     *
+     * @param {...Array<{key: string, name: string, reason: string}>} lists - Failure lists
+     * @returns {Array<{key: string, name: string, reason: string}>} Deduplicated by key
+     */
+    function mergeFailures(...lists) {
+        const byKey = new Map();
+        for (const list of lists) {
+            for (const failure of list || []) {
+                if (!byKey.has(failure.key)) byKey.set(failure.key, failure);
+            }
+        }
+        return [...byKey.values()];
+    }
+
+    /**
+     * A conservative set of anchors that should exist on any loaded game page,
+     * regardless of which panel is open — the header, the page's own wrapper, and
+     * the persistent skill navigation bars. Checked once, well after startup, to
+     * catch the one failure a per-feature health check cannot: the game renaming
+     * its own classes out from under every selector at once. A missing feature
+     * mark says "reopen the panel"; a missing anchor says the game updated.
+     *
+     * Deliberately short. Anything that only exists on one screen (a task card,
+     * an inventory tile, an open settings panel) is left out on purpose — it is
+     * routinely absent on a perfectly healthy page, and canarying it would just
+     * be noise the moment somebody was looking at a different tab.
+     *
+     * @returns {Array<{key: string, name: string, reason: string}>} One entry per missing anchor
+     */
+    function checkAnchorCanaries() {
+        const ANCHORS = [
+            { key: 'canaryHeaderTotalLevel', name: 'Header (total level)', selector: GAME.TOTAL_LEVEL },
+            { key: 'canaryGamePanel', name: 'Game panel wrapper', selector: GAME.GAME_PANEL },
+            { key: 'canaryNavLevel', name: 'Navigation bar (skill levels)', selector: GAME.NAV_LEVEL },
+            { key: 'canaryNavExperience', name: 'Navigation bar (skill XP)', selector: GAME.NAV_CURRENT_EXPERIENCE },
+        ];
+
+        const failures = [];
+        for (const { key, name, selector } of ANCHORS) {
+            if (!document.querySelector(selector)) {
+                failures.push({ key, name, reason: 'selector missing — game update?' });
+            }
+        }
+        return failures;
+    }
+
+    /**
+     * Is any element matching `selector` carrying a value above zero in `field`?
+     * @param {string} selector - Element selector
+     * @param {string} field - dataset key
+     * @returns {boolean} True if at least one is positive
+     */
+    function anyPositiveDataset(selector, field) {
+        for (const el of document.querySelectorAll(selector)) {
+            if (parseFloat(el.dataset[field]) > 0) return true;
+        }
+        return false;
     }
 
     /**
@@ -124,6 +296,10 @@
                 category: 'Market',
                 module: Market.itemCountDisplay,
                 async: false,
+                healthCheck: () =>
+                    whenSetting('market_visibleItemCount', () =>
+                        injectedInto('[class*="MarketplacePanel_marketItems"] use', '.mwi-item-count')
+                    ),
             },
             {
                 key: 'estimatedListingAge',
@@ -166,6 +342,10 @@
                 category: 'Market',
                 module: Market.marketOrderTotals,
                 async: false,
+                healthCheck: () =>
+                    whenSetting('market_showOrderTotals', () =>
+                        injectedInto('[class*="Header_totalLevel"]', '.mwi-market-order-totals')
+                    ),
             },
             {
                 key: 'marketHistoryViewer',
@@ -217,13 +397,63 @@
                 module: Market.sellQueue,
                 async: false,
             },
-            { key: 'networth', name: 'Net Worth', category: 'Economy', module: Market.networthFeature, async: false },
+            {
+                key: 'networth',
+                name: 'Net Worth',
+                category: 'Economy',
+                module: Market.networthFeature,
+                async: false,
+                healthCheck: () => injectedInto('[class*="Header_totalLevel"]', '.mwi-networth-header'),
+            },
             {
                 key: 'inventoryBadgeManager',
                 name: 'Inventory Badge Manager',
                 category: 'Inventory',
                 module: Market.inventoryBadgeManager,
                 async: false,
+                // The manager's job is to price every item container it can see; the
+                // dataset it writes is set even for a worthless item, so its absence
+                // on a drawn inventory means it never ran
+                healthCheck: () =>
+                    injectedInto(
+                        '[class*="Inventory_items"] [class*="Item_itemContainer"]',
+                        '[class*="Inventory_items"] [class*="Item_itemContainer"][data-ask-value]'
+                    ),
+            },
+            {
+                key: 'treasureTracker',
+                name: 'Treasure Tracker',
+                category: 'Inventory',
+                module: Market.treasureTracker,
+                async: true,
+            },
+            {
+                key: 'combatText',
+                name: 'Combat Text',
+                category: 'UI',
+                module: UI.combatText,
+                async: false,
+                // Either half being on is enough; the module subscribes to nothing
+                // when both are off
+                customCheck: () => config.getSetting('combatText_floating') || config.getSetting('combatText_scrolling'),
+            },
+            {
+                key: 'watchlist',
+                name: 'Watchlist',
+                category: 'Inventory',
+                module: Market.watchlist,
+                async: false,
+            },
+            {
+                // The list itself is always live — the overlay tile and the panel
+                // read it whatever this says. What the switch turns on is only the
+                // button in the game's own item menu.
+                key: 'equipmentSavings_menuButton',
+                name: 'Equipment Savings',
+                category: 'Inventory',
+                module: Market.equipmentSavings,
+                async: false,
+                customCheck: () => true,
             },
             {
                 key: 'inventorySort',
@@ -238,6 +468,14 @@
                 category: 'Inventory',
                 module: Market.inventoryBadgePrices,
                 async: false,
+                // A badge is only drawn for an item worth something, so the anchor is
+                // not "an inventory" but "an item the manager has priced above zero"
+                healthCheck: () =>
+                    whenSetting('invBadgePrices', () => {
+                        const items = '[class*="Inventory_items"] [class*="Item_itemContainer"]';
+                        if (!anyPositiveDataset(items, 'askPrice')) return null;
+                        return Boolean(document.querySelector('.mwi-badge-price-ask, .mwi-badge-price-bid'));
+                    }),
             },
             {
                 key: 'invCategoryTotals',
@@ -270,12 +508,23 @@
                 category: 'Actions',
                 module: Actions.actionTimeDisplay,
                 async: false,
+                healthCheck: () =>
+                    whenSetting('actionBar_enabled', () =>
+                        injectedInto('div[class*="Header_actionName"]', '#mwi-action-time-display')
+                    ),
             },
             {
                 key: 'actionCountdown',
                 name: 'Action Bar Countdown',
                 category: 'Actions',
                 module: Actions.actionCountdown,
+                async: false,
+            },
+            {
+                key: 'actionPanelLayout',
+                name: 'Action Panel Layout',
+                category: 'Actions',
+                module: Actions.actionPanelLayout,
                 async: false,
             },
             {
@@ -399,10 +648,50 @@
                 module: Actions.skillingOptimizer,
                 async: false,
             },
+            {
+                key: 'goalPlanner',
+                name: 'Goal Planner',
+                category: 'General',
+                module: Actions.goalPlanner,
+                async: true,
+            },
         ];
 
         // Combat Features
         const combatFeatures = [
+            {
+                key: 'damageTracker',
+                name: 'Damage Tracker',
+                category: 'Combat',
+                // `.default` because the global is the module namespace — see
+                // the note in libraries/combat.js
+                module: Combat.damageTracker.default,
+                async: false,
+            },
+            {
+                key: 'damageTakenTracker',
+                name: 'Damage Taken Tracker',
+                category: 'Combat',
+                module: Combat.damageTakenTracker.default,
+                async: false,
+            },
+            {
+                key: 'combatRecorder_autoStart',
+                name: 'Combat Recorder',
+                category: 'Combat',
+                module: Combat.combatRecorder,
+                async: false,
+                // The module is always reachable from the Damage panel's Record
+                // button; what this switch turns on is only the automatic start
+                customCheck: () => true,
+            },
+            {
+                key: 'manaTracker',
+                name: 'Mana Tracker',
+                category: 'Combat',
+                module: Combat.manaTracker,
+                async: false,
+            },
             {
                 key: 'abilityBookCalculator',
                 name: 'Ability Book Calculator',
@@ -417,8 +706,32 @@
                 module: Combat.abilityDictionaryButton,
                 async: false,
             },
-            { key: 'zoneIndices', name: 'Zone Indices', category: 'Combat', module: Combat.zoneIndices, async: false },
-            { key: 'combatScore', name: 'Combat Score', category: 'Profile', module: Combat.combatScore, async: false },
+            {
+                key: 'zoneIndices',
+                name: 'Zone Indices',
+                category: 'Combat',
+                module: Combat.zoneIndices,
+                async: false,
+                // The map numbering is the unconditional half — every zone button
+                // gets one. The task numbering only applies to combat tasks, so it
+                // is not what this asks about.
+                healthCheck: () =>
+                    whenSetting('mapIndex', () =>
+                        injectedInto(
+                            'div.MainPanel_subPanelContainer__1i-H9 div.CombatPanel_tabsComponentContainer__GsQlg ' +
+                                'div.MuiTabs-root.MuiTabs-vertical button.MuiButtonBase-root.MuiTab-root span.MuiBadge-root',
+                            'span.script_mapIndex'
+                        )
+                    ),
+            },
+            {
+                key: 'combatScore',
+                name: 'Combat Score',
+                category: 'Profile',
+                module: Combat.combatScore,
+                async: false,
+                healthCheck: () => injectedInto('div.SharableProfile_overviewTab__W4dCV', '#mwi-combat-score-panel'),
+            },
             {
                 key: 'characterCardButton',
                 name: 'Character Card Button',
@@ -466,6 +779,27 @@
                 name: 'Combat Summary',
                 category: 'Combat',
                 module: Combat.combatSummary,
+                async: false,
+            },
+            {
+                key: 'combatDropLuck',
+                name: 'Combat Drop Luck',
+                category: 'Combat',
+                module: Combat.combatDropLuck,
+                async: false,
+            },
+            {
+                key: 'combatDps',
+                name: 'Combat DPS',
+                category: 'Combat',
+                module: Combat.combatDPS,
+                async: false,
+            },
+            {
+                key: 'portraitDps',
+                name: 'Portrait DPS',
+                category: 'Combat',
+                module: Combat.portraitDps,
                 async: false,
             },
             { key: 'combatStats', name: 'Combat Stats', category: 'Combat', module: Combat.combatStats, async: false },
@@ -556,6 +890,10 @@
                 category: 'UI',
                 module: UI.skillExperiencePercentage,
                 async: false,
+                // The percentage is read off the bar's inline width, so a bar
+                // without one is not yet something the feature could have acted on
+                healthCheck: () =>
+                    injectedInto('[class*="NavigationBar_currentExperience"][style*="width"]', '.mwi-exp-percentage'),
             },
             { key: 'externalLinks', name: 'External Links', category: 'UI', module: UI.externalLinks, async: false },
             {
@@ -580,6 +918,13 @@
                 async: false,
             },
             {
+                key: 'welcomeBackValue',
+                name: 'Welcome Back Value',
+                category: 'UI',
+                module: UI.welcomeBackValue,
+                async: false,
+            },
+            {
                 key: 'panelSizeMemory',
                 name: 'Panel Size Memory',
                 category: 'UI',
@@ -592,6 +937,37 @@
                 category: 'UI',
                 module: UI.tabReorder,
                 async: true,
+            },
+            {
+                key: 'overlayPanel',
+                name: 'Overlay Panel',
+                category: 'Interface',
+                module: UI.overlayPanel,
+                async: true,
+            },
+            {
+                key: 'overlayTabButton',
+                name: 'Overlay Tab Button',
+                category: 'Interface',
+                module: UI.overlayTabButton,
+                async: false,
+                // The button is a switch for the overlay and the module refuses to
+                // draw one when the overlay itself is off
+                healthCheck: () =>
+                    whenSetting('overlayPanel', () => {
+                        if (!findCharacterTabList()) return null;
+                        return Boolean(document.getElementById('toolasha-overlay-tab'));
+                    }),
+            },
+            {
+                key: 'commandPalette',
+                name: 'Command Palette',
+                category: 'Interface',
+                module: UI.commandPalette,
+                async: false,
+                // No entry in config's own feature map, so the schema switch is what
+                // decides — without this the palette would be on regardless
+                customCheck: () => config.getSetting('commandPalette'),
             },
             {
                 key: 'draggableModals',
@@ -662,7 +1038,21 @@
                 async: false,
             },
             { key: 'taskSorter', name: 'Task Sorter', category: 'Tasks', module: UI.taskSorter, async: false },
-            { key: 'taskIcons', name: 'Task Icons', category: 'Tasks', module: UI.taskIcons, async: false },
+            {
+                key: 'taskIcons',
+                name: 'Task Icons',
+                category: 'Tasks',
+                module: UI.taskIcons,
+                async: false,
+                // The attribute rather than `.mwi-task-icon`: it is stamped on every
+                // card the feature has looked at, whereas an icon depends on a sprite
+                // resolving, and a missing sprite is a different complaint
+                healthCheck: () =>
+                    injectedInto(
+                        '[class*="TasksPanel_taskList"] [class*="RandomTask_randomTask"]',
+                        '[class*="RandomTask_randomTask"][data-mwi-task-processed]'
+                    ),
+            },
             {
                 key: 'taskInventoryHighlighter',
                 name: 'Task Inventory Highlighter',
@@ -676,12 +1066,24 @@
                 category: 'Tasks',
                 module: UI.taskStatistics,
                 async: false,
+                healthCheck: () =>
+                    injectedInto(
+                        '[class*="TasksPanel_tabsComponentContainer"] [class*="TabsComponent_tabsContainer"]',
+                        '.toolasha-task-stats-btn'
+                    ),
             },
             {
                 key: 'taskClaimCollector',
                 name: 'Task Claim Collector',
                 category: 'Tasks',
                 module: UI.taskClaimCollector,
+                async: false,
+            },
+            {
+                key: 'taskBulkReroll',
+                name: 'Task Bulk Reroll',
+                category: 'Tasks',
+                module: UI.taskBulkReroll,
                 async: false,
             },
             {
@@ -698,7 +1100,23 @@
                 module: UI.taskAutoReroll,
                 async: true,
             },
-            { key: 'skillRemainingXP', name: 'Remaining XP', category: 'Skills', module: UI.remainingXP, async: false },
+            {
+                key: 'skillRemainingXP',
+                name: 'Remaining XP',
+                category: 'Skills',
+                module: UI.remainingXP,
+                async: false,
+                // Needs a nav entry that both has an XP bar and names its skill —
+                // the name is what the remaining figure is computed from
+                healthCheck: () => {
+                    const bars = [...document.querySelectorAll('[class*="NavigationBar_currentExperience"]')];
+                    const named = bars.some((bar) =>
+                        bar.closest('[class*="NavigationBar_nav"]')?.querySelector('[class*="NavigationBar_label"]')
+                    );
+                    if (!named) return null;
+                    return Boolean(document.querySelector('.mwi-remaining-xp'));
+                },
+            },
             { key: 'xpTracker', name: 'XP/hr Tracker', category: 'Skills', module: UI.xpTracker, async: false },
             {
                 key: 'housePanelObserver',
@@ -781,22 +1199,43 @@
                 key: 'guildXPTracker',
                 name: 'Guild XP Tracker',
                 category: 'Guild',
-                module: UI.guildXPTracker,
+                module: Combat.guildXPTracker,
                 async: false,
             },
             {
                 key: 'guildXPDisplay',
                 name: 'Guild XP Display',
                 category: 'Guild',
-                module: UI.guildXPDisplay,
+                module: Combat.guildXPDisplay,
                 async: false,
             },
             {
                 key: 'guildCreditValue',
                 name: 'Guild Credit Value',
                 category: 'Guild',
-                module: UI.guildCreditValue,
+                module: Combat.guildCreditValue,
                 async: false,
+            },
+            {
+                key: 'guildRoster',
+                name: 'Guild Roster',
+                category: 'Guild',
+                module: Combat.guildRosterView,
+                async: false,
+            },
+            {
+                key: 'guildTrialsInfo',
+                name: 'Guild Trials',
+                category: 'Guild',
+                module: Combat.guildTrials,
+                async: true,
+            },
+            {
+                key: 'insights_calibration',
+                name: 'Prediction Calibration',
+                category: 'Insights',
+                module: UI.predictionCalibration,
+                async: true,
             },
             {
                 key: 'leaderboardXPTracker',
@@ -820,11 +1259,74 @@
                 async: true,
             },
             {
+                key: 'communityBuffAlerts',
+                name: 'Community Buff Expiry Alerts',
+                category: 'Notifications',
+                module: UI.communityBuffAlerts,
+                async: true,
+                // No entry in config's feature map, so the schema setting is the
+                // only gate — an unknown registry key would otherwise default to on
+                customCheck: () => config.getSetting('notifications_communityBuffExpiring'),
+            },
+            {
+                key: 'labyrinthRunAlerts',
+                name: 'Labyrinth Run Finished Alerts',
+                category: 'Notifications',
+                module: UI.labyrinthRunAlerts,
+                async: true,
+                // As above: no feature-map entry, so the schema setting is the only
+                // gate and an unknown registry key would otherwise default to on
+                customCheck: () => config.getSetting('notifications_labyrinthRunFinished'),
+            },
+            {
+                key: 'combatDeathAlerts',
+                name: 'Combat Death Alerts',
+                category: 'Notifications',
+                module: UI.combatDeathAlerts,
+                async: true,
+                customCheck: () => config.getSetting('notifications_combatDeath'),
+            },
+            {
+                key: 'enhancementTargetAlerts',
+                name: 'Enhancement Target Alerts',
+                category: 'Notifications',
+                module: UI.enhancementTargetAlerts,
+                async: true,
+                customCheck: () => config.getSetting('notifications_enhancementTarget'),
+            },
+            {
+                key: 'taskSlotAlerts',
+                name: 'Task Slot Alerts',
+                category: 'Notifications',
+                module: UI.taskSlotAlerts,
+                async: true,
+                customCheck: () => config.getSetting('notifications_taskSlotsFull'),
+            },
+            {
                 key: 'queueMonitor',
                 name: 'Queue Monitor',
                 category: 'General',
                 module: UI.queueMonitor,
                 async: false,
+            },
+            {
+                // Registry key stays ironCowFarm (persisted enable/disable state);
+                // the display name is "Iron Bell Farming".
+                key: 'ironCowFarm',
+                name: 'Iron Bell Farming',
+                category: 'General',
+                module: UI.ironCowFarmPanel,
+                async: true,
+            },
+            {
+                key: 'accountView',
+                name: 'Account View',
+                category: 'General',
+                module: UI.accountView,
+                async: true,
+                // No entry in settings-schema yet, so `getSetting`'s own default is
+                // what decides — an unknown key returns whatever is passed here
+                customCheck: () => config.getSetting('accountView', true),
             },
         ];
 
@@ -861,6 +1363,9 @@
                     : undefined,
                 async: feature.async,
                 customCheck: feature.customCheck || undefined,
+                // Without this the checks above would be dropped on the way into the
+                // registry, and `checkFeatureHealth` would go on finding nothing
+                healthCheck: feature.healthCheck || undefined,
             };
         });
 
@@ -889,6 +1394,8 @@
         // Start capturing client data from localStorage (for Combat Sim export)
         webSocketHook.captureClientDataFromLocalStorage();
 
+        performanceMonitor.mark('script:start');
+
         // Register all features from libraries
         registerFeatures();
 
@@ -901,9 +1408,11 @@
             try {
                 // Initialize storage (opens IndexedDB)
                 await storage.initialize();
+                performanceMonitor.mark('storage:open');
 
                 // Initialize config (loads settings from storage)
                 await config.initialize();
+                performanceMonitor.mark('config:loaded');
 
                 // Add beforeunload handler to flush all pending writes
                 window.addEventListener('beforeunload', () => {
@@ -924,6 +1433,7 @@
         featureRegistry.setupCharacterSwitchHandler();
 
         dataManager.on('character_initialized', (_data) => {
+            performanceMonitor.mark('character:data');
             // Skip full initialization during character switches
             // The character_switched handler in feature-registry already handles reinitialization
             if (_data._isCharacterSwitch) {
@@ -940,6 +1450,12 @@
                     // Reload config settings with character-specific data
                     await config.loadSettings();
                     config.applyColorSettings();
+                    performanceMonitor.mark('settings:character');
+
+                    // Before features initialise: the conservative-defaults policy
+                    // has to turn a new switch off before anything reads it — a
+                    // feature switched off after startup has already run once
+                    await UI.whatsNew.applyPolicy();
 
                     // Initialize scroll simulator storage (character-specific)
                     await Combat.scrollSimulator.initialize().catch((error) => {
@@ -951,13 +1467,35 @@
                         console.error('[Toolasha] Settings UI initialization failed:', error);
                     });
 
-                    await featureRegistry.initializeFeatures();
+                    const initFailures = await featureRegistry.initializeFeatures();
+                    performanceMonitor.mark('startup:complete');
+
+                    UI.whatsNew.maybeShow();
 
                     // Health check after initialization
                     setTimeout(async () => {
-                        const failedFeatures = featureRegistry.checkFeatureHealth();
+                        const failedFeatures = mergeFailures(initFailures, featureRegistry.checkFeatureHealth());
 
                         // Note: Settings tab health check removed - tab only appears when user opens settings panel
+
+                        // Selector canary: runs regardless of whether any single feature
+                        // reported unhealthy, because a game update can rename every
+                        // class at once without a single per-feature check noticing —
+                        // each one's anchor is just "not open," which reads as null.
+                        //
+                        // The schema canary is the same argument one layer down: the
+                        // script hardcodes the game's own data keys and hrids, and a
+                        // renamed one produces empty maps and null lookups rather
+                        // than an error. Both are reported together — two toasts
+                        // about the same game update is one toast too many.
+                        const canaryFailures = [...checkAnchorCanaries(), ...UI.schemaCanary.runSchemaCanary()];
+                        if (canaryFailures.length > 0) {
+                            console.warn(
+                                '[Toolasha] Canary found missing anchors or game data — the game may have updated:',
+                                canaryFailures.map((f) => f.name)
+                            );
+                            UI.healthStatus.reportFailures(canaryFailures);
+                        }
 
                         if (failedFeatures.length > 0) {
                             console.warn(
@@ -966,10 +1504,14 @@
                             );
 
                             setTimeout(async () => {
-                                await featureRegistry.retryFailedFeatures(failedFeatures);
+                                // What the retry could not fix, plus whatever the
+                                // second health pass still objects to. A feature that
+                                // came up on the second attempt — usually because the
+                                // panel it anchors to had not been drawn yet — is not
+                                // worth interrupting anybody about.
+                                const retryFailures = await featureRegistry.retryFailedFeatures(failedFeatures);
+                                const stillFailed = mergeFailures(retryFailures, featureRegistry.checkFeatureHealth());
 
-                                // Final health check
-                                const stillFailed = featureRegistry.checkFeatureHealth();
                                 if (stillFailed.length > 0) {
                                     console.warn(
                                         '[Toolasha] These features could not initialize:',
@@ -978,12 +1520,31 @@
                                     console.warn(
                                         '[Toolasha] Try refreshing the page or reopening the relevant game panels'
                                     );
+                                    UI.healthStatus.reportFailures(stillFailed);
                                 }
                             }, 1000);
                         }
                     }, 500); // Wait 500ms after initialization to check health
                 } catch (error) {
+                    // Nothing below this point ran, so the console was the only place
+                    // that said so — and a script that silently did not start is
+                    // indistinguishable from one that was never installed
                     console.error('[Toolasha] Feature initialization failed:', error);
+                    showToast(`Toolasha failed to start: ${error.message}`, {
+                        kind: 'error',
+                        duration: 0,
+                        action: {
+                            label: 'Diagnostics',
+                            onClick: () =>
+                                UI.healthStatus.showHealthStatus([
+                                    {
+                                        key: 'startup',
+                                        name: 'Toolasha startup',
+                                        reason: error.message || String(error),
+                                    },
+                                ]),
+                        },
+                    });
                 }
             }, 100);
         });
@@ -991,7 +1552,11 @@
         // Expose minimal user-facing API
         const targetWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
 
-        targetWindow.Toolasha.version = '2.88.0';
+        targetWindow.Toolasha.version = '2.89.0';
+        // Which fork this build came from. Version numbers are shared with
+        // upstream, so the what's-new popup keys on the (fork, version) pair —
+        // the same number on a different fork is still an update.
+        targetWindow.Toolasha.fork = 'Millennium44/Toolasha';
 
         // Feature toggle API (for users to manage settings via console)
         targetWindow.Toolasha.features = {
@@ -1005,9 +1570,13 @@
 
         // Guild XP data management
         targetWindow.Toolasha.guild = {
-            resetMemberXP: () => UI.guildXPTracker.resetMemberData(),
-            memberSample: (name) => UI.guildXPTracker.getRawMemberSample(name),
+            resetMemberXP: () => Combat.guildXPTracker.resetMemberData(),
+            memberSample: (name) => Combat.guildXPTracker.getRawMemberSample(name),
         };
+
+        // The per-player trial panel, so the command palette can reach it the way it
+        // reaches every other panel — through the page rather than through an import
+        targetWindow.Toolasha.guildTrialScoreboard = Combat.guildTrialScoreboard;
 
         // Debug utilities (for diagnosing issues via console)
         targetWindow.Toolasha.debug = {
@@ -1024,6 +1593,11 @@
                 console.log('Active timers:', diag.activeTimers);
                 return diag;
             },
+            // The selector canary, callable directly for a spot-check without
+            // waiting for the delayed health pass to run it on its own.
+            canary: checkAnchorCanaries,
+            // The same, for the shape of the game data rather than the page
+            schema: () => UI.schemaCanary.runSchemaCanary(),
         };
     }
 

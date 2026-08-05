@@ -1,7 +1,7 @@
 /**
  * Toolasha Utils Library
  * All utility modules
- * Version: 2.88.0
+ * Version: 2.89.0
  * License: CC-BY-NC-SA-4.0
  */
 
@@ -114,6 +114,28 @@
     }
 
     /**
+     * Read a KMB shorthand back into a number.
+     *
+     * The inverse of the formatters above, for the places where a person types an
+     * amount: `50m`, `1.5b`, `100k`, `500,000,000`. Separators are stripped rather
+     * than rejected — a figure copied out of the game or off a spreadsheet arrives
+     * with them, and refusing it teaches people to distrust the field.
+     *
+     * @param {string} text - What was typed
+     * @returns {number} The value, or NaN when it is not an amount
+     */
+    function parseKMB(text) {
+        const cleaned = String(text ?? '')
+            .trim()
+            .toLowerCase()
+            .replace(/[,_\s]/g, '');
+        const match = cleaned.match(/^(\d+\.?\d*)([kmb]?)$/);
+        if (!match) return NaN;
+        const multipliers = { k: 1e3, m: 1e6, b: 1e9 };
+        return parseFloat(match[1]) * (multipliers[match[2]] || 1);
+    }
+
+    /**
      * Format a number with thousand separators based on locale
      * @param {number} num - The number to format
      * @returns {string} Formatted number with separators
@@ -144,7 +166,11 @@
         const absNum = Math.abs(num);
         const sign = num < 0 ? '-' : '';
 
-        if (absNum >= 1e9) {
+        if (absNum >= 1e15) {
+            return sign + (absNum / 1e15).toFixed(decimals) + 'Q';
+        } else if (absNum >= 1e12) {
+            return sign + (absNum / 1e12).toFixed(decimals) + 'T';
+        } else if (absNum >= 1e9) {
             return sign + (absNum / 1e9).toFixed(decimals) + 'B';
         } else if (absNum >= 1e6) {
             return sign + (absNum / 1e6).toFixed(decimals) + 'M';
@@ -547,6 +573,7 @@
         isAbbreviationEnabled: isAbbreviationEnabled,
         networthFormatter: networthFormatter,
         numberFormatter: numberFormatter,
+        parseKMB: parseKMB,
         timeReadable: timeReadable
     });
 
@@ -608,6 +635,53 @@
         const enhancementLevel = !lastPart.startsWith('/') ? parseInt(lastPart, 10) || 0 : 0;
 
         return { itemLocationHrid, itemHrid, enhancementLevel };
+    }
+
+    /**
+     * The best enhancement level owned of every item, from the inventory.
+     *
+     * Equipped pieces are in `characterItems` alongside the loose ones, so this
+     * covers what is worn as well as what is in the bag — which is what "highest
+     * owned" means to the game.
+     *
+     * @param {Array<Object>} [items] - Defaults to the live inventory
+     * @returns {Map<string, number>} Item hrid → highest enhancement level owned
+     */
+    function highestOwnedEnhancements(items) {
+        const inventory = dataManager.characterItems || dataManager.characterData?.characterItems || [];
+        const highest = new Map();
+        for (const item of inventory) {
+            if (!item?.itemHrid || !(item.count > 0)) continue;
+            const level = item.enhancementLevel || 0;
+            if (!highest.has(item.itemHrid) || level > highest.get(item.itemHrid)) {
+                highest.set(item.itemHrid, level);
+            }
+        }
+        return highest;
+    }
+
+    /**
+     * What one slot of a loadout is really wearing.
+     *
+     * A loadout pinned with "use exact enhancement" wears what it says. Every other
+     * loadout wears the best copy owned, so a stored level is a stale reading of
+     * that rather than a fact — it is the level at the moment the loadout was last
+     * saved, and enhancing the item since does not rewrite it.
+     *
+     * Never lower than what is stored: an inventory that has not arrived yet is an
+     * empty map, and dropping a known +10 to 0 on the strength of it would be worse
+     * than the staleness this is here to fix.
+     *
+     * @param {Object} snapshot - The loadout
+     * @param {Object} equip - One entry of `snapshot.equipment`
+     * @param {Map<string, number>} owned - From `highestOwnedEnhancements`
+     * @returns {number} Enhancement level
+     */
+    function resolveEnhancementLevel(snapshot, equip, owned) {
+        const stored = equip?.enhancementLevel || 0;
+        if (snapshot?.useExactEnhancement) return stored;
+        const highest = owned?.get(equip?.itemHrid);
+        return highest === undefined ? stored : Math.max(stored, highest);
     }
 
     /**
@@ -702,9 +776,11 @@
             // UI, so storage is always the source of snapshots at startup.
             if (Object.keys(this.snapshots).length === 0) {
                 const storageKey = getStorageKey();
-                // NOTE: getCurrentCharacterId() may be null at this point (before init_character_data
-                // arrives), so getStorageKey() may return 'loadout_snapshots_default'. We will reload
-                // from the correct key once character_initialized fires.
+                // NOTE: getCurrentCharacterId() is set by the time this runs, because
+                // features are initialized from inside the character_initialized
+                // handler — so the key here is already character-scoped. The listener
+                // below cannot correct it if it ever were not: that event has already
+                // fired and will only come again on a character switch.
                 this.snapshots = (await storage.getJSON(storageKey, 'settings', null)) || {};
 
                 // Fallback for Steam users: if storage is also empty, bootstrap from
@@ -849,6 +925,29 @@
         }
 
         /**
+         * The equipment a loadout would actually put on, at the levels it would
+         * actually wear.
+         *
+         * A snapshot's stored enhancement level is only the truth for a loadout
+         * pinned with "use exact enhancement". The default is the other way round —
+         * the game equips the **highest copy you own** — and the wearable hash the
+         * snapshot is parsed from routinely carries 0, or a level from before the
+         * last enhancement. Reading it literally reports a refined cape at +0 while
+         * the character is wearing it at +10, and every number computed from that
+         * loadout is quietly wrong in the same direction.
+         *
+         * @param {Object} snapshot - From `snapshots` / `getAllSnapshots`
+         * @returns {Array<{itemHrid: string, enhancementLevel: number, itemLocationHrid: string}>}
+         */
+        resolveEquipment(snapshot) {
+            const owned = highestOwnedEnhancements();
+            return (snapshot?.equipment || []).map((equip) => ({
+                ...equip,
+                enhancementLevel: resolveEnhancementLevel(snapshot, equip, owned),
+            }));
+        }
+
+        /**
          * Get the name and default status of the saved loadout being used for a given action type.
          * Returns an object with name and isDefault, or null if no snapshot exists or feature is disabled.
          * @param {string} actionTypeHrid
@@ -901,10 +1000,27 @@
 
 
     /**
+     * The loadout store that actually has the loadouts in it.
+     *
+     * In the multi-bundle build every bundle that imports this file gets its own
+     * copy of the snapshot singleton, and only the Combat one has `initialize`
+     * called on it — the others never read storage, so they answer "no loadout" to
+     * everything and every caller quietly falls back to whatever is worn right now.
+     * The global is the initialized one. The bundled copy is the dev build, where
+     * there is only ever one.
+     *
+     * @returns {Object} The snapshot store
+     */
+    function loadouts() {
+        return (typeof window !== 'undefined' && window.Toolasha?.Combat?.loadoutSnapshot) || loadoutSnapshot;
+    }
+
+    /**
      * @param {string} actionTypeHrid - e.g. "/action_types/cooking"
      * @returns {{equipment: Map, drinks: Array}}
      */
     function resolveActionContext(actionTypeHrid) {
+        const loadoutSnapshot = loadouts();
         const rawDrinks =
             loadoutSnapshot.getSnapshotDrinksForSkill(actionTypeHrid) ?? dataManager.getActionDrinkSlots(actionTypeHrid);
 
@@ -935,6 +1051,9 @@
     const ENHANCEMENT_MULTIPLIERS = {
         '/equipment_types/neck': 5,
         '/equipment_types/ring': 5,
+        // The game's equipment type is plural; the singular is kept as an alias so any older
+        // caller (or saved loadout) that still says "earring" keeps its 5× multiplier.
+        '/equipment_types/earrings': 5,
         '/equipment_types/earring': 5,
         '/equipment_types/back': 5,
         '/equipment_types/trinket': 5,
@@ -2443,7 +2562,7 @@
      */
 
 
-    const STORAGE_KEY = 'Toolasha_customPriceOverrides';
+    const STORAGE_KEY$2 = 'Toolasha_customPriceOverrides';
 
     /** @type {Object|null} In-memory cache of overrides */
     let overridesCache = null;
@@ -2454,7 +2573,7 @@
      */
     async function loadOverrides() {
         if (overridesCache === null) {
-            overridesCache = (await storage.getJSON(STORAGE_KEY, 'settings', {})) || {};
+            overridesCache = (await storage.getJSON(STORAGE_KEY$2, 'settings', {})) || {};
         }
         return overridesCache;
     }
@@ -2588,6 +2707,39 @@
             default:
                 return resolvePrice(priceData.ask);
         }
+    }
+
+    /**
+     * Check whether a custom price override applies to a given item/side.
+     * `getItemPrice` returns a bare number for backward compatibility, so callers that need to
+     * know whether that number came from the user's own price overrides (rather than the market)
+     * can check this in parallel instead of relying on `getItemPrice`'s return shape.
+     * @param {string} itemHrid - Item HRID
+     * @param {number} [enhancementLevel=0] - Enhancement level
+     * @param {string} [side='sell'] - Transaction side ('buy'|'sell')
+     * @returns {boolean} True if a custom price override is set for this item/enhancement/side
+     */
+    function isPriceOverridden(itemHrid, enhancementLevel = 0, side = 'sell') {
+        if (!itemHrid || typeof itemHrid !== 'string') {
+            return false;
+        }
+
+        return getCustomPrice(itemHrid, enhancementLevel, side) !== null;
+    }
+
+    /**
+     * Get a short, human-readable description of how stale the current market price data is.
+     * Backed by marketAPI's fetch timestamp (data is refreshed at most every CACHE_DURATION).
+     * @returns {string|null} e.g. "prices 4m old", "prices updated just now", or null if no data loaded yet
+     */
+    function getPriceAgeString() {
+        const ageMs = marketAPI.getDataAge();
+        if (ageMs === null) {
+            return null;
+        }
+
+        const relative = formatRelativeTime(ageMs);
+        return relative === 'Just now' ? 'prices updated just now' : `prices ${relative} old`;
     }
 
     /**
@@ -2738,6 +2890,8 @@
         formatPrice,
         getPricingMode,
         getItemPricesBatch,
+        isPriceOverridden,
+        getPriceAgeString,
     };
 
     var marketData$1 = /*#__PURE__*/Object.freeze({
@@ -2747,7 +2901,9 @@
         getItemPrice: getItemPrice,
         getItemPrices: getItemPrices,
         getItemPricesBatch: getItemPricesBatch,
-        getPricingMode: getPricingMode
+        getPriceAgeString: getPriceAgeString,
+        getPricingMode: getPricingMode,
+        isPriceOverridden: isPriceOverridden
     });
 
     /**
@@ -2758,6 +2914,84 @@
      * test server and live server.
      */
 
+
+    /**
+     * Generate alternate display names to handle ★ ↔ (R) refined item naming.
+     * @param {string} name - Original display name
+     * @returns {string[]} Array of alternate names to try (may be empty)
+     */
+    function getRefinedNameVariants(name) {
+        const variants = [];
+        if (name.includes('★')) {
+            variants.push(name.replace(/\s*★/, ' (R)'));
+        }
+        if (name.includes('(R)')) {
+            variants.push(name.replace(/\s*\(R\)/, ' ★'));
+        }
+        return variants;
+    }
+
+    /**
+     * Find an action HRID from its display name.
+     * Tries exact match first, then ★ ↔ (R) variants for refined items.
+     * @param {string} actionName - Display name of the action
+     * @returns {string|null} Action HRID or null if not found
+     */
+    function getActionHridFromName(actionName) {
+        const gameData = dataManager.getInitClientData();
+        if (!gameData?.actionDetailMap) {
+            return null;
+        }
+
+        // Try exact match first
+        for (const [hrid, detail] of Object.entries(gameData.actionDetailMap)) {
+            if (detail.name === actionName) {
+                return hrid;
+            }
+        }
+
+        // Try ★ ↔ (R) variants for refined items
+        for (const variant of getRefinedNameVariants(actionName)) {
+            for (const [hrid, detail] of Object.entries(gameData.actionDetailMap)) {
+                if (detail.name === variant) {
+                    return hrid;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Find an item HRID from its display name.
+     * Tries exact match first, then ★ ↔ (R) variants for refined items.
+     * @param {string} itemName - Display name of the item
+     * @returns {string|null} Item HRID or null if not found
+     */
+    function getItemHridFromName(itemName) {
+        const gameData = dataManager.getInitClientData();
+        if (!gameData?.itemDetailMap) {
+            return null;
+        }
+
+        // Try exact match first
+        for (const [hrid, detail] of Object.entries(gameData.itemDetailMap)) {
+            if (detail.name === itemName) {
+                return hrid;
+            }
+        }
+
+        // Try ★ ↔ (R) variants for refined items
+        for (const variant of getRefinedNameVariants(itemName)) {
+            for (const [hrid, detail] of Object.entries(gameData.itemDetailMap)) {
+                if (detail.name === variant) {
+                    return hrid;
+                }
+            }
+        }
+
+        return null;
+    }
 
     /**
      * Get the coin cost of an item from the in-game shop.
@@ -2782,6 +3016,13 @@
 
         return 0;
     }
+
+    var gameLookups = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        getActionHridFromName: getActionHridFromName,
+        getItemHridFromName: getItemHridFromName,
+        getShopCoinCost: getShopCoinCost
+    });
 
     /**
      * Enhancement Calculator
@@ -2818,6 +3059,295 @@
         30, // +19
         30, // +20
     ];
+
+    /**
+     * Blessed Tea's base chance to skip an extra level on success, as a decimal.
+     * Used when the caller has no live consumable data to read the real flatBoost from.
+     */
+    const BLESSED_TEA_BASE_CHANCE = 0.01;
+
+    /**
+     * Build the enhancement Markov transition matrix.
+     *
+     * This body is the single source of the chain. The networth and enhancement worker pools run
+     * inside blob workers that cannot import a module, so their managers serialise this function
+     * with `toString()` and drop the identical text into their worker scripts — which is why it
+     * takes `math` and the base rates as arguments and closes over nothing. Any module-scope name
+     * read from here would not exist in the worker, and the two copies would drift apart again.
+     *
+     * @param {Object} math - math.js namespace (a parameter, not the global, so this can be serialised)
+     * @param {Object} options - Chain parameters
+     * @param {number[]} options.baseSuccessRates - Base success rate per level, as percentages
+     * @param {number} options.successMultiplier - Multiplier applied to the base rates
+     * @param {number} options.targetLevel - Absorbing state
+     * @param {number} [options.protectFrom=0] - Level from which a failure drops one level instead of to 0
+     * @param {boolean} [options.blessedTea=false] - Whether Blessed Tea is active
+     * @param {number} [options.guzzlingBonus=1.0] - Drink concentration multiplier
+     * @param {number} [options.blessedTeaBonus=0.01] - Blessed Tea double-jump chance as a decimal
+     * @returns {Object} 20×20 transition matrix
+     */
+    function buildEnhancementMarkov(math, options) {
+        const {
+            baseSuccessRates,
+            successMultiplier,
+            targetLevel,
+            protectFrom = 0,
+            blessedTea = false,
+            guzzlingBonus = 1.0,
+            blessedTeaBonus = 0.01,
+        } = options;
+
+        const markov = math.zeros(20, 20);
+
+        for (let i = 0; i < targetLevel; i++) {
+            const baseSuccessRate = baseSuccessRates[i] / 100.0;
+            // A big enough success multiplier pushes the raw product past 1, which would hand the
+            // failure row a negative probability and quietly corrupt the whole chain.
+            const successChance = Math.min(1, baseSuccessRate * successMultiplier);
+
+            // Where do we go on failure?
+            // Protection only applies when protectFrom > 0 AND we're at or above that level
+            const failureDestination = protectFrom > 0 && i >= protectFrom ? i - 1 : 0;
+
+            if (blessedTea) {
+                // Blessed Tea: base chance to jump +2 (read from item data when available),
+                // scaled by guzzling bonus. Remaining success chance goes to +1.
+                const skipChance = successChance * blessedTeaBonus * guzzlingBonus;
+                const remainingSuccess = successChance * (1 - blessedTeaBonus * guzzlingBonus);
+
+                // A jump from the last transient level lands past the absorbing state, which is
+                // outside the matrix. It is already absorbed either way, so drop it.
+                if (i + 2 <= targetLevel) {
+                    markov.set([i, i + 2], skipChance);
+                }
+                markov.set([i, i + 1], remainingSuccess);
+                markov.set([i, failureDestination], 1 - successChance);
+            } else {
+                // Normal: Success goes to +1, failure goes to destination
+                markov.set([i, i + 1], successChance);
+                markov.set([i, failureDestination], 1.0 - successChance);
+            }
+        }
+
+        // Absorbing state at target level
+        markov.set([targetLevel, targetLevel], 1.0);
+
+        return markov;
+    }
+
+    /**
+     * Variance of the number of attempts an enhancement run takes.
+     *
+     * The expected count on its own says nothing about the spread, and for this chain the spread is
+     * most of the story: a run that averages 40 attempts is not a run that takes 40 attempts, it is
+     * one that takes 12 if it goes well and 150 if it does not. Quoting only the mean turns a
+     * gamble into a price list.
+     *
+     * From the fundamental matrix M already computed, with t = M·1 the expected attempts from each
+     * state, the standard absorbing-chain result is
+     *
+     *   var = (2M − I)·t − t∘t
+     *
+     * taken at the starting state's row. Nothing extra is inverted — this is a second read of the
+     * matrix the expected count already came from, so the two can never disagree.
+     *
+     * Takes the matrix rather than the chain parameters so it stays a pure function of M, which is
+     * what lets a caller that already has one avoid rebuilding it.
+     *
+     * @param {Object} M - Fundamental matrix (I − Q)^-1, math.js matrix or anything with .get([i,j])
+     * @param {number} targetLevel - Absorbing state, so the transient block is 0..targetLevel−1
+     * @param {number} [startLevel=0] - State the run starts from
+     * @returns {number} Variance in attempts, never negative
+     */
+    function absorptionVariance(M, targetLevel, startLevel = 0) {
+        const expectedFrom = [];
+        for (let i = 0; i < targetLevel; i++) {
+            let rowSum = 0;
+            for (let j = 0; j < targetLevel; j++) {
+                rowSum += M.get([i, j]);
+            }
+            expectedFrom.push(rowSum);
+        }
+
+        let secondMoment = 0;
+        for (let j = 0; j < targetLevel; j++) {
+            // (2M − I) is the identity subtracted from twice M, which only touches the diagonal
+            const coefficient = 2 * M.get([startLevel, j]) - (j === startLevel ? 1 : 0);
+            secondMoment += coefficient * expectedFrom[j];
+        }
+
+        const mean = expectedFrom[startLevel] ?? 0;
+        // Floating-point error on a near-deterministic run can push this a hair below zero, and a
+        // negative variance would propagate as NaN through every standard deviation taken from it
+        return Math.max(0, secondMoment - mean * mean);
+    }
+
+    /**
+     * The standard normal quantile, to about seven decimal places.
+     *
+     * Acklam's rational approximation. Needed because the cost percentiles below are read off a
+     * fitted distribution, and there is no inverse normal in the language.
+     *
+     * @param {number} p - Probability in (0, 1)
+     * @returns {number} z such that Φ(z) = p
+     */
+    function normalQuantile(p) {
+        if (!(p > 0) || !(p < 1)) return p <= 0 ? -Infinity : Infinity;
+
+        const a = [
+            -39.6968302866538, 220.946098424521, -275.928510446969, 138.357751867269, -30.6647980661472, 2.50662827745924,
+        ];
+        const b = [-54.4760987982241, 161.585836858041, -155.698979859887, 66.8013118877197, -13.2806815528857];
+        const c = [
+            -0.00778489400243029, -0.322396458041136, -2.40075827716184, -2.54973253934373, 4.37466414146497,
+            2.93816398269878,
+        ];
+        const d = [0.00778469570904146, 0.32246712907004, 2.445134137143, 3.75440866190742];
+
+        const low = 0.02425;
+        const high = 1 - low;
+
+        if (p < low) {
+            const q = Math.sqrt(-2 * Math.log(p));
+            return (
+                (((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) /
+                ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1)
+            );
+        }
+        if (p > high) {
+            const q = Math.sqrt(-2 * Math.log(1 - p));
+            return -(
+                (((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) /
+                ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1)
+            );
+        }
+
+        const q = p - 0.5;
+        const r = q * q;
+        return (
+            ((((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) * q) /
+            (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1)
+        );
+    }
+
+    /**
+     * The standard normal CDF, via the Abramowitz & Stegun error-function approximation.
+     * @param {number} z - Standard score
+     * @returns {number} Φ(z)
+     */
+    function normalCdf(z) {
+        const t = 1 / (1 + 0.2316419 * Math.abs(z));
+        const density = Math.exp((-z * z) / 2) / Math.sqrt(2 * Math.PI);
+        const poly = t * (0.31938153 + t * (-0.356563782 + t * (1.781477937 + t * (-1.821255978 + t * 1.330274429))));
+        const upper = density * poly;
+        return z >= 0 ? 1 - upper : upper;
+    }
+
+    /**
+     * Turn an attempt count and its variance into what a run costs.
+     *
+     * Everything an enhancement consumes is either paid once — the base item — or paid per attempt:
+     * materials, and the protection items whose expected count is itself proportional to attempts.
+     * So the cost is an affine function of the attempt count, and its distribution is the attempt
+     * distribution scaled and shifted. That is the whole reason the variance is worth computing:
+     * once it exists, the cost spread follows without simulating anything.
+     *
+     * @param {Object} attempts - { attempts, attemptsVariance, minAttempts } from calculateEnhancement
+     * @param {Object} prices - Cost model
+     * @param {number} [prices.costPerAttempt=0] - Coins each attempt burns (materials, protection)
+     * @param {number} [prices.fixedCost=0] - Coins paid once, whatever happens (the base item)
+     * @returns {Object} { expected, variance, stdDev, minimum } in coins
+     */
+    function costStats(attempts, prices = {}) {
+        const perAttempt = Number(prices.costPerAttempt) || 0;
+        const fixed = Number(prices.fixedCost) || 0;
+        const mean = Number(attempts?.attempts) || 0;
+        const variance = Math.max(0, Number(attempts?.attemptsVariance) || 0);
+        const minimum = Math.max(0, Number(attempts?.minAttempts) || 0);
+
+        return {
+            expected: fixed + perAttempt * mean,
+            variance: variance * perAttempt * perAttempt,
+            stdDev: Math.sqrt(variance) * Math.abs(perAttempt),
+            minimum: fixed + perAttempt * minimum,
+        };
+    }
+
+    /**
+     * Percentiles of a run's cost.
+     *
+     * Fitted as a *shifted* gamma rather than a normal, because the attempt count is neither
+     * symmetric nor unbounded below. A normal fit on a run whose standard deviation approaches its
+     * mean — which is the ordinary case here — puts its tenth percentile below zero, which is not a
+     * cheap run, it is an impossible one. The shift is the fewest attempts the run could physically
+     * take, and the gamma matched on the remaining mean and the variance carries the long right tail
+     * that makes enhancing feel the way it does.
+     *
+     * Quantiles come from the Wilson–Hilferty cube-root transform, which is closed form and good to
+     * a few parts in a thousand over the range worth quoting. Below the shift is impossible, so
+     * every answer is clamped there.
+     *
+     * @param {Object} cost - Result of costStats
+     * @param {number[]} [probabilities=[0.1, 0.5, 0.9]] - Probabilities to report
+     * @returns {Object} { p10, p50, p90, values } — values pairs each probability with its cost,
+     *   and the named fields are present only when their probability was asked for
+     */
+    function costPercentiles(cost, probabilities = [0.1, 0.5, 0.9]) {
+        const expected = Number(cost?.expected) || 0;
+        const variance = Math.max(0, Number(cost?.variance) || 0);
+        const minimum = Math.min(Number(cost?.minimum) || 0, expected);
+        const spread = expected - minimum;
+
+        const quantile = (p) => {
+            if (!(p > 0) || !(p < 1)) return expected;
+            // A run with no spread costs what it costs; fitting a distribution to it would only
+            // introduce error
+            if (variance <= 0 || spread <= 0) return expected;
+
+            const shape = (spread * spread) / variance;
+            const scale = variance / spread;
+            const z = normalQuantile(p);
+            const factor = 1 - 1 / (9 * shape) + z / (3 * Math.sqrt(shape));
+            return Math.max(minimum, minimum + shape * scale * Math.max(0, factor) ** 3);
+        };
+
+        const values = probabilities.map((p) => ({ p, cost: quantile(p) }));
+        const named = {};
+        for (const entry of values) {
+            const label = `p${Math.round(entry.p * 100)}`;
+            named[label] = entry.cost;
+        }
+        return { ...named, values };
+    }
+
+    /**
+     * The chance a run costs more than some threshold — the sale proceeds, usually.
+     *
+     * The same fitted distribution read the other way round. It is the figure that decides whether
+     * an enhance-to-sell is a trade or a bet: a median profit means nothing if two runs in five lose
+     * money.
+     *
+     * @param {Object} cost - Result of costStats
+     * @param {number} threshold - Coins to compare against
+     * @returns {number} Probability in [0, 1]
+     */
+    function costExceedanceProbability(cost, threshold) {
+        const expected = Number(cost?.expected) || 0;
+        const variance = Math.max(0, Number(cost?.variance) || 0);
+        const minimum = Math.min(Number(cost?.minimum) || 0, expected);
+        const spread = expected - minimum;
+        const limit = Number(threshold) || 0;
+
+        if (variance <= 0 || spread <= 0) return expected > limit ? 1 : 0;
+        if (limit <= minimum) return 1;
+
+        const shape = (spread * spread) / variance;
+        const scale = variance / spread;
+        // Wilson–Hilferty inverted: the cube root of a gamma is very nearly normal
+        const standardised = (limit - minimum) / (scale * shape);
+        const z = 3 * Math.sqrt(shape) * (Math.cbrt(standardised) - 1 + 1 / (9 * shape));
+        return Math.min(1, Math.max(0, 1 - normalCdf(z)));
+    }
 
     /**
      * Calculate total success rate bonus multiplier
@@ -2886,6 +3416,10 @@
      * @param {number} params.protectFrom - Start using protection items at this level (0 = never)
      * @param {boolean} params.blessedTea - Whether Blessed Tea is active (1% double jump)
      * @param {number} params.guzzlingBonus - Drink concentration multiplier (1.0 = no bonus, scales blessed tea)
+     * @param {number} [params.blessedTeaBonus] - Blessed Tea double-jump chance as a decimal (default 1%)
+     * @param {number} [params.perActionTimeOverride] - Per-action time in seconds measured from the
+     *   game's buff maps. When supplied it replaces the formula below, so a tracker reading the live
+     *   buff maps and a prediction built here share one time base.
      * @returns {Object} Enhancement statistics
      */
     function calculateEnhancement(params) {
@@ -2900,6 +3434,8 @@
             protectFrom = 0,
             blessedTea = false,
             guzzlingBonus = 1.0,
+            blessedTeaBonus = BLESSED_TEA_BASE_CHANCE,
+            perActionTimeOverride = 0,
         } = params;
 
         // Validate inputs
@@ -2917,35 +3453,16 @@
             itemLevel,
         });
 
-        // Build Markov Chain transition matrix (20×20)
-        const markov = math.zeros(20, 20);
-
-        for (let i = 0; i < targetLevel; i++) {
-            const baseSuccessRate = BASE_SUCCESS_RATES[i] / 100.0;
-            const successChance = baseSuccessRate * successMultiplier;
-
-            // Where do we go on failure?
-            // Protection only applies when protectFrom > 0 AND we're at or above that level
-            const failureDestination = protectFrom > 0 && i >= protectFrom ? i - 1 : 0;
-
-            if (blessedTea) {
-                // Blessed Tea: 1% base chance to jump +2, scaled by guzzling bonus
-                // Remaining success chance goes to +1 (after accounting for skip chance)
-                const skipChance = successChance * 0.01 * guzzlingBonus;
-                const remainingSuccess = successChance * (1 - 0.01 * guzzlingBonus);
-
-                markov.set([i, i + 2], skipChance);
-                markov.set([i, i + 1], remainingSuccess);
-                markov.set([i, failureDestination], 1 - successChance);
-            } else {
-                // Normal: Success goes to +1, failure goes to destination
-                markov.set([i, i + 1], successChance);
-                markov.set([i, failureDestination], 1.0 - successChance);
-            }
-        }
-
-        // Absorbing state at target level
-        markov.set([targetLevel, targetLevel], 1.0);
+        // Build Markov Chain transition matrix (20×20) — shared with the worker pools
+        const markov = buildEnhancementMarkov(math, {
+            baseSuccessRates: BASE_SUCCESS_RATES,
+            successMultiplier,
+            targetLevel,
+            protectFrom,
+            blessedTea,
+            guzzlingBonus,
+            blessedTeaBonus,
+        });
 
         // Extract transient matrix Q (all states before target)
         const Q = markov.subset(math.index(math.range(0, targetLevel), math.range(0, targetLevel)));
@@ -2954,12 +3471,18 @@
         const I = math.identity(targetLevel);
         const M = math.inv(math.subtract(I, Q));
 
-        // Expected attempts from startLevel to target
-        // Sum all elements in startLevel row of M from startLevel to targetLevel
+        // Expected attempts from startLevel to target.
+        // This is the full row sum of the fundamental matrix: a failure below startLevel drops the
+        // item back to states the run started above, and every visit there costs an attempt too.
+        // Summing only from startLevel up would silently discount those.
         let attempts = 0;
-        for (let i = startLevel; i < targetLevel; i++) {
+        for (let i = 0; i < targetLevel; i++) {
             attempts += M.get([startLevel, i]);
         }
+
+        // How far a run can stray from that expectation. Read off the same M, so the two figures
+        // are one measurement rather than two that have to be kept in step.
+        const attemptsVariance = absorptionVariance(M, targetLevel, startLevel);
 
         // Expected protection item uses
         let protects = 0;
@@ -2985,12 +3508,27 @@
             speedMultiplier = 1 + speedBonus / 100;
         }
 
-        const perActionTime = Math.max(MIN_ACTION_TIME_SECONDS, baseActionTime / speedMultiplier);
+        // A caller that can read the game's own buff maps knows the real per-action time; prefer it
+        // over the formula so predictions and live tracking never disagree about the time base.
+        const perActionTime =
+            perActionTimeOverride > 0
+                ? perActionTimeOverride
+                : Math.max(MIN_ACTION_TIME_SECONDS, baseActionTime / speedMultiplier);
         const totalTime = perActionTime * attempts;
+
+        // The fewest attempts the run could physically take: one per level, or one per two levels
+        // when Blessed Tea can double-jump. Nothing below this is possible, which is what stops a
+        // fitted cost distribution quoting a tenth percentile nobody could ever hit.
+        const levelsToClimb = Math.max(0, targetLevel - startLevel);
+        const minAttempts = blessedTea ? Math.ceil(levelsToClimb / 2) : levelsToClimb;
 
         return {
             attempts: attempts, // Keep exact decimal value for calculations
             attemptsRounded: Math.round(attempts), // Rounded for display
+            // The spread around that expectation — see absorptionVariance
+            attemptsVariance,
+            attemptsStdDev: Math.sqrt(attemptsVariance),
+            minAttempts,
             protectionCount: protects, // Keep decimal precision
             perActionTime: perActionTime,
             totalTime: totalTime,
@@ -3013,8 +3551,1170 @@
     var enhancementCalculator = /*#__PURE__*/Object.freeze({
         __proto__: null,
         BASE_SUCCESS_RATES: BASE_SUCCESS_RATES,
+        BLESSED_TEA_BASE_CHANCE: BLESSED_TEA_BASE_CHANCE,
+        absorptionVariance: absorptionVariance,
+        buildEnhancementMarkov: buildEnhancementMarkov,
         calculateEnhancement: calculateEnhancement,
-        calculatePerActionTime: calculatePerActionTime
+        calculatePerActionTime: calculatePerActionTime,
+        costExceedanceProbability: costExceedanceProbability,
+        costPercentiles: costPercentiles,
+        costStats: costStats
+    });
+
+    /**
+     * Skill Gear Detector
+     *
+     * Auto-detects gear and buffs from character equipment for any skill.
+     * Originally designed for enhancing, now works generically for all skills.
+     */
+
+
+    /**
+     * Detect best gear for a specific skill by equipment slot
+     * @param {string} skillName - Skill name (e.g., 'enhancing', 'cooking', 'milking')
+     * @param {Map} equipment - Character equipment map (equipped items only)
+     * @param {Object} itemDetailMap - Item details map from init_client_data
+     * @returns {Object} Best gear per slot with bonuses
+     */
+    function detectSkillGear(skillName, equipment, itemDetailMap) {
+        const gear = {
+            // Totals for calculations
+            toolBonus: 0,
+            speedBonus: 0,
+            rareFindBonus: 0,
+            experienceBonus: 0,
+
+            // Per-slot breakdown for display
+            slotBreakdown: [],
+
+            // Best items per slot for display
+            toolSlot: null, // main_hand or two_hand
+            bodySlot: null, // body
+            legsSlot: null, // legs
+            handsSlot: null, // hands
+        };
+
+        // Get items to scan - only use equipment map (already filtered to equipped items only)
+        let itemsToScan = [];
+
+        if (equipment) {
+            // Scan only equipped items from equipment map
+            itemsToScan = Array.from(equipment.values()).filter((item) => item && item.itemHrid);
+        }
+
+        // Track best item per slot (by item level, then enhancement level)
+        const slotCandidates = {
+            tool: [], // main_hand or two_hand or skill-specific tool
+            body: [], // body
+            legs: [], // legs
+            hands: [], // hands
+            neck: [], // neck (accessories have 5× multiplier)
+            ring: [], // ring (accessories have 5× multiplier)
+            earrings: [], // earrings (accessories have 5× multiplier)
+            back: [], // back (capes)
+            charm: [], // charm (5× multiplier)
+        };
+
+        // Dynamic stat names based on skill
+        const successStat = `${skillName}Success`;
+        const speedStat = `${skillName}Speed`;
+        const rareFindStat = `${skillName}RareFind`;
+        const experienceStat = `${skillName}Experience`;
+
+        // Search all items for skill-related bonuses and group by slot
+        for (const item of itemsToScan) {
+            const itemDetails = itemDetailMap[item.itemHrid];
+            if (!itemDetails?.equipmentDetail?.noncombatStats) {
+                continue;
+            }
+
+            const stats = itemDetails.equipmentDetail.noncombatStats;
+            const enhancementLevel = item.enhancementLevel || 0;
+            const multiplier = getEnhancementMultiplier(itemDetails, enhancementLevel);
+            const equipmentType = itemDetails.equipmentDetail.type;
+
+            // Generic stat calculation: Loop over ALL stats and apply multiplier
+            const allStats = {};
+            for (const [statName, statValue] of Object.entries(stats)) {
+                if (typeof statValue !== 'number') continue; // Skip non-numeric values
+                allStats[statName] = statValue * 100 * multiplier;
+            }
+
+            // Check if item has any skill-related stats (including universal skills)
+            const hasSkillStats =
+                allStats[successStat] ||
+                allStats[speedStat] ||
+                allStats[rareFindStat] ||
+                allStats[experienceStat] ||
+                allStats.skillingSpeed ||
+                allStats.skillingRareFind ||
+                allStats.skillingExperience;
+
+            if (!hasSkillStats) {
+                continue;
+            }
+
+            // Calculate bonuses for this item (backward-compatible output)
+            const itemBonuses = {
+                item: item,
+                itemDetails: itemDetails,
+                itemLevel: itemDetails.itemLevel || 0,
+                enhancementLevel: enhancementLevel,
+                // Named bonuses (dynamic based on skill)
+                toolBonus: allStats[successStat] || 0,
+                speedBonus: (allStats[speedStat] || 0) + (allStats.skillingSpeed || 0), // Combine speed sources
+                rareFindBonus: (allStats[rareFindStat] || 0) + (allStats.skillingRareFind || 0),
+                experienceBonus: (allStats[experienceStat] || 0) + (allStats.skillingExperience || 0), // Combine experience sources
+                // Generic access to all stats
+                allStats: allStats,
+            };
+
+            // Group by slot
+            // Tool slots: skill-specific tools (e.g., enhancing_tool, cooking_tool) plus main_hand/two_hand
+            const skillToolType = `/equipment_types/${skillName}_tool`;
+            if (
+                equipmentType === skillToolType ||
+                equipmentType === '/equipment_types/main_hand' ||
+                equipmentType === '/equipment_types/two_hand'
+            ) {
+                slotCandidates.tool.push(itemBonuses);
+            } else if (equipmentType === '/equipment_types/body') {
+                slotCandidates.body.push(itemBonuses);
+            } else if (equipmentType === '/equipment_types/legs') {
+                slotCandidates.legs.push(itemBonuses);
+            } else if (equipmentType === '/equipment_types/hands') {
+                slotCandidates.hands.push(itemBonuses);
+            } else if (equipmentType === '/equipment_types/neck') {
+                slotCandidates.neck.push(itemBonuses);
+            } else if (equipmentType === '/equipment_types/ring') {
+                slotCandidates.ring.push(itemBonuses);
+            } else if (equipmentType === '/equipment_types/earrings') {
+                slotCandidates.earrings.push(itemBonuses);
+            } else if (equipmentType === '/equipment_types/back') {
+                slotCandidates.back.push(itemBonuses);
+            } else if (equipmentType === '/equipment_types/charm') {
+                slotCandidates.charm.push(itemBonuses);
+            }
+        }
+
+        // Select best item per slot (highest item level, then highest enhancement level)
+        const selectBest = (candidates) => {
+            if (candidates.length === 0) return null;
+
+            return candidates.reduce((best, current) => {
+                // Compare by item level first
+                if (current.itemLevel > best.itemLevel) return current;
+                if (current.itemLevel < best.itemLevel) return best;
+
+                // If item levels are equal, compare by enhancement level
+                if (current.enhancementLevel > best.enhancementLevel) return current;
+                return best;
+            });
+        };
+
+        const bestTool = selectBest(slotCandidates.tool);
+        const bestBody = selectBest(slotCandidates.body);
+        const bestLegs = selectBest(slotCandidates.legs);
+        const bestHands = selectBest(slotCandidates.hands);
+        const bestNeck = selectBest(slotCandidates.neck);
+        const bestRing = selectBest(slotCandidates.ring);
+        const bestEarrings = selectBest(slotCandidates.earrings);
+        const bestBack = selectBest(slotCandidates.back);
+        const bestCharm = selectBest(slotCandidates.charm);
+
+        // Add bonuses from best items in each slot
+        const addSlot = (best) => {
+            if (!best) return;
+            gear.toolBonus += best.toolBonus;
+            gear.speedBonus += best.speedBonus;
+            gear.rareFindBonus += best.rareFindBonus;
+            gear.experienceBonus += best.experienceBonus;
+            gear.slotBreakdown.push({
+                name: best.itemDetails.name,
+                enhancementLevel: best.enhancementLevel,
+                success: best.toolBonus,
+                speed: best.speedBonus,
+                rareFind: best.rareFindBonus,
+                experience: best.experienceBonus,
+            });
+            return { name: best.itemDetails.name, enhancementLevel: best.enhancementLevel };
+        };
+
+        gear.toolSlot = addSlot(bestTool) || null;
+        gear.bodySlot = addSlot(bestBody) || null;
+        gear.legsSlot = addSlot(bestLegs) || null;
+        gear.handsSlot = addSlot(bestHands) || null;
+        addSlot(bestNeck);
+        addSlot(bestRing);
+        addSlot(bestEarrings);
+        addSlot(bestBack);
+        addSlot(bestCharm);
+
+        return gear;
+    }
+
+    /**
+     * Detect active enhancing teas from drink slots
+     * @param {Array} drinkSlots - Active drink slots for enhancing action type
+     * @param {Object} itemDetailMap - Item details map from init_client_data
+     * @returns {Object} Active teas { enhancing, superEnhancing, ultraEnhancing, blessed }
+     */
+    function detectEnhancingTeas(drinkSlots, _itemDetailMap) {
+        const teas = {
+            enhancing: false, // Enhancing Tea (+3 levels)
+            superEnhancing: false, // Super Enhancing Tea (+6 levels)
+            ultraEnhancing: false, // Ultra Enhancing Tea (+8 levels)
+            blessed: false, // Blessed Tea (1% double jump)
+        };
+
+        if (!drinkSlots || drinkSlots.length === 0) {
+            return teas;
+        }
+
+        // Tea HRIDs to check for
+        const teaMap = {
+            '/items/enhancing_tea': 'enhancing',
+            '/items/super_enhancing_tea': 'superEnhancing',
+            '/items/ultra_enhancing_tea': 'ultraEnhancing',
+            '/items/blessed_tea': 'blessed',
+        };
+
+        for (const drink of drinkSlots) {
+            if (!drink || !drink.itemHrid) continue;
+
+            const teaKey = teaMap[drink.itemHrid];
+            if (teaKey) {
+                teas[teaKey] = true;
+            }
+        }
+
+        return teas;
+    }
+
+    /**
+     * Get enhancing tea level bonus
+     * @param {Object} teas - Active teas from detectEnhancingTeas()
+     * @returns {number} Total level bonus from teas
+     */
+    function getEnhancingTeaLevelBonus(teas) {
+        // Teas don't stack - highest one wins
+        if (teas.ultraEnhancing) return 8;
+        if (teas.superEnhancing) return 6;
+        if (teas.enhancing) return 3;
+
+        return 0;
+    }
+
+    /**
+     * Get enhancing tea speed bonus (base, before concentration)
+     * @param {Object} teas - Active teas from detectEnhancingTeas()
+     * @returns {number} Base speed bonus % from teas
+     */
+    function getEnhancingTeaSpeedBonus(teas) {
+        // Teas don't stack - highest one wins
+        // Base speed bonuses (before drink concentration):
+        if (teas.ultraEnhancing) return 6; // +6% base
+        if (teas.superEnhancing) return 4; // +4% base
+        if (teas.enhancing) return 2; // +2% base
+
+        return 0;
+    }
+
+    /**
+     * Backward-compatible wrapper for enhancing gear detection
+     * @param {Map} equipment - Character equipment map (equipped items only)
+     * @param {Object} itemDetailMap - Item details map from init_client_data
+     * @returns {Object} Best enhancing gear per slot with bonuses
+     */
+    function detectEnhancingGear(equipment, itemDetailMap) {
+        return detectSkillGear('enhancing', equipment, itemDetailMap);
+    }
+
+    var enhancementGearDetector = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        detectEnhancingGear: detectEnhancingGear,
+        detectEnhancingTeas: detectEnhancingTeas,
+        detectSkillGear: detectSkillGear,
+        getEnhancingTeaLevelBonus: getEnhancingTeaLevelBonus,
+        getEnhancingTeaSpeedBonus: getEnhancingTeaSpeedBonus
+    });
+
+    /**
+     * Enhancement Configuration Manager
+     *
+     * Combines auto-detected enhancing parameters with manual overrides from settings.
+     * Provides single source of truth for enhancement simulator inputs.
+     */
+
+
+    /**
+     * Read Blessed Tea's double-jump chance out of the game's consumable data.
+     * The number is a balance lever the game can move, so read it the same way the wisdom tea
+     * bonus is read rather than freezing last patch's value into the source.
+     * @param {Object} itemDetailMap - Item details map from init client data
+     * @returns {number} Double-jump chance as a decimal (e.g. 0.01 for 1%)
+     */
+    function getBlessedTeaBonus(itemDetailMap) {
+        const buffs = itemDetailMap?.['/items/blessed_tea']?.consumableDetail?.buffs;
+        if (Array.isArray(buffs)) {
+            const blessed = buffs.find((buff) => typeof buff?.typeHrid === 'string' && buff.typeHrid.includes('blessed'));
+            if (blessed?.flatBoost > 0) {
+                return blessed.flatBoost;
+            }
+        }
+        return BLESSED_TEA_BASE_CHANCE;
+    }
+
+    /**
+     * Get enhancing parameters (auto-detected or manual)
+     *
+     * Every surface that quotes what *this* character's enhancing will cost goes through here, so
+     * the default has to be the character's own stats. The manual fields ship preloaded with a
+     * professional enhancer's kit — level 140, a +13 celestial enhancer, ultra tea — and any field
+     * still holding those shipped numbers is a field nobody chose, so it is answered from detection
+     * instead. Only a field the player actually edited overrides what they really have.
+     *
+     * @returns {Object} Enhancement parameters for simulator, tagged with `paramsSource`
+     *   ('auto' | 'manual') and `manualOverrides` (labels of edited fields)
+     */
+    function getEnhancingParams() {
+        const autoDetect = config.getSettingValue('enhanceSim_autoDetect', false);
+
+        if (autoDetect) {
+            return getAutoDetectedParams();
+        } else {
+            return getManualParams();
+        }
+    }
+
+    /**
+     * The kit this script ships with: enhancing 140, a max Observatory, ultra and blessed tea, a
+     * +13 Celestial enhancer and +10 enhancing gear. It is what the manual fields are preloaded
+     * with, so the "pro rates" a surface quotes and the defaults the settings panel shows are one
+     * definition rather than two that can drift.
+     *
+     * Character-wide facts that are not part of anybody's kit — the server's community buff level,
+     * the item map's blessed tea chance — still come from live data, exactly as they do for the
+     * player's own numbers.
+     *
+     * @returns {Object} Enhancement parameters for a top-end enhancer, tagged `paramsSource: 'pro'`
+     */
+    function getProRatesParams() {
+        return getManualParams({ useShippedDefaults: true });
+    }
+
+    // Detection walks the loadout and the item map, and getEnhancingParams runs once per item
+    // during a networth or inventory sweep. The character cannot re-gear between two items of the
+    // same sweep, so the answer is held briefly instead of being rebuilt hundreds of times.
+    const DETECTION_CACHE_MS = 1000;
+    let _detectionCache = null;
+    let _detectionCacheAt = 0;
+
+    /**
+     * Detected gear settings, memoised for a moment.
+     * @returns {Object} Map of settingId → detected value
+     */
+    function getDetectedSettingsCached() {
+        const now = Date.now();
+        if (_detectionCache && now - _detectionCacheAt < DETECTION_CACHE_MS) {
+            return _detectionCache;
+        }
+
+        _detectionCache = getDetectedGearSettings();
+        _detectionCacheAt = now;
+        return _detectionCache;
+    }
+
+    /**
+     * Drop the memoised detection, so the next read re-inspects the character.
+     * Exists for tests and for any caller that knows the loadout just changed.
+     */
+    function resetDetectedSettingsCache() {
+        _detectionCache = null;
+        _detectionCacheAt = 0;
+    }
+
+    /**
+     * Compare two setting values, including the compound `{ enabled, tier, level }` gear objects.
+     * @param {*} a - First value
+     * @param {*} b - Second value
+     * @returns {boolean} True when the two describe the same setting
+     */
+    function settingsEqual(a, b) {
+        if (a === b) return true;
+        if (a === null || b === null || typeof a !== 'object' || typeof b !== 'object') return false;
+
+        const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+        for (const key of keys) {
+            if (a[key] !== b[key]) return false;
+        }
+        return true;
+    }
+
+    /**
+     * Describe where a set of enhancing parameters came from, for display next to a prediction.
+     * @param {Object} params - Result of getEnhancingParams()
+     * @returns {string|null} Short label when manual overrides are in play, otherwise null
+     */
+    function describeParamsSource(params) {
+        const overrides = params?.manualOverrides;
+        if (!Array.isArray(overrides) || overrides.length === 0) {
+            return null;
+        }
+
+        const shown = overrides.slice(0, 3).join(', ');
+        return overrides.length > 3 ? `manual params: ${shown} +${overrides.length - 3} more` : `manual params: ${shown}`;
+    }
+
+    /**
+     * Get auto-detected enhancing parameters from character data
+     * @returns {Object} Auto-detected parameters
+     */
+    function getAutoDetectedParams() {
+        // The gear the character would be wearing to enhance, not whatever is on
+        // them at this instant. Somebody in combat kit reading their enhancing
+        // costs off a battleaxe gets a run nobody would ever make; the loadout is
+        // what they actually enhance in. Skill-specific default first, then the
+        // all-skills default, then anything saved, then what is worn.
+        const { equipment, drinks: drinkSlots } = resolveActionContext('/action_types/enhancing');
+        const skills = dataManager.getSkills();
+        const itemDetailMap = dataManager.getInitClientData()?.itemDetailMap || {};
+
+        // Detect gear from equipped items only
+        const gear = detectEnhancingGear(equipment, itemDetailMap);
+
+        // Detect drink concentration from equipment (Guzzling Pouch)
+        // IMPORTANT: Only scan equipped items, not entire inventory
+        let drinkConcentration = 0;
+        const itemsToScan = equipment ? Array.from(equipment.values()).filter((item) => item && item.itemHrid) : [];
+
+        for (const item of itemsToScan) {
+            const itemDetails = itemDetailMap[item.itemHrid];
+            if (!itemDetails?.equipmentDetail?.noncombatStats?.drinkConcentration) continue;
+
+            const concentration = itemDetails.equipmentDetail.noncombatStats.drinkConcentration;
+            const enhancementLevel = item.enhancementLevel || 0;
+            const multiplier = getEnhancementMultiplier(itemDetails, enhancementLevel);
+            const scaledConcentration = concentration * 100 * multiplier;
+
+            // Only keep the highest concentration (shouldn't have multiple, but just in case)
+            if (scaledConcentration > drinkConcentration) {
+                drinkConcentration = scaledConcentration;
+            }
+        }
+
+        // Detect teas
+        const teas = detectEnhancingTeas(drinkSlots);
+
+        // Get tea level bonus (base, then scale with concentration)
+        const baseTeaLevel = getEnhancingTeaLevelBonus(teas);
+        const teaLevelBonus = baseTeaLevel > 0 ? baseTeaLevel * (1 + drinkConcentration / 100) : 0;
+
+        // Get tea speed bonus (base, then scale with concentration)
+        const baseTeaSpeed = getEnhancingTeaSpeedBonus(teas);
+        const teaSpeedBonus = baseTeaSpeed > 0 ? baseTeaSpeed * (1 + drinkConcentration / 100) : 0;
+
+        // Get tea wisdom bonus (base, then scale with concentration)
+        // Wisdom Tea/Coffee provide 12% wisdom, scales with drink concentration
+        let baseTeaWisdom = 0;
+        if (drinkSlots && drinkSlots.length > 0) {
+            for (const drink of drinkSlots) {
+                if (!drink || !drink.itemHrid) continue;
+                const drinkDetails = itemDetailMap[drink.itemHrid];
+                if (!drinkDetails?.consumableDetail?.buffs) continue;
+
+                const wisdomBuff = drinkDetails.consumableDetail.buffs.find(
+                    (buff) => buff.typeHrid === '/buff_types/wisdom'
+                );
+
+                if (wisdomBuff && wisdomBuff.flatBoost) {
+                    baseTeaWisdom += wisdomBuff.flatBoost * 100; // Convert to percentage
+                }
+            }
+        }
+        const teaWisdomBonus = baseTeaWisdom > 0 ? baseTeaWisdom * (1 + drinkConcentration / 100) : 0;
+
+        // Get Enhancing skill level
+        const enhancingSkill = skills?.find((s) => s.skillHrid === '/skills/enhancing');
+        if (!enhancingSkill) {
+            console.error('[EnhancementConfig] Skill not found: /skills/enhancing');
+        }
+        const enhancingLevel = enhancingSkill?.level || 1;
+
+        // Get Observatory house room level (enhancing uses observatory, NOT laboratory!)
+        const houseLevel = dataManager.getHouseRoomLevel('/house_rooms/observatory');
+
+        // Calculate global house buffs from ALL house rooms
+        // Rare Find: 0.2% base + 0.2% per level (per room, only if level >= 1)
+        // Wisdom: 0.05% base + 0.05% per level (per room, only if level >= 1)
+        const houseRooms = dataManager.getHouseRooms();
+        let houseRareFindBonus = 0;
+        let houseWisdomBonus = 0;
+
+        for (const [_hrid, room] of houseRooms) {
+            const level = room.level || 0;
+            if (level >= 1) {
+                // Each room: 0.2% per level (NOT 0.2% base + 0.2% per level)
+                houseRareFindBonus += 0.2 * level;
+                // Each room: 0.05% per level (NOT 0.05% base + 0.05% per level)
+                houseWisdomBonus += 0.05 * level;
+            }
+        }
+
+        // Get Enhancing Speed community buff level
+        const communityBuffLevel = dataManager.getCommunityBuffLevel('/community_buff_types/enhancing_speed');
+        // Formula: 20% base + 0.5% per level
+        const communitySpeedBonus = communityBuffLevel > 0 ? 20 + (communityBuffLevel - 1) * 0.5 : 0;
+
+        // Get Experience (Wisdom) community buff level
+        const communityWisdomLevel = dataManager.getCommunityBuffLevel('/community_buff_types/experience');
+        // Formula: 20% base + 0.5% per level (same as other community buffs)
+        const communityWisdomBonus = communityWisdomLevel > 0 ? 20 + (communityWisdomLevel - 1) * 0.5 : 0;
+
+        const achievementWisdomBonus =
+            dataManager.getAchievementBuffFlatBoost('/action_types/enhancing', '/buff_types/wisdom') * 100;
+        const achievementRareFindBonus =
+            dataManager.getAchievementBuffFlatBoost('/action_types/enhancing', '/buff_types/rare_find') * 100;
+
+        // Calculate total success rate bonus
+        // Equipment + house + achievement
+        const houseSuccessBonus = houseLevel * 0.05; // 0.05% per level for success
+        const equipmentSuccessBonus = gear.toolBonus;
+        const achievementSuccessBonus =
+            dataManager.getAchievementBuffRatioBoost('/action_types/enhancing', '/buff_types/enhancing_success') * 100;
+        const totalSuccessBonus = equipmentSuccessBonus + houseSuccessBonus + achievementSuccessBonus;
+
+        // Calculate total speed bonus
+        // Speed bonus (from equipment) + house bonus (1% per level) + community buff + tea speed
+        const houseSpeedBonus = houseLevel * 1.0; // 1% per level for action speed
+        const totalSpeedBonus = gear.speedBonus + houseSpeedBonus + communitySpeedBonus + teaSpeedBonus;
+
+        // Calculate total experience bonus
+        // Equipment + house wisdom + tea wisdom + community wisdom + achievement wisdom
+        const totalExperienceBonus =
+            gear.experienceBonus + houseWisdomBonus + teaWisdomBonus + communityWisdomBonus + achievementWisdomBonus;
+
+        // Calculate guzzling bonus multiplier (1.0 at level 0, scales with drink concentration)
+        const guzzlingBonus = 1 + drinkConcentration / 100;
+
+        return {
+            // Core values for calculations
+            enhancingLevel: enhancingLevel + teaLevelBonus, // Base level + tea bonus
+            houseLevel: houseLevel,
+            toolBonus: totalSuccessBonus, // Tool + house combined
+            speedBonus: totalSpeedBonus, // Speed + house + community + tea combined
+            rareFindBonus: gear.rareFindBonus + houseRareFindBonus + achievementRareFindBonus, // Rare find (equipment + house rooms + achievements)
+            experienceBonus: totalExperienceBonus, // Experience (equipment + house + tea + community wisdom)
+            guzzlingBonus: guzzlingBonus, // Drink concentration multiplier for blessed tea
+            blessedTeaBonus: getBlessedTeaBonus(itemDetailMap), // Double-jump chance from item data
+            teas: teas,
+
+            // Display info (for UI) - show best item per slot
+            toolSlot: gear.toolSlot,
+            bodySlot: gear.bodySlot,
+            legsSlot: gear.legsSlot,
+            handsSlot: gear.handsSlot,
+            detectedTeaBonus: teaLevelBonus,
+            communityBuffLevel: communityBuffLevel, // For display (speed)
+            communitySpeedBonus: communitySpeedBonus, // For display
+            communityWisdomLevel: communityWisdomLevel, // For display
+            communityWisdomBonus: communityWisdomBonus, // For display
+            achievementWisdomBonus: achievementWisdomBonus, // For display
+            teaSpeedBonus: teaSpeedBonus, // For display
+            teaWisdomBonus: teaWisdomBonus, // For display
+            drinkConcentration: drinkConcentration, // For display
+            houseRareFindBonus: houseRareFindBonus, // For display
+            achievementRareFindBonus: achievementRareFindBonus, // For display
+            houseWisdomBonus: houseWisdomBonus, // For display
+            equipmentRareFind: gear.rareFindBonus, // For display
+            equipmentExperience: gear.experienceBonus, // For display
+            equipmentSuccessBonus: equipmentSuccessBonus, // For display
+            houseSuccessBonus: houseSuccessBonus, // For display
+            achievementSuccessBonus: achievementSuccessBonus, // For display
+            equipmentSpeedBonus: gear.speedBonus, // For display
+            houseSpeedBonus: houseSpeedBonus, // For display
+            slotBreakdown: gear.slotBreakdown || [], // Per-item breakdown for display
+            paramsSource: 'auto', // Everything above came from this character
+            manualOverrides: [], // Nothing was overridden
+        };
+    }
+
+    /**
+     * Detect current character's enhancing gear and return values mapped to setting keys.
+     * Used by settings UI to populate gear inputs when auto-detect is toggled on.
+     * @returns {Object} Map of settingId → detected value
+     */
+    function getDetectedGearSettings() {
+        const { equipment, drinks: drinkSlots } = resolveActionContext('/action_types/enhancing');
+        const skills = dataManager.getSkills();
+
+        const result = {};
+
+        // Enhancing level
+        const enhancingSkill = skills?.find((s) => s.skillHrid === '/skills/enhancing');
+        result.enhanceSim_enhancingLevel = enhancingSkill?.level || 1;
+
+        // Observatory
+        result.enhanceSim_houseLevel = dataManager.getHouseRoomLevel('/house_rooms/observatory');
+
+        // Community buff
+        const communityLevel = dataManager.getCommunityBuffLevel('/community_buff_types/enhancing_speed');
+        result.enhanceSim_communityBuff = { enabled: true, level: communityLevel };
+
+        // Achievement
+        const achievementBonus = dataManager.getAchievementBuffRatioBoost(
+            '/action_types/enhancing',
+            '/buff_types/enhancing_success'
+        );
+        result.enhanceSim_achievement = achievementBonus > 0;
+
+        // Tea detection
+        const teaMap = {
+            '/items/ultra_enhancing_tea': 'ultra',
+            '/items/super_enhancing_tea': 'super',
+            '/items/enhancing_tea': 'basic',
+        };
+        let detectedTea = 'none';
+        let hasBlessed = false;
+        if (drinkSlots) {
+            for (const drink of drinkSlots) {
+                if (!drink?.itemHrid) continue;
+                if (teaMap[drink.itemHrid]) detectedTea = teaMap[drink.itemHrid];
+                if (drink.itemHrid === '/items/blessed_tea') hasBlessed = true;
+            }
+        }
+        result.enhanceSim_tea = detectedTea;
+        result.enhanceSim_blessedTea = hasBlessed;
+
+        // Gear detection — match equipped items to known gear HRIDs
+        const ENHANCER_HRIDS = {
+            '/items/cheese_enhancer': 'cheese',
+            '/items/verdant_enhancer': 'verdant',
+            '/items/azure_enhancer': 'azure',
+            '/items/burble_enhancer': 'burble',
+            '/items/crimson_enhancer': 'crimson',
+            '/items/rainbow_enhancer': 'rainbow',
+            '/items/holy_enhancer': 'holy',
+            '/items/celestial_enhancer': 'celestial',
+        };
+        const CAPE_HRIDS = {
+            '/items/chance_cape': 'normal',
+            '/items/chance_cape_refined': 'refined',
+        };
+        const CHARM_HRIDS = {
+            '/items/trainee_enhancing_charm': 'trainee',
+            '/items/basic_enhancing_charm': 'basic',
+            '/items/advanced_enhancing_charm': 'advanced',
+            '/items/expert_enhancing_charm': 'expert',
+            '/items/master_enhancing_charm': 'master',
+            '/items/grandmaster_enhancing_charm': 'grandmaster',
+        };
+        const FIXED_HRIDS = {
+            '/items/enchanted_gloves': 'gloves',
+            '/items/enhancers_top': 'top',
+            '/items/enhancers_bottoms': 'bottoms',
+            '/items/guzzling_pouch': 'guzzling',
+        };
+        const NECK_HRIDS = {
+            '/items/philosophers_necklace': 'philo',
+            '/items/necklace_of_speed': 'speed',
+        };
+        const RING_HRIDS = {
+            '/items/philosophers_ring': 'philo',
+            '/items/ring_of_rare_find': 'rarefind',
+        };
+        const EARRING_HRIDS = {
+            '/items/philosophers_earrings': 'philo',
+            '/items/earrings_of_rare_find': 'rarefind',
+        };
+
+        // Default all gear to disabled (not detected)
+        result.enhanceSim_gear_enhancer = { enabled: false, tier: 'celestial', level: 0 };
+        result.enhanceSim_gear_gloves = { enabled: false, level: 0 };
+        result.enhanceSim_gear_top = { enabled: false, level: 0 };
+        result.enhanceSim_gear_bottoms = { enabled: false, level: 0 };
+        result.enhanceSim_gear_neck = { enabled: false, tier: 'philo', level: 0 };
+        result.enhanceSim_gear_ring = { enabled: false, tier: 'philo', level: 0 };
+        result.enhanceSim_gear_earring = { enabled: false, tier: 'philo', level: 0 };
+        result.enhanceSim_gear_cape = { enabled: false, tier: 'normal', level: 0 };
+        result.enhanceSim_gear_guzzling = { enabled: false, level: 0 };
+        result.enhanceSim_gear_charm = { enabled: false, tier: 'grandmaster', level: 0 };
+
+        if (equipment) {
+            for (const item of equipment.values()) {
+                if (!item?.itemHrid) continue;
+                const hrid = item.itemHrid;
+                const enhLevel = item.enhancementLevel || 0;
+
+                if (ENHANCER_HRIDS[hrid]) {
+                    result.enhanceSim_gear_enhancer = { enabled: true, tier: ENHANCER_HRIDS[hrid], level: enhLevel };
+                } else if (CAPE_HRIDS[hrid]) {
+                    result.enhanceSim_gear_cape = { enabled: true, tier: CAPE_HRIDS[hrid], level: enhLevel };
+                } else if (CHARM_HRIDS[hrid]) {
+                    result.enhanceSim_gear_charm = { enabled: true, tier: CHARM_HRIDS[hrid], level: enhLevel };
+                } else if (NECK_HRIDS[hrid]) {
+                    result.enhanceSim_gear_neck = { enabled: true, tier: NECK_HRIDS[hrid], level: enhLevel };
+                } else if (RING_HRIDS[hrid]) {
+                    result.enhanceSim_gear_ring = { enabled: true, tier: RING_HRIDS[hrid], level: enhLevel };
+                } else if (EARRING_HRIDS[hrid]) {
+                    result.enhanceSim_gear_earring = { enabled: true, tier: EARRING_HRIDS[hrid], level: enhLevel };
+                } else if (FIXED_HRIDS[hrid]) {
+                    const slot = FIXED_HRIDS[hrid];
+                    result[`enhanceSim_gear_${slot}`] = { enabled: true, level: enhLevel };
+                }
+            }
+        }
+
+        return result;
+    }
+
+    /**
+     * Get manual enhancing parameters from gear-based config settings
+     * @param {Object} [options] - Options
+     * @param {boolean} [options.useShippedDefaults=false] - Answer every field with the value it
+     *   ships with, ignoring both what the player saved and what the character has. This is the
+     *   "pro rates" run: a fixed, top-end kit nobody's gear can change.
+     * @returns {Object} Manual parameters
+     */
+    function getManualParams({ useShippedDefaults = false } = {}) {
+        const itemDetailMap = dataManager.getInitClientData()?.itemDetailMap || {};
+
+        // What this character actually has. Used to fill in every manual field the player never
+        // touched, so an untouched panel quotes their own run rather than a stranger's.
+        let detectedSettings = {};
+        try {
+            // With no character loaded there is nothing to detect, and "detected" would read as
+            // "owns nothing" — worse than the shipped defaults. Fall back to those instead.
+            // A pro-rates run answers from the shipped kit throughout, so it never asks.
+            if (!useShippedDefaults && dataManager.getSkills()?.length) {
+                detectedSettings = getDetectedSettingsCached();
+            }
+        } catch (error) {
+            console.error('[EnhancementConfig] Gear detection failed, using saved settings:', error);
+        }
+
+        const manualOverrides = [];
+
+        /**
+         * Read a manual setting.
+         * @param {string} key - Setting id
+         * @param {*} shippedDefault - The value this field ships with
+         * @param {string} [label] - Human name, listed when the field overrides detection
+         * @returns {*} The value to simulate with
+         */
+        const readSetting = (key, shippedDefault, label) => {
+            // Pro rates are the shipped kit itself, so nothing the player saved or wears applies
+            if (useShippedDefaults) {
+                return shippedDefault;
+            }
+
+            const stored = config.getSettingValue(key, shippedDefault);
+            const detectedValue = detectedSettings[key];
+
+            if (detectedValue === undefined) {
+                return stored;
+            }
+            // Untouched shipped default: nobody chose this, so answer from the character
+            if (settingsEqual(stored, shippedDefault)) {
+                return detectedValue;
+            }
+            if (label && !settingsEqual(stored, detectedValue)) {
+                manualOverrides.push(label);
+            }
+            return stored;
+        };
+
+        const getValue = readSetting;
+
+        // --- ENHANCING ---
+        const houseLevel = getValue('enhanceSim_houseLevel', 8, 'Observatory level');
+        const baseEnhancingLevel = getValue('enhanceSim_enhancingLevel', 140, 'Enhancing level');
+
+        // --- TEA ---
+        const teaSelection = getValue('enhanceSim_tea', 'ultra', 'Tea');
+        const teas = {
+            enhancing: teaSelection === 'basic',
+            superEnhancing: teaSelection === 'super',
+            ultraEnhancing: teaSelection === 'ultra',
+            blessed: getValue('enhanceSim_blessedTea', true, 'Blessed tea'),
+        };
+        const teaLevelBonus =
+            teaSelection === 'ultra' ? 8 : teaSelection === 'super' ? 6 : teaSelection === 'basic' ? 3 : 0;
+        const teaSpeedBonus =
+            teaSelection === 'ultra' ? 6 : teaSelection === 'super' ? 4 : teaSelection === 'basic' ? 2 : 0;
+
+        // --- GEAR ---
+        const ENHANCER_TIERS = {
+            cheese: '/items/cheese_enhancer',
+            verdant: '/items/verdant_enhancer',
+            azure: '/items/azure_enhancer',
+            burble: '/items/burble_enhancer',
+            crimson: '/items/crimson_enhancer',
+            rainbow: '/items/rainbow_enhancer',
+            holy: '/items/holy_enhancer',
+            celestial: '/items/celestial_enhancer',
+        };
+        const CAPE_TIERS = {
+            normal: '/items/chance_cape',
+            refined: '/items/chance_cape_refined',
+        };
+        const CHARM_TIERS = {
+            trainee: '/items/trainee_enhancing_charm',
+            basic: '/items/basic_enhancing_charm',
+            advanced: '/items/advanced_enhancing_charm',
+            expert: '/items/expert_enhancing_charm',
+            master: '/items/master_enhancing_charm',
+            grandmaster: '/items/grandmaster_enhancing_charm',
+        };
+        const FIXED_GEAR = {
+            gloves: '/items/enchanted_gloves',
+            top: '/items/enhancers_top',
+            bottoms: '/items/enhancers_bottoms',
+            guzzling: '/items/guzzling_pouch',
+        };
+        const NECK_TIERS = {
+            philo: '/items/philosophers_necklace',
+            speed: '/items/necklace_of_speed',
+        };
+        const RING_TIERS = {
+            philo: '/items/philosophers_ring',
+            rarefind: '/items/ring_of_rare_find',
+        };
+        const EARRING_TIERS = {
+            philo: '/items/philosophers_earrings',
+            rarefind: '/items/earrings_of_rare_find',
+        };
+
+        // Helper to read compound gear setting
+        const getGear = (key, defaults, label) => {
+            const val = readSetting(key, defaults, label);
+            // Handle both object (new format) and missing/null
+            if (val && typeof val === 'object') return val;
+            return defaults;
+        };
+
+        // Calculate bonuses from each gear slot
+        let equipmentSuccessBonus = 0;
+        let equipmentSpeedBonus = 0;
+        let equipmentRareFind = 0;
+        let equipmentExperience = 0;
+        let drinkConcentration = 0;
+        const slotBreakdown = [];
+
+        // Enhancer
+        const enhancer = getGear('enhanceSim_gear_enhancer', { enabled: true, tier: 'celestial', level: 13 }, 'Enhancer');
+        if (enhancer.enabled) {
+            const hrid = ENHANCER_TIERS[enhancer.tier] || ENHANCER_TIERS.celestial;
+            const bonus = getGearSlotBonus(hrid, enhancer.level, itemDetailMap);
+            equipmentSuccessBonus += bonus.success;
+            equipmentSpeedBonus += bonus.speed;
+            equipmentRareFind += bonus.rareFind;
+            equipmentExperience += bonus.experience;
+            const details = itemDetailMap[hrid];
+            slotBreakdown.push({
+                name: details?.name || 'Enhancer',
+                enhancementLevel: enhancer.level,
+                success: bonus.success,
+                speed: bonus.speed,
+                rareFind: bonus.rareFind,
+                experience: bonus.experience,
+            });
+        }
+
+        // Gloves
+        const gloves = getGear('enhanceSim_gear_gloves', { enabled: true, level: 10 }, 'Gloves');
+        if (gloves.enabled) {
+            const bonus = getGearSlotBonus(FIXED_GEAR.gloves, gloves.level, itemDetailMap);
+            equipmentSpeedBonus += bonus.speed;
+            equipmentExperience += bonus.experience;
+            const details = itemDetailMap[FIXED_GEAR.gloves];
+            slotBreakdown.push({
+                name: details?.name || 'Gloves',
+                enhancementLevel: gloves.level,
+                success: 0,
+                speed: bonus.speed,
+                rareFind: 0,
+                experience: bonus.experience,
+            });
+        }
+
+        // Top
+        const top = getGear('enhanceSim_gear_top', { enabled: true, level: 10 }, 'Top');
+        if (top.enabled) {
+            const bonus = getGearSlotBonus(FIXED_GEAR.top, top.level, itemDetailMap);
+            equipmentSpeedBonus += bonus.speed;
+            equipmentRareFind += bonus.rareFind;
+            equipmentExperience += bonus.experience;
+            const details = itemDetailMap[FIXED_GEAR.top];
+            slotBreakdown.push({
+                name: details?.name || 'Top',
+                enhancementLevel: top.level,
+                success: 0,
+                speed: bonus.speed,
+                rareFind: bonus.rareFind,
+                experience: bonus.experience,
+            });
+        }
+
+        // Bottoms
+        const bottoms = getGear('enhanceSim_gear_bottoms', { enabled: true, level: 10 }, 'Bottoms');
+        if (bottoms.enabled) {
+            const bonus = getGearSlotBonus(FIXED_GEAR.bottoms, bottoms.level, itemDetailMap);
+            equipmentSpeedBonus += bonus.speed;
+            equipmentExperience += bonus.experience;
+            const details = itemDetailMap[FIXED_GEAR.bottoms];
+            slotBreakdown.push({
+                name: details?.name || 'Bottoms',
+                enhancementLevel: bottoms.level,
+                success: 0,
+                speed: bonus.speed,
+                rareFind: 0,
+                experience: bonus.experience,
+            });
+        }
+
+        // Neck
+        const neck = getGear('enhanceSim_gear_neck', { enabled: true, tier: 'philo', level: 10 }, 'Necklace');
+        if (neck.enabled) {
+            const hrid = NECK_TIERS[neck.tier] || NECK_TIERS.philo;
+            const bonus = getGearSlotBonus(hrid, neck.level, itemDetailMap);
+            equipmentSuccessBonus += bonus.success;
+            equipmentSpeedBonus += bonus.speed;
+            equipmentRareFind += bonus.rareFind;
+            equipmentExperience += bonus.experience;
+            const details = itemDetailMap[hrid];
+            slotBreakdown.push({
+                name: details?.name || 'Necklace',
+                enhancementLevel: neck.level,
+                success: bonus.success,
+                speed: bonus.speed,
+                rareFind: bonus.rareFind,
+                experience: bonus.experience,
+            });
+        }
+
+        // Ring
+        const ring = getGear('enhanceSim_gear_ring', { enabled: true, tier: 'philo', level: 10 }, 'Ring');
+        if (ring.enabled) {
+            const hrid = RING_TIERS[ring.tier] || RING_TIERS.philo;
+            const bonus = getGearSlotBonus(hrid, ring.level, itemDetailMap);
+            equipmentSuccessBonus += bonus.success;
+            equipmentSpeedBonus += bonus.speed;
+            equipmentRareFind += bonus.rareFind;
+            equipmentExperience += bonus.experience;
+            const details = itemDetailMap[hrid];
+            slotBreakdown.push({
+                name: details?.name || 'Ring',
+                enhancementLevel: ring.level,
+                success: bonus.success,
+                speed: bonus.speed,
+                rareFind: bonus.rareFind,
+                experience: bonus.experience,
+            });
+        }
+
+        // Earring
+        const earring = getGear('enhanceSim_gear_earring', { enabled: true, tier: 'philo', level: 10 }, 'Earrings');
+        if (earring.enabled) {
+            const hrid = EARRING_TIERS[earring.tier] || EARRING_TIERS.philo;
+            const bonus = getGearSlotBonus(hrid, earring.level, itemDetailMap);
+            equipmentSuccessBonus += bonus.success;
+            equipmentSpeedBonus += bonus.speed;
+            equipmentRareFind += bonus.rareFind;
+            equipmentExperience += bonus.experience;
+            const details = itemDetailMap[hrid];
+            slotBreakdown.push({
+                name: details?.name || 'Earrings',
+                enhancementLevel: earring.level,
+                success: bonus.success,
+                speed: bonus.speed,
+                rareFind: bonus.rareFind,
+                experience: bonus.experience,
+            });
+        }
+
+        // Cape
+        const cape = getGear('enhanceSim_gear_cape', { enabled: true, tier: 'normal', level: 5 }, 'Cape');
+        if (cape.enabled) {
+            const hrid = CAPE_TIERS[cape.tier] || CAPE_TIERS.normal;
+            const bonus = getGearSlotBonus(hrid, cape.level, itemDetailMap);
+            equipmentSuccessBonus += bonus.success;
+            equipmentSpeedBonus += bonus.speed;
+            equipmentRareFind += bonus.rareFind;
+            equipmentExperience += bonus.experience;
+            const details = itemDetailMap[hrid];
+            slotBreakdown.push({
+                name: details?.name || 'Cape',
+                enhancementLevel: cape.level,
+                success: bonus.success,
+                speed: bonus.speed,
+                rareFind: bonus.rareFind,
+                experience: bonus.experience,
+            });
+        }
+
+        // Guzzling Pouch (provides drink concentration)
+        const guzzling = getGear('enhanceSim_gear_guzzling', { enabled: true, level: 10 }, 'Guzzling Pouch');
+        if (guzzling.enabled) {
+            const bonus = getGearSlotBonus(FIXED_GEAR.guzzling, guzzling.level, itemDetailMap);
+            drinkConcentration = bonus.drinkConc;
+        }
+
+        // Charm (provides experience/wisdom bonus)
+        const charm = getGear('enhanceSim_gear_charm', { enabled: true, tier: 'grandmaster', level: 0 }, 'Charm');
+        if (charm.enabled) {
+            const hrid = CHARM_TIERS[charm.tier] || CHARM_TIERS.grandmaster;
+            const bonus = getGearSlotBonus(hrid, charm.level, itemDetailMap);
+            equipmentSuccessBonus += bonus.success;
+            equipmentSpeedBonus += bonus.speed;
+            equipmentRareFind += bonus.rareFind;
+            equipmentExperience += bonus.experience;
+            const details = itemDetailMap[hrid];
+            slotBreakdown.push({
+                name: details?.name || 'Charm',
+                enhancementLevel: charm.level,
+                success: bonus.success,
+                speed: bonus.speed,
+                rareFind: bonus.rareFind,
+                experience: bonus.experience,
+            });
+        }
+
+        // --- COMMUNITY BUFF ---
+        const communityBuff = getGear('enhanceSim_communityBuff', { enabled: true, level: 1 }, 'Community buff');
+        let communityBuffLevel;
+        if (communityBuff.enabled) {
+            // Checked = auto-detect from game
+            communityBuffLevel = dataManager.getCommunityBuffLevel('/community_buff_types/enhancing_speed');
+        } else {
+            communityBuffLevel = communityBuff.level;
+        }
+        const communitySpeedBonus = communityBuffLevel > 0 ? 20 + (communityBuffLevel - 1) * 0.5 : 0;
+
+        // --- ACHIEVEMENT ---
+        // The toggle only says whether to count the achievement buff; how big it is comes from the
+        // character's own data, the same source auto-detect reads, so the two modes cannot drift.
+        const achievementEnabled = getValue('enhanceSim_achievement', false, 'Achievement');
+        const achievementSuccessBonus = achievementEnabled
+            ? dataManager.getAchievementBuffRatioBoost('/action_types/enhancing', '/buff_types/enhancing_success') * 100
+            : 0;
+
+        // --- HOUSE BONUSES ---
+        const houseSpeedBonus = houseLevel * 1.0;
+        const houseSuccessBonus = houseLevel * 0.05;
+
+        // House wisdom: 0.05% per level per room (same as auto-detect)
+        const houseRooms = dataManager.getHouseRooms();
+        let houseWisdomBonus = 0;
+        for (const [_hrid, room] of houseRooms) {
+            const level = room.level || 0;
+            if (level >= 1) {
+                houseWisdomBonus += 0.05 * level;
+            }
+        }
+
+        // --- SCALE TEA BONUSES WITH DRINK CONCENTRATION ---
+        const scaledTeaLevelBonus = teaLevelBonus > 0 ? teaLevelBonus * (1 + drinkConcentration / 100) : 0;
+        const scaledTeaSpeedBonus = teaSpeedBonus > 0 ? teaSpeedBonus * (1 + drinkConcentration / 100) : 0;
+
+        // Tea wisdom bonus (Wisdom Tea/Coffee provide 12% wisdom, scales with drink concentration)
+        let baseTeaWisdom = 0;
+        const drinkSlots = dataManager.getActionDrinkSlots('/action_types/enhancing');
+        if (drinkSlots && drinkSlots.length > 0) {
+            for (const drink of drinkSlots) {
+                if (!drink || !drink.itemHrid) continue;
+                const drinkDetails = itemDetailMap[drink.itemHrid];
+                if (!drinkDetails?.consumableDetail?.buffs) continue;
+                const wisdomBuff = drinkDetails.consumableDetail.buffs.find(
+                    (buff) => buff.typeHrid === '/buff_types/wisdom'
+                );
+                if (wisdomBuff && wisdomBuff.flatBoost) {
+                    baseTeaWisdom += wisdomBuff.flatBoost * 100;
+                }
+            }
+        }
+        const teaWisdomBonus = baseTeaWisdom > 0 ? baseTeaWisdom * (1 + drinkConcentration / 100) : 0;
+
+        // Community wisdom buff
+        const communityWisdomLevel = dataManager.getCommunityBuffLevel('/community_buff_types/experience');
+        const communityWisdomBonus = communityWisdomLevel > 0 ? 20 + (communityWisdomLevel - 1) * 0.5 : 0;
+
+        // Achievement wisdom buff
+        const achievementWisdomBonus =
+            dataManager.getAchievementBuffFlatBoost('/action_types/enhancing', '/buff_types/wisdom') * 100;
+
+        // --- TOTALS ---
+        const totalToolBonus = equipmentSuccessBonus + houseSuccessBonus + achievementSuccessBonus;
+        const totalSpeedBonus = equipmentSpeedBonus + houseSpeedBonus + communitySpeedBonus + scaledTeaSpeedBonus;
+        const totalExperienceBonus =
+            equipmentExperience + houseWisdomBonus + teaWisdomBonus + communityWisdomBonus + achievementWisdomBonus;
+        const guzzlingBonus = 1 + drinkConcentration / 100;
+
+        return {
+            enhancingLevel: baseEnhancingLevel + scaledTeaLevelBonus,
+            houseLevel: houseLevel,
+            toolBonus: totalToolBonus,
+            speedBonus: totalSpeedBonus,
+            rareFindBonus: equipmentRareFind,
+            experienceBonus: totalExperienceBonus,
+            guzzlingBonus: guzzlingBonus,
+            blessedTeaBonus: getBlessedTeaBonus(itemDetailMap), // Double-jump chance from item data
+            teas: teas,
+
+            // Display info for manual mode
+            toolSlot: null,
+            bodySlot: null,
+            legsSlot: null,
+            handsSlot: null,
+            detectedTeaBonus: scaledTeaLevelBonus,
+            communityBuffLevel: communityBuffLevel,
+            communitySpeedBonus: communitySpeedBonus,
+            teaSpeedBonus: scaledTeaSpeedBonus,
+            equipmentSpeedBonus: equipmentSpeedBonus,
+            houseSpeedBonus: houseSpeedBonus,
+            equipmentSuccessBonus: equipmentSuccessBonus,
+            houseSuccessBonus: houseSuccessBonus,
+            achievementSuccessBonus: achievementSuccessBonus,
+            slotBreakdown: slotBreakdown,
+            // Fields left at their shipped values were answered from detection, so a run with no
+            // edited fields is an auto-detected run no matter what the toggle says
+            paramsSource: useShippedDefaults ? 'pro' : manualOverrides.length > 0 ? 'manual' : 'auto',
+            manualOverrides,
+        };
+    }
+
+    /**
+     * Calculate enhancing bonuses from a single gear slot
+     * @param {string} itemHrid - Item HRID
+     * @param {number} enhancementLevel - Enhancement level (0-20)
+     * @param {Object} itemDetailMap - Item details map
+     * @returns {Object} { success, speed, rareFind, experience, drinkConc }
+     */
+    function getGearSlotBonus(itemHrid, enhancementLevel, itemDetailMap) {
+        const itemDetails = itemDetailMap[itemHrid];
+        if (!itemDetails) return { success: 0, speed: 0, rareFind: 0, experience: 0, drinkConc: 0 };
+
+        const multiplier = getEnhancementMultiplier(itemDetails, enhancementLevel);
+        const stats = itemDetails.equipmentDetail?.noncombatStats || {};
+
+        return {
+            success: (stats.enhancingSuccess || 0) * 100 * multiplier,
+            speed: ((stats.enhancingSpeed || 0) + (stats.skillingSpeed || 0)) * 100 * multiplier,
+            rareFind: ((stats.enhancingRareFind || 0) + (stats.skillingRareFind || 0)) * 100 * multiplier,
+            experience: ((stats.enhancingExperience || 0) + (stats.skillingExperience || 0)) * 100 * multiplier,
+            drinkConc: (stats.drinkConcentration || 0) * 100 * multiplier,
+        };
+    }
+
+    var enhancementConfig = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        describeParamsSource: describeParamsSource,
+        getAutoDetectedParams: getAutoDetectedParams,
+        getBlessedTeaBonus: getBlessedTeaBonus,
+        getDetectedGearSettings: getDetectedGearSettings,
+        getEnhancingParams: getEnhancingParams,
+        getProRatesParams: getProRatesParams,
+        resetDetectedSettingsCache: resetDetectedSettingsCache
     });
 
     /**
@@ -4049,6 +5749,65 @@
     });
 
     /**
+     * Whether this is a touch device, and whether to act like it.
+     *
+     * Two questions, deliberately separate. `hasCoarsePointer` is a fact about the
+     * hardware — the primary pointer cannot hit a 14px target — and things sized
+     * for fingers key on it directly. `isMobileMode` is a *choice* that defaults to
+     * that fact: auto-detection is right until the one person on a touchscreen
+     * laptop wants desktop layouts, and a setting that cannot be overridden is a
+     * bug report waiting to be written.
+     */
+
+
+    /**
+     * Whether the primary pointer is a finger rather than a cursor.
+     *
+     * `pointer: coarse` rather than user-agent sniffing: it asks about the actual
+     * input device instead of guessing from a browser string that lies for
+     * compatibility reasons.
+     *
+     * @returns {boolean}
+     */
+    function hasCoarsePointer() {
+        return typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
+    }
+
+    /**
+     * Whether features should adjust for a phone-sized, touch-driven screen.
+     *
+     * @returns {boolean}
+     */
+    function isMobileMode() {
+        const mode = config.getSettingValue('mobileMode', 'auto');
+        if (mode === 'on') return true;
+        if (mode === 'off') return false;
+        return hasCoarsePointer();
+    }
+
+    /**
+     * What auto-detection is deciding right now, in a word.
+     *
+     * "Auto-detect" is a promise the settings page cannot keep quietly: on the one
+     * machine where the detection is wrong, the setting looks correct and the
+     * layout does not, and there is nothing on screen to tell the two apart. The
+     * settings UI shows this beside the option so the answer is visible before the
+     * override is needed.
+     *
+     * @returns {string} `'mobile'` or `'desktop'`
+     */
+    function detectedModeLabel() {
+        return hasCoarsePointer() ? 'mobile' : 'desktop';
+    }
+
+    var mobile = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        detectedModeLabel: detectedModeLabel,
+        hasCoarsePointer: hasCoarsePointer,
+        isMobileMode: isMobileMode
+    });
+
+    /**
      * DOM Observer Helper Utilities
      * Standardized wrappers around domObserver to reduce boilerplate
      */
@@ -4435,9 +6194,150 @@
         return bestValuePerToken > 0 ? bestValuePerToken : null;
     }
 
+    /**
+     * A shop line's costs, whichever shape the shop keeps them in.
+     *
+     * The dungeon and task shops carry a `costs` array; the labyrinth shop carries a
+     * single `cost`. Same idea, two spellings.
+     *
+     * @param {Object} line - A shop line
+     * @returns {Array<{itemHrid: string, count: number}>}
+     */
+    function shopCosts(line) {
+        if (Array.isArray(line?.costs)) return line.costs;
+        if (line?.cost) return [line.cost];
+        return [];
+    }
+
+    /**
+     * The best coins one token buys, within the shop that takes it.
+     *
+     * A token is worth the most valuable thing its own shop converts to. Only lines
+     * the market prices count — a line nobody can sell says nothing about what a
+     * token is worth.
+     *
+     * @param {Object} shopMap - One of the game's shop maps
+     * @param {Function} priceOf - `(itemHrid) => number|null`
+     * @param {string} tokenHrid - The currency
+     * @returns {number} Coins per token, or 0
+     */
+    function tokenValueIn(shopMap, priceOf, tokenHrid) {
+        let best = 0;
+
+        for (const line of Object.values(shopMap || {})) {
+            const cost = shopCosts(line).find((entry) => entry?.itemHrid === tokenHrid);
+            if (!(cost?.count > 0)) continue;
+
+            const price = priceOf(line.itemHrid);
+            if (!(price > 0)) continue;
+
+            const perToken = (price * (line.outputCount || 1)) / cost.count;
+            if (perToken > best) best = perToken;
+        }
+        return best;
+    }
+
+    /**
+     * What a shop charges for something, in coins.
+     *
+     * Some equipment is never listed on the market at all — capes drop, and are
+     * otherwise bought from a shop for tokens. A market-only reading says such a
+     * piece cannot be had at any price, which is the opposite of true. The shop
+     * knows the price; it is just quoted in a currency that needs converting, and a
+     * token converts at whatever the best line in its own shop is worth.
+     *
+     * @param {string} itemHrid - The item
+     * @param {Array<Object>} shopMaps - The game's shop maps, in preference order
+     * @param {Function} priceOf - `(itemHrid) => number|null`, a market ask
+     * @returns {number|null} Coins, or null when no shop sells it for anything priceable
+     */
+    function shopPurchasePrice(itemHrid, shopMaps, priceOf) {
+        for (const shopMap of shopMaps || []) {
+            const line = Object.values(shopMap || {}).find((entry) => entry?.itemHrid === itemHrid);
+            const costs = shopCosts(line);
+            if (!costs.length) continue;
+
+            let total = 0;
+            let priced = true;
+
+            for (const cost of costs) {
+                const each =
+                    cost?.itemHrid === '/items/coin'
+                        ? 1
+                        : priceOf(cost?.itemHrid) || tokenValueIn(shopMap, priceOf, cost?.itemHrid);
+                // One unpriceable currency makes the whole line unpriceable rather
+                // than cheap, the same rule the rest of this file runs on
+                if (!(each > 0) || !(cost?.count > 0)) {
+                    priced = false;
+                    break;
+                }
+                total += each * cost.count;
+            }
+
+            if (priced && total > 0) return total / (line.outputCount || 1);
+        }
+        return null;
+    }
+
+    /**
+     * The best coins a labyrinth token can be turned into.
+     *
+     * Labyrinth rewards are bought with tokens, and a token is worth whatever the
+     * most valuable thing in its shop converts to. Only tradable shop lines count —
+     * a shop line nobody can sell prices a token at nothing, which would then price
+     * every reward at nothing.
+     *
+     * @param {Object} shopMap - The game's `labyrinthShopItemDetailMap`
+     * @param {Function} priceOf - `(itemHrid) => number|null`
+     * @returns {number} Coins per token, or 0 when nothing in the shop is priced
+     */
+    function labyrinthTokenValue(shopMap, priceOf) {
+        let best = 0;
+
+        for (const line of Object.values(shopMap || {})) {
+            const cost = line?.cost?.count || 0;
+            if (!(cost > 0)) continue;
+
+            const price = priceOf(line.itemHrid);
+            if (!(price > 0)) continue;
+
+            // One token can buy several of something, and the shop says so
+            const perToken = (price * (line.outputCount || 1)) / cost;
+            if (perToken > best) best = perToken;
+        }
+        return best;
+    }
+
+    /**
+     * What a labyrinth reward is worth, through the tokens it costs.
+     *
+     * Scrolls and seals never appear on the market — they are bought from the
+     * labyrinth shop and used — so a market-only reading prices them at nothing and
+     * leaves them out of a chest's contents entirely. They cost tokens, and tokens
+     * have a value, so they have one.
+     *
+     * @param {string} itemHrid - The reward
+     * @param {Object} shopMap - The game's `labyrinthShopItemDetailMap`
+     * @param {Function} priceOf - `(itemHrid) => number|null`
+     * @returns {number|null} Coins, or null when it is not a labyrinth reward
+     */
+    function labyrinthRewardValue(itemHrid, shopMap, priceOf) {
+        const line = Object.values(shopMap || {}).find((entry) => entry?.itemHrid === itemHrid);
+        const cost = line?.cost?.count || 0;
+        if (!(cost > 0)) return null;
+
+        const perToken = labyrinthTokenValue(shopMap, priceOf);
+        if (!(perToken > 0)) return null;
+
+        return (perToken * cost) / (line.outputCount || 1);
+    }
+
     var tokenValuation = /*#__PURE__*/Object.freeze({
         __proto__: null,
-        calculateDungeonTokenValue: calculateDungeonTokenValue
+        calculateDungeonTokenValue: calculateDungeonTokenValue,
+        labyrinthRewardValue: labyrinthRewardValue,
+        labyrinthTokenValue: labyrinthTokenValue,
+        shopPurchasePrice: shopPurchasePrice
     });
 
     /**
@@ -4626,6 +6526,11 @@
         }
     }
 
+    var workerPool$3 = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        default: WorkerPool
+    });
+
     /**
      * Expected Value Calculator Worker Manager
      * Manages a worker pool for parallel EV container calculations
@@ -4633,10 +6538,10 @@
 
 
     // Worker pool instance
-    let workerPool = null;
+    let workerPool$2 = null;
 
     // Worker script as inline string
-    const WORKER_SCRIPT = `
+    const WORKER_SCRIPT$2 = `
 // Cache for EV calculation results
 const evCache = new Map();
 
@@ -4734,20 +6639,20 @@ self.onmessage = function (e) {
     /**
      * Get or create the worker pool instance
      */
-    async function getWorkerPool() {
-        if (workerPool) {
-            return workerPool;
+    async function getWorkerPool$2() {
+        if (workerPool$2) {
+            return workerPool$2;
         }
 
         try {
             // Create worker blob from inline script
-            const blob = new Blob([WORKER_SCRIPT], { type: 'application/javascript' });
+            const blob = new Blob([WORKER_SCRIPT$2], { type: 'application/javascript' });
 
             // Initialize worker pool with 2-4 workers
-            workerPool = new WorkerPool(blob);
-            await workerPool.initialize();
+            workerPool$2 = new WorkerPool(blob);
+            await workerPool$2.initialize();
 
-            return workerPool;
+            return workerPool$2;
         } catch (error) {
             throw error;
         }
@@ -4759,7 +6664,7 @@ self.onmessage = function (e) {
      * @returns {Promise<Array>} Array of {containerHrid, ev} results
      */
     async function calculateEVBatch(containers) {
-        const pool = await getWorkerPool();
+        const pool = await getWorkerPool$2();
 
         // Split containers into chunks for parallel processing
         const chunkSize = Math.ceil(containers.length / pool.getStats().poolSize);
@@ -4780,6 +6685,45 @@ self.onmessage = function (e) {
         // Flatten results
         return results.flat();
     }
+
+    /**
+     * Clear the worker cache
+     */
+    async function clearEVCache() {
+        if (!workerPool$2) {
+            return;
+        }
+
+        const pool = await getWorkerPool$2();
+        return pool.execute({
+            action: 'clearCache',
+        });
+    }
+
+    /**
+     * Get worker pool statistics
+     */
+    function getEVWorkerStats() {
+        return workerPool$2 ? workerPool$2.getStats() : null;
+    }
+
+    /**
+     * Terminate the worker pool
+     */
+    function terminateEVWorkerPool() {
+        if (workerPool$2) {
+            workerPool$2.terminate();
+            workerPool$2 = null;
+        }
+    }
+
+    var evWorkerManager = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        calculateEVBatch: calculateEVBatch,
+        clearEVCache: clearEVCache,
+        getEVWorkerStats: getEVWorkerStats,
+        terminateEVWorkerPool: terminateEVWorkerPool
+    });
 
     /**
      * Expected Value Calculator Module
@@ -5197,6 +7141,10 @@ self.onmessage = function (e) {
 
             this.containerCache.clear();
             this.isInitialized = false;
+
+            // The pool recreates itself on the next batch; idle workers should not
+            // outlive the feature that spawned them
+            terminateEVWorkerPool();
         }
 
         disable() {
@@ -6112,7 +8060,7 @@ self.onmessage = function (e) {
         // Skill Action Detail
         SKILL_ACTION_DETAIL: '[class*="SkillActionDetail_skillActionDetail"]',
         SKILL_ACTION_NAME: '[class*="SkillActionDetail_name"]',
-        ENHANCING_COMPONENT: 'div.SkillActionDetail_enhancingComponent__17bOx',
+        ENHANCING_COMPONENT: 'div[class*="SkillActionDetail_enhancingComponent"]',
 
         // Action Queue
         QUEUED_ACTIONS: '[class*="QueuedActions_action"]',
@@ -6123,11 +8071,18 @@ self.onmessage = function (e) {
         TASK_LIST: '[class*="TasksPanel_taskList"]',
         TASK_CARD: '[class*="RandomTask_randomTask"]',
         TASK_NAME: '[class*="RandomTask_name"]',
-        TASK_INFO: '.RandomTask_taskInfo__1uasf',
-        TASK_ACTION: '.RandomTask_action__3eC6o',
-        TASK_REWARDS: '.RandomTask_rewards__YZk7D',
+        TASK_INFO: '[class*="RandomTask_taskInfo"]',
+        TASK_ACTION: '[class*="RandomTask_action"]',
+        TASK_REWARDS: '[class*="RandomTask_rewards"]',
         TASK_CONTENT: '[class*="RandomTask_content"]',
         TASK_NAME_DIV: 'div[class*="RandomTask_name"]',
+        // Buttons within a task card. "Button_button" is the shared base class every
+        // button carries, so it is paired with the variant class ("Button_buy"/
+        // "Button_success") that actually distinguishes a claim button from any other.
+        TASK_CLAIM_BUTTON: 'button[class*="Button_button"][class*="Button_buy"]',
+        TASK_GO_BUTTON: 'button[class*="Button_success"]',
+        // The Tasks panel's own <h1> title, used to anchor the sprite-warning banner
+        TASKS_PANEL_TITLE: 'h1[class*="TasksPanel_title"]',
 
         // House Panel
         HOUSE_HEADER: '[class*="HousePanel_header"]',
@@ -6135,19 +8090,24 @@ self.onmessage = function (e) {
         HOUSE_ITEM_REQUIREMENTS: '[class*="HousePanel_itemRequirements"]',
 
         // Loot Log
-        LOOT_LOG_CONTAINER: '.LootLogPanel_actionLoots__3oTid',
-        LOOT_LOG_ENTRY: '.LootLogPanel_actionLoot__32gl_',
+        LOOT_LOG_CONTAINER: '[class*="LootLogPanel_actionLoots"]',
+        // "actionLoot" is a prefix of "actionLoots" (the container above), so this
+        // needs the trailing "__" — the point where the CSS-module hash begins — to
+        // stay a single entry rather than also matching the whole container.
+        LOOT_LOG_ENTRY: '[class*="LootLogPanel_actionLoot__"]',
 
         // Inventory
         INVENTORY_ITEMS: '[class*="Inventory_items"]',
-        INVENTORY_CATEGORY_BUTTON: '.Inventory_categoryButton__35s1x',
-        INVENTORY_LABEL: '.Inventory_label__XEOAx',
+        INVENTORY_CATEGORY_BUTTON: '[class*="Inventory_categoryButton"]',
+        INVENTORY_LABEL: '[class*="Inventory_label"]',
 
         // Items
-        ITEM_CONTAINER: '.Item_itemContainer__x7kH1',
-        ITEM_ITEM: '.Item_item__2De2O',
-        ITEM_COUNT: '.Item_count__1HVvv',
-        ITEM_TOOLTIP_TEXT: '.ItemTooltipText_itemTooltipText__zFq3A',
+        ITEM_CONTAINER: '[class*="Item_itemContainer"]',
+        // "Item_item" is a prefix of "Item_itemContainer" (above), so this needs the
+        // trailing "__" too, or it would match every item container as well.
+        ITEM_ITEM: '[class*="Item_item__"]',
+        ITEM_COUNT: '[class*="Item_count"]',
+        ITEM_TOOLTIP_TEXT: '[class*="ItemTooltipText_itemTooltipText"]',
 
         // Navigation/Experience Bars
         NAV_LEVEL: '[class*="NavigationBar_level"]',
@@ -6425,116 +8385,77 @@ self.onmessage = function (e) {
     }
 
     /**
-     * Calculate the cost to reach a specific ability level from level 0
-     * @param {string} abilityHrid - Ability HRID (e.g., '/abilities/fireball')
-     * @param {number} targetLevel - Target level to reach
-     * @returns {number} Total cost in coins
+     * What it costs to own an ability at a level, from nothing.
+     *
+     * The books to learn it plus the books to level it, at the book's market price —
+     * which is what `explainAbilityLevelUpCost` already answers, starting from level
+     * zero with zero XP.
+     *
+     * There used to be a `calculateAbilityCost` here that returned this number and
+     * `0` when the book had no listing, so an unpriced ability was reported as free.
+     * It is gone: `null` is the honest answer to "what does the market say", and
+     * every caller now has to decide what to draw for it. See
+     * `explainAbilityLevelUpCost` below.
+     *
+     * @param {string} abilityHrid - Ability HRID, e.g. `/abilities/fireball`
+     * @param {number} targetLevel - Level being priced
+     * @returns {Object} Same shape as `explainAbilityLevelUpCost`; `total` is null when unpriced
      */
-    function calculateAbilityCost(abilityHrid, targetLevel) {
-        const gameData = dataManager.getInitClientData();
-        if (!gameData) return 0;
-
-        const levelXpTable = gameData.levelExperienceTable;
-        if (!levelXpTable) return 0;
-
-        // Get XP needed to reach target level from level 0
-        const targetXp = levelXpTable[targetLevel] || 0;
-
-        // Determine XP per book (50 for starters, 500 for advanced)
-        const xpPerBook = isStarterAbility(abilityHrid) ? 50 : 500;
-
-        // Calculate books needed
-        let booksNeeded = targetXp / xpPerBook;
-        booksNeeded += 1; // +1 book to learn the ability initially
-
-        // Get market price for ability book
-        const itemHrid = abilityHrid.replace('/abilities/', '/items/');
-        const prices = marketAPI.getPrice(itemHrid, 0);
-
-        if (!prices) return 0;
-
-        // Match MCS behavior: if only one side of the order book exists, use it for both
-        // (getPrice normalizes missing sides to null)
-        let ask = prices.ask;
-        let bid = prices.bid;
-
-        if (ask != null && bid == null) {
-            bid = ask;
-        }
-        if (bid != null && ask == null) {
-            ask = bid;
-        }
-        if (ask == null && bid == null) {
-            return 0;
-        }
-
-        // Use weighted average
-        const weightedPrice = (ask + bid) / 2;
-
-        return booksNeeded * weightedPrice;
+    function explainAbilityCost(abilityHrid, targetLevel) {
+        return explainAbilityLevelUpCost(abilityHrid, 0, 0, targetLevel);
     }
 
     /**
-     * Calculate the cost to level up an ability from current level to target level
-     * @param {string} abilityHrid - Ability HRID
-     * @param {number} currentLevel - Current ability level
-     * @param {number} currentXp - Current ability XP
-     * @param {number} targetLevel - Target ability level
-     * @returns {number} Cost in coins
+     * The same cost, itemised: which book, how many, at what price.
+     *
+     * An ability is levelled by reading books, not by buying a copy of itself at an
+     * enhancement level — so a breakdown built from `resolveUpgradeBuyPrice` asks the
+     * market for something that does not exist and comes back with "no price found"
+     * for an ability anyone can buy books for today. This is what an ability upgrade
+     * actually costs, in the terms it is actually paid in.
+     *
+     * @param {string} abilityHrid - Ability HRID, e.g. `/abilities/fireball`
+     * @param {number} currentLevel - Level it is at now (0 = not learned)
+     * @param {number} currentXp - XP it has now
+     * @param {number} targetLevel - Level being priced
+     * @returns {Object} `{ bookHrid, bookName, books, xpPerBook, bookPrice, total, learnBook }`,
+     *   with `bookPrice` and `total` null when the book has no market listing
      */
-    function calculateAbilityLevelUpCost(abilityHrid, currentLevel, currentXp, targetLevel) {
+    function explainAbilityLevelUpCost(abilityHrid, currentLevel, currentXp, targetLevel) {
         const gameData = dataManager.getInitClientData();
-        if (!gameData) return 0;
+        const bookHrid = String(abilityHrid || '').replace('/abilities/', '/items/');
+        const bookName =
+            gameData?.itemDetailMap?.[bookHrid]?.name || bookHrid.split('/').pop().replace(/_/g, ' ') || 'ability book';
+        const blank = { bookHrid, bookName, books: 0, xpPerBook: 0, bookPrice: null, total: null, learnBook: false };
 
-        const levelXpTable = gameData.levelExperienceTable;
-        if (!levelXpTable) return 0;
+        const levelXpTable = gameData?.levelExperienceTable;
+        if (!levelXpTable) return blank;
 
-        // Calculate XP needed
         const targetXp = levelXpTable[targetLevel] || 0;
-        const xpNeeded = targetXp - currentXp;
-
-        // Determine XP per book
         const xpPerBook = isStarterAbility(abilityHrid) ? 50 : 500;
 
-        // Calculate books needed
-        let booksNeeded = xpNeeded / xpPerBook;
+        let books = (targetXp - currentXp) / xpPerBook;
+        // A book is spent learning the ability before any of them count as levels
+        const learnBook = currentLevel === 0;
+        if (learnBook) books += 1;
 
-        // If starting from level 0, need +1 book to learn initially
-        if (currentLevel === 0) {
-            booksNeeded += 1;
-        }
-
-        // Get market price
-        const itemHrid = abilityHrid.replace('/abilities/', '/items/');
-        const prices = marketAPI.getPrice(itemHrid, 0);
-
-        if (!prices) return 0;
-
+        const prices = marketAPI.getPrice(bookHrid, 0);
         // Match MCS behavior: if only one side of the order book exists, use it for both
         // (getPrice normalizes missing sides to null)
-        let ask = prices.ask;
-        let bid = prices.bid;
+        let ask = prices?.ask ?? null;
+        let bid = prices?.bid ?? null;
+        if (ask != null && bid == null) bid = ask;
+        if (bid != null && ask == null) ask = bid;
+        if (ask == null || bid == null) return { ...blank, books, xpPerBook, learnBook };
 
-        if (ask != null && bid == null) {
-            bid = ask;
-        }
-        if (bid != null && ask == null) {
-            ask = bid;
-        }
-        if (ask == null && bid == null) {
-            return 0;
-        }
-
-        // Weighted average
-        const weightedPrice = (ask + bid) / 2;
-
-        return booksNeeded * weightedPrice;
+        const bookPrice = (ask + bid) / 2;
+        return { bookHrid, bookName, books, xpPerBook, bookPrice, total: books * bookPrice, learnBook };
     }
 
     var abilityCalc = /*#__PURE__*/Object.freeze({
         __proto__: null,
-        calculateAbilityCost: calculateAbilityCost,
-        calculateAbilityLevelUpCost: calculateAbilityLevelUpCost,
+        explainAbilityCost: explainAbilityCost,
+        explainAbilityLevelUpCost: explainAbilityLevelUpCost,
         isStarterAbility: isStarterAbility
     });
 
@@ -6656,984 +8577,6 @@ self.onmessage = function (e) {
         __proto__: null,
         createCollapsibleSection: createCollapsibleSection,
         default: uiComponents
-    });
-
-    /**
-     * Skill Gear Detector
-     *
-     * Auto-detects gear and buffs from character equipment for any skill.
-     * Originally designed for enhancing, now works generically for all skills.
-     */
-
-
-    /**
-     * Detect best gear for a specific skill by equipment slot
-     * @param {string} skillName - Skill name (e.g., 'enhancing', 'cooking', 'milking')
-     * @param {Map} equipment - Character equipment map (equipped items only)
-     * @param {Object} itemDetailMap - Item details map from init_client_data
-     * @returns {Object} Best gear per slot with bonuses
-     */
-    function detectSkillGear(skillName, equipment, itemDetailMap) {
-        const gear = {
-            // Totals for calculations
-            toolBonus: 0,
-            speedBonus: 0,
-            rareFindBonus: 0,
-            experienceBonus: 0,
-
-            // Per-slot breakdown for display
-            slotBreakdown: [],
-
-            // Best items per slot for display
-            toolSlot: null, // main_hand or two_hand
-            bodySlot: null, // body
-            legsSlot: null, // legs
-            handsSlot: null, // hands
-        };
-
-        // Get items to scan - only use equipment map (already filtered to equipped items only)
-        let itemsToScan = [];
-
-        if (equipment) {
-            // Scan only equipped items from equipment map
-            itemsToScan = Array.from(equipment.values()).filter((item) => item && item.itemHrid);
-        }
-
-        // Track best item per slot (by item level, then enhancement level)
-        const slotCandidates = {
-            tool: [], // main_hand or two_hand or skill-specific tool
-            body: [], // body
-            legs: [], // legs
-            hands: [], // hands
-            neck: [], // neck (accessories have 5× multiplier)
-            ring: [], // ring (accessories have 5× multiplier)
-            earrings: [], // earrings (accessories have 5× multiplier)
-            back: [], // back (capes)
-            charm: [], // charm (5× multiplier)
-        };
-
-        // Dynamic stat names based on skill
-        const successStat = `${skillName}Success`;
-        const speedStat = `${skillName}Speed`;
-        const rareFindStat = `${skillName}RareFind`;
-        const experienceStat = `${skillName}Experience`;
-
-        // Search all items for skill-related bonuses and group by slot
-        for (const item of itemsToScan) {
-            const itemDetails = itemDetailMap[item.itemHrid];
-            if (!itemDetails?.equipmentDetail?.noncombatStats) {
-                continue;
-            }
-
-            const stats = itemDetails.equipmentDetail.noncombatStats;
-            const enhancementLevel = item.enhancementLevel || 0;
-            const multiplier = getEnhancementMultiplier(itemDetails, enhancementLevel);
-            const equipmentType = itemDetails.equipmentDetail.type;
-
-            // Generic stat calculation: Loop over ALL stats and apply multiplier
-            const allStats = {};
-            for (const [statName, statValue] of Object.entries(stats)) {
-                if (typeof statValue !== 'number') continue; // Skip non-numeric values
-                allStats[statName] = statValue * 100 * multiplier;
-            }
-
-            // Check if item has any skill-related stats (including universal skills)
-            const hasSkillStats =
-                allStats[successStat] ||
-                allStats[speedStat] ||
-                allStats[rareFindStat] ||
-                allStats[experienceStat] ||
-                allStats.skillingSpeed ||
-                allStats.skillingRareFind ||
-                allStats.skillingExperience;
-
-            if (!hasSkillStats) {
-                continue;
-            }
-
-            // Calculate bonuses for this item (backward-compatible output)
-            const itemBonuses = {
-                item: item,
-                itemDetails: itemDetails,
-                itemLevel: itemDetails.itemLevel || 0,
-                enhancementLevel: enhancementLevel,
-                // Named bonuses (dynamic based on skill)
-                toolBonus: allStats[successStat] || 0,
-                speedBonus: (allStats[speedStat] || 0) + (allStats.skillingSpeed || 0), // Combine speed sources
-                rareFindBonus: (allStats[rareFindStat] || 0) + (allStats.skillingRareFind || 0),
-                experienceBonus: (allStats[experienceStat] || 0) + (allStats.skillingExperience || 0), // Combine experience sources
-                // Generic access to all stats
-                allStats: allStats,
-            };
-
-            // Group by slot
-            // Tool slots: skill-specific tools (e.g., enhancing_tool, cooking_tool) plus main_hand/two_hand
-            const skillToolType = `/equipment_types/${skillName}_tool`;
-            if (
-                equipmentType === skillToolType ||
-                equipmentType === '/equipment_types/main_hand' ||
-                equipmentType === '/equipment_types/two_hand'
-            ) {
-                slotCandidates.tool.push(itemBonuses);
-            } else if (equipmentType === '/equipment_types/body') {
-                slotCandidates.body.push(itemBonuses);
-            } else if (equipmentType === '/equipment_types/legs') {
-                slotCandidates.legs.push(itemBonuses);
-            } else if (equipmentType === '/equipment_types/hands') {
-                slotCandidates.hands.push(itemBonuses);
-            } else if (equipmentType === '/equipment_types/neck') {
-                slotCandidates.neck.push(itemBonuses);
-            } else if (equipmentType === '/equipment_types/ring') {
-                slotCandidates.ring.push(itemBonuses);
-            } else if (equipmentType === '/equipment_types/earrings') {
-                slotCandidates.earrings.push(itemBonuses);
-            } else if (equipmentType === '/equipment_types/back') {
-                slotCandidates.back.push(itemBonuses);
-            } else if (equipmentType === '/equipment_types/charm') {
-                slotCandidates.charm.push(itemBonuses);
-            }
-        }
-
-        // Select best item per slot (highest item level, then highest enhancement level)
-        const selectBest = (candidates) => {
-            if (candidates.length === 0) return null;
-
-            return candidates.reduce((best, current) => {
-                // Compare by item level first
-                if (current.itemLevel > best.itemLevel) return current;
-                if (current.itemLevel < best.itemLevel) return best;
-
-                // If item levels are equal, compare by enhancement level
-                if (current.enhancementLevel > best.enhancementLevel) return current;
-                return best;
-            });
-        };
-
-        const bestTool = selectBest(slotCandidates.tool);
-        const bestBody = selectBest(slotCandidates.body);
-        const bestLegs = selectBest(slotCandidates.legs);
-        const bestHands = selectBest(slotCandidates.hands);
-        const bestNeck = selectBest(slotCandidates.neck);
-        const bestRing = selectBest(slotCandidates.ring);
-        const bestEarrings = selectBest(slotCandidates.earrings);
-        const bestBack = selectBest(slotCandidates.back);
-        const bestCharm = selectBest(slotCandidates.charm);
-
-        // Add bonuses from best items in each slot
-        const addSlot = (best) => {
-            if (!best) return;
-            gear.toolBonus += best.toolBonus;
-            gear.speedBonus += best.speedBonus;
-            gear.rareFindBonus += best.rareFindBonus;
-            gear.experienceBonus += best.experienceBonus;
-            gear.slotBreakdown.push({
-                name: best.itemDetails.name,
-                enhancementLevel: best.enhancementLevel,
-                success: best.toolBonus,
-                speed: best.speedBonus,
-                rareFind: best.rareFindBonus,
-                experience: best.experienceBonus,
-            });
-            return { name: best.itemDetails.name, enhancementLevel: best.enhancementLevel };
-        };
-
-        gear.toolSlot = addSlot(bestTool) || null;
-        gear.bodySlot = addSlot(bestBody) || null;
-        gear.legsSlot = addSlot(bestLegs) || null;
-        gear.handsSlot = addSlot(bestHands) || null;
-        addSlot(bestNeck);
-        addSlot(bestRing);
-        addSlot(bestEarrings);
-        addSlot(bestBack);
-        addSlot(bestCharm);
-
-        return gear;
-    }
-
-    /**
-     * Detect active enhancing teas from drink slots
-     * @param {Array} drinkSlots - Active drink slots for enhancing action type
-     * @param {Object} itemDetailMap - Item details map from init_client_data
-     * @returns {Object} Active teas { enhancing, superEnhancing, ultraEnhancing, blessed }
-     */
-    function detectEnhancingTeas(drinkSlots, _itemDetailMap) {
-        const teas = {
-            enhancing: false, // Enhancing Tea (+3 levels)
-            superEnhancing: false, // Super Enhancing Tea (+6 levels)
-            ultraEnhancing: false, // Ultra Enhancing Tea (+8 levels)
-            blessed: false, // Blessed Tea (1% double jump)
-        };
-
-        if (!drinkSlots || drinkSlots.length === 0) {
-            return teas;
-        }
-
-        // Tea HRIDs to check for
-        const teaMap = {
-            '/items/enhancing_tea': 'enhancing',
-            '/items/super_enhancing_tea': 'superEnhancing',
-            '/items/ultra_enhancing_tea': 'ultraEnhancing',
-            '/items/blessed_tea': 'blessed',
-        };
-
-        for (const drink of drinkSlots) {
-            if (!drink || !drink.itemHrid) continue;
-
-            const teaKey = teaMap[drink.itemHrid];
-            if (teaKey) {
-                teas[teaKey] = true;
-            }
-        }
-
-        return teas;
-    }
-
-    /**
-     * Get enhancing tea level bonus
-     * @param {Object} teas - Active teas from detectEnhancingTeas()
-     * @returns {number} Total level bonus from teas
-     */
-    function getEnhancingTeaLevelBonus(teas) {
-        // Teas don't stack - highest one wins
-        if (teas.ultraEnhancing) return 8;
-        if (teas.superEnhancing) return 6;
-        if (teas.enhancing) return 3;
-
-        return 0;
-    }
-
-    /**
-     * Get enhancing tea speed bonus (base, before concentration)
-     * @param {Object} teas - Active teas from detectEnhancingTeas()
-     * @returns {number} Base speed bonus % from teas
-     */
-    function getEnhancingTeaSpeedBonus(teas) {
-        // Teas don't stack - highest one wins
-        // Base speed bonuses (before drink concentration):
-        if (teas.ultraEnhancing) return 6; // +6% base
-        if (teas.superEnhancing) return 4; // +4% base
-        if (teas.enhancing) return 2; // +2% base
-
-        return 0;
-    }
-
-    /**
-     * Backward-compatible wrapper for enhancing gear detection
-     * @param {Map} equipment - Character equipment map (equipped items only)
-     * @param {Object} itemDetailMap - Item details map from init_client_data
-     * @returns {Object} Best enhancing gear per slot with bonuses
-     */
-    function detectEnhancingGear(equipment, itemDetailMap) {
-        return detectSkillGear('enhancing', equipment, itemDetailMap);
-    }
-
-    var enhancementGearDetector = /*#__PURE__*/Object.freeze({
-        __proto__: null,
-        detectEnhancingGear: detectEnhancingGear,
-        detectEnhancingTeas: detectEnhancingTeas,
-        detectSkillGear: detectSkillGear,
-        getEnhancingTeaLevelBonus: getEnhancingTeaLevelBonus,
-        getEnhancingTeaSpeedBonus: getEnhancingTeaSpeedBonus
-    });
-
-    /**
-     * Enhancement Configuration Manager
-     *
-     * Combines auto-detected enhancing parameters with manual overrides from settings.
-     * Provides single source of truth for enhancement simulator inputs.
-     */
-
-
-    /**
-     * Get enhancing parameters (auto-detected or manual)
-     * @returns {Object} Enhancement parameters for simulator
-     */
-    function getEnhancingParams() {
-        const autoDetect = config.getSettingValue('enhanceSim_autoDetect', false);
-
-        if (autoDetect) {
-            return getAutoDetectedParams();
-        } else {
-            return getManualParams();
-        }
-    }
-
-    /**
-     * Get auto-detected enhancing parameters from character data
-     * @returns {Object} Auto-detected parameters
-     */
-    function getAutoDetectedParams() {
-        // Get character data
-        const equipment = dataManager.getEquipment();
-        const skills = dataManager.getSkills();
-        const drinkSlots = dataManager.getActionDrinkSlots('/action_types/enhancing');
-        const itemDetailMap = dataManager.getInitClientData()?.itemDetailMap || {};
-
-        // Detect gear from equipped items only
-        const gear = detectEnhancingGear(equipment, itemDetailMap);
-
-        // Detect drink concentration from equipment (Guzzling Pouch)
-        // IMPORTANT: Only scan equipped items, not entire inventory
-        let drinkConcentration = 0;
-        const itemsToScan = equipment ? Array.from(equipment.values()).filter((item) => item && item.itemHrid) : [];
-
-        for (const item of itemsToScan) {
-            const itemDetails = itemDetailMap[item.itemHrid];
-            if (!itemDetails?.equipmentDetail?.noncombatStats?.drinkConcentration) continue;
-
-            const concentration = itemDetails.equipmentDetail.noncombatStats.drinkConcentration;
-            const enhancementLevel = item.enhancementLevel || 0;
-            const multiplier = getEnhancementMultiplier(itemDetails, enhancementLevel);
-            const scaledConcentration = concentration * 100 * multiplier;
-
-            // Only keep the highest concentration (shouldn't have multiple, but just in case)
-            if (scaledConcentration > drinkConcentration) {
-                drinkConcentration = scaledConcentration;
-            }
-        }
-
-        // Detect teas
-        const teas = detectEnhancingTeas(drinkSlots);
-
-        // Get tea level bonus (base, then scale with concentration)
-        const baseTeaLevel = getEnhancingTeaLevelBonus(teas);
-        const teaLevelBonus = baseTeaLevel > 0 ? baseTeaLevel * (1 + drinkConcentration / 100) : 0;
-
-        // Get tea speed bonus (base, then scale with concentration)
-        const baseTeaSpeed = getEnhancingTeaSpeedBonus(teas);
-        const teaSpeedBonus = baseTeaSpeed > 0 ? baseTeaSpeed * (1 + drinkConcentration / 100) : 0;
-
-        // Get tea wisdom bonus (base, then scale with concentration)
-        // Wisdom Tea/Coffee provide 12% wisdom, scales with drink concentration
-        let baseTeaWisdom = 0;
-        if (drinkSlots && drinkSlots.length > 0) {
-            for (const drink of drinkSlots) {
-                if (!drink || !drink.itemHrid) continue;
-                const drinkDetails = itemDetailMap[drink.itemHrid];
-                if (!drinkDetails?.consumableDetail?.buffs) continue;
-
-                const wisdomBuff = drinkDetails.consumableDetail.buffs.find(
-                    (buff) => buff.typeHrid === '/buff_types/wisdom'
-                );
-
-                if (wisdomBuff && wisdomBuff.flatBoost) {
-                    baseTeaWisdom += wisdomBuff.flatBoost * 100; // Convert to percentage
-                }
-            }
-        }
-        const teaWisdomBonus = baseTeaWisdom > 0 ? baseTeaWisdom * (1 + drinkConcentration / 100) : 0;
-
-        // Get Enhancing skill level
-        const enhancingSkill = skills?.find((s) => s.skillHrid === '/skills/enhancing');
-        if (!enhancingSkill) {
-            console.error('[EnhancementConfig] Skill not found: /skills/enhancing');
-        }
-        const enhancingLevel = enhancingSkill?.level || 1;
-
-        // Get Observatory house room level (enhancing uses observatory, NOT laboratory!)
-        const houseLevel = dataManager.getHouseRoomLevel('/house_rooms/observatory');
-
-        // Calculate global house buffs from ALL house rooms
-        // Rare Find: 0.2% base + 0.2% per level (per room, only if level >= 1)
-        // Wisdom: 0.05% base + 0.05% per level (per room, only if level >= 1)
-        const houseRooms = dataManager.getHouseRooms();
-        let houseRareFindBonus = 0;
-        let houseWisdomBonus = 0;
-
-        for (const [_hrid, room] of houseRooms) {
-            const level = room.level || 0;
-            if (level >= 1) {
-                // Each room: 0.2% per level (NOT 0.2% base + 0.2% per level)
-                houseRareFindBonus += 0.2 * level;
-                // Each room: 0.05% per level (NOT 0.05% base + 0.05% per level)
-                houseWisdomBonus += 0.05 * level;
-            }
-        }
-
-        // Get Enhancing Speed community buff level
-        const communityBuffLevel = dataManager.getCommunityBuffLevel('/community_buff_types/enhancing_speed');
-        // Formula: 20% base + 0.5% per level
-        const communitySpeedBonus = communityBuffLevel > 0 ? 20 + (communityBuffLevel - 1) * 0.5 : 0;
-
-        // Get Experience (Wisdom) community buff level
-        const communityWisdomLevel = dataManager.getCommunityBuffLevel('/community_buff_types/experience');
-        // Formula: 20% base + 0.5% per level (same as other community buffs)
-        const communityWisdomBonus = communityWisdomLevel > 0 ? 20 + (communityWisdomLevel - 1) * 0.5 : 0;
-
-        const achievementWisdomBonus =
-            dataManager.getAchievementBuffFlatBoost('/action_types/enhancing', '/buff_types/wisdom') * 100;
-        const achievementRareFindBonus =
-            dataManager.getAchievementBuffFlatBoost('/action_types/enhancing', '/buff_types/rare_find') * 100;
-
-        // Calculate total success rate bonus
-        // Equipment + house + achievement
-        const houseSuccessBonus = houseLevel * 0.05; // 0.05% per level for success
-        const equipmentSuccessBonus = gear.toolBonus;
-        const achievementSuccessBonus =
-            dataManager.getAchievementBuffRatioBoost('/action_types/enhancing', '/buff_types/enhancing_success') * 100;
-        const totalSuccessBonus = equipmentSuccessBonus + houseSuccessBonus + achievementSuccessBonus;
-
-        // Calculate total speed bonus
-        // Speed bonus (from equipment) + house bonus (1% per level) + community buff + tea speed
-        const houseSpeedBonus = houseLevel * 1.0; // 1% per level for action speed
-        const totalSpeedBonus = gear.speedBonus + houseSpeedBonus + communitySpeedBonus + teaSpeedBonus;
-
-        // Calculate total experience bonus
-        // Equipment + house wisdom + tea wisdom + community wisdom + achievement wisdom
-        const totalExperienceBonus =
-            gear.experienceBonus + houseWisdomBonus + teaWisdomBonus + communityWisdomBonus + achievementWisdomBonus;
-
-        // Calculate guzzling bonus multiplier (1.0 at level 0, scales with drink concentration)
-        const guzzlingBonus = 1 + drinkConcentration / 100;
-
-        return {
-            // Core values for calculations
-            enhancingLevel: enhancingLevel + teaLevelBonus, // Base level + tea bonus
-            houseLevel: houseLevel,
-            toolBonus: totalSuccessBonus, // Tool + house combined
-            speedBonus: totalSpeedBonus, // Speed + house + community + tea combined
-            rareFindBonus: gear.rareFindBonus + houseRareFindBonus + achievementRareFindBonus, // Rare find (equipment + house rooms + achievements)
-            experienceBonus: totalExperienceBonus, // Experience (equipment + house + tea + community wisdom)
-            guzzlingBonus: guzzlingBonus, // Drink concentration multiplier for blessed tea
-            teas: teas,
-
-            // Display info (for UI) - show best item per slot
-            toolSlot: gear.toolSlot,
-            bodySlot: gear.bodySlot,
-            legsSlot: gear.legsSlot,
-            handsSlot: gear.handsSlot,
-            detectedTeaBonus: teaLevelBonus,
-            communityBuffLevel: communityBuffLevel, // For display (speed)
-            communitySpeedBonus: communitySpeedBonus, // For display
-            communityWisdomLevel: communityWisdomLevel, // For display
-            communityWisdomBonus: communityWisdomBonus, // For display
-            achievementWisdomBonus: achievementWisdomBonus, // For display
-            teaSpeedBonus: teaSpeedBonus, // For display
-            teaWisdomBonus: teaWisdomBonus, // For display
-            drinkConcentration: drinkConcentration, // For display
-            houseRareFindBonus: houseRareFindBonus, // For display
-            achievementRareFindBonus: achievementRareFindBonus, // For display
-            houseWisdomBonus: houseWisdomBonus, // For display
-            equipmentRareFind: gear.rareFindBonus, // For display
-            equipmentExperience: gear.experienceBonus, // For display
-            equipmentSuccessBonus: equipmentSuccessBonus, // For display
-            houseSuccessBonus: houseSuccessBonus, // For display
-            achievementSuccessBonus: achievementSuccessBonus, // For display
-            equipmentSpeedBonus: gear.speedBonus, // For display
-            houseSpeedBonus: houseSpeedBonus, // For display
-            slotBreakdown: gear.slotBreakdown || [], // Per-item breakdown for display
-        };
-    }
-
-    /**
-     * Detect current character's enhancing gear and return values mapped to setting keys.
-     * Used by settings UI to populate gear inputs when auto-detect is toggled on.
-     * @returns {Object} Map of settingId → detected value
-     */
-    function getDetectedGearSettings() {
-        const equipment = dataManager.getEquipment();
-        const skills = dataManager.getSkills();
-        const drinkSlots = dataManager.getActionDrinkSlots('/action_types/enhancing');
-
-        const result = {};
-
-        // Enhancing level
-        const enhancingSkill = skills?.find((s) => s.skillHrid === '/skills/enhancing');
-        result.enhanceSim_enhancingLevel = enhancingSkill?.level || 1;
-
-        // Observatory
-        result.enhanceSim_houseLevel = dataManager.getHouseRoomLevel('/house_rooms/observatory');
-
-        // Community buff
-        const communityLevel = dataManager.getCommunityBuffLevel('/community_buff_types/enhancing_speed');
-        result.enhanceSim_communityBuff = { enabled: true, level: communityLevel };
-
-        // Achievement
-        const achievementBonus = dataManager.getAchievementBuffRatioBoost(
-            '/action_types/enhancing',
-            '/buff_types/enhancing_success'
-        );
-        result.enhanceSim_achievement = achievementBonus > 0;
-
-        // Tea detection
-        const teaMap = {
-            '/items/ultra_enhancing_tea': 'ultra',
-            '/items/super_enhancing_tea': 'super',
-            '/items/enhancing_tea': 'basic',
-        };
-        let detectedTea = 'none';
-        let hasBlessed = false;
-        if (drinkSlots) {
-            for (const drink of drinkSlots) {
-                if (!drink?.itemHrid) continue;
-                if (teaMap[drink.itemHrid]) detectedTea = teaMap[drink.itemHrid];
-                if (drink.itemHrid === '/items/blessed_tea') hasBlessed = true;
-            }
-        }
-        result.enhanceSim_tea = detectedTea;
-        result.enhanceSim_blessedTea = hasBlessed;
-
-        // Gear detection — match equipped items to known gear HRIDs
-        const ENHANCER_HRIDS = {
-            '/items/cheese_enhancer': 'cheese',
-            '/items/verdant_enhancer': 'verdant',
-            '/items/azure_enhancer': 'azure',
-            '/items/burble_enhancer': 'burble',
-            '/items/crimson_enhancer': 'crimson',
-            '/items/rainbow_enhancer': 'rainbow',
-            '/items/holy_enhancer': 'holy',
-            '/items/celestial_enhancer': 'celestial',
-        };
-        const CAPE_HRIDS = {
-            '/items/chance_cape': 'normal',
-            '/items/chance_cape_refined': 'refined',
-        };
-        const CHARM_HRIDS = {
-            '/items/trainee_enhancing_charm': 'trainee',
-            '/items/basic_enhancing_charm': 'basic',
-            '/items/advanced_enhancing_charm': 'advanced',
-            '/items/expert_enhancing_charm': 'expert',
-            '/items/master_enhancing_charm': 'master',
-            '/items/grandmaster_enhancing_charm': 'grandmaster',
-        };
-        const FIXED_HRIDS = {
-            '/items/enchanted_gloves': 'gloves',
-            '/items/enhancers_top': 'top',
-            '/items/enhancers_bottoms': 'bottoms',
-            '/items/guzzling_pouch': 'guzzling',
-        };
-        const NECK_HRIDS = {
-            '/items/philosophers_necklace': 'philo',
-            '/items/necklace_of_speed': 'speed',
-        };
-        const RING_HRIDS = {
-            '/items/philosophers_ring': 'philo',
-            '/items/ring_of_rare_find': 'rarefind',
-        };
-        const EARRING_HRIDS = {
-            '/items/philosophers_earrings': 'philo',
-            '/items/earrings_of_rare_find': 'rarefind',
-        };
-
-        // Default all gear to disabled (not detected)
-        result.enhanceSim_gear_enhancer = { enabled: false, tier: 'celestial', level: 0 };
-        result.enhanceSim_gear_gloves = { enabled: false, level: 0 };
-        result.enhanceSim_gear_top = { enabled: false, level: 0 };
-        result.enhanceSim_gear_bottoms = { enabled: false, level: 0 };
-        result.enhanceSim_gear_neck = { enabled: false, tier: 'philo', level: 0 };
-        result.enhanceSim_gear_ring = { enabled: false, tier: 'philo', level: 0 };
-        result.enhanceSim_gear_earring = { enabled: false, tier: 'philo', level: 0 };
-        result.enhanceSim_gear_cape = { enabled: false, tier: 'normal', level: 0 };
-        result.enhanceSim_gear_guzzling = { enabled: false, level: 0 };
-        result.enhanceSim_gear_charm = { enabled: false, tier: 'grandmaster', level: 0 };
-
-        if (equipment) {
-            for (const item of equipment.values()) {
-                if (!item?.itemHrid) continue;
-                const hrid = item.itemHrid;
-                const enhLevel = item.enhancementLevel || 0;
-
-                if (ENHANCER_HRIDS[hrid]) {
-                    result.enhanceSim_gear_enhancer = { enabled: true, tier: ENHANCER_HRIDS[hrid], level: enhLevel };
-                } else if (CAPE_HRIDS[hrid]) {
-                    result.enhanceSim_gear_cape = { enabled: true, tier: CAPE_HRIDS[hrid], level: enhLevel };
-                } else if (CHARM_HRIDS[hrid]) {
-                    result.enhanceSim_gear_charm = { enabled: true, tier: CHARM_HRIDS[hrid], level: enhLevel };
-                } else if (NECK_HRIDS[hrid]) {
-                    result.enhanceSim_gear_neck = { enabled: true, tier: NECK_HRIDS[hrid], level: enhLevel };
-                } else if (RING_HRIDS[hrid]) {
-                    result.enhanceSim_gear_ring = { enabled: true, tier: RING_HRIDS[hrid], level: enhLevel };
-                } else if (EARRING_HRIDS[hrid]) {
-                    result.enhanceSim_gear_earring = { enabled: true, tier: EARRING_HRIDS[hrid], level: enhLevel };
-                } else if (FIXED_HRIDS[hrid]) {
-                    const slot = FIXED_HRIDS[hrid];
-                    result[`enhanceSim_gear_${slot}`] = { enabled: true, level: enhLevel };
-                }
-            }
-        }
-
-        return result;
-    }
-
-    /**
-     * Get manual enhancing parameters from gear-based config settings
-     * @returns {Object} Manual parameters
-     */
-    function getManualParams() {
-        const getValue = (key, defaultValue) => {
-            return config.getSettingValue(key, defaultValue);
-        };
-
-        const itemDetailMap = dataManager.getInitClientData()?.itemDetailMap || {};
-
-        // --- ENHANCING ---
-        const houseLevel = getValue('enhanceSim_houseLevel', 8);
-        const baseEnhancingLevel = getValue('enhanceSim_enhancingLevel', 140);
-
-        // --- TEA ---
-        const teaSelection = getValue('enhanceSim_tea', 'ultra');
-        const teas = {
-            enhancing: teaSelection === 'basic',
-            superEnhancing: teaSelection === 'super',
-            ultraEnhancing: teaSelection === 'ultra',
-            blessed: getValue('enhanceSim_blessedTea', true),
-        };
-        const teaLevelBonus =
-            teaSelection === 'ultra' ? 8 : teaSelection === 'super' ? 6 : teaSelection === 'basic' ? 3 : 0;
-        const teaSpeedBonus =
-            teaSelection === 'ultra' ? 6 : teaSelection === 'super' ? 4 : teaSelection === 'basic' ? 2 : 0;
-
-        // --- GEAR ---
-        const ENHANCER_TIERS = {
-            cheese: '/items/cheese_enhancer',
-            verdant: '/items/verdant_enhancer',
-            azure: '/items/azure_enhancer',
-            burble: '/items/burble_enhancer',
-            crimson: '/items/crimson_enhancer',
-            rainbow: '/items/rainbow_enhancer',
-            holy: '/items/holy_enhancer',
-            celestial: '/items/celestial_enhancer',
-        };
-        const CAPE_TIERS = {
-            normal: '/items/chance_cape',
-            refined: '/items/chance_cape_refined',
-        };
-        const CHARM_TIERS = {
-            trainee: '/items/trainee_enhancing_charm',
-            basic: '/items/basic_enhancing_charm',
-            advanced: '/items/advanced_enhancing_charm',
-            expert: '/items/expert_enhancing_charm',
-            master: '/items/master_enhancing_charm',
-            grandmaster: '/items/grandmaster_enhancing_charm',
-        };
-        const FIXED_GEAR = {
-            gloves: '/items/enchanted_gloves',
-            top: '/items/enhancers_top',
-            bottoms: '/items/enhancers_bottoms',
-            guzzling: '/items/guzzling_pouch',
-        };
-        const NECK_TIERS = {
-            philo: '/items/philosophers_necklace',
-            speed: '/items/necklace_of_speed',
-        };
-        const RING_TIERS = {
-            philo: '/items/philosophers_ring',
-            rarefind: '/items/ring_of_rare_find',
-        };
-        const EARRING_TIERS = {
-            philo: '/items/philosophers_earrings',
-            rarefind: '/items/earrings_of_rare_find',
-        };
-
-        // Helper to read compound gear setting
-        const getGear = (key, defaults) => {
-            const val = getValue(key, defaults);
-            // Handle both object (new format) and missing/null
-            if (val && typeof val === 'object') return val;
-            return defaults;
-        };
-
-        // Calculate bonuses from each gear slot
-        let equipmentSuccessBonus = 0;
-        let equipmentSpeedBonus = 0;
-        let equipmentRareFind = 0;
-        let equipmentExperience = 0;
-        let drinkConcentration = 0;
-        const slotBreakdown = [];
-
-        // Enhancer
-        const enhancer = getGear('enhanceSim_gear_enhancer', { enabled: true, tier: 'celestial', level: 13 });
-        if (enhancer.enabled) {
-            const hrid = ENHANCER_TIERS[enhancer.tier] || ENHANCER_TIERS.celestial;
-            const bonus = getGearSlotBonus(hrid, enhancer.level, itemDetailMap);
-            equipmentSuccessBonus += bonus.success;
-            equipmentSpeedBonus += bonus.speed;
-            equipmentRareFind += bonus.rareFind;
-            equipmentExperience += bonus.experience;
-            const details = itemDetailMap[hrid];
-            slotBreakdown.push({
-                name: details?.name || 'Enhancer',
-                enhancementLevel: enhancer.level,
-                success: bonus.success,
-                speed: bonus.speed,
-                rareFind: bonus.rareFind,
-                experience: bonus.experience,
-            });
-        }
-
-        // Gloves
-        const gloves = getGear('enhanceSim_gear_gloves', { enabled: true, level: 10 });
-        if (gloves.enabled) {
-            const bonus = getGearSlotBonus(FIXED_GEAR.gloves, gloves.level, itemDetailMap);
-            equipmentSpeedBonus += bonus.speed;
-            equipmentExperience += bonus.experience;
-            const details = itemDetailMap[FIXED_GEAR.gloves];
-            slotBreakdown.push({
-                name: details?.name || 'Gloves',
-                enhancementLevel: gloves.level,
-                success: 0,
-                speed: bonus.speed,
-                rareFind: 0,
-                experience: bonus.experience,
-            });
-        }
-
-        // Top
-        const top = getGear('enhanceSim_gear_top', { enabled: true, level: 10 });
-        if (top.enabled) {
-            const bonus = getGearSlotBonus(FIXED_GEAR.top, top.level, itemDetailMap);
-            equipmentSpeedBonus += bonus.speed;
-            equipmentRareFind += bonus.rareFind;
-            equipmentExperience += bonus.experience;
-            const details = itemDetailMap[FIXED_GEAR.top];
-            slotBreakdown.push({
-                name: details?.name || 'Top',
-                enhancementLevel: top.level,
-                success: 0,
-                speed: bonus.speed,
-                rareFind: bonus.rareFind,
-                experience: bonus.experience,
-            });
-        }
-
-        // Bottoms
-        const bottoms = getGear('enhanceSim_gear_bottoms', { enabled: true, level: 10 });
-        if (bottoms.enabled) {
-            const bonus = getGearSlotBonus(FIXED_GEAR.bottoms, bottoms.level, itemDetailMap);
-            equipmentSpeedBonus += bonus.speed;
-            equipmentExperience += bonus.experience;
-            const details = itemDetailMap[FIXED_GEAR.bottoms];
-            slotBreakdown.push({
-                name: details?.name || 'Bottoms',
-                enhancementLevel: bottoms.level,
-                success: 0,
-                speed: bonus.speed,
-                rareFind: 0,
-                experience: bonus.experience,
-            });
-        }
-
-        // Neck
-        const neck = getGear('enhanceSim_gear_neck', { enabled: true, tier: 'philo', level: 10 });
-        if (neck.enabled) {
-            const hrid = NECK_TIERS[neck.tier] || NECK_TIERS.philo;
-            const bonus = getGearSlotBonus(hrid, neck.level, itemDetailMap);
-            equipmentSpeedBonus += bonus.speed;
-            equipmentRareFind += bonus.rareFind;
-            equipmentExperience += bonus.experience;
-            const details = itemDetailMap[hrid];
-            slotBreakdown.push({
-                name: details?.name || 'Necklace',
-                enhancementLevel: neck.level,
-                success: 0,
-                speed: bonus.speed,
-                rareFind: bonus.rareFind,
-                experience: bonus.experience,
-            });
-        }
-
-        // Ring
-        const ring = getGear('enhanceSim_gear_ring', { enabled: true, tier: 'philo', level: 10 });
-        if (ring.enabled) {
-            const hrid = RING_TIERS[ring.tier] || RING_TIERS.philo;
-            const bonus = getGearSlotBonus(hrid, ring.level, itemDetailMap);
-            equipmentSpeedBonus += bonus.speed;
-            equipmentRareFind += bonus.rareFind;
-            equipmentExperience += bonus.experience;
-            const details = itemDetailMap[hrid];
-            slotBreakdown.push({
-                name: details?.name || 'Ring',
-                enhancementLevel: ring.level,
-                success: 0,
-                speed: bonus.speed,
-                rareFind: bonus.rareFind,
-                experience: bonus.experience,
-            });
-        }
-
-        // Earring
-        const earring = getGear('enhanceSim_gear_earring', { enabled: true, tier: 'philo', level: 10 });
-        if (earring.enabled) {
-            const hrid = EARRING_TIERS[earring.tier] || EARRING_TIERS.philo;
-            const bonus = getGearSlotBonus(hrid, earring.level, itemDetailMap);
-            equipmentSpeedBonus += bonus.speed;
-            equipmentRareFind += bonus.rareFind;
-            equipmentExperience += bonus.experience;
-            const details = itemDetailMap[hrid];
-            slotBreakdown.push({
-                name: details?.name || 'Earrings',
-                enhancementLevel: earring.level,
-                success: 0,
-                speed: bonus.speed,
-                rareFind: bonus.rareFind,
-                experience: bonus.experience,
-            });
-        }
-
-        // Cape
-        const cape = getGear('enhanceSim_gear_cape', { enabled: true, tier: 'normal', level: 5 });
-        if (cape.enabled) {
-            const hrid = CAPE_TIERS[cape.tier] || CAPE_TIERS.normal;
-            const bonus = getGearSlotBonus(hrid, cape.level, itemDetailMap);
-            equipmentSpeedBonus += bonus.speed;
-            equipmentExperience += bonus.experience;
-            const details = itemDetailMap[hrid];
-            slotBreakdown.push({
-                name: details?.name || 'Cape',
-                enhancementLevel: cape.level,
-                success: 0,
-                speed: bonus.speed,
-                rareFind: 0,
-                experience: bonus.experience,
-            });
-        }
-
-        // Guzzling Pouch (provides drink concentration)
-        const guzzling = getGear('enhanceSim_gear_guzzling', { enabled: true, level: 10 });
-        if (guzzling.enabled) {
-            const bonus = getGearSlotBonus(FIXED_GEAR.guzzling, guzzling.level, itemDetailMap);
-            drinkConcentration = bonus.drinkConc;
-        }
-
-        // Charm (provides experience/wisdom bonus)
-        const charm = getGear('enhanceSim_gear_charm', { enabled: true, tier: 'grandmaster', level: 0 });
-        if (charm.enabled) {
-            const hrid = CHARM_TIERS[charm.tier] || CHARM_TIERS.grandmaster;
-            const bonus = getGearSlotBonus(hrid, charm.level, itemDetailMap);
-            equipmentExperience += bonus.experience;
-            const details = itemDetailMap[hrid];
-            slotBreakdown.push({
-                name: details?.name || 'Charm',
-                enhancementLevel: charm.level,
-                success: 0,
-                speed: 0,
-                rareFind: 0,
-                experience: bonus.experience,
-            });
-        }
-
-        // --- COMMUNITY BUFF ---
-        const communityBuff = getGear('enhanceSim_communityBuff', { enabled: true, level: 1 });
-        let communityBuffLevel;
-        if (communityBuff.enabled) {
-            // Checked = auto-detect from game
-            communityBuffLevel = dataManager.getCommunityBuffLevel('/community_buff_types/enhancing_speed');
-        } else {
-            communityBuffLevel = communityBuff.level;
-        }
-        const communitySpeedBonus = communityBuffLevel > 0 ? 20 + (communityBuffLevel - 1) * 0.5 : 0;
-
-        // --- ACHIEVEMENT ---
-        const achievementEnabled = getValue('enhanceSim_achievement', false);
-        const achievementSuccessBonus = achievementEnabled ? 0.2 : 0;
-
-        // --- HOUSE BONUSES ---
-        const houseSpeedBonus = houseLevel * 1.0;
-        const houseSuccessBonus = houseLevel * 0.05;
-
-        // House wisdom: 0.05% per level per room (same as auto-detect)
-        const houseRooms = dataManager.getHouseRooms();
-        let houseWisdomBonus = 0;
-        for (const [_hrid, room] of houseRooms) {
-            const level = room.level || 0;
-            if (level >= 1) {
-                houseWisdomBonus += 0.05 * level;
-            }
-        }
-
-        // --- SCALE TEA BONUSES WITH DRINK CONCENTRATION ---
-        const scaledTeaLevelBonus = teaLevelBonus > 0 ? teaLevelBonus * (1 + drinkConcentration / 100) : 0;
-        const scaledTeaSpeedBonus = teaSpeedBonus > 0 ? teaSpeedBonus * (1 + drinkConcentration / 100) : 0;
-
-        // Tea wisdom bonus (Wisdom Tea/Coffee provide 12% wisdom, scales with drink concentration)
-        let baseTeaWisdom = 0;
-        const drinkSlots = dataManager.getActionDrinkSlots('/action_types/enhancing');
-        if (drinkSlots && drinkSlots.length > 0) {
-            for (const drink of drinkSlots) {
-                if (!drink || !drink.itemHrid) continue;
-                const drinkDetails = itemDetailMap[drink.itemHrid];
-                if (!drinkDetails?.consumableDetail?.buffs) continue;
-                const wisdomBuff = drinkDetails.consumableDetail.buffs.find(
-                    (buff) => buff.typeHrid === '/buff_types/wisdom'
-                );
-                if (wisdomBuff && wisdomBuff.flatBoost) {
-                    baseTeaWisdom += wisdomBuff.flatBoost * 100;
-                }
-            }
-        }
-        const teaWisdomBonus = baseTeaWisdom > 0 ? baseTeaWisdom * (1 + drinkConcentration / 100) : 0;
-
-        // Community wisdom buff
-        const communityWisdomLevel = dataManager.getCommunityBuffLevel('/community_buff_types/experience');
-        const communityWisdomBonus = communityWisdomLevel > 0 ? 20 + (communityWisdomLevel - 1) * 0.5 : 0;
-
-        // Achievement wisdom buff
-        const achievementWisdomBonus =
-            dataManager.getAchievementBuffFlatBoost('/action_types/enhancing', '/buff_types/wisdom') * 100;
-
-        // --- TOTALS ---
-        const totalToolBonus = equipmentSuccessBonus + houseSuccessBonus + achievementSuccessBonus;
-        const totalSpeedBonus = equipmentSpeedBonus + houseSpeedBonus + communitySpeedBonus + scaledTeaSpeedBonus;
-        const totalExperienceBonus =
-            equipmentExperience + houseWisdomBonus + teaWisdomBonus + communityWisdomBonus + achievementWisdomBonus;
-        const guzzlingBonus = 1 + drinkConcentration / 100;
-
-        return {
-            enhancingLevel: baseEnhancingLevel + scaledTeaLevelBonus,
-            houseLevel: houseLevel,
-            toolBonus: totalToolBonus,
-            speedBonus: totalSpeedBonus,
-            rareFindBonus: equipmentRareFind,
-            experienceBonus: totalExperienceBonus,
-            guzzlingBonus: guzzlingBonus,
-            teas: teas,
-
-            // Display info for manual mode
-            toolSlot: null,
-            bodySlot: null,
-            legsSlot: null,
-            handsSlot: null,
-            detectedTeaBonus: scaledTeaLevelBonus,
-            communityBuffLevel: communityBuffLevel,
-            communitySpeedBonus: communitySpeedBonus,
-            teaSpeedBonus: scaledTeaSpeedBonus,
-            equipmentSpeedBonus: equipmentSpeedBonus,
-            houseSpeedBonus: houseSpeedBonus,
-            equipmentSuccessBonus: equipmentSuccessBonus,
-            houseSuccessBonus: houseSuccessBonus,
-            achievementSuccessBonus: achievementSuccessBonus,
-            slotBreakdown: slotBreakdown,
-        };
-    }
-
-    /**
-     * Calculate enhancing bonuses from a single gear slot
-     * @param {string} itemHrid - Item HRID
-     * @param {number} enhancementLevel - Enhancement level (0-20)
-     * @param {Object} itemDetailMap - Item details map
-     * @returns {Object} { success, speed, rareFind, experience, drinkConc }
-     */
-    function getGearSlotBonus(itemHrid, enhancementLevel, itemDetailMap) {
-        const itemDetails = itemDetailMap[itemHrid];
-        if (!itemDetails) return { success: 0, speed: 0, rareFind: 0, experience: 0, drinkConc: 0 };
-
-        const multiplier = getEnhancementMultiplier(itemDetails, enhancementLevel);
-        const stats = itemDetails.equipmentDetail?.noncombatStats || {};
-
-        return {
-            success: (stats.enhancingSuccess || 0) * 100 * multiplier,
-            speed: ((stats.enhancingSpeed || 0) + (stats.skillingSpeed || 0)) * 100 * multiplier,
-            rareFind: ((stats.enhancingRareFind || 0) + (stats.skillingRareFind || 0)) * 100 * multiplier,
-            experience: ((stats.enhancingExperience || 0) + (stats.skillingExperience || 0)) * 100 * multiplier,
-            drinkConc: (stats.drinkConcentration || 0) * 100 * multiplier,
-        };
-    }
-
-    var enhancementConfig = /*#__PURE__*/Object.freeze({
-        __proto__: null,
-        getAutoDetectedParams: getAutoDetectedParams,
-        getDetectedGearSettings: getDetectedGearSettings,
-        getEnhancingParams: getEnhancingParams
     });
 
     /**
@@ -8334,8 +9277,23 @@ self.onmessage = function (e) {
 
     /**
      * House Cost Calculator Utility
-     * Calculates the total cost to build house rooms to specific levels
-     * Used for combat score calculation
+     *
+     * What it costs to build a house room up to a level, materials priced at the
+     * market.
+     *
+     * ## Which side of the book
+     *
+     * The buy side — the ask. Every question asked of this is some form of "what
+     * would it cost me to do this now": the Houses panel's affordability count, the
+     * upgrade advisor, the equipment savings goals, the combat score's estimate of
+     * what a character's rooms represent. Buying the materials is what any of those
+     * would involve, and the ask is what buying costs.
+     *
+     * It used to price at the ask/bid midpoint, which is a defensible number for
+     * nothing in particular and had the concrete cost that the same room was quoted
+     * two different figures in two of this script's own panels — the advisor and the
+     * savings row already asked for the ask. One side, and it is the one the money
+     * actually leaves at.
      */
 
 
@@ -8377,26 +9335,15 @@ self.onmessage = function (e) {
                 const prices = marketAPI.getPrice(item.itemHrid, 0);
                 if (!prices) continue;
 
-                // Match MCS behavior: if only one side of the order book exists, use it for both
+                // The buy side, because buying is the thing being costed. A book
+                // with no ask still has a bid to go on — one side is a worse
+                // estimate than two, but it is an estimate, and dropping the
+                // material would understate the room by exactly that material
                 // (getPrice normalizes missing sides to null)
-                let ask = prices.ask;
-                let bid = prices.bid;
+                const price = prices.ask ?? prices.bid;
+                if (price == null) continue;
 
-                if (ask != null && bid == null) {
-                    bid = ask;
-                }
-                if (bid != null && ask == null) {
-                    ask = bid;
-                }
-                if (ask == null && bid == null) {
-                    continue;
-                }
-
-                // Use weighted average
-                const weightedPrice = (ask + bid) / 2;
-
-                const itemCost = item.count * weightedPrice;
-                totalCost += itemCost;
+                totalCost += item.count * price;
             }
         }
 
@@ -8456,6 +9403,8734 @@ self.onmessage = function (e) {
     });
 
     /**
+     * Overlay Rows
+     *
+     * The registry of rows the overlay panel draws.
+     *
+     * Deliberately here in `utils` rather than beside the panel in `features/ui`,
+     * because of how this project ships. The production build is six separate
+     * bundles loaded in order — core, utils, market, actions, combat, ui — and a
+     * module that is not declared shared is **copied into every bundle that imports
+     * it**, each copy with its own state. A registry living in the UI bundle would
+     * therefore give the combat features one row list, the market features another,
+     * and the panel a third, so the panel would render nothing. Worse, ui loads
+     * last, so a combat feature registering at module scope would be reaching for a
+     * bundle that does not exist yet.
+     *
+     * Utils loads before every feature bundle and is declared shared in
+     * `rollup.config.js`, so there is exactly one list and it exists before anyone
+     * registers into it.
+     *
+     * None of this shows up in the dev standalone build, which is a single bundle
+     * where every arrangement works.
+     */
+
+    /**
+     * Rows, in registration order.
+     *
+     * Module-level so a feature can register while the shell is still asleep — the
+     * alternative is every feature having to know whether the panel has started yet.
+     * @type {Array<{key: string, name: string, render: Function, defaultVisible: boolean}>}
+     */
+    const rows$1 = [];
+
+    /**
+     * Add a row to the overlay.
+     *
+     * Safe to call before the panel exists, and safe to call twice — a repeated key
+     * replaces the earlier definition rather than drawing the row twice, so a feature
+     * that re-initialises does not double up.
+     *
+     * @param {Object} row - Row definition
+     * @param {string} row.key - Stable identifier, used as the storage key
+     * @param {string} row.name - Label in the row picker
+     * @param {Function} row.render - `(container: HTMLElement) => void`, called per refresh
+     * @param {boolean} [row.defaultVisible] - Whether it starts on
+     * @param {Function} [row.onOpen] - Called when the row is double-clicked. A row is
+     *   a summary; this is where the panel behind it opens. It should **toggle**,
+     *   since the same gesture is what you reach for to dismiss what it summoned.
+     *   Rows without one are simply not interactive.
+     * @param {{width: number, height: number}} [row.defaultSize] - How large a tile the row
+     *   needs before anyone has resized it. A row knows how much it draws; the panel
+     *   does not, and guessing one size for all of them leaves half of them clipped.
+     * @param {number} [row.defaultZoom] - Starting text size, as a percentage
+     * @param {string} [row.empty] - What the tile says when the row draws nothing,
+     *   and only where that is worth a whole tile — see {@link emptyPolicyFor}, which
+     *   decides whether an empty tile says this, says its own name, or stands down.
+     *   Defaults to naming the row.
+     * @param {string} [row.tileClass] - One of {@link TILE_CLASS}. What kind of thing
+     *   the tile shows, which is what decides how it behaves before it has anything
+     *   to show. Optional: rows that do not say are classed by the table below.
+     * @param {string} [row.whenEmpty] - `hide`, `compact` or `full`, when this
+     *   particular row wants something other than what its class would give it.
+     */
+    function registerRow({
+        key,
+        name,
+        render,
+        defaultVisible = true,
+        onOpen = null,
+        defaultSize = null,
+        defaultZoom = null,
+        empty = '',
+        tileClass = '',
+        whenEmpty = '',
+    }) {
+        if (!key || typeof render !== 'function') {
+            console.error('[OverlayPanel] A row needs a key and a render function:', key);
+            return;
+        }
+
+        const definition = {
+            key,
+            name: name || key,
+            render,
+            defaultVisible,
+            onOpen,
+            defaultSize,
+            defaultZoom,
+            empty,
+            tileClass,
+            whenEmpty,
+        };
+        const existing = rows$1.findIndex((row) => row.key === key);
+        if (existing >= 0) rows$1[existing] = definition;
+        else rows$1.push(definition);
+    }
+
+    /**
+     * The registered rows, in the order they should be offered.
+     * Exported for tests and for anything that wants to know what is available.
+     * @returns {Array<Object>} Row definitions
+     */
+    function registeredRows() {
+        return [...rows$1];
+    }
+
+    /**
+     * What kind of thing a tile shows.
+     *
+     * The distinction only matters in one place, and it is the place the overlay was
+     * worst at: what a tile does before it has anything to show. A net worth that
+     * has not been counted yet will be counted in a moment, and saying so is worth a
+     * dim line. A dungeon run that has not happened may never happen, and a tile
+     * reserving space for it is a tile in the way — every one of those placeholders
+     * is a promise the overlay is making about a number it does not have.
+     */
+    const TILE_CLASS = {
+        /** Reads state the game already has, so it fills itself in shortly */
+        VALUE: 'value',
+        /** Needs something to happen first — a fight, a run, a chest opened */
+        MEASUREMENT: 'measurement',
+        /** Shows what you asked it to watch, and is empty until you ask */
+        WATCH: 'watch',
+    };
+
+    /** What a tile does when it has drawn nothing */
+    const EMPTY_POLICY = {
+        /** Whatever the tile's class says; the setting's default */
+        AUTO: 'auto',
+        /** Not drawn at all until there is something to draw */
+        HIDE: 'hide',
+        /** A dim strip carrying the tile's own name */
+        COMPACT: 'compact',
+        /** The row's full placeholder line, at the tile's full size */
+        FULL: 'full',
+    };
+
+    /**
+     * Every registered row's class.
+     *
+     * Here rather than in the `registerRow` calls because those live across a dozen
+     * feature files owned by as many features, and the classification is one
+     * judgement about the overlay as a whole — it wants to be readable in one place,
+     * beside the curated default set it has to agree with. A row may still say for
+     * itself with `tileClass`, and anything unlisted is treated as a value, which is
+     * the forgiving answer: an unrecognised tile shows a dim name rather than
+     * vanishing.
+     */
+    const TILE_CLASSES = {
+        // Figures the game already knows, or knows as soon as it has loaded
+        netWorth: TILE_CLASS.VALUE,
+        coins: TILE_CLASS.VALUE,
+        inventoryValue: TILE_CLASS.VALUE,
+        marketListings: TILE_CLASS.VALUE,
+        skillBooks: TILE_CLASS.VALUE,
+        buildScore: TILE_CLASS.VALUE,
+        combatLevel: TILE_CLASS.VALUE,
+        houses: TILE_CLASS.VALUE,
+        accountView: TILE_CLASS.VALUE,
+        guildRoster: TILE_CLASS.VALUE,
+        combatStatus: TILE_CLASS.VALUE,
+        battleTimer: TILE_CLASS.VALUE,
+        consumables: TILE_CLASS.VALUE,
+        // The queue is state the game holds; the plan is state this script holds,
+        // and both are true the moment they are read
+        queueTimeLeft: TILE_CLASS.VALUE,
+        goalNextStep: TILE_CLASS.VALUE,
+
+        // Nothing to say until you have done something
+        // Drop Luck and Over Expected % are one tile now, under luck's key
+        luck: TILE_CLASS.MEASUREMENT,
+        dps: TILE_CLASS.MEASUREMENT,
+        combatRevenue: TILE_CLASS.MEASUREMENT,
+        totalProfit: TILE_CLASS.MEASUREMENT,
+        experiencePerHour: TILE_CLASS.MEASUREMENT,
+        deathsPerHour: TILE_CLASS.MEASUREMENT,
+        combatSession: TILE_CLASS.MEASUREMENT,
+        manaPerFight: TILE_CLASS.MEASUREMENT,
+        timeToLevel: TILE_CLASS.MEASUREMENT,
+        treasure: TILE_CLASS.MEASUREMENT,
+        charmValue: TILE_CLASS.MEASUREMENT,
+        replayCheck: TILE_CLASS.MEASUREMENT,
+        predictionCalibration: TILE_CLASS.MEASUREMENT,
+        combatText: TILE_CLASS.MEASUREMENT,
+        // Each waits on something being under way — an enhancement started, a task
+        // board dealt, a trial tab looked at — and none of the three is a figure a
+        // fresh character would ever see filled in
+        enhancementSession: TILE_CLASS.MEASUREMENT,
+        taskTokens: TILE_CLASS.MEASUREMENT,
+        guildTrialsPace: TILE_CLASS.MEASUREMENT,
+
+        // Empty until you put something in them
+        watchlist: TILE_CLASS.WATCH,
+        equipmentWatch: TILE_CLASS.WATCH,
+    };
+
+    /**
+     * The tiles a character who has never arranged the overlay starts with.
+     *
+     * Small on purpose. Every row defaulting to on gave a first open that was a wall
+     * of placeholders with three real figures buried in it, and a panel where
+     * nothing is worth reading is a panel nobody opens twice. These are the ones
+     * that are alive for any character within a minute of playing: what you are
+     * worth, what you are carrying, what you are doing, and what it is earning. The
+     * rest are one click away in ⚙, where a list of switched-off rows reads as a
+     * menu rather than as clutter.
+     *
+     * Order is the order they are placed in, left to right and wrapping — so the
+     * two figures that are true the moment the game loads come first.
+     */
+    const CURATED_ROWS = [
+        'netWorth',
+        'coins',
+        'buildScore',
+        'combatStatus',
+        'battleTimer',
+        'experiencePerHour',
+        'totalProfit',
+        'timeToLevel',
+    ];
+
+    /**
+     * Which class a row belongs to.
+     * @param {Object} row - A row definition
+     * @returns {string} One of {@link TILE_CLASS}
+     */
+    function tileClassFor(row) {
+        const declared = row?.tileClass;
+        if (declared && Object.values(TILE_CLASS).includes(declared)) return declared;
+        return TILE_CLASSES[row?.key] || TILE_CLASS.VALUE;
+    }
+
+    /**
+     * What a tile that drew nothing should do about it.
+     *
+     * The setting wins where it has an opinion, so somebody who wants the old wall
+     * of placeholders back — or wants every empty tile gone — says so once and is
+     * obeyed everywhere. Left on `auto`, the class decides, and a watch tile decides
+     * on top of that: "nothing watched" is only worth a line when there is something
+     * you can do about it, which means the tile has to be able to open the panel you
+     * would add to. A watch tile with no `onOpen` is a dead end, and stands down.
+     *
+     * @param {Object} row - A row definition
+     * @param {string} [setting] - The panel's `emptyTiles` setting
+     * @returns {string} `hide`, `compact` or `full`
+     */
+    function emptyPolicyFor(row, setting = EMPTY_POLICY.AUTO) {
+        const forced = [EMPTY_POLICY.HIDE, EMPTY_POLICY.COMPACT, EMPTY_POLICY.FULL];
+        if (forced.includes(setting)) return setting;
+        if (forced.includes(row?.whenEmpty)) return row.whenEmpty;
+
+        switch (tileClassFor(row)) {
+            case TILE_CLASS.MEASUREMENT:
+                return EMPTY_POLICY.HIDE;
+            case TILE_CLASS.WATCH:
+                return typeof row?.onOpen === 'function' ? EMPTY_POLICY.COMPACT : EMPTY_POLICY.HIDE;
+            default:
+                return EMPTY_POLICY.COMPACT;
+        }
+    }
+
+    /**
+     * What a compact tile says.
+     *
+     * Its own name, never its placeholder line. Two rows are allowed to have nothing
+     * to report in the same words — "Nothing watched" belongs to both the watchlist
+     * and the equipment watch, "No run measured yet" to both luck tiles — and two
+     * identical strips sitting beside each other are worse than one, because now you
+     * cannot even tell which feature is idle. A name is the one thing a tile has
+     * that is its own.
+     *
+     * @param {Object} row - A row definition
+     * @returns {string} The line to draw
+     */
+    function compactLabel(row) {
+        const name = row?.name || row?.key || '';
+        if (tileClassFor(row) === TILE_CLASS.WATCH && typeof row?.onOpen === 'function') return `${name} — click to add`;
+        return name;
+    }
+
+    /**
+     * What a tile is waiting for, in one short line.
+     *
+     * Only ever shown to somebody who has just switched the tile on by hand. The
+     * auto-hiding policies above are the right *passive* default — a fresh character
+     * should not open the overlay onto a wall of promises — but they are the wrong
+     * answer to a gesture. Switching a tile on and watching nothing appear is not
+     * "the overlay is decluttering for me", it is "the overlay is broken", and that
+     * is exactly how it was reported. So the gesture gets an answer: the tile draws,
+     * dim, saying what it is waiting for. The decluttering rationale survives intact
+     * because nobody asked for the tiles it hides.
+     *
+     * @param {Object} row - A row definition
+     * @returns {string} A line to draw under the row's name
+     */
+    function waitingLine(row) {
+        switch (tileClassFor(row)) {
+            case TILE_CLASS.MEASUREMENT:
+                return 'waiting for data';
+            case TILE_CLASS.WATCH:
+                return typeof row?.onOpen === 'function' ? 'waiting for something to watch' : 'nothing watched yet';
+            default:
+                return 'waiting for the game to load this';
+        }
+    }
+
+    /**
+     * What a row promises about when it will appear, for the ⚙ list.
+     *
+     * The contract a tile is under ought to be legible *before* it is switched on,
+     * not discovered afterwards by its absence. Empty for the tiles that fill
+     * themselves in, because a caption on every chip is a caption nobody reads.
+     *
+     * @param {Object} row - A row definition
+     * @returns {string} A short badge, or an empty string when there is nothing to warn about
+     */
+    function emptyContract(row) {
+        switch (tileClassFor(row)) {
+            case TILE_CLASS.MEASUREMENT:
+                return 'shows when it has data';
+            case TILE_CLASS.WATCH:
+                return 'shows what you add to it';
+            default:
+                return '';
+        }
+    }
+
+    /**
+     * Put saved settings and the rows that actually exist together.
+     *
+     * Kept pure so the awkward cases are testable: a row saved in the order but since
+     * removed from the code, and a row added by an update that no saved order has
+     * heard of. The first must not leave a hole and the second must not be lost at
+     * the bottom of a list nobody knows to look at.
+     *
+     * `curatedDefaults` is what tells a character who has never touched the overlay
+     * from one who arranged it before the curated set existed. It is set once, when
+     * the panel finds nothing saved, and persists — so an existing layout keeps
+     * answering "is this row on?" the way it always did, with each row's own
+     * `defaultVisible`, and only a fresh one gets {@link CURATED_ROWS}. A row the
+     * settings have an explicit opinion about beats both.
+     *
+     * @param {Array<Object>} available - Registered rows
+     * @param {Object} saved - `{ visible: {key: bool}, order: string[], curatedDefaults: bool }`
+     * @returns {Array<Object>} Rows to draw, in order, each with `visible`
+     */
+    function resolveRows(available, saved) {
+        const order = saved?.order || [];
+        const visible = saved?.visible || {};
+        const curated = saved?.curatedDefaults === true;
+
+        const known = new Map(available.map((row) => [row.key, row]));
+        const ordered = [];
+
+        for (const key of order) {
+            const row = known.get(key);
+            // A key left over from a row that no longer exists
+            if (!row) continue;
+            ordered.push(row);
+            known.delete(key);
+        }
+        // Anything the saved order has not heard of is new, and goes at the end
+        ordered.push(...known.values());
+
+        // Nobody has arranged anything yet, so the curated set is the arrangement:
+        // its tiles first and in its order, which is what the initial packing lays
+        // out. Sorting is stable, so everything else keeps registration order.
+        if (curated && !order.length) {
+            const rank = (key) => {
+                const index = CURATED_ROWS.indexOf(key);
+                return index < 0 ? CURATED_ROWS.length : index;
+            };
+            ordered.sort((a, b) => rank(a.key) - rank(b.key));
+        }
+
+        return ordered.map((row) => ({
+            ...row,
+            visible: visible[row.key] ?? (curated ? CURATED_ROWS.includes(row.key) : row.defaultVisible),
+        }));
+    }
+
+    /**
+     * Move a key one place through an order.
+     *
+     * Works on the full order rather than only the visible rows, so hiding a row and
+     * showing it again does not quietly move it.
+     *
+     * @param {string[]} order - Current order
+     * @param {string} key - What to move
+     * @param {number} delta - -1 for up, 1 for down
+     * @returns {string[]} A new order
+     */
+    function moveRow(order, key, delta) {
+        const index = order.indexOf(key);
+        const target = index + delta;
+        if (index < 0 || target < 0 || target >= order.length) return order;
+
+        const next = [...order];
+        [next[index], next[target]] = [next[target], next[index]];
+        return next;
+    }
+
+    /**
+     * A tile's display option, as set in the overlay's own settings.
+     *
+     * Some tiles can be drawn more than one way — with or without the names beside
+     * the figures, for one player or for the party — and OPanel keeps those choices
+     * beside the row list rather than in a settings dialog, which is where somebody
+     * arranging an overlay is already looking.
+     *
+     * Read through the global rather than imported: the panel that owns these lives
+     * in the UI bundle and the rows that read them are scattered across the others,
+     * so importing it would put a second copy of the panel in every one of them.
+     *
+     * @param {string} key - The option, e.g. `luckOnlyNumbers`
+     * @returns {boolean} False when the panel is not up, which is the quiet default
+     */
+    function rowOption(key) {
+        if (typeof window === 'undefined') return false;
+        return Boolean(window.Toolasha?.UI?.overlayPanel?.settings?.[key]);
+    }
+
+    var overlayRows = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        CURATED_ROWS: CURATED_ROWS,
+        EMPTY_POLICY: EMPTY_POLICY,
+        TILE_CLASS: TILE_CLASS,
+        compactLabel: compactLabel,
+        emptyContract: emptyContract,
+        emptyPolicyFor: emptyPolicyFor,
+        moveRow: moveRow,
+        registerRow: registerRow,
+        registeredRows: registeredRows,
+        resolveRows: resolveRows,
+        rowOption: rowOption,
+        tileClassFor: tileClassFor,
+        waitingLine: waitingLine
+    });
+
+    /**
+     * Overlay Layout
+     *
+     * Where each overlay row sits, how big it is, and how large it draws.
+     *
+     * The overlay started as a vertical stack, which is the wrong shape for what it
+     * holds. A stack forces one ordering decision — what comes above what — when the
+     * real question is what sits beside what: revenue next to profit, luck next to
+     * expectation. OPanel solves this by making the body a canvas of freely placed
+     * tiles, and this module is the arithmetic behind that.
+     *
+     * Kept pure and apart from the panel because layout is where the awkward cases
+     * live — a row added by an update that no saved layout has heard of, a tile left
+     * off the edge by a since-resized panel, a repack that has to fit tiles of
+     * different heights. None of that is testable through the DOM in this project,
+     * and all of it is testable here.
+     *
+     * The model is OPanel's, from MWI Combat Suite by Frotty (MIT) — see
+     * `third-party/mwi-combat-suite/` and `docs/THIRD-PARTY-LICENSES.md`. The code is
+     * Toolasha's own.
+     */
+
+    /** Everything snaps to this when snapping is on; OPanel's saved layouts are all multiples of it */
+    const GRID = 10;
+
+    /** What a row gets before anyone has moved or resized it */
+    const DEFAULT_TILE = { width: 160, height: 30 };
+
+    /** Percent of the panel's base font size; a tile can be made to read larger or smaller */
+    const DEFAULT_ZOOM = 100;
+    const MIN_ZOOM = 50;
+    const MAX_ZOOM = 200;
+
+    /** Below this a tile has no room for content, and becomes impossible to grab */
+    const MIN_TILE = { width: 40, height: 20 };
+
+    /**
+     * How tall a tile is while it is standing down to a dim name.
+     *
+     * Height only. A compact tile keeps the width it was given, because tiles are
+     * arranged in columns and a placeholder that also narrows breaks the column it
+     * is sitting in — the layout you arranged comes back different every time a
+     * feature goes quiet, which is worse than the space it saves.
+     */
+    const COMPACT_TILE = { height: 20 };
+
+    /**
+     * Round to the nearest grid step.
+     * @param {number} value - Pixels
+     * @param {number} [grid] - Step, or 1 to leave the value alone
+     * @returns {number} Snapped pixels
+     */
+    function snap(value, grid = GRID) {
+        if (!(grid > 1)) return Math.round(value);
+        return Math.round(value / grid) * grid;
+    }
+
+    /**
+     * Round up to the next grid step.
+     *
+     * For advancing past something rather than placing something: rounding the far
+     * edge of a tile *down* to the grid puts the next tile back inside it, which is
+     * an overlap of up to a step for every tile whose size is not a multiple of one.
+     *
+     * @param {number} value - Pixels
+     * @param {number} [grid] - Step, or 1 to leave the value alone
+     * @returns {number} Snapped pixels, never less than `value`
+     */
+    function snapUp(value, grid = GRID) {
+        if (!(grid > 1)) return Math.ceil(value);
+        return Math.ceil(value / grid) * grid;
+    }
+
+    /**
+     * Do two tiles cover any of the same ground?
+     * @param {{x: number, y: number, width: number, height: number}} a - One tile
+     * @param {{x: number, y: number, width: number, height: number}} b - The other
+     * @returns {boolean} True when they overlap
+     */
+    function overlaps(a, b) {
+        return a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+    }
+
+    /**
+     * Find somewhere to put a tile that nothing else is already using.
+     *
+     * Scans left to right then top to bottom, which puts a new row where the eye
+     * looks for it rather than in whatever gap happens to be largest. Falls back to
+     * below everything when the canvas is genuinely full — a tile off the bottom can
+     * be scrolled to, where a tile hidden under another cannot be found at all.
+     *
+     * @param {Array<Object>} placed - Tiles already positioned
+     * @param {{width: number, height: number}} size - The tile to place
+     * @param {number} width - Canvas width to wrap at
+     * @param {number} [grid] - Step to search on
+     * @returns {{x: number, y: number}} Somewhere free
+     */
+    function findFreeSpot(placed, size, width, grid = GRID) {
+        const step = grid > 1 ? grid : GRID;
+        const bottom = placed.reduce((max, tile) => Math.max(max, tile.y + tile.height), 0);
+
+        for (let y = 0; y <= bottom; y += step) {
+            for (let x = 0; x + size.width <= Math.max(width, size.width); x += step) {
+                const candidate = { x, y, width: size.width, height: size.height };
+                if (!placed.some((tile) => overlaps(candidate, tile))) return { x, y };
+            }
+        }
+        return { x: 0, y: snap(bottom, step) };
+    }
+
+    /**
+     * Keep a tile on the canvas.
+     *
+     * Only the left edge is held: the canvas scrolls downward, so a tile below the
+     * fold is merely out of sight, while a tile past the right edge is unreachable
+     * once the panel is narrowed. A tile wider than the canvas sits at zero rather
+     * than at a negative offset.
+     *
+     * @param {{x: number, y: number}} position - Where it wants to be
+     * @param {{width: number, height: number}} size - How big it is
+     * @param {{width: number}} bounds - The canvas
+     * @returns {{x: number, y: number}} Somewhere reachable
+     */
+    function clampTile(position, size, bounds) {
+        const maxX = Math.max(0, bounds.width - size.width);
+        return {
+            x: Math.min(Math.max(0, position.x), maxX),
+            y: Math.max(0, position.y),
+        };
+    }
+
+    /**
+     * Put the rows to be drawn together with the layout saved for them.
+     *
+     * A row that no saved layout knows about is placed rather than left at the
+     * origin on top of an existing tile, because a fresh row hidden under an old one
+     * reads as a row that failed to render.
+     *
+     * @param {Array<Object>} rows - Resolved, visible rows
+     * @param {Object} layout - `{ positions, sizes, zoom }` keyed by row key
+     * @param {number} width - Canvas width, for placing anything new
+     * @param {Function} [sizeFor] - `(row, size) => size`, a last word on how big a
+     *   tile is drawn this time round. For a tile standing down to a dim name: the
+     *   size it was *given* is still the size it has, so shrinking it in the saved
+     *   layout would lose the arrangement the moment a feature went quiet.
+     * @returns {Array<Object>} Each row with `x`, `y`, `width`, `height`, `zoom`
+     */
+    function resolveLayout(rows, layout, width, sizeFor = null) {
+        const positions = layout?.positions || {};
+        const sizes = layout?.sizes || {};
+        const zooms = layout?.zoom || {};
+
+        const tiles = [];
+        for (const row of rows) {
+            const given = sizes[row.key] || row.defaultSize || DEFAULT_TILE;
+            const size = sizeFor ? sizeFor(row, given) : given;
+            const saved = positions[row.key];
+            const spot = saved ? clampTile(saved, size, { width }) : findFreeSpot(tiles, size, width);
+
+            tiles.push({
+                ...row,
+                x: spot.x,
+                y: spot.y,
+                width: size.width,
+                height: size.height,
+                zoom: clampZoom(zooms[row.key] ?? row.defaultZoom ?? DEFAULT_ZOOM),
+            });
+        }
+        return tiles;
+    }
+
+    /**
+     * Hold a zoom level inside what stays legible.
+     * @param {number} zoom - Percent
+     * @returns {number} Percent within range
+     */
+    function clampZoom(zoom) {
+        if (!Number.isFinite(zoom)) return DEFAULT_ZOOM;
+        return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Math.round(zoom)));
+    }
+
+    /**
+     * Settle every tile upwards in its own column, closing gaps and collisions alike.
+     *
+     * For an imported layout rather than for one built here. A layout built here
+     * cannot overlap — every drag is clamped as it happens — but a layout that came
+     * from OPanel was measured against OPanel's rendering, and the same rows drawn
+     * by this overlay are not the same size. Import it verbatim and tiles land on
+     * top of one another; grow them to fit and push the collisions down, and the
+     * layout stretches into a scatter with holes in it.
+     *
+     * So: gravity. Each tile falls to the highest position in its column that
+     * nothing already occupies. Overlaps resolve because two tiles cannot settle in
+     * the same place, and the gaps left by resizing close because a tile does not
+     * stop at the gap it used to sit below.
+     *
+     * The column is held rather than searched. An OPanel layout is two columns, and
+     * a tile that resolves a collision by sliding into the other one has not been
+     * nudged, it has been scrambled — so a tile only ever moves vertically.
+     *
+     * @param {Array<Object>} tiles - Tiles with `key`, `x`, `y`, `width`, `height`
+     * @param {number} width - Canvas width
+     * @param {number} [grid] - Step to settle onto
+     * @returns {Array<{key: string, x: number, y: number}>} Settled positions
+     */
+    function compactColumns(tiles, width, grid = GRID) {
+        const step = grid > 1 ? grid : GRID;
+        const placed = [];
+        const positions = [];
+
+        // Top to bottom, then left to right: a tile above another before should
+        // still be above it after, since it gets to claim its place first
+        const ordered = [...tiles].sort((a, b) => a.y - b.y || a.x - b.x);
+
+        for (const tile of ordered) {
+            const size = { width: tile.width, height: tile.height };
+            const { x } = clampTile({ x: tile.x, y: tile.y }, size, { width });
+
+            let y = 0;
+            for (;;) {
+                const candidate = { x, y, ...size };
+                if (!placed.some((other) => overlaps(candidate, other))) break;
+                y += step;
+            }
+
+            placed.push({ x, y, ...size });
+            positions.push({ key: tile.key, x, y });
+        }
+        return positions;
+    }
+
+    /**
+     * Repack every tile against the top-left, in order, wrapping at the canvas edge.
+     *
+     * Rows within a wrapped line share the height of the tallest, so a short tile
+     * next to a tall one does not leave the next line interleaved with this one.
+     * Sizes are left alone — this answers "where has everything gone", not "make
+     * them all the same".
+     *
+     * @param {Array<Object>} tiles - Tiles in the order they should be laid out
+     * @param {number} width - Canvas width
+     * @param {number} [grid] - Step to align to
+     * @returns {Array<{key: string, x: number, y: number}>} New positions
+     */
+    function autoGrid(tiles, width, grid = GRID) {
+        const step = grid > 1 ? grid : 1;
+        const positions = [];
+
+        let x = 0;
+        let y = 0;
+        let lineHeight = 0;
+
+        for (const tile of tiles) {
+            // Wrapping on the first tile of a line would leave an empty line above it
+            if (x > 0 && x + tile.width > width) {
+                x = 0;
+                // Up, not to the nearest: a tile 245 wide on a 10 grid ends at 245,
+                // and a nearest-snap advance of 240 would start the next one five
+                // pixels inside it. Rounding up costs at most a step of empty
+                // space and can never overlap.
+                y = snapUp(y + lineHeight, step);
+                lineHeight = 0;
+            }
+            positions.push({ key: tile.key, x, y });
+            x = snapUp(x + tile.width, step);
+            lineHeight = Math.max(lineHeight, tile.height);
+        }
+        return positions;
+    }
+
+    /**
+     * How much room the tiles actually need.
+     *
+     * The canvas is sized from this rather than from the panel, so dragging a tile
+     * to the bottom extends the scroll instead of putting it out of reach.
+     *
+     * @param {Array<Object>} tiles - Placed tiles
+     * @returns {{width: number, height: number}} Extent
+     */
+    function contentBounds(tiles) {
+        let width = 0;
+        let height = 0;
+        for (const tile of tiles) {
+            width = Math.max(width, tile.x + tile.width);
+            height = Math.max(height, tile.y + tile.height);
+        }
+        return { width, height };
+    }
+
+    var overlayLayout = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        COMPACT_TILE: COMPACT_TILE,
+        DEFAULT_TILE: DEFAULT_TILE,
+        DEFAULT_ZOOM: DEFAULT_ZOOM,
+        GRID: GRID,
+        MAX_ZOOM: MAX_ZOOM,
+        MIN_TILE: MIN_TILE,
+        MIN_ZOOM: MIN_ZOOM,
+        autoGrid: autoGrid,
+        clampTile: clampTile,
+        clampZoom: clampZoom,
+        compactColumns: compactColumns,
+        contentBounds: contentBounds,
+        findFreeSpot: findFreeSpot,
+        overlaps: overlaps,
+        resolveLayout: resolveLayout,
+        snap: snap,
+        snapUp: snapUp
+    });
+
+    /**
+     * Overlay row formatting
+     *
+     * How a tile reads, in one place.
+     *
+     * Tiles are small and fixed. Anything that wraps does not get taller — it gets
+     * cut off, or pushes the rest of the tile out of sight — so **nothing in a row
+     * may wrap**, and a value too long for its tile has to be shortened rather than
+     * folded. Every row was doing that for itself, differently, which is how the
+     * overlay ended up with "Drop luck" broken across two lines beside a figure that
+     * had run off the edge.
+     *
+     * The other half is what a row says. A tile is read at a glance from three feet
+     * away, so the unit belongs on the value — `260,572 exp/hr` rather than
+     * `Experience` on the left and `260,572/hr` on the right. Half the label was
+     * saying what the number's own unit already said, in the space the number needed.
+     *
+     * The style is OPanel's, from MWI Combat Suite by Frotty (MIT) — see
+     * `third-party/mwi-combat-suite/` and `docs/THIRD-PARTY-LICENSES.md`. The code is
+     * Toolasha's own.
+     */
+
+    /**
+     * The game's own sprite sheets, found once each.
+     *
+     * Read off an existing icon rather than hardcoded: the URL carries a build hash
+     * that changes with every game update, so a constant would be right until the
+     * next Tuesday and silently wrong after it.
+     */
+    const spriteSheets = {};
+
+    /**
+     * A sprite sheet's URL, or an empty string before the game has drawn from it.
+     *
+     * @param {string} [sheet] - `items`, `skills`, `actions`, `combat_monsters`
+     * @returns {string}
+     */
+    function spriteUrl(sheet = 'items') {
+        if (spriteSheets[sheet]) return spriteSheets[sheet];
+
+        const use = document.querySelector(`svg use[href*="${sheet}_sprite"]`);
+        const found = use?.getAttribute('href')?.split('#')[0] || '';
+        // Not cached when it came back empty — the game may simply not have drawn
+        // from this sheet yet, and one empty answer should not be the answer forever
+        if (found) spriteSheets[sheet] = found;
+        return found;
+    }
+
+    /**
+     * The item sheet, kept as its own name because most callers only want that one.
+     * @returns {string}
+     */
+    function itemSpriteUrl() {
+        return spriteUrl('items');
+    }
+
+    /**
+     * One sprite, from whichever sheet holds it.
+     *
+     * @param {string} id - The sprite's id, or an hrid whose last segment is one
+     * @param {number} [size] - Pixels
+     * @param {string} [sheet] - Which sheet
+     * @returns {SVGElement|HTMLElement} An icon, or a spacer while the sheet is unknown
+     */
+    function spriteIcon(id, size = 18, sheet = 'items') {
+        const sprite = spriteUrl(sheet);
+        if (!sprite) {
+            // A spacer rather than nothing, so a row of icons does not reflow the
+            // moment the sheet turns up
+            const spacer = document.createElement('span');
+            Object.assign(spacer.style, { width: `${size}px`, flex: '0 0 auto', display: 'inline-block' });
+            return spacer;
+        }
+
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.setAttribute('width', String(size));
+        svg.setAttribute('height', String(size));
+        svg.style.flex = '0 0 auto';
+
+        const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+        use.setAttribute('href', `${sprite}#${String(id).split('/').pop()}`);
+        svg.appendChild(use);
+        return svg;
+    }
+
+    /**
+     * An item's icon.
+     * @param {string} itemHrid - Item to draw
+     * @param {number} [size] - Pixels
+     * @returns {SVGElement|HTMLElement} An icon, or a spacer while the sheet is unknown
+     */
+    function itemIcon(itemHrid, size = 18) {
+        return spriteIcon(itemHrid, size, 'items');
+    }
+
+    /**
+     * A skill's icon.
+     *
+     * The sheet OPanel and JHouse draw their headings from — a house room is
+     * recognised by the skill it boosts far faster than by its name.
+     *
+     * @param {string} skill - `milking`, `attack`, and so on
+     * @param {number} [size] - Pixels
+     * @returns {SVGElement|HTMLElement}
+     */
+    function skillIcon(skill, size = 18) {
+        return spriteIcon(skill, size, 'skills');
+    }
+
+    /**
+     * Make an element open an item's marketplace listing when clicked.
+     *
+     * Applied to icons and names rather than to a separate button, because the icon
+     * and the name are what you point at when you think "what does that cost" — and
+     * a row about consumables is read while deciding whether to go and buy some.
+     *
+     * @param {HTMLElement} element - Icon or name
+     * @param {string} itemHrid - Item to open
+     * @param {Function} navigate - `(itemHrid) => void`, injected so this file stays DOM-only
+     */
+    function linkToMarketplace(element, itemHrid, navigate) {
+        if (!element || !itemHrid) return;
+
+        element.style.cursor = 'pointer';
+        element.title = 'Open in the marketplace';
+        element.addEventListener('click', (event) => {
+            // Stopped, or the click reaches the tile behind and counts towards a
+            // double-click that would toggle the panel shut under you
+            event.stopPropagation();
+            try {
+                navigate(itemHrid);
+            } catch (error) {
+                console.error('[OverlayFormat] Opening the marketplace failed:', error);
+            }
+        });
+    }
+
+    /** The palette every row draws from, so two rows never disagree about what green means */
+    const ROW_COLORS = {
+        good: '#4ade80',
+        bad: '#f87171',
+        neutral: '#e8ecf5',
+        dim: 'rgba(232, 236, 245, 0.55)',
+        accent: '#9ec4ff',
+        gold: '#ffcf5c',
+        violet: '#c9a0ff',
+    };
+
+    /**
+     * The overlay's glyphs, in one place, following OPanel's vocabulary.
+     *
+     * A tile has room for a symbol or a word, not both, so the symbol has to carry
+     * the label — which only works if it means the same thing everywhere. These were
+     * chosen per file before, so a coin was 🪙 in one row and 💰 in another and the
+     * overlay read as several tools stacked up rather than one.
+     *
+     * Matched to OPanel where OPanel has an opinion, because the two sit side by
+     * side on the same screen and a reader should not have to learn two alphabets.
+     * Where it does not — it draws some of these as game sprites rather than text —
+     * the nearest emoji is used.
+     */
+    const GLYPHS = {
+        /** Coins in hand */
+        coin: '🪙',
+        /** Market value, listings, anything priced */
+        market: '📈',
+        /** Bid orders waiting to fill */
+        bid: '📦',
+        /** The inventory as a whole */
+        inventory: '🎒',
+        /** Chests and other openables */
+        chest: '🎁',
+        /** Ability books */
+        books: '📖',
+        /** Mana */
+        mana: '💧',
+        /** Food and drink */
+        consumable: '🍴',
+        /** Damage dealt */
+        dealt: '⚔',
+        /** Damage taken */
+        taken: '🛡',
+        /** Watched items */
+        watch: '👁',
+        /** Locked and unlocked, as the overlay's own header uses them */
+        locked: '🔒',
+        unlocked: '🔓',
+        /** Settings */
+        settings: '⚙',
+        /** Close */
+        close: '✖',
+        /** Something is wrong with the figure rather than with the run */
+        warning: '⚠',
+    };
+
+    /**
+     * The glyphs the game itself has artwork for.
+     *
+     * OPanel draws these as sprites rather than as text, and beside the game's own
+     * UI that is the difference between a row that belongs on the screen and one
+     * that looks pasted on: an emoji is whatever font the browser picked, at
+     * whatever weight, in whatever palette its designer chose. The game's coin is
+     * *the* coin.
+     *
+     * Only the ones the game actually draws. A bid order and a market trend are
+     * concepts rather than objects, so they have no sprite and stay as emoji — which
+     * is what OPanel does with them too.
+     */
+    const GLYPH_SPRITES = {
+        coin: { id: 'coin', sheet: 'items' },
+        chest: { id: 'chimerical_chest', sheet: 'items' },
+        books: { id: 'ability_book', sheet: 'items' },
+        consumable: { id: 'cooking', sheet: 'skills' },
+        mana: { id: 'intelligence', sheet: 'skills' },
+        dealt: { id: 'attack', sheet: 'skills' },
+        taken: { id: 'defense', sheet: 'skills' },
+    };
+
+    /**
+     * A glyph as a row segment: the game's own artwork where it has some, the emoji
+     * where it does not.
+     *
+     * Falls back on its own, so a caller never has to know which is which — and a
+     * sheet the game has not drawn from yet produces a spacer rather than a gap that
+     * shifts everything when it arrives.
+     *
+     * @param {string} name - A key of `GLYPHS`
+     * @param {number} [size] - Pixels, for the sprite form
+     * @returns {Object} A segment for `row` or `rows`
+     */
+    function glyph(name, size = 16) {
+        const sprite = GLYPH_SPRITES[name];
+        if (sprite && spriteUrl(sprite.sheet)) return { icon: sprite.id, sheet: sprite.sheet, size };
+
+        return { text: GLYPHS[name] || '' };
+    }
+
+    /**
+     * A piece of a line.
+     * @typedef {Object} Segment
+     * @property {string} [text] - What it says
+     * @property {string} [icon] - An item hrid, or any sprite id, to draw instead of text
+     * @property {string} [sheet] - Which sprite sheet `icon` is on; items by default
+     * @property {number} [size] - Icon size in pixels
+     * @property {string} [color] - From `ROW_COLORS`, or any CSS colour
+     * @property {boolean} [bold] - Emphasis
+     * @property {boolean} [ellipsis] - This is the piece that gives way when the tile is too narrow
+     * @property {boolean} [push] - Push this and everything after it to the right
+     */
+
+    /**
+     * Draw one line of segments into an element.
+     *
+     * Exactly one piece should be marked `ellipsis` — a name, usually. Everything
+     * else keeps its full width, because a truncated number is not a smaller number,
+     * it is a wrong one.
+     *
+     * @param {HTMLElement} host - Where to draw
+     * @param {Segment[]} segments - The line
+     */
+    function drawLine(host, segments) {
+        // Text on a line together is aligned on its baseline, which is what makes a
+        // row of figures read as a row. An icon has no baseline: it is a box, and
+        // against baselined text it sits low and drags the line's height with it.
+        // So a line carrying one is centred instead — the box and the numbers are
+        // then aligned on the only thing they share, their middles.
+        const hasIcon = segments.some((segment) => segment?.icon);
+
+        Object.assign(host.style, {
+            display: 'flex',
+            alignItems: hasIcon ? 'center' : 'baseline',
+            gap: '5px',
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+        });
+
+        for (const segment of segments) {
+            if (!segment) continue;
+
+            // An item's own icon says which item without spending the width a name
+            // costs, which is the only reason a forty-pixel tile can name one at all
+            if (segment.icon) {
+                const icon = spriteIcon(segment.icon, segment.size || 16, segment.sheet || 'items');
+                if (segment.push) icon.style.marginLeft = 'auto';
+                host.appendChild(icon);
+                continue;
+            }
+
+            const span = document.createElement('span');
+            span.textContent = segment.text;
+            if (segment.color) span.style.color = segment.color;
+            if (segment.bold) span.style.fontWeight = 'bold';
+            if (segment.push) span.style.marginLeft = 'auto';
+
+            if (segment.ellipsis) {
+                Object.assign(span.style, { overflow: 'hidden', textOverflow: 'ellipsis', minWidth: '0' });
+            } else {
+                // Never allowed to shrink: a number squeezed to "1.2…" reads as a
+                // number rather than as a truncation
+                span.style.flex = '0 0 auto';
+            }
+
+            host.appendChild(span);
+        }
+    }
+
+    /**
+     * Draw a tile as one line.
+     *
+     * @param {HTMLElement} container - The row's container
+     * @param {Segment[]} segments - The line
+     * @param {Object} [options] - Layout
+     * @param {boolean} [options.center] - Centre the line rather than filling the
+     *   tile. Right for a tile whose pieces belong together — an icon, a count and
+     *   a price read as one phrase, and pushing the price to the far edge of a
+     *   resized tile puts a gap in the middle of it.
+     */
+    function row(container, segments, { center = false } = {}) {
+        container.replaceChildren();
+        container.style.flexDirection = '';
+        drawLine(container, segments);
+        container.style.justifyContent = center ? 'center' : '';
+    }
+
+    /**
+     * Draw a tile as several lines.
+     *
+     * By default each line is laid out independently, which is right when the lines
+     * are different facts — an income line above a cost line has no columns to
+     * agree about.
+     *
+     * `align` is for when they *are* a table: a row per player and then a total is
+     * the same measurement three times, and a figure that sits a few pixels off the
+     * one above it makes a reader check whether it is the same kind of number. The
+     * lines share columns then, the first stretching and the rest sized to their
+     * contents against the right edge.
+     *
+     * @param {HTMLElement} container - The row's container
+     * @param {Segment[][]} lines - One array of segments per line
+     * @param {Object} [options] - Layout
+     * @param {boolean} [options.align] - Share columns between the lines
+     */
+    function rows(container, lines, { align = false } = {}) {
+        container.replaceChildren();
+
+        const drawn = lines.filter((segments) => segments?.length);
+        // An icon has no width until it loads, so it cannot size a column; those
+        // tiles keep the independent layout, where nothing depends on its width
+        const alignable = align && !drawn.some((segments) => segments.some((segment) => segment?.icon));
+
+        if (alignable) return alignedRows(container, drawn);
+
+        Object.assign(container.style, {
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'center',
+            lineHeight: '1.3',
+            overflow: 'hidden',
+        });
+
+        for (const segments of drawn) {
+            const line = document.createElement('div');
+            drawLine(line, segments);
+            container.appendChild(line);
+        }
+    }
+
+    /**
+     * The lines as a grid, so every column lines up.
+     *
+     * The first column takes the slack and the rest are as wide as their widest
+     * cell, which puts the figures in a column against the right edge whether or
+     * not every line has the same number of them. `push` is ignored here — the
+     * stretching first column already does what it was for.
+     *
+     * @param {HTMLElement} container - The row's container
+     * @param {Segment[][]} lines - One array of segments per line
+     */
+    function alignedRows(container, lines) {
+        const columns = Math.max(...lines.map((segments) => segments.length), 1);
+
+        Object.assign(container.style, {
+            display: 'grid',
+            gridTemplateColumns: `minmax(0, 1fr)${' auto'.repeat(Math.max(columns - 1, 0))}`,
+            // From the top, not centred. These tiles sit in a row beside each other
+            // and carry different numbers of lines — DPS has a player and a total,
+            // Luck has one line — and centring puts the single line of one tile
+            // halfway down the two lines of the next. Aligned to the top, the first
+            // line of every one of them is at the same height.
+            alignContent: 'start',
+            columnGap: '5px',
+            lineHeight: '1.3',
+            overflow: 'hidden',
+            // Digits of one width, so a column of figures is a column rather than a
+            // ragged edge that shifts as the numbers change
+            fontVariantNumeric: 'tabular-nums',
+        });
+
+        for (const segments of lines) {
+            for (let index = 0; index < columns; index += 1) {
+                const segment = segments[index];
+                const span = document.createElement('span');
+
+                if (segment) {
+                    span.textContent = segment.text;
+                    if (segment.color) span.style.color = segment.color;
+                    if (segment.bold) span.style.fontWeight = 'bold';
+                }
+
+                Object.assign(span.style, {
+                    // The first column holds a name and is the one that may be cut;
+                    // a figure squeezed to "1.2…" reads as a number rather than as
+                    // a truncation
+                    textAlign: index === 0 ? 'left' : 'right',
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: index === 0 ? 'ellipsis' : 'clip',
+                    minWidth: '0',
+                });
+
+                container.appendChild(span);
+            }
+        }
+    }
+
+    /** Draw nothing, for a row with nothing to say yet */
+    function blank(container) {
+        container.replaceChildren();
+    }
+
+    /**
+     * A signed percentage, and what colour it should be.
+     *
+     * The band matters as much as the sign: everything sits a percent or two off
+     * whatever it is being compared with, and colouring that makes a row into a
+     * light that is always on.
+     *
+     * @param {number} percent - Signed percentage
+     * @param {number} [band] - How far from zero counts as news
+     * @returns {{text: string, color: string}}
+     */
+    function signedPercent(percent, band = 5) {
+        const text = `${percent >= 0 ? '+' : ''}${percent.toFixed(1)}%`;
+        if (percent > band) return { text, color: ROW_COLORS.good };
+        if (percent < -band) return { text, color: ROW_COLORS.bad };
+        return { text, color: ROW_COLORS.dim };
+    }
+
+    /**
+     * A duration short enough to sit in a tile.
+     *
+     * `timeReadable` writes "71 days 9h 55m", which is right in a tooltip and wrong
+     * in a tile forty pixels wide — it pushed the label it sat beside down to a
+     * single letter. Two units at most, and the small one drops off once the large
+     * one is big enough to make it noise.
+     *
+     * @param {number} seconds - Duration
+     * @returns {string} e.g. `45s`, `12m`, `3h 20m`, `4d 16h`, `71d`
+     */
+    function shortDuration(seconds) {
+        if (!Number.isFinite(seconds) || seconds < 0) return '—';
+
+        if (seconds < 60) return `${Math.round(seconds)}s`;
+        if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+
+        if (seconds < 86400) {
+            const hours = Math.floor(seconds / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+            return minutes ? `${hours}h ${minutes}m` : `${hours}h`;
+        }
+
+        const days = Math.floor(seconds / 86400);
+        // Past a month the hours are noise beside the days, and the space they take
+        // is the space the label beside them needs
+        if (days >= 30) return `${days}d`;
+
+        const hours = Math.floor((seconds % 86400) / 3600);
+        return hours ? `${days}d ${hours}h` : `${days}d`;
+    }
+
+    var overlayFormat = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        GLYPHS: GLYPHS,
+        ROW_COLORS: ROW_COLORS,
+        blank: blank,
+        drawLine: drawLine,
+        glyph: glyph,
+        itemIcon: itemIcon,
+        itemSpriteUrl: itemSpriteUrl,
+        linkToMarketplace: linkToMarketplace,
+        row: row,
+        rows: rows,
+        shortDuration: shortDuration,
+        signedPercent: signedPercent,
+        skillIcon: skillIcon,
+        spriteIcon: spriteIcon,
+        spriteUrl: spriteUrl
+    });
+
+    /**
+     * Order book reading
+     *
+     * How deep a price level is, and how long an order placed there would wait.
+     *
+     * The game sends an order book with each listing's creation timestamp, and those
+     * timestamps are the only rate signal available anywhere: twenty listings at one
+     * price spanning ten minutes is a level that churns, and twenty spanning a week
+     * is a level where an order is a week-long proposition.
+     *
+     * ## The assumption, stated
+     *
+     * Fill time is estimated as **depth ahead ÷ the rate at which depth arrived**.
+     * That is the steady-state assumption — that a price level drains about as fast
+     * as it fills — which holds in a liquid market and fails in a moving one. It is
+     * the honest reading of what the data can support: the book says how fast orders
+     * *arrive*, and nothing directly says how fast they are *taken*.
+     *
+     * The queue extrapolation is Ranged Way Idle's, by way of the queue length
+     * estimator this shares its arithmetic with.
+     */
+
+    /** The book only ever sends this many listings per side */
+    const VISIBLE_LISTINGS = 20;
+
+    /**
+     * The best price on one side of the book.
+     *
+     * Listings arrive best-first, so this is simply the head — but reading it
+     * through a function keeps the assumption in one place rather than in every
+     * caller that indexes `[0]`.
+     *
+     * @param {Array<Object>} listings - One side of the book
+     * @returns {number|null} The price, or null when the side is empty
+     */
+    function bestPrice(listings) {
+        const price = listings?.[0]?.price;
+        return price > 0 ? price : null;
+    }
+
+    /**
+     * How much sits at a price, extrapolating past the twenty the game shows.
+     *
+     * When all twenty visible listings share the best price, the level is deeper
+     * than the window and the timestamps are used to guess by how much — the same
+     * extrapolation the queue length display makes, so the two never disagree.
+     *
+     * @param {Array<Object>} listings - One side of the book
+     * @param {number} price - The price level to measure
+     * @returns {{quantity: number, estimated: boolean, spanMs: number}} Depth at that price
+     */
+    function queueAt(listings, price) {
+        const rows = listings || [];
+
+        let quantity = 0;
+        for (const listing of rows) {
+            if (listing?.price === price) quantity += listing.quantity || 0;
+        }
+
+        // Fewer than a full window means the level is fully visible, and the count
+        // is a fact rather than an estimate
+        if (rows.length < VISIBLE_LISTINGS || rows[VISIBLE_LISTINGS - 1]?.price !== price) {
+            return { quantity, estimated: false, spanMs: listingSpanMs(rows) };
+        }
+
+        const spanMs = listingSpanMs(rows);
+        if (!(spanMs > 0)) return { quantity, estimated: false, spanMs };
+
+        // Nothing has arrived since the newest listing when it arrived a moment ago,
+        // which extrapolates to exactly the visible depth — a real answer, not an
+        // inapplicable one, so it still counts as estimated
+        const sinceLast = Math.max(0, Date.now() - new Date(rows[VISIBLE_LISTINGS - 1].createdTimestamp).getTime());
+
+        // Ranged Way Idle's formula: the window covers a known stretch of time, and
+        // the rest of the queue is assumed to have arrived at the same rate
+        const multiplier = 1 + ((VISIBLE_LISTINGS - 1) / VISIBLE_LISTINGS) * (sinceLast / spanMs);
+        return { quantity: quantity * multiplier, estimated: true, spanMs };
+    }
+
+    /**
+     * How long the visible listings took to accumulate.
+     * @param {Array<Object>} listings - One side of the book
+     * @returns {number} Milliseconds, or 0 when it cannot be told
+     */
+    function listingSpanMs(listings) {
+        const rows = listings || [];
+        if (rows.length < 2) return 0;
+
+        const first = new Date(rows[0]?.createdTimestamp).getTime();
+        const last = new Date(rows[rows.length - 1]?.createdTimestamp).getTime();
+        const span = Math.abs(last - first);
+        return Number.isFinite(span) ? span : 0;
+    }
+
+    /**
+     * How long an order joining the back of a queue would wait.
+     *
+     * Depth ahead divided by the rate depth arrived at — see the note at the top of
+     * this file for why that is the rate being used and what it assumes. Returns
+     * null rather than a guess when the book gives nothing to measure, so a caller
+     * can tell "slow" apart from "unknown".
+     *
+     * @param {Array<Object>} listings - The side the order would join
+     * @param {number} count - How many the order is for
+     * @returns {number|null} Seconds, or null when unmeasurable
+     */
+    function estimateFillSeconds(listings, count) {
+        const price = bestPrice(listings);
+        if (price === null) return null;
+
+        const { quantity, spanMs } = queueAt(listings, price);
+        if (!(spanMs > 0)) return null;
+
+        // Quantity that arrived across the window, which is the rate's numerator.
+        // The extrapolated total is what the order waits behind, not what arrived.
+        let arrived = 0;
+        for (const listing of listings) {
+            if (listing?.price === price) arrived += listing.quantity || 0;
+        }
+        if (!(arrived > 0)) return null;
+
+        const perSecond = arrived / (spanMs / 1000);
+        // The order's own quantity counts: it is not filled until all of it is
+        return (quantity + count) / perSecond;
+    }
+
+    var orderBook = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        bestPrice: bestPrice,
+        estimateFillSeconds: estimateFillSeconds,
+        queueAt: queueAt
+    });
+
+    /**
+     * Combat level
+     *
+     * What your combat level actually is, and what it would take to move it.
+     *
+     * The game shows a whole number and nothing else, which hides the two facts
+     * worth knowing: how close the next one is, and which skill would get you there
+     * soonest. Combat level is a weighted average, so those two questions have
+     * different answers for every skill — a level of Melee is worth six times a
+     * level of Defense, and no amount of Defense may be the fastest route anyway.
+     *
+     * ## The formula
+     *
+     * ```
+     * 0.1 × (stamina + intelligence + attack + defense + MAX(melee, ranged, magic))
+     *   + 0.5 × MAX(attack, defense, melee, ranged, magic)
+     * ```
+     *
+     * The two maxima are over **different sets**, which is the detail worth getting
+     * right: the first counts only the three offensive skills, and the second
+     * includes Attack and Defense as well. They agree whenever an offensive skill
+     * leads overall — which is most builds, and is exactly why taking them to be the
+     * same set survives casual checking — and disagree the moment Attack or Defense
+     * is your highest, where the doubled term is Attack's rather than Melee's.
+     *
+     * So a skill can count twice, once, or not at all, and which of those it is
+     * depends on the rest of the build. Rather than encode that as a table of cases,
+     * what a level is worth is measured by adding one and re-running the formula.
+     *
+     * The displayed level is the floor, and the fraction it discards is exactly the
+     * progress bar the game does not draw.
+     *
+     * The model is GWhiz's, from MWI Combat Suite by Frotty (MIT) — see
+     * `third-party/mwi-combat-suite/` and `docs/THIRD-PARTY-LICENSES.md`. The code is
+     * Toolasha's own.
+     */
+
+    /** Every skill that counts, and what one level of it is worth on its own */
+    const COMBAT_SKILLS = ['stamina', 'intelligence', 'attack', 'defense', 'melee', 'ranged', 'magic'];
+
+    /** The three that compete for the slot inside the flat sum */
+    const OFFENSE_SKILLS = ['melee', 'ranged', 'magic'];
+
+    /** The five that compete for the doubled term — Attack and Defense are in it too */
+    const DOUBLED_SKILLS = ['attack', 'defense', 'melee', 'ranged', 'magic'];
+
+    /** Weight on the flat sum, and the extra weight the best offensive skill carries */
+    const FLAT_WEIGHT = 0.1;
+    const BEST_WEIGHT = 0.5;
+
+    /**
+     * A skill's level, defaulting to zero rather than to NaN.
+     * @param {Object} levels - Skill name → level
+     * @param {string} skill - Which one
+     * @returns {number}
+     */
+    function levelOf(levels, skill) {
+        const value = Number(levels?.[skill]);
+        return Number.isFinite(value) ? value : 0;
+    }
+
+    /**
+     * The highest of a set of skills.
+     *
+     * Ties resolve to the first in the given order, so the answer does not wander
+     * between two equal skills as unrelated levels change — which would make the
+     * combat level appear to flicker without anything having happened.
+     *
+     * @param {Object} levels - Skill name → level
+     * @param {string[]} among - Which skills to consider
+     * @returns {{skill: string, level: number}}
+     */
+    function highestOf(levels, among) {
+        let skill = among[0];
+        let level = levelOf(levels, skill);
+
+        for (const candidate of among.slice(1)) {
+            const value = levelOf(levels, candidate);
+            if (value > level) {
+                skill = candidate;
+                level = value;
+            }
+        }
+        return { skill, level };
+    }
+
+    /**
+     * The offensive skill inside the flat sum.
+     * @param {Object} levels - Skill name → level
+     * @returns {{skill: string, level: number}}
+     */
+    function bestOffense(levels) {
+        return highestOf(levels, OFFENSE_SKILLS);
+    }
+
+    /**
+     * The skill carrying the doubled term, which may be Attack or Defense.
+     * @param {Object} levels - Skill name → level
+     * @returns {{skill: string, level: number}}
+     */
+    function bestDoubled(levels) {
+        return highestOf(levels, DOUBLED_SKILLS);
+    }
+
+    /**
+     * Your combat level, and the arithmetic behind it.
+     *
+     * @param {Object} levels - Skill name → level
+     * @returns {{level: number, exact: number, best: string, progress: number, terms: number[]}}
+     *   `level` is what the game shows, `exact` the unrounded figure, and `progress`
+     *   the fraction of the way to the next whole level — the bar the game omits.
+     */
+    function combatLevel(levels) {
+        const offense = bestOffense(levels);
+        const doubled = bestDoubled(levels);
+
+        const terms = [
+            levelOf(levels, 'stamina'),
+            levelOf(levels, 'intelligence'),
+            levelOf(levels, 'attack'),
+            levelOf(levels, 'defense'),
+            offense.level,
+        ];
+
+        const exact = FLAT_WEIGHT * terms.reduce((sum, value) => sum + value, 0) + BEST_WEIGHT * doubled.level;
+        return {
+            level: Math.floor(exact),
+            exact,
+            best: offense.skill,
+            doubled: doubled.skill,
+            doubledLevel: doubled.level,
+            terms,
+            progress: exact - Math.floor(exact),
+        };
+    }
+
+    /**
+     * What one more level of a skill is worth towards combat level.
+     *
+     * Measured rather than looked up: add one and re-run the formula. A skill can
+     * count twice, once, or not at all depending on the rest of the build, and this
+     * gets the awkward cases right for free — a skill one level below the leader is
+     * worth 0.1 for that level and 0.6 for the next, which no fixed table says.
+     *
+     * @param {Object} levels - Skill name → level
+     * @param {string} skill - Which skill
+     * @returns {number} Combat levels gained by one level of it
+     */
+    function combatValueOf(levels, skill) {
+        if (!COMBAT_SKILLS.includes(skill)) return 0;
+
+        const before = combatLevel(levels).exact;
+        const after = combatLevel({ ...levels, [skill]: levelOf(levels, skill) + 1 }).exact;
+        return after - before;
+    }
+
+    /**
+     * How many levels of one skill would raise your combat level.
+     *
+     * Counted by adding levels until the whole number moves, rather than by
+     * dividing — because the value of each level is not constant. A skill below the
+     * leader contributes little until it overtakes and then contributes a lot, and
+     * dividing by today's rate would report a number that is wrong in both
+     * directions at once.
+     *
+     * @param {Object} levels - Skill name → level
+     * @param {string} skill - Which skill to raise
+     * @param {number} [limit] - Give up past this many levels
+     * @returns {number|null} Levels needed, or null when it would take more than the limit
+     */
+    function levelsToNextCombat(levels, skill, limit = 200) {
+        if (!COMBAT_SKILLS.includes(skill)) return null;
+
+        const target = Math.floor(combatLevel(levels).exact) + 1;
+        const start = levelOf(levels, skill);
+
+        for (let added = 1; added <= limit; added++) {
+            if (combatLevel({ ...levels, [skill]: start + added }).exact >= target) return added;
+        }
+        return null;
+    }
+
+    /**
+     * The skill that reaches the next combat level in the fewest levels.
+     *
+     * Fewest *levels*, not fastest — how long a level takes is a question about
+     * experience rates, which this module deliberately knows nothing about.
+     *
+     * @param {Object} levels - Skill name → level
+     * @returns {{skill: string, levels: number}|null}
+     */
+    function cheapestRouteToNextCombat(levels) {
+        let best = null;
+        for (const skill of COMBAT_SKILLS) {
+            const needed = levelsToNextCombat(levels, skill);
+            if (needed === null) continue;
+            if (!best || needed < best.levels) best = { skill, levels: needed };
+        }
+        return best;
+    }
+
+    /**
+     * How far through its current level a skill is, as a fraction.
+     *
+     * Which matters here rather than only cosmetically: fed back into the formula,
+     * it turns the combat level from a step function into the continuous figure it
+     * really is. A character at Combat 126.300 with Melee 81.7% of the way to 135 is
+     * not 30% of the way to Combat 127 — it is 79%, because most of the Melee level
+     * that carries the doubled term is already earned. The whole-number formula
+     * cannot see that, and it is the difference between "a third of the way" and
+     * "nearly there".
+     *
+     * @param {number} experience - Cumulative experience in the skill
+     * @param {number} level - Current level
+     * @param {number[]} table - The game's cumulative `levelExperienceTable`
+     * @returns {number} 0 to 1; zero at the cap, where there is nothing to be part of
+     */
+    function levelFraction(experience, level, table) {
+        const floor = table?.[level];
+        const ceiling = table?.[level + 1];
+        if (floor === undefined || ceiling === undefined || !(ceiling > floor)) return 0;
+
+        return Math.min(1, Math.max(0, ((Number(experience) || 0) - floor) / (ceiling - floor)));
+    }
+
+    /**
+     * Levels with their part-finished fractions included.
+     *
+     * @param {Array<{name: string, level: number, experience: number}>} skills - Combat skills
+     * @param {number[]} table - The game's cumulative experience table
+     * @returns {Object<string, number>} Skill name → fractional level
+     */
+    function fractionalLevels(skills, table) {
+        const levels = {};
+        for (const skill of skills || []) {
+            levels[skill.name] = skill.level + levelFraction(skill.experience, skill.level, table);
+        }
+        return levels;
+    }
+
+    /**
+     * The fractional level a cumulative experience total sits at.
+     *
+     * The inverse of the table: 3,500 experience against thresholds of 3,000 and
+     * 4,000 is level 3.5. At or past the last threshold it is the cap exactly, since
+     * there is no next one to be part of the way towards.
+     *
+     * @param {number} experience - Cumulative experience
+     * @param {number[]} table - The game's cumulative `levelExperienceTable`
+     * @returns {number|null} The fractional level, or null without a usable table
+     */
+    function fractionalLevelOf(experience, table) {
+        if (!Array.isArray(table) || table.length < 2) return null;
+
+        const total = Number(experience) || 0;
+        const cap = table.length - 1;
+        if (total >= table[cap]) return cap;
+
+        // Binary search rather than a scan: this is called inside the search below,
+        // which calls it a few hundred times per answer
+        let low = 1;
+        let high = cap;
+        while (low < high) {
+            const middle = Math.ceil((low + high) / 2);
+            if (table[middle] <= total) low = middle;
+            else high = middle - 1;
+        }
+
+        const floor = table[low];
+        const ceiling = table[low + 1];
+        if (ceiling === undefined || !(ceiling > floor)) return low;
+
+        return low + (total - floor) / (ceiling - floor);
+    }
+
+    /**
+     * How long a target **combat** level is away.
+     *
+     * Combat level is not a skill, so there is no experience table to divide into —
+     * it moves because two skills underneath it are moving, at different rates and
+     * with different weights. The honest answer is to run the clock forward and ask
+     * the formula, which is what this does.
+     *
+     * Combat level is non-decreasing in time, since every skill's level is, so the
+     * time is found by doubling until the target is passed and then bisecting. That
+     * is exact to the second in a few dozen evaluations, where a closed form would
+     * need the weights to be constant — and they are not, because a skill overtaking
+     * another changes what a level of it is worth partway through.
+     *
+     * @param {Object} input - What it needs
+     * @param {Array<{name: string, experience: number}>} input.skills - Combat skills
+     * @param {number[]} input.table - The game's cumulative experience table
+     * @param {Object<string, number>} input.rates - Skill name → experience per hour
+     * @param {number} input.target - Target combat level
+     * @returns {number|null} Seconds, or null when nothing is moving or it is out of reach
+     */
+    function timeToCombatLevel({ skills, table, rates, target }) {
+        /** The combat level after a given number of seconds at the current rates */
+        const after = (seconds) => {
+            const levels = {};
+            for (const skill of skills || []) {
+                const gained = ((rates?.[skill.name] || 0) * seconds) / 3600;
+                levels[skill.name] = fractionalLevelOf(skill.experience + gained, table);
+            }
+            return combatLevel(levels).exact;
+        };
+
+        if (!Array.isArray(table) || table.length < 2) return null;
+        if (after(0) >= target) return 0;
+        if (!Object.values(rates || {}).some((rate) => rate > 0)) return null;
+
+        // A century of idling is not an answer anybody wants, and it is the guard
+        // against a target above what these rates can ever reach — the skills hit
+        // the level cap and the combat level stops moving
+        const LIMIT_SECONDS = 100 * 365 * 24 * 3600;
+        let high = 3600;
+        while (after(high) < target) {
+            high *= 2;
+            if (high > LIMIT_SECONDS) return null;
+        }
+
+        let low = 0;
+        for (let step = 0; step < 60; step++) {
+            const middle = (low + high) / 2;
+            if (after(middle) >= target) high = middle;
+            else low = middle;
+        }
+        return high;
+    }
+
+    /**
+     * Experience between two levels.
+     *
+     * @param {number} from - Starting level
+     * @param {number} to - Target level
+     * @param {number[]} table - The game's cumulative `levelExperienceTable`
+     * @returns {number|null} Experience needed, or null when either level is off the table
+     */
+    function experienceBetween(from, to, table) {
+        const start = table?.[from];
+        const end = table?.[to];
+        if (start === undefined || end === undefined) return null;
+
+        return Math.max(0, end - start);
+    }
+
+    /**
+     * How long a target level is away at a given rate.
+     *
+     * @param {Object} input - What it needs
+     * @param {number} input.experience - Cumulative experience now
+     * @param {number} input.target - Target level
+     * @param {number[]} input.table - The game's cumulative experience table
+     * @param {number} input.perHour - Experience per hour
+     * @returns {number|null} Seconds, or null when unknowable
+     */
+    function timeToTargetLevel({ experience, target, table, perHour }) {
+        const goal = table?.[target];
+        if (goal === undefined || !(perHour > 0)) return null;
+
+        const remaining = goal - (Number(experience) || 0);
+        // Already there is zero, not a negative countdown
+        if (remaining <= 0) return 0;
+
+        return (remaining / perHour) * 3600;
+    }
+
+    var combatLevel$1 = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        COMBAT_SKILLS: COMBAT_SKILLS,
+        DOUBLED_SKILLS: DOUBLED_SKILLS,
+        OFFENSE_SKILLS: OFFENSE_SKILLS,
+        bestDoubled: bestDoubled,
+        bestOffense: bestOffense,
+        cheapestRouteToNextCombat: cheapestRouteToNextCombat,
+        combatLevel: combatLevel,
+        combatValueOf: combatValueOf,
+        experienceBetween: experienceBetween,
+        fractionalLevelOf: fractionalLevelOf,
+        fractionalLevels: fractionalLevels,
+        highestOf: highestOf,
+        levelFraction: levelFraction,
+        levelsToNextCombat: levelsToNextCombat,
+        timeToCombatLevel: timeToCombatLevel,
+        timeToTargetLevel: timeToTargetLevel
+    });
+
+    /**
+     * OPanel layout import and export
+     *
+     * Reading and writing MWI Combat Suite's OPanel configuration.
+     *
+     * A layout is worth an hour of fiddling and is then worth keeping. Someone
+     * arriving from MCS has already spent that hour, and asking them to spend it
+     * again is the main reason a second tool does not get used. The shapes are close
+     * enough that this is mostly a rename.
+     *
+     * ## What does and does not survive
+     *
+     * Positions, sizes, text scales, order, which rows are on, the lock and the grid
+     * all carry across unchanged — OPanel and this overlay measure them the same way.
+     * Rows Toolasha has no equivalent for are **reported rather than dropped
+     * silently**, because a layout that quietly arrives missing three tiles looks
+     * like an import that half-worked.
+     *
+     * The panel's own position and size come across too, but separately: they live
+     * in the geometry store rather than in the layout, so they are returned beside
+     * it rather than inside it.
+     *
+     * ## Why the file also carries a Toolasha section
+     *
+     * OPanel names twenty rows. This overlay has half as many again — the watchlist,
+     * charms, mana, the combat log, equipment savings — and OPanel has no key for
+     * any of them. Written in OPanel's shape alone, a Toolasha layout comes back
+     * missing every one of those, and rows that arrive with no position get laid out
+     * wherever the packer puts them. Exporting from one character and importing on
+     * another produced a jumble for exactly this reason.
+     *
+     * So the file carries **both**: `config` in OPanel's shape, which MCS reads and
+     * this ignores when the other half is present, and `toolasha` carrying the
+     * layout whole. MCS ignores keys it does not know, so the file stays readable by
+     * both without either losing anything.
+     *
+     * Kept pure and apart from the panel so the mapping is testable without a DOM,
+     * which is where a rename table's mistakes actually live.
+     */
+
+    /**
+     * OPanel's row keys against ours.
+     *
+     * Most are the same word. The ones that are not carry the name of whichever
+     * script the row came from — `kollectionNetWorth`, `ewatchCoins`, `gwhizTTL` —
+     * which is history rather than description, so ours are named for what they show.
+     */
+    const ROW_KEY_MAP = {
+        battleTimer: 'battleTimer',
+        combatRevenue: 'combatRevenue',
+        consumables: 'consumables',
+        experiencePerHour: 'experiencePerHour',
+        totalProfit: 'totalProfit',
+        dps: 'dps',
+        overExpected: 'overExpected',
+        luck: 'luck',
+        deathsPerHour: 'deathsPerHour',
+        houses: 'houses',
+        equipmentWatch: 'equipmentWatch',
+        combatStatus: 'combatStatus',
+        treasure: 'treasure',
+        ntallyInventory: 'inventoryValue',
+        kollectionBuildScore: 'buildScore',
+        kollectionNetWorth: 'netWorth',
+        ewatchCoins: 'coins',
+        ewatchMarket: 'marketListings',
+        skillBooks: 'skillBooks',
+        gwhizTTL: 'timeToLevel',
+    };
+
+    /**
+     * Bumped only when the section's shape changes in a way a reader must know
+     * about. It is written and never yet read, which is the point of writing it.
+     */
+    const TOOLASHA_SECTION_VERSION = 1;
+
+    /** Ours back to theirs, for writing a file MCS can read */
+    const REVERSE_KEY_MAP = Object.fromEntries(Object.entries(ROW_KEY_MAP).map(([theirs, ours]) => [ours, theirs]));
+
+    /**
+     * Does this look like an OPanel configuration?
+     *
+     * Checked by shape rather than by a version field, which OPanel does not write.
+     * A config with rows in a known order and a sizes map is one; anything else is
+     * declined rather than half-read.
+     *
+     * @param {Object} json - Parsed file
+     * @returns {boolean}
+     */
+    function isOPanelConfig(json) {
+        const config = json?.config;
+        return !!config && (Array.isArray(config.order) || !!config.sizes || !!config.positions);
+    }
+
+    /**
+     * Read an OPanel configuration into overlay settings.
+     *
+     * @param {Object} json - Parsed OPanel config file
+     * @returns {{settings: Object, geometry: Object|null, unknown: string[]}|null}
+     *   `settings` merges into the overlay's own, `geometry` is the panel's frame,
+     *   and `unknown` names every row of theirs we have nothing to map to. `native`
+     *   says the layout came from this overlay's own section rather than from
+     *   OPanel's, which is the difference between coordinates that can be used as
+     *   they are and coordinates that have to be laid out again. Null when the file
+     *   is not an OPanel config.
+     */
+    function fromOPanelConfig(json) {
+        if (!isOPanelConfig(json)) return null;
+
+        // Our own section wins when the file has one: it names every row rather than
+        // the twenty OPanel knows, and a layout half of whose rows arrive without a
+        // position is a layout the packer rearranges from scratch
+        const native = readToolashaSection(json);
+        if (native) return { settings: native, geometry: readGeometry(json), unknown: [], native: true };
+
+        const config = json.config;
+        const unknown = [];
+
+        /**
+         * @param {string} theirKey - An OPanel row key
+         * @returns {string|null} Ours, recording the miss
+         */
+        const translate = (theirKey) => {
+            const ours = ROW_KEY_MAP[theirKey];
+            if (!ours && !unknown.includes(theirKey)) unknown.push(theirKey);
+            return ours || null;
+        };
+
+        const visible = {};
+        const positions = {};
+        const sizes = {};
+        const zoom = {};
+        const order = [];
+
+        for (const theirKey of config.order || []) {
+            const ours = translate(theirKey);
+            if (ours) order.push(ours);
+        }
+
+        // Visibility is a bare boolean beside the display sub-options in the same
+        // object, so it is read from the key map rather than by walking the object —
+        // `snapToGrid` is not a row
+        for (const theirKey of Object.keys(ROW_KEY_MAP)) {
+            if (typeof config[theirKey] === 'boolean') visible[ROW_KEY_MAP[theirKey]] = config[theirKey];
+        }
+
+        for (const [theirKey, value] of Object.entries(config.positions || {})) {
+            const ours = translate(theirKey);
+            if (ours && Number.isFinite(value?.x) && Number.isFinite(value?.y)) {
+                positions[ours] = { x: value.x, y: value.y };
+            }
+        }
+
+        for (const [theirKey, value] of Object.entries(config.sizes || {})) {
+            const ours = translate(theirKey);
+            if (ours && value?.width > 0 && value?.height > 0) {
+                sizes[ours] = { width: value.width, height: value.height };
+            }
+        }
+
+        for (const [theirKey, value] of Object.entries(json.zoom_levels || {})) {
+            const ours = translate(theirKey);
+            if (ours && Number.isFinite(value)) zoom[ours] = value;
+        }
+
+        const settings = { visible, order, positions, sizes, zoom };
+        if (typeof config.snapToGrid === 'boolean') settings.snapToGrid = config.snapToGrid;
+        if (typeof json.is_locked === 'boolean') settings.locked = json.is_locked;
+
+        return { settings, geometry: readGeometry(json), unknown, native: false };
+    }
+
+    /**
+     * The layout as this overlay stores it, if the file carries one.
+     *
+     * Validated rather than trusted: a hand-edited or truncated file should be
+     * declined so the OPanel half is read instead, which is worse but not wrong.
+     *
+     * @param {Object} json - Parsed file
+     * @returns {Object|null} Settings, or null when there is no usable section
+     */
+    function readToolashaSection(json) {
+        const saved = json?.toolasha?.settings;
+        if (!saved || !Array.isArray(saved.order) || !saved.order.length) return null;
+
+        const settings = {
+            order: saved.order.filter((key) => typeof key === 'string'),
+            visible: {},
+            positions: {},
+            sizes: {},
+            zoom: {},
+        };
+
+        for (const [key, on] of Object.entries(saved.visible || {})) settings.visible[key] = !!on;
+
+        for (const [key, value] of Object.entries(saved.positions || {})) {
+            if (Number.isFinite(value?.x) && Number.isFinite(value?.y))
+                settings.positions[key] = { x: value.x, y: value.y };
+        }
+
+        for (const [key, value] of Object.entries(saved.sizes || {})) {
+            if (value?.width > 0 && value?.height > 0) settings.sizes[key] = { width: value.width, height: value.height };
+        }
+
+        for (const [key, value] of Object.entries(saved.zoom || {})) {
+            if (Number.isFinite(value)) settings.zoom[key] = value;
+        }
+
+        if (typeof saved.snapToGrid === 'boolean') settings.snapToGrid = saved.snapToGrid;
+        if (typeof saved.locked === 'boolean') settings.locked = saved.locked;
+        if (typeof saved.separators === 'boolean') settings.separators = saved.separators;
+        if (Number.isFinite(saved.textScale)) settings.textScale = saved.textScale;
+
+        return settings;
+    }
+
+    /**
+     * The panel's own frame, if the file carries one.
+     * @param {Object} json - Parsed OPanel config
+     * @returns {Object|null} `{left, top, width, height}`
+     */
+    function readGeometry(json) {
+        const geometry = {};
+        if (Number.isFinite(json?.position?.left)) geometry.left = Math.round(json.position.left);
+        if (Number.isFinite(json?.position?.top)) geometry.top = Math.round(json.position.top);
+        if (json?.size?.width > 0) geometry.width = Math.round(json.size.width);
+        if (json?.size?.height > 0) geometry.height = Math.round(json.size.height);
+        return Object.keys(geometry).length ? geometry : null;
+    }
+
+    /**
+     * Write overlay settings out in OPanel's shape.
+     *
+     * Rows OPanel has no key for are left out — writing ours into their file would
+     * produce something MCS reads as corrupt rather than as extended.
+     *
+     * @param {Object} settings - The overlay's settings
+     * @param {Object} [geometry] - The panel's frame
+     * @returns {Object} A file OPanel can read
+     */
+    function toOPanelConfig(settings, geometry = null) {
+        const config = { order: [], sizes: {}, positions: {}, firstLoad: false };
+        const zoomLevels = {};
+
+        for (const ourKey of settings?.order || []) {
+            const theirs = REVERSE_KEY_MAP[ourKey];
+            if (theirs) config.order.push(theirs);
+        }
+
+        for (const [ourKey, on] of Object.entries(settings?.visible || {})) {
+            const theirs = REVERSE_KEY_MAP[ourKey];
+            if (theirs) config[theirs] = !!on;
+        }
+
+        for (const [ourKey, value] of Object.entries(settings?.positions || {})) {
+            const theirs = REVERSE_KEY_MAP[ourKey];
+            if (theirs) config.positions[theirs] = { x: value.x, y: value.y };
+        }
+
+        for (const [ourKey, value] of Object.entries(settings?.sizes || {})) {
+            const theirs = REVERSE_KEY_MAP[ourKey];
+            if (theirs) config.sizes[theirs] = { width: value.width, height: value.height };
+        }
+
+        for (const [ourKey, value] of Object.entries(settings?.zoom || {})) {
+            const theirs = REVERSE_KEY_MAP[ourKey];
+            if (theirs) zoomLevels[theirs] = value;
+        }
+
+        config.snapToGrid = settings?.snapToGrid !== false;
+
+        return {
+            config,
+            is_locked: settings?.locked !== false,
+            position: geometry ? { top: geometry.top ?? 0, left: geometry.left ?? 0 } : undefined,
+            size: geometry?.width ? { width: geometry.width, height: geometry.height } : undefined,
+            zoom_levels: zoomLevels,
+            // The layout whole, beside the twenty rows OPanel has names for. MCS
+            // ignores keys it does not know, so this costs it nothing and is the
+            // difference between a Toolasha layout surviving a round trip and
+            // arriving with a third of its rows unplaced.
+            toolasha: { version: TOOLASHA_SECTION_VERSION, settings: nativeSection(settings) },
+        };
+    }
+
+    /**
+     * The layout as this overlay holds it, trimmed to what a file needs.
+     *
+     * Copied field by field rather than spread, so a future setting that has no
+     * business in a layout file — a cache, a timestamp — does not silently start
+     * travelling between characters.
+     *
+     * @param {Object} settings - The overlay's settings
+     * @returns {Object}
+     */
+    function nativeSection(settings) {
+        return {
+            order: [...(settings?.order || [])],
+            visible: { ...(settings?.visible || {}) },
+            positions: { ...(settings?.positions || {}) },
+            sizes: { ...(settings?.sizes || {}) },
+            zoom: { ...(settings?.zoom || {}) },
+            snapToGrid: settings?.snapToGrid !== false,
+            locked: settings?.locked !== false,
+            separators: settings?.separators !== false,
+            textScale: settings?.textScale,
+        };
+    }
+
+    var opanelConfig = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        ROW_KEY_MAP: ROW_KEY_MAP,
+        fromOPanelConfig: fromOPanelConfig,
+        isOPanelConfig: isOPanelConfig,
+        toOPanelConfig: toOPanelConfig
+    });
+
+    /**
+     * Skill Progress
+     *
+     * How long until the next level, from a rate you are actually achieving.
+     *
+     * The arithmetic is small but every part of it has a wrong answer that looks
+     * right. Cumulative experience against per-level experience, a rate measured
+     * over a window short enough to be noise, a skill at the cap that should say
+     * nothing rather than "never" — each produces a plausible number. So it lives
+     * here, apart from the DOM, with tests.
+     */
+
+    /** Below this a rate is one action's worth of luck rather than a measurement */
+    const MIN_WINDOW_SECONDS = 20;
+
+    /**
+     * Experience per hour, from two readings of the same skill.
+     *
+     * Returns null rather than zero when there is nothing to measure. Zero is a
+     * claim — that you are gaining no experience — and a window of two seconds
+     * cannot support it.
+     *
+     * @param {{t: number, xp: number}} first - Earlier reading, `t` in ms
+     * @param {{t: number, xp: number}} last - Later reading
+     * @returns {number|null} Experience per hour, or null when unmeasurable
+     */
+    function experiencePerHour(first, last) {
+        if (!first || !last) return null;
+
+        const seconds = (last.t - first.t) / 1000;
+        if (!(seconds >= MIN_WINDOW_SECONDS)) return null;
+
+        const gained = last.xp - first.xp;
+        // Experience going backwards is not a rate; it is a reset, a character
+        // switch, or a reading from before a wipe
+        if (!(gained > 0)) return null;
+
+        return (gained / seconds) * 3600;
+    }
+
+    /**
+     * Experience still owed for the next level.
+     *
+     * @param {number} experience - Cumulative experience in the skill
+     * @param {number} level - Current level
+     * @param {number[]} levelExperienceTable - Cumulative experience per level, indexed by level
+     * @returns {number|null} Experience remaining, or null at the cap or without a table
+     */
+    function experienceToNextLevel(experience, level, levelExperienceTable) {
+        const next = levelExperienceTable?.[level + 1];
+        // Undefined means the table has run out, which is the level cap — not zero
+        // experience remaining, which would read as "about to level"
+        if (next === undefined || !Number.isFinite(experience)) return null;
+
+        return Math.max(0, next - experience);
+    }
+
+    /**
+     * How long the next level will take at the rate being achieved.
+     *
+     * @param {Object} input - What it needs
+     * @param {number} input.experience - Cumulative experience
+     * @param {number} input.level - Current level
+     * @param {number[]} input.levelExperienceTable - The game's table
+     * @param {number|null} input.xpPerHour - Measured rate
+     * @returns {number|null} Seconds, or null when unknowable
+     */
+    function timeToNextLevel({ experience, level, levelExperienceTable, xpPerHour }) {
+        if (!(xpPerHour > 0)) return null;
+
+        const remaining = experienceToNextLevel(experience, level, levelExperienceTable);
+        if (remaining === null) return null;
+
+        return (remaining / xpPerHour) * 3600;
+    }
+
+    /**
+     * Entries in `characterSkills` that are not skills you train.
+     *
+     * The game keeps the total level in the same list, and it gains experience
+     * faster than anything else by definition — it is the sum of them all. Left in,
+     * it always wins the "which is being trained" question and always reports no
+     * next level, since there is no row for it in the experience table.
+     */
+    const NOT_A_SKILL = new Set(['/skills/total_level']);
+
+    /**
+     * Which skill is being trained, judged by which is gaining fastest.
+     *
+     * By rate rather than by the current action, because an action trains several
+     * skills at once and the one you care about is the one moving. Ties go to
+     * whichever is found first, which is stable for a stable input order.
+     *
+     * @param {Object<string, number>} ratesByHrid - Skill hrid → experience per hour
+     * @returns {string|null} The skill hrid, or null when nothing is moving
+     */
+    function fastestGaining(ratesByHrid) {
+        let best = null;
+        let bestRate = 0;
+
+        for (const [hrid, rate] of Object.entries(ratesByHrid || {})) {
+            if (NOT_A_SKILL.has(hrid)) continue;
+            if (rate > bestRate) {
+                best = hrid;
+                bestRate = rate;
+            }
+        }
+        return best;
+    }
+
+    /**
+     * A skill hrid as its name.
+     * @param {string} skillHrid - e.g. `/skills/melee`
+     * @returns {string} e.g. `Melee`
+     */
+    function skillName(skillHrid) {
+        const last =
+            String(skillHrid || '')
+                .split('/')
+                .pop() || '';
+        return last.replace(/_/g, ' ').replace(/\b\w/g, (character) => character.toUpperCase());
+    }
+
+    var skillProgress = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        experiencePerHour: experiencePerHour,
+        experienceToNextLevel: experienceToNextLevel,
+        fastestGaining: fastestGaining,
+        skillName: skillName,
+        timeToNextLevel: timeToNextLevel
+    });
+
+    /**
+     * Skill history
+     *
+     * Two readings of a skill's experience, far enough apart to divide.
+     *
+     * A rate needs a memory, and a memory needs three decisions that each have a
+     * wrong answer looking exactly like the right one: how often to read, how far
+     * back to keep, and what to do when a reading makes no sense against the last.
+     * That last one is where the bugs are, and it is why this is one module rather
+     * than a loop copied into every feature that wants a rate.
+     *
+     * ## The two readings that are not progress
+     *
+     * **Experience below the previous reading** is a different character, not a
+     * loss. A test server beside a live one is an ordinary thing to have, and the
+     * difference between two characters' totals is a large negative number that
+     * would otherwise be reported as a rate.
+     *
+     * **A clock that has gone backwards** — an NTP correction, a resume from sleep —
+     * leaves readings stamped in the future. Nothing can be measured against those:
+     * the window between them is negative, so every rate reads as unmeasurable until
+     * real time catches up with the stale stamps, which after a long sleep is hours
+     * of a panel quietly saying nothing. Starting again costs one window and is the
+     * only answer that recovers.
+     *
+     * Each caller makes its own, so opening or closing one panel cannot reset
+     * another's measurement.
+     */
+
+
+    /** Ten minutes back is long enough to be a measurement and short enough to be current */
+    const DEFAULT_WINDOW_MS = 10 * 60 * 1000;
+
+    /** No point re-reading the skill list faster than anything redraws */
+    const DEFAULT_SAMPLE_MS = 5000;
+
+    /**
+     * A private record of how fast each skill is going up.
+     *
+     * @param {Object} [options] - Tuning
+     * @param {number} [options.windowMs] - How far back to measure over
+     * @param {number} [options.sampleMs] - How often to take a reading
+     * @returns {{sample: Function, rateFor: Function, rates: Function, readings: Function, clear: Function}}
+     */
+    function createSkillHistory({ windowMs = DEFAULT_WINDOW_MS, sampleMs = DEFAULT_SAMPLE_MS } = {}) {
+        /** skillHrid → [{t, xp}], oldest first */
+        const history = new Map();
+
+        // Null rather than zero for "never read": zero is a real time, and against
+        // it the first reading of a session looks like one taken a moment ago and
+        // is refused. Under a real clock that is invisible, which is exactly the
+        // kind of edge that survives to bite a test that sets its own time.
+        let lastSampleAt = null;
+
+        /**
+         * Take a reading of every skill, if one is due.
+         *
+         * @param {Array<{skillHrid: string, experience: number}>} skills - The game's list
+         * @param {number} [now] - Milliseconds since the epoch
+         */
+        function sample(skills, now = Date.now()) {
+            if (lastSampleAt !== null) {
+                if (now < lastSampleAt) history.clear();
+                else if (now - lastSampleAt < sampleMs) return;
+            }
+            lastSampleAt = now;
+
+            for (const skill of skills || []) {
+                if (!skill?.skillHrid || !Number.isFinite(skill.experience)) continue;
+
+                let readings = history.get(skill.skillHrid) || [];
+                if (readings.length && skill.experience < readings[readings.length - 1].xp) readings = [];
+
+                readings.push({ t: now, xp: skill.experience });
+                // Drop everything that has fallen out of the window, but never the
+                // last one before it — that reading is the far end of the measurement
+                while (readings.length > 2 && readings[1].t < now - windowMs) readings.shift();
+                history.set(skill.skillHrid, readings);
+            }
+        }
+
+        /**
+         * @param {string} skillHrid - Which skill
+         * @returns {number|null} Experience per hour, or null when unmeasurable
+         */
+        function rateFor(skillHrid) {
+            const readings = history.get(skillHrid) || [];
+            return experiencePerHour(readings[0], readings[readings.length - 1]);
+        }
+
+        /**
+         * Every skill that has a measurable rate.
+         * @returns {Object<string, number>} Skill hrid → experience per hour
+         */
+        function rates() {
+            const result = {};
+            for (const skillHrid of history.keys()) {
+                const rate = rateFor(skillHrid);
+                if (rate) result[skillHrid] = rate;
+            }
+            return result;
+        }
+
+        /**
+         * @param {string} skillHrid - Which skill
+         * @returns {Array<{t: number, xp: number}>} Its readings, oldest first
+         */
+        function readings(skillHrid) {
+            return history.get(skillHrid) || [];
+        }
+
+        /** Forget everything and start the measurement again */
+        function clear() {
+            history.clear();
+            lastSampleAt = null;
+        }
+
+        return { sample, rateFor, rates, readings, clear };
+    }
+
+    var skillHistory = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        createSkillHistory: createSkillHistory
+    });
+
+    /**
+     * Ability books
+     *
+     * How many books an ability level costs, and which level is the cheapest to buy.
+     *
+     * ## The book that teaches the ability
+     *
+     * An ability you have never learned is level 0, and the first book does not
+     * grant experience towards level 1 — it teaches the ability. So a plan from
+     * level 0 is one book more than the experience arithmetic says, and a
+     * calculation that misses it is short by exactly one book every time, which is
+     * the kind of error that only shows up when you are one book short.
+     *
+     * ## Cheapest is not fewest
+     *
+     * The ability closest to its next level is rarely the cheapest one to level:
+     * books differ in experience granted and by orders of magnitude in price. So the
+     * question worth answering is not "which is nearest" but "which costs least",
+     * and that needs the market.
+     *
+     * The maths was already in `features/abilities/ability-book-calculator.js`, tied
+     * to whichever book the Item Dictionary happened to be showing. It is here so
+     * the panel and the dictionary cannot disagree about the same number.
+     *
+     * The model is BRead's, from MWI Combat Suite by Frotty (MIT) — see
+     * `third-party/mwi-combat-suite/` and `docs/THIRD-PARTY-LICENSES.md`. The code is
+     * Toolasha's own.
+     */
+
+    /** Where an ability's book lives — the game keeps the two under matching names */
+    function bookItemFor(abilityHrid) {
+        return String(abilityHrid || '').replace('/abilities/', '/items/');
+    }
+
+    /**
+     * Books needed to take an ability to a target level.
+     *
+     * @param {Object} input - What it needs
+     * @param {number} input.level - Current ability level; 0 means never learned
+     * @param {number} input.experience - Current ability experience
+     * @param {number} input.targetLevel - Level being aimed at
+     * @param {number} input.perBookExperience - Experience one book grants
+     * @param {number[]} input.table - The game's cumulative `levelExperienceTable`
+     * @returns {number|null} Books needed, or null when it cannot be worked out
+     */
+    function booksToLevel({ level, experience, targetLevel, perBookExperience, table }) {
+        const goal = table?.[targetLevel];
+        if (goal === undefined || !(perBookExperience > 0)) return null;
+
+        const owed = goal - (Number(experience) || 0);
+        // Already past it is nothing to buy, not a negative order
+        if (owed <= 0) return level === 0 ? 1 : 0;
+
+        // The first book teaches the ability rather than levelling it
+        return Math.ceil(owed / perBookExperience) + (level === 0 ? 1 : 0);
+    }
+
+    /**
+     * Experience still owed to a level.
+     *
+     * @param {number[]} table - The game's cumulative `levelExperienceTable`
+     * @param {number} targetLevel - Level being aimed at
+     * @param {number} experience - Current ability experience
+     * @returns {number|null} Nothing when the table does not go that far
+     */
+    function experienceOwed(table, targetLevel, experience) {
+        const goal = table?.[targetLevel];
+        if (goal === undefined) return null;
+        // Past it is nothing left to earn, not a negative amount of experience
+        return Math.max(0, goal - (Number(experience) || 0));
+    }
+
+    /**
+     * One ability's plan: what the next level costs, and a chosen target.
+     *
+     * @param {Object} input - What it needs
+     * @param {Object} input.ability - `{abilityHrid, level, experience}`
+     * @param {number} input.perBookExperience - Experience one book grants
+     * @param {number} input.bookPrice - What one book costs
+     * @param {number[]} input.table - The game's cumulative experience table
+     * @param {number} [input.targetLevel] - A level beyond the next one
+     * @returns {Object|null} The plan, or null without a book to buy
+     */
+    function abilityPlan({ ability, perBookExperience, bookPrice, table, targetLevel }) {
+        if (!ability?.abilityHrid || !(perBookExperience > 0)) return null;
+
+        const level = Number(ability.level) || 0;
+        const experience = Number(ability.experience) || 0;
+        const price = Number(bookPrice) || 0;
+
+        const next = booksToLevel({ level, experience, targetLevel: level + 1, perBookExperience, table });
+        const target = targetLevel && targetLevel > level ? targetLevel : null;
+        const toTarget = target ? booksToLevel({ level, experience, targetLevel: target, perBookExperience, table }) : null;
+
+        return {
+            abilityHrid: ability.abilityHrid,
+            itemHrid: bookItemFor(ability.abilityHrid),
+            level,
+            experience,
+            perBookExperience,
+            bookPrice: price,
+            // Experience rather than books, because a rate is measured in experience
+            // and a time to a level cannot be got from a book count
+            experienceToNext: experienceOwed(table, level + 1, experience),
+            experienceToTarget: target === null ? null : experienceOwed(table, target, experience),
+            booksToNext: next,
+            // Nothing rather than zero when the book has no price: an ability whose
+            // book is unpriced is not free to level, it is unknown
+            costToNext: next === null || !price ? null : next * price,
+            targetLevel: target,
+            booksToTarget: toTarget,
+            costToTarget: toTarget === null || !price ? null : toTarget * price,
+        };
+    }
+
+    /**
+     * The ability whose next level costs least.
+     *
+     * Plans with no price are not candidates — an unpriced book is unknown rather
+     * than free, and treating it as zero would make it win every time.
+     *
+     * @param {Array<Object>} plans - From `abilityPlan`
+     * @returns {Object|null}
+     */
+    function cheapestNextLevel(plans) {
+        let best = null;
+        for (const plan of plans || []) {
+            if (!plan || plan.costToNext === null || !(plan.costToNext > 0)) continue;
+            if (!best || plan.costToNext < best.costToNext) best = plan;
+        }
+        return best;
+    }
+
+    /**
+     * What a whole set of plans would cost, each aimed where it is aimed.
+     *
+     * A total over a set where some abilities have a target and some do not cannot
+     * come from one field: `costToTarget` is null on the ones with no target, and
+     * `costToNext` ignores the targets that were set. It has to be per plan.
+     *
+     * @param {Array<Object>} plans - From `abilityPlan`
+     * @returns {{books: number, cost: number, unpriced: number}}
+     */
+    function aimedTotals(plans) {
+        return planTotals(
+            (plans || []).map((plan) =>
+                !plan || plan.targetLevel === null
+                    ? plan
+                    : { ...plan, booksToNext: plan.booksToTarget, costToNext: plan.costToTarget }
+            )
+        );
+    }
+
+    /**
+     * What a whole set of plans would cost.
+     *
+     * @param {Array<Object>} plans - From `abilityPlan`
+     * @param {string} [field] - `costToNext` or `costToTarget`
+     * @returns {{books: number, cost: number, unpriced: number}} `unpriced` is how
+     *   many abilities the total could not include, which is the difference between
+     *   a total and a lower bound presented as one
+     */
+    function planTotals(plans, field = 'costToNext') {
+        const booksField = field === 'costToTarget' ? 'booksToTarget' : 'booksToNext';
+        let books = 0;
+        let cost = 0;
+        let unpriced = 0;
+
+        for (const plan of plans || []) {
+            if (!plan) continue;
+            books += plan[booksField] || 0;
+            if (plan[field] === null) unpriced++;
+            else cost += plan[field];
+        }
+        return { books, cost, unpriced };
+    }
+
+    var abilityBooks = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        abilityPlan: abilityPlan,
+        aimedTotals: aimedTotals,
+        bookItemFor: bookItemFor,
+        booksToLevel: booksToLevel,
+        cheapestNextLevel: cheapestNextLevel,
+        experienceOwed: experienceOwed,
+        planTotals: planTotals
+    });
+
+    /**
+     * Damage attribution
+     *
+     * Who hit what, derived from a payload that never says.
+     *
+     * `battle_updated` carries every unit's current state and no events. Working out
+     * that "Bob crit the rat for 4,120" from two of those snapshots is the whole
+     * problem, and there is no attribution field to read — the trick is elsewhere.
+     *
+     * ## An attack counter identifies the attacker
+     *
+     * Each player carries `atkCounter`, and it goes up when they attack. Across two
+     * recorded runs it rose on **every** tick that dealt damage — sixty-nine of
+     * sixty-nine — which makes it the join between a player and a monster's lost
+     * health.
+     *
+     * It replaced mana, which was the original answer and a weaker one: only an
+     * ability costs mana, so `cMP` falling identified the actor on eight of those
+     * sixty-nine ticks. Mana is kept below the counter, for a payload that carries
+     * no counter and for the tick where two people act at once and one of them cast.
+     *
+     * **In a party of two this changed nothing**, and it took five to show why it
+     * mattered. `pMap` is a delta exactly as `mMap` is, so a character who did
+     * nothing is not in the tick, and with two people "the only one here must be
+     * them" is usually right — the old and new rules pick the same character on all
+     * 137 damage ticks of a recorded pair.
+     *
+     * With five, one person tanks. The character a tick is about is then very often
+     * the one being **hit**, not the one attacking: on 82 of 440 damage ticks the
+     * lone character in the tick was there because their own health and damage
+     * counter had moved. Crediting them handed 8,500 points of other people's
+     * damage to whoever was holding aggro. That rung is now "the last character to
+     * swing", because a swing and its damage are not always in the same tick —
+     * 76 of those 82 had somebody else swinging one real tick earlier.
+     *
+     * ## Every payload arrives twice
+     *
+     * 757 of 1,465 `battle_updated` messages in that recording are byte-identical to
+     * the one before. Nothing here has to care — a duplicate diffs to no change and
+     * produces no events — but it is why the swing behind a hit looks two ticks back
+     * rather than one.
+     *
+     * ## A counter distinguishes a hit from a tick
+     *
+     * Health falling is not sufficient — bleeds and regeneration move it too. A hit
+     * is `dmgCounter` **rising**, and a crit is `critCounter` rising. Which also
+     * gives the one case a health diff can never express: `dmgCounter` up with the
+     * health unchanged is a **miss**, not a non-event.
+     *
+     * ## What it deliberately does not do
+     *
+     * It does not guess. A tick where several players act at once falls back to the
+     * last mana drop, because the payload cannot separate them — and a tick that
+     * names nobody at all credits nobody rather than the wrong body.
+     *
+     * The model is DPs' and the Floating Combat Text tool's, from MWI Combat Suite
+     * by Frotty (MIT) — see `third-party/mwi-combat-suite/` and
+     * `docs/THIRD-PARTY-LICENSES.md`. The code is Toolasha's own.
+     */
+
+    /**
+     * A fresh set of the counters a tick is measured against.
+     * @returns {Object}
+     */
+    function newAttributionState() {
+        return {
+            playersMP: {},
+            playersAtk: {},
+            party: {},
+            lastSwing: null,
+            monstersHP: {},
+            dmgCounter: {},
+            critCounter: {},
+            actions: {},
+        };
+    }
+
+    /**
+     * Note what each player is preparing, so a hit can be labelled with an ability.
+     *
+     * The ability when one is mid-cast, `auto` when it is an auto-attack, and
+     * `idle` otherwise — the same three cases MCS distinguishes, and what the
+     * non-damaging filter keys off.
+     *
+     * ## Two spellings of the same field
+     *
+     * `new_battle` writes `preparingAbilityHrid` and `isPreparingAutoAttack`; the
+     * per-tick `battle_updated` abbreviates them to `abilityHrid` and `isAutoAtk`.
+     * Reading only the long pair means the label is whatever was being prepared
+     * when the battle began and never changes again — which credits the entire
+     * fight to one ability, and to the wrong one at that.
+     *
+     * ## When to call it
+     *
+     * **After attributing a tick, not before.** The hit that lands on a tick was
+     * cast by what was being prepared *before* it; by the time the payload arrives
+     * the player has already begun the next thing. Updating first credits every hit
+     * to the ability that follows it.
+     *
+     * @param {Object} state - From `newAttributionState`, mutated
+     * @param {Object} players - A `new_battle` player list or a tick's `pMap`
+     */
+    function noteActions(state, players) {
+        for (const [index, player] of Object.entries(players || {})) {
+            // A `new_battle` carries the whole roster, which is the only place the
+            // party's size is stated — and it is what tells a solo run apart from a
+            // party where one member happens to be alone in this tick
+            state.party[index] = true;
+            const ability = player?.preparingAbilityHrid || player?.abilityHrid;
+            const auto = player?.isPreparingAutoAttack || player?.isAutoAtk;
+
+            state.actions[index] = ability ? ability : auto ? 'auto' : 'idle';
+        }
+    }
+
+    /**
+     * Which player acted this tick.
+     *
+     * @param {Object} pMap - This tick's players
+     * @param {Object} state - From `newAttributionState`, mutated
+     * @returns {string|null} The player index, or null when nobody can be identified
+     */
+    function findCaster(pMap, state) {
+        const indices = Object.keys(pMap || {});
+        const swung = [];
+        const spent = [];
+
+        for (const index of indices) {
+            const player = pMap[index];
+
+            const attacks = Number(player?.atkCounter);
+            const attacksBefore = state.playersAtk[index];
+            if (Number.isFinite(attacks)) {
+                if (attacksBefore !== undefined && attacks > attacksBefore) swung.push(index);
+                state.playersAtk[index] = attacks;
+            }
+
+            const mana = Number(player?.cMP);
+            if (Number.isFinite(mana)) {
+                const before = state.playersMP[index];
+                if (before !== undefined && mana < before) spent.push(index);
+                state.playersMP[index] = mana;
+            }
+        }
+
+        // `atkCounter` is what it sounds like, and it almost always names one person:
+        // in a five-character party, two of them swung on the same tick three times
+        // in fourteen hundred, one of which dealt damage. Rare enough to identify
+        // by, not so rare that the tie can be pretended away.
+        if (swung.length === 1) {
+            state.lastSwing = swung[0];
+            return swung[0];
+        }
+
+        // Two people acting at once. Mana at least separates a cast from a swing,
+        // which is the older and worse answer rather than no answer.
+        if (spent.length) return spent[spent.length - 1];
+
+        // Nobody else it could have been. This is the rung that carries a solo run
+        // on a payload with no attack counter at all.
+        const party = Object.keys(state.party);
+        if (party.length === 1) return party[0];
+        if (!party.length && indices.length === 1) return indices[0];
+
+        // The last character to swing. A swing and the damage it does are not always
+        // in the same tick — see the note above — and the person the tick *is* about
+        // is usually the one being hit, which is who this used to credit.
+        return state.lastSwing;
+    }
+
+    /**
+     * The hits in one tick.
+     *
+     * @param {Object} tick - A `battle_updated` payload
+     * @param {Object} state - From `newAttributionState`, mutated
+     * @returns {Array<Object>} Hits as
+     *   `{playerIndex, monsterIndex, amount, isCrit, isMiss, isHeal, action}`, and
+     *   deaths as `{monsterIndex, isKill}` — the two are separate events because a
+     *   bleed can land the killing blow on a tick where no counter moved
+     */
+    function attributeTick(tick, state) {
+        const { mMap, pMap } = tick || {};
+        const caster = findCaster(pMap, state);
+        const events = [];
+
+        for (const [index, monster] of Object.entries(mMap || {})) {
+            const health = Number(monster?.currentHitpoints ?? monster?.cHP);
+            if (!Number.isFinite(health)) continue;
+
+            const beforeHealth = state.monstersHP[index];
+            const beforeDamage = state.dmgCounter[index];
+            const beforeCrits = state.critCounter[index];
+
+            const damageCount = Number(monster?.dmgCounter) || 0;
+            const critCount = Number(monster?.critCounter) || 0;
+
+            state.monstersHP[index] = health;
+            state.dmgCounter[index] = damageCount;
+            state.critCounter[index] = critCount;
+
+            // First sighting of a monster is not a hit for its entire health bar
+            if (beforeHealth === undefined) continue;
+
+            // A death is its own event, separate from the hit that caused it.
+            // Merging the two would lose every kill landed by a bleed — the health
+            // reaches zero on a tick where no counter moved — and a kill counted
+            // only when a hit lands undercounts exactly the fights that take
+            // longest, which are the ones worth measuring.
+            if (beforeHealth > 0 && health <= 0) {
+                events.push({ monsterIndex: index, isKill: true });
+            }
+
+            // A hit is the counter rising. Health falling on its own is a bleed or
+            // a tick of something, and crediting it to whoever last cast would
+            // hand a damage-over-time effect to the wrong ability.
+            const hit = beforeDamage !== undefined && damageCount > beforeDamage;
+            if (!hit) continue;
+            if (caster === null) continue;
+
+            const change = beforeHealth - health;
+            events.push({
+                playerIndex: caster,
+                monsterIndex: index,
+                amount: Math.abs(change),
+                isCrit: beforeCrits !== undefined && critCount > beforeCrits,
+                // The one case a health diff cannot express on its own
+                isMiss: change === 0,
+                isHeal: change < 0,
+                action: state.actions[caster] || 'idle',
+            });
+        }
+        return events;
+    }
+
+    /** Abilities that deal no damage, so a hit credited during one is not theirs */
+    const NON_DAMAGING = new Set(['idle']);
+
+    /**
+     * Whether an action should count towards damage.
+     *
+     * @param {string} action - From an event
+     * @param {Set<string>} [nonDamaging] - Ability hrids known to deal no damage
+     * @returns {boolean}
+     */
+    function isDamagingAction(action, nonDamaging = NON_DAMAGING) {
+        return !nonDamaging.has(action);
+    }
+
+    /**
+     * Fold events into a per-player tally.
+     *
+     * @param {Object} tally - `{}` or a previous return, mutated
+     * @param {Array<Object>} events - From `attributeTick`
+     * @param {Object} [options] - `{filterNonDamaging, nonDamaging, nameOf}`. `nameOf`
+     *   turns a monster index into a name; without it the per-enemy split is skipped.
+     * @returns {Object} Player index → `{damage, hits, crits, misses, byAbility, byEnemy}`
+     */
+    function foldEvents(tally, events, { filterNonDamaging = true, nonDamaging, nameOf } = {}) {
+        for (const event of events || []) {
+            // A death is not a swing, and counting it as one would add a phantom
+            // hit to whoever happened to be casting
+            if (event.isKill) continue;
+
+            const player = (tally[event.playerIndex] = tally[event.playerIndex] || {
+                damage: 0,
+                hits: 0,
+                crits: 0,
+                misses: 0,
+                byAbility: {},
+                byEnemy: {},
+            });
+
+            // Counted before the filter: a miss is a swing that happened, and
+            // dropping it would flatter the hit rate of whatever was cast
+            if (event.isMiss) player.misses++;
+            if (filterNonDamaging && !isDamagingAction(event.action, nonDamaging)) continue;
+
+            if (!event.isMiss && !event.isHeal) {
+                player.damage += event.amount;
+                player.hits++;
+                if (event.isCrit) player.crits++;
+            }
+
+            const ability = (player.byAbility[event.action] = player.byAbility[event.action] || {
+                damage: 0,
+                hits: 0,
+                crits: 0,
+                misses: 0,
+            });
+            if (event.isMiss) ability.misses++;
+            else if (!event.isHeal) {
+                ability.damage += event.amount;
+                ability.hits++;
+                if (event.isCrit) ability.crits++;
+            }
+
+            // The same split again, by what was being hit rather than by what was
+            // swung. A party's enemy rows belong under the player who fought them —
+            // one player kiting while another burns the boss is two different
+            // fights, and a party-wide enemy total averages them into neither.
+            const name = nameOf ? nameOf(event.monsterIndex) : null;
+            if (!name) continue;
+
+            const enemy = (player.byEnemy[name] = player.byEnemy[name] || {
+                damage: 0,
+                hits: 0,
+                crits: 0,
+                misses: 0,
+                byAbility: {},
+            });
+            const against = (enemy.byAbility[event.action] = enemy.byAbility[event.action] || {
+                damage: 0,
+                hits: 0,
+                crits: 0,
+                misses: 0,
+            });
+
+            if (event.isMiss) {
+                enemy.misses++;
+                against.misses++;
+            } else if (!event.isHeal) {
+                enemy.damage += event.amount;
+                enemy.hits++;
+                against.damage += event.amount;
+                against.hits++;
+                if (event.isCrit) {
+                    enemy.crits++;
+                    against.crits++;
+                }
+            }
+        }
+        return tally;
+    }
+
+    /**
+     * Fold events into a per-monster tally.
+     *
+     * The player table answers "who is doing the damage". This answers "to what",
+     * which is the other half of a fight: a run that looks slow is often one zone's
+     * worth of a single tanky monster rather than a rotation problem, and no
+     * per-ability figure can say so.
+     *
+     * Keyed by name rather than by index, because an index is one spawn — a zone
+     * cycles through dozens of them and the question is about the kind of monster,
+     * not this particular rat.
+     *
+     * @param {Object} tally - `{}` or a previous return, mutated
+     * @param {Array<Object>} events - From `attributeTick`
+     * @param {Function} nameOf - `(monsterIndex) => string|null`
+     * @returns {Object} Monster name → `{damage, hits, crits, misses, kills, byAbility}`
+     */
+    function foldEnemies(tally, events, nameOf) {
+        for (const event of events || []) {
+            const name = nameOf(event.monsterIndex);
+            if (!name) continue;
+
+            const enemy = (tally[name] = tally[name] || {
+                damage: 0,
+                hits: 0,
+                crits: 0,
+                misses: 0,
+                kills: 0,
+                byAbility: {},
+            });
+
+            if (event.isKill) {
+                enemy.kills++;
+                continue;
+            }
+
+            const ability = (enemy.byAbility[event.action] = enemy.byAbility[event.action] || {
+                damage: 0,
+                hits: 0,
+                crits: 0,
+                misses: 0,
+            });
+
+            if (event.isMiss) {
+                enemy.misses++;
+                ability.misses++;
+            } else if (!event.isHeal) {
+                enemy.damage += event.amount;
+                enemy.hits++;
+                ability.damage += event.amount;
+                ability.hits++;
+                if (event.isCrit) {
+                    enemy.crits++;
+                    ability.crits++;
+                }
+            }
+        }
+        return tally;
+    }
+
+    var damageAttribution = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        attributeTick: attributeTick,
+        findCaster: findCaster,
+        foldEnemies: foldEnemies,
+        foldEvents: foldEvents,
+        isDamagingAction: isDamagingAction,
+        newAttributionState: newAttributionState,
+        noteActions: noteActions
+    });
+
+    /**
+     * Consent gate for the adopt-once migration.
+     *
+     * Legacy account-wide data is never silently claimed by whichever character
+     * logs in first. The first time an adoptable value is found, one modal asks
+     * which character should inherit the pre-scoping data; until the user
+     * confirms, every legacy value stays where it is. The heuristics (game mode,
+     * test names, networth history) only choose which character the dialog
+     * preselects.
+     *
+     * The decision is stored account-wide under `adoptionTargetCharacterId` and
+     * can be reopened from the console via `Toolasha.debug.chooseDataOwner()`.
+     */
+
+    const DECISION_KEY = 'adoptionTargetCharacterId';
+
+    /** undefined = not read yet, null = undecided, string = chosen character id. */
+    let cachedDecision;
+
+    /** One prompt per session, shared by every concurrent readScoped call. */
+    let promptPromise = null;
+
+    /**
+     * The character chosen to inherit legacy data, or null while undecided.
+     * @returns {Promise<string|null>} Chosen character id
+     */
+    async function getAdoptionTargetId() {
+        if (cachedDecision === undefined) {
+            cachedDecision = await storage.get(DECISION_KEY, 'settings', null);
+        }
+        return cachedDecision;
+    }
+
+    /**
+     * Record the choice.
+     * @param {string} id - Character id that inherits legacy data
+     * @returns {Promise<void>}
+     */
+    async function setAdoptionTargetId(id) {
+        cachedDecision = id;
+        await storage.set(DECISION_KEY, id, 'settings', true);
+    }
+
+    /**
+     * Show the choose-a-character dialog (once per session).
+     *
+     * Fire-and-forget from data paths: callers must not await this before
+     * returning a fallback, or a modal would block feature initialization.
+     * @param {{recommendedId?: string|null}} [options] - Which character to preselect
+     * @returns {Promise<string|null>} The chosen id, or null for "not now"
+     */
+    function requestAdoptionConsent(options = {}) {
+        if (promptPromise) return promptPromise;
+        if (typeof document === 'undefined' || !document.body) return Promise.resolve(null);
+
+        promptPromise = (async () => {
+            try {
+                const names = (await storage.get('accountCharacterNames', 'settings', null)) || {};
+                const currentId = dataManager.getCurrentCharacterId();
+                const currentName = dataManager.getCurrentCharacterName?.() || '';
+                const known = { ...names };
+                if (currentId && !known[currentId]) known[currentId] = currentName || String(currentId);
+                const recommended = options.recommendedId || currentId;
+                const chosen = await showDialog(known, recommended, currentId);
+                if (chosen) await setAdoptionTargetId(chosen);
+                return chosen;
+            } catch (error) {
+                console.error('[AdoptionConsent] Prompt failed:', error);
+                return null;
+            }
+        })();
+        return promptPromise;
+    }
+
+    /**
+     * The dialog itself. Resolves with a character id or null for "not now".
+     * @param {Record<string, string>} characters - id → display name
+     * @param {string|null} recommendedId - Preselected id
+     * @param {string|null} currentId - The logged-in character, labeled as such
+     * @returns {Promise<string|null>} Choice
+     */
+    function showDialog(characters, recommendedId, currentId) {
+        return new Promise((resolve) => {
+            const overlay = document.createElement('div');
+            // Above every panel tier — this blocks a data migration, nothing may cover it
+            overlay.style.cssText =
+                'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:2147483600; ' +
+                'display:flex; align-items:center; justify-content:center;';
+
+            const ids = Object.keys(characters);
+            const rows = ids
+                .map((id) => {
+                    const checked = id === recommendedId ? ' checked' : '';
+                    const who = `${characters[id]}${id === currentId ? ' (this character)' : ''}`;
+                    return (
+                        `<label style="display:block; margin:4px 0; cursor:pointer;">` +
+                        `<input type="radio" name="mwi-adopt-target" value="${id}"${checked}> ${who}</label>`
+                    );
+                })
+                .join('');
+
+            const card = document.createElement('div');
+            card.style.cssText =
+                'background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:8px; ' +
+                'padding:16px 20px; max-width:420px; font-size:13px; line-height:1.5;';
+            card.innerHTML =
+                `<div style="font-weight:700; font-size:14px; margin-bottom:8px;">Toolasha — who owns the saved data?</div>` +
+                `<div style="color:#aaa; margin-bottom:10px;">Saved data from before per-character scoping was found ` +
+                `(watchlist, savings targets, trackers, panel state…). Choose which character should inherit it — ` +
+                `nothing moves until you confirm.</div>` +
+                rows +
+                `<div style="margin-top:12px; display:flex; gap:8px; justify-content:flex-end;">` +
+                `<button id="mwi-adopt-later" style="background:#333; color:#ccc; border:1px solid #555; border-radius:4px; padding:4px 12px; cursor:pointer;">Not now</button>` +
+                `<button id="mwi-adopt-confirm" style="background:#4a6fdc; color:#fff; border:none; border-radius:4px; padding:4px 12px; cursor:pointer;">Confirm</button>` +
+                `</div>` +
+                `<div style="color:#777; margin-top:8px; font-size:11px;">Applies as data is next read; reload to apply everywhere. ` +
+                `Reopen later with Toolasha.debug.chooseDataOwner().</div>`;
+
+            overlay.appendChild(card);
+            document.body.appendChild(overlay);
+
+            const done = (value) => {
+                overlay.remove();
+                resolve(value);
+            };
+            card.querySelector('#mwi-adopt-confirm').addEventListener('click', () => {
+                const picked = card.querySelector('input[name="mwi-adopt-target"]:checked');
+                done(picked ? picked.value : null);
+            });
+            card.querySelector('#mwi-adopt-later').addEventListener('click', () => done(null));
+        });
+    }
+
+    /**
+     * Append-only history, stored as records rather than as one array.
+     *
+     * ## The write amplification this exists to end
+     *
+     * A recorder that keeps its history in a single key does the same three things
+     * on every event: read the whole array, push one entry, write the whole array
+     * back. The cost of recording one loot drop is therefore the size of every loot
+     * drop already recorded, and it grows for as long as the player keeps playing —
+     * which is the shape of every quota failure this script has had. The loot log
+     * rewrote five hundred entries per `loot_log_updated`; the alchemy trackers
+     * rewrote every session ever, immediately, on every completed action.
+     *
+     * Splitting the array over several keys makes the write proportional to what
+     * changed instead of to what is kept. A new entry lands in one record; the other
+     * records are untouched, so IndexedDB never sees them.
+     *
+     * ## Chunks, not one key per entry
+     *
+     * A key per entry would make every write minimal, and would also put a thousand
+     * keys per character into a store whose soft budget is measured in hundreds (see
+     * `STORE_KEY_BUDGETS` in `core/storage.js`). Grouping entries by the hour, day or
+     * month they belong to keeps both numbers small: the record written is the
+     * current bucket, which holds the handful of entries recorded since the bucket
+     * opened, and the key count grows with calendar time rather than with events.
+     *
+     * ## What the callers keep
+     *
+     * Nothing above this changes shape. A recorder still holds its history as one
+     * array, still hands the whole array to `save()`, and still gets the whole array
+     * back from `load()`. The diff against the last known state is what turns a
+     * whole-array save into a one-record write, so the call sites did not have to
+     * learn about chunking to stop paying for it.
+     *
+     * ## Migration, and what happens when the disk is full
+     *
+     * The legacy single-array key is split on the first read and then deleted. If
+     * the split cannot be written — which on a full disk is exactly when it matters —
+     * the legacy key is left alone and the recorder keeps using it. A migration that
+     * bricked the history the moment storage filled up would be worse than the write
+     * amplification it was meant to fix.
+     */
+
+
+    /**
+     * The character ids a set of record keys names.
+     *
+     * Record keys are `<prefix>_<characterId>_<chunkId>`, so the id is the segment
+     * between the prefix and the next underscore. Character ids are alphanumeric
+     * (see `NETWORTH_SERIES_RE` in `utils/character-key.js`), which is what makes
+     * that split unambiguous.
+     *
+     * @param {Array<string>} keys - Keys from one store
+     * @param {string} prefix - The record prefix including its trailing underscore
+     * @returns {Array<string>} Character ids, in key order, deduplicated
+     */
+    function idsFromRecordKeys(keys, prefix) {
+        const ids = [];
+        const seen = new Set();
+        for (const key of keys || []) {
+            if (typeof key !== 'string' || !key.startsWith(prefix)) continue;
+            const rest = key.slice(prefix.length);
+            const end = rest.indexOf('_');
+            if (end <= 0) continue;
+            const id = rest.slice(0, end);
+            if (seen.has(id)) continue;
+            seen.add(id);
+            ids.push(id);
+        }
+        return ids;
+    }
+
+    /**
+     * Every record key in a store belonging to one character.
+     *
+     * @param {Array<string>} keys - Keys from one store
+     * @param {string} prefix - The record prefix, without its trailing underscore
+     * @param {string} charId - Whose records to pick out
+     * @returns {Array<string>} Matching keys, in chunk-id order
+     */
+    function recordKeysFor(keys, prefix, charId) {
+        const scoped = `${prefix}_${charId}_`;
+        return (keys || []).filter((key) => typeof key === 'string' && key.startsWith(scoped)).sort();
+    }
+
+    /**
+     * Per-character storage key helpers.
+     *
+     * Character-specific state stored under a bare key leaks between characters —
+     * the market cow's watchlist shows up on the iron cow. Every feature that
+     * persists per-character state should build its key through {@link characterKey}
+     * and read through {@link readScoped}, which also handles one-time adoption of
+     * the legacy global value.
+     *
+     * Adoption policy: a legacy global value almost always belongs to the account's
+     * main character. It is adopted (moved to the scoped key, legacy deleted) only
+     * by an adoption candidate — a non-ironcow character which, when several
+     * characters have networth history, owns the longest series. Other characters
+     * simply start clean and leave the legacy value in place for the main to claim.
+     */
+
+    const NETWORTH_SERIES_RE = /^networth_[0-9a-zA-Z]+$/;
+
+    /**
+     * The networth series after it was split into one record per month.
+     *
+     * A migrated character has no `networth_<id>` key at all, so the length
+     * comparison below would see nothing and let every character adopt — including
+     * the alts the policy exists to keep out.
+     */
+    const NETWORTH_RECORD_PREFIX = 'networthSeries';
+
+    /** Per-character memo of the adoption decision, reset only on reload. */
+    const adoptionDecisions = new Map();
+
+    /**
+     * A storage key scoped to the character now logged in.
+     *
+     * Uses the codebase's dominant `${base}_${charId}` idiom with a `'default'`
+     * fallback before login, so account-view suffix parsing keeps working.
+     * @param {string} base - The unscoped key
+     * @returns {string} `base_<characterId>`, or `base_default` before login
+     */
+    function characterKey(base) {
+        return `${base}_${dataManager.getCurrentCharacterId() || 'default'}`;
+    }
+
+    /**
+     * How many networth points one character has recorded, either way it is stored.
+     *
+     * The pre-migration single key wins where it exists: its presence is what says
+     * the split has not happened, so any records beside it are a half-finished
+     * migration rather than the series.
+     *
+     * @param {Array<string>} keys - Every key in the networth store
+     * @param {string} id - Whose series
+     * @returns {Promise<number>} Points recorded
+     */
+    async function networthSeriesLength(keys, id) {
+        const legacy = await storage.get(`networth_${id}`, 'networthHistory', null);
+        if (Array.isArray(legacy) && legacy.length > 0) return legacy.length;
+
+        let length = 0;
+        for (const key of recordKeysFor(keys, NETWORTH_RECORD_PREFIX, id)) {
+            const chunk = await storage.get(key, 'networthHistory', null);
+            if (Array.isArray(chunk)) length += chunk.length;
+        }
+        return length;
+    }
+
+    /**
+     * Whether the given character should inherit legacy (pre-scoping) global data.
+     *
+     * Iron cow characters never adopt — the legacy value was almost certainly
+     * written by the market character. When several characters have networth
+     * history, only the one with the longest series adopts. On any failure the
+     * check errs toward adopting, so a solo-character install migrates cleanly.
+     * @param {string} charId - The character considering adoption
+     * @returns {Promise<boolean>} True when this character may claim legacy data
+     */
+    async function isAdoptionCandidate(charId) {
+        if (adoptionDecisions.has(charId)) {
+            return adoptionDecisions.get(charId);
+        }
+
+        let decision = true;
+        try {
+            // Same signal MCS reads: character.gameMode. 'standard' is the market
+            // character; 'ironcow' and 'legacy_ironcow' never adopt.
+            const gameMode = dataManager.getCurrentCharacterGameMode();
+            const name =
+                typeof dataManager.getCurrentCharacterName === 'function'
+                    ? dataManager.getCurrentCharacterName() || ''
+                    : '';
+            if (typeof gameMode === 'string' && gameMode.includes('ironcow')) {
+                decision = false;
+            } else if (/test/i.test(name)) {
+                // A test character is never the main, whatever its history says.
+                decision = false;
+            } else {
+                const keys = await storage.getAllKeys('networthHistory');
+                const ids = new Set([
+                    ...keys
+                        .filter((key) => typeof key === 'string' && NETWORTH_SERIES_RE.test(key))
+                        .map((key) => key.slice('networth_'.length)),
+                    ...idsFromRecordKeys(keys, `${NETWORTH_RECORD_PREFIX}_`),
+                ]);
+
+                if (ids.size > 0 && !ids.has(charId)) {
+                    // Someone on this account has recorded history and this
+                    // character has none — it is not the main. Skipping the
+                    // comparison here is what once let a fresh alt adopt
+                    // everything just by logging in first.
+                    decision = false;
+                } else if (ids.size > 1) {
+                    let bestId = null;
+                    let bestLength = -1;
+                    for (const id of ids) {
+                        const length = await networthSeriesLength(keys, id);
+                        if (length > bestLength) {
+                            bestLength = length;
+                            bestId = id;
+                        }
+                    }
+                    decision = bestId === null || bestId === charId;
+                }
+            }
+        } catch (error) {
+            console.error('[CharacterKey] Adoption check failed, adopting by default:', error);
+            decision = true;
+        }
+
+        adoptionDecisions.set(charId, decision);
+        return decision;
+    }
+
+    /**
+     * Read a per-character key, migrating any legacy global value exactly once.
+     *
+     * Looks up `characterKey(base)` first. When absent and the legacy bare `base`
+     * key exists, either adopts it (moves it to this character's key and deletes
+     * the legacy copy — main character only, see module doc) or discards it
+     * (deletes the legacy copy and starts clean), per `options.migrate`.
+     *
+     * Discard is for state derived from one character's gear or sim results, where
+     * inheriting another character's data is worse than starting empty.
+     * @param {string} base - The unscoped key
+     * @param {string} [storeName] - Object store name (default: 'settings')
+     * @param {*} [defaultValue] - Value returned when neither key exists
+     * @param {{migrate?: 'adopt'|'discard'}} [options] - Legacy migration mode (default: 'adopt')
+     * @returns {Promise<*>} The stored value or default
+     */
+    async function readScoped(base, storeName = 'settings', defaultValue = null, options = {}) {
+        const { migrate = 'adopt' } = options;
+
+        const scopedKey = characterKey(base);
+        const scoped = await storage.get(scopedKey, storeName, null);
+        if (scoped !== null) {
+            return scoped;
+        }
+
+        const legacy = await storage.get(base, storeName, null);
+        if (legacy === null) {
+            return defaultValue;
+        }
+
+        if (migrate === 'discard') {
+            await storage.delete(base, storeName);
+            return defaultValue;
+        }
+
+        const charId = dataManager.getCurrentCharacterId();
+        if (!charId) {
+            return defaultValue;
+        }
+
+        // Adoption is user-confirmed, never automatic. The heuristics only pick
+        // which character the dialog preselects.
+        const targetId = await getAdoptionTargetId();
+        if (targetId === null) {
+            // Fire-and-forget: awaiting a modal here would hang feature init.
+            isAdoptionCandidate(charId).then(
+                (candidate) => requestAdoptionConsent({ recommendedId: candidate ? charId : null }),
+                () => requestAdoptionConsent({})
+            );
+            return defaultValue;
+        }
+        if (targetId !== charId) {
+            // Leave the legacy value in place for the chosen character to claim.
+            return defaultValue;
+        }
+
+        await storage.set(scopedKey, legacy, storeName, true);
+        await storage.delete(base, storeName);
+        return legacy;
+    }
+
+    /**
+     * Write a value under this character's scoped key.
+     * @param {string} base - The unscoped key
+     * @param {*} value - Value to store
+     * @param {string} [storeName] - Object store name (default: 'settings')
+     * @param {boolean} [immediate] - Skip write debouncing
+     * @returns {Promise<boolean>} Success status
+     */
+    async function writeScoped(base, value, storeName = 'settings', immediate = false) {
+        return storage.set(characterKey(base), value, storeName, immediate);
+    }
+
+    /**
+     * Panel Geometry
+     *
+     * Where a floating panel was left, and how big it was left.
+     *
+     * Every panel in this script had its own answer to this, which is to say most of
+     * them had none: they opened at a hardcoded corner at a hardcoded width, and a
+     * panel you have to drag and resize on every page load is a panel you stop
+     * opening. One store, keyed by panel, so a new panel gets the behaviour by
+     * calling one function.
+     *
+     * The clamping is the part worth having apart from the DOM. A panel remembers
+     * the window it was left in, and that window may since have been narrower — a
+     * saved position restored blindly puts the panel somewhere you cannot reach it,
+     * which looks exactly like a feature that stopped working.
+     *
+     * Geometry is deliberately shared by every character on the account: a panel
+     * should sit where you put it whichever character you logged in as. Whether a
+     * panel was *open* is not — the market character's eight open panels reopening
+     * on top of the iron cow is the one part of this that is per-character, and it
+     * lives in its own key, `panelOpenState_<characterId>`.
+     */
+
+
+    const STORAGE_KEY$1 = 'panelGeometry';
+    /** Per-character open flags: `{ [panelKey]: boolean }` */
+    const OPEN_KEY = 'panelOpenState';
+
+    /** Cache of every panel's geometry, so opening a panel does not wait on storage */
+    let cache = null;
+    let loading = null;
+
+    /**
+     * Open flags per scoped key, so switching characters loads the new set rather
+     * than reusing the old one — the key is derived at read time, never at import.
+     */
+    const openCache = new Map();
+    const openLoading = new Map();
+
+    /** Enough of a panel to see and grab, when the whole of it cannot be shown */
+    const EDGE_KEEP = 30;
+
+    /**
+     * Hold a saved geometry inside the current window.
+     *
+     * Size is capped at the viewport, since a panel restored wider than the screen
+     * cannot be resized back — its resize grip is off the edge. Position then puts
+     * the panel *fully* on screen rather than merely leaving a strip of it: the
+     * close button lives at the top right of every panel here, and a panel hanging
+     * off the right edge of a phone is one you cannot close. Only a panel bigger
+     * than the window falls back to showing as much as there is room for.
+     *
+     * @param {Object} geometry - `{left, top, width, height}` in pixels
+     * @param {{width: number, height: number}} viewport - The window
+     * @param {{width: number, height: number}} [min] - Smallest allowed size
+     * @returns {Object|null} A usable geometry, or null when there is nothing to use
+     */
+    function clampGeometry(geometry, viewport, min = { width: 200, height: 80 }) {
+        if (!geometry) return null;
+
+        const result = {};
+
+        // A minimum wider than the screen is not a minimum, it is the bug it was
+        // written to prevent: the Treasure panel asks for 420px back on a 400px
+        // phone and comes back wider than the phone.
+        const minWidth = Math.min(min.width, viewport.width);
+        const minHeight = Math.min(min.height, viewport.height);
+
+        const width = Number(geometry.width);
+        const height = Number(geometry.height);
+        if (Number.isFinite(width)) {
+            result.width = Math.max(minWidth, Math.min(width, viewport.width));
+        }
+        if (Number.isFinite(height)) {
+            result.height = Math.max(minHeight, Math.min(height, viewport.height));
+        }
+
+        const left = Number(geometry.left);
+        const top = Number(geometry.top);
+        if (Number.isFinite(left) && Number.isFinite(top)) {
+            // What the panel will actually occupy once the size above is applied
+            const boxWidth = Math.min(result.width ?? minWidth, viewport.width);
+            const boxHeight = Math.min(result.height ?? EDGE_KEEP, viewport.height);
+            result.left = Math.min(Math.max(left, 0), Math.max(0, viewport.width - boxWidth));
+            result.top = Math.min(Math.max(top, 0), Math.max(0, viewport.height - boxHeight));
+        }
+
+        return Object.keys(result).length ? result : null;
+    }
+
+    /**
+     * Hold a panel that is already on screen inside the window it is on screen in.
+     *
+     * The saved-geometry clamp only ever ran on what was *stored*, so a panel that
+     * had never been moved opened wherever it was written to open — 80px in from
+     * the right of a desktop, which on a 400px phone is off the side — and stayed
+     * there. This measures the panel as it stands instead, which covers the default
+     * position, a width in `vw` that still overflows, and a window that has since
+     * been resized, with one rule.
+     *
+     * Nothing is touched unless it is out of bounds: a panel that fits keeps sizing
+     * and anchoring itself however it likes. Anchoring is what the two guards are
+     * about — an absolutely positioned panel measures from its offset parent, and a
+     * centred one is offset by its own transform, so a viewport-relative `left`
+     * would move either of them somewhere nobody asked for.
+     *
+     * @param {HTMLElement} panel - The panel, already in the document
+     * @param {{width: number, height: number}} [min] - Smallest allowed size
+     * @returns {Object|null} What was changed, or null when nothing needed to be
+     */
+    function clampPanelToViewport(panel, min) {
+        if (typeof window === 'undefined' || !panel?.isConnected) return null;
+
+        const viewport = { width: window.innerWidth, height: window.innerHeight };
+        if (!(viewport.width > 0) || !(viewport.height > 0)) return null;
+
+        if (typeof getComputedStyle === 'function') {
+            const computed = getComputedStyle(panel);
+            if (computed.position !== 'fixed') return null;
+            if (computed.transform && computed.transform !== 'none') return null;
+        }
+
+        const rect = panel.getBoundingClientRect();
+        // Not laid out yet — in a test DOM it never will be, and guessing at a
+        // position from zeroes would move every panel to the top left corner
+        if (!(rect.width > 0) && !(rect.height > 0)) return null;
+
+        const clamped = clampGeometry(
+            { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
+            viewport,
+            min
+        );
+        if (!clamped) return null;
+
+        const applied = {};
+        if (rect.width > viewport.width && clamped.width) {
+            panel.style.width = `${clamped.width}px`;
+            applied.width = clamped.width;
+        }
+        if (Math.round(clamped.left) !== Math.round(rect.left) || Math.round(clamped.top) !== Math.round(rect.top)) {
+            panel.style.left = `${clamped.left}px`;
+            panel.style.top = `${clamped.top}px`;
+            // Anchored from the left from here on; a panel positioned from the right
+            // edge would jump the moment the window is resized
+            panel.style.right = 'auto';
+            panel.style.bottom = 'auto';
+            applied.left = clamped.left;
+            applied.top = clamped.top;
+        }
+
+        return Object.keys(applied).length ? applied : null;
+    }
+
+    /**
+     * Every panel's saved geometry.
+     * @returns {Promise<Object>} `{ [panelKey]: geometry }`
+     */
+    async function allGeometry() {
+        // Module-scope callers run before the database is open, and an unguarded
+        // read there comes back with the default — indistinguishable from nothing
+        // having been stored
+        await storage.ready;
+        if (cache) return cache;
+        if (!loading) {
+            loading = storage
+                .getJSON(STORAGE_KEY$1, 'settings', {})
+                .then((saved) => {
+                    cache = saved || {};
+                    return cache;
+                })
+                .catch((error) => {
+                    console.error('[PanelGeometry] Loading saved geometry failed:', error);
+                    cache = {};
+                    return cache;
+                });
+        }
+        return loading;
+    }
+
+    /**
+     * Remember a panel's geometry.
+     * @param {string} panelKey - Which panel
+     * @param {Object} geometry - `{left, top, width, height}`
+     */
+    async function saveGeometry(panelKey, geometry) {
+        const all = await allGeometry();
+        all[panelKey] = { ...all[panelKey], ...geometry };
+        try {
+            await storage.setJSON(STORAGE_KEY$1, all, 'settings');
+        } catch (error) {
+            console.error('[PanelGeometry] Saving geometry failed:', error);
+        }
+    }
+
+    /**
+     * Forget a panel's geometry, so it opens where it was designed to.
+     * @param {string} panelKey - Which panel
+     */
+    async function clearGeometry(panelKey) {
+        const all = await allGeometry();
+        delete all[panelKey];
+        try {
+            await storage.setJSON(STORAGE_KEY$1, all, 'settings');
+        } catch (error) {
+            console.error('[PanelGeometry] Clearing geometry failed:', error);
+        }
+    }
+
+    /**
+     * Forget where a panel was, but not how big it was.
+     *
+     * For a panel that places itself and is only pinned by being moved: unpinning
+     * has to drop the position, and dropping the size with it would be an unasked-for
+     * second change.
+     *
+     * @param {string} panelKey - Which panel
+     */
+    async function clearPosition(panelKey) {
+        const all = await allGeometry();
+        if (!all[panelKey]) return;
+
+        const { left: _left, top: _top, ...rest } = all[panelKey];
+        all[panelKey] = rest;
+        try {
+            await storage.setJSON(STORAGE_KEY$1, all, 'settings');
+        } catch (error) {
+            console.error('[PanelGeometry] Clearing a panel position failed:', error);
+        }
+    }
+
+    /**
+     * Put a panel back where it was left.
+     *
+     * Applied after the panel is on screen rather than before, because the geometry
+     * comes from storage and the alternative is holding every panel closed until a
+     * database answers. Opening at the default and settling a frame later is the
+     * lesser of the two.
+     *
+     * @param {HTMLElement} panel - The panel
+     * @param {string} panelKey - Which panel
+     * @param {{width: number, height: number}} [min] - Smallest allowed size
+     * @param {Object} [options] - `position: false` to restore the size only, for a
+     *   panel that places itself and only remembers how big it was
+     * @returns {Promise<void>}
+     */
+    async function restoreGeometry(panel, panelKey, min, { position = true } = {}) {
+        const all = await allGeometry();
+        const clamped = clampGeometry(all[panelKey], { width: window.innerWidth, height: window.innerHeight }, min);
+        if (!panel?.isConnected) return;
+
+        if (clamped) {
+            if (clamped.width) panel.style.width = `${clamped.width}px`;
+            if (clamped.height) panel.style.height = `${clamped.height}px`;
+            if (position && clamped.left !== undefined) {
+                panel.style.left = `${clamped.left}px`;
+                panel.style.top = `${clamped.top}px`;
+                // Anchored from the left from here on; a panel positioned from the
+                // right edge would jump the moment the window is resized
+                panel.style.right = 'auto';
+                panel.style.bottom = 'auto';
+            }
+        }
+
+        // Whether or not anything was stored: a panel opening at the position it
+        // was written to open at is off the side of a phone just as surely as one
+        // restoring a position saved on a desktop.
+        clampPanelToViewport(panel, min);
+    }
+
+    /**
+     * Lift the `open` flags out of the shared geometry record, once.
+     *
+     * They used to live beside `left`/`top`, which is why every panel the market
+     * character left open reopened on the iron cow. Moving them to the bare
+     * `panelOpenState` key turns them into an ordinary legacy value, which
+     * {@link readScoped} then hands to whichever character is entitled to adopt it —
+     * the geometry stays exactly where it is, shared, which is what it should be.
+     *
+     * @returns {Promise<void>}
+     */
+    async function liftLegacyOpenFlags() {
+        const all = await allGeometry();
+
+        const flags = {};
+        let found = false;
+        for (const [panelKey, geometry] of Object.entries(all)) {
+            if (geometry && typeof geometry === 'object' && 'open' in geometry) {
+                found = true;
+                flags[panelKey] = Boolean(geometry.open);
+                const { open: _open, ...rest } = geometry;
+                all[panelKey] = rest;
+            }
+        }
+        if (!found) return;
+
+        // An earlier character may have lifted a set already and not been allowed to
+        // adopt it; that copy is the newer one and wins
+        const waiting = await storage.get(OPEN_KEY, 'settings', null);
+        await storage.set(OPEN_KEY, { ...flags, ...(waiting || {}) }, 'settings', true);
+        await storage.setJSON(STORAGE_KEY$1, all, 'settings');
+    }
+
+    /**
+     * This character's open flags, loaded once per character.
+     * @returns {Promise<Object>} `{ [panelKey]: boolean }`
+     */
+    async function openFlags() {
+        await storage.ready;
+
+        const key = characterKey(OPEN_KEY);
+        if (openCache.has(key)) return openCache.get(key);
+
+        if (!openLoading.has(key)) {
+            const load = (async () => {
+                let flags = {};
+                try {
+                    await liftLegacyOpenFlags();
+                    const saved = await readScoped(OPEN_KEY, 'settings', null, { migrate: 'adopt' });
+                    if (saved && typeof saved === 'object') flags = saved;
+                } catch (error) {
+                    console.error('[PanelGeometry] Loading which panels were open failed:', error);
+                }
+                openCache.set(key, flags);
+                return flags;
+            })();
+            openLoading.set(key, load);
+        }
+        return openLoading.get(key);
+    }
+
+    /**
+     * Whether a panel was open when the page was last left.
+     *
+     * Per character, unlike the geometry: a panel belongs where you left it on every
+     * character, but the eight panels one character had up are that character's. A
+     * panel that has to be reopened after every refresh is a panel that gets opened
+     * once and then not bothered with.
+     *
+     * @param {string} panelKey - The panel's key
+     * @param {boolean} open - Whether it is open now
+     * @returns {Promise<void>}
+     */
+    async function saveOpenState(panelKey, open) {
+        try {
+            const flags = await openFlags();
+            flags[panelKey] = Boolean(open);
+            await writeScoped(OPEN_KEY, flags, 'settings');
+        } catch (error) {
+            console.error('[PanelGeometry] Remembering whether a panel was open failed:', error);
+        }
+    }
+
+    /**
+     * @param {string} panelKey - The panel's key
+     * @returns {Promise<boolean>} Whether it should be reopened
+     */
+    async function wasOpen(panelKey) {
+        try {
+            const flags = await openFlags();
+            return Boolean(flags[panelKey]);
+        } catch (error) {
+            console.error('[PanelGeometry] Reading whether a panel was open failed:', error);
+            return false;
+        }
+    }
+
+    /**
+     * Resolves once there is a `<body>` to append a panel to.
+     *
+     * The script runs at `document-start`, so at the moment these modules are
+     * imported there is no body — a panel reopening itself then would throw on the
+     * append and take the rest of the module's start-up with it.
+     *
+     * @returns {Promise<void>}
+     */
+    function bodyReady() {
+        if (typeof document === 'undefined' || document.body) return Promise.resolve();
+        return new Promise((resolve) => {
+            document.addEventListener('DOMContentLoaded', () => resolve(), { once: true });
+        });
+    }
+
+    /**
+     * Resolves once there is a character to ask about.
+     *
+     * Panels ask at module scope, which is long before the websocket has said who
+     * logged in — and asking then reads the *wrong character's* key, which comes
+     * back empty and looks exactly like "nothing was left open". Waiting is the
+     * difference between per-character open state working and never reopening
+     * anything again.
+     *
+     * @returns {Promise<void>}
+     */
+    function characterReady() {
+        if (dataManager.getCurrentCharacterId()) return Promise.resolve();
+        return new Promise((resolve) => {
+            const onInitialized = () => {
+                dataManager.off('character_initialized', onInitialized);
+                resolve();
+            };
+            dataManager.on('character_initialized', onInitialized);
+        });
+    }
+
+    /**
+     * Reopen a panel that was open when the page was last left.
+     *
+     * The waiting is the whole of it, and is why this is one function rather than a
+     * `wasOpen` call in each panel. Panels ask at module scope, which is before the
+     * database is open *and* before there is a body to draw into; asking then gets
+     * the default back, which is indistinguishable from having been closed. That is
+     * why remembering appeared to work and reopening never did. Which character is
+     * logged in is the third thing not yet known at that moment, and now matters as
+     * much as the other two.
+     *
+     * @param {string} panelKey - The panel's key
+     * @param {Function} reopen - Called only if it was open
+     * @returns {Promise<void>}
+     */
+    async function reopenIfLeftOpen(panelKey, reopen) {
+        try {
+            await characterReady();
+            if (!(await wasOpen(panelKey))) return;
+            await bodyReady();
+            reopen();
+        } catch (error) {
+            console.error('[PanelGeometry] Reopening a panel failed:', error);
+        }
+    }
+
+    /**
+     * Test-only: forget the loaded geometry and open flags.
+     */
+    function _resetCaches() {
+        cache = null;
+        loading = null;
+        openCache.clear();
+        openLoading.clear();
+    }
+
+    var panelGeometry = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        _resetCaches: _resetCaches,
+        allGeometry: allGeometry,
+        clampGeometry: clampGeometry,
+        clampPanelToViewport: clampPanelToViewport,
+        clearGeometry: clearGeometry,
+        clearPosition: clearPosition,
+        reopenIfLeftOpen: reopenIfLeftOpen,
+        restoreGeometry: restoreGeometry,
+        saveGeometry: saveGeometry,
+        saveOpenState: saveOpenState,
+        wasOpen: wasOpen
+    });
+
+    /**
+     * Floating Panel Z-Index Manager
+     * Manages bring-to-front ordering for persistent floating panels.
+     * All panels are capped below PANEL_Z_CAP (config.Z_FLOATING_PANEL + 99, i.e. 1199)
+     * so they never cross the game's MUI modal layer (~1300).
+     */
+
+
+    const panels = new Set();
+
+    /**
+     * The highest z-index any registered floating panel may reach.
+     *
+     * Exported so anything that must sit above every panel — the choice dialog's
+     * backdrop, for one — can derive its own z-index from this instead of
+     * guessing a number that has to be kept in sync by hand.
+     */
+    const PANEL_Z_CAP = config.Z_FLOATING_PANEL + 99;
+
+    /** How long to wait after the last resize event before re-clamping panels */
+    const RESIZE_DEBOUNCE_MS = 200;
+
+    /**
+     * Register a floating panel element for z-index management.
+     *
+     * Every floating panel in the script comes through here, which makes it the one
+     * place a viewport clamp reaches all of them — including the panels that open
+     * at a hardcoded corner and never ask `restoreGeometry` for anything. The clamp
+     * waits a frame because a panel is commonly registered in the same tick it is
+     * appended, and an element the browser has not laid out yet measures as nothing.
+     *
+     * @param {HTMLElement} el - The panel element
+     */
+    function registerFloatingPanel(el) {
+        panels.add(el);
+        afterLayout(() => {
+            try {
+                if (panels.has(el)) clampPanelToViewport(el);
+            } catch (error) {
+                console.error('[PanelZIndex] Holding a panel inside the window failed:', error);
+            }
+        });
+    }
+
+    /**
+     * Run something once the browser has had a chance to lay the page out.
+     * @param {Function} run - What to run
+     */
+    function afterLayout(run) {
+        if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => run());
+        else setTimeout(run, 0);
+    }
+
+    /**
+     * Unregister a floating panel element
+     * @param {HTMLElement} el - The panel element
+     */
+    function unregisterFloatingPanel(el) {
+        panels.delete(el);
+    }
+
+    /**
+     * Bring a panel to the front among all registered panels,
+     * without exceeding PANEL_Z_CAP.
+     * @param {HTMLElement} el - The panel to bring forward
+     */
+    function bringPanelToFront(el) {
+        const base = config.Z_FLOATING_PANEL;
+        const cap = PANEL_Z_CAP;
+
+        let maxZ = base;
+        for (const p of panels) {
+            const z = parseInt(p.style.zIndex) || base;
+            if (z > maxZ) maxZ = z;
+        }
+
+        const next = maxZ + 1;
+        if (next > cap) {
+            // Overflow — reassign all from base upward, put el last
+            let i = base;
+            for (const p of panels) {
+                if (p !== el) p.style.zIndex = String(i++);
+            }
+            el.style.zIndex = String(i);
+        } else {
+            el.style.zIndex = String(next);
+        }
+    }
+
+    /**
+     * Nudge every registered panel that is now out of bounds back on screen.
+     *
+     * A panel remembers where it was left, and a resize does not go through
+     * `restoreGeometry` — nothing was re-checking the saved position against a
+     * window that has since shrunk, so a panel dragged toward the right edge was
+     * stranded off-screen the moment the window got smaller. A phone rotating is
+     * the same event, and the reason the size is re-checked here too and not only
+     * the position. Only panels that are actually out of bounds are touched, and
+     * the result is never persisted — the saved geometry is still what a larger
+     * window restores to.
+     */
+    function reclampRegisteredPanels() {
+        for (const panel of panels) {
+            try {
+                clampPanelToViewport(panel);
+            } catch (error) {
+                console.error('[PanelZIndex] Re-clamping a panel after a resize failed:', error);
+            }
+        }
+    }
+
+    let resizeTimer = null;
+
+    function onWindowResize() {
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(reclampRegisteredPanels, RESIZE_DEBOUNCE_MS);
+    }
+
+    if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+        window.addEventListener('resize', onWindowResize);
+    }
+
+    var panelZIndex = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        PANEL_Z_CAP: PANEL_Z_CAP,
+        bringPanelToFront: bringPanelToFront,
+        registerFloatingPanel: registerFloatingPanel,
+        unregisterFloatingPanel: unregisterFloatingPanel
+    });
+
+    /**
+     * Choice Dialog
+     *
+     * A modal that asks a question and offers more than two answers.
+     *
+     * `window.confirm` offers exactly two, so a three-way choice has to be squeezed
+     * into OK and Cancel with a paragraph explaining which is which — "OK to ADD,
+     * Cancel to REPLACE" is a question you have to read twice and can still get
+     * wrong, and getting it wrong overwrites a ledger. Buttons that say what they do
+     * cannot be misread.
+     *
+     * Deliberately promise-based rather than callback-based so the calling code
+     * reads as a decision rather than as a continuation.
+     */
+
+
+    const COLORS = {
+        background: 'rgba(12, 15, 26, 0.98)',
+        border: 'rgba(120, 160, 255, 0.35)',
+        text: '#e8ecf5',
+        textDim: 'rgba(232, 236, 245, 0.65)',
+        accent: '#9ec4ff',
+    };
+
+    /**
+     * Ask a question and wait for an answer.
+     *
+     * Escape and a click outside both resolve to null, matching what dismissing a
+     * dialog means everywhere else: no, and nothing has happened.
+     *
+     * @param {Object} options - The question
+     * @param {string} options.title - Heading
+     * @param {string} [options.message] - Body text; newlines become line breaks
+     * @param {Array<{value: string, label: string, hint?: string, tone?: string}>} options.choices -
+     *   Buttons, in order. `tone` may be `'primary'`, `'danger'` or left off.
+     * @returns {Promise<string|null>} The chosen value, or null when dismissed
+     */
+    function askChoice({ title, message = '', choices = [] }) {
+        return new Promise((resolve) => {
+            const backdrop = document.createElement('div');
+            Object.assign(backdrop.style, {
+                position: 'fixed',
+                inset: '0',
+                background: 'rgba(0, 0, 0, 0.55)',
+                // Always above every floating panel, including one raised by
+                // bringPanelToFront to PANEL_Z_CAP — this dialog is often opened
+                // from that very panel and must never render behind it
+                zIndex: String(PANEL_Z_CAP + 1),
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+            });
+
+            const dialog = document.createElement('div');
+            Object.assign(dialog.style, {
+                minWidth: '320px',
+                maxWidth: '460px',
+                background: COLORS.background,
+                border: `1px solid ${COLORS.border}`,
+                borderRadius: '8px',
+                boxShadow: '0 12px 48px rgba(0, 0, 0, 0.7)',
+                color: COLORS.text,
+                fontSize: '13px',
+                padding: '14px 16px 12px',
+            });
+
+            const heading = document.createElement('div');
+            heading.textContent = title;
+            Object.assign(heading.style, { fontWeight: 'bold', color: COLORS.accent, marginBottom: '6px' });
+            dialog.appendChild(heading);
+
+            if (message) {
+                const body = document.createElement('div');
+                body.textContent = message;
+                Object.assign(body.style, {
+                    color: COLORS.textDim,
+                    marginBottom: '12px',
+                    lineHeight: '1.45',
+                    whiteSpace: 'pre-wrap',
+                });
+                dialog.appendChild(body);
+            }
+
+            const buttons = document.createElement('div');
+            Object.assign(buttons.style, { display: 'flex', gap: '8px', justifyContent: 'flex-end', flexWrap: 'wrap' });
+
+            let settled = false;
+            const finish = (value) => {
+                if (settled) return;
+                settled = true;
+                document.removeEventListener('keydown', onKeyDown, true);
+                backdrop.remove();
+                resolve(value);
+            };
+
+            const onKeyDown = (event) => {
+                if (event.key !== 'Escape') return;
+                // Captured, because the game listens for Escape too and would close
+                // whatever is behind this dialog as well
+                event.stopPropagation();
+                event.preventDefault();
+                finish(null);
+            };
+
+            for (const choice of choices) {
+                const button = document.createElement('button');
+                button.textContent = choice.label;
+                if (choice.hint) button.title = choice.hint;
+
+                const tone = choice.tone === 'danger' ? '#ff8080' : choice.tone === 'primary' ? COLORS.accent : COLORS.text;
+                Object.assign(button.style, {
+                    background: choice.tone === 'primary' ? 'rgba(158, 196, 255, 0.18)' : 'rgba(255, 255, 255, 0.07)',
+                    border: `1px solid ${COLORS.border}`,
+                    borderRadius: '4px',
+                    color: tone,
+                    cursor: 'pointer',
+                    fontSize: '13px',
+                    padding: '5px 14px',
+                });
+                button.addEventListener('click', () => finish(choice.value));
+                buttons.appendChild(button);
+            }
+
+            dialog.appendChild(buttons);
+            backdrop.appendChild(dialog);
+
+            backdrop.addEventListener('mousedown', (event) => {
+                if (event.target === backdrop) finish(null);
+            });
+            document.addEventListener('keydown', onKeyDown, true);
+
+            document.body.appendChild(backdrop);
+            // Focused so Enter and Tab work from the keyboard, and so the dialog
+            // takes focus away from whatever was behind it
+            buttons.firstElementChild?.focus();
+        });
+    }
+
+    var choiceDialog = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        askChoice: askChoice
+    });
+
+    /**
+     * Floating Panel helpers
+     *
+     * The drag behaviour every floating panel needs, in one place.
+     *
+     * Written for the overlay shell, which has to remember where it was left. The
+     * PFormance and Treasure panels each carry their own copy of this and could
+     * adopt it; they are left alone here because moving working code is a separate
+     * change from adding new code.
+     */
+
+
+    /**
+     * Let a panel be dragged by one of its parts.
+     *
+     * Listeners live on the document rather than the handle, because a fast drag
+     * outruns the element under the cursor and the panel would be left stuck to the
+     * pointer. They are attached on mousedown and removed on mouseup, so nothing
+     * stays bound while the panel sits still.
+     *
+     * @param {HTMLElement} panel - The thing that moves
+     * @param {HTMLElement} handle - The part you grab
+     * @param {Function} [onDrop] - Called with `{left, top}` once the panel has
+     *   actually been moved. A click that never moved is not a drag.
+     * @returns {Function} Detaches the handle's listener
+     */
+    function makeDraggable(panel, handle, onDrop) {
+        let offsetX = 0;
+        let offsetY = 0;
+        let dragging = false;
+        let moved = false;
+
+        // Pointer events rather than mouse events, so a finger works the same as a
+        // cursor — mousedown never fires on a touchscreen and every panel was
+        // simply immovable there. touch-action:none is the half that is easy to
+        // forget: without it the browser claims the gesture for scrolling and the
+        // pointermove stream ends after a few pixels.
+        handle.style.touchAction = 'none';
+
+        const onPointerMove = (event) => {
+            if (!dragging) return;
+            moved = true;
+            // Anchored left/top from here on: a panel positioned from the right edge
+            // would jump the moment the window is resized
+            panel.style.left = `${event.clientX - offsetX}px`;
+            panel.style.top = `${event.clientY - offsetY}px`;
+            panel.style.right = 'auto';
+            panel.style.bottom = 'auto';
+        };
+
+        const onPointerUp = () => {
+            if (!dragging) return;
+            dragging = false;
+            document.removeEventListener('pointermove', onPointerMove);
+            document.removeEventListener('pointerup', onPointerUp);
+            document.removeEventListener('pointercancel', onPointerUp);
+
+            // A press that never moved is a click, not a drag. Saving one is
+            // harmless for a panel that only remembers where it is, and wrong for
+            // the Treasure popup, where being moved is how you tell it to stop
+            // following the chest dialog — clicking its header once silently
+            // pinned it somewhere and auto-placement appeared to stop working.
+            if (!moved) return;
+            onDrop?.({ left: panel.style.left, top: panel.style.top });
+        };
+
+        const onPointerDown = (event) => {
+            // Only the primary button, and never a click that was meant for a
+            // control sitting in the handle
+            if (event.button !== 0 || event.target.closest('button, input, select')) return;
+
+            bringPanelToFront(panel);
+            dragging = true;
+            moved = false;
+            const rect = panel.getBoundingClientRect();
+            offsetX = event.clientX - rect.left;
+            offsetY = event.clientY - rect.top;
+            document.addEventListener('pointermove', onPointerMove);
+            document.addEventListener('pointerup', onPointerUp);
+            // A touch interrupted by the system (notification, palm rejection)
+            // cancels rather than lifts; without this the panel stays glued
+            document.addEventListener('pointercancel', onPointerUp);
+            event.preventDefault();
+        };
+
+        handle.addEventListener('pointerdown', onPointerDown);
+
+        return () => {
+            handle.removeEventListener('pointerdown', onPointerDown);
+            onPointerUp();
+        };
+    }
+
+    /**
+     * Give a panel a corner you can drag to resize it.
+     *
+     * A grip rather than CSS `resize: both`, because the native handle needs the
+     * element to scroll its own overflow — these panels hide theirs so the rounded
+     * corners stay rounded — and it cannot be styled to be visible against a dark
+     * panel. It also gives us the minimums, which the native handle does not
+     * enforce below the content size.
+     *
+     * @param {HTMLElement} panel - The thing that resizes
+     * @param {Object} [options] - Options
+     * @param {number} [options.minWidth] - Smallest width
+     * @param {number} [options.minHeight] - Smallest height
+     * @param {Function} [options.onResize] - Called with `{width, height}` once the drag ends
+     * @returns {Function} Removes the grip
+     */
+    function makeResizable(panel, { minWidth = 200, minHeight = 80, onResize } = {}) {
+        const grip = document.createElement('div');
+        grip.title = 'Drag to resize';
+        Object.assign(grip.style, {
+            position: 'absolute',
+            right: '0',
+            bottom: '0',
+            width: '14px',
+            height: '14px',
+            cursor: 'nwse-resize',
+            // Two hairlines reading as a corner, rather than an icon that would need
+            // to be legible against whatever the panel's last row happens to be
+            background:
+                'linear-gradient(135deg, transparent 0 45%, rgba(158, 196, 255, 0.55) 45% 55%, transparent 55% 72%, ' +
+                'rgba(158, 196, 255, 0.55) 72% 82%, transparent 82%)',
+            zIndex: '2',
+        });
+
+        let startX = 0;
+        let startY = 0;
+        let startWidth = 0;
+        let startHeight = 0;
+        let resizing = false;
+
+        // Same pointer-events story as the drag handle; and a 14px grip is a
+        // mouse-sized target, so a coarse pointer gets a bigger one
+        grip.style.touchAction = 'none';
+        if (hasCoarsePointer()) {
+            grip.style.width = '26px';
+            grip.style.height = '26px';
+        }
+
+        const onPointerMove = (event) => {
+            if (!resizing) return;
+            panel.style.width = `${Math.max(minWidth, startWidth + event.clientX - startX)}px`;
+            panel.style.height = `${Math.max(minHeight, startHeight + event.clientY - startY)}px`;
+        };
+
+        const onPointerUp = () => {
+            if (!resizing) return;
+            resizing = false;
+            document.removeEventListener('pointermove', onPointerMove);
+            document.removeEventListener('pointerup', onPointerUp);
+            document.removeEventListener('pointercancel', onPointerUp);
+            const rect = panel.getBoundingClientRect();
+            onResize?.({ width: Math.round(rect.width), height: Math.round(rect.height) });
+        };
+
+        const onPointerDown = (event) => {
+            if (event.button !== 0) return;
+            resizing = true;
+            const rect = panel.getBoundingClientRect();
+            startX = event.clientX;
+            startY = event.clientY;
+            startWidth = rect.width;
+            startHeight = rect.height;
+            document.addEventListener('pointermove', onPointerMove);
+            document.addEventListener('pointerup', onPointerUp);
+            document.addEventListener('pointercancel', onPointerUp);
+            event.preventDefault();
+            event.stopPropagation();
+        };
+
+        grip.addEventListener('pointerdown', onPointerDown);
+        panel.appendChild(grip);
+
+        return () => {
+            grip.removeEventListener('pointerdown', onPointerDown);
+            onPointerUp();
+            grip.remove();
+        };
+    }
+
+    // A `clampToViewport` lived here and had no callers. Panels are clamped by
+    // `panel-geometry.js` on restore and by the overlay's own `_clampToViewport`,
+    // both of which keep the whole panel on screen; this one kept a 40px strip of
+    // it, on the reasoning that a strip is enough to grab and drag back. Nothing
+    // agreed, so it was two rules and one of them was never applied.
+
+    var floatingPanel = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        makeDraggable: makeDraggable,
+        makeResizable: makeResizable
+    });
+
+    /**
+     * Simple panel
+     *
+     * The floating-panel shell, once.
+     *
+     * Every panel in this script wants the same six things: a header you can drag
+     * by, a close button, a scrolling body, a resize grip, a remembered position and
+     * a refresh on a timer. Written out per panel that is six chances to open
+     * somewhere unreachable, and it has already happened.
+     *
+     * What differs between panels is only what fills the body, so that is the only
+     * thing a caller supplies.
+     */
+
+
+    const DEFAULT_REFRESH_MS = 3000;
+
+    /**
+     * @param {Object} definition - What makes this panel itself
+     * @param {string} definition.id - DOM id and geometry key
+     * @param {string} definition.title - Header text
+     * @param {{width: number, height: number}} definition.size - Opening size
+     * @param {Function} definition.draw - `(body, panel) => void`, called each refresh
+     * @param {string} [definition.accent] - Header and title colour
+     * @param {number} [definition.refreshMs] - How often to redraw
+     * @returns {Object} A panel with `show`, `hide` and `toggle`
+     */
+    function createPanel({ id, title, size, draw, accent = '#8fb4ff', refreshMs = DEFAULT_REFRESH_MS }) {
+        let panel = null;
+        let bodyEl = null;
+        let refreshId = null;
+        let detachDrag = null;
+        let detachResize = null;
+
+        /** Draw, or say which panel could not be drawn */
+        function render() {
+            if (!bodyEl) return;
+            bodyEl.replaceChildren();
+
+            try {
+                draw(bodyEl, panel);
+            } catch (error) {
+                console.error(`[Panel] ${title} could not be drawn:`, error);
+                const failed = document.createElement('div');
+                failed.textContent = `This could not be drawn: ${error.message}`;
+                failed.style.color = ROW_COLORS.bad;
+                bodyEl.appendChild(failed);
+            }
+        }
+
+        /**
+         * The timed redraw, which leaves a control being used alone.
+         *
+         * A refresh rebuilds the whole body, and rebuilding a `<select>` closes its
+         * dropdown. Scroll through a long list of equipment for more than a few
+         * seconds and the list shuts under the pointer — which reads as the panel
+         * refusing to be used rather than as a redraw. A control the pointer or the
+         * keyboard is in is a control somebody is in the middle of.
+         */
+        function refresh() {
+            const active = document.activeElement;
+            const busy = panel?.contains(active) && ['INPUT', 'SELECT', 'TEXTAREA'].includes(active.tagName);
+            if (busy) return;
+
+            render();
+        }
+
+        function create() {
+            panel = document.createElement('div');
+            panel.id = `toolasha-${id}-panel`;
+            Object.assign(panel.style, {
+                position: 'fixed',
+                top: '170px',
+                left: '170px',
+                zIndex: String(config.Z_FLOATING_PANEL),
+                width: `${size.width}px`,
+                height: `${size.height}px`,
+                background: 'rgba(14, 16, 22, 0.97)',
+                border: `1px solid ${accent}55`,
+                borderRadius: '8px',
+                boxShadow: '0 8px 32px rgba(0, 0, 0, 0.6)',
+                color: '#e8ecf5',
+                fontSize: '12px',
+                display: 'flex',
+                flexDirection: 'column',
+                overflow: 'hidden',
+            });
+
+            const header = document.createElement('div');
+            Object.assign(header.style, {
+                display: 'flex',
+                alignItems: 'center',
+                cursor: 'move',
+                padding: '7px 8px 7px 11px',
+                background: 'rgba(24, 24, 34, 0.9)',
+                borderBottom: `1px solid ${accent}55`,
+                userSelect: 'none',
+                flex: '0 0 auto',
+            });
+
+            const heading = document.createElement('span');
+            heading.textContent = title;
+            Object.assign(heading.style, { fontWeight: 'bold', color: accent, flex: '1' });
+
+            const close = document.createElement('button');
+            close.textContent = '✕';
+            Object.assign(close.style, {
+                background: 'none',
+                border: 'none',
+                color: '#e8ecf5',
+                cursor: 'pointer',
+                fontSize: '13px',
+                padding: '2px 4px',
+            });
+            close.addEventListener('click', (event) => {
+                event.stopPropagation();
+                api.hide();
+            });
+
+            header.append(heading, close);
+            panel.appendChild(header);
+
+            bodyEl = document.createElement('div');
+            Object.assign(bodyEl.style, {
+                flex: '1',
+                overflow: 'auto',
+                padding: '8px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '7px',
+                fontVariantNumeric: 'tabular-nums',
+            });
+            panel.appendChild(bodyEl);
+
+            detachDrag = makeDraggable(panel, header, (position) => {
+                saveGeometry(id, { left: parseFloat(position.left), top: parseFloat(position.top) });
+            });
+            detachResize = makeResizable(panel, {
+                minWidth: 280,
+                minHeight: 160,
+                onResize: (next) => saveGeometry(id, next),
+            });
+
+            document.body.appendChild(panel);
+            registerFloatingPanel(panel);
+            restoreGeometry(panel, id, { width: 280, height: 160 });
+
+            render();
+            refreshId = setInterval(refresh, refreshMs);
+        }
+
+        const api = {
+            show({ remember = true } = {}) {
+                if (remember) saveOpenState(id, true);
+                if (panel && document.body.contains(panel)) {
+                    bringPanelToFront(panel);
+                    return;
+                }
+                create();
+            },
+            hide({ remember = true } = {}) {
+                if (remember) saveOpenState(id, false);
+                clearInterval(refreshId);
+                refreshId = null;
+                detachDrag?.();
+                detachResize?.();
+                detachDrag = null;
+                detachResize = null;
+
+                if (!panel) return;
+                unregisterFloatingPanel(panel);
+                panel.remove();
+                panel = null;
+                bodyEl = null;
+            },
+            toggle() {
+                if (panel) api.hide();
+                else api.show();
+            },
+            render,
+            get panel() {
+                return panel;
+            },
+        };
+        // Reopen if it was open when the page was last left. Fire and forget, since
+        // this is module scope and a storage read has no business holding it up —
+        // the panel appears a moment after the rest of the page, which is what a
+        // remembered panel looks like anyway.
+        reopenIfLeftOpen(id, () => api.show({ remember: false }));
+
+        return api;
+    }
+
+    /**
+     * A titled block to put lines in.
+     *
+     * @param {HTMLElement} body - Where it goes
+     * @param {string} [title] - Heading
+     * @param {string} [accent] - Heading colour
+     * @returns {HTMLElement}
+     */
+    function panelCard(body, title, accent = '#8fb4ff') {
+        const card = document.createElement('div');
+        Object.assign(card.style, {
+            background: 'rgba(255, 255, 255, 0.04)',
+            border: '1px solid rgba(255, 255, 255, 0.10)',
+            borderRadius: '6px',
+            padding: '7px 9px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '2px',
+        });
+
+        if (title) {
+            const heading = document.createElement('div');
+            heading.textContent = title;
+            Object.assign(heading.style, { color: accent, fontWeight: 'bold', marginBottom: '3px' });
+            card.appendChild(heading);
+        }
+        body.appendChild(card);
+        return card;
+    }
+
+    /**
+     * A labelled figure on its own line.
+     *
+     * @param {string} label - What it is
+     * @param {string} value - What it says
+     * @param {string} [color] - Ink for the value
+     * @param {string} [title] - Tooltip
+     * @returns {HTMLElement}
+     */
+    function panelLine(label, value, color = '#e8ecf5', title = '') {
+        const line = document.createElement('div');
+        Object.assign(line.style, { display: 'flex', gap: '8px', alignItems: 'baseline' });
+
+        const name = document.createElement('span');
+        name.textContent = label;
+        name.style.color = 'rgba(232, 236, 245, 0.5)';
+        name.style.flex = '1';
+
+        const figure = document.createElement('span');
+        figure.textContent = value;
+        figure.style.color = color;
+        figure.style.whiteSpace = 'nowrap';
+
+        if (title) line.title = title;
+        line.append(name, figure);
+        return line;
+    }
+
+    /**
+     * Something to say when there is nothing to show.
+     * @param {string} text - What to say
+     * @returns {HTMLElement}
+     */
+    function panelNote(text) {
+        const note = document.createElement('div');
+        note.textContent = text;
+        note.style.color = 'rgba(232, 236, 245, 0.5)';
+        return note;
+    }
+
+    var simplePanel = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        createPanel: createPanel,
+        panelCard: panelCard,
+        panelLine: panelLine,
+        panelNote: panelNote
+    });
+
+    /**
+     * Consumable target
+     *
+     * How long the stock is supposed to last.
+     *
+     * One setting, in one place, because two things read it and they are in
+     * different bundles. The Consumables panel measures every shortfall against it —
+     * "buy for three days" is a different number from "buy for eight hours". The
+     * overlay tile colours against it: a consumable lasting two days is fine if you
+     * asked for one and is the thing to go and fix if you asked for three. A tile
+     * and a panel disagreeing about that would be worse than either being wrong,
+     * because you would have to work out which one to believe.
+     *
+     * Held in memory and mirrored to storage: the tile redraws every second and an
+     * await per draw is not a thing to put behind a colour.
+     */
+
+
+    const STORAGE_KEY = 'consumablesSettings';
+
+    /** The durations offered, in the order the header button cycles them */
+    const TARGETS = [
+        { label: '8 hours', seconds: 8 * 3600 },
+        { label: '1 day', seconds: 86400 },
+        { label: '3 days', seconds: 3 * 86400 },
+        { label: '1 week', seconds: 7 * 86400 },
+    ];
+
+    const DEFAULT_INDEX = 1;
+    let index = DEFAULT_INDEX;
+
+    /**
+     * @returns {{label: string, seconds: number}} The duration everything is
+     *   measured against
+     */
+    function currentTarget() {
+        return TARGETS[index] || TARGETS[DEFAULT_INDEX];
+    }
+
+    /** @returns {number} Which of `TARGETS` is selected */
+    function targetIndex() {
+        return index;
+    }
+
+    /**
+     * Move to the next duration and remember it.
+     * @returns {{label: string, seconds: number}} The new target
+     */
+    function cycleTarget() {
+        index = (index + 1) % TARGETS.length;
+        writeScoped(STORAGE_KEY, { targetSeconds: currentTarget().seconds }, 'settings').catch((error) => {
+            console.error('[ConsumableTarget] Saving the target failed:', error);
+        });
+        return currentTarget();
+    }
+
+    /**
+     * Read the target back at start-up.
+     *
+     * @param {Function} [onLoaded] - Called once the answer is in, for anything that
+     *   has already drawn against the default
+     * @returns {Promise<void>}
+     */
+    async function loadTarget(onLoaded) {
+        try {
+            // Waits for the database: it is opened after the libraries are
+            // evaluated, so a read at module scope always returns the default
+            await storage.ready;
+            const saved = await readScoped(STORAGE_KEY, 'settings', null, { migrate: 'adopt' });
+            const found = TARGETS.findIndex((target) => target.seconds === saved?.targetSeconds);
+            // A value stored by an older list must not win over the code's
+            index = found >= 0 ? found : DEFAULT_INDEX;
+        } catch (error) {
+            console.error('[ConsumableTarget] Reading the target failed:', error);
+        }
+        onLoaded?.(currentTarget());
+    }
+
+    // How much stock is enough is a question about one character's habits, so the
+    // key is theirs — and nothing here re-runs on a switch unless it asks to be told
+    dataManager.on('character_initialized', () => loadTarget());
+    dataManager.on('character_switched', () => loadTarget());
+
+    var consumableTarget = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        TARGETS: TARGETS,
+        currentTarget: currentTarget,
+        cycleTarget: cycleTarget,
+        loadTarget: loadTarget,
+        targetIndex: targetIndex
+    });
+
+    /**
+     * Complex arithmetic and a radix-2 FFT.
+     *
+     * Exists for `drop-luck.js`, which works in the frequency domain: the value of a
+     * session's drops is a sum of many independent random variables, and sums are
+     * ugly in the value domain and a plain product in the frequency one. Getting a
+     * distribution back out at the end is one inverse transform.
+     *
+     * Complex numbers are `[re, im]` pairs rather than objects or parallel typed
+     * arrays. Pairs allocate more than typed arrays would, and if the luck analysis
+     * ever needs to get faster this is the first place to look — but the transform
+     * itself, which is where the array is longest, runs on plain number arrays.
+     *
+     * Ported from MWI Combat Suite by Frotty (MIT) — see
+     * `third-party/mwi-combat-suite/` and `docs/THIRD-PARTY-LICENSES.md`.
+     */
+
+    /** @typedef {[number, number]} Complex - A complex number as [real, imaginary] */
+
+    /**
+     * @param {Complex} a - Left
+     * @param {Complex} b - Right
+     * @returns {Complex} a × b
+     */
+    function cMul(a, b) {
+        return [a[0] * b[0] - a[1] * b[1], a[0] * b[1] + a[1] * b[0]];
+    }
+
+    /**
+     * @param {Complex} a - Numerator
+     * @param {Complex} b - Denominator
+     * @returns {Complex} a ÷ b
+     */
+    function cDiv(a, b) {
+        const magnitude = b[0] * b[0] + b[1] * b[1];
+        return [(a[0] * b[0] + a[1] * b[1]) / magnitude, (a[1] * b[0] - a[0] * b[1]) / magnitude];
+    }
+
+    /**
+     * A complex number to a real power, via polar form.
+     * @param {Complex} c - Base
+     * @param {number} x - Exponent
+     * @returns {Complex} c^x
+     */
+    function cPow(c, x) {
+        const argument = Math.atan2(c[1], c[0]) * x;
+        const magnitude = Math.pow(c[0] * c[0] + c[1] * c[1], x / 2);
+        return [magnitude * Math.cos(argument), magnitude * Math.sin(argument)];
+    }
+
+    /**
+     * A vector of `n` copies of a real number.
+     * @param {number} n - Length
+     * @param {number} value - The real part; imaginary is zero
+     * @returns {Complex[]} The vector
+     */
+    function vecConstant(n, value) {
+        const vector = new Array(n);
+        for (let i = 0; i < n; i++) vector[i] = [value, 0];
+        return vector;
+    }
+
+    /**
+     * Multiply a vector by another, in place.
+     * @param {Complex[]} target - Mutated and returned
+     * @param {Complex[]} other - Multiplier
+     * @returns {Complex[]} target
+     */
+    function vecMulEq(target, other) {
+        for (let i = 0; i < target.length; i++) {
+            const re = target[i][0] * other[i][0] - target[i][1] * other[i][1];
+            const im = target[i][0] * other[i][1] + target[i][1] * other[i][0];
+            target[i][0] = re;
+            target[i][1] = im;
+        }
+        return target;
+    }
+
+    /**
+     * Scale a vector by a real number, in place.
+     * @param {Complex[]} target - Mutated and returned
+     * @param {number} scale - Multiplier
+     * @returns {Complex[]} target
+     */
+    function vecScaleEq(target, scale) {
+        for (let i = 0; i < target.length; i++) {
+            target[i][0] *= scale;
+            target[i][1] *= scale;
+        }
+        return target;
+    }
+
+    /**
+     * Add the elementwise product of two vectors into a third, in place.
+     * The inner step of the wave transition graph, where each state accumulates its
+     * successors weighted by the monster that leads to them.
+     * @param {Complex[]} target - Mutated and returned
+     * @param {Complex[]} a - One factor
+     * @param {Complex[]} b - The other
+     * @returns {Complex[]} target
+     */
+    function vecAddMulEq(target, a, b) {
+        for (let i = 0; i < target.length; i++) {
+            target[i][0] += a[i][0] * b[i][0] - a[i][1] * b[i][1];
+            target[i][1] += a[i][0] * b[i][1] + a[i][1] * b[i][0];
+        }
+        return target;
+    }
+
+    /**
+     * Powers of a unit complex number: cos(k·angle) and sin(k·angle) for k = 0…n−1.
+     *
+     * Built by angle addition from earlier entries rather than by calling `Math.cos`
+     * and `Math.sin` n times, which is the hot loop of the whole analysis — every
+     * drop in a session builds one of these. The recurrence costs accuracy: error
+     * compounds along the table, reaching a few parts in 1e13 by the far end of a
+     * 4096-entry one rather than staying at machine epsilon. That is orders below the
+     * sampling error of the transform it feeds, and `complex-fft.test.js` pins it so
+     * a regression shows up as a failure rather than as a slightly wrong percentile.
+     *
+     * @param {number} angle - The base angle in radians
+     * @param {number} n - How many powers; must be a positive multiple of 4
+     * @returns {[number[], number[]]} [cosines, sines]
+     */
+    function unitPowers(angle, n) {
+        if (!Number.isInteger(n) || n < 4 || n % 4 !== 0) {
+            throw new Error(`unitPowers needs a positive multiple of 4, got ${n}`);
+        }
+
+        const cos = new Array(n);
+        const sin = new Array(n);
+        cos[0] = 1;
+        sin[0] = 0;
+        cos[1] = Math.cos(angle);
+        sin[1] = Math.sin(angle);
+        cos[2] = cos[1] * cos[1] - sin[1] * sin[1];
+        sin[2] = 2 * sin[1] * cos[1];
+        cos[3] = cos[1] * cos[2] - sin[1] * sin[2];
+        sin[3] = sin[1] * cos[2] + cos[1] * sin[2];
+
+        // Each block of four is built from two roughly-halfway entries, so the number
+        // of additions any entry is removed from the seed grows like log(n) rather
+        // than n — which is what keeps the compounding error down
+        for (let i = 4; i < n; i += 4) {
+            const j = i >> 1;
+            const k = i - j;
+            cos[i] = cos[j] * cos[k] - sin[j] * sin[k];
+            sin[i] = sin[j] * cos[k] + cos[j] * sin[k];
+            cos[i + 1] = cos[j] * cos[k + 1] - sin[j] * sin[k + 1];
+            sin[i + 1] = sin[j] * cos[k + 1] + cos[j] * sin[k + 1];
+            cos[i + 2] = cos[j + 1] * cos[k + 1] - sin[j + 1] * sin[k + 1];
+            sin[i + 2] = sin[j + 1] * cos[k + 1] + cos[j + 1] * sin[k + 1];
+            cos[i + 3] = cos[j + 1] * cos[k + 2] - sin[j + 1] * sin[k + 2];
+            sin[i + 3] = sin[j + 1] * cos[k + 2] + cos[j + 1] * sin[k + 2];
+        }
+
+        return [cos, sin];
+    }
+
+    /**
+     * In-place iterative radix-2 FFT.
+     *
+     * Decimation in time: the bit-reversal permutation first, then log₂(n) passes of
+     * butterflies over doubling block sizes.
+     *
+     * @param {number[]} re - Real parts, mutated in place
+     * @param {number[]} im - Imaginary parts, mutated in place; same length as `re`
+     */
+    function fftInPlace(re, im) {
+        const n = re.length;
+        if (n <= 1) return;
+        if ((n & (n - 1)) !== 0) throw new Error(`fftInPlace needs a power-of-two length, got ${n}`);
+        if (im.length !== n) throw new Error('fftInPlace needs matching real and imaginary lengths');
+
+        for (let i = 0, j = 0; i < n; i++) {
+            if (i < j) {
+                [re[i], re[j]] = [re[j], re[i]];
+                [im[i], im[j]] = [im[j], im[i]];
+            }
+            let k = n >> 1;
+            while (k > 0 && k <= j) {
+                j -= k;
+                k >>= 1;
+            }
+            j += k;
+        }
+
+        for (let len = 2; len <= n; len <<= 1) {
+            const half = len >> 1;
+            const step = (-2 * Math.PI) / len;
+            const stepRe = Math.cos(step);
+            const stepIm = Math.sin(step);
+
+            for (let start = 0; start < n; start += len) {
+                let wRe = 1;
+                let wIm = 0;
+
+                for (let offset = 0; offset < half; offset++) {
+                    const lo = start + offset;
+                    const hi = lo + half;
+                    const tRe = wRe * re[hi] - wIm * im[hi];
+                    const tIm = wRe * im[hi] + wIm * re[hi];
+
+                    re[hi] = re[lo] - tRe;
+                    im[hi] = im[lo] - tIm;
+                    re[lo] += tRe;
+                    im[lo] += tIm;
+
+                    const nextWRe = wRe * stepRe - wIm * stepIm;
+                    wIm = wRe * stepIm + wIm * stepRe;
+                    wRe = nextWRe;
+                }
+            }
+        }
+    }
+
+    /**
+     * Binary search for the point where a monotonic function reaches a target.
+     * @param {Function} f - Monotonically non-decreasing
+     * @param {number} low - Lower bound
+     * @param {number} high - Upper bound
+     * @param {number} target - Value to reach
+     * @param {number} [iterations] - Halvings; 60 takes a unit interval below 1e-18
+     * @returns {number} The crossing point
+     */
+    function binarySearch(f, low, high, target, iterations = 60) {
+        let lo = low;
+        let hi = high;
+        for (let i = 0; i < iterations; i++) {
+            const mid = (lo + hi) / 2;
+            if (f(mid) < target) lo = mid;
+            else hi = mid;
+        }
+        return (lo + hi) / 2;
+    }
+
+    var complexFft = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        binarySearch: binarySearch,
+        cDiv: cDiv,
+        cMul: cMul,
+        cPow: cPow,
+        fftInPlace: fftInPlace,
+        unitPowers: unitPowers,
+        vecAddMulEq: vecAddMulEq,
+        vecConstant: vecConstant,
+        vecMulEq: vecMulEq,
+        vecScaleEq: vecScaleEq
+    });
+
+    /**
+     * Drop Luck
+     *
+     * Where a session's takings sit in the distribution of takings it could have had.
+     *
+     * "Expected value" answers the wrong question after a bad run. Toolasha already
+     * computes what a zone pays on average — but a session that came in 30% under
+     * average is either routine or remarkable depending on the shape of the tail, and
+     * an average cannot tell the two apart. A zone whose income is mostly a common
+     * drop and a zone whose income is mostly one rare drop have the same mean and
+     * nothing else in common. This gives the percentile: the fraction of runs that
+     * would have done worse.
+     *
+     * ## How
+     *
+     * Total income is a sum of independent contributions — every drop of every
+     * monster in every wave. Summing distributions directly means convolving them,
+     * which is quadratic and gets worse with every drop added. In the frequency
+     * domain a convolution is a plain product, so each drop contributes one
+     * characteristic function, they all multiply together, and one inverse transform
+     * at the end turns the product back into a distribution. Repetition becomes a
+     * power rather than a repeated convolution, which is what makes a thousand waves
+     * cost the same as one.
+     *
+     * The awkward part is that the transform needs a finite window and the true
+     * support of the sum is not known in advance. Too narrow and the far tail wraps
+     * around onto the near one; too wide and the resolution is spent on income
+     * nobody will ever see. `invertToCDF` searches for a window instead of guessing,
+     * shrinking it until the distribution nearly fills it.
+     *
+     * ## What this file does not do
+     *
+     * Pure computation only — it takes drop tables and prices and returns numbers.
+     * Reading the current zone, pricing items, and counting what actually dropped are
+     * not here. Nothing in Toolasha calls this yet.
+     *
+     * Ported from MWI Combat Suite by Frotty (MIT) — see
+     * `third-party/mwi-combat-suite/` and `docs/THIRD-PARTY-LICENSES.md`.
+     */
+
+
+    /**
+     * A characteristic function, as this file represents one: given a sample count
+     * and a frequency scale, it returns the function evaluated at that many evenly
+     * spaced frequencies.
+     * @typedef {(samples: number, scale: number) => Array<[number, number]>} CharacteristicFunction
+     */
+
+    /** Knobs for the transform. Defaults chosen to be accurate rather than quick. */
+    const LUCK_DEFAULTS = {
+        /** Frequencies sampled for the final answer. Powers of two only. */
+        samples: 4096,
+        /** Frequencies sampled while searching for the window — cheap and rough. */
+        searchSamples: 64,
+        /** How much of the window the distribution should fill before the search stops */
+        fillTarget: 0.9,
+        /** Tail mass allowed outside the window */
+        tailTolerance: 1e-4,
+        /** Give up shrinking once a step buys less than this */
+        shrinkTolerance: 1e-4,
+        /** Cap on shrink steps */
+        maxIterations: 30,
+        /** Fraction of the transform reserved as a guard band against wrap-around */
+        guardBand: 0.4,
+    };
+
+    /**
+     * A characteristic function that is identically one — the sum of nothing.
+     * @param {number} [value] - The constant
+     * @returns {CharacteristicFunction}
+     */
+    function constantCF(value = 1) {
+        return (samples) => vecConstant(samples, value);
+    }
+
+    /**
+     * The characteristic function of a sum, which is the product of the parts.
+     * @param {CharacteristicFunction[]} functions - The independent contributions
+     * @returns {CharacteristicFunction}
+     */
+    function multiplyCFs(functions) {
+        if (!functions.length) return constantCF(1);
+
+        return (samples, scale) => {
+            const product = functions[0](samples, scale);
+            for (let i = 1; i < functions.length; i++) {
+                vecMulEq(product, functions[i](samples, scale));
+            }
+            return product;
+        };
+    }
+
+    /**
+     * The characteristic function of `n` independent repeats of something.
+     *
+     * A power, not `n` multiplications — which is the whole reason a long session is
+     * no more expensive to analyse than a short one. `n` need not be a whole number;
+     * a fractional exponent interpolates between wave counts.
+     *
+     * @param {CharacteristicFunction} cf - One repeat
+     * @param {number} n - How many
+     * @returns {CharacteristicFunction}
+     */
+    function powCF(cf, n) {
+        return (samples, scale) => {
+            const values = cf(samples, scale);
+            for (let i = 0; i < samples; i++) values[i] = cPow(values[i], n);
+            return values;
+        };
+    }
+
+    /**
+     * The characteristic function of one drop's contribution to income.
+     *
+     * A drop is "with probability `dropRate`, a count uniform on [minCount, maxCount],
+     * each worth `price`". The count is continuous in the game's data but only whole
+     * items can drop, so the uniform range is first pushed onto the integers — mass
+     * between two integers splits between them in proportion to how close it is,
+     * which is what makes a range like 1.5–2.5 pay 2 on average rather than rounding
+     * to a fixed 2.
+     *
+     * Three cases, because the arithmetic collapses differently in each:
+     *
+     * - The range spans no integer, or is a single point: the count is one of two
+     *   adjacent integers, and the whole thing is two terms.
+     * - The range spans exactly one integer: that integer plus a symmetric spill to
+     *   its neighbours.
+     * - The range spans several: the interior is a run of equally likely integers,
+     *   which sums in closed form as a geometric series, plus a partial integer at
+     *   each end.
+     *
+     * @param {Object} drop - `{ minCount, maxCount, dropRate, price }`
+     * @returns {CharacteristicFunction}
+     */
+    function dropCF(drop) {
+        const { minCount, maxCount, dropRate, price } = drop;
+        const epsilon = 1e-8;
+        const low = Math.ceil(minCount);
+        const high = Math.floor(maxCount);
+        const miss = 1 - dropRate;
+
+        // No whole count strictly inside the range, so it is one of two neighbours
+        if (low > high || maxCount - minCount < epsilon) {
+            const fraction = (minCount + maxCount) / 2 - high;
+            const upper = fraction * dropRate;
+            const lower = (1 - fraction) * dropRate;
+
+            return (samples, scale) => {
+                const base = 2 * Math.PI * scale * price;
+                const [cosHigh1, sinHigh1] = unitPowers(base * (high + 1), samples);
+                const [cosHigh, sinHigh] = unitPowers(base * high, samples);
+
+                const values = new Array(samples);
+                for (let i = 0; i < samples; i++) {
+                    values[i] = [cosHigh1[i] * upper + cosHigh[i] * lower + miss, sinHigh1[i] * upper + sinHigh[i] * lower];
+                }
+                return values;
+            };
+        }
+
+        // Exactly one whole count inside, with a spill to each side
+        if (low === high) {
+            const spillLow = (dropRate * (low - minCount) * (low - minCount)) / ((maxCount - minCount) * 2);
+            const spillHigh = (dropRate * (maxCount - high) * (maxCount - high)) / ((maxCount - minCount) * 2);
+
+            return (samples, scale) => {
+                const base = 2 * Math.PI * scale * price;
+                const [cos, sin] = unitPowers(base, samples);
+                const [cosHigh, sinHigh] = unitPowers(base * high, samples);
+
+                const values = new Array(samples);
+                for (let i = 0; i < samples; i++) {
+                    const shape = [dropRate + (spillLow + spillHigh) * (cos[i] - 1), (spillHigh - spillLow) * sin[i]];
+                    values[i] = cMul([cosHigh[i], sinHigh[i]], shape);
+                    values[i][0] += miss;
+                }
+                return values;
+            };
+        }
+
+        // A run of whole counts, plus a partial one at each end
+        const lowPart = low - minCount;
+        const highPart = maxCount - high;
+        const lowPart2 = lowPart * lowPart;
+        const highPart2 = highPart * highPart;
+        const density = dropRate / (maxCount - minCount);
+
+        return (samples, scale) => {
+            const base = 2 * Math.PI * scale * price;
+            const [cos, sin] = unitPowers(base, samples);
+            const [cosHigh, sinHigh] = unitPowers(base * high, samples);
+            const [cosLow, sinLow] = unitPowers(base * low, samples);
+
+            const values = new Array(samples);
+            for (let i = 0; i < samples; i++) {
+                const halfCosStep = (cos[i] - 1) / 2;
+                const halfSinStep = sin[i] / 2;
+                const atLow = [cosLow[i], sinLow[i]];
+                const atHigh = [cosHigh[i], sinHigh[i]];
+
+                const endLow = cMul([lowPart + lowPart2 * halfCosStep, -lowPart2 * halfSinStep], atLow);
+                const endHigh = cMul([highPart + highPart2 * halfCosStep, highPart2 * halfSinStep], atHigh);
+
+                // The interior sums as a geometric series, except at zero frequency
+                // where the ratio is one and the closed form divides by nothing
+                const atZeroFrequency = halfCosStep > -epsilon && Math.abs(halfSinStep) < epsilon;
+                const interior = atZeroFrequency
+                    ? [(high - low) * atLow[0], (high - low) * (atLow[1] + halfSinStep * (high - low - 1))]
+                    : cDiv([atHigh[0] - atLow[0], atHigh[1] - atLow[1]], [halfCosStep * 2, halfSinStep * 2]);
+                const middle = cMul(interior, [1 + halfCosStep, halfSinStep]);
+
+                values[i] = [
+                    miss + density * (endLow[0] + endHigh[0] + middle[0]),
+                    density * (endLow[1] + endHigh[1] + middle[1]),
+                ];
+            }
+            return values;
+        };
+    }
+
+    /**
+     * Invert a characteristic function over a fixed window into a CDF on [0, 1].
+     *
+     * The transform is periodic, so probability past the end of the window reappears
+     * at the start of it. A guard band leaves part of the window empty and the result
+     * is re-based against it, which turns wrap-around into a known offset instead of
+     * corruption at both ends.
+     *
+     * The three passes afterwards each fix something the transform does badly at its
+     * own resolution: a short moving median removes the ringing that a hard window
+     * edge puts into the tails, re-basing pins the guard band back to one, and a
+     * running maximum restores monotonicity, since a CDF that dips is worse than a
+     * CDF that is slightly wrong.
+     *
+     * @param {CharacteristicFunction} cf - What to invert
+     * @param {number} samples - Frequencies to sample; a power of two
+     * @param {number} scale - Reciprocal of the window width
+     * @param {Object} [options] - Overrides for `LUCK_DEFAULTS`
+     * @returns {(x: number) => number} CDF over the fraction of the window
+     */
+    function invertOverWindow(cf, samples, scale, options = {}) {
+        const { guardBand } = { ...LUCK_DEFAULTS, ...options };
+        const padding = 2;
+        const n = samples * padding;
+
+        const values = cf(samples, scale * (1 - guardBand));
+        const re = new Array(n).fill(0);
+        const im = new Array(n).fill(0);
+        for (let i = 0; i < samples; i++) {
+            if (!Number.isFinite(values[i][0]) || !Number.isFinite(values[i][1])) {
+                throw new Error('Characteristic function produced a non-finite value');
+            }
+            re[i] = values[i][0];
+            im[i] = values[i][1];
+        }
+
+        fftInPlace(re, im);
+
+        // The zero frequency carries the whole mass and would swamp everything else;
+        // removing a half from every bin is the discrete form of dropping it
+        for (let i = 0; i < n; i++) re[i] -= 0.5;
+        const total = re.reduce((sum, x) => sum + x, 0);
+        if (Math.abs(total) < 1e-10) throw new Error('Transform came back empty');
+        for (let i = 0; i < n; i++) re[i] /= total;
+
+        const cdf = new Array(n);
+        cdf[0] = (re[0] + re[n - 1]) / 2;
+        for (let i = 1; i < n; i++) cdf[i] = cdf[i - 1] + (re[i] + re[i - 1]) / 2;
+
+        const smoothed = circularMovingMedian(cdf, padding);
+        const offset = smoothed[Math.floor(n * (1 - guardBand))] - 1;
+        for (let i = 0; i < n; i++) smoothed[i] -= offset;
+        for (let i = 1; i < n; i++) if (smoothed[i] < smoothed[i - 1]) smoothed[i] = smoothed[i - 1];
+
+        return (x) => interpolateCDF(smoothed, x, guardBand);
+    }
+
+    /**
+     * A moving median that wraps, treating the sequence as one period of something
+     * that climbs by one each time round — which is what a CDF read off a periodic
+     * transform is.
+     * @param {number[]} values - The sequence
+     * @param {number} radius - Half-width of the window
+     * @returns {number[]} Smoothed copy
+     */
+    function circularMovingMedian(values, radius) {
+        const n = values.length;
+        const out = new Array(n);
+
+        for (let i = 0; i < n; i++) {
+            const window = [];
+            for (let j = i - radius + 1; j <= i + radius; j++) {
+                const wrapped = values[((j % n) + n) % n];
+                window.push(j < 0 ? wrapped - 1 : j >= n ? wrapped + 1 : wrapped);
+            }
+            window.sort((a, b) => a - b);
+            out[i] = (window[radius - 1] + window[radius]) / 2;
+        }
+        return out;
+    }
+
+    /**
+     * Read a CDF between its samples.
+     *
+     * Cubic rather than linear because the answer is a percentile, and linear
+     * interpolation of a curve this smooth leaves visible steps in one.
+     *
+     * @param {number[]} cdf - Sampled CDF
+     * @param {number} x - Position in [0, 1] across the usable part of the window
+     * @param {number} guardBand - Fraction reserved against wrap-around
+     * @returns {number} Probability in [0, 1]
+     */
+    function interpolateCDF(cdf, x, guardBand) {
+        if (x < 0) return 0;
+        if (x >= 1) return 1;
+
+        const n = cdf.length;
+        const position = x * (1 - guardBand) * n - 0.5;
+        const index = Math.round(position);
+        const t = position - index;
+
+        // Neighbours wrap, and a wrap crosses one whole step of the CDF
+        const before = index - 1 < 0 ? cdf[index + n - 1] - 1 : cdf[index - 1];
+        const after = index + 1 >= n ? cdf[index - n + 1] + 1 : cdf[index + 1];
+        const midBefore = (cdf[index] + before) / 2;
+        const midAfter = (cdf[index] + after) / 2;
+        const slopeBefore = cdf[index] - before;
+        const slopeAfter = after - cdf[index];
+
+        const value =
+            2 * (t + 1) * (t - 0.5) * (t - 0.5) * midBefore +
+            2 * (1 - t) * (t + 0.5) * (t + 0.5) * midAfter +
+            (t * t - 0.25) * ((t - 0.5) * slopeBefore + (t + 0.5) * slopeAfter);
+
+        return value < 0 ? 0 : value > 1 ? 1 : value;
+    }
+
+    /**
+     * Invert a characteristic function into a CDF over actual income.
+     *
+     * The window has to hold the distribution but not dwarf it, and its width is not
+     * known before the distribution is computed. So a cheap, coarse inversion runs
+     * first and reports where the mass actually ends; the window shrinks to that and
+     * the check repeats. Each round is a few dozen samples, and the accurate
+     * inversion runs once at the end.
+     *
+     * @param {CharacteristicFunction} cf - What to invert
+     * @param {number} startingLimit - First guess at the largest plausible income
+     * @param {Object} [options] - Overrides for `LUCK_DEFAULTS`
+     * @returns {{limit: number, cdf: (income: number) => number}} The window that was
+     *   settled on, and the CDF over income
+     */
+    function invertToCDF(cf, startingLimit, options = {}) {
+        const settings = { ...LUCK_DEFAULTS, ...options };
+        let limit = startingLimit;
+
+        for (let i = 0; i < settings.maxIterations; i++) {
+            const rough = invertOverWindow(cf, settings.searchSamples, 1 / limit, settings);
+
+            // Already loose enough that the tail is nowhere near the edge
+            if (rough(settings.fillTarget) < 1 - settings.tailTolerance) break;
+
+            const reaches = binarySearch(rough, 0, 1, 1 - settings.tailTolerance);
+            const shrink = reaches / settings.fillTarget;
+            if (shrink > 1 - settings.shrinkTolerance) break;
+            limit *= shrink;
+        }
+
+        const accurate = invertOverWindow(cf, settings.samples, 1 / limit, settings);
+        return { limit, cdf: (income) => accurate(income / limit) };
+    }
+
+    /**
+     * Every path a wave can take through its spawn table, as a graph.
+     *
+     * The same states as `spawn-expectation.js` — strength spent, monsters drawn —
+     * but keeping the edges rather than just the totals, because the income of a wave
+     * depends on which monsters appeared together and not only on how many of each
+     * appeared on average.
+     *
+     * Each node records the probability the wave ends there, which is the weight of
+     * the draws that would not fit.
+     *
+     * @param {Object} spawnInfo - `{ spawns, maxSpawnCount, maxTotalStrength }`
+     * @returns {Array<{stop: number, edges: Array<{to: number, hrid: string}>}>} Nodes,
+     *   with the starting state first
+     */
+    function spawnGraph(spawnInfo) {
+        const { spawns, maxSpawnCount, maxTotalStrength } = spawnInfo;
+        const ids = new Map();
+        const nodes = [];
+
+        const idFor = (strength, count) => {
+            const key = strength * (maxSpawnCount + 1) + count;
+            if (!ids.has(key)) {
+                ids.set(key, nodes.length);
+                nodes.push({ stop: 0, edges: [] });
+            }
+            return ids.get(key);
+        };
+
+        idFor(0, 0);
+        for (let strength = 0; strength <= maxTotalStrength; strength++) {
+            for (let count = 0; count <= maxSpawnCount; count++) {
+                const key = strength * (maxSpawnCount + 1) + count;
+                if (!ids.has(key)) continue;
+                const id = ids.get(key);
+
+                for (const monster of spawns) {
+                    const nextStrength = strength + (monster.strength || 0);
+                    const nextCount = count + 1;
+                    if (nextStrength > maxTotalStrength || nextCount > maxSpawnCount) {
+                        nodes[id].stop += monster.rate || 0;
+                        continue;
+                    }
+                    nodes[id].edges.push({
+                        to: idFor(nextStrength, nextCount),
+                        hrid: monster.combatMonsterHrid || monster.hrid,
+                    });
+                }
+            }
+        }
+        return nodes;
+    }
+
+    /**
+     * The characteristic function of one wave's income.
+     *
+     * Walking the graph backwards means every node's successors are already solved
+     * when it is reached, so the whole wave resolves in one pass: a node's value is
+     * the chance it stops there, plus each outgoing draw weighted by that monster's
+     * rate and its own drops.
+     *
+     * @param {Object} spawnInfo - `{ spawns, maxSpawnCount, maxTotalStrength }`
+     * @param {Object<string, Object[]>} monsterDrops - Monster hrid → its drops
+     * @returns {CharacteristicFunction}
+     */
+    function waveCF(spawnInfo, monsterDrops) {
+        const spawns = spawnInfo?.spawns || [];
+        if (!spawns.length) return constantCF(1);
+
+        const totalWeight = spawns.reduce((sum, spawn) => sum + (spawn.rate || 0), 0);
+        if (totalWeight <= 0) return constantCF(1);
+
+        const perMonster = {};
+        for (const monster of spawns) {
+            const hrid = monster.combatMonsterHrid || monster.hrid;
+            perMonster[hrid] = multiplyCFs((monsterDrops[hrid] || []).map(dropCF));
+        }
+
+        // Rates are weights, and the graph reads them as probabilities
+        const normalised = {
+            ...spawnInfo,
+            spawns: spawns.map((spawn) => ({ ...spawn, rate: (spawn.rate || 0) / totalWeight })),
+        };
+        const graph = spawnGraph(normalised);
+        const rateOf = new Map(normalised.spawns.map((spawn) => [spawn.combatMonsterHrid || spawn.hrid, spawn.rate]));
+
+        return (samples, scale) => {
+            const weighted = {};
+            for (const hrid of Object.keys(perMonster)) {
+                weighted[hrid] = vecScaleEq(perMonster[hrid](samples, scale), rateOf.get(hrid));
+            }
+
+            const values = new Array(graph.length);
+            for (let id = graph.length - 1; id >= 0; id--) {
+                values[id] = vecConstant(samples, graph[id].stop);
+                for (const edge of graph[id].edges) {
+                    vecAddMulEq(values[id], values[edge.to], weighted[edge.hrid]);
+                }
+            }
+            return values[0];
+        };
+    }
+
+    /**
+     * The characteristic function of a whole session's income.
+     * @param {Object} session - Session shape
+     * @param {Object} session.spawnInfo - The zone's random spawn table
+     * @param {Object<string, Object[]>} session.monsterDrops - Monster hrid → its drops
+     * @param {Object<string, Object[]>} [session.bossDrops] - Boss key → its drops
+     * @param {number} session.normalCount - Normal waves fought
+     * @param {number} [session.bossCount] - Boss waves fought
+     * @returns {CharacteristicFunction}
+     */
+    function sessionCF({ spawnInfo, monsterDrops, bossDrops = {}, normalCount, bossCount = 0 }) {
+        const normal = powCF(waveCF(spawnInfo, monsterDrops), normalCount);
+        const boss = powCF(multiplyCFs(Object.values(bossDrops).map((drops) => multiplyCFs(drops.map(dropCF)))), bossCount);
+        return multiplyCFs([normal, boss]);
+    }
+
+    /**
+     * How lucky a session's takings were.
+     *
+     * @param {Object} session - As `sessionCF` takes
+     * @param {number} income - What the session actually paid
+     * @param {Object} [options] - Overrides for `LUCK_DEFAULTS`
+     * @returns {{percentile: number, limit: number, cdf: (income: number) => number}}
+     *   `percentile` is the fraction of sessions that would have done worse — so 0.5
+     *   is exactly typical, 0.99 is a session in a hundred, and 0.01 is a session in
+     *   a hundred the other way. `cdf` answers the same question for any other
+     *   income, and `limit` is the window that was settled on.
+     */
+    function sessionLuck(session, income, options = {}) {
+        const waves = (session.normalCount || 0) + (session.bossCount || 0);
+
+        // Opening guess: generous enough that the search shrinks onto the answer
+        // rather than having to widen, which it cannot do
+        const startingLimit = Math.max(1e8, 2e5 * Math.max(waves, 1));
+
+        const { limit, cdf } = invertToCDF(sessionCF(session), startingLimit, options);
+        return { percentile: cdf(income), limit, cdf };
+    }
+
+    var dropLuck = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        LUCK_DEFAULTS: LUCK_DEFAULTS,
+        constantCF: constantCF,
+        dropCF: dropCF,
+        invertToCDF: invertToCDF,
+        multiplyCFs: multiplyCFs,
+        powCF: powCF,
+        sessionCF: sessionCF,
+        sessionLuck: sessionLuck,
+        waveCF: waveCF
+    });
+
+    /**
+     * Spawn Expectation
+     *
+     * How many of each monster a combat wave is expected to contain.
+     *
+     * A wave is not a fixed roster. The game draws monsters one at a time from a
+     * weighted table and stops early when the next draw would push the wave past its
+     * strength budget, so the roster is a distribution rather than a list. That makes
+     * "this monster drops X at rate Y" not directly usable: to turn a drop rate into
+     * an expectation you first need the expected number of that monster per wave, and
+     * a monster's strength changes how often the wave has room for it at all — a
+     * heavy monster is rarer than its weight suggests, and a light one is commoner.
+     *
+     * Solved exactly rather than sampled. `combat-sim/engine/zone.js` draws real
+     * random encounters because a simulation needs one concrete wave at a time; this
+     * needs the mean over all of them, and there are few enough states to enumerate
+     * every one. The result is exact and takes no samples to converge.
+     *
+     * Ported from MWI Combat Suite by Frotty (MIT) — see
+     * `third-party/mwi-combat-suite/` and `docs/THIRD-PARTY-LICENSES.md`.
+     */
+
+    /**
+     * Expected count of each monster in one wave of a random spawn table.
+     *
+     * The state is (strength spent so far, monsters drawn so far), and every state is
+     * reachable only through draws that fit — a draw that would overflow the strength
+     * budget ends the wave, so it contributes neither the monster that overflowed nor
+     * anything after it. Walking the states in order of strength and then count means
+     * a state is only ever read after every path into it has been added, so one pass
+     * suffices.
+     *
+     * Spawn rates are treated as **weights and normalised**, which is what the game
+     * itself does when it draws (`totalWeight * random()` in `engine/zone.js`). Read
+     * as bare probabilities they only happen to work when the table sums to 1.
+     *
+     * @param {Object} randomSpawnInfo - `combatZoneInfo.fightInfo.randomSpawnInfo`, or an
+     *   entry of a dungeon's `randomSpawnInfoMap`: `{ spawns, maxSpawnCount, maxTotalStrength }`
+     * @returns {Object<string, number>} Monster hrid → expected count per wave. Empty when
+     *   the table is missing, weightless, or allows no draws.
+     */
+    function expectedSpawnsPerWave(randomSpawnInfo) {
+        const spawns = randomSpawnInfo?.spawns || [];
+        const maxSpawnCount = randomSpawnInfo?.maxSpawnCount ?? 0;
+        const maxTotalStrength = randomSpawnInfo?.maxTotalStrength ?? 0;
+
+        const expected = {};
+        if (!spawns.length || maxSpawnCount <= 0 || maxTotalStrength < 0) return expected;
+
+        const totalWeight = spawns.reduce((sum, spawn) => sum + (spawn.rate || 0), 0);
+        if (totalWeight <= 0) return expected;
+
+        for (const spawn of spawns) {
+            const hrid = spawn.combatMonsterHrid || spawn.hrid;
+            if (hrid) expected[hrid] = 0;
+        }
+
+        // reached[strength][count] — the probability the wave is in exactly that state
+        const reached = [];
+        for (let strength = 0; strength <= maxTotalStrength; strength++) {
+            reached.push(new Array(maxSpawnCount + 1).fill(0));
+        }
+        reached[0][0] = 1;
+
+        for (let strength = 0; strength <= maxTotalStrength; strength++) {
+            for (let count = 0; count < maxSpawnCount; count++) {
+                const here = reached[strength][count];
+                if (!here) continue;
+
+                for (const spawn of spawns) {
+                    const hrid = spawn.combatMonsterHrid || spawn.hrid;
+                    if (!hrid) continue;
+
+                    // A draw that does not fit ends the wave rather than being retried,
+                    // so its share of the probability simply stops here
+                    const nextStrength = strength + (spawn.strength || 0);
+                    if (nextStrength > maxTotalStrength) continue;
+
+                    const probability = here * ((spawn.rate || 0) / totalWeight);
+                    reached[nextStrength][count + 1] += probability;
+                    expected[hrid] += probability;
+                }
+            }
+        }
+
+        return expected;
+    }
+
+    /**
+     * Expected count of each monster over a run of waves.
+     *
+     * Separate from the per-wave figure because the per-wave one is worth caching per
+     * zone — it depends only on the spawn table — while the run length changes every
+     * time you ask.
+     *
+     * @param {Object} randomSpawnInfo - Spawn table, as above
+     * @param {number} waveCount - How many waves
+     * @returns {Object<string, number>} Monster hrid → expected count over the run. Empty
+     *   when the run length is not a count.
+     */
+    function expectedSpawnsOverWaves(randomSpawnInfo, waveCount) {
+        if (!Number.isFinite(waveCount) || waveCount < 0) return {};
+
+        const perWave = expectedSpawnsPerWave(randomSpawnInfo);
+        const total = {};
+        for (const [hrid, count] of Object.entries(perWave)) {
+            total[hrid] = count * waveCount;
+        }
+        return total;
+    }
+
+    var spawnExpectation = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        expectedSpawnsOverWaves: expectedSpawnsOverWaves,
+        expectedSpawnsPerWave: expectedSpawnsPerWave
+    });
+
+    /**
+     * Combat Drop Model
+     *
+     * Turning the game's zone data into the shape `drop-luck.js` analyses.
+     *
+     * Kept apart from the feature that displays the result because this is where
+     * being wrong is invisible. A drop rate read straight out of the data is not the
+     * rate you experience: difficulty tier raises it, your combat drop stats raise it
+     * again, party size divides the quantity, and a rare drop scales by a different
+     * stat than a common one. Get any of those wrong and the luck percentile is still
+     * a plausible-looking number — it just quietly says everyone with drop-rate gear
+     * is permanently lucky. So the arithmetic lives here, on its own, with tests.
+     *
+     * ## The assumption worth knowing about
+     *
+     * Quantity bonuses give fractional counts — a 1-to-1 drop at +10% quantity is a
+     * count of 1.1 — and only whole items can drop. This assumes the game settles
+     * that **without losing the fraction**: 1 item nine times in ten and 2 the tenth,
+     * so the average is the 1.1 it says. `drop-luck.js` discretises the same way, and
+     * its "a fractional fixed count splits between its neighbours" test pins it.
+     *
+     * If the game instead truncates, every such bonus below the next whole item is
+     * worth nothing and this model overstates income. That is not a rounding detail:
+     * on a zone where a rare carries the value, the two readings differed by 5% of
+     * total income in testing, because the rare is exactly the drop whose count is
+     * small enough for the fraction to be most of the bonus.
+     *
+     * The multipliers and the discretisation are both Frotty's, read out of MWI
+     * Combat Suite — see `third-party/mwi-combat-suite/` and
+     * `docs/THIRD-PARTY-LICENSES.md`.
+     */
+
+
+    /** What the game gives every character before gear and buffs */
+    const NO_DROP_BONUSES = { combatDropRate: 0, combatRareFind: 0, combatDropQuantity: 0 };
+
+    /** Zones without their own figure send a boss every this many battles */
+    const DEFAULT_BATTLES_PER_BOSS = 10;
+
+    /** A dungeon hands its whole party this much more of each drop */
+    const DUNGEON_QUANTITY_MULTIPLIER = 5;
+
+    /**
+     * The rate a drop actually lands at, for one player in one zone.
+     *
+     * Difficulty raises a drop's rate twice over: once by a flat per-tier step the
+     * drop itself carries, and again by a tenth of the base for every tier. Drop-rate
+     * gear then multiplies what is left — but rare drops answer to `combatRareFind`
+     * and common ones to `combatDropRate`, so a rare-find build looks unlucky on
+     * common drops and lucky on rares if the two are mixed up.
+     *
+     * @param {Object} drop - `{ dropRate, dropRatePerDifficultyTier, isRare }`
+     * @param {number} tier - Difficulty tier
+     * @param {Object} bonuses - `{ combatDropRate, combatRareFind }`
+     * @returns {number} Rate in [0, 1]
+     */
+    function effectiveDropRate(drop, tier, bonuses = NO_DROP_BONUSES) {
+        const base = drop.dropRate || 0;
+        const perTier = drop.dropRatePerDifficultyTier || 0;
+        const finder = drop.isRare ? bonuses.combatRareFind || 0 : bonuses.combatDropRate || 0;
+
+        const rate = (base + tier * perTier) * (1 + tier * 0.1) * (1 + finder);
+        return Math.min(Math.max(rate, 0), 1);
+    }
+
+    /**
+     * How much a drop's count is scaled before it reaches you.
+     *
+     * Quantity bonuses raise the whole stack, party size splits it, and a dungeon
+     * multiplies it — the last two nearly cancelling in a full party, which is why
+     * neither can be left out on its own.
+     *
+     * @param {Object} bonuses - `{ combatDropQuantity }`
+     * @param {number} partySize - How many are splitting the loot
+     * @param {boolean} isDungeon - Whether the zone is a dungeon
+     * @returns {number} Multiplier for min and max count
+     */
+    function dropQuantityMultiplier(bonuses = NO_DROP_BONUSES, partySize = 1, isDungeon = false) {
+        const party = partySize > 0 ? partySize : 1;
+        const dungeon = isDungeon ? DUNGEON_QUANTITY_MULTIPLIER : 1;
+        return ((1 + (bonuses.combatDropQuantity || 0)) / party) * dungeon;
+    }
+
+    /**
+     * Every drop a monster can give, as one list.
+     *
+     * The two tables are kept apart in the game's data because they scale by
+     * different stats, so the rare flag has to survive the merge.
+     *
+     * @param {Object} monster - An entry of `combatMonsterDetailMap`
+     * @returns {Array<Object>} Drops, each flagged `isRare`
+     */
+    function monsterDropList(monster) {
+        const common = (monster?.dropTable || []).map((drop) => ({ ...drop, isRare: false }));
+        const rare = (monster?.rareDropTable || []).map((drop) => ({ ...drop, isRare: true }));
+        return [...common, ...rare];
+    }
+
+    /**
+     * Split a run of battles into ordinary ones and boss ones.
+     * @param {number} battles - Battles fought
+     * @param {number} battlesPerBoss - How often a boss comes round; 0 for never
+     * @returns {{normalCount: number, bossCount: number}}
+     */
+    function splitBattles(battles, battlesPerBoss) {
+        const total = Math.max(battles || 0, 0);
+        if (!battlesPerBoss || battlesPerBoss <= 0) return { normalCount: total, bossCount: 0 };
+
+        const bossCount = Math.floor(total / battlesPerBoss);
+        return { normalCount: total - bossCount, bossCount };
+    }
+
+    /**
+     * Build the session `drop-luck.js` analyses from a zone and a run of battles.
+     *
+     * Priced here rather than downstream because the analysis works in coins, not
+     * items — an item with no price contributes nothing and is dropped, which is the
+     * honest thing to do: counting it as zero would make every session containing one
+     * look unlucky.
+     *
+     * @param {Object} input - Everything the model needs
+     * @param {Object} input.actionDetail - The zone's `actionDetailMap` entry
+     * @param {Object} input.monsterDetailMap - The game's `combatMonsterDetailMap`
+     * @param {number} input.battles - Battles fought, excluding any still in progress
+     * @param {Function} input.priceOf - `(itemHrid) => number|null`
+     * @param {number} [input.difficultyTier] - Zone difficulty
+     * @param {Object} [input.bonuses] - `{ combatDropRate, combatRareFind, combatDropQuantity }`
+     * @param {number} [input.partySize] - How many are splitting the loot
+     * @returns {Object|null} A session for `sessionLuck`, or null when the zone cannot
+     *   be modelled — a dungeon, a zone with no spawn table, or no battles fought
+     */
+    function buildCombatSession({
+        actionDetail,
+        monsterDetailMap,
+        battles,
+        priceOf,
+        difficultyTier = 0,
+        bonuses = NO_DROP_BONUSES,
+        partySize = 1,
+    }) {
+        const zone = actionDetail?.combatZoneInfo;
+        const fight = zone?.fightInfo;
+        const spawnInfo = fight?.randomSpawnInfo;
+
+        // Dungeons pay out of a reward table on completion rather than per monster,
+        // which is a different distribution entirely. Better to show nothing than a
+        // number built from the wrong model.
+        if (!zone || zone.isDungeon) return null;
+        if (!spawnInfo?.spawns?.length || !monsterDetailMap) return null;
+        if (!(battles > 0)) return null;
+
+        const quantity = dropQuantityMultiplier(bonuses, partySize, false);
+
+        const priceDrop = (drop) => {
+            const price = priceOf(drop.itemHrid);
+            if (!(price > 0)) return null;
+
+            const rate = effectiveDropRate(drop, difficultyTier, bonuses);
+            if (rate <= 0) return null;
+
+            return {
+                // Carried through so a per-item expectation can be built from the
+                // same priced drops the coin total is; two models of the same
+                // session would disagree the moment either changed
+                itemHrid: drop.itemHrid,
+                minCount: (drop.minCount || 0) * quantity,
+                maxCount: (drop.maxCount || 0) * quantity,
+                dropRate: rate,
+                price,
+            };
+        };
+        const dropsFor = (hrid) => monsterDropList(monsterDetailMap[hrid]).map(priceDrop).filter(Boolean);
+
+        const monsterDrops = {};
+        for (const spawn of spawnInfo.spawns) {
+            const hrid = spawn.combatMonsterHrid;
+            if (hrid) monsterDrops[hrid] = dropsFor(hrid);
+        }
+
+        const bossDrops = {};
+        for (const boss of fight.bossSpawns || []) {
+            const hrid = boss.combatMonsterHrid;
+            if (hrid) bossDrops[hrid] = dropsFor(hrid);
+        }
+
+        const battlesPerBoss = Object.keys(bossDrops).length ? fight.battlesPerBoss || DEFAULT_BATTLES_PER_BOSS : 0;
+        const { normalCount, bossCount } = splitBattles(battles, battlesPerBoss);
+
+        return { spawnInfo, monsterDrops, bossDrops, normalCount, bossCount };
+    }
+
+    /**
+     * What a run of loot was worth, by the same prices the model used.
+     *
+     * Has to share the pricing with `buildCombatSession` or the comparison is
+     * meaningless — an income counted at ask against a distribution built at bid
+     * would read as luck.
+     *
+     * @param {Object<string, {itemHrid: string, count: number}>} lootMap - The game's `totalLootMap`
+     * @param {Function} priceOf - `(itemHrid) => number|null`
+     * @returns {number} Total value in coins
+     */
+    function lootValue(lootMap, priceOf) {
+        let total = 0;
+        for (const loot of Object.values(lootMap || {})) {
+            const price = priceOf(loot.itemHrid);
+            if (price > 0) total += price * (loot.count || 0);
+        }
+        return total;
+    }
+
+    /**
+     * What one drop pays on average, counting the times it does not land.
+     * @param {Object} drop - A priced drop from `buildCombatSession`
+     * @returns {number} Coins per attempt
+     */
+    function dropMean(drop) {
+        // The mean of the integerised count is the continuous mean it was built
+        // from — the discretisation in `drop-luck.js` splits mass between neighbours
+        // in proportion to distance, which is exactly what preserves it
+        const meanCount = ((drop.minCount || 0) + (drop.maxCount || 0)) / 2;
+        return drop.dropRate * meanCount * drop.price;
+    }
+
+    /**
+     * What a session was owed on average.
+     *
+     * The percentile from `sessionLuck` says where a session sits among all the
+     * sessions it could have been, which is the honest answer but not an intuitive
+     * one — on a zone where a rare carries the value, a perfectly ordinary session
+     * sits at the 30th percentile and reads as bad luck. This is the other half of
+     * that: how far above or below par the takings actually were, in coins.
+     *
+     * Computed in closed form rather than from the distribution. The mean of a sum
+     * is the sum of the means whatever the shape, so no inversion is needed and this
+     * costs microseconds where the percentile costs a tenth of a second.
+     *
+     * @param {Object} session - As `buildCombatSession` returns
+     * @returns {number} Expected income in coins
+     */
+    function sessionMean({ spawnInfo, monsterDrops, bossDrops = {}, normalCount, bossCount = 0 }) {
+        let total = 0;
+
+        const perWave = expectedSpawnsPerWave(spawnInfo);
+        for (const [hrid, spawns] of Object.entries(perWave)) {
+            const drops = monsterDrops?.[hrid];
+            if (!drops?.length) continue;
+
+            const perKill = drops.reduce((sum, drop) => sum + dropMean(drop), 0);
+            total += perKill * spawns * (normalCount || 0);
+        }
+
+        // Every boss in the table turns up on a boss wave, so they are counted
+        // outright rather than weighted by a spawn rate
+        for (const drops of Object.values(bossDrops)) {
+            const perKill = drops.reduce((sum, drop) => sum + dropMean(drop), 0);
+            total += perKill * (bossCount || 0);
+        }
+
+        return total;
+    }
+
+    /**
+     * What a session was owed, item by item.
+     *
+     * `sessionMean` answers the same question in coins, which is the right shape for
+     * "was this run lucky" and the wrong one for "which drop is behind it". Both
+     * walk the same priced drops in the same order, so they cannot disagree about
+     * the session — one sums `rate × count × price`, this one sums `rate × count`
+     * and keeps it under the item.
+     *
+     * @param {Object} session - From `buildCombatSession`
+     * @returns {Object<string, number>} Item hrid → expected count
+     */
+    function expectedItemCounts({ spawnInfo, monsterDrops, bossDrops = {}, normalCount, bossCount = 0 }) {
+        const counts = {};
+
+        const add = (drops, kills) => {
+            for (const drop of drops || []) {
+                if (!drop?.itemHrid) continue;
+                const meanCount = ((drop.minCount || 0) + (drop.maxCount || 0)) / 2;
+                counts[drop.itemHrid] = (counts[drop.itemHrid] || 0) + drop.dropRate * meanCount * kills;
+            }
+        };
+
+        const perWave = expectedSpawnsPerWave(spawnInfo);
+        for (const [hrid, spawns] of Object.entries(perWave)) {
+            add(monsterDrops?.[hrid], spawns * (normalCount || 0));
+        }
+
+        // Every boss in the table turns up on a boss wave, so they are counted
+        // outright rather than weighted by a spawn rate
+        for (const drops of Object.values(bossDrops)) add(drops, bossCount || 0);
+
+        return counts;
+    }
+
+    /**
+     * How far above or below par a figure landed, as a percentage.
+     *
+     * Signed against zero rather than expressed as a fraction of expectation:
+     * "+36%" is read at a glance and "136%" is read twice. Nothing to compare
+     * against is nothing, not a triumph — a zero expectation with drops in hand is
+     * a model that does not cover this zone, not infinite luck.
+     *
+     * @param {number} actual - What happened
+     * @param {number} expected - What was owed
+     * @returns {number|null} Signed percentage, or null when there is nothing to say
+     */
+    function percentOfExpected(actual, expected) {
+        if (!(expected > 0)) return null;
+        return ((actual || 0) / expected - 1) * 100;
+    }
+
+    var combatDropModel = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        DEFAULT_BATTLES_PER_BOSS: DEFAULT_BATTLES_PER_BOSS,
+        buildCombatSession: buildCombatSession,
+        dropQuantityMultiplier: dropQuantityMultiplier,
+        effectiveDropRate: effectiveDropRate,
+        expectedItemCounts: expectedItemCounts,
+        lootValue: lootValue,
+        monsterDropList: monsterDropList,
+        percentOfExpected: percentOfExpected,
+        sessionMean: sessionMean,
+        splitBattles: splitBattles
+    });
+
+    /**
+     * Chest Tally
+     *
+     * What you actually got out of the chests you opened, against what they owed you.
+     *
+     * Toolasha already prices a chest before you open it — `expected-value-calculator.js`
+     * says what one is worth on average, and that shows up in tooltips and net worth.
+     * What it cannot say is whether the four hundred you have already opened paid out.
+     * Expected value is a statement about the long run; this is the ledger that says
+     * whether the long run has arrived.
+     *
+     * The comparison is deliberately made against **your own openings**, item by item,
+     * rather than against a headline average. A chest that owes you one rare in two
+     * hundred is not meaningfully behind after fifty, and the per-item breakdown is
+     * what shows that the shortfall is one unlucky rare rather than something wrong
+     * across the board.
+     *
+     * Pure, and separate from the panel that draws it, for the usual reason: an
+     * expectation computed slightly wrong still renders as a confident percentage.
+     *
+     * The idea and the ledger shape come from TReasure in MWI Combat Suite by Frotty
+     * (MIT) — see `third-party/mwi-combat-suite/` and `docs/THIRD-PARTY-LICENSES.md`.
+     */
+
+    /**
+     * Fold one `loot_opened` message into the tally.
+     *
+     * Returns a new tally rather than mutating, so a caller can persist the result
+     * without worrying about which copy is which.
+     *
+     * @param {Object} tally - `{ [chestHrid]: { opened, loot: { [itemHrid]: count } } }`
+     * @param {string} chestHrid - What was opened
+     * @param {number} count - How many
+     * @param {Array<{itemHrid: string, count: number}>} gainedItems - What came out
+     * @returns {Object} A new tally
+     */
+    function recordOpening(tally, chestHrid, count, gainedItems) {
+        if (!chestHrid || !(count > 0)) return tally || {};
+
+        const previous = (tally || {})[chestHrid] || { opened: 0, loot: {} };
+        const loot = { ...previous.loot };
+        const justNow = {};
+
+        for (const item of gainedItems || []) {
+            if (!item?.itemHrid) continue;
+            loot[item.itemHrid] = (loot[item.itemHrid] || 0) + (item.count || 0);
+            justNow[item.itemHrid] = (justNow[item.itemHrid] || 0) + (item.count || 0);
+        }
+
+        // `last` is the same shape as the running total, so anything that can judge
+        // a lifetime can judge a single opening without a second code path
+        return {
+            ...tally,
+            [chestHrid]: { opened: previous.opened + count, loot, last: { opened: count, loot: justNow } },
+        };
+    }
+
+    /**
+     * Forget one chest's history, or all of it.
+     * @param {Object} tally - The tally
+     * @param {string} [chestHrid] - Which chest; omit to clear everything
+     * @returns {Object} A new tally
+     */
+    function resetTally(tally, chestHrid) {
+        if (!chestHrid) return {};
+
+        const next = { ...tally };
+        delete next[chestHrid];
+        return next;
+    }
+
+    /**
+     * What one chest owes on average, per item.
+     *
+     * The midpoint of the count range times the rate — the same arithmetic the
+     * expected-value calculator uses, kept here in item counts rather than collapsed
+     * to a single coin figure, because the interesting question is which item came up
+     * short and not just by how much.
+     *
+     * @param {Array<Object>} dropTable - An entry of `openableLootDropMap`
+     * @returns {Object<string, number>} Item hrid → expected count per chest
+     */
+    function expectedLootPerChest(dropTable) {
+        const expected = {};
+
+        for (const drop of dropTable || []) {
+            if (!drop?.itemHrid) continue;
+            const rate = drop.dropRate ?? 0;
+            const average = ((drop.minCount ?? 0) + (drop.maxCount ?? 0)) / 2;
+            const count = rate * average;
+            if (count > 0) expected[drop.itemHrid] = (expected[drop.itemHrid] || 0) + count;
+        }
+        return expected;
+    }
+
+    /**
+     * How one chest has treated you.
+     *
+     * Items are returned whether they dropped or not: a rare that never came up is
+     * the whole story on an unlucky chest, and leaving it out of the list would hide
+     * exactly the row worth seeing.
+     *
+     * @param {Object} entry - `{ opened, loot }` for one chest
+     * @param {Array<Object>} dropTable - That chest's drop table
+     * @param {Function} priceOf - `(itemHrid) => number|null`
+     * @returns {Object} `{ opened, actualValue, expectedValue, difference, ratio, items }`
+     *   where `ratio` is null until something has been opened
+     */
+    function chestPerformance(entry, dropTable, priceOf) {
+        const opened = entry?.opened || 0;
+        const loot = entry?.loot || {};
+        const perChest = expectedLootPerChest(dropTable);
+
+        const hrids = new Set([...Object.keys(perChest), ...Object.keys(loot)]);
+        const items = [];
+        let actualValue = 0;
+        let expectedValue = 0;
+
+        for (const itemHrid of hrids) {
+            const price = priceOf(itemHrid);
+            // No price means no contribution to either side, which keeps the
+            // comparison honest rather than counting the item as free. It is still
+            // a row: an item that dropped and is simply not shown reads as a chest
+            // that did not contain it, and a panel that quietly omits things is
+            // worse than one that says it cannot price them.
+            const priced = price > 0;
+
+            const actualCount = loot[itemHrid] || 0;
+            const expectedCount = (perChest[itemHrid] || 0) * opened;
+
+            if (priced) {
+                actualValue += actualCount * price;
+                expectedValue += expectedCount * price;
+            }
+
+            items.push({
+                itemHrid,
+                actualCount,
+                expectedCount,
+                unpriced: !priced,
+                actualValue: priced ? actualCount * price : 0,
+                expectedValue: priced ? expectedCount * price : 0,
+            });
+        }
+
+        // Sorted by how much of each the chest owes you, commonest first, and by
+        // nothing else.
+        //
+        // It used to be sorted by what each was worth, which meant the rows moved
+        // whenever a price moved and whenever the cape or cowbell valuation was
+        // changed — a list you had learned the shape of rearranged itself for
+        // reasons that had nothing to do with the chest. A drop table does not
+        // change, so an order taken from it does not either. It is also the order
+        // TReasure lists them in.
+        //
+        // An item that dropped but is not in the table is owed nothing and goes
+        // last; the hrid tie-break is only there so that group has a fixed order
+        // rather than the map's.
+        items.sort((a, b) => b.expectedCount - a.expectedCount || a.itemHrid.localeCompare(b.itemHrid));
+
+        return {
+            opened,
+            actualValue,
+            expectedValue,
+            difference: actualValue - expectedValue,
+            ratio: expectedValue > 0 ? actualValue / expectedValue : null,
+            items,
+        };
+    }
+
+    /**
+     * One chest's history in the three views the panel shows side by side.
+     *
+     * The same items appear in each column, in the same order, so a row can be read
+     * across: what the last opening gave, what every opening has given, and what one
+     * chest and the whole run were owed. Ordering them separately per column would
+     * make the comparison a lookup rather than a glance.
+     *
+     * @param {Object} entry - `{ opened, loot, last }` for one chest
+     * @param {Array<Object>} dropTable - That chest's drop table
+     * @param {Function} priceOf - `(itemHrid) => number|null`
+     * @returns {Object} `{ last, total, perChestValue, items }` where each item carries
+     *   its last, total and expected figures together
+     */
+    function chestBreakdown(entry, dropTable, priceOf) {
+        const total = chestPerformance(entry, dropTable, priceOf);
+        const last = chestPerformance(entry?.last, dropTable, priceOf);
+        const perChest = expectedLootPerChest(dropTable);
+
+        const lastByItem = new Map(last.items.map((item) => [item.itemHrid, item]));
+        const opened = entry?.opened || 0;
+
+        const items = total.items.map((item) => {
+            const price = priceOf(item.itemHrid) || 0;
+            const perOne = perChest[item.itemHrid] || 0;
+            const lastItem = lastByItem.get(item.itemHrid);
+            const lastOpened = entry?.last?.opened || 0;
+            const lastExpectedValue = perOne * lastOpened * price;
+
+            return {
+                itemHrid: item.itemHrid,
+                price,
+                unpriced: item.unpriced,
+                lastCount: lastItem?.actualCount || 0,
+                lastValue: lastItem?.actualValue || 0,
+                lastRatio: lastExpectedValue > 0 ? (lastItem?.actualValue || 0) / lastExpectedValue : null,
+                totalCount: item.actualCount,
+                totalValue: item.actualValue,
+                totalRatio: item.expectedValue > 0 ? item.actualValue / item.expectedValue : null,
+                expectedPerChest: perOne,
+                expectedPerChestValue: perOne * price,
+                expectedTotal: perOne * opened,
+                expectedTotalValue: item.expectedValue,
+            };
+        });
+
+        // What one chest is worth on average, which is the figure beside its name
+        const perChestValue = Object.entries(perChest).reduce(
+            (sum, [itemHrid, count]) => sum + count * (priceOf(itemHrid) || 0),
+            0
+        );
+
+        return { last, total, perChestValue, items };
+    }
+
+    /**
+     * Every chest in the game, with whatever history you have for it.
+     *
+     * Unopened chests are listed too, priced but with no verdict, because the panel
+     * is also the place to look up what a chest is worth before deciding to open it
+     * — a list of only what you have already opened cannot answer that.
+     *
+     * Ordered by how far from expectation each sits, worst first, since the reason
+     * to open the panel is usually to find out which chest let you down. Chests with
+     * no history sort after those, by what one is worth, so the list stays useful
+     * rather than alphabetical.
+     *
+     * @param {Object} tally - The tally
+     * @param {Object} dropTables - `openableLootDropMap`
+     * @param {Function} priceOf - `(itemHrid) => number|null`
+     * @returns {Array<Object>} Performances, each with `chestHrid` and `perChestValue`
+     */
+    function summariseTally(tally, dropTables, priceOf) {
+        // Every chest the game knows about, plus anything in the tally that the game
+        // has since stopped listing — history should not vanish on a game update
+        const chestHrids = new Set([...Object.keys(dropTables || {}), ...Object.keys(tally || {})]);
+
+        const rows = [...chestHrids].map((chestHrid) => {
+            const dropTable = dropTables?.[chestHrid];
+            const performance = chestPerformance((tally || {})[chestHrid], dropTable, priceOf);
+            const perChest = expectedLootPerChest(dropTable);
+            const perChestValue = Object.entries(perChest).reduce(
+                (sum, [itemHrid, count]) => sum + count * (priceOf(itemHrid) || 0),
+                0
+            );
+            return { chestHrid, perChestValue, ...performance };
+        });
+
+        return sortSummary(rows);
+    }
+
+    /**
+     * The orders the panel offers, in the order it offers them.
+     *
+     * `luck` is the default and the reason the panel exists. The rest are there
+     * because it lists every chest in the game — sixty-odd rows — and a ranking by
+     * how unlucky each was is the worst possible order for finding one chest you
+     * have in mind. `name` is that: the row is where the alphabet says it is.
+     */
+    const SORT_MODES = [
+        { key: 'luck', label: 'Luck (worst first)' },
+        { key: 'name', label: 'Name (A–Z)' },
+        { key: 'opened', label: 'Most opened' },
+        { key: 'value', label: 'Chest value' },
+        { key: 'profit', label: 'Coins up or down' },
+    ];
+
+    /**
+     * Order the rows.
+     *
+     * Sorts a copy: the caller's array is usually the one on screen, and reordering
+     * it underneath a half-drawn table is how a row ends up drawn twice.
+     *
+     * @param {Array<Object>} rows - From `summariseTally`
+     * @param {string} [mode] - One of `SORT_MODES`
+     * @param {Function} [nameOf] - `(chestHrid) => string`, for the name order
+     * @returns {Array<Object>} A new, sorted array
+     */
+    function sortSummary(rows, mode = 'luck', nameOf = (chestHrid) => chestHrid) {
+        const sorted = [...(rows || [])];
+
+        if (mode === 'name') {
+            // Every chest, opened or not, in one alphabet — splitting them would put
+            // half the names in one place and half in another, which is the thing
+            // this order exists to avoid
+            sorted.sort((a, b) => String(nameOf(a.chestHrid)).localeCompare(String(nameOf(b.chestHrid))));
+            return sorted;
+        }
+
+        sorted.sort((a, b) => {
+            // A chest you have never opened has no verdict to rank, so it waits
+            // behind the ones that do
+            if (!a.opened !== !b.opened) return a.opened ? -1 : 1;
+            if (!a.opened) return b.perChestValue - a.perChestValue;
+
+            if (mode === 'opened') return b.opened - a.opened;
+            if (mode === 'value') return b.perChestValue - a.perChestValue;
+            if (mode === 'profit') {
+                return b.actualValue - b.expectedValue - (a.actualValue - a.expectedValue);
+            }
+            return (a.ratio ?? Infinity) - (b.ratio ?? Infinity);
+        });
+        return sorted;
+    }
+
+    /**
+     * The totals across every chest, since one chest running hot while another runs
+     * cold is the common case and neither row answers "am I up or down".
+     * @param {Array<Object>} rows - From `summariseTally`
+     * @returns {Object} `{ opened, actualValue, expectedValue, difference, ratio }`
+     */
+    function tallyTotals(rows) {
+        const totals = rows.reduce(
+            (sum, row) => ({
+                opened: sum.opened + row.opened,
+                actualValue: sum.actualValue + row.actualValue,
+                expectedValue: sum.expectedValue + row.expectedValue,
+            }),
+            { opened: 0, actualValue: 0, expectedValue: 0 }
+        );
+
+        return {
+            ...totals,
+            difference: totals.actualValue - totals.expectedValue,
+            ratio: totals.expectedValue > 0 ? totals.actualValue / totals.expectedValue : null,
+        };
+    }
+
+    var chestTally = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        SORT_MODES: SORT_MODES,
+        chestBreakdown: chestBreakdown,
+        chestPerformance: chestPerformance,
+        expectedLootPerChest: expectedLootPerChest,
+        recordOpening: recordOpening,
+        resetTally: resetTally,
+        sortSummary: sortSummary,
+        summariseTally: summariseTally,
+        tallyTotals: tallyTotals
+    });
+
+    /**
+     * Enhancement Calculator Worker Manager
+     * Manages a worker pool for parallel enhancement calculations
+     */
+
+
+    // Worker pool instance
+    let workerPool$1 = null;
+
+    // Worker script as inline string — this is the sole source of the worker code.
+    // The chain itself is NOT written here: a blob worker cannot import a module, so the real
+    // buildEnhancementMarkov is serialised in below. A hand-copied chain in this string is exactly
+    // how the worker drifted from the calculator and lost the success-chance clamp.
+    const WORKER_SCRIPT$1 = `
+// Import math.js library from CDN
+importScripts('https://cdnjs.cloudflare.com/ajax/libs/mathjs/12.4.2/math.js');
+
+// Cache for enhancement calculation results
+const calculationCache = new Map();
+
+const BASE_SUCCESS_RATES = ${JSON.stringify(BASE_SUCCESS_RATES)};
+const DEFAULT_BLESSED_TEA_CHANCE = ${BLESSED_TEA_BASE_CHANCE};
+const buildEnhancementMarkov = ${buildEnhancementMarkov.toString()};
+
+function getCacheKey(params) {
+    const {enhancingLevel,toolBonus,itemLevel,targetLevel,protectFrom,blessedTea,guzzlingBonus,blessedTeaBonus,speedBonus} = params;
+    return \`\${enhancingLevel}|\${toolBonus}|\${itemLevel}|\${targetLevel}|\${protectFrom}|\${blessedTea}|\${guzzlingBonus}|\${blessedTeaBonus}|\${speedBonus}\`;
+}
+
+function calculateSuccessMultiplier(params) {
+    const { enhancingLevel, toolBonus, itemLevel } = params;
+    let totalBonus;
+    if (enhancingLevel >= itemLevel) {
+        const levelAdvantage = 0.05 * (enhancingLevel - itemLevel);
+        totalBonus = 1 + (toolBonus + levelAdvantage) / 100;
+    } else {
+        totalBonus = 1 - 0.5 * (1 - enhancingLevel / itemLevel) + toolBonus / 100;
+    }
+    return totalBonus;
+}
+
+function calculateEnhancement(params) {
+    const {enhancingLevel,toolBonus,speedBonus=0,itemLevel,targetLevel,protectFrom=0,blessedTea=false,guzzlingBonus=1.0,blessedTeaBonus=DEFAULT_BLESSED_TEA_CHANCE} = params;
+
+    if (targetLevel < 1 || targetLevel > 20) throw new Error('Target level must be between 1 and 20');
+    if (protectFrom < 0 || protectFrom > targetLevel) throw new Error('Protection level must be between 0 and target level');
+
+    const successMultiplier = calculateSuccessMultiplier({enhancingLevel,toolBonus,itemLevel});
+    const markov = buildEnhancementMarkov(math, {
+        baseSuccessRates: BASE_SUCCESS_RATES,
+        successMultiplier,
+        targetLevel,
+        protectFrom,
+        blessedTea,
+        guzzlingBonus,
+        blessedTeaBonus,
+    });
+
+    const Q = markov.subset(math.index(math.range(0, targetLevel), math.range(0, targetLevel)));
+    const I = math.identity(targetLevel);
+    const M = math.inv(math.subtract(I, Q));
+
+    let attempts = 0;
+    for (let i = 0; i < targetLevel; i++) {
+        attempts += M.get([0, i]);
+    }
+
+    let protects = 0;
+    if (protectFrom > 0 && protectFrom < targetLevel) {
+        for (let i = protectFrom; i < targetLevel; i++) {
+            const timesAtLevel = M.get([0, i]);
+            const failureChance = markov.get([i, i - 1]);
+            protects += timesAtLevel * failureChance;
+        }
+    }
+
+    const baseActionTime = 12;
+    let speedMultiplier;
+    if (enhancingLevel > itemLevel) {
+        speedMultiplier = 1 + (enhancingLevel - itemLevel + speedBonus) / 100;
+    } else {
+        speedMultiplier = 1 + speedBonus / 100;
+    }
+
+    const perActionTime = baseActionTime / speedMultiplier;
+    const totalTime = perActionTime * attempts;
+
+    return {
+        attempts,
+        attemptsRounded: Math.round(attempts),
+        protectionCount: protects,
+        perActionTime,
+        totalTime,
+        successMultiplier,
+        successRates: BASE_SUCCESS_RATES.slice(0, targetLevel).map((base, i) => ({
+            level: i + 1,
+            baseRate: base,
+            actualRate: Math.min(100, base * successMultiplier)
+        }))
+    };
+}
+
+self.onmessage = function (e) {
+    const { taskId, data } = e.data;
+    try {
+        const { action, params } = data;
+        if (action === 'calculate') {
+            const cacheKey = getCacheKey(params);
+            let result = calculationCache.get(cacheKey);
+            if (!result) {
+                result = calculateEnhancement(params);
+                calculationCache.set(cacheKey, result);
+                if (calculationCache.size > 1000) {
+                    const firstKey = calculationCache.keys().next().value;
+                    calculationCache.delete(firstKey);
+                }
+            }
+            self.postMessage({taskId,result});
+        } else if (action === 'clearCache') {
+            calculationCache.clear();
+            self.postMessage({taskId,result: { success: true, message: 'Cache cleared' }});
+        } else {
+            throw new Error(\`Unknown action: \${action}\`);
+        }
+    } catch (error) {
+        self.postMessage({taskId,error: error.message || String(error)});
+    }
+};
+`;
+
+    /**
+     * Get or create the worker pool instance
+     */
+    async function getWorkerPool$1() {
+        if (workerPool$1) {
+            return workerPool$1;
+        }
+
+        try {
+            // Create worker blob from inline script
+            const blob = new Blob([WORKER_SCRIPT$1], { type: 'application/javascript' });
+
+            // Initialize worker pool with 2-4 workers
+            workerPool$1 = new WorkerPool(blob);
+            await workerPool$1.initialize();
+
+            return workerPool$1;
+        } catch (error) {
+            throw error;
+        }
+    }
+
+    /**
+     * Calculate enhancement path using worker pool
+     * @param {Object} params - Enhancement parameters
+     * @returns {Promise<Object>} Enhancement calculation results
+     */
+    async function calculateEnhancementAsync(params) {
+        const pool = await getWorkerPool$1();
+
+        return pool.execute({
+            action: 'calculate',
+            params,
+        });
+    }
+
+    /**
+     * Calculate multiple enhancements in parallel
+     * @param {Array<Object>} paramsArray - Array of enhancement parameters
+     * @returns {Promise<Array<Object>>} Array of enhancement results
+     */
+    async function calculateEnhancementBatch(paramsArray) {
+        const pool = await getWorkerPool$1();
+
+        const tasks = paramsArray.map((params) => ({
+            action: 'calculate',
+            params,
+        }));
+
+        return pool.executeAll(tasks);
+    }
+
+    /**
+     * Clear the worker cache
+     */
+    async function clearEnhancementCache() {
+        if (!workerPool$1) {
+            return;
+        }
+
+        const pool = await getWorkerPool$1();
+        return pool.execute({
+            action: 'clearCache',
+        });
+    }
+
+    /**
+     * Get worker pool statistics
+     */
+    function getWorkerStats() {
+        return workerPool$1 ? workerPool$1.getStats() : null;
+    }
+
+    /**
+     * Terminate the worker pool
+     */
+    function terminateWorkerPool() {
+        if (workerPool$1) {
+            workerPool$1.terminate();
+            workerPool$1 = null;
+        }
+    }
+
+    var enhancementWorkerManager = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        calculateEnhancementAsync: calculateEnhancementAsync,
+        calculateEnhancementBatch: calculateEnhancementBatch,
+        clearEnhancementCache: clearEnhancementCache,
+        getWorkerStats: getWorkerStats,
+        terminateWorkerPool: terminateWorkerPool
+    });
+
+    /**
+     * Networth Item Valuation Worker Manager
+     * Manages parallel item valuation calculations including enhancement paths
+     */
+
+
+    // Worker pool instance
+    let workerPool = null;
+
+    // Worker script as inline string.
+    // The Markov chain is not written here: a blob worker cannot import a module, so the real
+    // buildEnhancementMarkov is serialised in below and networth costs the same chain the tooltip
+    // quotes, clamp and blessed-tea chance included.
+    const WORKER_SCRIPT = `
+// Import math.js library for enhancement calculations
+importScripts('https://cdnjs.cloudflare.com/ajax/libs/mathjs/12.4.2/math.js');
+
+// Cache for item valuations
+const valuationCache = new Map();
+
+// Enhancement calculation BASE_SUCCESS_RATES
+const BASE_SUCCESS_RATES = ${JSON.stringify(BASE_SUCCESS_RATES)};
+const DEFAULT_BLESSED_TEA_CHANCE = ${BLESSED_TEA_BASE_CHANCE};
+const buildEnhancementMarkov = ${buildEnhancementMarkov.toString()};
+
+/**
+ * Calculate production cost from crafting/upgrading recipe
+ * @param {string} itemHrid - Item HRID
+ * @param {Object} priceMap - Price map
+ * @param {Object} actionDetailMap - Action detail map from game data
+ * @returns {number} Production cost
+ */
+function calculateProductionCost(itemHrid, priceMap, actionDetailMap) {
+    // Find the action that produces this item
+    let action = null;
+    for (const actionHrid in actionDetailMap) {
+        const actionData = actionDetailMap[actionHrid];
+        if (actionData.outputItems && actionData.outputItems.length > 0) {
+            if (actionData.outputItems[0].itemHrid === itemHrid) {
+                action = actionData;
+                break;
+            }
+        }
+    }
+
+    if (!action) {
+        return 0;
+    }
+
+    let totalPrice = 0;
+
+    // Sum up input material costs
+    if (action.inputItems) {
+        for (const input of action.inputItems) {
+            // Match main thread: getItemPrice(input.itemHrid, { mode: 'ask' }) || 0
+            let inputPrice = priceMap[input.itemHrid + ':0_ask'];
+            if (inputPrice === undefined) inputPrice = priceMap[input.itemHrid + ':0'];
+            if (inputPrice === null || inputPrice === undefined) inputPrice = 0;
+
+            // Recursively calculate production cost if no market price (matches main thread)
+            if (inputPrice === 0) {
+                inputPrice = calculateProductionCost(input.itemHrid, priceMap, actionDetailMap);
+            }
+
+            totalPrice += inputPrice * input.count;
+        }
+    }
+
+    // Apply Artisan Tea reduction (0.9x)
+    totalPrice *= 0.9;
+
+    // Add upgrade item cost if this is an upgrade recipe (for refined items)
+    if (action.upgradeItemHrid) {
+        // Match main thread: getItemPrice(action.upgradeItemHrid, { mode: 'ask' }) || 0
+        let upgradePrice = priceMap[action.upgradeItemHrid + ':0_ask'];
+        if (upgradePrice === undefined) upgradePrice = priceMap[action.upgradeItemHrid + ':0'];
+        if (upgradePrice === null || upgradePrice === undefined) upgradePrice = 0;
+
+        // Recursively calculate production cost if no market price (matches main thread)
+        if (upgradePrice === 0) {
+            upgradePrice = calculateProductionCost(action.upgradeItemHrid, priceMap, actionDetailMap);
+        }
+
+        totalPrice += upgradePrice;
+    }
+
+    return totalPrice;
+}
+
+/**
+ * Calculate enhancement path cost using proper strategy optimization
+ * @param {Object} params - Enhancement calculation parameters
+ * @returns {number} Total cost
+ */
+function calculateEnhancementCost(params) {
+    const { itemHrid, targetLevel, enhancementParams, itemDetails, priceMap, actionDetailMap } = params;
+
+    if (!itemDetails.enhancementCosts || targetLevel < 1 || targetLevel > 20) {
+        return null;
+    }
+
+    const itemLevel = itemDetails.itemLevel || 1;
+
+    // Get base item cost using realistic pricing (matches main thread logic)
+    const basePrice = getRealisticPrice(itemHrid, null, priceMap, actionDetailMap);
+
+    // Build cost array for each level by testing all protection strategies
+    const targetCosts = new Array(targetLevel + 1);
+    targetCosts[0] = basePrice;
+
+    for (let level = 1; level <= targetLevel; level++) {
+        // Calculate per-attempt material cost (sum of ALL materials)
+        let perAttemptMaterialCost = 0;
+        if (itemDetails.enhancementCosts && itemDetails.enhancementCosts.length > 0) {
+            for (const material of itemDetails.enhancementCosts) {
+                let materialPrice = 0;
+
+                // Special cases
+                if (material.itemHrid.startsWith('/items/trainee_')) {
+                    materialPrice = 250000; // Trainee charms are untradeable, fixed price
+                } else if (material.itemHrid === '/items/coin') {
+                    materialPrice = 1; // Coins have face value of 1
+                } else {
+                    // Get material details for sellPrice fallback
+                    const materialDetail = itemDetails.enhancementCosts ?
+                        (itemDetails.allItemDetails && itemDetails.allItemDetails[material.itemHrid]) : null;
+
+                    // Try to get market price from priceMap
+                    const hasMarketData = (material.itemHrid + ':0_ask') in priceMap || (material.itemHrid + ':0') in priceMap;
+
+                    if (hasMarketData) {
+                        let ask = priceMap[material.itemHrid + ':0_ask'];
+                        if (ask === undefined) ask = priceMap[material.itemHrid + ':0'];
+                        let bid = priceMap[material.itemHrid + ':0_bid'];
+
+                        // Match MCS behavior: if one price is positive and other is negative, use positive for both
+                        if (ask > 0 && bid < 0) {
+                            bid = ask;
+                        }
+                        if (bid > 0 && ask < 0) {
+                            ask = bid;
+                        }
+
+                        // MCS uses just ask for material prices (matches main thread)
+                        materialPrice = ask || 0;
+                    } else {
+                        // Fallback to sellPrice if no market data (matches main thread)
+                        materialPrice = materialDetail?.sellPrice || 0;
+                    }
+                }
+
+                perAttemptMaterialCost += materialPrice * material.count;
+            }
+        }
+
+        // Test no protection (protectFrom = 0)
+        let minCost = Infinity;
+        const noProtResult = calculateStrategyRealCost(
+            enhancementParams,
+            itemLevel,
+            level,
+            0,
+            perAttemptMaterialCost,
+            basePrice,
+            priceMap,
+            itemDetails,
+            itemHrid,
+            actionDetailMap
+        );
+        if (noProtResult < minCost) {
+            minCost = noProtResult;
+        }
+
+        // Test protection from level 2 to current level
+        for (let protectFrom = 2; protectFrom <= level; protectFrom++) {
+            const protResult = calculateStrategyRealCost(
+                enhancementParams,
+                itemLevel,
+                level,
+                protectFrom,
+                perAttemptMaterialCost,
+                basePrice,
+                priceMap,
+                itemDetails,
+                itemHrid,
+                actionDetailMap
+            );
+            if (protResult < minCost) {
+                minCost = protResult;
+            }
+        }
+
+        targetCosts[level] = minCost;
+    }
+
+    // Apply Philosopher's Mirror optimization
+    let mirrorPrice = priceMap['/items/philosophers_mirror:0'] || 0;
+    if (mirrorPrice === 0) {
+        mirrorPrice = calculateProductionCost('/items/philosophers_mirror', priceMap, actionDetailMap);
+    }
+
+    if (mirrorPrice > 0) {
+        for (let level = 3; level <= targetLevel; level++) {
+            const traditionalCost = targetCosts[level];
+            const mirrorCost = targetCosts[level - 2] + targetCosts[level - 1] + mirrorPrice;
+            if (mirrorCost < traditionalCost) {
+                targetCosts[level] = mirrorCost;
+            }
+        }
+    }
+
+    return targetCosts[targetLevel];
+}
+
+/**
+ * Calculate real cost for a specific protection strategy
+ * Now includes support for Blessed Tea
+ */
+function calculateStrategyRealCost(
+    enhancementParams,
+    itemLevel,
+    targetLevel,
+    protectFrom,
+    perAttemptMaterialCost,
+    baseItemPrice,
+    priceMap,
+    itemDetails,
+    itemHrid,
+    actionDetailMap
+) {
+    const { enhancingLevel, toolBonus, blessedTea = false, guzzlingBonus = 1.0, blessedTeaBonus = DEFAULT_BLESSED_TEA_CHANCE } = enhancementParams;
+
+    // Calculate success multiplier
+    let totalBonus;
+    if (enhancingLevel >= itemLevel) {
+        const levelAdvantage = 0.05 * (enhancingLevel - itemLevel);
+        totalBonus = 1 + (toolBonus + levelAdvantage) / 100;
+    } else {
+        totalBonus = 1 - 0.5 * (1 - enhancingLevel / itemLevel) + toolBonus / 100;
+    }
+
+    // Build Markov chain (shared with the main-thread calculator)
+    const markov = buildEnhancementMarkov(math, {
+        baseSuccessRates: BASE_SUCCESS_RATES,
+        successMultiplier: totalBonus,
+        targetLevel,
+        protectFrom,
+        blessedTea,
+        guzzlingBonus,
+        blessedTeaBonus,
+    });
+
+    // Solve for expected attempts and protections
+    const Q = markov.subset(math.index(math.range(0, targetLevel), math.range(0, targetLevel)));
+    const I = math.identity(targetLevel);
+    const M = math.inv(math.subtract(I, Q));
+
+    let attempts = 0;
+    for (let i = 0; i < targetLevel; i++) {
+        attempts += M.get([0, i]);
+    }
+
+    // Calculate expected protection uses
+    let protections = 0;
+    if (protectFrom > 0 && protectFrom < targetLevel) {
+        for (let i = protectFrom; i < targetLevel; i++) {
+            const timesAtLevel = M.get([0, i]);
+            const failureChance = markov.get([i, i - 1]);
+            protections += timesAtLevel * failureChance;
+        }
+    }
+
+    // Get protection item price using realistic pricing (like main thread)
+    let protectionPrice = 0;
+    if (protections > 0) {
+        protectionPrice = getRealisticPrice(itemHrid, baseItemPrice, priceMap, actionDetailMap);
+
+        // Check mirror of protection
+        const mirrorPrice = getRealisticPrice('/items/mirror_of_protection', null, priceMap, actionDetailMap);
+        if (mirrorPrice > 0 && mirrorPrice < protectionPrice) {
+            protectionPrice = mirrorPrice;
+        }
+
+        // Check specific protection items
+        if (itemDetails.protectionItemHrids && itemDetails.protectionItemHrids.length > 0) {
+            for (const protHrid of itemDetails.protectionItemHrids) {
+                const protPrice = getRealisticPrice(protHrid, null, priceMap, actionDetailMap);
+                if (protPrice > 0 && protPrice < protectionPrice) {
+                    protectionPrice = protPrice;
+                }
+            }
+        }
+    }
+
+    const materialCost = perAttemptMaterialCost * attempts;
+    const protectionCost = protectionPrice * protections;
+
+    return baseItemPrice + materialCost + protectionCost;
+}
+
+/**
+ * Get realistic price for an item (matches main thread logic)
+ * Handles inflation detection and fallbacks
+ */
+function getRealisticPrice(itemHrid, knownBasePrice, priceMap, actionDetailMap) {
+    let ask = priceMap[itemHrid + ':0_ask'];
+    if (ask === undefined) ask = priceMap[itemHrid + ':0'];
+    if (ask === null || ask === undefined) ask = 0;
+
+    let bid = priceMap[itemHrid + ':0_bid'];
+    if (bid === null || bid === undefined) bid = 0;
+
+    // Calculate production cost as fallback
+    const productionCost = calculateProductionCost(itemHrid, priceMap, actionDetailMap);
+
+    // If both ask and bid exist
+    if (ask > 0 && bid > 0) {
+        // If ask is significantly higher than bid (>30% markup), use max(bid, production)
+        if (ask / bid > 1.3) {
+            return Math.max(bid, productionCost);
+        }
+        // Otherwise use ask (normal market)
+        return ask;
+    }
+
+    // If only ask exists
+    if (ask > 0) {
+        // If ask is inflated compared to production, use production
+        if (productionCost > 0 && ask / productionCost > 1.3) {
+            return productionCost;
+        }
+        // Otherwise use max of ask and production
+        return Math.max(ask, productionCost);
+    }
+
+    // If only bid exists, use max(bid, production)
+    if (bid > 0) {
+        return Math.max(bid, productionCost);
+    }
+
+    // No market data - use production cost or known base price
+    return productionCost > 0 ? productionCost : (knownBasePrice || 0);
+}
+
+/**
+ * Calculate value for a single item
+ * @param {Object} data - Item data
+ * @returns {Object} {itemIndex, value}
+ */
+function calculateItemValue(data) {
+    const { itemIndex, item, priceMap, useHighEnhancementCost, minLevel, enhancementParams, itemDetails, actionDetailMap } = data;
+    const { itemHrid, enhancementLevel = 0, count = 1 } = item;
+
+    let itemValue = 0;
+
+    // For enhanced items (1+)
+    if (enhancementLevel >= 1) {
+        // For high enhancement levels, use cost instead of market price (if enabled)
+        if (useHighEnhancementCost && enhancementLevel >= minLevel) {
+            // Calculate enhancement cost
+            const cost = calculateEnhancementCost({
+                itemHrid,
+                targetLevel: enhancementLevel,
+                enhancementParams,
+                itemDetails,
+                priceMap,
+                actionDetailMap
+            });
+
+            if (cost !== null && cost > 0) {
+                itemValue = cost;
+            } else {
+                // Fallback to base item price or production cost
+                let basePrice = priceMap[itemHrid + ':0'] || 0;
+                if (basePrice === 0) {
+                    basePrice = calculateProductionCost(itemHrid, priceMap, actionDetailMap);
+                }
+                itemValue = basePrice;
+            }
+        } else {
+            // Normal logic: try market price first
+            const marketPrice = priceMap[itemHrid + ':' + enhancementLevel] || 0;
+
+            if (marketPrice > 0) {
+                itemValue = marketPrice;
+            } else {
+                // No market data, calculate enhancement cost
+                const cost = calculateEnhancementCost({
+                    itemHrid,
+                    targetLevel: enhancementLevel,
+                    enhancementParams,
+                    itemDetails,
+                    priceMap,
+                    actionDetailMap
+                });
+
+                if (cost !== null && cost > 0) {
+                    itemValue = cost;
+                } else {
+                    let basePrice = priceMap[itemHrid + ':0'] || 0;
+                    if (basePrice === 0) {
+                        basePrice = calculateProductionCost(itemHrid, priceMap, actionDetailMap);
+                    }
+                    itemValue = basePrice;
+                }
+            }
+        }
+    } else {
+        // Unenhanced items: use market price or production cost
+        itemValue = priceMap[itemHrid + ':0'] || 0;
+        if (itemValue === 0) {
+            itemValue = calculateProductionCost(itemHrid, priceMap, actionDetailMap);
+        }
+    }
+
+    return { itemIndex, value: itemValue * count };
+}
+
+/**
+ * Calculate values for a batch of items
+ * @param {Array} items - Array of item data objects
+ * @returns {Array} Array of {itemIndex, value} results
+ */
+function calculateItemValueBatch(items) {
+    const results = [];
+
+    for (const itemData of items) {
+        const result = calculateItemValue(itemData);
+        results.push(result);
+    }
+
+    return results;
+}
+
+self.onmessage = function (e) {
+    const { taskId, data } = e.data;
+    try {
+        const { action, params } = data;
+
+        if (action === 'calculateBatch') {
+            const results = calculateItemValueBatch(params.items);
+            self.postMessage({ taskId, result: results });
+        } else if (action === 'clearCache') {
+            valuationCache.clear();
+            self.postMessage({ taskId, result: { success: true, message: 'Cache cleared' } });
+        } else {
+            throw new Error(\`Unknown action: \${action}\`);
+        }
+    } catch (error) {
+        self.postMessage({ taskId, error: error.message || String(error) });
+    }
+};
+`;
+
+    /**
+     * Get or create the worker pool instance
+     */
+    async function getWorkerPool() {
+        if (workerPool) {
+            return workerPool;
+        }
+
+        try {
+            // Create worker blob from inline script
+            const blob = new Blob([WORKER_SCRIPT], { type: 'application/javascript' });
+
+            // Initialize worker pool with 2-4 workers
+            workerPool = new WorkerPool(blob);
+            await workerPool.initialize();
+
+            return workerPool;
+        } catch (error) {
+            throw error;
+        }
+    }
+
+    /**
+     * Calculate values for multiple items in parallel
+     * @param {Array} items - Array of item objects
+     * @param {Object} priceMap - Price map for all items
+     * @param {Object} config - Configuration options
+     * @param {Object} gameData - Game data with item details
+     * @returns {Promise<Array>} Array of values in same order as input
+     */
+    async function calculateItemValueBatch(items, priceMap, configOptions, gameData) {
+        const pool = await getWorkerPool();
+
+        // Prepare data for workers - need to include item details, material details, and actionDetailMap
+        const itemsWithDetails = items.map((item, index) => {
+            const itemDetails = gameData.itemDetailMap[item.itemHrid];
+
+            // Include material item details for sellPrice fallback
+            const allItemDetails = {};
+            if (itemDetails && itemDetails.enhancementCosts) {
+                for (const material of itemDetails.enhancementCosts) {
+                    const materialDetail = gameData.itemDetailMap[material.itemHrid];
+                    if (materialDetail) {
+                        allItemDetails[material.itemHrid] = {
+                            sellPrice: materialDetail.sellPrice,
+                            name: materialDetail.name,
+                        };
+                    }
+                }
+            }
+
+            return {
+                itemIndex: index,
+                item,
+                priceMap,
+                useHighEnhancementCost: configOptions.useHighEnhancementCost,
+                minLevel: configOptions.minLevel,
+                enhancementParams: configOptions.enhancementParams,
+                itemDetails: itemDetails ? { ...itemDetails, allItemDetails } : {},
+                actionDetailMap: gameData.actionDetailMap,
+            };
+        });
+
+        // Split items into chunks for parallel processing
+        const chunkSize = Math.ceil(itemsWithDetails.length / pool.getStats().poolSize);
+        const chunks = [];
+
+        for (let i = 0; i < itemsWithDetails.length; i += chunkSize) {
+            chunks.push(itemsWithDetails.slice(i, i + chunkSize));
+        }
+
+        // Process chunks in parallel
+        const tasks = chunks.map((chunk) => ({
+            action: 'calculateBatch',
+            params: { items: chunk },
+        }));
+
+        const results = await pool.executeAll(tasks);
+
+        // Flatten results and sort by itemIndex to maintain order
+        const flatResults = results.flat();
+        flatResults.sort((a, b) => a.itemIndex - b.itemIndex);
+
+        // Extract just the values
+        return flatResults.map((r) => r.value);
+    }
+
+    /**
+     * Clear the worker cache
+     */
+    async function clearItemValueCache() {
+        if (!workerPool) {
+            return;
+        }
+
+        const pool = await getWorkerPool();
+        return pool.execute({
+            action: 'clearCache',
+        });
+    }
+
+    /**
+     * Get worker pool statistics
+     */
+    function getItemValueWorkerStats() {
+        return workerPool ? workerPool.getStats() : null;
+    }
+
+    /**
+     * Terminate the worker pool
+     */
+    function terminateItemValueWorkerPool() {
+        if (workerPool) {
+            workerPool.terminate();
+            workerPool = null;
+        }
+    }
+
+    var networthWorkerManager = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        calculateItemValueBatch: calculateItemValueBatch,
+        clearItemValueCache: clearItemValueCache,
+        getItemValueWorkerStats: getItemValueWorkerStats,
+        terminateItemValueWorkerPool: terminateItemValueWorkerPool
+    });
+
+    /**
+     * Performance Monitor
+     * Tracks execution time of features and DOM observer handlers
+     * using a rolling window for CPU percentage calculations.
+     */
+
+    const WINDOW_MS = 5000;
+
+    /**
+     * When the script started, as the clock the rest of the timings are quoted
+     * against. `performance.now()` is already relative to page navigation, but the
+     * userscript runs at document-start and the difference matters when the
+     * question is "what happened before my feature got a turn".
+     */
+    const BOOT_AT = typeof performance !== 'undefined' ? performance.now() : 0;
+
+    class PerformanceMonitor {
+        constructor() {
+            this.measurements = new Map();
+            this.snapshots = new Map();
+            // Named moments on the startup timeline, in the order they happened
+            this.marks = [];
+            // Work that a snapshot was made of, broken into its parts
+            this.spans = new Map();
+            this.bootAt = BOOT_AT;
+            this.windowMs = WINDOW_MS;
+            this.enabled = false;
+            this._onVisibilityChange = () => {
+                this._tabVisible = !document.hidden;
+            };
+            this._tabVisible = true;
+            if (typeof document !== 'undefined') {
+                document.addEventListener('visibilitychange', this._onVisibilityChange);
+            }
+        }
+
+        /**
+         * Record a timing measurement
+         * @param {string} name - Metric name (e.g. "dom:MarketFilter", "init:tooltipPrices")
+         * @param {number} durationMs - Duration in milliseconds
+         */
+        record(name, durationMs) {
+            if (!this.enabled || !this._tabVisible) return;
+            if (!this.measurements.has(name)) {
+                this.measurements.set(name, []);
+            }
+            this.measurements.get(name).push({ time: Date.now(), duration: durationMs });
+        }
+
+        /**
+         * Store a one-time snapshot measurement that persists beyond the rolling window
+         *
+         * `startedAt` is what makes a startup trace readable: a feature that took six
+         * seconds is one fact, and whether it took them at second two or second
+         * fourteen is a different one — and only the second says what else was
+         * waiting behind it.
+         *
+         * @param {string} name - Metric name
+         * @param {number} durationMs - Duration in milliseconds
+         * @param {number} [startedAt] - Milliseconds since boot when it began
+         */
+        snapshot(name, durationMs, startedAt) {
+            this.snapshots.set(name, {
+                duration: durationMs,
+                time: Date.now(),
+                startedAt: startedAt ?? this.sinceBoot() - durationMs,
+            });
+        }
+
+        /** @returns {number} Milliseconds since the script started */
+        sinceBoot() {
+            return (typeof performance !== 'undefined' ? performance.now() : 0) - this.bootAt;
+        }
+
+        /**
+         * Note that something happened, and when.
+         *
+         * Marks answer the question a list of durations cannot: where did the gaps
+         * go. Half of a slow start is usually spent waiting — for IndexedDB, for the
+         * game's own data to arrive — and waiting shows up in nobody's duration.
+         *
+         * @param {string} name - What happened, e.g. `storage:open`
+         * @param {Object} [detail] - Anything worth carrying alongside
+         */
+        mark(name, detail = null) {
+            this.marks.push({ name, at: this.sinceBoot(), detail });
+        }
+
+        /**
+         * Time a part of something already being timed.
+         *
+         * A feature that takes six seconds is a question, not an answer. Spans are
+         * how the answer gets recorded — which call inside it was the six seconds —
+         * and they are always on, because the run worth profiling is the one that
+         * already happened.
+         *
+         * @param {string} name - Parent metric, e.g. `init:networth`
+         * @param {string} part - What this piece is, e.g. `recalculate`
+         * @returns {Function} Call it when the piece is done
+         */
+        startSpan(name, part) {
+            const startedAt = this.sinceBoot();
+            return () => {
+                const duration = this.sinceBoot() - startedAt;
+                if (!this.spans.has(name)) this.spans.set(name, []);
+                this.spans.get(name).push({ part, duration, startedAt });
+                return duration;
+            };
+        }
+
+        /**
+         * Run a function, recording how long its part took.
+         *
+         * @param {string} name - Parent metric
+         * @param {string} part - What this piece is
+         * @param {Function} fn - The work
+         * @returns {*} Whatever the work returned
+         */
+        async span(name, part, fn) {
+            const end = this.startSpan(name, part);
+            try {
+                return await fn();
+            } finally {
+                end();
+            }
+        }
+
+        /** @returns {Array<Object>} The parts of one metric, longest first */
+        getSpans(name) {
+            return [...(this.spans.get(name) || [])].sort((a, b) => b.duration - a.duration);
+        }
+
+        /** @returns {Array<Object>} Every mark, in the order they happened */
+        getMarks() {
+            return [...this.marks].sort((a, b) => a.at - b.at);
+        }
+
+        /**
+         * Wrap a function with automatic timing
+         * @param {string} name - Metric name
+         * @param {Function} fn - Function to wrap
+         * @returns {Function} Wrapped function
+         */
+        wrap(name, fn) {
+            const monitor = this;
+            return function (...args) {
+                if (!monitor.enabled || !monitor._tabVisible) return fn.apply(this, args);
+                const start = performance.now();
+                try {
+                    const result = fn.apply(this, args);
+                    if (result && typeof result.then === 'function') {
+                        return result.finally(() => monitor.record(name, performance.now() - start));
+                    }
+                    monitor.record(name, performance.now() - start);
+                    return result;
+                } catch (error) {
+                    monitor.record(name, performance.now() - start);
+                    throw error;
+                }
+            };
+        }
+
+        /**
+         * Get stats for a single metric within the rolling window
+         * @param {string} name - Metric name
+         * @returns {{ calls: number, totalMs: number, avgMs: number, cpuPercent: number } | null}
+         */
+        getStats(name) {
+            const entries = this.measurements.get(name);
+            if (!entries || entries.length === 0) return null;
+
+            const cutoff = Date.now() - this.windowMs;
+            let calls = 0;
+            let totalMs = 0;
+
+            for (let i = entries.length - 1; i >= 0; i--) {
+                if (entries[i].time < cutoff) break;
+                calls++;
+                totalMs += entries[i].duration;
+            }
+
+            if (calls === 0) return null;
+
+            return {
+                calls,
+                totalMs,
+                avgMs: totalMs / calls,
+                cpuPercent: Math.min((totalMs / this.windowMs) * 100, 100),
+            };
+        }
+
+        /**
+         * Get stats for all metrics, cleaning up stale data
+         * @returns {Map<string, { calls: number, totalMs: number, avgMs: number, cpuPercent: number }>}
+         */
+        getAllStats() {
+            this._cleanup();
+            const result = new Map();
+
+            for (const [name, entries] of this.measurements) {
+                if (entries.length === 0) continue;
+                const stats = this.getStats(name);
+                if (stats) {
+                    result.set(name, stats);
+                }
+            }
+
+            return result;
+        }
+
+        /**
+         * Remove measurements older than the rolling window
+         * @private
+         */
+        _cleanup() {
+            const cutoff = Date.now() - this.windowMs;
+            for (const [name, entries] of this.measurements) {
+                let firstValid = 0;
+                while (firstValid < entries.length && entries[firstValid].time < cutoff) {
+                    firstValid++;
+                }
+                if (firstValid > 0) {
+                    entries.splice(0, firstValid);
+                }
+                if (entries.length === 0) {
+                    this.measurements.delete(name);
+                }
+            }
+        }
+
+        /**
+         * Get all snapshot measurements
+         * @returns {Map<string, { duration: number, time: number }>}
+         */
+        getSnapshots() {
+            return new Map(this.snapshots);
+        }
+
+        /**
+         * Clear all measurements
+         */
+        reset() {
+            this.measurements.clear();
+            this.snapshots.clear();
+            this.spans.clear();
+            // Marks are the startup trace and cannot be taken again without a
+            // reload, so resetting the rolling stats leaves them alone
+        }
+    }
+
+    const performanceMonitor = new PerformanceMonitor();
+
+    var performanceMonitor$1 = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        default: performanceMonitor
+    });
+
+    /**
+     * Item Navigation Utilities
+     * Handles Alt+click navigation to crafting/gathering actions or item dictionary
+     */
+
+
+    /**
+     * Get game object via React fiber tree traversal
+     * @returns {Object|null} Game component instance
+     */
+    function getGameObject$1() {
+        const rootEl = document.getElementById('root');
+        const rootFiber = rootEl?._reactRootContainer?.current || rootEl?._reactRootContainer?._internalRoot?.current;
+        if (!rootFiber) return null;
+
+        function find(fiber) {
+            if (!fiber) return null;
+            if (fiber.stateNode?.handleGoToMarketplace) return fiber.stateNode;
+            return find(fiber.child) || find(fiber.sibling);
+        }
+
+        return find(rootFiber);
+    }
+
+    /**
+     * Find which action produces a given item
+     * Prioritizes production actions over gathering actions
+     * @param {string} itemHrid - Item HRID to search for
+     * @returns {Object|null} { actionHrid, type: 'production'|'gathering' } or null
+     */
+    function findActionForItem(itemHrid) {
+        const gameData = dataManager.getInitClientData();
+        if (!gameData?.actionDetailMap) {
+            return null;
+        }
+
+        const itemSlug = itemHrid.split('/').pop();
+
+        // First pass: Look for production actions (outputItems)
+        const productionMatches = [];
+        for (const [actionHrid, action] of Object.entries(gameData.actionDetailMap)) {
+            if (action.outputItems?.some((item) => item.itemHrid === itemHrid)) {
+                productionMatches.push(actionHrid);
+            }
+        }
+        if (productionMatches.length > 0) {
+            const exact = productionMatches.find((a) => a.split('/').pop() === itemSlug);
+            return { actionHrid: exact || productionMatches[0], type: 'production' };
+        }
+
+        // Second pass: Look for gathering actions (dropTable)
+        const gatheringMatches = [];
+        for (const [actionHrid, action] of Object.entries(gameData.actionDetailMap)) {
+            if (action.dropTable?.some((drop) => drop.itemHrid === itemHrid)) {
+                gatheringMatches.push(actionHrid);
+            }
+        }
+        if (gatheringMatches.length > 0) {
+            const exact = gatheringMatches.find((a) => a.split('/').pop() === itemSlug);
+            return { actionHrid: exact || gatheringMatches[0], type: 'gathering' };
+        }
+
+        return null;
+    }
+
+    /**
+     * Open the game's Item Dictionary for an item.
+     * @param {string} itemHrid - Item HRID to open
+     * @returns {boolean} True if the dictionary was opened
+     */
+    function openItemDictionary(itemHrid) {
+        const game = getGameObject$1();
+        if (!game?.handleOpenItemDictionary) {
+            return false;
+        }
+        // Validate HRID exists before passing to game (invalid HRIDs crash renderDescription)
+        if (!dataManager.getItemDetails(itemHrid)) {
+            return false;
+        }
+        game.handleOpenItemDictionary(itemHrid);
+        return true;
+    }
+
+    /**
+     * Open the game on an action.
+     *
+     * The same `handleGoToAction` {@link navigateToItem} already reaches for, exposed
+     * on its own for callers that know the action rather than the item — a plan step
+     * that says "Train Cheesesmithing 105 → 108 — Griffin Bulwark ★" knows exactly
+     * which action it means, and re-deriving it from an item would be a guess.
+     *
+     * Enhancing has one action (`/actions/enhancing/enhance`), so the enhancing
+     * screen is reached the same way rather than through a handler of its own.
+     *
+     * @param {string} actionHrid - Action HRID, e.g. `/actions/cheesesmithing/griffin_bulwark`
+     * @returns {boolean} True if the game was navigated, false if it could not be
+     */
+    function navigateToAction(actionHrid) {
+        if (typeof actionHrid !== 'string' || !actionHrid.startsWith('/actions/')) {
+            return false;
+        }
+
+        const game = getGameObject$1();
+        if (!game?.handleGoToAction) {
+            return false;
+        }
+
+        game.handleGoToAction(actionHrid);
+        return true;
+    }
+
+    /**
+     * Navigate to the action page for an item, or item dictionary if no action found
+     * @param {string} itemHrid - Item HRID to navigate to
+     * @returns {boolean} True if navigation was attempted, false if game API unavailable
+     */
+    function navigateToItem(itemHrid) {
+        const game = getGameObject$1();
+        if (!game) {
+            return false;
+        }
+
+        // Try to find action that produces this item
+        const actionInfo = findActionForItem(itemHrid);
+
+        if (actionInfo && game.handleGoToAction) {
+            // Navigate to the action page
+            game.handleGoToAction(actionInfo.actionHrid);
+            return true;
+        } else if (game.handleOpenItemDictionary) {
+            // Validate HRID exists before passing to game (invalid HRIDs crash renderDescription)
+            const itemDetails = dataManager.getItemDetails(itemHrid);
+            if (!itemDetails) {
+                return false;
+            }
+            game.handleOpenItemDictionary(itemHrid);
+            return true;
+        }
+
+        return false;
+    }
+
+    var itemNavigation = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        findActionForItem: findActionForItem,
+        navigateToAction: navigateToAction,
+        navigateToItem: navigateToItem,
+        openItemDictionary: openItemDictionary
+    });
+
+    /**
+     * Marketplace Custom Tabs Utility
+     * Provides shared functionality for creating and managing custom marketplace tabs
+     * Used by missing materials features (actions, houses, etc.)
+     */
+
+
+    /**
+     * Tabs currently watching their item for acquisition, keyed by the tab element,
+     * value is the unsubscribe function returned by `webSocketHook.on('*', …)`.
+     * A tab in here is a tab `watchTabForAcquisition` is still tracking; removing it
+     * from the map is how every retirement path — auto, manual dismiss, "× All",
+     * marketplace close — agrees the watch is over.
+     */
+    const acquisitionWatchers = new Map();
+
+    /**
+     * The "show a ✓ for a moment, then remove the tab" timeout for a tab that just
+     * got retired, keyed by tab. Tracked separately from `acquisitionWatchers` so a
+     * dismiss that lands during the brief ✓ window can cancel the pending removal
+     * and `onRetire` call instead of racing them.
+     */
+    const pendingRetireTimeouts = new Map();
+
+    /** How long the ✓ badge stays up before the tab is actually removed. */
+    const ACQUIRED_BADGE_DELAY_MS = 900;
+
+    /**
+     * Create a custom material tab for the marketplace
+     * @param {Object} material - Material data object
+     * @param {string} material.itemHrid - Item HRID
+     * @param {string} material.itemName - Display name for the item
+     * @param {number} material.missing - Amount missing (0 if sufficient)
+     * @param {number} [material.queued=0] - Amount reserved by queue
+     * @param {boolean} material.isTradeable - Whether item can be traded
+     * @param {HTMLElement} referenceTab - Tab element to clone structure from
+     * @param {Function} onClickCallback - Callback when tab is clicked, receives (e, material)
+     * @param {Object} [options] - Optional extras
+     * @param {Function} [options.onDismiss] - Called with `material` when the tab's own
+     *   dismiss (×) button is used, right before the tab is removed from the DOM. Lets a
+     *   caller prune whatever list of its own it is keeping alongside the tab.
+     * @returns {HTMLElement} Created tab element
+     */
+    function createMaterialTab(material, referenceTab, onClickCallback, options = {}) {
+        // Clone reference tab structure
+        const tab = referenceTab.cloneNode(true);
+
+        // Mark as custom tab for later identification
+        tab.setAttribute('data-mwi-custom-tab', 'true');
+        tab.setAttribute('data-item-hrid', material.itemHrid);
+        tab.setAttribute('data-missing-quantity', material.missing.toString());
+
+        // Color coding:
+        // - Red: Missing materials (missing > 0)
+        // - Green: Sufficient materials (missing = 0)
+        // - Gray: Not tradeable
+        let statusColor;
+        let statusText;
+
+        if (!material.isTradeable) {
+            statusColor = '#888888'; // Gray - not tradeable
+            statusText = 'Not Tradeable';
+        } else if (material.missing > 0) {
+            statusColor = '#ef4444'; // Red - missing materials
+            // Show queued amount if any materials are reserved by queue
+            const queuedText = material.queued > 0 ? ` (${formatWithSeparator(material.queued)} Q'd)` : '';
+            statusText = `Missing: ${formatWithSeparator(material.missing)}${queuedText}`;
+        } else {
+            statusColor = '#4ade80'; // Green - sufficient materials
+            statusText = `Sufficient (${formatWithSeparator(material.required)})`;
+        }
+
+        // Update text content
+        const badgeSpan = tab.querySelector('[class*="TabsComponent_badge"]');
+        if (badgeSpan) {
+            // Title case: capitalize first letter of each word
+            const titleCaseName = material.itemName
+                .split(' ')
+                .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+                .join(' ');
+
+            badgeSpan.innerHTML = `
+            <div style="text-align: center;">
+                <div>${titleCaseName}</div>
+                <div style="font-size: 0.75em; color: ${statusColor};">
+                    ${statusText}
+                </div>
+            </div>
+        `;
+        }
+
+        // Gray out if not tradeable
+        if (!material.isTradeable) {
+            tab.style.opacity = '0.5';
+            tab.style.cursor = 'not-allowed';
+        }
+
+        // Remove selected state
+        tab.classList.remove('Mui-selected');
+        tab.setAttribute('aria-selected', 'false');
+        tab.setAttribute('tabindex', '-1');
+
+        // Add click handler
+        tab.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+
+            if (!material.isTradeable) {
+                // Not tradeable - do nothing
+                return;
+            }
+
+            // Call the provided callback
+            if (onClickCallback) {
+                onClickCallback(e, material);
+            }
+        });
+
+        attachDismissButton(tab, material, options.onDismiss);
+
+        return tab;
+    }
+
+    /**
+     * Pin a small × in the corner of a tab, visible on hover, that removes just that
+     * tab. It never got one, which is why the fix for "I don't want this pinned
+     * anymore" was always "wait for the whole strip to be replaced or the
+     * marketplace to close" — the only two things that called `removeMaterialTabs`.
+     *
+     * @param {HTMLElement} tab - Tab element (mutated in place)
+     * @param {Object} material - The material this tab represents, handed to `onDismiss`
+     * @param {Function} [onDismiss] - Called with `material` right before the tab is removed
+     */
+    function attachDismissButton(tab, material, onDismiss) {
+        // Absolute-positioned inside the tab, so the tab needs to anchor it. MUI tabs
+        // are not positioned by default; only take over `position` when nothing else
+        // already claimed it.
+        if (!tab.style.position) {
+            tab.style.position = 'relative';
+        }
+
+        const dismissBtn = document.createElement('span');
+        dismissBtn.setAttribute('data-mwi-tab-dismiss', 'true');
+        dismissBtn.title = 'Remove this tab';
+        dismissBtn.textContent = '×';
+        dismissBtn.style.cssText = `
+        position: absolute;
+        top: 1px;
+        right: 1px;
+        width: 14px;
+        height: 14px;
+        line-height: 13px;
+        text-align: center;
+        font-size: 12px;
+        font-weight: 700;
+        border-radius: 50%;
+        color: #ddd;
+        background: rgba(0, 0, 0, 0.45);
+        cursor: pointer;
+        opacity: 0;
+        transition: opacity 0.12s ease;
+        z-index: 1;
+    `;
+
+        tab.addEventListener('mouseenter', () => {
+            dismissBtn.style.opacity = '1';
+        });
+        tab.addEventListener('mouseleave', () => {
+            dismissBtn.style.opacity = '0';
+        });
+
+        dismissBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            unwatchTabAcquisition(tab);
+            if (onDismiss) onDismiss(material);
+            tab.remove();
+        });
+
+        tab.appendChild(dismissBtn);
+    }
+
+    /**
+     * Build a small "clear all" control shaped like the other tabs, so it sits in the
+     * strip rather than floating above it. Clicking it removes every custom material
+     * tab currently pinned (the same set `removeMaterialTabs` clears) — including
+     * itself, since it is tagged `data-mwi-custom-tab` too.
+     *
+     * @param {HTMLElement} referenceTab - Tab element to clone structure from
+     * @param {Function} [onClearAll] - Called after the tabs are removed, so a caller
+     *   can prune whatever list of its own it was keeping alongside them
+     * @returns {HTMLElement} The control element, not yet attached anywhere
+     */
+    function createClearAllTabsControl(referenceTab, onClearAll) {
+        const control = referenceTab.cloneNode(true);
+
+        control.setAttribute('data-mwi-custom-tab', 'true');
+        control.setAttribute('data-mwi-clear-all-tab', 'true');
+        control.classList.remove('Mui-selected');
+        control.setAttribute('aria-selected', 'false');
+        control.setAttribute('tabindex', '-1');
+        control.title = 'Clear all pinned tabs';
+        control.style.opacity = '0.7';
+        control.style.flex = '0 0 auto';
+
+        const badgeSpan = control.querySelector('[class*="TabsComponent_badge"]');
+        if (badgeSpan) {
+            badgeSpan.innerHTML = `
+            <div style="text-align: center; font-weight: 700; font-size: 13px;">
+                &times; All
+            </div>
+        `;
+        }
+
+        control.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            removeMaterialTabs();
+            if (onClearAll) onClearAll();
+        });
+
+        return control;
+    }
+
+    /**
+     * Append a `createClearAllTabsControl` to `container`, unless one is already
+     * there. Kept idempotent so callers can invoke it every time they add tabs
+     * without needing to track whether they already have one.
+     *
+     * @param {HTMLElement} container - The visible tab bar
+     * @param {HTMLElement} referenceTab - Tab element to clone structure from
+     * @param {Function} [onClearAll] - Forwarded to `createClearAllTabsControl`
+     */
+    function ensureClearAllTabsControl(container, referenceTab, onClearAll) {
+        if (!container || container.querySelector('[data-mwi-clear-all-tab="true"]')) return;
+        container.appendChild(createClearAllTabsControl(referenceTab, onClearAll));
+    }
+
+    /**
+     * The marketplace tab bar you can actually see.
+     *
+     * There can be more than one. The marketplace opens as a popout over whatever
+     * you were doing, and the full marketplace page keeps its own tab bar in the
+     * document behind it — so `querySelector` returns whichever comes first, which
+     * is frequently the hidden one. Tabs added there are added correctly and are
+     * invisible, which is the worst shape a bug can take: nothing appears, and
+     * visiting the real marketplace first "fixes" it by making the bar that was
+     * already being picked the one on screen.
+     *
+     * Every candidate is checked and the displayed one wins.
+     *
+     * @param {string} [contains] - Text a tab must contain, to tell a marketplace bar
+     *   from any other tab strip on the page
+     * @returns {HTMLElement|null} The visible tab bar
+     */
+    function visibleTabsContainer(contains = 'My Listings') {
+        for (const container of document.querySelectorAll('.MuiTabs-flexContainer[role="tablist"]')) {
+            if (contains && !Array.from(container.children).some((tab) => tab.textContent.includes(contains))) continue;
+
+            // `offsetParent` is null under any `display: none` ancestor, which is how
+            // the game parks the panel you are not looking at
+            if (container.offsetParent === null) continue;
+            if (!container.getBoundingClientRect().width) continue;
+
+            return container;
+        }
+        return null;
+    }
+
+    /**
+     * Remove all custom material tabs from the marketplace
+     */
+    function removeMaterialTabs() {
+        const customTabs = document.querySelectorAll('[data-mwi-custom-tab="true"]');
+        customTabs.forEach((tab) => {
+            unwatchTabAcquisition(tab);
+            tab.remove();
+        });
+    }
+
+    /**
+     * Remove all shrine-specific material tabs from the marketplace
+     */
+    function removeShrineMarketTabs() {
+        document.querySelectorAll('[data-mwi-shrine-tab="true"]').forEach((tab) => tab.remove());
+    }
+
+    /**
+     * Update the badge content and quantity attribute on an existing material tab
+     * @param {HTMLElement} tab - Tab element created by createMaterialTab
+     * @param {Object} material - Updated material data
+     * @param {string} material.itemName - Display name
+     * @param {number} material.missing - Current missing quantity
+     * @param {number} [material.required] - Total required quantity
+     * @param {boolean} material.isTradeable - Whether tradeable
+     * @param {number} [material.queued] - Queued quantity
+     */
+    function updateTabBadge(tab, material) {
+        const badgeSpan = tab.querySelector('[class*="TabsComponent_badge"]');
+        if (!badgeSpan) return;
+
+        let statusColor;
+        let statusText;
+
+        if (!material.isTradeable) {
+            statusColor = '#888888';
+            statusText = 'Not Tradeable';
+        } else if (material.missing > 0) {
+            statusColor = '#ef4444';
+            const queuedText = material.queued > 0 ? ` (${formatWithSeparator(material.queued)} Q'd)` : '';
+            statusText = `Missing: ${formatWithSeparator(material.missing)}${queuedText}`;
+        } else {
+            statusColor = '#4ade80';
+            statusText = `Sufficient (${formatWithSeparator(material.required)})`;
+        }
+
+        const titleCaseName = material.itemName
+            .split(' ')
+            .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+            .join(' ');
+
+        badgeSpan.innerHTML = `
+        <div style="text-align: center;">
+            <div>${titleCaseName}</div>
+            <div style="font-size: 0.75em; color: ${statusColor};">
+                ${statusText}
+            </div>
+        </div>
+    `;
+
+        tab.setAttribute('data-missing-quantity', material.missing.toString());
+
+        if (!material.isTradeable) {
+            tab.style.opacity = '0.5';
+            tab.style.cursor = 'not-allowed';
+        } else {
+            tab.style.opacity = '1';
+            tab.style.cursor = 'pointer';
+        }
+    }
+
+    /**
+     * Setup marketplace cleanup observer
+     * Watches for marketplace panel removal and calls cleanup callback
+     * @param {Function} onCleanup - Callback when marketplace closes, receives no args
+     * @param {Array} tabsArray - Array reference to track tabs (will be checked for length)
+     * @returns {Function} Unregister function to stop observing
+     */
+    function setupMarketplaceCleanupObserver(onCleanup, tabsArray) {
+        let pollInterval = null;
+
+        function poll() {
+            if (!tabsArray || tabsArray.length === 0) return;
+
+            // If custom tabs were removed from DOM, clean up
+            const hasCustomTabsInDOM = tabsArray.some((tab) => document.body.contains(tab));
+            if (!hasCustomTabsInDOM) {
+                if (onCleanup) onCleanup();
+                return;
+            }
+
+            // If marketplace panel is hidden (navigated away), clean up
+            const marketplacePanel = document.querySelector('.MarketplacePanel_marketplacePanel__21b7o');
+            const subPanelContainer = marketplacePanel?.closest('.MainPanel_subPanelContainer__1i-H9');
+            if (subPanelContainer && getComputedStyle(subPanelContainer).display === 'none') {
+                if (onCleanup) onCleanup();
+            }
+        }
+
+        pollInterval = setInterval(poll, 1000);
+
+        return () => {
+            if (pollInterval) {
+                clearInterval(pollInterval);
+                pollInterval = null;
+            }
+        };
+    }
+
+    /**
+     * Get game object via React fiber
+     * @returns {Object|null} Game component instance
+     */
+    function getGameObject() {
+        const rootEl = document.getElementById('root');
+        const rootFiber = rootEl?._reactRootContainer?.current || rootEl?._reactRootContainer?._internalRoot?.current;
+        if (!rootFiber) return null;
+
+        function find(fiber) {
+            if (!fiber) return null;
+            if (fiber.stateNode?.handleGoToMarketplace) return fiber.stateNode;
+            return find(fiber.child) || find(fiber.sibling);
+        }
+
+        return find(rootFiber);
+    }
+
+    /**
+     * Navigate to marketplace for a specific item
+     * @param {string} itemHrid - Item HRID to navigate to
+     * @param {number} enhancementLevel - Enhancement level (default 0)
+     */
+    function navigateToMarketplace(itemHrid, enhancementLevel = 0) {
+        const game = getGameObject();
+        if (game?.handleGoToMarketplace) {
+            game.handleGoToMarketplace(itemHrid, enhancementLevel);
+        }
+        // Silently fail if game API unavailable - feature still provides value without auto-navigation
+    }
+
+    /**
+     * How many of `itemHrid` at `enhancementLevel` currently sit in inventory.
+     *
+     * `characterItems` rows carry an `enhancementLevel` field for anything that can
+     * be enhanced (0/absent otherwise), the same field `material-calculator.js`
+     * checks to tell raw stock apart from a copy the player already improved. That
+     * makes an exact match possible here too — a pinned "+5" tab is only retired by
+     * a +5 in inventory, not by three +0 copies sitting next to it.
+     *
+     * The one gap: if a future inventory row ever omitted `enhancementLevel`
+     * entirely for an item that actually has one, this would read it as level 0 and
+     * could retire a tab against the wrong copy. Nothing observed in
+     * `data-manager.js` does that today, so this is a documented risk, not a known bug.
+     *
+     * @param {string} itemHrid - Item HRID to count
+     * @param {number} enhancementLevel - Enhancement level to match exactly (0 for unenhanced)
+     * @returns {number} Total count in inventory
+     */
+    function currentAcquiredCount(itemHrid, enhancementLevel) {
+        const inventory = dataManager.getInventory?.() || [];
+        return inventory
+            .filter((item) => item.itemHrid === itemHrid && (item.enhancementLevel || 0) === (enhancementLevel || 0))
+            .reduce((sum, item) => sum + (item.count || 0), 0);
+    }
+
+    /**
+     * Swap a tab's badge to a brief "✓ Acquired" before it is removed, so retiring
+     * a tab reads as "got it" rather than as the tab silently vanishing.
+     * @param {HTMLElement} tab - Tab element
+     * @param {string} itemName - Display name to keep on the badge
+     */
+    function showAcquiredBadge(tab, itemName) {
+        const badgeSpan = tab.querySelector('[class*="TabsComponent_badge"]');
+        if (badgeSpan) {
+            badgeSpan.innerHTML = `
+            <div style="text-align: center;">
+                <div>${itemName}</div>
+                <div style="font-size: 0.75em; color: #4ade80;">
+                    ✓ Acquired
+                </div>
+            </div>
+        `;
+        }
+        tab.style.opacity = '1';
+        tab.style.cursor = 'default';
+    }
+
+    /**
+     * Stop watching a tab for acquisition: cancel any pending retirement and drop
+     * the websocket subscription. Safe to call on a tab that was never watched.
+     *
+     * Called automatically by `removeMaterialTabs` and the per-tab dismiss (×)
+     * button, so callers of `watchTabForAcquisition` do not need to remember to
+     * unwind it themselves on every removal path — only on paths that bypass both
+     * (there are none in this module).
+     *
+     * @param {HTMLElement} tab - Tab element
+     */
+    function unwatchTabAcquisition(tab) {
+        const pendingTimeout = pendingRetireTimeouts.get(tab);
+        if (pendingTimeout) {
+            clearTimeout(pendingTimeout);
+            pendingRetireTimeouts.delete(tab);
+        }
+
+        const unsubscribe = acquisitionWatchers.get(tab);
+        if (unsubscribe) {
+            unsubscribe();
+            acquisitionWatchers.delete(tab);
+        }
+    }
+
+    /**
+     * Auto-retire a pinned material tab once its item shows up in inventory.
+     *
+     * Reuses the exact mechanism `missing-materials-button.js` already uses to
+     * notice inventory changes — a `webSocketHook.on('*', …)` listener filtered to
+     * messages shaped like an inventory update (`type` containing "item",
+     * "inventory", or "market", or a top-level `inventory`/`characterItems` field).
+     * That filter is intentionally identical to the one in `missing-materials-button.js`
+     * rather than a second guess at which message types matter — see that file's
+     * `setupInventoryListener` for the original.
+     *
+     * @param {HTMLElement} tab - Tab element, e.g. one made by `createMaterialTab`
+     * @param {Object} options
+     * @param {string} options.itemHrid - Item HRID to watch for
+     * @param {number} [options.enhancementLevel=0] - Enhancement level to match exactly
+     *   (see `currentAcquiredCount` for how/when that match is exact)
+     * @param {number} [options.requiredCount=1] - Quantity that counts as "acquired"
+     * @param {string} [options.itemName] - Display name for badge updates; falls back to
+     *   the game's item name lookup, then to the HRID's last path segment
+     * @param {Function} [options.onRetire] - Called with `tab` right after it is removed
+     *   from the DOM because the item was acquired. Not called on manual dismiss,
+     *   "× All", or marketplace close — those retire the watch without this callback.
+     * @returns {Function} Unwatch function. Also invoked automatically by the tab's own
+     *   dismiss button, `removeMaterialTabs`, and therefore marketplace-close cleanup
+     *   (both of which route through `removeMaterialTabs`).
+     */
+    function watchTabForAcquisition(tab, options) {
+        const noop = () => {};
+        if (!tab || !options?.itemHrid) return noop;
+
+        const { itemHrid, enhancementLevel = 0, requiredCount = 1, onRetire } = options;
+
+        // Re-registering (e.g. the same tab watched twice) replaces the old watch
+        // rather than stacking a second subscription on top of it.
+        unwatchTabAcquisition(tab);
+
+        const itemName =
+            options.itemName || dataManager.getItemDetails?.(itemHrid)?.name || itemHrid.split('/').pop() || itemHrid;
+
+        const retire = () => {
+            showAcquiredBadge(tab, itemName);
+            // Stop listening immediately — only the DOM removal + onRetire are delayed,
+            // so a second inventory event during the ✓ window can't retire it twice.
+            const unsubscribe = acquisitionWatchers.get(tab);
+            if (unsubscribe) {
+                unsubscribe();
+                acquisitionWatchers.delete(tab);
+            }
+
+            const retireTimeout = setTimeout(() => {
+                pendingRetireTimeouts.delete(tab);
+                tab.remove();
+                if (onRetire) onRetire(tab);
+            }, ACQUIRED_BADGE_DELAY_MS);
+            pendingRetireTimeouts.set(tab, retireTimeout);
+        };
+
+        const check = () => {
+            const acquired = currentAcquiredCount(itemHrid, enhancementLevel);
+            if (acquired >= requiredCount) {
+                retire();
+            } else {
+                updateTabBadge(tab, {
+                    itemName,
+                    missing: requiredCount - acquired,
+                    required: requiredCount,
+                    isTradeable: true,
+                    queued: 0,
+                });
+            }
+        };
+
+        const handler = (data) => {
+            if (
+                data.type?.includes('item') ||
+                data.type?.includes('inventory') ||
+                data.type?.includes('market') ||
+                data.inventory ||
+                data.characterItems
+            ) {
+                check();
+            }
+        };
+
+        webSocketHook.on('*', handler);
+        acquisitionWatchers.set(tab, () => webSocketHook.off('*', handler));
+
+        // Cover the case where the item was already sitting in inventory before
+        // this tab started watching (e.g. a stale plan reopened after buying).
+        check();
+
+        return () => unwatchTabAcquisition(tab);
+    }
+
+    var marketplaceTabs = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        createClearAllTabsControl: createClearAllTabsControl,
+        createMaterialTab: createMaterialTab,
+        ensureClearAllTabsControl: ensureClearAllTabsControl,
+        navigateToMarketplace: navigateToMarketplace,
+        removeMaterialTabs: removeMaterialTabs,
+        removeShrineMarketTabs: removeShrineMarketTabs,
+        setupMarketplaceCleanupObserver: setupMarketplaceCleanupObserver,
+        updateTabBadge: updateTabBadge,
+        visibleTabsContainer: visibleTabsContainer,
+        watchTabForAcquisition: watchTabForAcquisition
+    });
+
+    /**
+     * Marketplace Buy Modal Autofill Utility
+     * Provides shared functionality for auto-filling quantity in marketplace buy modals
+     * Used by missing materials features (actions, houses, etc.)
+     */
+
+
+    /**
+     * Find the quantity input in the buy modal
+     * For equipment items, there are multiple number inputs (enhancement level + quantity)
+     * We need to find the correct one by checking parent containers for label text
+     * @param {HTMLElement} modal - Modal container element
+     * @returns {HTMLInputElement|null} Quantity input element or null
+     */
+    function findQuantityInput(modal) {
+        // Get all number inputs in the modal
+        const allInputs = Array.from(modal.querySelectorAll('input[type="number"]'));
+
+        if (allInputs.length === 0) {
+            return null;
+        }
+
+        if (allInputs.length === 1) {
+            // Only one input - must be quantity
+            return allInputs[0];
+        }
+
+        // Multiple inputs - identify by checking CLOSEST parent first
+        // Strategy 1: Check each parent level individually, prioritizing closer parents
+        // This prevents matching on the outermost container that has all text
+        for (let level = 0; level < 4; level++) {
+            for (let i = 0; i < allInputs.length; i++) {
+                const input = allInputs[i];
+                let parent = input.parentElement;
+
+                // Navigate to the specific level
+                for (let j = 0; j < level && parent; j++) {
+                    parent = parent.parentElement;
+                }
+
+                if (!parent) continue;
+
+                const text = parent.textContent;
+
+                // At this specific level, check if it contains "Quantity" but NOT "Enhancement Level"
+                if (text.includes('Quantity') && !text.includes('Enhancement Level')) {
+                    return input;
+                }
+            }
+        }
+
+        // Strategy 2: Exclude inputs that have "Enhancement Level" in close parents (level 0-2)
+        for (let i = 0; i < allInputs.length; i++) {
+            const input = allInputs[i];
+            let parent = input.parentElement;
+            let isEnhancementInput = false;
+
+            // Check only the first 3 levels (not the outermost container)
+            for (let j = 0; j < 3 && parent; j++) {
+                const text = parent.textContent;
+
+                if (text.includes('Enhancement Level') && !text.includes('Quantity')) {
+                    isEnhancementInput = true;
+                    break;
+                }
+
+                parent = parent.parentElement;
+            }
+
+            if (!isEnhancementInput) {
+                return input;
+            }
+        }
+
+        // Fallback: Return first input and log warning
+        console.warn('[MarketplaceAutofill] Could not definitively identify quantity input, using first input');
+        return allInputs[0];
+    }
+
+    /**
+     * Handle buy modal appearance and auto-fill quantity if available
+     * @param {HTMLElement} modal - Modal container element
+     * @param {number|null} activeQuantity - Static quantity to auto-fill (null if using pending fn)
+     * @param {Function|null} pendingCalculation - Lazy fn that returns current quantity (takes priority)
+     */
+    function handleBuyModal(modal, activeQuantity, pendingCalculation) {
+        // Resolve quantity: prefer lazy recalculation over stored static value
+        const quantity = pendingCalculation ? pendingCalculation() : activeQuantity;
+
+        // Check if we have a quantity to fill
+        if (!quantity || quantity <= 0) {
+            return;
+        }
+
+        // Check if this is a "Buy Now" modal
+        const header = modal.querySelector('div[class*="MarketplacePanel_header"]');
+        if (!header) {
+            return;
+        }
+
+        const headerText = header.textContent.trim();
+        if (!headerText.includes('Buy Now') && !headerText.includes('Buy Listing')) {
+            return;
+        }
+
+        // Find the quantity input - need to be specific to avoid enhancement level input
+        const quantityInput = findQuantityInput(modal);
+        if (!quantityInput) {
+            return;
+        }
+
+        // Set the quantity value
+        const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+        nativeInputValueSetter.call(quantityInput, quantity.toString());
+
+        // Trigger input event to notify React
+        const inputEvent = new Event('input', { bubbles: true });
+        quantityInput.dispatchEvent(inputEvent);
+    }
+
+    /**
+     * Create an autofill manager instance
+     * Manages storing quantity to autofill and observing buy modals
+     * @param {string} observerId - Unique ID for this observer (e.g., 'MissingMats-Actions')
+     * @returns {Object} Autofill manager with methods: setQuantity, setPendingCalculation, clearQuantity, initialize, cleanup
+     */
+    function createAutofillManager(observerId) {
+        let activeQuantity = null;
+        let pendingCalculation = null;
+        let observerUnregister = null;
+
+        return {
+            /**
+             * Set a static quantity to auto-fill in the next buy modal
+             * @param {number} quantity - Quantity to auto-fill
+             */
+            setQuantity(quantity) {
+                activeQuantity = quantity;
+                pendingCalculation = null;
+            },
+
+            /**
+             * Set a lazy calculation function that is called each time a buy modal opens.
+             * Takes priority over setQuantity — quantity is recomputed fresh on every modal open,
+             * so subsequent purchases within the same session always autofill the remaining needed amount.
+             * @param {Function} fn - Function returning the current quantity to fill
+             */
+            setPendingCalculation(fn) {
+                pendingCalculation = fn;
+                activeQuantity = null;
+            },
+
+            /**
+             * Clear the stored quantity (cancel autofill)
+             */
+            clearQuantity() {
+                activeQuantity = null;
+                pendingCalculation = null;
+            },
+
+            /**
+             * Get the current active quantity
+             * @returns {number|null} Current quantity or null
+             */
+            getQuantity() {
+                return pendingCalculation ? pendingCalculation() : activeQuantity;
+            },
+
+            /**
+             * Initialize buy modal observer
+             * Sets up watching for buy modals to appear and auto-fills them
+             *
+             * Idempotent. Callers reach for this defensively — the shopping list ran
+             * `autofill.initialize?.()` on every open — and each call used to register
+             * a second observer while dropping the previous unregister on the floor,
+             * so the handler could never be taken away again. One live observer per
+             * manager is all this needs: the quantity it fills is read fresh from the
+             * closure every time, so a re-registered handler was not doing anything
+             * the first one was not already doing.
+             *
+             * @returns {Function} The unregister function for the live observer
+             */
+            initialize() {
+                if (observerUnregister) return observerUnregister;
+
+                observerUnregister = domObserver.onClass(observerId, 'Modal_modalContainer', (modal) => {
+                    handleBuyModal(modal, activeQuantity, pendingCalculation);
+                    // Clear static quantity after use (one-shot) — pendingCalculation persists intentionally
+                    if (activeQuantity !== null && !pendingCalculation) {
+                        activeQuantity = null;
+                    }
+                });
+                return observerUnregister;
+            },
+
+            /**
+             * Cleanup observer
+             * Stops watching for buy modals and clears quantity
+             */
+            cleanup() {
+                if (observerUnregister) {
+                    observerUnregister();
+                    observerUnregister = null;
+                }
+                activeQuantity = null;
+                pendingCalculation = null;
+            },
+        };
+    }
+
+    var marketplaceAutofill = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        createAutofillManager: createAutofillManager
+    });
+
+    /**
+     * Shopping list
+     *
+     * A whole restock, as marketplace tabs.
+     *
+     * The Buy figure on a panel row sends one item to the marketplace, which is the
+     * right gesture for topping up one thing. Restocking for a week is not that
+     * gesture — it is six items, and doing it a row at a time means six trips back
+     * to a panel that is behind the marketplace you are standing in.
+     *
+     * So the whole shortfall goes across at once, as the same "Missing: N" tabs the
+     * missing-materials features put there. Each tab opens its item with the
+     * quantity already filled in, and the row of tabs is the list: what is left to
+     * buy is what is still red.
+     *
+     * ## Why this lives in utils rather than beside the panel that first wanted it
+     *
+     * It was `features/ui/consumables-shopping-list.js`, and then the goal planner
+     * wanted the same hand-off. The planner is in the **actions** bundle and the
+     * consumables panel is in the **ui** bundle, so rollup gave each of them its own
+     * copy — and with it, its own `tabs` and `watchTimer`. Two lists opened inside
+     * the six-second watch window then fought over the same tab bar: each copy's
+     * interval saw tabs it had not built, tore them down and put its own back.
+     *
+     * The state below is module-level on purpose — there is one marketplace tab bar,
+     * so there should be one list watching it. That is only true if there is one
+     * module, which is what `Toolasha.Utils.shoppingList` in `rollup.config.js`
+     * buys. The old path re-exports from here so nothing had to move to get it.
+     *
+     * ## There is more than one marketplace
+     *
+     * It opens as a popout over whatever you were doing, and the full marketplace
+     * page keeps its own tab bar in the document behind it — so the tabs have to go
+     * on the one being displayed rather than the one that comes first.
+     * `visibleTabsContainer` handles that, and every feature that adds marketplace
+     * tabs now goes through it.
+     *
+     * ## Reusing the missing-materials machinery
+     *
+     * Nothing here is new. `createMaterialTab` draws them, `createAutofillManager`
+     * fills the quantity in, and `setupMarketplaceCleanupObserver` takes them away
+     * when you leave — the same three pieces, given a different list. Which is the
+     * point: a second implementation of marketplace tabs would be a second set of
+     * bugs about where the game moved its tab bar.
+     */
+
+
+    /**
+     * How long to keep putting the tabs back.
+     *
+     * Not just how long to wait for the tab bar — the bar is frequently already
+     * there from a previous visit, so the tabs go in immediately and are then wiped
+     * when React re-renders the marketplace for the item being navigated to. So the
+     * check keeps running for a few seconds and re-adds them whenever they have
+     * gone, which survives however many times the panel rebuilds itself.
+     */
+    const WATCH_MS = 6000;
+    const WATCH_INTERVAL_MS = 150;
+
+    const autofill = createAutofillManager('Shopping-List');
+    let tabs = [];
+    let cleanupObserver = null;
+    let watchTimer = null;
+    let heading = '';
+
+    /**
+     * Put a shopping list on the marketplace and go there.
+     *
+     * @param {Array<{itemHrid: string, name: string, count: number}>} items - What to buy
+     * @param {Object} [options] - Options
+     * @param {string} [options.heading] - What the row of tabs calls itself. The default counts
+     *   the items; a caller whose counts are an estimate rather than a bill should say so here,
+     *   because the marketplace is where somebody decides how many to actually buy.
+     */
+    function openShoppingList(items, { heading: headingText = '' } = {}) {
+        const wanted = (items || []).filter((item) => item.itemHrid && item.count > 0);
+        if (!wanted.length) return;
+
+        // Idempotent since the observer leak was fixed: this used to register a
+        // fresh DOM observer on every open and drop the previous unregister
+        autofill.initialize?.();
+        heading = headingText;
+
+        // The first item opens the marketplace, and the tabs are put in behind it
+        navigateToMarketplace(wanted[0].itemHrid, 0);
+        autofill.setQuantity(wanted[0].count);
+        watchForTabBar(wanted);
+    }
+
+    /** Take the tabs away, and stop watching for the marketplace to close */
+    function clearShoppingList() {
+        clearInterval(watchTimer);
+        watchTimer = null;
+        removeMaterialTabs();
+        tabs = [];
+        cleanupObserver?.();
+        cleanupObserver = null;
+        autofill.clearQuantity?.();
+    }
+
+    /**
+     * Keep the tabs on the marketplace while it settles.
+     *
+     * React rebuilds the marketplace panel when it navigates to an item, and a tab
+     * added a moment before that rebuild is gone a moment after it — which is why
+     * adding them once, immediately, put them nowhere. This re-adds them whenever
+     * they are missing, for long enough to outlast the rebuilds.
+     *
+     * @param {Array<Object>} items - What to buy
+     */
+    function watchForTabBar(items) {
+        clearInterval(watchTimer);
+        const until = Date.now() + WATCH_MS;
+
+        watchTimer = setInterval(() => {
+            const container = visibleTabsContainer();
+            const reference =
+                container && Array.from(container.children).find((tab) => tab.textContent.includes('My Listings'));
+
+            // Judged on the item tabs rather than on having run: the heading alone
+            // is what a failed build leaves behind, and counting that as success is
+            // what let one bad attempt stand until something else rebuilt the bar
+            const built = tabs.filter((tab) => tab.hasAttribute('data-item-hrid'));
+            const present = built.length === items.length && built.every((tab) => document.body.contains(tab));
+            if (reference && !present) addTabs(container, reference, items);
+
+            if (Date.now() > until) {
+                clearInterval(watchTimer);
+                watchTimer = null;
+            }
+        }, WATCH_INTERVAL_MS);
+    }
+
+    /**
+     * @param {HTMLElement} container - The game's tab bar
+     * @param {HTMLElement} reference - A tab to clone the structure from
+     * @param {Array<Object>} items - What to buy
+     */
+    function addTabs(container, reference, items) {
+        removeMaterialTabs();
+        tabs = [];
+
+        // Several tabs will not fit on one line, and the game's bar does not wrap
+        // on its own
+        container.style.flexWrap = 'wrap';
+
+        const title = document.createElement('div');
+        // Marked as one of ours, or `removeMaterialTabs` leaves it behind and every
+        // re-add stacks another heading beside the last
+        title.setAttribute('data-mwi-custom-tab', 'true');
+        title.textContent = heading || `Restock: ${items.length} item${items.length === 1 ? '' : 's'}`;
+        Object.assign(title.style, {
+            alignSelf: 'center',
+            padding: '0 10px',
+            color: '#7fd6a3',
+            fontWeight: 'bold',
+            fontSize: '1.2rem',
+        });
+        container.appendChild(title);
+        tabs.push(title);
+
+        for (const item of items) {
+            // `itemName` rather than `name`: the tab helper reads that field, and
+            // passing the wrong one threw on the first item, leaving the heading
+            // standing alone above no tabs at all
+            try {
+                const tab = createMaterialTab(
+                    {
+                        itemHrid: item.itemHrid,
+                        itemName: item.name,
+                        missing: item.count,
+                        required: item.count,
+                        isTradeable: true,
+                    },
+                    reference,
+                    handlerFor(item)
+                );
+                container.appendChild(tab);
+                tabs.push(tab);
+            } catch (error) {
+                // One unbuildable tab must not cost the rest of the list. Logged
+                // rather than swallowed, because a list that silently arrives short
+                // is indistinguishable from one that had nothing to add.
+                console.error(`[ShoppingList] Could not build a tab for ${item.itemHrid}:`, error);
+            }
+        }
+
+        cleanupObserver?.();
+        cleanupObserver = setupMarketplaceCleanupObserver(clearShoppingList, tabs);
+    }
+
+    /**
+     * The click handler for one tab.
+     *
+     * Built outside the loop so the item it closes over is the tab's own, rather
+     * than whichever the loop finished on.
+     *
+     * @param {Object} item - What that tab buys
+     * @returns {Function}
+     */
+    function handlerFor(item) {
+        return () => {
+            autofill.setQuantity(item.count);
+            navigateToMarketplace(item.itemHrid, 0);
+        };
+    }
+
+    var shoppingList = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        clearShoppingList: clearShoppingList,
+        openShoppingList: openShoppingList
+    });
+
+    /**
+     * Scroll Buff Values
+     * Hardcoded buff definitions for Labyrinth scrolls (formerly "Seals").
+     * The game JSON has no consumableDetail for scroll items — values sourced from item descriptions.
+     */
+
+    const SCROLL_BUFF_VALUES = {
+        '/buff_types/efficiency': 0.14,
+        '/buff_types/gathering': 0.18,
+        '/buff_types/wisdom': 0.2,
+        '/buff_types/action_speed': 0.15,
+        '/buff_types/rare_find': 0.6,
+        '/buff_types/processing': 0.2,
+        '/buff_types/gourmet': 0.16,
+    };
+
+    const SCROLL_BUFF_ITEMS = {
+        '/buff_types/efficiency': 'seal_of_efficiency',
+        '/buff_types/gathering': 'seal_of_gathering',
+        '/buff_types/wisdom': 'seal_of_wisdom',
+        '/buff_types/action_speed': 'seal_of_action_speed',
+        '/buff_types/rare_find': 'seal_of_rare_find',
+        '/buff_types/processing': 'seal_of_processing',
+        '/buff_types/gourmet': 'seal_of_gourmet',
+    };
+
+    const SCROLL_BUFF_LABELS = {
+        '/buff_types/efficiency': 'Scroll of Efficiency (+14%)',
+        '/buff_types/gathering': 'Scroll of Gathering (+18%)',
+        '/buff_types/wisdom': 'Scroll of Wisdom (+20%)',
+        '/buff_types/action_speed': 'Scroll of Action Speed (+15%)',
+        '/buff_types/rare_find': 'Scroll of Rare Find (+60%)',
+        '/buff_types/processing': 'Scroll of Processing (+20%)',
+        '/buff_types/gourmet': 'Scroll of Gourmet (+16%)',
+    };
+
+    var scrollBuffValues = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        SCROLL_BUFF_ITEMS: SCROLL_BUFF_ITEMS,
+        SCROLL_BUFF_LABELS: SCROLL_BUFF_LABELS,
+        SCROLL_BUFF_VALUES: SCROLL_BUFF_VALUES
+    });
+
+    /**
+     * One toast, for the whole script.
+     *
+     * Two of these already existed and neither could be reused: the combat
+     * simulator's is parented to its own panel, so it vanishes with the panel and
+     * cannot say anything about the panel failing to open; the dungeon tracker's is
+     * centred, modal-looking and `pointer-events: none`, so it cannot carry a
+     * button and blocks nothing while it sits over the middle of the game.
+     *
+     * What is taken from each: the tracker's fade-and-remove lifetime and its use of
+     * a real z-index constant rather than a guessed number, and the simulator's
+     * per-kind colouring. What is added is the part both lack — a stack, so a second
+     * message does not overwrite the first, a dismiss control, and an optional
+     * action, because "N features failed to start" is only useful if you can get
+     * from it to which ones.
+     *
+     * It sits one above `PANEL_Z_CAP` so it is over every floating panel, and still
+     * under the game's own MUI modal layer (~1300) so it never covers a dialog the
+     * player is trying to answer.
+     */
+
+
+    /** The stack's container, looked up by id so a stale copy is never orphaned */
+    const TOAST_CONTAINER_ID = 'toolasha-toasts';
+
+    /** Beyond this the oldest is dropped — a stack taller than this is noise */
+    const MAX_TOASTS = 4;
+
+    /** How long the fade before an expiring toast is removed */
+    const FADE_MS = 180;
+
+    /** Default lifetime; `duration: 0` means it stays until dismissed */
+    const DEFAULT_DURATION_MS = 6000;
+
+    const KINDS = {
+        info: { border: 'rgba(74, 158, 255, 0.75)', background: 'rgba(12, 22, 38, 0.97)', text: '#cfe6ff' },
+        warn: { border: 'rgba(255, 152, 0, 0.75)', background: 'rgba(30, 22, 10, 0.97)', text: '#ffcc80' },
+        error: { border: 'rgba(255, 82, 82, 0.8)', background: 'rgba(36, 14, 14, 0.97)', text: '#ff9e9e' },
+    };
+
+    /** Live toasts, oldest first */
+    const active = [];
+
+    /**
+     * The stack container, created on first use.
+     * @returns {HTMLElement} The container element
+     */
+    function getContainer() {
+        const existing = document.getElementById(TOAST_CONTAINER_ID);
+        if (existing) return existing;
+
+        const container = document.createElement('div');
+        container.id = TOAST_CONTAINER_ID;
+        Object.assign(container.style, {
+            position: 'fixed',
+            right: '16px',
+            bottom: '16px',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'flex-end',
+            gap: '8px',
+            // The container spans a column of empty space most of the time; only
+            // the toasts themselves may take clicks
+            pointerEvents: 'none',
+            maxWidth: 'min(420px, 92vw)',
+            zIndex: String(PANEL_Z_CAP + 1),
+        });
+        document.body.appendChild(container);
+        return container;
+    }
+
+    /**
+     * Drop a toast from the stack.
+     * @param {Object} entry - Internal toast record
+     * @param {boolean} animate - Fade it out rather than removing it at once
+     */
+    function remove(entry, animate) {
+        const index = active.indexOf(entry);
+        if (index === -1) return;
+        active.splice(index, 1);
+
+        if (entry.timer) {
+            clearTimeout(entry.timer);
+            entry.timer = null;
+        }
+
+        if (!animate) {
+            entry.element.remove();
+            pruneContainer();
+            return;
+        }
+
+        entry.element.style.transition = `opacity ${FADE_MS}ms ease`;
+        entry.element.style.opacity = '0';
+        setTimeout(() => {
+            entry.element.remove();
+            pruneContainer();
+        }, FADE_MS);
+    }
+
+    /** Take the container away once nothing is in it, so it cannot swallow clicks */
+    function pruneContainer() {
+        const container = document.getElementById(TOAST_CONTAINER_ID);
+        if (container && container.childElementCount === 0) container.remove();
+    }
+
+    /**
+     * Show a message that does not stop what the player is doing.
+     *
+     * @param {string} message - What to say. Plain text; never HTML
+     * @param {Object} [options] - Options
+     * @param {'info'|'warn'|'error'} [options.kind='info'] - Colouring and urgency
+     * @param {number} [options.duration] - Lifetime in ms; `0` stays until dismissed
+     * @param {{label: string, onClick: Function}} [options.action] - Optional follow-up.
+     *   The whole toast becomes clickable when this is given, because a small button
+     *   is a poor target and the message itself is the obvious thing to press
+     * @returns {{element: HTMLElement, dismiss: Function}|null} Handle, or null with no DOM
+     */
+    function showToast(message, { kind = 'info', duration, action } = {}) {
+        if (typeof document === 'undefined' || !document.body) return null;
+
+        const palette = KINDS[kind] || KINDS.info;
+        const lifetime = duration === undefined ? DEFAULT_DURATION_MS : duration;
+
+        const element = document.createElement('div');
+        element.className = `toolasha-toast toolasha-toast-${kind}`;
+        element.setAttribute('role', kind === 'error' ? 'alert' : 'status');
+        element.setAttribute('aria-live', kind === 'error' ? 'assertive' : 'polite');
+        Object.assign(element.style, {
+            pointerEvents: 'auto',
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: '10px',
+            background: palette.background,
+            border: `1px solid ${palette.border}`,
+            borderRadius: '8px',
+            boxShadow: '0 4px 16px rgba(0, 0, 0, 0.5)',
+            padding: '10px 12px',
+            color: palette.text,
+            fontFamily: "'Segoe UI', sans-serif",
+            fontSize: '13px',
+            lineHeight: '1.35',
+            maxWidth: '100%',
+        });
+
+        const body = document.createElement('div');
+        body.style.flex = '1';
+
+        const text = document.createElement('div');
+        text.textContent = message;
+        body.appendChild(text);
+
+        const entry = { element, timer: null };
+
+        if (action && typeof action.onClick === 'function') {
+            const hint = document.createElement('div');
+            hint.className = 'toolasha-toast-action';
+            hint.textContent = action.label || 'Details';
+            Object.assign(hint.style, {
+                marginTop: '4px',
+                fontWeight: '600',
+                textDecoration: 'underline',
+                fontSize: '12px',
+            });
+            body.appendChild(hint);
+
+            element.style.cursor = 'pointer';
+            element.addEventListener('click', (event) => {
+                // The ✕ is inside the toast and must not also trigger the action
+                if (event.target.closest('.toolasha-toast-dismiss')) return;
+                try {
+                    action.onClick();
+                } catch (error) {
+                    console.error('[Toast] Action failed:', error);
+                }
+                remove(entry, false);
+            });
+        }
+
+        const dismissBtn = document.createElement('button');
+        dismissBtn.className = 'toolasha-toast-dismiss';
+        dismissBtn.type = 'button';
+        dismissBtn.textContent = '✕';
+        dismissBtn.title = 'Dismiss';
+        dismissBtn.setAttribute('aria-label', 'Dismiss');
+        Object.assign(dismissBtn.style, {
+            background: 'none',
+            border: 'none',
+            color: 'inherit',
+            cursor: 'pointer',
+            fontSize: '12px',
+            lineHeight: '1',
+            opacity: '0.7',
+            padding: '2px 4px',
+        });
+        dismissBtn.addEventListener('click', (event) => {
+            event.stopPropagation();
+            remove(entry, false);
+        });
+
+        element.appendChild(body);
+        element.appendChild(dismissBtn);
+
+        getContainer().appendChild(element);
+        active.push(entry);
+
+        // Oldest first, so a burst of failures still leaves the newest readable
+        while (active.length > MAX_TOASTS) {
+            remove(active[0], false);
+        }
+
+        if (lifetime > 0) {
+            entry.timer = setTimeout(() => remove(entry, true), lifetime);
+        }
+
+        return { element, dismiss: () => remove(entry, false) };
+    }
+
+    /**
+     * Clear the stack — used on teardown, and by tests.
+     */
+    function dismissAllToasts() {
+        while (active.length) {
+            remove(active[0], false);
+        }
+        pruneContainer();
+    }
+
+    /**
+     * How many toasts are up. Exported for tests rather than for callers.
+     * @returns {number} Live toast count
+     */
+    function activeToastCount() {
+        return active.length;
+    }
+
+    var toast = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        TOAST_CONTAINER_ID: TOAST_CONTAINER_ID,
+        activeToastCount: activeToastCount,
+        dismissAllToasts: dismissAllToasts,
+        showToast: showToast
+    });
+
+    /**
      * Foundation Utils Library
      * All utility modules
      *
@@ -8477,6 +18152,7 @@ self.onmessage = function (e) {
         profitHelpers: profitHelpers$1,
         profitConstants: profitConstants$1,
         dom: dom$1,
+        mobile,
         domObserverHelpers,
         timerRegistry,
         bonusRevenueCalculator,
@@ -8503,6 +18179,39 @@ self.onmessage = function (e) {
         cleanupRegistry,
         houseCostCalculator,
         enhancementCalculator,
+        overlayRows,
+        overlayLayout,
+        overlayFormat,
+        orderBook,
+        combatLevel: combatLevel$1,
+        opanelConfig,
+        skillProgress,
+        skillHistory,
+        abilityBooks,
+        damageAttribution,
+        panelGeometry,
+        choiceDialog,
+        simplePanel,
+        consumableTarget,
+        dropLuck,
+        complexFft,
+        combatDropModel,
+        spawnExpectation,
+        chestTally,
+        floatingPanel,
+        workerPool: workerPool$3,
+        evWorkerManager,
+        enhancementWorkerManager,
+        networthWorkerManager,
+        panelZIndex,
+        performanceMonitor: performanceMonitor$1,
+        gameLookups,
+        itemNavigation,
+        marketplaceTabs,
+        marketplaceAutofill,
+        shoppingList,
+        scrollBuffValues,
+        toast,
     };
 
     console.log('[Toolasha] Utils library loaded');
