@@ -607,13 +607,22 @@ class TreasureTracker {
             overflow: 'hidden',
         });
 
+        const touch = isMobileMode();
         const header = document.createElement('div');
         Object.assign(header.style, {
             display: 'flex',
-            justifyContent: 'space-between',
             alignItems: 'center',
+            // The same treatment the panel's header has, for the same reason:
+            // the title is a chest name and some of them are long, so on a
+            // narrow screen a title pushed against a close button in the flow
+            // is a close button pushed off the end.
+            flexWrap: 'wrap',
             gap: '8px',
             padding: '7px 8px 7px 11px',
+            // Room kept clear on the right for the close button, which sits
+            // outside the flow below
+            paddingRight: `${touch ? CLOSE_GUTTER.touch : CLOSE_GUTTER.pointer}px`,
+            position: 'relative',
             background: COLORS.headerBg,
             borderBottom: `1px solid ${COLORS.border}`,
             cursor: 'move',
@@ -624,7 +633,20 @@ class TreasureTracker {
         title.style.fontWeight = 'bold';
         title.style.color = COLORS.accent;
         header.appendChild(title);
-        header.appendChild(this._headerButton('✕', () => this._removePopup()));
+
+        // Out of the flow entirely and pinned to the popup's top right corner,
+        // so the way out of it is in the same place whatever the title does
+        const closeBtn = this._headerButton('✕', () => this._removePopup());
+        closeBtn.title = 'Close';
+        Object.assign(closeBtn.style, { position: 'absolute', top: '3px', right: '4px' });
+        if (touch) {
+            Object.assign(closeBtn.style, {
+                minWidth: `${TOUCH_TARGET}px`,
+                minHeight: `${TOUCH_TARGET}px`,
+                fontSize: '16px',
+            });
+        }
+        header.appendChild(closeBtn);
         popup.appendChild(header);
 
         const body = document.createElement('div');

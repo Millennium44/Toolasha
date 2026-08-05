@@ -256,6 +256,59 @@ describe('the header on a screen too narrow for it', () => {
     });
 });
 
+describe('the popup’s header is the panel’s header', () => {
+    // The popup is a second header built by a second method, and it got none of
+    // the treatment the panel's did — its ✕ sat in the flow beside a title that
+    // is a chest name, so the fix that pinned one of them left the other one
+    // able to regress in exactly the same way
+    const opening = { opened: 1, ratio: 1.1, actualValue: 45440, items: [] };
+    const lifetime = { opened: 12, ratio: 0.98, actualValue: 500000 };
+    const build = () => treasureTracker._buildPopup('/items/known', opening, lifetime);
+    const header = (popup) => popup.firstChild;
+    const closeButton = (popup) => [...popup.querySelectorAll('button')].find((b) => b.textContent === '✕');
+
+    afterEach(() => {
+        treasureTracker._removePopup();
+        pointer.touch = false;
+    });
+
+    test('the title wraps instead of pushing the close button off the side', () => {
+        expect(header(build()).style.flexWrap).toBe('wrap');
+    });
+
+    test('the close button is out of the flow, pinned to the corner', () => {
+        const popup = build();
+        const close = closeButton(popup);
+
+        expect(close.style.position).toBe('absolute');
+        expect(close.style.right).toBeTruthy();
+        expect(close.style.top).toBeTruthy();
+    });
+
+    test('and nothing flows underneath it', () => {
+        expect(parseFloat(header(build()).style.paddingRight)).toBeGreaterThanOrEqual(28);
+    });
+
+    test('a finger gets something it can hit', () => {
+        pointer.touch = true;
+        const popup = build();
+
+        expect(parseFloat(closeButton(popup).style.minWidth)).toBeGreaterThanOrEqual(32);
+        expect(parseFloat(closeButton(popup).style.minHeight)).toBeGreaterThanOrEqual(32);
+        expect(parseFloat(header(popup).style.paddingRight)).toBeGreaterThanOrEqual(32);
+    });
+
+    test('pressing it takes the popup away', () => {
+        const popup = build();
+        document.body.appendChild(popup);
+        treasureTracker.popup = popup;
+
+        closeButton(popup).click();
+
+        expect(document.getElementById(popup.id)).toBe(null);
+    });
+});
+
 describe('the button in settings', () => {
     afterEach(() => {
         treasureTracker.panel = null;

@@ -56,6 +56,22 @@ export function snap(value, grid = GRID) {
 }
 
 /**
+ * Round up to the next grid step.
+ *
+ * For advancing past something rather than placing something: rounding the far
+ * edge of a tile *down* to the grid puts the next tile back inside it, which is
+ * an overlap of up to a step for every tile whose size is not a multiple of one.
+ *
+ * @param {number} value - Pixels
+ * @param {number} [grid] - Step, or 1 to leave the value alone
+ * @returns {number} Snapped pixels, never less than `value`
+ */
+export function snapUp(value, grid = GRID) {
+    if (!(grid > 1)) return Math.ceil(value);
+    return Math.ceil(value / grid) * grid;
+}
+
+/**
  * Do two tiles cover any of the same ground?
  * @param {{x: number, y: number, width: number, height: number}} a - One tile
  * @param {{x: number, y: number, width: number, height: number}} b - The other
@@ -238,11 +254,15 @@ export function autoGrid(tiles, width, grid = GRID) {
         // Wrapping on the first tile of a line would leave an empty line above it
         if (x > 0 && x + tile.width > width) {
             x = 0;
-            y = snap(y + lineHeight, step);
+            // Up, not to the nearest: a tile 245 wide on a 10 grid ends at 245,
+            // and a nearest-snap advance of 240 would start the next one five
+            // pixels inside it. Rounding up costs at most a step of empty
+            // space and can never overlap.
+            y = snapUp(y + lineHeight, step);
             lineHeight = 0;
         }
         positions.push({ key: tile.key, x, y });
-        x = snap(x + tile.width, step);
+        x = snapUp(x + tile.width, step);
         lineHeight = Math.max(lineHeight, tile.height);
     }
     return positions;

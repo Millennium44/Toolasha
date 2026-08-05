@@ -76,6 +76,7 @@ import {
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { createPanel, panelCard, panelNote } from '../../utils/simple-panel.js';
 import { registerRow } from '../../utils/overlay-rows.js';
+import { roomSkill } from '../../utils/room-skills.js';
 import {
     upgradeCost,
     craftCost,
@@ -529,48 +530,6 @@ export async function watchAbility(abilityHrid, targetLevel, cost = undefined) {
  */
 export async function unwatchAbility(abilityHrid) {
     await removeAbilityGoal(abilityHrid);
-}
-
-/**
- * Which skill's artwork stands for a room.
- *
- * A room is recognised by its skill far faster than by its name — a sword says
- * Dojo before "Dojo" has been read — and the game has artwork for every skill
- * but none for a room. The same association JHouse and the Houses panel make;
- * hardcoded in both because the room detail does not carry the link.
- *
- * A room the game adds and this does not know falls back to its own name, which
- * finds no sprite and draws a spacer: a missing icon rather than a wrong one.
- */
-const ROOM_SKILLS = {
-    dairy_barn: 'milking',
-    garden: 'foraging',
-    log_shed: 'woodcutting',
-    forge: 'cheesesmithing',
-    workshop: 'crafting',
-    sewing_parlor: 'tailoring',
-    kitchen: 'cooking',
-    brewery: 'brewing',
-    laboratory: 'alchemy',
-    observatory: 'enhancing',
-    dining_room: 'stamina',
-    library: 'intelligence',
-    dojo: 'attack',
-    armory: 'defense',
-    gym: 'melee',
-    archery_range: 'ranged',
-    mystical_study: 'magic',
-};
-
-/**
- * @param {string} houseRoomHrid - The room
- * @returns {string} The skill sprite's id
- */
-function roomSkill(houseRoomHrid) {
-    const key = String(houseRoomHrid || '')
-        .split('/')
-        .pop();
-    return ROOM_SKILLS[key] || key;
 }
 
 /**

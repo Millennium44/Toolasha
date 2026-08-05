@@ -7,7 +7,9 @@
  * The costing is `utils/house-cost-calculator.js` — this only asks it a
  * different question. That calculator returns the **cumulative** cost of taking
  * a room from nothing to a level, so the price of the next upgrade alone is the
- * difference between two of its answers rather than anything new.
+ * difference between two of its answers rather than anything new. It prices
+ * materials at the buy side, so the headline upgrade cost is the same figure as
+ * the `ask` shown beside it rather than a third number between the two.
  *
  * The figure is worth having because the alternative is opening each room in
  * turn to see what it wants, and the answer changes with the market rather than
@@ -27,6 +29,7 @@ import { restoreGeometry, saveGeometry, saveOpenState, reopenIfLeftOpen } from '
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { getItemPrice } from '../../utils/market-data.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
+import { roomSkill } from '../../utils/room-skills.js';
 
 /** The game's cap; a room at this level has nothing left to buy */
 const MAX_ROOM_LEVEL = 8;
@@ -49,48 +52,6 @@ const COLORS = {
     tooDear: 'rgba(120, 60, 60, 0.3)',
     maxed: 'rgba(60, 60, 70, 0.35)',
 };
-
-/**
- * The skill each room boosts, which is how its icon is found.
- *
- * A room is recognised by its skill far faster than by its name — a milk bottle
- * says Dairy Barn before "Dairy Barn" has been read — and the game already has
- * artwork for every skill. JHouse makes the same association; this is its map.
- *
- * Hardcoded because the room detail does not carry the link. If a room is added
- * and not listed here it falls back to its own hrid, which finds nothing and
- * draws a spacer — a missing icon rather than a wrong one.
- */
-const ROOM_SKILLS = {
-    dairy_barn: 'milking',
-    garden: 'foraging',
-    log_shed: 'woodcutting',
-    forge: 'cheesesmithing',
-    workshop: 'crafting',
-    sewing_parlor: 'tailoring',
-    kitchen: 'cooking',
-    brewery: 'brewing',
-    laboratory: 'alchemy',
-    observatory: 'enhancing',
-    dining_room: 'stamina',
-    library: 'intelligence',
-    dojo: 'attack',
-    armory: 'defense',
-    gym: 'melee',
-    archery_range: 'ranged',
-    mystical_study: 'magic',
-};
-
-/**
- * @param {string} houseRoomHrid - The room
- * @returns {string} The skill sprite's id
- */
-export function roomSkill(houseRoomHrid) {
-    const key = String(houseRoomHrid || '')
-        .split('/')
-        .pop();
-    return ROOM_SKILLS[key] || key;
-}
 
 /**
  * What one unit of a material costs.
