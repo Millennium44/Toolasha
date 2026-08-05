@@ -53,11 +53,29 @@ export const MAX_SAMPLES = 800;
 
 /**
  * Storage key for a guild's trial record.
+ *
+ * By guild name where it is known, because trial state belongs to the guild and
+ * not to whichever alt happened to look at it — two characters in one guild are
+ * two views of the same trial.
+ *
+ * Before the name is known the key falls back to the **character**, not to a
+ * single shared bucket. That bucket was reported as a data leak and it is
+ * exactly one: switching characters in the same tab left the previous guild's
+ * finished trial on screen — "Guild Points banked 2,880" against a guild whose
+ * own header read 0 — because both characters wrote to and read from
+ * `guildTrials_default`. A per-character fallback cannot collide that way, and
+ * the moment the guild's name arrives the record is merged onto the guild's key
+ * as before.
+ *
  * @param {string|null} guildName - Guild name, or null before it is known
+ * @param {string|number|null} [characterId] - The viewing character, for the fallback key
  * @returns {string} Storage key
  */
-export function guildTrialsStorageKey(guildName) {
-    return `${KEY_PREFIX}_${guildName || 'default'}`;
+export function guildTrialsStorageKey(guildName, characterId = null) {
+    if (guildName) return `${KEY_PREFIX}_${guildName}`;
+    return characterId === null || characterId === undefined
+        ? `${KEY_PREFIX}_default`
+        : `${KEY_PREFIX}_char_${characterId}`;
 }
 
 /**
@@ -259,12 +277,13 @@ export function mergeTrialRecords(base, incoming) {
  * Read a guild's record, discarding one from a previous week.
  * @param {string|null} guildName - Guild name
  * @param {number} [now] - Clock, in ms
+ * @param {string|number|null} [characterId] - The viewing character, for the fallback key
  * @returns {Promise<Object>} The record, or a fresh one
  */
-export async function loadTrialRecord(guildName, now = Date.now()) {
+export async function loadTrialRecord(guildName, now = Date.now(), characterId = null) {
     const weekStart = trialWeekStart(now);
     try {
-        const record = await storage.get(guildTrialsStorageKey(guildName), STORE_NAME, null);
+        const record = await storage.get(guildTrialsStorageKey(guildName, characterId), STORE_NAME, null);
         if (!record || typeof record !== 'object' || record.weekStart !== weekStart) return emptyRecord(weekStart);
         return { weekStart: record.weekStart, tiles: record.tiles || {} };
     } catch (error) {
@@ -277,11 +296,12 @@ export async function loadTrialRecord(guildName, now = Date.now()) {
  * Write a guild's record.
  * @param {string|null} guildName - Guild name
  * @param {Object} record - The record
+ * @param {string|number|null} [characterId] - The viewing character, for the fallback key
  * @returns {Promise<boolean>} True when the write was queued
  */
-export async function saveTrialRecord(guildName, record) {
+export async function saveTrialRecord(guildName, record, characterId = null) {
     try {
-        await storage.set(guildTrialsStorageKey(guildName), record, STORE_NAME);
+        await storage.set(guildTrialsStorageKey(guildName, characterId), record, STORE_NAME);
         return true;
     } catch (error) {
         console.error('[GuildTrialsStore] Failed to save trial samples:', error);
