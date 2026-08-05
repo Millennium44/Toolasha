@@ -78,6 +78,7 @@ import {
 import { describeGuildTokenGold } from './guild-token-value.js';
 import {
     classifyReadings,
+    findTrialClockMs,
     findTrialsRoot,
     matchTrialHrid,
     parseClockMs,
@@ -85,6 +86,7 @@ import {
 } from './guild-trials-scrape.js';
 import {
     loadTrialRecord,
+    mergeTrialRecords,
     readPayoutBonuses,
     recordTileSample,
     saveTrialRecord,
@@ -114,7 +116,8 @@ const WARN = '#f0a830';
  * @param {number|null} [options.timeLeftMs] - Active time left in the trial
  * @returns {{kind: string, tier: number|null, level: number|null, tiersClearedSoFar: number,
  *   rate: number|null, remaining: number|null, total: number|null, etaMs: number|null,
- *   growthPerTier: number|null, next: Object|null, pace: Object|null, samples: number}} Analysis
+ *   growthPerTier: number|null, next: Object|null, pace: Object|null, samples: number,
+ *   timeLeftMs: number|null}} Analysis
  */
 export function analyseTrial(record, { participants = 0, timeLeftMs = null } = {}) {
     const samples = Array.isArray(record?.samples) ? record.samples : [];
@@ -140,6 +143,10 @@ export function analyseTrial(record, { participants = 0, timeLeftMs = null } = {
         next: null,
         pace: null,
         samples: samples.length,
+        // Carried through so the block can tell "no pace because no clock" from
+        // "no pace because no rate yet" — they read identically on screen and
+        // only one of them is something the player can do anything about
+        timeLeftMs: Number.isFinite(timeLeftMs) ? timeLeftMs : null,
     };
 
     if (index === null) return base;
@@ -280,6 +287,20 @@ export function renderTrialBlock(analysis, participants) {
         );
     }
 
+    if (!analysis.pace && analysis.timeLeftMs === null) {
+        // Silently omitting the row was indistinguishable from the feature not
+        // having this idea at all
+        rows.push(
+            line(
+                'On pace for',
+                'no clock visible',
+                DIM,
+                'A pace needs the time left in the trial, and no countdown was found on this tab. ' +
+                    'The game draws one while a trial is in progress — open the trial tab while it is running.'
+            )
+        );
+    }
+
     if (analysis.pace) {
         const projected = analysis.pace.tiersCleared;
         const finalTier = analysis.pace.finalTier ?? analysis.tier;
@@ -332,7 +353,10 @@ class GuildTrials {
         this.unregister = [];
         this.timers = createTimerRegistry();
         this.record = null;
+        /** The name the record is currently keyed by; null means the `default` key */
         this.guildName = null;
+        /** Guards the one-shot adoption below against a second render starting it again */
+        this.adopting = false;
     }
 
     async initialize() {
@@ -342,17 +366,17 @@ class GuildTrials {
         this.guildName = guildXPTracker.getOwnGuildName?.() || null;
         this.record = await loadTrialRecord(this.guildName);
 
-        // Three class names rather than one. The tab's own container is
-        // unverified, so `GuildPanel_tileSummary` — which is verified, and which
-        // every trial card carries — is watched as well: whatever the tab is
-        // called, a trial card appearing is a reason to look.
+        // Any guild panel node at all, rather than a list of guesses at what the
+        // two trial tabs are called. The In Progress tab's card carries neither
+        // a tile summary nor a level, so there is no narrower class this could
+        // wait for without being wrong about one of the two tabs again — and
+        // `findTrialsRoot` costs two `querySelector`s to answer "not this tab".
+        // Debounced, so React's render burst is one call rather than hundreds.
         this.unregister.push(
-            domObserver.onClass(
-                'GuildTrials',
-                ['GuildPanel_trialsContent', 'GuildPanel_trialsTab', 'GuildPanel_tileSummary'],
-                () => this._onTab(findTrialsRoot()),
-                { debounce: true, debounceDelay: 100 }
-            )
+            domObserver.onClass('GuildTrials', 'GuildPanel_', () => this._onTab(findTrialsRoot()), {
+                debounce: true,
+                debounceDelay: 100,
+            })
         );
 
         this._refresh = () => this._render(findTrialsRoot());
@@ -384,6 +408,41 @@ class GuildTrials {
     }
 
     /**
+     * Move the record onto the real guild's key, once the guild is known.
+     *
+     * The key is resolved lazily rather than at startup because at startup it is
+     * not knowable: `guildXPTracker` learns the guild name from socket traffic
+     * that has not arrived when features initialise, so every session began by
+     * writing its samples to `guildTrials_default` and never revisiting the
+     * question. Two guilds' worth of an alt's browsing went into the same bucket,
+     * and the correctly-keyed record from the last session was never read.
+     *
+     * Absorbing rather than replacing: whatever is stored under the real name is
+     * merged with what this session has already collected under `default`, so no
+     * reading is stranded in either direction. The `default` entry is left where
+     * it is — it costs nothing, and deleting the only other copy of a record on
+     * the strength of a name that has just arrived is not a trade worth making.
+     *
+     * @returns {Promise<void>}
+     */
+    async _adoptGuildName() {
+        const name = guildXPTracker.getOwnGuildName?.() || null;
+        if (!name || name === this.guildName || this.adopting) return;
+
+        this.adopting = true;
+        try {
+            const stored = await loadTrialRecord(name);
+            this.record = mergeTrialRecords(stored, this.record);
+            this.guildName = name;
+            await saveTrialRecord(name, this.record);
+        } catch (error) {
+            console.error('[GuildTrials] Moving the record onto the guild key failed:', error);
+        } finally {
+            this.adopting = false;
+        }
+    }
+
+    /**
      * Take a reading and redraw.
      * @param {Element|null} root - The trials content element
      */
@@ -398,15 +457,21 @@ class GuildTrials {
                 this.record = { weekStart, tiles: {} };
             }
 
-            // A card with no bar on it is not a trial in progress — it is the
-            // sign-up dialog's card, or a tier that has not opened. That matters
-            // more now the root can be a whole guild panel rather than the tab:
-            // recording one would put a trial with no readings into the record,
-            // and the overlay tile would then report it as the newest thing seen
-            // and sit at "measuring…" forever with nothing behind it.
-            const tiles = readTrialTiles(root).filter((tile) => tile.readings.length > 0);
+            // Every card on either tab, bar or no bar. A Trials card carries the
+            // tier, the points and the sign-ups; the In Progress card carries the
+            // reading; `recordTileSample` takes a sample only from the one that
+            // has something moving on it, and both write the identity of the same
+            // trial under the same key.
+            const tiles = readTrialTiles(root);
             for (const tile of tiles) this.record = recordTileSample(this.record, tile, now);
             if (tiles.length) saveTrialRecord(this.guildName, this.record);
+
+            // Asked again on every render rather than once at startup: the guild
+            // name arrives on socket traffic, which is usually later than this
+            // feature's initialisation. Not awaited — the drawing below does not
+            // depend on which key the record is stored under, and a render that
+            // waited on storage would drop a frame of the tab every time.
+            this._adoptGuildName().catch(() => {});
 
             root.querySelectorAll(`.${CSS_CLASS}`).forEach((el) => el.remove());
             if (!tiles.length) return;
@@ -419,8 +484,11 @@ class GuildTrials {
                 const record = this.record.tiles[tileKey(tile)];
                 if (!record) continue;
 
+                // The card's own "1/28 signed up" beats the socket count where
+                // it exists: it is the number the game is showing the player,
+                // and it needs no name-to-hrid match to be believed
                 const hrid = matchTrialHrid(tile.name, Object.keys(counts));
-                const participants = hrid ? counts[hrid] : 0;
+                const participants = record.signups?.signed ?? (hrid ? counts[hrid] : 0);
                 const analysis = analyseTrial(record, { participants, timeLeftMs });
 
                 trialsForPayout.push({
@@ -453,6 +521,11 @@ class GuildTrials {
      * it" would be wrong for every player who opened the tab late, which is most
      * of them — so without a clock on screen there is no pace projection at all.
      *
+     * The named status row is tried first and is no longer required: it is as
+     * unverified as the tab container was, and it was the only source of a time
+     * left, so a wrong guess about it took "On pace for" off the screen with
+     * nothing said. {@link findTrialClockMs} looks for the clock instead.
+     *
      * @param {Element} root - The trials content element
      * @returns {number|null} Milliseconds, or null when the tab shows no clock
      */
@@ -461,8 +534,7 @@ class GuildTrials {
         const fromStatus = parseClockMs(statusRow?.textContent || '');
         if (fromStatus !== null) return Math.min(fromStatus, TRIAL_ACTIVE_MS);
 
-        const fromTab = parseClockMs(root.textContent || '');
-        return fromTab === null ? null : Math.min(fromTab, TRIAL_ACTIVE_MS);
+        return findTrialClockMs(root, TRIAL_ACTIVE_MS);
     }
 
     /**

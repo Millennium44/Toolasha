@@ -5,10 +5,12 @@
  *
  * ## The tile has to admit it is not live
  *
- * Everything the trial feature knows is scraped off the guild panel's In
- * Progress tab. There is no socket message carrying a trial's progress bar, so
- * the readings stop the moment that tab is closed, and the record on disk is a
- * photograph of whenever you last looked at it. A tile that drew those figures
+ * Everything the trial feature knows is scraped off the guild page, and the
+ * reading this tile is built on — the pool filling — is on the **In Progress**
+ * tab specifically, not the Trials tab beside it (the Trials tab has the tiers
+ * and the sign-ups and no bar at all). There is no socket message carrying
+ * either, so the readings stop the moment that tab is closed, and the record on
+ * disk is a photograph of whenever you last looked at it. A tile that drew those figures
  * with no date on them would be a tile that says a trial is 40% through when it
  * finished two hours ago — the single most misleading thing this overlay could
  * do, because the numbers themselves are perfectly correct.
@@ -30,7 +32,7 @@
  *
  * ## Why there is nothing to open
  *
- * The detail behind this tile is the guild panel's own In Progress tab, which
+ * The detail behind this tile is the guild page's own In Progress tab, which
  * is a page of the game rather than a panel of this script — there is no
  * `toggle()` that could reach it, and navigating the player somewhere on a
  * double-click is not what any other tile does. The tooltip says where to go
@@ -85,7 +87,7 @@ export function latestTrialTile(record = guildTrials?.record) {
 registerRow({
     key: 'guildTrialsPace',
     name: 'Guild Trials',
-    empty: 'Open the guild Trials tab once',
+    empty: 'Open the guild In Progress tab',
     defaultVisible: false,
     defaultSize: { width: 220, height: 30 },
     render: (container) => {
@@ -134,7 +136,8 @@ registerRow({
                   : analysis.etaMs === null
                     ? 'Not enough movement was seen to measure a rate.'
                     : `At the rate last measured, this tier clears in ${shortDuration(analysis.etaMs / 1000)}.`) +
-            `\nRead ${shortDuration(ageSeconds)} ago — open the guild In Progress tab to refresh.`;
+            `\nRead ${shortDuration(ageSeconds)} ago — open the guild In Progress tab to refresh ` +
+            '(the Trials tab beside it has the tiers and sign-ups; the pool bar is only on In Progress).';
     },
     // No onOpen: the detail behind this is a page of the game, not a panel
 });

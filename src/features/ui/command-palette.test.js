@@ -486,17 +486,18 @@ describe('the Guild Trials entry', () => {
         const panel = document.createElement('div');
         panel.className = 'GuildPanel_guildPanel__a';
 
-        const members = document.createElement('div');
-        members.className = 'TabsComponent_tab__b';
-        members.textContent = 'Members';
-        members.addEventListener('click', () => clicks.push('members'));
+        // The live guild page has both, in this order, and they are different
+        // pages: Trials is the sign-up sheet, In Progress is where the pool bar
+        // and the pace figures are
+        const tab = (label) => {
+            const el = document.createElement('div');
+            el.className = 'TabsComponent_tab__b';
+            el.textContent = label;
+            el.addEventListener('click', () => clicks.push(label.toLowerCase()));
+            return el;
+        };
 
-        const trials = document.createElement('div');
-        trials.className = 'TabsComponent_tab__b';
-        trials.textContent = 'Trials';
-        trials.addEventListener('click', () => clicks.push('trials'));
-
-        panel.append(members, trials);
+        panel.append(tab('Members'), tab('Trials'), tab('In Progress'));
 
         let block = null;
         if (withBlock) {
@@ -524,7 +525,8 @@ describe('the Guild Trials entry', () => {
 
         expect(await openGuildTrials()).toBe(true);
 
-        expect(dom.clicks).toEqual(['guild', 'trials']);
+        // In Progress, not Trials: the Trials tab cannot produce a reading
+        expect(dom.clicks).toEqual(['guild', 'in progress']);
         expect(dom.block.dataset.toolashaFlash).toBe('on');
         expect(dom.block.scrollIntoView).toHaveBeenCalled();
     });
@@ -543,8 +545,9 @@ describe('the Guild Trials entry', () => {
             vi.useRealTimers();
         }
 
-        expect(dom.clicks).toEqual(['guild', 'trials']);
+        expect(dom.clicks).toEqual(['guild', 'in progress']);
         expect(toasts.said.join(' ')).toContain('No trial figures yet');
+        expect(toasts.said.join(' ')).toContain('In Progress tab');
     });
 
     test('a guild page that never appears is reported, not thrown', async () => {
@@ -558,5 +561,33 @@ describe('the Guild Trials entry', () => {
         }
 
         expect(toasts.said.join(' ')).toContain('Could not open the guild page');
+    });
+});
+
+describe('the Guild Trials entry, on a page with both tabs', () => {
+    test('falls back to the Trials tab when the game has no In Progress one', async () => {
+        // Older clients, and any future rename: the entry should still land
+        // somewhere useful rather than nowhere
+        const clicks = [];
+        const link = document.createElement('a');
+        link.className = 'NavigationBar_minorNavigationLink__xyz';
+        link.textContent = 'Guild';
+        link.addEventListener('click', () => clicks.push('guild'));
+        document.body.appendChild(link);
+
+        const panel = document.createElement('div');
+        panel.className = 'GuildPanel_guildPanel__a';
+        const trials = document.createElement('div');
+        trials.className = 'TabsComponent_tab__b';
+        trials.textContent = 'Trials';
+        trials.addEventListener('click', () => clicks.push('trials'));
+        const block = document.createElement('div');
+        block.className = 'mwi-trial-info';
+        block.scrollIntoView = vi.fn();
+        panel.append(trials, block);
+        document.body.appendChild(panel);
+
+        expect(await openGuildTrials()).toBe(true);
+        expect(clicks).toEqual(['guild', 'trials']);
     });
 });

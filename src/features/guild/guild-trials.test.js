@@ -380,7 +380,7 @@ describe('the panel, end to end', () => {
 
     // The callback takes no element: it finds the root itself, so that a tab
     // whose container is called something else is still read
-    const fire = () => game.observers['GuildPanel_tileSummary']();
+    const fire = () => game.observers['GuildPanel_']();
     const text = () => document.body.textContent;
 
     beforeEach(async () => {
@@ -425,16 +425,18 @@ describe('the panel, end to end', () => {
         expect(text()).toContain('Trial payout');
     });
 
-    test('a card with no progress bar is not recorded as a trial in progress', () => {
-        // The sign-up dialog draws trial cards too, and the root can now be a
-        // whole guild panel. A card with nothing to measure must not reach the
-        // record, or the overlay tile reports it as the newest reading there is.
+    test('a card with no progress bar is identity, not a reading', () => {
+        // The Trials tab's cards carry the tier and the sign-ups and no bar at
+        // all. They are worth recording and must not push a sample: a sample
+        // with no readings in it puts a hole in the series a rate is fitted to.
         const root = buildTab([{ name: 'Trial Chameleon', level: 140, bar: '618,000 / 618,000' }]);
         root.querySelector('[class*="ProgressBar_text"]').textContent = 'Sign up';
         fire();
 
-        expect(document.querySelectorAll('.mwi-trial-info')).toHaveLength(0);
-        expect(text()).not.toContain('Trial payout');
+        const record = guildTrials.record.tiles['combat::trial chameleon'];
+        expect(record.tier).toBe(5);
+        expect(record.samples).toHaveLength(0);
+        expect(text()).toContain('Trial payout');
     });
 
     test('the payout block sits above the cards when there is no status row to hang it on', () => {
@@ -568,5 +570,230 @@ describe('the panel, end to end', () => {
 
         expect(game.observers['GuildPanel_trialsContent']).toBeUndefined();
         expect(guildTrials.initialized).toBe(false);
+    });
+});
+
+/**
+ * The two tabs as the live client actually draws them.
+ *
+ * Transcribed from screenshots of a running trial, which is the only reason this
+ * file knows any of it. The shapes matter more than the exact strings: the
+ * Trials tab has cards with no progress bar and the In Progress tab has a bar
+ * with no level, so anything that requires both on one card records nothing on
+ * either tab — which is what shipped, twice.
+ */
+describe('the two trial tabs, as the game draws them', () => {
+    /**
+     * The Trials tab: the setup cards, their sign-ups, and a countdown.
+     * @returns {Element} The guild panel
+     */
+    function buildTrialsTab() {
+        document.body.innerHTML = '';
+        const panel = document.createElement('div');
+        panel.className = 'GuildPanel_guildPanel__root';
+        panel.innerHTML = `
+            <div class="GuildPanel_header__h">Skilling Trial - In Progress Thu 09:00 AM</div>
+            <div class="GuildPanel_setTime__s">Set Time</div>
+            <div class="GuildPanel_tile__a">
+                <div class="GuildPanel_tileName__n">Milking</div>
+                <div class="GuildPanel_tileSummary__s">Lv.130<span class="mwi-trial-tier">T4</span></div>
+                <div class="GuildPanel_points__p">600 pts</div>
+                <div class="GuildPanel_signups__u">1/28 signed up</div>
+                <div class="GuildPanel_clock__c">20m 53s</div>
+            </div>
+            <div class="GuildPanel_tile__b">
+                <div class="GuildPanel_tileName__n">Foraging</div>
+                <div class="GuildPanel_points__p">0 pts</div>
+                <div class="GuildPanel_signups__u">0/28 signed up</div>
+            </div>
+            <div class="GuildPanel_tile__c">
+                <div class="GuildPanel_tileName__n">Alchemy</div>
+                <div class="GuildPanel_tileSummary__s">Lv.150<span class="mwi-trial-tier">T6</span></div>
+                <div class="GuildPanel_points__p">840 pts</div>
+                <div class="GuildPanel_signups__u">2/28 signed up</div>
+                <div class="GuildPanel_clock__c">20m 53s</div>
+            </div>
+            <div class="GuildPanel_tile__d">
+                <div class="GuildPanel_tileName__n">Trial Chameleon</div>
+                <div class="GuildPanel_points__p">0 pts</div>
+                <div class="GuildPanel_signups__u">Signed Up 3/56</div>
+            </div>`;
+        document.body.appendChild(panel);
+        return panel;
+    }
+
+    /**
+     * The In Progress tab: one card with the pool reading, and the footer.
+     * @param {string} [reading] - What the bar says
+     * @returns {Element} The guild panel
+     */
+    function buildInProgressTab(reading = '18,850 / 65,280') {
+        document.body.innerHTML = '';
+        const panel = document.createElement('div');
+        panel.className = 'GuildPanel_guildPanel__root';
+        panel.innerHTML = `
+            <div class="GuildPanel_card__a">
+                <div class="GuildPanel_cardName__n">Alchemy</div>
+                <div class="ProgressBar_text__t">${reading}</div>
+            </div>
+            <div class="GuildPanel_member__m"><div>MillenniumTest</div><div>Working</div></div>
+            <div class="GuildPanel_footer__f">
+                <div>Work Power 229</div>
+                <div>Work Time 3.14s</div>
+                <div>Success Rate 60.8%</div>
+                <div>Time: 20m 37s</div>
+            </div>`;
+        document.body.appendChild(panel);
+        return panel;
+    }
+
+    const fire = () => game.observers['GuildPanel_']();
+
+    beforeEach(async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(now);
+        game.settings = { guildTrialsInfo: true };
+        game.settingValues = {};
+        game.clientData = {};
+        game.prices = {};
+        game.buildingLevels = {};
+        game.store = {};
+        game.members = [];
+        guildTrials.record = null;
+        guildTrials.guildName = null;
+        await trialsFeature.initialize();
+    });
+
+    afterEach(() => {
+        trialsFeature.cleanup();
+        vi.useRealTimers();
+        document.body.innerHTML = '';
+    });
+
+    test('the Trials tab gives the tier, the points and the sign-ups, and no samples', () => {
+        buildTrialsTab();
+        fire();
+
+        const milking = guildTrials.record.tiles['skilling::milking'];
+        expect(milking).toMatchObject({ level: 130, tier: 4, points: 600 });
+        expect(milking.signups).toEqual({ signed: 1, total: 28 });
+        // Nothing on this tab moves, so nothing here is a reading
+        expect(milking.samples).toHaveLength(0);
+    });
+
+    test('the tier survives this script having written a badge into the level line', () => {
+        // `guild-credit-value.js` appends `T4` inside the very element holding
+        // "Lv.130", and a leaf-element text walk drops any element that has
+        // acquired a child — so the level vanished from every card the moment
+        // this script annotated it
+        buildTrialsTab();
+        fire();
+
+        expect(guildTrials.record.tiles['skilling::alchemy'].tier).toBe(6);
+    });
+
+    test('a sign-up ratio is never sampled as a progress bar', () => {
+        // "1/28 signed up" and "Signed Up 3/56" have exactly the shape of a
+        // reading, and a pool that fills and empties as members join would be
+        // measured as a rate
+        buildTrialsTab();
+        fire();
+
+        for (const tile of Object.values(guildTrials.record.tiles)) {
+            expect(tile.samples).toHaveLength(0);
+        }
+    });
+
+    test('a combat card written "Signed Up 3/56" is read the other way round too', () => {
+        buildTrialsTab();
+        fire();
+
+        expect(guildTrials.record.tiles['combat::trial chameleon'].signups).toEqual({ signed: 3, total: 56 });
+    });
+
+    test('the In Progress tab gives the reading, from a card with no level on it', () => {
+        buildInProgressTab();
+        fire();
+
+        const alchemy = guildTrials.record.tiles['skilling::alchemy'];
+        expect(alchemy.samples).toHaveLength(1);
+        expect(alchemy.samples[0].readings).toEqual([{ current: 18_850, max: 65_280 }]);
+    });
+
+    test('neither the members nor the footer is mistaken for a trial', () => {
+        buildInProgressTab();
+        fire();
+
+        expect(Object.keys(guildTrials.record.tiles)).toEqual(['skilling::alchemy']);
+    });
+
+    test('the two tabs join into one trial: tier from Trials, rate from In Progress', () => {
+        // The whole point. Neither tab is sufficient and the name is the join.
+        buildTrialsTab();
+        fire();
+
+        buildInProgressTab('18,850 / 65,280');
+        fire();
+
+        vi.setSystemTime(now + 60_000);
+        buildInProgressTab('28,850 / 65,280');
+        fire();
+
+        const alchemy = guildTrials.record.tiles['skilling::alchemy'];
+        expect(alchemy.tier).toBe(6);
+        expect(alchemy.samples).toHaveLength(2);
+
+        const analysis = analyseTrial(alchemy, { timeLeftMs: 20 * 60_000 });
+        expect(analysis.rate).toBeCloseTo(10_000 / 60_000, 9);
+        expect(analysis.tiersClearedSoFar).toBe(5);
+    });
+
+    test('the countdown is read off either tab, and the footer stats are not clocks', () => {
+        // "Work Time 3.14s" is a decimal, "Success Rate 60.8%" is a percentage,
+        // and "Thu 09:00 AM" is a time of day that reads as nine minutes
+        buildInProgressTab();
+        fire();
+        expect(guildTrials._timeLeftMs(document.querySelector('[class*="GuildPanel"]'))).toBe(20 * 60_000 + 37_000);
+
+        buildTrialsTab();
+        expect(guildTrials._timeLeftMs(document.querySelector('[class*="GuildPanel"]'))).toBe(20 * 60_000 + 53_000);
+    });
+
+    test('the pace block appears once a rate and a clock are both in hand', () => {
+        buildTrialsTab();
+        fire();
+        buildInProgressTab('18,850 / 65,280');
+        fire();
+        vi.setSystemTime(now + 60_000);
+        buildInProgressTab('28,850 / 65,280');
+        fire();
+
+        expect(document.body.textContent).toContain('On pace for');
+        expect(document.body.textContent).not.toContain('no clock visible');
+    });
+
+    test('a tier observation needs both tabs, and is recorded from both', () => {
+        // The total comes off the In Progress bar and the tier off the Trials
+        // card. Requiring one card to carry both means the growth curve is never
+        // fitted and "Next tier work" never appears.
+        buildTrialsTab();
+        fire();
+        buildInProgressTab();
+        fire();
+
+        expect(guildTrials.record.tiles['skilling::alchemy'].tiers).toContainEqual({ tier: 6, total: 65_280 });
+    });
+
+    test('the sign-up count off the card is what the panel counts as participants', () => {
+        buildTrialsTab();
+        fire();
+        buildInProgressTab();
+        fire();
+
+        // Two members signed up for Alchemy on the Trials tab, and no socket
+        // sign-up traffic has been seen at all — the old count would be zero
+        expect(participantCounts()).toEqual({});
+        expect(guildTrials.record.tiles['skilling::alchemy'].signups.signed).toBe(2);
+        expect(document.body.textContent).toContain('Trial payout');
     });
 });

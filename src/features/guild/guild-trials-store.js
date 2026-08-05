@@ -95,6 +95,15 @@ export function tileKey(tile) {
  * several times for one React render and a zero-span pair reads as an infinite
  * rate.
  *
+ * **A card with nothing moving on it updates the identity and adds no sample.**
+ * That is what makes the two trial tabs add up. The Trials tab's card carries
+ * the level, the tier, what the trial is worth and how many members signed up,
+ * and no progress bar at all; the In Progress tab's card carries the reading and
+ * neither a level nor a tier. Both write here under the same key, and a sample
+ * with an empty `readings` array would be worse than useless — `ratePerMs` would
+ * fit a rate across a series with holes in it, and the overlay tile would report
+ * a trial as freshly read when all that was seen was its sign-up sheet.
+ *
  * @param {Object} record - Existing record (not mutated)
  * @param {Object} tile - A tile from `readTrialTiles`
  * @param {number} at - Sample time, in ms
@@ -106,16 +115,23 @@ export function recordTileSample(record, tile, at) {
     const key = tileKey(tile);
     const existing = tiles[key] || { name: tile?.name || '', kind: tile?.kind || 'skilling', samples: [], tiers: [] };
 
+    const readings = tile?.readings || [];
     const samples = existing.samples.filter((sample) => sample?.t !== at);
-    samples.push({ t: at, readings: (tile?.readings || []).map((reading) => ({ ...reading })) });
+    if (readings.length) samples.push({ t: at, readings: readings.map((reading) => ({ ...reading })) });
     samples.sort((a, b) => a.t - b.t);
 
+    // The tier the reading belongs to may have come from the *other* tab: the In
+    // Progress card carries a total and no tier, the Trials card carries a tier
+    // and no total, and a tier observation needs both. Taking the tier already
+    // on the record is what lets the growth curve be fitted at all — requiring
+    // one card to carry both means no observation is ever recorded.
+    const tier = Number.isFinite(tile?.tier) ? tile.tier : existing.tier;
     const tiers = [...(existing.tiers || [])];
-    if (Number.isFinite(tile?.tier)) {
-        for (const reading of tile?.readings || []) {
+    if (Number.isFinite(tier)) {
+        for (const reading of readings) {
             if (!(reading.max > 0)) continue;
-            const seen = tiers.find((entry) => entry.tier === tile.tier && entry.total === reading.max);
-            if (!seen) tiers.push({ tier: tile.tier, total: reading.max });
+            const seen = tiers.find((entry) => entry.tier === tier && entry.total === reading.max);
+            if (!seen) tiers.push({ tier, total: reading.max });
         }
     }
 
@@ -124,11 +140,85 @@ export function recordTileSample(record, tile, at) {
         kind: tile?.kind || existing.kind,
         level: Number.isFinite(tile?.level) ? tile.level : existing.level,
         tier: Number.isFinite(tile?.tier) ? tile.tier : existing.tier,
+        // Both come off the Trials tab and are absent from the In Progress one,
+        // so a card that does not carry them must not erase what the other tab
+        // already said
+        points: Number.isFinite(tile?.points) ? tile.points : existing.points,
+        signups: tile?.signups || existing.signups || null,
         samples: samples.slice(-MAX_SAMPLES),
         tiers,
     };
 
     return { weekStart, tiles };
+}
+
+/**
+ * Fold two records for the same week into one.
+ *
+ * Needed because the guild's name arrives *after* this feature starts. The
+ * record is keyed by guild name following the `guildXP_<name>` precedent, but
+ * `guildXPTracker` has usually not seen the guild yet when the trials feature
+ * initialises, so the first samples of a session are written under `default`.
+ * When the real name turns up there are then two records — this session's under
+ * `default` and previous sessions' under the name — and picking either one
+ * throws away readings that were correctly taken. So they are merged.
+ *
+ * Samples are unioned by timestamp, which is exactly right: two records of the
+ * same trial are two views of one series, a repeated timestamp is the same
+ * observation seen twice, and `ratePerMs` wants them in order. Records from
+ * different weeks are not merged at all — the newer week wins whole, because
+ * last week's trials are a different ladder and splicing them together would
+ * fit a growth curve across both.
+ *
+ * @param {Object|null} base - The stored record
+ * @param {Object|null} incoming - The record in hand
+ * @returns {Object} One record
+ */
+export function mergeTrialRecords(base, incoming) {
+    const baseWeek = Number.isFinite(base?.weekStart) ? base.weekStart : null;
+    const incomingWeek = Number.isFinite(incoming?.weekStart) ? incoming.weekStart : null;
+
+    if (baseWeek === null) return incoming ? { weekStart: incomingWeek, tiles: incoming.tiles || {} } : emptyRecord(0);
+    if (incomingWeek === null) return { weekStart: baseWeek, tiles: base.tiles || {} };
+    if (baseWeek !== incomingWeek) {
+        const newer = baseWeek > incomingWeek ? base : incoming;
+        return { weekStart: newer.weekStart, tiles: newer.tiles || {} };
+    }
+
+    const tiles = { ...(base.tiles || {}) };
+    for (const [key, tile] of Object.entries(incoming.tiles || {})) {
+        const existing = tiles[key];
+        if (!existing) {
+            tiles[key] = tile;
+            continue;
+        }
+
+        const byTime = new Map();
+        for (const sample of [...(existing.samples || []), ...(tile.samples || [])]) {
+            if (Number.isFinite(sample?.t)) byTime.set(sample.t, sample);
+        }
+        const samples = [...byTime.values()].sort((a, b) => a.t - b.t).slice(-MAX_SAMPLES);
+
+        const tiers = [...(existing.tiers || [])];
+        for (const entry of tile.tiers || []) {
+            if (!tiers.some((seen) => seen.tier === entry.tier && seen.total === entry.total)) tiers.push(entry);
+        }
+
+        // The newer record's identity wins: a tile that has moved on a tier is
+        // describing the trial as it is now
+        const newest = (record) => record.samples?.[record.samples.length - 1]?.t ?? 0;
+        const fresher = newest(tile) >= newest(existing) ? tile : existing;
+        tiles[key] = {
+            name: fresher.name || existing.name,
+            kind: fresher.kind || existing.kind,
+            level: Number.isFinite(fresher.level) ? fresher.level : existing.level,
+            tier: Number.isFinite(fresher.tier) ? fresher.tier : existing.tier,
+            samples,
+            tiers,
+        };
+    }
+
+    return { weekStart: baseWeek, tiles };
 }
 
 /**
