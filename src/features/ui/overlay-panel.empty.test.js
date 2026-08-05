@@ -61,7 +61,7 @@ vi.mock('../../utils/overlay-rows.js', async (importActual) => ({
 }));
 
 const overlayPanel = (await import('./overlay-panel.js')).default;
-const { CURATED_ROWS, TILE_CLASS, EMPTY_POLICY, emptyPolicyFor, compactLabel } =
+const { CURATED_ROWS, TILE_CLASS, EMPTY_POLICY, emptyPolicyFor, compactLabel, waitingLine, emptyContract } =
     await import('../../utils/overlay-rows.js');
 
 /**
@@ -114,6 +114,7 @@ beforeEach(() => {
     game.rows = [];
     document.body.replaceChildren();
     overlayPanel.isInitialized = false;
+    overlayPanel.justEnabled.clear();
 });
 
 afterEach(() => {
@@ -375,6 +376,146 @@ describe('the empty-tiles setting', () => {
     });
 });
 
+describe('switching a tile on by hand', () => {
+    /**
+     * Open with a hidden-by-default measurement row switched off, plus one live
+     * row so the panel is not empty.
+     * @param {Array<Object>} [rows] - Rows to register
+     */
+    async function openWithOffRow(rows) {
+        game.rows = rows || [
+            row('guildTrialsPace', { name: 'Guild Trials', empty: 'Open the guild Trials tab once' }),
+            row('coins', { name: 'Coins', text: '1,024' }),
+        ];
+        saved.read = {
+            visible: { guildTrialsPace: false, coins: true },
+            order: game.rows.map((entry) => entry.key),
+            locked: true,
+        };
+        await overlayPanel.initialize();
+        overlayPanel.show();
+        overlayPanel.pickerEl.style.display = '';
+        overlayPanel._renderPicker();
+    }
+
+    /**
+     * Tick or untick a row's box in the ⚙ list, the way a player does.
+     * @param {string} key - Row key
+     * @param {boolean} on - Whether to switch it on
+     */
+    function tick(key, on) {
+        const box = overlayPanel.pickerEl.querySelector(`[data-overlay-row-chip="${key}"] input`);
+        box.checked = on;
+        box.dispatchEvent(new Event('change'));
+    }
+
+    test('answers the gesture: the tile appears, dim, saying what it waits for', async () => {
+        // The bug as reported — "clicking it on doesn't add anything to the
+        // overlay". Under the passive policy this row is hide-until-data, and
+        // hide-until-data is indistinguishable from broken when it is the
+        // response to a click.
+        await openWithOffRow();
+        expect(shown()).toEqual(['coins']);
+
+        tick('guildTrialsPace', true);
+
+        expect(shown()).toEqual(['coins', 'guildTrialsPace']);
+        const content = tiles().get('guildTrialsPace')._content.textContent;
+        expect(content).toContain('Guild Trials');
+        expect(content).toContain('waiting for data');
+        expect(content).toContain('Open the guild Trials tab once');
+    });
+
+    test('and keeps saying it, refresh after refresh, until there is data', async () => {
+        await openWithOffRow();
+        tick('guildTrialsPace', true);
+
+        overlayPanel.refresh();
+        overlayPanel.refresh();
+
+        expect(shown()).toContain('guildTrialsPace');
+    });
+
+    test('the moment it has something real to say, it says that instead', async () => {
+        await openWithOffRow();
+        tick('guildTrialsPace', true);
+
+        game.rows[0].render = (el) => (el.textContent = 'T7 · 4m');
+        overlayPanel.refresh();
+
+        expect(tiles().get('guildTrialsPace')._content.textContent).toBe('T7 · 4m');
+        expect(overlayPanel.justEnabled.has('guildTrialsPace')).toBe(false);
+    });
+
+    test('and having been seen to work, it goes back to standing down when it empties', async () => {
+        // The acknowledgment is owed once. A tile that has proved itself may
+        // hide again, which is the decluttering this policy exists for.
+        await openWithOffRow();
+        tick('guildTrialsPace', true);
+
+        game.rows[0].render = (el) => (el.textContent = 'T7 · 4m');
+        overlayPanel.refresh();
+        game.rows[0].render = (el) => el.replaceChildren();
+        overlayPanel.refresh();
+
+        expect(shown()).toEqual(['coins']);
+    });
+
+    test('switching it off again withdraws the question', async () => {
+        await openWithOffRow();
+        tick('guildTrialsPace', true);
+        tick('guildTrialsPace', false);
+
+        expect(overlayPanel.justEnabled.has('guildTrialsPace')).toBe(false);
+        expect(shown()).toEqual(['coins']);
+    });
+
+    test('a tile nobody touched is still hidden, which is the point of the policy', async () => {
+        await openWithOffRow([
+            row('guildTrialsPace', { name: 'Guild Trials', empty: 'Open the guild Trials tab once' }),
+            row('dps', { name: 'DPS', empty: 'No damage tracked yet' }),
+            row('coins', { name: 'Coins', text: '1,024' }),
+        ]);
+        overlayPanel.settings.visible = { ...overlayPanel.settings.visible, dps: true };
+        overlayPanel.refresh();
+
+        // `dps` is on, empty, and was switched on by a saved setting rather than
+        // by a click in front of the player — so it stays away
+        expect(shown()).toEqual(['coins']);
+    });
+
+    test('the explicit empty-tiles setting still outranks the gesture', async () => {
+        await openWithOffRow();
+        overlayPanel.settings.emptyTiles = EMPTY_POLICY.HIDE;
+        tick('guildTrialsPace', true);
+
+        expect(shown()).toEqual(['coins']);
+    });
+
+    test('nothing about the gesture is written to storage', async () => {
+        // It records a click, not a preference — and `emptyTiles` is the durable
+        // version of the same wish
+        await openWithOffRow();
+        saved.written = null;
+        tick('guildTrialsPace', true);
+
+        expect(saved.written).not.toBeNull();
+        expect(JSON.stringify(saved.written)).not.toContain('justEnabled');
+    });
+
+    test('the ⚙ list says which rows only appear once they have data', async () => {
+        await openWithOffRow();
+
+        const chip = overlayPanel.pickerEl.querySelector('[data-overlay-row-chip="guildTrialsPace"]');
+        expect(chip.title).toContain('shows when it has data');
+        expect(chip.querySelector('[data-overlay-contract]')).toBeTruthy();
+
+        // And says nothing about the ones that fill themselves in
+        const coins = overlayPanel.pickerEl.querySelector('[data-overlay-row-chip="coins"]');
+        expect(coins.querySelector('[data-overlay-contract]')).toBeNull();
+    });
+});
+
 describe('the policy each row gets', () => {
     test('classes a row by its key, and lets a row say for itself', () => {
         expect(emptyPolicyFor({ key: 'netWorth' })).toBe(EMPTY_POLICY.COMPACT);
@@ -387,6 +528,20 @@ describe('the policy each row gets', () => {
         // Which is what a row added by a later update gets, sight unseen
         expect(emptyPolicyFor({ key: 'somethingNew', name: 'Something New' })).toBe(EMPTY_POLICY.COMPACT);
         expect(compactLabel({ key: 'somethingNew', name: 'Something New' })).toBe('Something New');
+    });
+
+    test('the trials tile stands down when nobody has asked for it', () => {
+        // Its data comes off a game tab that may never have been opened, so
+        // hide-until-data is right for it — passively
+        expect(emptyPolicyFor({ key: 'guildTrialsPace' })).toBe(EMPTY_POLICY.HIDE);
+        expect(waitingLine({ key: 'guildTrialsPace' })).toBe('waiting for data');
+        expect(emptyContract({ key: 'guildTrialsPace' })).toBe('shows when it has data');
+    });
+
+    test('what a tile is waiting for is said in its own terms', () => {
+        expect(waitingLine({ key: 'watchlist', onOpen: () => {} })).toContain('watch');
+        expect(waitingLine({ key: 'netWorth' })).toContain('waiting');
+        expect(emptyContract({ key: 'netWorth' })).toBe('');
     });
 
     test('the setting overrides every one of them', () => {

@@ -19,13 +19,32 @@
  * a pace fitted to readings older than the whole event is arithmetic about
  * nothing.
  *
+ * ## Sparse is not empty
+ *
+ * A rate needs two readings a minute apart. A trial that started thirty seconds
+ * ago has one, and the tile used to answer that with a dash — the same dash it
+ * shows for a trial it knows nothing about — so the first half-minute of every
+ * trial looked like a tile that had failed. It says `measuring…` instead: the
+ * tier is known from the first reading, and saying which tier the guild is on
+ * while the rate is still being fitted is most of the value.
+ *
  * ## Why there is nothing to open
  *
  * The detail behind this tile is the guild panel's own In Progress tab, which
  * is a page of the game rather than a panel of this script — there is no
  * `toggle()` that could reach it, and navigating the player somewhere on a
  * double-click is not what any other tile does. The tooltip says where to go
- * instead, which is also the only way to make the figures fresh again.
+ * instead, which is also the only way to make the figures fresh again, and the
+ * command palette's "Guild Trials" entry is the gesture that gets you there.
+ *
+ * ## What the tile says when it has never been fed
+ *
+ * Nothing arrives without that tab being opened, so a guild with a live trial
+ * and a player who has not looked at it is the normal case, not an error. The
+ * row's `empty` line therefore names the remedy rather than the absence — and
+ * the panel shows that line, rather than hiding the tile, whenever the player
+ * has just switched this tile on by hand (see `overlay-panel.js`). Hiding it
+ * then is what made this read as broken.
  */
 
 import { registerRow } from '../../utils/overlay-rows.js';
@@ -66,7 +85,7 @@ export function latestTrialTile(record = guildTrials?.record) {
 registerRow({
     key: 'guildTrialsPace',
     name: 'Guild Trials',
-    empty: 'No trial seen this week',
+    empty: 'Open the guild Trials tab once',
     defaultVisible: false,
     defaultSize: { width: 220, height: 30 },
     render: (container) => {
@@ -85,11 +104,16 @@ registerRow({
         const tier = Number.isFinite(analysis.tier) ? analysis.tier : null;
         const level = tier === null ? null : levelFromTier(tier);
 
+        // A tier with one reading behind it is a measurement in progress, not a
+        // measurement that failed, and the two must not look alike
+        const measuring = analysis.etaMs === null && analysis.samples < 2;
         const projection = stale
             ? { text: 'stale', color: ROW_COLORS.dim }
-            : analysis.etaMs === null
-              ? { text: '—', color: ROW_COLORS.dim }
-              : { text: shortDuration(analysis.etaMs / 1000), color: ROW_COLORS.accent };
+            : measuring
+              ? { text: 'measuring…', color: ROW_COLORS.dim }
+              : analysis.etaMs === null
+                ? { text: '—', color: ROW_COLORS.dim }
+                : { text: shortDuration(analysis.etaMs / 1000), color: ROW_COLORS.accent };
 
         row(container, [
             { text: tier === null ? tile.name || 'Trial' : `T${tier}`, color: ROW_COLORS.gold, ellipsis: true },
@@ -105,9 +129,11 @@ registerRow({
             `${analysis.tiersClearedSoFar} banked.\n` +
             (stale
                 ? 'These readings are older than the hour a trial runs for, so no pace is projected from them.'
-                : analysis.etaMs === null
-                  ? 'Not enough movement was seen to measure a rate.'
-                  : `At the rate last measured, this tier clears in ${shortDuration(analysis.etaMs / 1000)}.`) +
+                : measuring
+                  ? 'One reading so far — a rate needs a second one, taken while the tab is open.'
+                  : analysis.etaMs === null
+                    ? 'Not enough movement was seen to measure a rate.'
+                    : `At the rate last measured, this tier clears in ${shortDuration(analysis.etaMs / 1000)}.`) +
             `\nRead ${shortDuration(ageSeconds)} ago — open the guild In Progress tab to refresh.`;
     },
     // No onOpen: the detail behind this is a page of the game, not a panel

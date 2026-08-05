@@ -159,7 +159,10 @@ describe('the guild trials tile', () => {
         expect(container.title).toContain('older than the hour a trial runs for');
     });
 
-    test('a single reading has no rate to project, and does not invent one', () => {
+    test('a single reading says it is still measuring, rather than showing a dash', () => {
+        // A trial that started thirty seconds ago has one reading, and a dash is
+        // what this tile shows for a trial it knows nothing about at all. The
+        // first half-minute of every trial looked like a broken tile.
         game.record = {
             weekStart: 0,
             tiles: { a: tile({ name: 'Brewing', tier: 4, at: Date.now() - 5000, values: [4000] }) },
@@ -167,6 +170,20 @@ describe('the guild trials tile', () => {
 
         const container = draw();
         expect(container.textContent).toContain('T4');
+        expect(container.textContent).toContain('measuring…');
+        expect(container.title).toContain('One reading so far');
+    });
+
+    test('two readings that did not move is a different answer from one reading', () => {
+        // Nothing was gained in a minute, which is a fact about the trial rather
+        // than a measurement still in progress
+        game.record = {
+            weekStart: 0,
+            tiles: { a: tile({ name: 'Brewing', tier: 4, at: Date.now() - 5000, values: [4000, 4000] }) },
+        };
+
+        const container = draw();
+        expect(container.textContent).not.toContain('measuring…');
         expect(container.title).toContain('Not enough movement');
     });
 

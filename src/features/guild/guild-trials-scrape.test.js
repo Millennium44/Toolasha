@@ -15,6 +15,7 @@ import { describe, test, expect } from 'vitest';
 
 import {
     classifyReadings,
+    findTrialsRoot,
     isCombatTrialName,
     matchTrialHrid,
     parseAmount,
@@ -224,6 +225,71 @@ describe('readTrialTiles', () => {
     test('nothing to read is an empty list, not a throw', () => {
         expect(readTrialTiles(null)).toEqual([]);
         expect(readTrialTiles({})).toEqual([]);
+    });
+
+    test('a guild building is not a trial, however wide the root is', () => {
+        // The same `GuildPanel_tileSummary` carries a building's "Lv. 10 / 20",
+        // and the root being scraped is a whole guild panel whenever the tab's
+        // own container is not where it was expected. A building read as a trial
+        // would be a tier-1 card with a nonsense bar on it.
+        document.body.innerHTML =
+            '<div class="GuildPanel_guildPanel__a">' +
+            '<div class="GuildPanel_tile__b"><div class="GuildPanel_tileSummary__c">Treasury Lv. 10 / 20</div></div>' +
+            '<div class="GuildPanel_tile__d"><div class="GuildPanel_tileSummary__e">Trial Milking Lv.110</div>' +
+            '<div>1.2M / 4M</div></div></div>';
+
+        const tiles = readTrialTiles(document.querySelector('[class*="GuildPanel_guildPanel"]'));
+        expect(tiles.map((tile) => tile.name)).toEqual(['Trial Milking']);
+    });
+});
+
+describe('findTrialsRoot', () => {
+    test('prefers the tab container the game names, when it has one', () => {
+        document.body.innerHTML =
+            '<div class="GuildPanel_guildPanel__a"><div class="GuildPanel_trialsContent__b">' +
+            '<div class="GuildPanel_tileSummary__c">Trial Milking Lv.110</div></div></div>';
+
+        expect(findTrialsRoot(document).className).toContain('GuildPanel_trialsContent');
+    });
+
+    test('accepts the other spelling the tab could plausibly carry', () => {
+        // Every other tab is `<name>Tab` — `membersTab`, `overviewTab` — so
+        // `trialsContent` was always a guess, and guessing once is enough
+        document.body.innerHTML =
+            '<div class="GuildPanel_guildPanel__a"><div class="GuildPanel_trialsTab__b">' +
+            '<div class="GuildPanel_tileSummary__c">Trial Milking Lv.110</div></div></div>';
+
+        expect(findTrialsRoot(document).className).toContain('GuildPanel_trialsTab');
+    });
+
+    test('falls back to the guild panel itself when the tab is called something else', () => {
+        // This is the whole bug: one unverified class name took the feature
+        // offline with no error anywhere. A card on screen is enough to work from.
+        document.body.innerHTML =
+            '<div class="GuildPanel_guildPanel__a"><div class="GuildPanel_somethingElse__b">' +
+            '<div class="GuildPanel_tileSummary__c">Trial Milking Lv.110</div></div></div>';
+
+        const root = findTrialsRoot(document);
+        expect(root.className).toContain('GuildPanel_guildPanel');
+        expect(readTrialTiles(root)).toHaveLength(1);
+    });
+
+    test('the outermost guild element wins, not the first small child', () => {
+        document.body.innerHTML =
+            '<div class="GuildPanel_guildPanel__a"><div class="GuildPanel_inner__b">' +
+            '<div class="GuildPanel_tileSummary__c">Trial Milking Lv.110</div></div></div>';
+
+        expect(findTrialsRoot(document).className).toContain('GuildPanel_guildPanel');
+    });
+
+    test('no cards on screen is no root, rather than a panel to scrape for nothing', () => {
+        document.body.innerHTML = '<div class="GuildPanel_guildPanel__a"><table></table></div>';
+        expect(findTrialsRoot(document)).toBeNull();
+    });
+
+    test('nothing to look at is null, not a throw', () => {
+        expect(findTrialsRoot(null)).toBeNull();
+        expect(findTrialsRoot({})).toBeNull();
     });
 });
 

@@ -278,6 +278,53 @@ export function compactLabel(row) {
 }
 
 /**
+ * What a tile is waiting for, in one short line.
+ *
+ * Only ever shown to somebody who has just switched the tile on by hand. The
+ * auto-hiding policies above are the right *passive* default — a fresh character
+ * should not open the overlay onto a wall of promises — but they are the wrong
+ * answer to a gesture. Switching a tile on and watching nothing appear is not
+ * "the overlay is decluttering for me", it is "the overlay is broken", and that
+ * is exactly how it was reported. So the gesture gets an answer: the tile draws,
+ * dim, saying what it is waiting for. The decluttering rationale survives intact
+ * because nobody asked for the tiles it hides.
+ *
+ * @param {Object} row - A row definition
+ * @returns {string} A line to draw under the row's name
+ */
+export function waitingLine(row) {
+    switch (tileClassFor(row)) {
+        case TILE_CLASS.MEASUREMENT:
+            return 'waiting for data';
+        case TILE_CLASS.WATCH:
+            return typeof row?.onOpen === 'function' ? 'waiting for something to watch' : 'nothing watched yet';
+        default:
+            return 'waiting for the game to load this';
+    }
+}
+
+/**
+ * What a row promises about when it will appear, for the ⚙ list.
+ *
+ * The contract a tile is under ought to be legible *before* it is switched on,
+ * not discovered afterwards by its absence. Empty for the tiles that fill
+ * themselves in, because a caption on every chip is a caption nobody reads.
+ *
+ * @param {Object} row - A row definition
+ * @returns {string} A short badge, or an empty string when there is nothing to warn about
+ */
+export function emptyContract(row) {
+    switch (tileClassFor(row)) {
+        case TILE_CLASS.MEASUREMENT:
+            return 'shows when it has data';
+        case TILE_CLASS.WATCH:
+            return 'shows what you add to it';
+        default:
+            return '';
+    }
+}
+
+/**
  * Put saved settings and the rows that actually exist together.
  *
  * Kept pure so the awkward cases are testable: a row saved in the order but since

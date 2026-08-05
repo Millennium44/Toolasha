@@ -87,6 +87,8 @@ import {
     moveRow,
     emptyPolicyFor,
     compactLabel,
+    waitingLine,
+    emptyContract,
     EMPTY_POLICY,
 } from '../../utils/overlay-rows.js';
 import { fromOPanelConfig, toOPanelConfig } from '../../utils/opanel-config.js';
@@ -358,6 +360,18 @@ class OverlayPanel {
         this.savedLayouts = null;
         /** What auto-switching has seen and done — see `decideAutoSwitch` */
         this.switchState = freshSwitchState();
+        /**
+         * Rows switched on by hand this session, and not yet seen to draw.
+         *
+         * Deliberately in memory and not in the settings. It records a *gesture*,
+         * not a preference: the answer it buys — an empty tile that says what it
+         * is waiting for instead of vanishing — is owed to the click, and a
+         * click does not need to survive a reload. Persisting it would turn a
+         * one-off acknowledgment into a second, invisible copy of the
+         * `emptyTiles` setting, which is the thing a player is meant to use when
+         * they want this permanently. See `_emptyPolicy`.
+         */
+        this.justEnabled = new Set();
     }
 
     async initialize() {
@@ -1449,6 +1463,7 @@ class OverlayPanel {
      */
     _rowChip(row) {
         const chip = document.createElement('label');
+        chip.dataset.overlayRowChip = row.key;
         Object.assign(chip.style, {
             display: 'inline-flex',
             alignItems: 'center',
@@ -1466,6 +1481,10 @@ class OverlayPanel {
         checkbox.style.cursor = 'pointer';
         checkbox.addEventListener('change', () => {
             this.settings.visible = { ...this.settings.visible, [row.key]: checkbox.checked };
+            // Switching it on is a question, and an empty tile is the answer to
+            // it — see `_emptyPolicy`. Switching it off withdraws the question.
+            if (checkbox.checked) this.justEnabled.add(row.key);
+            else this.justEnabled.delete(row.key);
             this._save();
             this._renderPicker();
             this._renderBody();
@@ -1474,6 +1493,20 @@ class OverlayPanel {
         const name = document.createElement('span');
         name.textContent = row.name;
         if (!row.visible) name.style.color = COLORS.textDim;
+
+        // What this row promises about when it will appear, said before it is
+        // switched on rather than discovered afterwards by its absence
+        const contract = emptyContract(row);
+        let badge = null;
+        if (contract) {
+            chip.title = `${row.name} — ${contract}.`;
+            badge = document.createElement('span');
+            badge.textContent = '◌';
+            badge.dataset.overlayContract = row.key;
+            badge.title = contract;
+            badge.style.color = COLORS.textDim;
+            badge.style.fontSize = '9px';
+        }
 
         // Order still matters: it is what Autogrid packs by, and what a new row
         // is placed after
@@ -1485,7 +1518,7 @@ class OverlayPanel {
             button.style.color = COLORS.textDim;
         }
 
-        chip.append(checkbox, name, up, down);
+        chip.append(checkbox, name, ...(badge ? [badge] : []), up, down);
         return chip;
     }
 
@@ -2183,6 +2216,9 @@ class OverlayPanel {
             const tile = this._tileFor(row);
             this._styleTile(tile, row);
             if (this._drawRow(tile, row)) empty.add(row.key);
+            // It has been seen working, which is all a switched-on tile was
+            // ever owed — see `_emptyPolicy`
+            else this.justEnabled.delete(row.key);
         }
 
         // Pass two: what the ones that drew nothing do about it
@@ -2303,11 +2339,36 @@ class OverlayPanel {
      * cannot judge the size of. Arranging is the one moment you want to see
      * everything you have switched on, at the size it will be.
      *
+     * The same goes, for the same reason, for a tile that was just switched on
+     * by hand. `hide-until-data` is the right passive default and a wrong answer
+     * to a gesture: the player ticks Guild Trials, nothing appears, and the only
+     * available reading is that the script is broken — which is how this
+     * arrived, as a bug report, during a live trial. So a manually enabled row
+     * draws its placeholder, and goes on drawing it until it has something real
+     * to say. The acknowledgment is discharged by the first successful draw
+     * rather than by a timer: what it owes the player is one look at a working
+     * tile, and once they have had it the decluttering rule is welcome back.
+     * Nothing is persisted — a reload is a new session and a new set of
+     * questions. Somebody who wants placeholders permanently has the `emptyTiles`
+     * setting, which is the durable version of this and beats it either way.
+     *
+     * The cost of that is real and worth naming: a row switched on yesterday
+     * that still has no data is hidden again today, with only the ⚙ badge to say
+     * why. The alternative — remembering forever that a row has never drawn —
+     * would put a placeholder under every measurement tile in the curated set on
+     * a fresh character's first open, which is the wall of promises this whole
+     * policy exists to remove.
+     *
      * @param {Object} row - The resolved row
      * @returns {string} One of {@link EMPTY_POLICY}
      */
     _emptyPolicy(row) {
         if (this.isEditable) return EMPTY_POLICY.FULL;
+        // The setting is an explicit instruction and outranks the gesture
+        if (this.settings.emptyTiles && this.settings.emptyTiles !== EMPTY_POLICY.AUTO) {
+            return emptyPolicyFor(row, this.settings.emptyTiles);
+        }
+        if (this.justEnabled.has(row.key)) return EMPTY_POLICY.FULL;
         return emptyPolicyFor(row, this.settings.emptyTiles);
     }
 
@@ -2345,22 +2406,40 @@ class OverlayPanel {
      * would rather say; naming itself is the fallback, which at least identifies
      * which tile is which while the layout is being arranged.
      *
+     * A tile drawn *because it was just switched on* gets its name above that
+     * line as well. The player has one row in mind and a dozen tiles on screen,
+     * and a placeholder that only says "Open the guild Trials tab once" leaves
+     * them hunting for which tile answered them.
+     *
      * @param {HTMLElement} tile - The tile
      * @param {Object} row - The resolved row
      */
     _drawPlaceholder(tile, row) {
         if (!tile) return;
 
+        const shared = { whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' };
+        const lines = [];
+
+        const acknowledging = this.justEnabled.has(row.key) && !this.isEditable;
+        if (acknowledging) {
+            const label = document.createElement('div');
+            label.textContent = row.name;
+            Object.assign(label.style, { color: COLORS.textDim, ...shared });
+            lines.push(label);
+        }
+
         const note = document.createElement('div');
-        note.textContent = row.empty || `No ${row.name.toLowerCase()} data`;
+        note.textContent = acknowledging
+            ? `${waitingLine(row)} — ${row.empty || `no ${row.name.toLowerCase()} yet`}`
+            : row.empty || `No ${row.name.toLowerCase()} data`;
         Object.assign(note.style, {
             color: COLORS.textDim,
-            whiteSpace: 'nowrap',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
+            ...(acknowledging ? { fontSize: '85%' } : {}),
+            ...shared,
         });
+        lines.push(note);
 
-        tile._content.replaceChildren(note);
+        tile._content.replaceChildren(...lines);
     }
 
     /**

@@ -38,6 +38,16 @@
  * figure labelled "via credit exchange" (`guild-token-value.js`). Without an
  * exchange rate the rows show the bare token count they always did.
  *
+ * **Nothing arrives while the tab is shut.** This is the honest limit of the
+ * whole feature and it is worth stating where somebody will read it: no socket
+ * message carries a running trial's pool fill or a boss's health, so a reading
+ * only exists because the tab was on screen when the sampler ran. A trial can
+ * therefore be live, and this can have nothing to say about it, and both of
+ * those can be true at once. Everything downstream — the blocks here, the
+ * overlay tile in `guild-trials-row.js` — must say *that* rather than going
+ * quiet, because a blank surface during a live trial is indistinguishable from a
+ * broken one. It was reported as a broken one.
+ *
  * **Payout bonuses may be unknown.** Guild Points scale with the Builders Hall
  * and token payouts with the Treasury; both levels arrive on guild traffic and
  * the bonus-per-level table has not been located in client data. When it cannot
@@ -66,7 +76,13 @@ import {
     trialWeekStart,
 } from './guild-trials-math.js';
 import { describeGuildTokenGold } from './guild-token-value.js';
-import { classifyReadings, matchTrialHrid, parseClockMs, readTrialTiles } from './guild-trials-scrape.js';
+import {
+    classifyReadings,
+    findTrialsRoot,
+    matchTrialHrid,
+    parseClockMs,
+    readTrialTiles,
+} from './guild-trials-scrape.js';
 import {
     loadTrialRecord,
     readPayoutBonuses,
@@ -326,14 +342,20 @@ class GuildTrials {
         this.guildName = guildXPTracker.getOwnGuildName?.() || null;
         this.record = await loadTrialRecord(this.guildName);
 
+        // Three class names rather than one. The tab's own container is
+        // unverified, so `GuildPanel_tileSummary` — which is verified, and which
+        // every trial card carries — is watched as well: whatever the tab is
+        // called, a trial card appearing is a reason to look.
         this.unregister.push(
-            domObserver.onClass('GuildTrials', 'GuildPanel_trialsContent', (el) => this._onTab(el), {
-                debounce: true,
-                debounceDelay: 100,
-            })
+            domObserver.onClass(
+                'GuildTrials',
+                ['GuildPanel_trialsContent', 'GuildPanel_trialsTab', 'GuildPanel_tileSummary'],
+                () => this._onTab(findTrialsRoot()),
+                { debounce: true, debounceDelay: 100 }
+            )
         );
 
-        this._refresh = () => this._render(document.querySelector('[class*="GuildPanel_trialsContent"]'));
+        this._refresh = () => this._render(findTrialsRoot());
         for (const type of ['guild_updated', 'guild_characters_updated', 'guild_trial_signup_updated']) {
             webSocketHook.on(type, this._refresh);
         }
@@ -345,7 +367,7 @@ class GuildTrials {
 
         this.timers.registerInterval(
             setInterval(() => {
-                const el = document.querySelector('[class*="GuildPanel_trialsContent"]');
+                const el = findTrialsRoot();
                 if (el?.isConnected) this._render(el);
             }, SAMPLE_MS)
         );
@@ -355,7 +377,7 @@ class GuildTrials {
 
     /**
      * The tab appeared or changed.
-     * @param {Element} el - The trials content element
+     * @param {Element|null} el - The trials content element
      */
     _onTab(el) {
         this._render(el);
@@ -376,7 +398,13 @@ class GuildTrials {
                 this.record = { weekStart, tiles: {} };
             }
 
-            const tiles = readTrialTiles(root);
+            // A card with no bar on it is not a trial in progress — it is the
+            // sign-up dialog's card, or a tier that has not opened. That matters
+            // more now the root can be a whole guild panel rather than the tab:
+            // recording one would put a trial with no readings into the record,
+            // and the overlay tile would then report it as the newest thing seen
+            // and sit at "measuring…" forever with nothing behind it.
+            const tiles = readTrialTiles(root).filter((tile) => tile.readings.length > 0);
             for (const tile of tiles) this.record = recordTileSample(this.record, tile, now);
             if (tiles.length) saveTrialRecord(this.guildName, this.record);
 
@@ -411,7 +439,7 @@ class GuildTrials {
                 tile.element.appendChild(block);
             }
 
-            this._renderPayout(root, trialsForPayout);
+            this._renderPayout(root, trialsForPayout, tiles[0]?.element || null);
         } catch (error) {
             console.error('[GuildTrials] Drawing the trial panel failed:', error);
         }
@@ -441,8 +469,9 @@ class GuildTrials {
      * The payout block: what is banked, and what the current pace would add.
      * @param {Element} root - The trials content element
      * @param {Array<{name: string, type: string, banked: number, projected: number}>} trials - This week's trials
+     * @param {Element|null} [firstTile] - The topmost trial card, for placement when there is no status row
      */
-    _renderPayout(root, trials) {
+    _renderPayout(root, trials, firstTile = null) {
         if (!trials.length) return;
 
         const bonuses = readPayoutBonuses();
@@ -496,8 +525,13 @@ class GuildTrials {
 
         wrapper.innerHTML = rows.join('');
 
+        // Under the game's own status row when there is one. Otherwise directly
+        // above the first card, which is where it belongs and — unlike the
+        // panel's own top edge — is somewhere the reader is already looking when
+        // the root being drawn into is a whole guild panel.
         const statusRow = root.querySelector('[class*="GuildPanel_eventStatusRow"]');
         if (statusRow) statusRow.insertAdjacentElement('afterend', wrapper);
+        else if (firstTile?.isConnected) firstTile.insertAdjacentElement('beforebegin', wrapper);
         else root.insertAdjacentElement('afterbegin', wrapper);
     }
 
