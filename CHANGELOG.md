@@ -17,6 +17,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - **The Task Tokens tile earns its rate line**: `tokens/hr this week` beneath the board value, on wall-clock time between your first and last claim (the tooltip names the sample and the basis; under two claims shows no rate rather than a fake one).
 - **Task statistics gains "Claimed Tasks (last 7 days)"**: tasks, tokens, coins, both hourly rates, the measured span — and reroll spend over the same window tied in for a **Net Task Income** figure, plus your last five completions.
 
+### The buff tells you before it leaves
+
+- **Community buff expiry alerts**: get notified a selectable lead time (default 15 minutes, 5–120) before a community buff's *actual* expiry — read from the game's own expireTime, never guessed from a last-seen duration. Master toggle plus per-buff toggles for all five buff types, off by default. A buff extended by new donations re-arms automatically; one expiry never double-fires.
+- **Two core staleness bugs found en route, fixed**: the `community_buffs_updated` message could be silently dropped as a duplicate when two donations opened identically (the changed expiry sits past the dedup hash window), and community buff levels were only ever read at login — the tea optimizer, efficiency and profit calculators all quietly used launch-time levels as the server buff moved. Levels now track the live message.
+
 ### The sim comes home
 
 - **The community buff cap is 20 after all** — the earlier raise to 30 was a misdiagnosis (the real fix was the at-cap "what the buff is worth" row, which stays). The advisor, the sim editor's inputs, and the tooltip all agree on Lv20 now.

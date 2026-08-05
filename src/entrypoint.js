@@ -1223,6 +1223,16 @@ function registerFeatures() {
             async: true,
         },
         {
+            key: 'communityBuffAlerts',
+            name: 'Community Buff Expiry Alerts',
+            category: 'Notifications',
+            module: UI.communityBuffAlerts,
+            async: true,
+            // No entry in config's feature map, so the schema setting is the
+            // only gate — an unknown registry key would otherwise default to on
+            customCheck: () => config.getSetting('notifications_communityBuffExpiring'),
+        },
+        {
             key: 'queueMonitor',
             name: 'Queue Monitor',
             category: 'General',

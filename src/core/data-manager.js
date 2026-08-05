@@ -480,6 +480,17 @@ class DataManager {
             this.emit('buffs_updated', data);
         });
 
+        // Handle community_buffs_updated (anyone donating changes levels and
+        // expiry). Without this, every community buff level reads as it was at
+        // login — the tea optimizer, efficiency and profit calculators all go
+        // quietly stale as the server buff moves.
+        this.webSocketHook.on('community_buffs_updated', (data) => {
+            if (this.characterData && Array.isArray(data.communityBuffs)) {
+                this.characterData.communityBuffs = data.communityBuffs;
+            }
+            this.emit('community_buffs_updated', data);
+        });
+
         // Handle personal_buffs_updated (seal buffs from Labyrinth)
         this.webSocketHook.on('personal_buffs_updated', (data) => {
             if (data.personalActionTypeBuffsMap) {
