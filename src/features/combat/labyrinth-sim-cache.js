@@ -12,7 +12,7 @@
 
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
-import { buildGameDataPayload } from '../combat-sim/combat-sim-adapter.js';
+import { buildGameDataPayload, getCommunityBuffs } from '../combat-sim/combat-sim-adapter.js';
 import { runLabyrinthSimulation } from '../combat-sim/combat-sim-runner.js';
 import { wilsonInterval, decidedAgainst } from '../combat-sim/engine/wilson.js';
 import loadoutSnapshot from './loadout-snapshot.js';
@@ -297,7 +297,15 @@ export const simCacheMethods = {
                               minTrials: DECISION_MIN_TRIALS,
                               maxTrials: DECISION_MAX_TRIALS,
                           },
-                communityBuffs: { mooPass: false, comExp: 0, comDrop: 0 },
+                // The character's own, the way the Lab Sim panel passes them.
+                // Neither of the two the engine models — wisdom and combat drop
+                // quantity — moves a win rate, so the hardcoded zeroes this
+                // replaces produced the same clear chance. They are still the
+                // wrong thing to tell a simulator: the sim result is cached and
+                // read back by anything that wants a figure off it, and a run
+                // labelled "no buffs" is one balance patch away from being read
+                // as one.
+                communityBuffs: getCommunityBuffs(),
                 labyrinthCombatBuffs,
             });
 

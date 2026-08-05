@@ -21,6 +21,11 @@ import {
     labAbilityLevelTypeAvailability,
     estimateLabUpgradeSims,
     LAB_HEAVY_RUN_SIMS,
+    LAB_LEVEL_SOURCE_KEYS,
+    DEFAULT_CONFIGURE_LEVEL,
+    defaultLabLevelSource,
+    sanitizeLabLevelSource,
+    resolveLabTargetLevel,
     planLabSingleTargetModes,
     planLabUpgradeRun,
 } from './lab-sim-upgrade-modes.js';
@@ -115,27 +120,25 @@ describe('what a scope can be asked', () => {
         }
     });
 
-    test('and every set but house rooms is offered across a whole labyrinth too', () => {
+    test('and every set is offered across a whole labyrinth too', () => {
         // Ability Swaps used to be refused here on size — thousands of sims —
         // which put the refusal on the one scope where "which ability should I
         // change" is most worth asking. Size is handled by shortening the sims
         // and saying the count, not by declining the question.
         const availability = labDimensionAvailability('all', 8);
         for (const key of LAB_UPGRADE_DIMENSION_KEYS) {
-            if (key === 'house') continue;
             expect(availability[key].enabled).toBe(true);
             expect(availability[key].reason).toBe('');
         }
     });
 
-    test('house rooms are the Configure fight only, and say why', () => {
-        // A room level is one number the character carries; the whole-run
-        // analysis installs each candidate into a *loadout*, which has nowhere
-        // to put it
-        expect(labDimensionAvailability('all', 8).house.enabled).toBe(false);
-        expect(labDimensionAvailability('all', 8).house.reason).toMatch(/Configure fight only/);
-        // A subset of one is still the whole-run analysis, so it is refused too
-        expect(labDimensionAvailability('selected', 1).house.enabled).toBe(false);
+    test('house rooms included — the shared applier installs a room level now', () => {
+        // The refusal was never about the scope: the whole-run analysis could
+        // not install a room level at all. It can, and a room level being
+        // character-wide is what makes the multi-fight question interesting.
+        expect(labDimensionAvailability('all', 8).house).toEqual({ enabled: true, reason: '' });
+        expect(labDimensionAvailability('selected', 1).house.enabled).toBe(true);
+        expect(labDimensionAvailability('current', 1).house.enabled).toBe(true);
     });
 
     test('the per-ability target level is only meaningful for one loadout', () => {
@@ -298,10 +301,11 @@ describe('a selection, resolved into the analysis to run', () => {
         expect(plan).toMatchObject({ kind: 'allFights', modes: ['ability_swap'], monsterHrids: ALL });
     });
 
-    test('house rooms are kept out of the mode lists and asked for separately', () => {
-        // Handing a house candidate to the shared applier would install it as a
-        // piece of equipment in a slot called `house|/house_rooms/…`, which
-        // changes nothing — so the row would read a confident +0.00%
+    test('house rooms ride along with everything else rather than being asked for separately', () => {
+        // They used to be pulled out into a `standaloneModes` list, because the
+        // shared applier had no branch for a room level and would have installed
+        // the candidate as a piece of equipment in a slot called
+        // `house|/house_rooms/…` — changing nothing, and reading +0.00%
         const plan = planLabUpgradeRun({
             dimensions: ['equipment', 'house'],
             scopeMode: 'current',
@@ -311,33 +315,98 @@ describe('a selection, resolved into the analysis to run', () => {
         expect(plan).toMatchObject({
             kind: 'single',
             upgradeMode: 'equipment',
-            extraModes: [],
-            standaloneModes: ['house'],
+            extraModes: ['house'],
         });
+        expect(plan.standaloneModes).toBeUndefined();
     });
 
-    test('house rooms on their own are a run, with nothing for the analysis to generate', () => {
+    test('house rooms on their own are the whole run rather than nothing for it to generate', () => {
         const plan = planLabUpgradeRun({
             dimensions: ['house'],
             scopeMode: 'current',
             configureMonsterHrid: '/monsters/b',
             allMonsters: ALL,
         });
-        expect(plan).toMatchObject({ kind: 'single', upgradeMode: 'none', standaloneModes: ['house'] });
+        expect(plan).toMatchObject({ kind: 'single', upgradeMode: 'house', extraModes: [] });
     });
 
-    test('and across several fights they are reported as dropped rather than silently skipped', () => {
+    test('and across several fights they are weighed rather than dropped', () => {
+        // The whole-run question — one room level, measured against each fight
+        // it changes — is the one this used to refuse
         const plan = planLabUpgradeRun({
             dimensions: ['equipment', 'house'],
             scopeMode: 'all',
             allMonsters: ALL,
         });
-        expect(plan).toMatchObject({ kind: 'allFights', modes: ['equipment'], dropped: ['house'] });
+        expect(plan).toMatchObject({ kind: 'allFights', modes: ['equipment', 'house'], dropped: [] });
     });
 
     test('all targets with no fights resolving explains itself', () => {
         const plan = planLabUpgradeRun({ dimensions: ['equipment'], scopeMode: 'all', allMonsters: [] });
         expect(plan.kind).toBe('none');
         expect(plan.error).toMatch(/skip levels/);
+    });
+});
+
+describe('where the Configure fight takes its level from', () => {
+    test('the three levels a fight actually has, and no others', () => {
+        expect(LAB_LEVEL_SOURCE_KEYS).toEqual(['sim_max', 'skip', 'configure']);
+    });
+
+    test('a Level box sitting on its default is not a request for that level', () => {
+        expect(defaultLabLevelSource(DEFAULT_CONFIGURE_LEVEL)).toBe('sim_max');
+        expect(defaultLabLevelSource(0)).toBe('sim_max');
+        expect(defaultLabLevelSource(NaN)).toBe('sim_max');
+    });
+
+    test('but a box holding anything else was typed into, and the typed number wins', () => {
+        expect(defaultLabLevelSource(232)).toBe('configure');
+        expect(defaultLabLevelSource(20)).toBe('configure');
+    });
+
+    test('a stored choice is kept, and anything else falls to the rule', () => {
+        expect(sanitizeLabLevelSource('skip', 100)).toBe('skip');
+        expect(sanitizeLabLevelSource('moon_phase', 100)).toBe('sim_max');
+        expect(sanitizeLabLevelSource(null, 232)).toBe('configure');
+    });
+});
+
+describe('a level source, resolved into a level', () => {
+    const at = (over) => resolveLabTargetLevel({ simMaxLevel: 232, skipLevel: 130, configureLevel: 100, ...over });
+
+    test('each source comes to its own number, labelled with it', () => {
+        expect(at({ source: 'sim_max' })).toMatchObject({ level: 232, usedSource: 'sim_max', label: 'Sim max (L232)' });
+        expect(at({ source: 'skip' })).toMatchObject({ level: 130, label: 'Skip level (L130)' });
+        expect(at({ source: 'configure' })).toMatchObject({ level: 100, label: 'Configure value (L100)' });
+    });
+
+    test('a sim max nothing has searched for yet falls through to the skip level', () => {
+        expect(at({ source: 'sim_max', simMaxLevel: 0 })).toMatchObject({
+            level: 130,
+            usedSource: 'skip',
+            fellBack: true,
+        });
+    });
+
+    test('and with no skip threshold either, to the box that always holds something', () => {
+        expect(at({ source: 'sim_max', simMaxLevel: 0, skipLevel: 0 })).toMatchObject({
+            level: 100,
+            usedSource: 'configure',
+            fellBack: true,
+        });
+    });
+
+    test('nothing at all is not a level, and says so rather than offering zero', () => {
+        const resolved = resolveLabTargetLevel({ source: 'sim_max' });
+        expect(resolved.level).toBe(0);
+        expect(resolved.label).toMatch(/not resolved/);
+    });
+
+    test('an unknown source is read as the box, which is where this started', () => {
+        expect(at({ source: 'moon_phase' })).toMatchObject({ level: 100, usedSource: 'configure', fellBack: false });
+    });
+
+    test('a source that produced its own number never reports a fallback', () => {
+        expect(at({ source: 'skip' }).fellBack).toBe(false);
     });
 });

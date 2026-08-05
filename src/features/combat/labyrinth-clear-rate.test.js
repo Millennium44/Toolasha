@@ -15,6 +15,9 @@ const gear = vi.hoisted(() => ({ snapshots: {} }));
 /** Guild shrine data the mocked adapter and data manager report */
 const shrines = vi.hoisted(() => ({ detailMap: {}, owned: {} }));
 
+/** Community buff levels the mocked data manager reports, by buff hrid */
+const community = vi.hoisted(() => ({ levels: {} }));
+
 /** Backing store for the mocked storage module: `${storeName}:${key}` -> value */
 const db = vi.hoisted(() => ({ map: new Map() }));
 
@@ -45,6 +48,9 @@ vi.mock('../../core/data-manager.js', () => ({
         getCurrentCharacterGameMode: vi.fn(() => 'standard'),
         getSkills: vi.fn(() => []),
         getInitClientData: vi.fn(() => null),
+        // The community buff levels the server is running, which the skilling
+        // metrics and the combat experience award both read live
+        getCommunityBuffLevel: (hrid) => community.levels[hrid] || 0,
         getCharacterGuildBuffLevel: (hrid) => shrines.owned[hrid] || 0,
         getInventory: () => bag.items,
         characterData: null,
@@ -55,6 +61,7 @@ vi.mock('../combat-sim/combat-sim-adapter.js', () => ({
     buildPlayerDTO: vi.fn(),
     buildGameDataPayload: vi.fn(),
     applyLoadoutSnapshotToDTO: vi.fn(),
+    getCommunityBuffs: () => ({ mooPass: false, comExp: 0, comDrop: 0 }),
     getGuildBuffDetailMap: () => shrines.detailMap,
     applyGuildBuffLevel: (buffs, detail, level) => [
         ...buffs.filter((b) => b.typeHrid !== detail.buffs[0].typeHrid),
@@ -567,6 +574,91 @@ describe('equipment experience reaches a labyrinth room', () => {
         });
         const buffs = labyrinthClearRate.getLoadoutEquipmentBuffs(3, 'milking');
         expect(buffs.some((b) => b.typeHrid === '/buff_types/wisdom')).toBe(false);
+    });
+});
+
+describe('the community buffs the server is running reach a labyrinth room', () => {
+    // The map the metrics used to read is written once, from the login payload,
+    // and never again — while `characterData.communityBuffs`, which is what
+    // `getCommunityBuffLevel` reads, is replaced on every donation. So the two
+    // are set to *different* levels here: only a reading off the live one can
+    // tell them apart.
+    beforeEach(() => {
+        community.levels = {};
+        dataManagerMock.characterData = {
+            communityActionTypeBuffsMap: {
+                '/action_types/milking': [{ typeHrid: '/buff_types/gathering', flatBoost: 999, ratioBoost: 0 }],
+            },
+        };
+    });
+
+    afterEach(() => {
+        community.levels = {};
+        dataManagerMock.characterData = null;
+        dataManagerMock.getInitClientData.mockReturnValue(null);
+    });
+
+    test('a skilling room is scored on the live level, not the one frozen at login', () => {
+        community.levels['/community_buff_types/gathering_quantity'] = 5;
+
+        const metrics = labyrinthClearRate.getSkillingMetrics('milking', '/action_types/milking');
+
+        // Gathering Quantity Lv5 is 0.2 + 4 × 0.005 = 0.22, and the stale map's
+        // absurd 999 is nowhere in it
+        expect(metrics.gatheringBonus).toBeCloseTo(0.22, 10);
+    });
+
+    test('a buff that is not running adds nothing', () => {
+        const metrics = labyrinthClearRate.getSkillingMetrics('milking', '/action_types/milking');
+        expect(metrics.gatheringBonus).toBe(0);
+    });
+
+    test('the Experience buff lands on the experience bonus a room’s award is raised by', () => {
+        community.levels['/community_buff_types/experience'] = 1;
+
+        const metrics = labyrinthClearRate.getSkillingMetrics('milking', '/action_types/milking');
+
+        expect(metrics.experienceBonus).toBeCloseTo(0.2, 10);
+    });
+
+    test('and a fight’s award is raised by the same buff, which it used to ignore', () => {
+        community.levels['/community_buff_types/experience'] = 11;
+
+        // 0.2 + 10 × 0.005
+        expect(labyrinthClearRate.getCombatExperienceBonus()).toBeCloseTo(0.25, 10);
+    });
+
+    test('the game’s own numbers win over the fallbacks when they have loaded', () => {
+        community.levels['/community_buff_types/experience'] = 3;
+        dataManagerMock.getInitClientData.mockReturnValue({
+            communityBuffTypeDetailMap: {
+                '/community_buff_types/experience': { buff: { flatBoost: 0.5, flatBoostLevelBonus: 0.1 } },
+            },
+        });
+
+        expect(labyrinthClearRate.getCombatExperienceBonus()).toBeCloseTo(0.7, 10);
+    });
+
+    test('a fight with no buff running is still only its labyrinth upgrade', () => {
+        expect(labyrinthClearRate.getCombatExperienceBonus()).toBe(0);
+    });
+});
+
+describe('the Moo Pass reaches an edited loadout the way it reaches a live one', () => {
+    afterEach(() => {
+        dataManagerMock.characterData = null;
+    });
+
+    test('its wisdom is scored even though nothing in the overrides carries it', () => {
+        dataManagerMock.characterData = {
+            mooPassActionTypeBuffsMap: {
+                '/action_types/milking': [{ typeHrid: '/buff_types/wisdom', flatBoost: 0.05, ratioBoost: 0 }],
+            },
+        };
+
+        const metrics = labyrinthClearRate.getSkillingMetricsFromOverrides('milking', '/action_types/milking', {});
+
+        expect(metrics.experienceBonus).toBeCloseTo(0.05, 10);
     });
 });
 

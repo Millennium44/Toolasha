@@ -22,9 +22,17 @@ const game = vi.hoisted(() => ({
     monsters: [],
     /** Monster hrid → room level the skip thresholds resolve to */
     skipLevels: {},
+    /** Monster hrid → room level a Recommend run picked out */
+    recommendedLevels: {},
     players: [],
+    /** What `buildGameDataPayload` reports about the character's house */
+    houseRoomDetailMap: {},
+    /** The room levels every labyrinth loadout's DTO carries */
+    houseRooms: {},
 }));
 const sim = vi.hoisted(() => ({ calls: [] }));
+/** Every key the panel wrote, so a persisted choice can be asserted on */
+const storage = vi.hoisted(() => ({ written: {} }));
 const rowActions = vi.hoisted(() => ({ wired: [] }));
 
 vi.mock('../../core/config.js', () => ({
@@ -39,7 +47,9 @@ vi.mock('../../core/config.js', () => ({
 vi.mock('../../core/storage.js', () => ({
     default: {
         get: async (_key, _store, fallback) => fallback,
-        set: async () => {},
+        set: async (key, value) => {
+            storage.written[key] = value;
+        },
     },
 }));
 
@@ -48,6 +58,11 @@ vi.mock('../../core/data-manager.js', () => ({
         getInitClientData: () => ({ abilityDetailMap: {} }),
         getItemDetails: () => null,
         getSkills: () => [],
+        getInventory: () => [],
+        // The scoped-storage helpers key on the character; without these the
+        // panel's own restore throws before it can read anything back
+        getCurrentCharacterId: () => 'me',
+        getCurrentCharacterGameMode: () => 'standard',
         characterItems: [],
         characterEquipment: new Map(),
         characterData: { characterAbilities: [] },
@@ -89,7 +104,11 @@ vi.mock('../../utils/panel-geometry.js', () => ({
 }));
 
 vi.mock('./combat-sim-adapter.js', () => ({
-    buildGameDataPayload: () => ({ itemDetailMap: {} }),
+    buildGameDataPayload: () => ({
+        itemDetailMap: {},
+        actionDetailMap: { '/actions/combat/fly': {} },
+        houseRoomDetailMap: game.houseRoomDetailMap,
+    }),
     buildAllPlayerDTOs: async () => ({ players: game.players, selfHrid: game.players[0]?.hrid }),
     getCombatZones: () => [],
     getCommunityBuffs: () => ({}),
@@ -150,12 +169,16 @@ vi.mock('./combat-sim-ui.js', () => ({
 // That is enough for the thing worth asserting — that a community buff level
 // reaches the room at all, and lands on the metric it belongs to.
 vi.mock('../combat/labyrinth-clear-rate.js', () => ({
+    // The level finder reads the skip window off this module, and a missing
+    // named export makes its search window NaN — which silently searches nothing
+    SKIP_THRESHOLD_RANGE: 60,
     default: {
         getLabyrinthCombatBuffs: () => [],
         getCombatSkipRoomLevel: (hrid) => game.skipLevels[hrid] || 0,
         getCombatRoomLevel: (hrid) => game.skipLevels[hrid] || 0,
+        getRecommendedCombatRoomLevel: (hrid) => game.recommendedLevels[hrid] || 0,
         getLabyrinthLoadoutId: () => null,
-        buildLabyrinthPlayerDTO: () => ({ equipment: {}, abilities: [] }),
+        buildLabyrinthPlayerDTO: () => ({ equipment: {}, abilities: [], houseRooms: { ...game.houseRooms } }),
         getPlayerEffectiveCombatLevel: () => 100,
         estimateCombatXpPerHour: () => 0,
         getTargetRoomLevel: () => 0,
@@ -545,6 +568,279 @@ describe('the Upgrade tab asks two questions instead of one', () => {
     test('nothing checked is refused rather than run empty', () => {
         for (const b of boxes()) if (b.checked) check(b.getAttribute('data-lab-upgrade-dimension'), false);
         expect(ui._planFromControls().kind).toBe('none');
+    });
+
+    test('house rooms are offered for every scope now, not just the Configure fight', () => {
+        for (const value of ['current', 'all', 'selected']) {
+            setScope(value);
+            expect(box('house').disabled).toBe(false);
+            expect(ui.panel.querySelector('[data-lab-mode-chip="house"]').style.opacity).toBe('1');
+        }
+    });
+
+    test('and a whole-run selection carries them into the analysis rather than dropping them', () => {
+        check('equipment', false);
+        check('house', true);
+        setScope('all');
+
+        expect(ui._planFromControls()).toMatchObject({ kind: 'allFights', modes: ['house'], dropped: [] });
+    });
+});
+
+/**
+ * The one thing about a house room that used to be silently wrong.
+ *
+ * A room level is not held in a loadout, and the applier both labyrinth
+ * analyses build each candidate's character with had no branch for one — so a
+ * house candidate was installed as a piece of equipment in a slot named after
+ * the room, the simulation ran the *unchanged* character, and the row came back
+ * a confident +0.00%. The panel worked around it with a pass of its own, which
+ * is why the dimension was Configure-fight only.
+ *
+ * The branch exists, the workaround is gone, and what is worth asserting is the
+ * thing the workaround existed to guarantee: that the raised level reaches the
+ * character the simulation is handed — through the shared path, in both scopes.
+ * The advisor is deliberately *not* mocked here; only the simulator is.
+ */
+describe('a house room level reaches the character the simulation is handed', () => {
+    const DAIRY = '/house_rooms/dairy_barn';
+    const GARDEN = '/house_rooms/garden';
+
+    const houseRoomsSimmed = () => sim.calls.map((call) => call.playerDTOs[0].houseRooms);
+
+    beforeEach(async () => {
+        geometry.saved = null;
+        geometry.wasOpen = false;
+        sim.calls = [];
+        game.monsters = [
+            { hrid: '/monsters/mimic', name: 'Mimic' },
+            { hrid: '/monsters/eye_watcher', name: 'Eye Watcher' },
+        ];
+        game.skipLevels = { '/monsters/mimic': 130, '/monsters/eye_watcher': 150 };
+        game.houseRooms = { [DAIRY]: 4, [GARDEN]: 2 };
+        game.players = [{ hrid: 'p1', equipment: {}, abilities: [], houseRooms: { ...game.houseRooms } }];
+        // Two rooms the combat engine reads, so both are candidates
+        game.houseRoomDetailMap = {
+            [DAIRY]: { name: 'Dairy Barn', actionBuffs: [{ typeHrid: '/buff_types/armor' }] },
+            [GARDEN]: { name: 'Garden', actionBuffs: [{ typeHrid: '/buff_types/damage' }] },
+            // A skilling-only room, which must never appear
+            '/house_rooms/brewery': { name: 'Brewery', actionBuffs: [{ typeHrid: '/buff_types/efficiency' }] },
+        };
+
+        ui.buildPanel();
+        await settle();
+        ui._switchTab('upgrade');
+        ui.panel.querySelector('#mwi-labsim-monster').value = '/monsters/mimic';
+        // After the restore rather than before it, or the restore's own default
+        // lands last. This suite is about the room, not the level it is fought at.
+        await ui._restoreUpgradeSelection();
+        ui.panel.querySelector('#mwi-labsim-level-source').value = 'configure';
+    });
+
+    afterEach(() => {
+        game.houseRooms = {};
+        game.houseRoomDetailMap = {};
+        game.players = [];
+        ui.destroy();
+    });
+
+    const checkOnlyHouse = () => {
+        for (const b of ui.panel.querySelectorAll('[data-lab-upgrade-dimension]')) {
+            b.checked = b.getAttribute('data-lab-upgrade-dimension') === 'house';
+            b.dispatchEvent(new window.Event('change', { bubbles: true }));
+        }
+    };
+
+    test('the Configure fight sims each room one level up, and nothing else moved', async () => {
+        checkOnlyHouse();
+
+        await ui._onUpgradeAnalyze();
+
+        // A baseline plus one run per combat-relevant room
+        expect(sim.calls).toHaveLength(3);
+        expect(houseRoomsSimmed()[0]).toEqual({ [DAIRY]: 4, [GARDEN]: 2 });
+        expect(houseRoomsSimmed()).toContainEqual({ [DAIRY]: 5, [GARDEN]: 2 });
+        expect(houseRoomsSimmed()).toContainEqual({ [DAIRY]: 4, [GARDEN]: 3 });
+        // The Brewery buffs a skill, not a fight
+        expect(JSON.stringify(houseRoomsSimmed())).not.toContain('brewery');
+    });
+
+    test('the panel’s own character is never the one that gets the level', async () => {
+        checkOnlyHouse();
+
+        await ui._onUpgradeAnalyze();
+
+        expect(game.players[0].houseRooms).toEqual({ [DAIRY]: 4, [GARDEN]: 2 });
+    });
+
+    test('across every fight the same room level is installed into each of them', async () => {
+        checkOnlyHouse();
+        const scope = ui.panel.querySelector('#mwi-labsim-upgrade-scope');
+        scope.value = 'all';
+        scope.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        await ui._onUpgradeAnalyze();
+
+        // Two fights' baselines, then each room against each fight — a room
+        // level is the character's, so every fight is one it reaches
+        const raised = houseRoomsSimmed().filter((rooms) => rooms[DAIRY] === 5);
+        expect(raised).toHaveLength(2);
+        const levels = sim.calls.filter((call) => call.playerDTOs[0].houseRooms[DAIRY] === 5).map((c) => c.roomLevel);
+        expect(levels.sort()).toEqual([130, 150]);
+    });
+
+    test('a house with every combat room maxed says so rather than reading as no upgrades', async () => {
+        game.houseRooms = { [DAIRY]: 8, [GARDEN]: 8 };
+        game.players = [{ hrid: 'p1', equipment: {}, abilities: [], houseRooms: { ...game.houseRooms } }];
+        checkOnlyHouse();
+
+        await ui._onUpgradeAnalyze();
+
+        expect(ui.panel.querySelector('#mwi-labsim-status').textContent).toMatch(
+            /all 2 combat house rooms are already maxed/
+        );
+    });
+});
+
+/**
+ * Which level the Configure fight is analysed at.
+ *
+ * It used to be the Configure tab's Level box and nothing else, which meant the
+ * most-used analysis in the panel ran at 100 — the number the box opens on, and
+ * the one number in it that carries no intent. The source is now a choice with
+ * the level it comes to shown beside it.
+ */
+describe('the Configure fight is analysed at a level that was chosen', () => {
+    beforeEach(async () => {
+        geometry.saved = null;
+        geometry.wasOpen = false;
+        sim.calls = [];
+        game.monsters = [{ hrid: '/monsters/mimic', name: 'Mimic' }];
+        game.skipLevels = { '/monsters/mimic': 130 };
+        game.recommendedLevels = {};
+        game.players = [{ hrid: 'p1', equipment: {}, abilities: [], houseRooms: {} }];
+        game.houseRoomDetailMap = {};
+
+        ui.buildPanel();
+        await settle();
+        ui._switchTab('upgrade');
+        ui.panel.querySelector('#mwi-labsim-monster').value = '/monsters/mimic';
+        await ui._restoreUpgradeSelection();
+        ui._maxLevelByMonster = {};
+        storage.written = {};
+    });
+
+    afterEach(() => {
+        game.recommendedLevels = {};
+        game.players = [];
+        ui._maxLevelByMonster = {};
+        ui.destroy();
+    });
+
+    const source = () => ui.panel.querySelector('#mwi-labsim-level-source');
+    const setSource = (value) => {
+        source().value = value;
+        source().dispatchEvent(new window.Event('change', { bubbles: true }));
+    };
+    const setScope = (value) => {
+        const scope = ui.panel.querySelector('#mwi-labsim-upgrade-scope');
+        scope.value = value;
+        scope.dispatchEvent(new window.Event('change', { bubbles: true }));
+    };
+    const readout = () => ui.panel.querySelector('#mwi-labsim-level-source-resolved').textContent;
+
+    test('the choice sits beside Targets, with all three levels a fight has', () => {
+        expect([...source().options].map((o) => o.value)).toEqual(['sim_max', 'skip', 'configure']);
+        expect(source().closest('#mwi-labsim-upgrade-scope')).toBeNull();
+        expect(ui.panel.querySelector('#mwi-labsim-upgrade-scope').parentElement).toBe(
+            source().closest('label').parentElement
+        );
+    });
+
+    test('and only for the scope it means anything to', () => {
+        const label = ui.panel.querySelector('#mwi-labsim-level-source-label');
+        expect(label.style.display).toBe('inline-flex');
+        setScope('all');
+        expect(label.style.display).toBe('none');
+        setScope('current');
+        expect(label.style.display).toBe('inline-flex');
+    });
+
+    test('a Level box left on its default means Sim max — nobody asked for 100', async () => {
+        await ui._restoreUpgradeSelection();
+        expect(source().value).toBe('sim_max');
+    });
+
+    test('a Level box that was typed into means the number that was typed', async () => {
+        ui.panel.querySelector('#mwi-labsim-level').value = '232';
+        await ui._restoreUpgradeSelection();
+        expect(source().value).toBe('configure');
+    });
+
+    test('the resolved level is on screen before Analyze is pressed', () => {
+        setSource('skip');
+        expect(readout()).toBe('= L130');
+        expect(ui.panel.querySelector('#mwi-labsim-level-source-resolved').title).toContain('Skip level (L130)');
+    });
+
+    test('a sim max nothing has searched for yet says so rather than a number', () => {
+        setSource('sim_max');
+        expect(readout()).toMatch(/not simmed yet/);
+    });
+
+    test('and reads as a level once a Find Max has produced one', () => {
+        ui._maxLevelByMonster['/monsters/mimic'] = 232;
+        setSource('sim_max');
+        expect(readout()).toBe('= L232');
+    });
+
+    test('a Recommend result wins over the threshold currently configured', () => {
+        game.recommendedLevels['/monsters/mimic'] = 141;
+        setSource('skip');
+        expect(readout()).toBe('= L141');
+    });
+
+    test('the analysis actually runs at the level the source resolved to', async () => {
+        ui.panel.querySelector('#mwi-labsim-level').value = '100';
+        setSource('skip');
+
+        await ui._onUpgradeAnalyze();
+
+        expect(sim.calls.length).toBeGreaterThan(0);
+        for (const call of sim.calls) expect(call.roomLevel).toBe(130);
+    });
+
+    test('a cached sim max is used without searching for it again', async () => {
+        ui._maxLevelByMonster['/monsters/mimic'] = 232;
+        setSource('sim_max');
+
+        await ui._onUpgradeAnalyze();
+
+        for (const call of sim.calls) expect(call.roomLevel).toBe(232);
+    });
+
+    test('and the Configure box is still exactly what Configure value means', async () => {
+        ui.panel.querySelector('#mwi-labsim-level').value = '175';
+        setSource('configure');
+
+        await ui._onUpgradeAnalyze();
+
+        for (const call of sim.calls) expect(call.roomLevel).toBe(175);
+    });
+
+    test('a source with nothing behind it falls through rather than analysing level 0', () => {
+        game.skipLevels = {};
+        ui.panel.querySelector('#mwi-labsim-level').value = '150';
+        setSource('skip');
+
+        expect(readout()).toBe('= L150');
+        expect(ui._resolveTargetLevel('/monsters/mimic')).toMatchObject({ usedSource: 'configure', fellBack: true });
+    });
+
+    test('the choice survives being made — it is written down like its neighbours', async () => {
+        setSource('skip');
+        await settle();
+        expect(storage.written['labSimUpgradeLevelSource_me']).toBe('skip');
     });
 });
 

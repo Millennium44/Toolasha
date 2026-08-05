@@ -12,10 +12,12 @@ import {
     buildPlayerDTO,
     buildGameDataPayload,
     applyLoadoutSnapshotToDTO,
+    getCommunityBuffs,
     getGuildBuffDetailMap,
     applyGuildBuffLevel,
 } from '../combat-sim/combat-sim-adapter.js';
 import { runLabyrinthSimulation } from '../combat-sim/combat-sim-runner.js';
+import { buildCommunityBuffsForSkill } from '../combat-sim/skilling-sim-helpers.js';
 import { wilsonInterval } from '../combat-sim/engine/wilson.js';
 import Monster from '../combat-sim/engine/monster.js';
 import { setGameData } from '../combat-sim/engine/game-data.js';
@@ -584,11 +586,76 @@ class LabyrinthClearRate {
     }
 
     /**
+     * The community buff levels the server is currently running, by the key the
+     * skilling helpers name them with.
+     *
+     * Read through `getCommunityBuffLevel` rather than off
+     * `communityActionTypeBuffsMap`, and that is the whole point of the method.
+     * The map is only ever written from the `init_character_data` payload —
+     * nothing refreshes it — while `characterData.communityBuffs`, which is what
+     * this reads, is replaced on every `community_buffs_updated` message. A room
+     * scored off the map was being scored against the buff levels as they stood
+     * when the page was loaded, which drifts away from the truth every time
+     * anybody on the server donates, and disagreed with the Lab Sim panel (whose
+     * DTO has always read the live levels) for the rest of the session.
+     *
+     * @returns {{productionEfficiency: number, enhancingSpeed: number, gatheringQuantity: number, experience: number}}
+     */
+    getLiveCommunityBuffLevels() {
+        const level = (hrid) => Math.max(0, Math.floor(Number(dataManager.getCommunityBuffLevel?.(hrid)) || 0));
+        return {
+            productionEfficiency: level('/community_buff_types/production_efficiency'),
+            enhancingSpeed: level('/community_buff_types/enhancing_speed'),
+            gatheringQuantity: level('/community_buff_types/gathering_quantity'),
+            experience: level('/community_buff_types/experience'),
+        };
+    }
+
+    /**
+     * What the Experience community buff is worth right now, as a ratio.
+     *
+     * The numbers come from `communityBuffTypeDetailMap` when it has loaded and
+     * from the same fallbacks the rest of the script carries when it has not —
+     * `flatBoost + (level − 1) × flatBoostLevelBonus`, which is the formula the
+     * combat sim's own `buildExtraBuffs` uses for this exact buff.
+     *
+     * It is read separately from the skilling helper because that one answers a
+     * question about a *skill* — it filters on `usableInActionTypeMap` for a
+     * skilling action type and drops everything that cannot move a skilling
+     * metric. A labyrinth fight is not one of those action types, and the award
+     * being raised here is the room's completion experience rather than a
+     * skilling metric.
+     *
+     * @returns {number} Ratio, 0 when the buff is not running
+     */
+    getCommunityExperienceBonus() {
+        const level = Math.max(
+            0,
+            Math.floor(Number(dataManager.getCommunityBuffLevel?.('/community_buff_types/experience')) || 0)
+        );
+        if (level <= 0) return 0;
+
+        const buff =
+            dataManager.getInitClientData?.()?.communityBuffTypeDetailMap?.['/community_buff_types/experience']?.buff;
+        const num = (value, fallback) => (typeof value === 'number' && Number.isFinite(value) ? value : fallback);
+        const flat = num(buff?.flatBoost, 0.2) + (level - 1) * num(buff?.flatBoostLevelBonus, 0.005);
+        const ratio = num(buff?.ratioBoost, 0) + (level - 1) * num(buff?.ratioBoostLevelBonus, 0);
+        return flat + ratio;
+    }
+
+    /**
      * How much more experience a labyrinth room pays than its base award.
      *
-     * The labyrinth experience upgrade plus any wisdom the run's crates carry.
-     * The same two sources the skilling rooms read, minus the per-skill buff
-     * maps a fight has no equivalent of.
+     * The labyrinth experience upgrade, any wisdom the run's crates carry, and
+     * the Experience community buff.
+     *
+     * That last one was missing, and only from here: a skilling room's award is
+     * `roomLevel × 50 × (1 + experienceBonus)` with the bonus built by
+     * `getSkillingMetrics`, which reads the community buffs among its sources —
+     * so the same server-wide buff was worth up to a fifth more experience in a
+     * Milking room and exactly nothing in a fight. The two rooms pay on the same
+     * formula and the buff applies to both.
+     *
      * @returns {number} Ratio, 0 when nothing applies
      */
     getCombatExperienceBonus() {
@@ -597,7 +664,7 @@ class LabyrinthClearRate {
             if (buff?.typeHrid !== '/buff_types/wisdom') continue;
             bonus += (Number(buff.flatBoost) || 0) + (Number(buff.ratioBoost) || 0);
         }
-        return bonus;
+        return bonus + this.getCommunityExperienceBonus();
     }
 
     /**
@@ -723,7 +790,12 @@ class LabyrinthClearRate {
 
         const buffSources = [
             loadoutEquipBuffs || charData.equipmentActionTypeBuffsMap?.[actionTypeHrid],
-            charData.communityActionTypeBuffsMap?.[actionTypeHrid],
+            // Built from the levels the server is running now rather than read
+            // from `communityActionTypeBuffsMap`, which is written once at login
+            // and never again — see `getLiveCommunityBuffLevels`. Built by the
+            // same helper the Lab Sim's skilling tab uses, so the tile and the
+            // panel cannot disagree about what a community buff is worth.
+            buildCommunityBuffsForSkill(this.getLiveCommunityBuffLevels(), actionTypeHrid),
             charData.houseActionTypeBuffsMap?.[actionTypeHrid],
             charData.guildActionTypeBuffsMap?.[actionTypeHrid],
             charData.achievementActionTypeBuffsMap?.[actionTypeHrid],
@@ -1663,7 +1735,12 @@ class LabyrinthClearRate {
                 playerMpFraction: state.playerMpFraction,
                 elapsedNs: Math.max(0, state.elapsedSeconds) * 1e9,
             },
-            communityBuffs: { mooPass: false, comExp: 0, comDrop: 0 },
+            // The character's own, so the replay behind the live readout is
+            // running the same character the tile badges and the Lab Sim are.
+            // Neither buff the engine models changes a win rate, so this does
+            // not move the number on the attempt bar today — it stops the live
+            // path being the one place that says the buffs are off.
+            communityBuffs: getCommunityBuffs(),
             labyrinthCombatBuffs: this.getLabyrinthCombatBuffs(),
         });
 
@@ -3871,6 +3948,12 @@ class LabyrinthClearRate {
             overrides.communityBuffs,
             overrides.houseBuffs,
             dataManager.characterData?.achievementActionTypeBuffsMap?.[actionTypeHrid],
+            // Not editable and so not in the overrides, exactly like the
+            // achievement buffs above — and, exactly like them, part of what the
+            // live `getSkillingMetrics` scores a room with. Leaving it out made
+            // the panel's baseline disagree with the tile's by the Moo Pass's
+            // wisdom for every subscriber.
+            dataManager.characterData?.mooPassActionTypeBuffsMap?.[actionTypeHrid],
             guildBuffs,
         ];
 

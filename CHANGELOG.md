@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The lab reads the same buffs as the sim
+
+- **The live clear-rate readout was scoring against buff levels frozen at page load** — its community buffs came from a map written once at login, so tiles and hovers drifted from the Lab Sim (which reads live levels) for the whole session. Both now build community buffs through the same code, so they cannot diverge. Combat XP readouts also gained the community Experience bonus they'd always ignored, and the sim baseline for Moo Pass subscribers no longer understates XP.
+- **House rooms work in every lab scope now** — and the old separate Configure-only pass is gone entirely: house rows used to be measured against their own baseline on their own seed (not comparable with the rest of the table); they now share the analysis's baseline and paired trials, and a whole-run candidate is simmed against each fight at that fight's own level.
+- **The Configure-fight enemy level finally defaults sensibly**: a level-source picker (Sim max / Skip level / Configure value) shows the resolved level inline. Default is Sim max — unless you've typed something other than 100 into the Level box, which is read as intent and respected. Skip level prefers a Recommend run's set-percent threshold, falling back to your configured skip; every fallback is shown, never silent.
+
 ### The budget planner spends the money
 
 - **The empty 500M plan is fixed**: the planner demanded every gain clear the run's 1.96σ noise bar, and on the profit axis a real 0.4% improvement never can — so everything was skipped as "within noise" and the plan came back empty. It now prefers statistically-measured rows exactly as before, and only when that buys nothing re-plans on the estimates with an amber "Ranked on estimates" note, so you always see the best affordable set. Multiple ability upgrades can share one plan (each ability is its own key; two targets for the same ability still pick the better one).
