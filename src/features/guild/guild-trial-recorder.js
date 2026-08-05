@@ -44,6 +44,7 @@ import { createTimerRegistry } from '../../utils/timer-registry.js';
 import guildTrialDamage from './guild-trial-damage.js';
 import { loadLoadouts } from './guild-loadouts.js';
 import { supportCoverage } from './guild-trial-support.js';
+import guildMemberSkills from './guild-member-skills.js';
 import { TRIAL_ACTIVE_MS, trialWeekStart } from './guild-trials-math.js';
 import { loadTrialRecord } from './guild-trials-store.js';
 
@@ -374,10 +375,13 @@ export async function buildTrialExport({ guildName = null } = {}) {
         record,
         loadouts,
         trialDamage,
-        // New, and additive: the session the recorder kept, and a statement of
-        // what the battle feed can and cannot say about a player
+        // New, and additive: the session the recorder kept, a statement of what
+        // the battle feed can and cannot say about a player, and the members'
+        // skill levels the profile cycler has collected — which is the only
+        // source a skilling trial's forecast has
         session,
         coverage: supportCoverage(),
+        memberSkills: guildMemberSkills.all?.() ?? {},
     };
 }
 

@@ -161,6 +161,21 @@ class GuildTrialScoreboard {
         this.container = null;
         this.tab = 'damage';
         this.refreshId = null;
+        /** The trials feature's expected-tier forecast, pushed in rather than imported */
+        this.forecast = null;
+    }
+
+    /**
+     * Take the expected-tier forecast from the trials feature.
+     *
+     * Pushed rather than pulled, the same way the damage gate is told which
+     * encounters this week's trials are: the trials feature imports this panel,
+     * so this panel must not import it back.
+     *
+     * @param {Object|null} forecast - From `guild-trial-forecast.js`
+     */
+    noteForecast(forecast) {
+        this.forecast = forecast || null;
     }
 
     /** @returns {boolean} Whether the panel is on screen */
@@ -347,6 +362,15 @@ class GuildTrialScoreboard {
                   `${formatKMB(Math.round(unattributed))} unattributed — regeneration, or two healers on one tick.</div>`
                 : '';
 
+        const forecast = this.forecast;
+        const expected =
+            forecast && forecast.tier !== null
+                ? `<div style="color:${DIM}; font-size:10px; margin-top:6px;">` +
+                  `Expected to reach <span style="color:${GOOD}; font-weight:600;">T${forecast.tier}</span> ` +
+                  `in the hour — ${forecast.source === 'measured' ? 'from the party\u2019s measured rate' : 'estimated from captured loadouts'}` +
+                  `${forecast.limitedBy === 'enrage' ? ', walled by the ten-minute enrage' : ''}.</div>`
+                : '';
+
         const buttons =
             `<div style="display:flex; gap:6px; margin-top:8px;">` +
             `<button data-action="copy" style="flex:1; cursor:pointer; padding:4px 0; border-radius:4px;` +
@@ -356,7 +380,7 @@ class GuildTrialScoreboard {
             `border:1px solid rgba(240,168,48,0.5); background:transparent; color:${WARN}; font-size:11px;">` +
             'End &amp; start new</button></div>';
 
-        return head + tabs + disclaimer + list + footnote + buttons;
+        return head + tabs + disclaimer + list + footnote + expected + buttons;
     }
 
     /**

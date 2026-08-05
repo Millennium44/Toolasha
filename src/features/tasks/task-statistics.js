@@ -17,6 +17,7 @@ import {
 import { calculateTaskCompletionSeconds } from './task-profit-display.js';
 import taskCompletionTracker from './task-completion-tracker.js';
 import taskRerollTracker from './task-reroll-tracker.js';
+import { forecastTaskSlots } from './task-slot-forecast.js';
 import { timeReadable, formatKMB, formatDateTime } from '../../utils/formatters.js';
 import { TOOLASHA } from '../../utils/selectors.js';
 
@@ -202,37 +203,32 @@ class TaskStatistics {
 
     /**
      * Calculate task overflow time
+     *
+     * The arithmetic is `task-slot-forecast.js`, which the task-slot
+     * notification projects from too — one definition of when the board fills,
+     * so the panel and the alert cannot come to disagree about it. What this
+     * panel calls "overflow" is the forecast's `wastesAt`: the first task that
+     * arrives with nowhere to go, one cadence after the last free slot is taken.
+     *
      * @returns {Object} Overflow time data
      */
     calculateOverflowTime() {
-        const characterInfo = dataManager.characterData?.characterInfo;
-        if (!characterInfo) {
+        const forecast = forecastTaskSlots({
+            characterInfo: dataManager.characterData?.characterInfo,
+            activeTaskCount: this.getActiveTasks().length,
+        });
+        if (!forecast.ok) {
             return { error: 'Character info not available' };
         }
 
-        const taskSlotCap = characterInfo.taskSlotCap;
-        const taskCooldownHours = characterInfo.taskCooldownHours;
-        const lastTaskTimestamp = characterInfo.lastTaskTimestamp;
-        const unreadTaskCount = characterInfo.unreadTaskCount || 0;
-        const activeTaskCount = this.getActiveTasks().length;
-
-        const taskCount = unreadTaskCount + activeTaskCount;
-        const availableSlots = taskSlotCap - taskCount;
-        const taskCooldownMs = taskCooldownHours * 3.6e6;
-        const lastTaskDate = new Date(lastTaskTimestamp).getTime();
-        const overflowDate = new Date(lastTaskDate + (availableSlots + 1) * taskCooldownMs);
-
-        const now = Date.now();
-        const msUntilOverflow = overflowDate.getTime() - now;
-
         return {
-            overflowDate,
-            msUntilOverflow,
-            isOverflowing: msUntilOverflow <= 0,
-            taskSlotCap,
-            taskCooldownHours,
-            usedSlots: taskCount,
-            availableSlots,
+            overflowDate: new Date(forecast.wastesAt),
+            msUntilOverflow: forecast.msUntilWaste,
+            isOverflowing: forecast.msUntilWaste <= 0,
+            taskSlotCap: forecast.slotCap,
+            taskCooldownHours: forecast.cooldownHours,
+            usedSlots: forecast.usedSlots,
+            availableSlots: forecast.freeSlots,
         };
     }
 

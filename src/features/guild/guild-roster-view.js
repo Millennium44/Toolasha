@@ -37,6 +37,7 @@ import { createPanel, panelCard, panelLine, panelNote } from '../../utils/simple
 import { registerRow } from '../../utils/overlay-rows.js';
 import { guildXPTracker } from './guild-xp-tracker.js';
 import guildLoadoutCapture from './guild-loadout-capture.js';
+import guildMemberSkills from './guild-member-skills.js';
 import { describeLoadoutAge } from './guild-loadouts.js';
 
 /** How many stat rows of a snapshot the roster panel shows before it stops */
@@ -213,6 +214,57 @@ function xp(value) {
 }
 
 /**
+ * The profile cycler: one click, one guildmate's skills.
+ *
+ * A skilling trial's forecast needs the party's skill levels, and the only place
+ * those appear is a member's own profile — `profile_shared` is sent when a
+ * profile is opened and at no other time. So they have to be collected, and the
+ * collecting is a person clicking a button, once per member, which is both what
+ * was asked for and the only version worth building: nothing here opens profiles
+ * on its own.
+ *
+ * @param {HTMLElement} body - The panel body
+ * @param {Object} [capture] - The skills store, injectable for tests
+ * @returns {HTMLElement} The card
+ */
+export function drawProfileCycler(body, capture = guildMemberSkills) {
+    const state = capture.progress?.() || { logged: 0, total: 0, next: null, stale: 0 };
+    const card = panelCard(body, `Member skills (logged ${state.logged}/${state.total})`, ACCENT);
+
+    if (!state.total) {
+        card.appendChild(panelNote('No roster yet — open the guild page once.'));
+        return card;
+    }
+
+    const button = document.createElement('button');
+    button.className = 'mwi-profile-cycler';
+    button.textContent = state.next ? `Open ${state.next.name}\u2019s profile` : 'Every member logged';
+    button.disabled = !state.next;
+    button.style.cssText =
+        'width:100%; margin:4px 0; padding:4px 8px; border-radius:4px; font-size:11px;' +
+        `cursor:${state.next ? 'pointer' : 'default'}; background:transparent;` +
+        `border:1px solid ${state.next ? ACCENT : 'rgba(255,255,255,0.2)'};` +
+        `color:${state.next ? ACCENT : ROW_COLORS.dim};`;
+    button.title =
+        'Opens one member\u2019s profile per click, so the game sends their skill levels and this can keep ' +
+        'them. Nothing is opened automatically.\n' +
+        'A profile carries every skill level, which is what the skilling forecast needs; combat stat sheets ' +
+        'come from fighting beside somebody instead.';
+
+    button.addEventListener('click', () => {
+        const result = capture.openNext?.();
+        if (result?.how === 'chat') button.textContent = `Press Enter to open ${result.opened}`;
+        else if (result?.opened) button.textContent = `Opened ${result.opened}`;
+    });
+
+    card.appendChild(button);
+    if (state.stale) {
+        card.appendChild(panelNote(`${state.stale} capture${state.stale === 1 ? '' : 's'} older than a week.`));
+    }
+    return card;
+}
+
+/**
  * The stat sheets that have been seen, with the date on every one of them.
  *
  * The only place a guild member's build is visible is the unit popup, and it is
@@ -315,6 +367,7 @@ export const guildRosterPanel = createPanel({
             }
         }
 
+        drawProfileCycler(body);
         drawSeenLoadouts(body);
 
         const contributing = rows.filter((member) => Number.isFinite(member.delta7d) && member.delta7d > 0);

@@ -78,6 +78,7 @@ afterEach(() => {
     // A panel remembers which tab you left it on, which is right for a panel
     // and wrong for the next test
     guildTrialScoreboard.tab = 'damage';
+    guildTrialScoreboard.noteForecast(null);
     vi.restoreAllMocks();
     vi.useRealTimers();
     document.body.innerHTML = '';
@@ -221,6 +222,30 @@ describe('the panel', () => {
         document.querySelector('[data-action="copy"]').click();
 
         expect(written[0]).toContain('1. Tib — 600,000');
+    });
+
+    test('the expected tier is echoed from the trials feature, not recomputed', () => {
+        guildTrialScoreboard.noteForecast({ tier: 6, source: 'measured', limitedBy: 'time' });
+        guildTrialScoreboard.open();
+
+        expect(text()).toContain('Expected to reach');
+        expect(text()).toContain('T6');
+        expect(text()).toContain('measured rate');
+    });
+
+    test('a walled forecast says so here too', () => {
+        guildTrialScoreboard.noteForecast({ tier: 3, source: 'estimated', limitedBy: 'enrage' });
+        guildTrialScoreboard.open();
+
+        expect(text()).toContain('walled by the ten-minute enrage');
+        expect(text()).toContain('estimated from captured loadouts');
+    });
+
+    test('no forecast is no row rather than an empty one', () => {
+        guildTrialScoreboard.noteForecast(null);
+        guildTrialScoreboard.open();
+
+        expect(text()).not.toContain('Expected to reach');
     });
 
     test('toggling twice leaves nothing behind', () => {
