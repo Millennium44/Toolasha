@@ -261,7 +261,7 @@ describe('readSyncGist', () => {
             body: {
                 updated_at: '2026-01-01T00:00:00Z',
                 files: {
-                    [MANIFEST_FILE]: { content: JSON.stringify({ chunks: 2, exportedAt: 'T' }) },
+                    [MANIFEST_FILE]: { content: JSON.stringify({ toolashaSync: 1, chunks: 2, exportedAt: 'T' }) },
                     [chunkFileName(0)]: { content: '{"a":' },
                     [chunkFileName(1)]: { content: '1}' },
                 },
@@ -277,7 +277,7 @@ describe('readSyncGist', () => {
             status: 200,
             body: {
                 files: {
-                    [MANIFEST_FILE]: { content: JSON.stringify({ chunks: 1 }) },
+                    [MANIFEST_FILE]: { content: JSON.stringify({ toolashaSync: 1, chunks: 1 }) },
                     [chunkFileName(0)]: { truncated: true, raw_url: 'https://gist.example/raw', content: 'partial' },
                 },
             },
@@ -294,12 +294,53 @@ describe('readSyncGist', () => {
         await expect(readSyncGist('tok', 'abc')).rejects.toMatchObject({ kind: 'parse' });
     });
 
+    test('a manifest file replaced by a hand-pasted backup is named for what it is', async () => {
+        // Valid JSON, but no toolashaSync marker and no chunk count — exactly
+        // what pasting a backup file over the manifest produces
+        responses.push({
+            status: 200,
+            body: {
+                files: {
+                    [MANIFEST_FILE]: { content: JSON.stringify({ formatVersion: 1, stores: { settings: {} } }) },
+                },
+            },
+        });
+        const error = await readSyncGist('tok', 'abc').catch((caught) => caught);
+        expect(error.kind).toBe('parse');
+        expect(error.message).toContain('hand');
+    });
+
+    test('a manifest that is not JSON says which gist to look at', async () => {
+        responses.push({
+            status: 200,
+            body: { files: { [MANIFEST_FILE]: { content: 'this is not json' } } },
+        });
+        const error = await readSyncGist('tok', 'gist-xyz').catch((caught) => caught);
+        expect(error.kind).toBe('parse');
+        expect(error.message).toContain('gist-xyz');
+    });
+
+    test('a transport failure while reading the manifest keeps its own kind', async () => {
+        // Truncated manifest forces a raw_url refetch; that refetch failing
+        // with 401 must surface as auth, not as a corrupt manifest
+        responses.push({
+            status: 200,
+            body: {
+                files: {
+                    [MANIFEST_FILE]: { truncated: true, raw_url: 'https://gist.example/raw', content: 'part' },
+                },
+            },
+        });
+        responses.push({ status: 401, body: {} });
+        await expect(readSyncGist('tok', 'abc')).rejects.toMatchObject({ kind: 'auth' });
+    });
+
     test('a missing chunk fails loudly rather than returning half a backup', async () => {
         responses.push({
             status: 200,
             body: {
                 files: {
-                    [MANIFEST_FILE]: { content: JSON.stringify({ chunks: 2 }) },
+                    [MANIFEST_FILE]: { content: JSON.stringify({ toolashaSync: 1, chunks: 2 }) },
                     [chunkFileName(0)]: { content: 'half' },
                 },
             },

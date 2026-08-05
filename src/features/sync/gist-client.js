@@ -458,11 +458,31 @@ export async function readSyncGist(token, gistId) {
         throw new GistError('parse', 'That gist is not a Toolasha sync gist — it has no manifest file.');
     }
 
+    // Fetched outside the parse try/catch: a transport failure here (offline,
+    // auth, rate limit) must keep its own classification — swallowing it into
+    // "corrupt manifest" sends the reader to repair a gist that is fine.
+    const manifestText = await readFileContent(token, manifestFile);
+
     let manifest;
     try {
-        manifest = JSON.parse(await readFileContent(token, manifestFile));
+        manifest = JSON.parse(manifestText);
     } catch {
-        throw new GistError('parse', 'The sync gist manifest is corrupt. Push from a good device to replace it.');
+        throw new GistError(
+            'parse',
+            `The sync gist's ${MANIFEST_FILE} is not valid JSON (gist ${gistId}). Push from a good device to replace it.`
+        );
+    }
+
+    // Every manifest this script has ever written carries the marker and a
+    // chunk count. A file that parses but has neither is not ours — a backup
+    // pasted into the gist by hand looks exactly like this, and reading it as
+    // a manifest would quietly resolve to an empty payload.
+    if (manifest?.toolashaSync !== 1 || !(Number(manifest?.chunks) >= 1)) {
+        throw new GistError(
+            'parse',
+            `The ${MANIFEST_FILE} in gist ${gistId} is not one this script wrote — it looks edited or replaced by ` +
+                'hand. Pushing from a good device rewrites it.'
+        );
     }
 
     const chunkCount = Number(manifest?.chunks) || 0;
