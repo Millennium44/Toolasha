@@ -46,8 +46,10 @@ import {
 } from './labyrinth-formulas.js';
 import {
     BEACON_RADIUS,
+    LABYRINTH_ENTRANCE,
     isRoomRevealed,
     computeLabyrinthPath,
+    computeApproachPath,
     countDisjointRoutes,
     computeBeaconPlan,
 } from './labyrinth-pathing.js';
@@ -76,7 +78,7 @@ import { recommendationMethods, RECOMMEND_CLASS, RECOMMEND_CONTROLS_CLASS } from
  * reached for them here keep working.
  */
 export { SKIP_THRESHOLD_RANGE, labyrinthGridSize, labyrinthRoomRewards };
-export { computeLabyrinthPath, countDisjointRoutes, computeBeaconPlan };
+export { computeLabyrinthPath, computeApproachPath, countDisjointRoutes, computeBeaconPlan };
 
 const BADGE_CLASS = 'mwi-labyrinth-clear';
 const LIVE_PROGRESS_CLASS = 'mwi-labyrinth-live-progress';
@@ -435,6 +437,34 @@ class LabyrinthClearRate {
         const head = path[0];
         if (!head || !Number.isInteger(head.x) || !Number.isInteger(head.y)) return null;
         return rows[head.y]?.[head.x] || null;
+    }
+
+    /**
+     * Where the path head is standing, as a flat grid index.
+     *
+     * The same reading as `currentRoom`, in the form the planners work in.
+     * Falls back to -1 rather than to the entrance: "not in a run" and "at the
+     * entrance" are different answers, and only the caller knows which default
+     * it wants.
+     *
+     * @param {number} cols - Grid width
+     * @returns {number} Flat index, or -1 when the game has not said
+     */
+    currentRoomIndex(cols) {
+        if (!cols || !Array.isArray(this.roomData)) return -1;
+        let path = this._pathData;
+        if (typeof path === 'string' && path) {
+            try {
+                path = JSON.parse(path);
+            } catch {
+                return -1;
+            }
+        }
+        const head = Array.isArray(path) && path.length ? path[0] : null;
+        if (!head || !Number.isInteger(head.x) || !Number.isInteger(head.y)) return -1;
+        if (head.x < 0 || head.x >= cols || head.y < 0) return -1;
+        const idx = head.y * cols + head.x;
+        return idx < this.roomData.flat().length ? idx : -1;
     }
 
     /** Times the room being run now has been entered, 0 when unknown */
@@ -2931,6 +2961,23 @@ class LabyrinthClearRate {
                 const tile = tiles[idx];
                 if (tile?.needsShroud && !tile.isUnknown && !tile.unjudged && !tile.cleared) confirmedShrouds++;
             }
+            // The rooms leading up to the plan. A route only names rooms that
+            // cost something, so on a floor already opened up it starts out at
+            // the frontier with nothing drawn between here and there — the
+            // approach is that gap, walked over ground already cleared. Drawn
+            // first so a step marker always sits on top of it.
+            const standingIn = this.currentRoomIndex(cols);
+            const approach = computeApproachPath(
+                tiles,
+                cols,
+                path.route,
+                standingIn >= 0 ? standingIn : LABYRINTH_ENTRANCE
+            );
+            for (const idx of approach) {
+                const cell = cells[idx];
+                if (cell) this.appendPathOverlay(cell, '#57d08a', '', { approach: true });
+            }
+
             for (const idx of path.route) {
                 const tile = tiles[idx];
                 const cell = cells[idx];
@@ -2994,9 +3041,13 @@ class LabyrinthClearRate {
             }
             const torchNote = torches.over ? ` · only ${supplies.torch} torches for ${path.torches} entries` : '';
 
+            // Rooms walked through cost nothing and are nothing to do, so they
+            // are counted beside the plan's own rooms rather than inside them
+            const walkedNote = approach.length ? ` (+${approach.length} walked)` : '';
+
             this.setTileStatus(
-                `Path: ${plural(path.torches, 'room')} · ${shrouds.text}${shroudNote} · ${plural(path.chests.size, 'chest')}` +
-                    `${unknownText}${splitNote}${torchNote}`,
+                `Path: ${plural(path.torches, 'room')}${walkedNote} · ${shrouds.text}${shroudNote} · ` +
+                    `${plural(path.chests.size, 'chest')}${unknownText}${splitNote}${torchNote}`,
                 shrouds.over || torches.over
             );
         } catch (error) {
@@ -3011,16 +3062,22 @@ class LabyrinthClearRate {
     /**
      * Outline a run-grid tile as part of the computed route
      */
-    appendPathOverlay(cell, color, label) {
+    appendPathOverlay(cell, color, label, { approach = false } = {}) {
         const cellStyle = window.getComputedStyle(cell);
         if (cellStyle.position === 'static') {
             cell.style.position = 'relative';
         }
         const overlay = document.createElement('div');
         overlay.className = PATH_OVERLAY_CLASS;
-        overlay.style.cssText =
-            `position:absolute; inset:0; border:2px solid ${color}; border-radius:6px; ` +
-            'pointer-events:none; z-index:8; box-sizing:border-box;';
+        // An approach room is one to walk through, not one to do anything in,
+        // so it reads as the same highlight turned down: dashed, faded, and
+        // underneath the steps it leads to
+        if (approach) overlay.dataset.approach = '1';
+        overlay.style.cssText = approach
+            ? `position:absolute; inset:0; border:2px dashed ${color}; border-radius:6px; opacity:0.45; ` +
+              'pointer-events:none; z-index:7; box-sizing:border-box;'
+            : `position:absolute; inset:0; border:2px solid ${color}; border-radius:6px; ` +
+              'pointer-events:none; z-index:8; box-sizing:border-box;';
         if (label) {
             const tag = document.createElement('div');
             tag.style.cssText =
@@ -3283,7 +3340,9 @@ class LabyrinthClearRate {
 
         for (let i = 0; i < flatRooms.length; i++) {
             if (!flatRooms[i]?.isCleared) continue;
-            cells[i]?.querySelector(`.${PATH_OVERLAY_CLASS}`)?.remove();
+            // Every approach room is a cleared room — that is what makes it
+            // free to walk — so clearing progress is no reason to rub one out
+            cells[i]?.querySelector(`.${PATH_OVERLAY_CLASS}:not([data-approach])`)?.remove();
         }
     }
 

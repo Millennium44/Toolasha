@@ -8,7 +8,12 @@
 
 import { describe, test, expect } from 'vitest';
 
-import { computeLabyrinthPath, computeBeaconPlan, countDisjointRoutes } from './labyrinth-pathing.js';
+import {
+    computeLabyrinthPath,
+    computeApproachPath,
+    computeBeaconPlan,
+    countDisjointRoutes,
+} from './labyrinth-pathing.js';
 
 describe('computeLabyrinthPath', () => {
     // ASCII grids: S = cleared start, E = entrance, . = clearable,
@@ -87,6 +92,59 @@ describe('computeLabyrinthPath', () => {
     test('returns null when no start or exit exists', () => {
         expect(computeLabyrinthPath(grid(['..F']).tiles, 3)).toBeNull();
         expect(computeLabyrinthPath(grid(['S..']).tiles, 3)).toBeNull();
+    });
+});
+
+/**
+ * The walk up to the plan. A floor with its first rooms already cleared gets a
+ * route that starts out at the frontier, and from a live floor 10: "I want it
+ * to light up the tiles before the tile I've shrouded as well that make the
+ * shortest path".
+ */
+describe('computeApproachPath', () => {
+    // S = cleared, E = entrance, . = uncleared room, # = wall
+    function grid(rows) {
+        const cols = rows[0].length;
+        const tiles = [];
+        for (const row of rows) {
+            for (const ch of row) {
+                tiles.push(ch === '#' ? null : { cleared: ch === 'S', isEntrance: ch === 'E' });
+            }
+        }
+        return { tiles, cols };
+    }
+
+    test('lights the cleared rooms between the entrance and the first planned room', () => {
+        const { tiles, cols } = grid(['ESS..']);
+        // The plan starts at 3, two cleared rooms along
+        expect(computeApproachPath(tiles, cols, new Set([3, 4]))).toEqual([1, 2]);
+    });
+
+    test('is nothing at all when the plan starts where you are standing', () => {
+        const { tiles, cols } = grid(['E....']);
+        expect(computeApproachPath(tiles, cols, new Set([1, 2]))).toEqual([]);
+    });
+
+    test('takes the shortest way round when cleared ground offers two', () => {
+        const { tiles, cols } = grid(['ESS.', 'SS#.', 'SSS.']);
+        // Along the top row is two rooms; down and around is four
+        expect(computeApproachPath(tiles, cols, new Set([3, 7, 11]))).toEqual([1, 2]);
+    });
+
+    test('walks from where the player is standing rather than from the entrance', () => {
+        const { tiles, cols } = grid(['ESSS.']);
+        expect(computeApproachPath(tiles, cols, new Set([4]), 1)).toEqual([2, 3]);
+    });
+
+    test('refuses to walk through a room the plan should have costed', () => {
+        // The gap at 2 is uncleared, so there is no free way to the plan
+        const { tiles, cols } = grid(['ES..S']);
+        expect(computeApproachPath(tiles, cols, new Set([4]))).toEqual([]);
+    });
+
+    test('an empty plan has no approach', () => {
+        const { tiles, cols } = grid(['ESSSS']);
+        expect(computeApproachPath(tiles, cols, new Set())).toEqual([]);
     });
 });
 

@@ -2026,11 +2026,13 @@ describe('re-planning a route after shrouds have been spent', () => {
         return { status, parent };
     }
 
-    /** What each room ended up marked as: '', 'Shroud', '?', '⚑'… */
+    /** What each room ended up marked as: '', 'walk', 'Shroud', '?', '⚑'… */
     const marks = (parent) =>
-        [...parent.children].map((cell) =>
-            cell.querySelector('.mwi-labyrinth-path-overlay') ? cell.textContent || 'route' : ''
-        );
+        [...parent.children].map((cell) => {
+            const overlay = cell.querySelector('.mwi-labyrinth-path-overlay');
+            if (!overlay) return '';
+            return overlay.dataset.approach ? 'walk' : cell.textContent || 'route';
+        });
 
     /** A revealed fight the sims judge unbeatable, so the route must shroud it */
     const fight = () => ({
@@ -2091,9 +2093,11 @@ describe('re-planning a route after shrouds have been spent', () => {
 
         await labyrinthClearRate.runPathCalculation();
 
-        expect(status.textContent).toBe('Path: 4 rooms · 3 shrouds · 0 chests');
-        expect(marks(parent)[1]).toBe('');
-        expect(marks(parent)[2]).toBe('');
+        // Not planned for again — and now drawn as ground to walk over, which
+        // is what they have become
+        expect(status.textContent).toBe('Path: 4 rooms (+2 walked) · 3 shrouds · 0 chests');
+        expect(marks(parent)[1]).toBe('walk');
+        expect(marks(parent)[2]).toBe('walk');
     });
 
     test('a shroud spent while the sims are still running is not planned for either', async () => {
@@ -2112,9 +2116,9 @@ describe('re-planning a route after shrouds have been spent', () => {
 
         // The answer is about the floor as it stands, not as it was when the
         // button went down — no "Shroud" over a room already shrouded
-        expect(status.textContent).toBe('Path: 4 rooms · 3 shrouds · 0 chests');
-        expect(marks(parent)[1]).toBe('');
-        expect(marks(parent)[2]).toBe('');
+        expect(status.textContent).toBe('Path: 4 rooms (+2 walked) · 3 shrouds · 0 chests');
+        expect(marks(parent)[1]).toBe('walk');
+        expect(marks(parent)[2]).toBe('walk');
     });
 
     test('a room revealed mid-sim is costed like any other room nothing is known about', async () => {
@@ -2161,6 +2165,60 @@ describe('re-planning a route after shrouds have been spent', () => {
         spy.mockRestore();
 
         expect(status.textContent).toContain('press Path again');
+    });
+
+    test('the rooms between the entrance and the plan are lit as ground to walk, not work to do', async () => {
+        // The first three rooms are behind us; the plan starts at the frontier
+        const rooms = unbeatableFloor();
+        for (const i of [1, 2, 3]) rooms[i] = shrouded();
+        const { status, parent } = buildBoard(rooms);
+
+        await labyrinthClearRate.runPathCalculation();
+
+        // Three rooms of work, three of walking, and the walking is counted
+        // beside the plan rather than inside it — it costs nothing
+        expect(status.textContent).toBe('Path: 3 rooms (+3 walked) · 2 shrouds · 0 chests');
+        expect(marks(parent).slice(0, 4)).toEqual(['', 'walk', 'walk', 'walk']);
+        expect(marks(parent)[7]).toBe('Shroud');
+
+        // …and it reads as the same highlight turned down: dashed, faded, and
+        // carrying no instruction of its own
+        const approach = parent.children[1].querySelector('.mwi-labyrinth-path-overlay');
+        expect(approach.getAttribute('style')).toContain('dashed');
+        expect(approach.textContent).toBe('');
+        expect(parent.children[7].querySelector('.mwi-labyrinth-path-overlay').getAttribute('style')).toContain(
+            'solid'
+        );
+    });
+
+    test('the walk starts from the room the player is standing in when the game says', async () => {
+        const rooms = unbeatableFloor();
+        for (const i of [1, 2, 3]) rooms[i] = shrouded();
+        const { status } = buildBoard(rooms);
+        // The path head is the room being run — here, the far end of the
+        // cleared stretch, so there is nothing left to walk
+        labyrinthClearRate._pathData = JSON.stringify([{ x: 3, y: 0 }]);
+
+        await labyrinthClearRate.runPathCalculation();
+        labyrinthClearRate._pathData = null;
+
+        expect(status.textContent).toBe('Path: 3 rooms · 2 shrouds · 0 chests');
+    });
+
+    test('clearing progress does not rub out the walk it just created', async () => {
+        const rooms = unbeatableFloor();
+        for (const i of [1, 2]) rooms[i] = shrouded();
+        const { parent } = buildBoard(rooms);
+
+        await labyrinthClearRate.runPathCalculation();
+        expect(marks(parent)[1]).toBe('walk');
+
+        // Every approach room is a cleared room, and the pruner exists to strip
+        // the plan off rooms that have been cleared since it was drawn
+        labyrinthClearRate.pruneClearedPathOverlays();
+
+        expect(marks(parent)[1]).toBe('walk');
+        expect(marks(parent)[2]).toBe('walk');
     });
 
     test('the beacon planner counts a shrouded room as revealed, and plans no coverage over it', () => {
