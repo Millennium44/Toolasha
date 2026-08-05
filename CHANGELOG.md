@@ -17,6 +17,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - **The Task Tokens tile earns its rate line**: `tokens/hr this week` beneath the board value, on wall-clock time between your first and last claim (the tooltip names the sample and the basis; under two claims shows no rate rather than a fake one).
 - **Task statistics gains "Claimed Tasks (last 7 days)"**: tasks, tokens, coins, both hourly rates, the measured span — and reroll spend over the same window tied in for a **Net Task Income** figure, plus your last five completions.
 
+### Zones compared on even footing
+
+- **"Max-tier Food" option for all-zones sims**: substitute each equipped food slot with the strongest same-purpose food on the market (never a downgrade, never an unpriced item, your eat-triggers kept) so weak food dying in hard zones stops distorting the comparison. Sim-only — your real loadout is untouched. The headline badges the run (hover names the swaps), the CSV gains a Food column, and the stored all-zones snapshot carries the flag so the goal planner can tell a max-food comparison from your real earnings. Drinks are left alone on purpose: in this game every restoring consumable is food; drinks are buff coffees and have nothing to do with dying.
+
 ### The skilling sim sims your skill
 
 - **Tool candidates are scoped to the skill being simmed**: a Cooking run no longer evaluates chisels. The rule reads item stats, not a list — a piece qualifies only if it carries the simmed skill's speed/efficiency or all-skilling speed/efficiency, which also stops rare-find charms from outranking real speed tools in "best per slot". All-skills runs are untouched.
@@ -25,7 +29,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### The buff tells you before it leaves
 
-- **Community buff expiry alerts**: get notified a selectable lead time (default 15 minutes, 5–120) before a community buff's *actual* expiry — read from the game's own expireTime, never guessed from a last-seen duration. Master toggle plus per-buff toggles for all five buff types, off by default. A buff extended by new donations re-arms automatically; one expiry never double-fires.
+- **Community buff expiry alerts**: get notified a selectable lead time (default 15 minutes, 5–120) before a community buff's _actual_ expiry — read from the game's own expireTime, never guessed from a last-seen duration. Master toggle plus per-buff toggles for all five buff types, off by default. A buff extended by new donations re-arms automatically; one expiry never double-fires.
 - **Two core staleness bugs found en route, fixed**: the `community_buffs_updated` message could be silently dropped as a duplicate when two donations opened identically (the changed expiry sits past the dedup hash window), and community buff levels were only ever read at login — the tea optimizer, efficiency and profit calculators all quietly used launch-time levels as the server buff moved. Levels now track the live message.
 
 ### The sim comes home
