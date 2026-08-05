@@ -100,18 +100,35 @@ export const TRIAL_SKILLS = [
 /**
  * Whether a card's name is a trial's name.
  *
- * Substring rather than equality: the game writes combat trials as "Trial
- * Chameleon" and skilling trials as bare "Milking" on the Trials tab and
- * "Alchemy" on the In Progress tab, and a card may carry a level or a tier badge
- * on the same line.
+ * A trial card's name is *only* the trial's name — "Milking", "Alchemy", "Trial
+ * Chameleon" — optionally with the level or tier badge the card carries beside
+ * it, which is stripped before this is asked. So this matches the whole string
+ * rather than looking for the word inside it.
+ *
+ * It used to be a substring test, and that is what put the trial panel on the
+ * guild's **Overview** tab: the notice board is prose, prose mentions skills,
+ * and "we're milking at Level 90 if anyone wants to join" contains "milking".
+ * Paired with the guild XP bar — which reads `4,120 / 20,000` and so looks
+ * exactly like a progress reading — that was enough to build a card out of a
+ * paragraph and draw a payout block over somebody's notice board.
+ *
+ * The permitted decorations are the ones the game has actually been seen to
+ * write: a leading "Trial", a trailing level (`Lv.130`), a tier badge (`T6`) and
+ * ordinary punctuation. Anything else is prose.
  *
  * @param {string} name - A card's name
  * @returns {boolean} True when it names a trial
  */
 export function isTrialName(name) {
-    const lowered = String(name || '').toLowerCase();
+    const lowered = String(name || '')
+        .toLowerCase()
+        .replace(/\b(?:lv\.?\s*\d+|tier\s*\d+|t\d+)\b/g, ' ')
+        .replace(/^\s*trial\s+/, ' ')
+        .replace(/[^a-z]+/g, ' ')
+        .trim();
     if (!lowered) return false;
-    return [...COMBAT_ENCOUNTERS, ...TRIAL_SKILLS].some((trial) => lowered.includes(trial));
+
+    return [...COMBAT_ENCOUNTERS, ...TRIAL_SKILLS].includes(lowered);
 }
 
 /**

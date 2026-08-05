@@ -630,6 +630,36 @@ describe('isTrialName', () => {
     });
 });
 
+describe('a name that is not a card\u2019s', () => {
+    // The reported failure: the trial panel drew itself over the guild's
+    // Overview tab. The notice board is prose, prose mentions skills, and the
+    // guild XP bar reads "4,120 / 20,000" — which looks exactly like a progress
+    // reading. A substring test on the name was the last thing standing between
+    // a paragraph and a trial card, and it let one through.
+    test('prose that mentions a skill is not a trial', () => {
+        expect(isTrialName('We are milking at Level 90 if anyone wants to join')).toBe(false);
+        expect(isTrialName('Welcome! Read the rules before crafting anything')).toBe(false);
+        expect(isTrialName('Guild Experience')).toBe(false);
+        expect(isTrialName('Exp to Next Level')).toBe(false);
+    });
+
+    test('a card\u2019s own name still is, decorations and all', () => {
+        expect(isTrialName('Milking')).toBe(true);
+        expect(isTrialName('Alchemy')).toBe(true);
+        expect(isTrialName('Trial Chameleon')).toBe(true);
+        expect(isTrialName('Milking Lv.130')).toBe(true);
+        expect(isTrialName('Trial Jellyfish Lv.170')).toBe(true);
+        expect(isTrialName('Alchemy T6')).toBe(true);
+        expect(isTrialName('  Cheesesmithing  ')).toBe(true);
+    });
+
+    test('nothing is not a trial', () => {
+        expect(isTrialName('')).toBe(false);
+        expect(isTrialName(null)).toBe(false);
+        expect(isTrialName('Lv.130')).toBe(false);
+    });
+});
+
 describe('tierMarginalPoints', () => {
     test('the first tier is worth more than the ones after it', () => {
         expect(tierMarginalPoints('skilling', 1)).toBe(200);

@@ -96,6 +96,7 @@ beforeEach(() => {
     game.breakdown = breakdown();
     guildTrialRecorder.session = null;
     guildTrialRecorder.lastActivityAt = 0;
+    guildTrialRecorder.phase = null;
     guildTrialRecorder.initialize(null);
 });
 
@@ -156,6 +157,58 @@ describe('starting by itself', () => {
         const first = guildTrialRecorder.session;
         guildTrialRecorder.start('button');
         expect(guildTrialRecorder.session).toBe(first);
+    });
+});
+
+describe('not recording when nothing is running', () => {
+    test('a phase that has never been read is not permission to record', () => {
+        // Reported: "Stop recording" was active on a guild whose weekly trials
+        // were not on. Unknown must not be treated as live.
+        game.breakdown = breakdown({ active: false });
+        guildTrialRecorder.noteLifecycle(null);
+        vi.advanceTimersByTime(SNAPSHOT_MS * 2);
+
+        expect(guildTrialRecorder.recording).toBe(false);
+    });
+
+    test('a scheduled cycle stops a session that armed itself', () => {
+        guildTrialRecorder.noteActivity('tab-reading');
+        expect(guildTrialRecorder.recording).toBe(true);
+
+        guildTrialRecorder.noteLifecycle('scheduled');
+
+        expect(guildTrialRecorder.recording).toBe(false);
+        expect(guildTrialRecorder.session.endedBy).toBe('the trial is scheduled');
+    });
+
+    test('a session somebody pressed Record for is theirs to stop', () => {
+        guildTrialRecorder.start('button');
+        guildTrialRecorder.noteLifecycle('completed');
+
+        expect(guildTrialRecorder.recording).toBe(true);
+    });
+
+    test('the watcher stops promptly rather than waiting out the idle timer', () => {
+        guildTrialRecorder.noteActivity('trial-fight');
+        expect(guildTrialRecorder.recording).toBe(true);
+
+        // The fight ends and the panel says the cycle is over — well inside the
+        // ten minutes the idle rule would have taken
+        game.breakdown = breakdown({ active: false });
+        guildTrialRecorder.phase = 'completed';
+        vi.advanceTimersByTime(SNAPSHOT_MS);
+
+        expect(guildTrialRecorder.recording).toBe(false);
+        expect(guildTrialRecorder.session.endedBy).toBe('the trial is completed');
+    });
+
+    test('a live phase keeps it running', () => {
+        guildTrialRecorder.noteActivity('tab-reading');
+        guildTrialRecorder.noteLifecycle('live');
+        game.breakdown = breakdown({ active: false, totalDamage: 600_000 });
+        vi.advanceTimersByTime(SNAPSHOT_MS);
+
+        expect(guildTrialRecorder.recording).toBe(true);
     });
 });
 

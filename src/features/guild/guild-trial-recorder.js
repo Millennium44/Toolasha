@@ -121,6 +121,8 @@ class GuildTrialRecorder {
         this.characterId = null;
         /** Last moment anything said a trial was happening */
         this.lastActivityAt = 0;
+        /** Where the guild panel says the cycle is; null until one has been read */
+        this.phase = null;
     }
 
     /**
@@ -159,6 +161,7 @@ class GuildTrialRecorder {
     forget() {
         this.session = null;
         this.lastActivityAt = 0;
+        this.phase = null;
         this.characterId = dataManager.getCurrentCharacterId?.() ?? null;
     }
 
@@ -239,21 +242,57 @@ class GuildTrialRecorder {
         this.start(kind, at);
     }
 
+    /**
+     * Where the guild panel says the cycle is.
+     *
+     * The recorder cannot read the page itself and will not guess. A phase it
+     * has never been told is `null`, and `null` is *not* permission to record —
+     * which is the bug this exists for: a session was found running on a guild
+     * whose weekly trials were not on at all, because "no status seen" was
+     * being treated the same as "a trial is live".
+     *
+     * @param {string|null} phase - `scheduled`, `live`, `completed` or null
+     * @param {number} [at] - Clock
+     */
+    noteLifecycle(phase, at = Date.now()) {
+        this.phase = phase || null;
+        if (!this.recording) return;
+
+        // A session somebody pressed Record for is theirs to stop
+        if (this.session?.startedBy === 'button') return;
+        if (this.phase && this.phase !== 'live') this.stop(`the trial is ${this.phase}`, at);
+    }
+
     /** The watcher: arm on a trial fight, snapshot while recording, stop when it is over */
     _tick() {
         try {
             const now = Date.now();
             const breakdown = guildTrialDamage.breakdown?.();
+            // A fight the damage gate has armed is a trial by the gate's own
+            // narrow test, which is evidence enough on its own
             if (breakdown?.active) this.noteActivity('trial-fight', now);
 
             if (!this.recording) return;
 
             this._snapshot(now);
 
+            const automatic = this.session.startedBy !== 'button';
             const ranLong = now - this.session.startedAt > TRIAL_ACTIVE_MS;
             const wentQuiet = now - this.lastActivityAt > IDLE_STOP_MS;
-            if (ranLong || wentQuiet) this.stop(ranLong ? 'the hour a trial runs for elapsed' : 'nothing seen', now);
-            else this._persist();
+            // Neither the panel nor the battle feed says a trial is happening,
+            // and nobody pressed Record. Stopped now rather than in ten minutes
+            const notRunning = automatic && !breakdown?.active && this.phase && this.phase !== 'live';
+
+            if (ranLong || wentQuiet || notRunning) {
+                this.stop(
+                    ranLong
+                        ? 'the hour a trial runs for elapsed'
+                        : notRunning
+                          ? `the trial is ${this.phase}`
+                          : 'nothing seen',
+                    now
+                );
+            } else this._persist();
         } catch (error) {
             console.error('[GuildTrialRecorder] Watching the trial failed:', error);
         }

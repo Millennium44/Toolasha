@@ -18,6 +18,7 @@ import {
     findTrialClockMs,
     findTrialsRoot,
     isTrialsSetupTab,
+    onTrialTab,
     parsePoints,
     readPersonalStats,
     readTrialStatus,
@@ -606,6 +607,57 @@ describe('a card that says the trial is over', () => {
             )
         )[0];
         expect(tile.completed).toBe(false);
+    });
+});
+
+describe('the Overview tab is not the trials tab', () => {
+    /**
+     * The guild page as the Overview tab draws it: a notice board and the
+     * guild's own XP bar, and not a trial anywhere.
+     * @returns {Element} The panel
+     */
+    function overview() {
+        document.body.innerHTML =
+            '<div class="GuildPanel_guildPanel__r">' +
+            '<div class="TabsComponent_tab__x TabsComponent_selected__y">Overview</div>' +
+            '<div class="TabsComponent_tab__x">Trials</div>' +
+            '<div class="GuildPanel_notice__n">Welcome! We are milking at Level 90 if anyone wants to join, ' +
+            'and there is cheesesmithing on Thursdays.</div>' +
+            '<div class="GuildPanel_dataBlock__d"><div>Exp to Next Level</div><div>4,120 / 20,000</div></div>' +
+            '</div>';
+        return document.querySelector('[class*="GuildPanel_guildPanel"]');
+    }
+
+    test('a notice board beside an XP bar builds no cards', () => {
+        // Every ingredient of the reported bug in one fixture: a reading that
+        // looks like a progress bar, and prose that mentions two skills
+        expect(readTrialTiles(overview())).toEqual([]);
+    });
+
+    test('and the tab strip says so on its own', () => {
+        expect(onTrialTab(overview())).toBe(false);
+    });
+
+    test('the trials tab passes the same gate', () => {
+        document.body.innerHTML =
+            '<div class="GuildPanel_guildPanel__r">' +
+            '<div class="TabsComponent_tab__x">Overview</div>' +
+            '<div class="TabsComponent_tab__x TabsComponent_selected__y">In Progress</div>' +
+            '<div class="GuildPanel_tile__a"><div class="GuildPanel_tileName__n">Alchemy</div>' +
+            '<div>18,850 / 65,280</div></div></div>';
+        const panel = document.querySelector('[class*="GuildPanel_guildPanel"]');
+
+        expect(onTrialTab(panel)).toBe(true);
+        expect(readTrialTiles(panel)).toHaveLength(1);
+    });
+
+    test('a page with no legible tab strip is allowed, not refused', () => {
+        // The class name is unverified, and a gate that fails closed on an
+        // unrecognised tab strip takes the whole feature off the screen the day
+        // the game renames something
+        document.body.innerHTML = '<div class="GuildPanel_guildPanel__r"><div>Alchemy</div></div>';
+        expect(onTrialTab(document.querySelector('[class*="GuildPanel"]'))).toBe(true);
+        expect(onTrialTab(null)).toBe(true);
     });
 });
 

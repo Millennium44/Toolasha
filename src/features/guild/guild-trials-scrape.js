@@ -417,6 +417,46 @@ export function findTrialsRoot(scope = typeof document === 'undefined' ? null : 
 }
 
 /**
+ * Whether the guild page is showing a trial tab at all.
+ *
+ * A second, independent gate on top of "are there trial cards here", and it
+ * exists because the first one was fooled: a notice board that mentions a skill,
+ * beside a guild XP bar that reads `4,120 / 20,000`, was enough to build a card
+ * out of prose and draw the payout block over the **Overview** tab.
+ * {@link module:./guild-trials-math.isTrialName} is the fix for that particular
+ * paragraph; this is the fix for the next one.
+ *
+ * Deliberately permissive about not knowing. The tab strip's class name is
+ * unverified — the command palette leans on `TabsComponent_tab` and nothing
+ * else does — so a page where no tab strip can be found is *allowed*, and only a
+ * page where the selected tab is legible and is plainly something else is
+ * refused. A gate that fails closed on an unrecognised tab strip would take the
+ * whole feature off the screen the day the game renames a class, which is the
+ * failure this file already has two scars from.
+ *
+ * @param {Element|null} root - The trials root
+ * @returns {boolean} False only when the selected tab is legibly not a trial tab
+ */
+export function onTrialTab(root) {
+    const panel = root?.closest?.('[class*="GuildPanel"]') || root;
+    if (!panel || typeof panel.querySelectorAll !== 'function') return true;
+
+    const tabs = [...panel.querySelectorAll('[class*="TabsComponent_tab"], [role="tab"]')];
+    if (!tabs.length) return true;
+
+    const selected = tabs.filter(
+        (tab) =>
+            tab.getAttribute?.('aria-selected') === 'true' ||
+            (typeof tab.className === 'string' && /selected|active/i.test(tab.className))
+    );
+    // Nothing marked as selected is the same as no tab strip: unreadable, so
+    // not a reason to withhold anything
+    if (!selected.length) return true;
+
+    return selected.some((tab) => /trial|progress/i.test(tab.textContent || ''));
+}
+
+/**
  * Where the trial cycle currently is, from the header the game writes.
  *
  * The page says it plainly and this feature had never read it: **"Scheduled Wed

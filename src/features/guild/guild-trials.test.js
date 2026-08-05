@@ -34,7 +34,7 @@ const game = vi.hoisted(() => ({
     dmHandlers: {},
     trialNames: [],
     alerts: { status: [], payouts: [], reset: 0 },
-    recorder: { recording: false, activity: [], downloads: [], startedBy: null, endedBy: null },
+    recorder: { recording: false, activity: [], lifecycle: [], downloads: [], startedBy: null, endedBy: null },
     scoreboardToggles: 0,
 }));
 
@@ -121,6 +121,7 @@ vi.mock('./guild-trial-recorder.js', () => ({
             game.recorder.forgotten = true;
         },
         noteActivity: (kind) => game.recorder.activity.push(kind),
+        noteLifecycle: (phase) => game.recorder.lifecycle.push(phase),
         start: (reason) => {
             game.recorder.recording = true;
             game.recorder.startedBy = reason;
@@ -688,7 +689,14 @@ describe('the panel, end to end', () => {
         game.dmHandlers = {};
         game.trialNames = [];
         game.alerts = { status: [], payouts: [], reset: 0 };
-        game.recorder = { recording: false, activity: [], downloads: [], startedBy: null, endedBy: null };
+        game.recorder = {
+            recording: false,
+            activity: [],
+            lifecycle: [],
+            downloads: [],
+            startedBy: null,
+            endedBy: null,
+        };
         game.scoreboardToggles = 0;
         await trialsFeature.initialize();
     });
@@ -773,7 +781,8 @@ describe('the panel, end to end', () => {
         fire(root);
 
         expect(text()).toContain('Party DPS');
-        expect(text()).toContain('449 dmg/s');
+        // A non-breaking space: the unit must never be left on its own line
+        expect(text()).toContain('449\u00a0dmg/s');
         // The card's own level puts both readings at tier 3, so there is no
         // second tier to fit a growth curve to and the boundary cannot be shown
         // to be a single step — said outright rather than quietly under-counted
@@ -796,7 +805,7 @@ describe('the panel, end to end', () => {
         fire(root);
 
         // 100,000 off the boss in ten seconds, and not a number from the mana bar
-        expect(text()).toContain('10.0K dmg/s');
+        expect(text()).toContain('10.0K\u00a0dmg/s');
     });
 
     test('four tiers banked at tier 5 reach the payout block', () => {
@@ -1154,6 +1163,64 @@ describe('the panel, end to end', () => {
         expect(text()).not.toContain('Banked5 tiers');
     });
 
+    test('nothing is drawn on the guild Overview tab', () => {
+        // Reported from the user's main guild: the payout block and a side block
+        // sat over the Overview tab's notice board, on a page with no trial
+        // cards at all
+        document.body.innerHTML =
+            '<div class="GuildPanel_guildPanel__r">' +
+            '<div class="TabsComponent_tab__x TabsComponent_selected__y">Overview</div>' +
+            '<div class="GuildPanel_notice__n">Welcome! We are milking at Level 90 if anyone wants to join.</div>' +
+            '<div class="GuildPanel_dataBlock__d"><div>Exp to Next Level</div><div>4,120 / 20,000</div></div>' +
+            '</div>';
+        fire();
+
+        expect(document.querySelectorAll('.mwi-trial-info')).toHaveLength(0);
+        expect(text()).not.toContain('Trial payout');
+    });
+
+    test('blocks drawn on the trials tab do not survive the switch away from it', () => {
+        const root = buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]);
+        fire(root);
+        expect(document.querySelectorAll('.mwi-trial-info').length).toBeGreaterThan(0);
+
+        // The player clicks Overview. The root finder now answers with a
+        // different element, so a block left under the old one would never be
+        // looked at again — it would simply stay on screen
+        document.body.innerHTML =
+            '<div class="GuildPanel_guildPanel__r">' +
+            '<div class="TabsComponent_tab__x TabsComponent_selected__y">Overview</div>' +
+            '<div class="GuildPanel_dataBlock__d"><div>Exp to Next Level</div><div>4,120 / 20,000</div></div></div>';
+        fire();
+
+        expect(document.querySelectorAll('.mwi-trial-info')).toHaveLength(0);
+    });
+
+    test('a reading with no live status behind it does not start a recording', () => {
+        // Reported alongside: "Stop recording" was active on a guild whose
+        // weekly trials were not running. A bar on the page is not a trial
+        const root = buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]);
+        root.querySelector('[class*="GuildPanel_eventStatusRow"]')?.remove();
+        fire(root);
+
+        expect(game.recorder.activity).not.toContain('tab-reading');
+    });
+
+    test('a reading on a running trial does start one', () => {
+        document.body.innerHTML = '';
+        const root = document.createElement('div');
+        root.className = 'GuildPanel_trialsContent__a';
+        root.innerHTML =
+            '<div class="GuildPanel_eventStatusRow__b">In Progress — 42:15 remaining</div>' +
+            '<div class="GuildPanel_tile__c"><div class="GuildPanel_tileName__d">Alchemy</div>' +
+            '<div class="ProgressBar_text__f">18,850 / 65,280</div></div>';
+        document.body.appendChild(root);
+        fire();
+
+        expect(game.recorder.activity).toContain('tab-reading');
+        expect(game.recorder.lifecycle).toContain('live');
+    });
+
     test('the legacy shared bucket is purged at startup', async () => {
         trialsFeature.cleanup();
         game.store = { guildTrials_default: { weekStart: 1, tiles: { a: {} } } };
@@ -1391,7 +1458,14 @@ describe('the two trial tabs, as the game draws them', () => {
         game.dmHandlers = {};
         game.trialNames = [];
         game.alerts = { status: [], payouts: [], reset: 0 };
-        game.recorder = { recording: false, activity: [], downloads: [], startedBy: null, endedBy: null };
+        game.recorder = {
+            recording: false,
+            activity: [],
+            lifecycle: [],
+            downloads: [],
+            startedBy: null,
+            endedBy: null,
+        };
         game.scoreboardToggles = 0;
         guildTrials.record = null;
         guildTrials.guildName = null;
@@ -1622,7 +1696,114 @@ describe('the side block’s shape', () => {
 
         expect(html).toMatch(/justify-content:space-between/);
         expect(html).toContain('Fill rate');
-        expect(html).toContain('work/s');
+        expect(html).toContain('\u00a0work/s');
+    });
+});
+
+describe('one row set per phase', () => {
+    /** Nothing attributed, which is the usual case for a trial nobody joined */
+    const breakdown = { measured: false, reason: 'no trial fight seen yet', players: [] };
+
+    // Reported from two screenshots. A scheduled card stacked three rows all
+    // saying variations of "nothing yet"; a finished card offered to fit a
+    // growth curve for a tier that will never be fought, and told a player who
+    // was not in the trial that its rate was "not measured".
+    const combat = (extra = {}) => analyseTrial(record({ kind: 'combat', tier: 4, completed: true, ...extra }), {});
+
+    test('a scheduled card is one line, with the countdown', () => {
+        const html = renderTrialBlock(analyseTrial(record({ tier: 6 }), {}), 3, breakdown, {
+            phase: 'scheduled',
+            startsInMs: 2 * 3600_000 + 24 * 60_000,
+        });
+
+        expect(html).toContain('scheduled');
+        expect(html).toContain('2h');
+        // And none of the three rows that used to sit under it
+        expect(html).not.toContain('Banked');
+        expect(html).not.toContain('Per player');
+        expect(html).not.toContain('Next tier');
+    });
+
+    test('a scheduled card with no countdown still says only that', () => {
+        const html = renderTrialBlock(analyseTrial(record({ tier: 6 }), {}), 3, breakdown, { phase: 'scheduled' });
+        expect(html).toContain('scheduled');
+        expect(html).not.toContain('Banked');
+    });
+
+    test('a completed card is results only', () => {
+        const analysis = combat({
+            samples: [
+                { t: now, readings: [{ current: 618_000, max: 618_000 }] },
+                { t: now + 10_000, readings: [{ current: 518_000, max: 618_000 }] },
+            ],
+        });
+        const html = renderTrialBlock(analysis, 3, breakdown, { phase: 'completed' });
+
+        expect(html).toContain('Final party DPS');
+        expect(html).toContain('Banked');
+        // Nothing about a future that is not coming
+        expect(html).not.toContain('Next tier');
+        expect(html).not.toContain('On pace for');
+        expect(html).not.toContain('Kill in');
+        expect(html).not.toContain('Per player');
+    });
+
+    test('a completed trial nobody joined shows the facts and no absences', () => {
+        // "Final fill rate | not measured" beside "no trial fight seen here" is
+        // two ways of saying the same nothing
+        const html = renderTrialBlock(
+            analyseTrial(record({ kind: 'combat', tier: 4, completed: true }), {}),
+            3,
+            breakdown,
+            {
+                phase: 'completed',
+                participating: false,
+            }
+        );
+
+        expect(html).not.toContain('not measured');
+        expect(html).not.toContain('Per player');
+        expect(html).not.toContain('only trials you join');
+        // What is known is still shown
+        expect(html).toContain('Banked');
+        expect(html).toContain('4 tiers');
+    });
+
+    test('a live card keeps the full set', () => {
+        const analysis = analyseTrial(
+            record({
+                kind: 'skilling',
+                samples: [
+                    { t: now, readings: [{ current: 1000, max: 65_280 }] },
+                    { t: now + 10_000, readings: [{ current: 2060, max: 65_280 }] },
+                ],
+            }),
+            { timeLeftMs: 20 * 60_000 }
+        );
+        const html = renderTrialBlock(analysis, 3, breakdown, { phase: 'live' });
+
+        expect(html).toContain('Fill rate');
+        expect(html).toContain('Banked');
+        expect(html).toContain('On pace for');
+    });
+
+    test('a value never gives up its unit', () => {
+        const analysis = analyseTrial(
+            record({
+                kind: 'combat',
+                samples: [
+                    { t: now, readings: [{ current: 618_000, max: 618_000 }] },
+                    { t: now + 10_000, readings: [{ current: 518_000, max: 618_000 }] },
+                ],
+            }),
+            {}
+        );
+        const html = renderTrialBlock(analysis, 3, breakdown, { phase: 'live' });
+
+        // Non-breaking space between the number and its unit, and a value
+        // column that does not wrap or shrink
+        expect(html).toContain('\u00a0dmg/s');
+        expect(html).toMatch(/white-space:nowrap; *flex-shrink:0;/);
     });
 });
 
@@ -1829,7 +2010,14 @@ describe('the payout block, audited', () => {
         game.dmHandlers = {};
         game.trialNames = [];
         game.alerts = { status: [], payouts: [], reset: 0 };
-        game.recorder = { recording: false, activity: [], downloads: [], startedBy: null, endedBy: null };
+        game.recorder = {
+            recording: false,
+            activity: [],
+            lifecycle: [],
+            downloads: [],
+            startedBy: null,
+            endedBy: null,
+        };
         game.scoreboardToggles = 0;
         await trialsFeature.initialize();
     });

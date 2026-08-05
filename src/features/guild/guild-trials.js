@@ -128,6 +128,7 @@ import {
     findTrialClockMs,
     findTrialsRoot,
     matchTrialHrid,
+    onTrialTab,
     parseClockMs,
     readPersonalStats,
     readTrialStatus,
@@ -436,10 +437,17 @@ function line(label, value, color = '#e8ecf5', title = '') {
         );
     }
 
+    // The value never wraps and the label gives way instead. "522 dmg/s" broken
+    // across two lines as "522 dmg/" and "s" was reported twice, and a figure
+    // split from its unit is worse than a truncated label — the label is a word
+    // the reader already knows, and the unit is what makes the number mean
+    // anything
     return (
-        `<div style="display:flex; justify-content:space-between; align-items:baseline; gap:12px;"${tip}>` +
-        `<span style="color:${DIM}; white-space:nowrap;">${label}</span>` +
-        `<span style="color:${color}; font-weight:600; text-align:right;">${text}</span></div>`
+        `<div style="display:flex; justify-content:space-between; align-items:baseline; gap:8px;"${tip}>` +
+        `<span style="color:${DIM}; min-width:0; overflow:hidden; text-overflow:ellipsis; ` +
+        `white-space:nowrap;">${label}</span>` +
+        `<span style="color:${color}; font-weight:600; text-align:right; white-space:nowrap; ` +
+        `flex-shrink:0;">${text}</span></div>`
     );
 }
 
@@ -470,55 +478,122 @@ export function tokenPayoutLine(tokens, baseTitle) {
 }
 
 /**
+ * What the trial has banked, as one row.
+ *
+ * Pulled out because all three phases want it and nothing else about them is
+ * the same: it is the one figure that means what it says whether the trial has
+ * not started, is running, or is over.
+ *
+ * @param {Object} analysis - From {@link analyseTrial}
+ * @returns {string} HTML
+ */
+function bankedRow(analysis) {
+    if (!analysis.tierKnown) {
+        return line(
+            'Banked',
+            'tier not seen yet',
+            DIM,
+            'Tiers cleared are read off the tier on screen, and the In Progress card carries no tier. ' +
+                'Open the Trials tab beside it once — the tier is on the card there, and everything banked ' +
+                'follows from it. Nothing is lost meanwhile; this is what is not yet known, not zero.'
+        );
+    }
+
+    if (analysis.tiersClearedSoFar === 0) {
+        return line(
+            'Banked',
+            `nothing yet — tier ${analysis.tier} in progress`,
+            DIM,
+            'A trial starts at tier 1, so nothing is banked until the first tier completes.'
+        );
+    }
+
+    return line(
+        'Banked',
+        `${analysis.tiersClearedSoFar} tier${analysis.tiersClearedSoFar === 1 ? '' : 's'}` +
+            (analysis.completed ? ' · finished' : ''),
+        DIM,
+        analysis.completed
+            ? 'This trial is over, so the tier on the card is the tier it reached — and the points it ' +
+                  'states are the ladder’s total for exactly that many tiers, which is what makes this ' +
+                  'figure exact rather than inferred.'
+            : 'While a trial runs, the tier on screen is the one being fought, so what is banked is one ' +
+                  'fewer. That is an inference — it holds as long as a trial starts at tier 1 and climbs ' +
+                  'one at a time — and it settles when the card says the trial is complete.'
+    );
+}
+
+/**
  * The block drawn under one trial tile.
  * @param {Object} analysis - From {@link analyseTrial}
  * @param {number} participants - Signed-up participants
  * @param {Object} [breakdown] - Per-player damage, from `guildTrialDamage.breakdown()`
+ * ## One row set per phase
+ *
+ * The three states of a trial are not one layout with rows switched off. A card
+ * whose trial has not started has one thing to say; a card whose trial is over
+ * has results and no process; only a running trial wants the projections. Drawn
+ * as a single set with per-row guards, the screen filled with variations of
+ * nothing — a scheduled card stacked "scheduled — nothing running yet" over
+ * "tier not seen yet" over "no trial fight seen here", and a finished one
+ * offered to fit a growth curve for a next tier that will never be fought.
+ *
+ * So the phase picks the row set, and the participation rule composes with it:
+ * a trial this character did not join, once it is over, shows the facts the
+ * Trials tab states about it and no rows about data that can no longer arrive.
+ *
  * @param {Object} [options] - Context
  * @param {boolean|null} [options.participating] - Whether this character is in this trial
+ * @param {string|null} [options.phase] - `scheduled`, `live` or `completed`
+ * @param {number|null} [options.startsInMs] - Countdown to the scheduled start
  * @returns {string} HTML
  */
 export function renderTrialBlock(
     analysis,
     participants,
     breakdown = guildTrialDamage.breakdown(),
-    { participating = null, phase = null } = {}
+    { participating = null, phase = null, startsInMs = null } = {}
 ) {
     const unit = analysis.kind === 'combat' ? 'dmg' : 'work';
     const rows = [];
 
-    // A finished cycle has no future to project into. The figures are still
-    // worth showing — they are what happened — but "Tier clears in 11m" from
-    // the last samples of an event that ended is a claim about nobody's trial,
-    // and it is what the panel was still saying hours afterwards.
-    const over = phase === 'completed';
-    const notStarted = phase === 'scheduled';
+    // Nothing has started. One line, and the countdown the header already
+    // states, because everything else on this card would be about the absence
+    // of data rather than about the trial
+    if (phase === 'scheduled') {
+        const when = Number.isFinite(startsInMs) && startsInMs > 0 ? ` — starts in ${formatEta(startsInMs)}` : '';
+        return line(
+            'Trial',
+            `scheduled${when}`,
+            DIM,
+            'The guild panel says this cycle has not started. Nothing is measured until it does, and ' +
+                'anything this script already holds belongs to the previous cycle.'
+        );
+    }
+
+    // Over. Results only: what it reached, what that is worth, and the rate it
+    // ran at if one was ever measured. No next tier, no pace, no waiting.
+    if (phase === 'completed') {
+        if (Number.isFinite(analysis.rate)) {
+            rows.push(
+                line(
+                    analysis.kind === 'combat' ? 'Final party DPS' : 'Final fill rate',
+                    `${num(analysis.rate * 1000)}\u00a0${unit}/s`,
+                    DIM,
+                    'The last rate measured while this trial ran. It is not a live figure.'
+                )
+            );
+        }
+        rows.push(bankedRow(analysis));
+        return rows.join('');
+    }
 
     // A trial this character did not join sends nothing: the In Progress tab
     // carries only their own trials, so no reading for this card will ever
     // arrive. Saying "measuring…" there promises a number that cannot come.
     const notMine = participating === false && !Number.isFinite(analysis.rate);
 
-    if (notStarted) {
-        rows.push(
-            line(
-                'Trial',
-                'scheduled — nothing running yet',
-                DIM,
-                'The guild panel says the next cycle has not started. Anything measured belongs to the ' +
-                    'previous one and is kept in the record rather than shown as current.'
-            )
-        );
-    } else if (over) {
-        rows.push(
-            line(
-                analysis.kind === 'combat' ? 'Final party DPS' : 'Final fill rate',
-                Number.isFinite(analysis.rate) ? `${num(analysis.rate * 1000)} ${unit}/s` : 'not measured',
-                DIM,
-                'This cycle is over. The figure is the last rate measured while it ran, not a live one.'
-            )
-        );
-    } else if (notMine) {
+    if (notMine) {
         rows.push(
             line(
                 'Rate',
@@ -542,7 +617,7 @@ export function renderTrialBlock(
         rows.push(
             line(
                 analysis.kind === 'combat' ? 'Party DPS' : 'Fill rate',
-                `${num(perSecond)} ${unit}/s`,
+                `${num(perSecond)}\u00a0${unit}/s`,
                 ACCENT,
                 analysis.rateNote ? `${measuredFrom}\n${analysis.rateNote}` : measuredFrom
             )
@@ -559,7 +634,7 @@ export function renderTrialBlock(
                 rows.push(
                     line(
                         'Split disagrees',
-                        `${num(attributed)} ${unit}/s`,
+                        `${num(attributed)}\u00a0${unit}/s`,
                         WARN,
                         'The per-player split adds up to a different party DPS than the boss bar shows. ' +
                             'The bar covers everybody in the trial; the split covers only the fights this ' +
@@ -581,7 +656,7 @@ export function renderTrialBlock(
         );
     }
 
-    if (!analysis.pace && !notMine && !over && !notStarted) {
+    if (!analysis.pace && !notMine) {
         // Silently omitting the row was indistinguishable from the feature not
         // having this idea at all — and the no-clock case was the only one that
         // said so. A pace needs four things and going quiet about the other
@@ -613,7 +688,7 @@ export function renderTrialBlock(
         rows.push(line('On pace for', missing.text, DIM, missing.why));
     }
 
-    if (analysis.pace && !over && !notStarted) {
+    if (analysis.pace) {
         const projected = analysis.pace.tiersCleared;
         const finalTier = analysis.pace.finalTier ?? analysis.tier;
         const level = levelFromTier(finalTier);
@@ -647,43 +722,7 @@ export function renderTrialBlock(
         rows.push(line('Next tier', 'needs a second tier to fit the curve', DIM));
     }
 
-    if (!analysis.tierKnown) {
-        rows.push(
-            line(
-                'Banked',
-                'tier not seen yet',
-                DIM,
-                'Tiers cleared are read off the tier on screen, and the In Progress card carries no tier. ' +
-                    'Open the Trials tab beside it once — the tier is on the card there, and everything banked ' +
-                    'follows from it. Nothing is lost meanwhile; this is what is not yet known, not zero.'
-            )
-        );
-    } else if (analysis.tiersClearedSoFar === 0) {
-        rows.push(
-            line(
-                'Banked',
-                `nothing yet — tier ${analysis.tier} in progress`,
-                DIM,
-                'A trial starts at tier 1, so nothing is banked until the first tier completes.'
-            )
-        );
-    } else {
-        rows.push(
-            line(
-                'Banked',
-                `${analysis.tiersClearedSoFar} tier${analysis.tiersClearedSoFar === 1 ? '' : 's'}` +
-                    (analysis.completed ? ' · finished' : ''),
-                DIM,
-                analysis.completed
-                    ? 'This trial is over, so the tier on the card is the tier it reached — and the points ' +
-                          'it states are the ladder’s total for exactly that many tiers, which is what makes ' +
-                          'this figure exact rather than inferred.'
-                    : 'While a trial runs, the tier on screen is the one being fought, so what is banked is ' +
-                          'one fewer. That is an inference — it holds as long as a trial starts at tier 1 and ' +
-                          'climbs one at a time — and it settles when the card says the trial is complete.'
-            )
-        );
-    }
+    rows.push(bankedRow(analysis));
 
     if (analysis.kind === 'combat') rows.push(...renderTrialPlayers(breakdown));
 
@@ -1193,6 +1232,16 @@ class GuildTrials {
             // reading; `recordTileSample` takes a sample only from the one that
             // has something moving on it, and both write the identity of the same
             // trial under the same key.
+            // Positive gate, before anything is read or written. The guild page
+            // is one panel with several tabs and the root finder answers for the
+            // whole of it, so "a guild panel exists" is not "a trial is on
+            // screen" — which is how the payout block came to be drawn over the
+            // Overview tab's notice board.
+            if (!onTrialTab(root)) {
+                this._reapBlocks(null, new Set());
+                return;
+            }
+
             const tiles = readTrialTiles(root);
 
             // Where the cycle is decides what the record below even means. Read
@@ -1200,6 +1249,7 @@ class GuildTrials {
             // sampled into and then archived — the sample would go with it.
             const status = readTrialStatus(root);
             this._healStaleRecord(status, tiles, now);
+            guildTrialRecorder.noteLifecycle?.(status.phase, now);
             // The player's own action stats live in the tab's footer rather than
             // on a card, so they are read once and attached to whichever trial
             // is the live one — the only card that can have produced them
@@ -1213,9 +1263,11 @@ class GuildTrials {
                 saveTrialRecord(this.guildName, this.record, this.characterId, { guildId: this._guildId() });
             }
 
-            // A reading is a trial in progress, which is one of the two things
-            // the recorder starts itself on
-            if (live) guildTrialRecorder.noteActivity('tab-reading', now);
+            // A reading is only evidence of a *running* trial when the panel
+            // also says one is running. A bar on its own is not: the guild XP
+            // bar reads like one, and a session was found recording on a guild
+            // whose weekly trials were not on
+            if (live && status.phase === 'live') guildTrialRecorder.noteActivity('tab-reading', now);
 
             this._noteLifecycle(status, tiles, now);
 
@@ -1278,6 +1330,7 @@ class GuildTrials {
                     html: renderTrialBlock(analysis, participants, undefined, {
                         participating: ownParticipation(tile.name),
                         phase: status?.phase || null,
+                        startsInMs: status?.startsInMs ?? null,
                     }),
                     // Wide enough that a label and a figure fit on one line, and
                     // capped so it cannot stretch a whole panel — the reported
@@ -1365,11 +1418,7 @@ class GuildTrials {
      */
     _noteLifecycle(status, tiles, now) {
         const phase = status?.phase || null;
-        if (phase && phase !== this.phase) {
-            this.phase = phase;
-            // A scheduled or finished cycle is not a session to keep open
-            if (phase !== 'live') guildTrialRecorder.stop?.(`the trial is ${phase}`, now);
-        }
+        if (phase && phase !== this.phase) this.phase = phase;
 
         guildTrialAlerts.noteTrialStatus?.({
             phase,
@@ -1437,7 +1486,14 @@ class GuildTrials {
      * @param {Set<string>} drawn - Keys drawn this pass
      */
     _reapBlocks(root, drawn) {
-        for (const block of root.querySelectorAll(`.${CSS_CLASS}`)) {
+        // Every block on the page, not only those under the root being drawn
+        // into. A tab switch changes which element the root finder answers with,
+        // and a block left under the previous one would never be looked at
+        // again — it would simply stay on screen, which is what was reported
+        const scope = typeof document === 'undefined' ? root : document;
+        if (!scope?.querySelectorAll) return;
+
+        for (const block of scope.querySelectorAll(`.${CSS_CLASS}`)) {
             const key = block.dataset?.mwiBlock;
             // A block with no key is from an older build, or from a redraw that
             // failed halfway; either way it is not this pass's and goes
