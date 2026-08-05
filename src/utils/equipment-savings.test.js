@@ -1,12 +1,43 @@
-import { describe, test, expect } from 'vitest';
-import {
+import { describe, test, expect, beforeEach, vi } from 'vitest';
+
+// The record the goals live in, as the storage layer would hand it back
+const stored = vi.hoisted(() => ({ record: null, writes: [] }));
+
+vi.mock('../core/storage.js', () => ({ default: { ready: Promise.resolve(true) } }));
+vi.mock('./character-key.js', () => ({
+    readScoped: async () => stored.record,
+    writeScoped: async (_key, value) => {
+        stored.record = value;
+        stored.writes.push(value);
+        return true;
+    },
+}));
+
+const {
     upgradeCost,
     craftCost,
     savingsProgress,
     timeToAffordSeconds,
     totalSavings,
     orderTargets,
-} from './equipment-savings.js';
+    abilityBookHrid,
+    abilityGoalLabel,
+    abilityGoalReached,
+    abilityGoals,
+    abilityGoalFor,
+    hasAbilityGoal,
+    addAbilityGoal,
+    removeAbilityGoal,
+    resetAbilityGoals,
+    loadSavingsRecord,
+    saveSavingsRecord,
+} = await import('./equipment-savings.js');
+
+beforeEach(() => {
+    stored.record = null;
+    stored.writes = [];
+    resetAbilityGoals();
+});
 
 describe('upgradeCost', () => {
     test('the ask less what the old piece fetches', () => {
@@ -152,5 +183,172 @@ describe('orderTargets', () => {
     test('it does not modify the array it was given', () => {
         orderTargets(targets);
         expect(targets[0].name).toBe('far');
+    });
+});
+
+describe('ability goals', () => {
+    test('a goal is the ability, the level, the cost and how it reads', async () => {
+        await addAbilityGoal({
+            abilityHrid: '/abilities/fierce_aura',
+            targetLevel: 46,
+            cost: 250_000_000,
+            label: 'Fierce Aura Lv46',
+        });
+
+        expect(abilityGoals()).toEqual([
+            {
+                abilityHrid: '/abilities/fierce_aura',
+                targetLevel: 46,
+                cost: 250_000_000,
+                label: 'Fierce Aura Lv46',
+                updatedAt: expect.any(Number),
+            },
+        ]);
+        expect(hasAbilityGoal('/abilities/fierce_aura')).toBe(true);
+    });
+
+    test('adding one for an ability that has one replaces it rather than stacking', async () => {
+        // A later sim run has costed the same intention more accurately, and two
+        // rows for one ability would show both and total both
+        await addAbilityGoal({ abilityHrid: '/abilities/fierce_aura', targetLevel: 46, cost: 250_000_000 });
+        await addAbilityGoal({ abilityHrid: '/abilities/fierce_aura', targetLevel: 51, cost: 400_000_000 });
+
+        expect(abilityGoals()).toHaveLength(1);
+        expect(abilityGoalFor('/abilities/fierce_aura')).toMatchObject({ targetLevel: 51, cost: 400_000_000 });
+    });
+
+    test('an unpriced goal costs nothing known rather than nothing', async () => {
+        // Zero would report it as already affordable, which is the most
+        // misleading thing this could say
+        await addAbilityGoal({ abilityHrid: '/abilities/fierce_aura', targetLevel: 46, cost: null });
+        expect(abilityGoalFor('/abilities/fierce_aura').cost).toBeNull();
+
+        await addAbilityGoal({ abilityHrid: '/abilities/toxic_pollen', targetLevel: 30 });
+        expect(abilityGoalFor('/abilities/toxic_pollen').cost).toBeNull();
+    });
+
+    test('a goal with no ability is not a goal', async () => {
+        await addAbilityGoal({ targetLevel: 46, cost: 1 });
+        await addAbilityGoal();
+        expect(abilityGoals()).toEqual([]);
+    });
+
+    test('a label is derived when none was supplied', async () => {
+        await addAbilityGoal({ abilityHrid: '/abilities/fierce_aura', targetLevel: 46, cost: 1 });
+        expect(abilityGoalFor('/abilities/fierce_aura').label).toBe('Fierce Aura Lv46');
+    });
+
+    test('removing one takes it off the list', async () => {
+        await addAbilityGoal({ abilityHrid: '/abilities/fierce_aura', targetLevel: 46, cost: 1 });
+        await addAbilityGoal({ abilityHrid: '/abilities/toxic_pollen', targetLevel: 30, cost: 2 });
+
+        await removeAbilityGoal('/abilities/fierce_aura');
+
+        expect(abilityGoals().map((goal) => goal.abilityHrid)).toEqual(['/abilities/toxic_pollen']);
+        expect(hasAbilityGoal('/abilities/fierce_aura')).toBe(false);
+    });
+
+    test('removing one that is not there writes nothing', async () => {
+        await addAbilityGoal({ abilityHrid: '/abilities/fierce_aura', targetLevel: 46, cost: 1 });
+        const writes = stored.writes.length;
+
+        await removeAbilityGoal('/abilities/nothing');
+        expect(stored.writes).toHaveLength(writes);
+    });
+});
+
+describe('a goal that has happened', () => {
+    test('is reached at the level, not only past it', () => {
+        expect(abilityGoalReached({ targetLevel: 46 }, 46)).toBe(true);
+        expect(abilityGoalReached({ targetLevel: 46 }, 47)).toBe(true);
+        expect(abilityGoalReached({ targetLevel: 46 }, 45)).toBe(false);
+    });
+
+    test('a goal of nothing is not something to have reached', () => {
+        expect(abilityGoalReached({ targetLevel: 0 }, 10)).toBe(false);
+        expect(abilityGoalReached(null, 10)).toBe(false);
+    });
+});
+
+describe('the book, and how a goal reads', () => {
+    test('the book is the item of the same name', () => {
+        expect(abilityBookHrid('/abilities/fierce_aura')).toBe('/items/fierce_aura');
+    });
+
+    test('a label names the ability and the level it is going to', () => {
+        expect(abilityGoalLabel('/abilities/fierce_aura', 46)).toBe('Fierce Aura Lv46');
+        expect(abilityGoalLabel('/abilities/fierce_aura', 46, 'Fierce Aura')).toBe('Fierce Aura Lv46');
+    });
+});
+
+describe('the stored record', () => {
+    test('a record written before ability goals existed loads unchanged', async () => {
+        stored.record = {
+            targets: { '/items/holy_sword': { enhancementLevel: 3 } },
+            noSell: true,
+            marketValue: false,
+            selected: '/items/holy_sword',
+            locked: true,
+        };
+
+        const gear = await loadSavingsRecord();
+
+        expect(gear).toEqual({
+            targets: { '/items/holy_sword': { enhancementLevel: 3 } },
+            noSell: true,
+            marketValue: false,
+            selected: '/items/holy_sword',
+            locked: true,
+        });
+        expect(abilityGoals()).toEqual([]);
+    });
+
+    test('goals are absorbed rather than handed back with the gear', async () => {
+        stored.record = {
+            targets: { '/items/holy_sword': { enhancementLevel: 0 } },
+            abilities: { '/abilities/fierce_aura': { targetLevel: 46, cost: 250_000_000, label: 'Fierce Aura Lv46' } },
+        };
+
+        const gear = await loadSavingsRecord();
+
+        expect(gear.abilities).toBeUndefined();
+        expect(abilityGoalFor('/abilities/fierce_aura')).toMatchObject({ targetLevel: 46, cost: 250_000_000 });
+    });
+
+    test('nothing stored for this character is nothing rather than an empty record', async () => {
+        expect(await loadSavingsRecord()).toBeNull();
+    });
+
+    test('saving the gear keeps the goals, and saving a goal keeps the gear', async () => {
+        // Two writers of one key lose each other's edits, which is why there is
+        // only the one
+        await saveSavingsRecord({ targets: { '/items/holy_sword': { enhancementLevel: 0 } }, noSell: true });
+        await addAbilityGoal({ abilityHrid: '/abilities/fierce_aura', targetLevel: 46, cost: 250_000_000 });
+
+        expect(stored.record.targets).toEqual({ '/items/holy_sword': { enhancementLevel: 0 } });
+        expect(stored.record.noSell).toBe(true);
+        expect(stored.record.abilities['/abilities/fierce_aura'].targetLevel).toBe(46);
+
+        await saveSavingsRecord({ targets: {}, noSell: false });
+        expect(stored.record.abilities['/abilities/fierce_aura'].targetLevel).toBe(46);
+    });
+
+    test('a goal added before anything was loaded still finds what is stored', async () => {
+        stored.record = { targets: { '/items/holy_sword': { enhancementLevel: 0 } } };
+        resetAbilityGoals({ loaded: false });
+
+        await addAbilityGoal({ abilityHrid: '/abilities/fierce_aura', targetLevel: 46, cost: 1 });
+
+        expect(stored.record.targets).toEqual({ '/items/holy_sword': { enhancementLevel: 0 } });
+        expect(stored.record.abilities['/abilities/fierce_aura']).toBeDefined();
+    });
+
+    test('garbage in the goals is skipped rather than drawn', async () => {
+        stored.record = {
+            abilities: { '/abilities/fierce_aura': null, '/abilities/toxic_pollen': { targetLevel: 30 } },
+        };
+        await loadSavingsRecord();
+
+        expect(abilityGoals().map((goal) => goal.abilityHrid)).toEqual(['/abilities/toxic_pollen']);
     });
 });

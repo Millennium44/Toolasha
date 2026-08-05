@@ -28,6 +28,14 @@ const game = vi.hoisted(() => ({
     // surviving a reload can look at what would actually be reloaded rather
     // than at the module's own memory of it
     writes: [],
+    // The character's abilities, which is where an ability goal's progress
+    // comes from
+    abilities: [],
+    abilityDetails: {},
+    // Books are priced through marketAPI rather than through the item price
+    // helper, as the sim's own ability costing is
+    bookPrices: {},
+    levelXp: [],
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
@@ -35,9 +43,16 @@ vi.mock('../../core/data-manager.js', () => ({
         getInventory: () => game.inventory,
         getEquipment: () => game.equipment,
         getItemDetails: (hrid) => game.details[hrid],
+        getLearnedAbilities: () => game.abilities,
         // The picker builds its list from the whole item map, which is the same
         // fixture the per-item lookups read
-        getInitClientData: () => ({ itemDetailMap: game.details, actionDetailMap: game.actions, ...game.shops }),
+        getInitClientData: () => ({
+            itemDetailMap: game.details,
+            actionDetailMap: game.actions,
+            abilityDetailMap: game.abilityDetails,
+            levelExperienceTable: game.levelXp,
+            ...game.shops,
+        }),
         // Gear targets are one character's, so the module keys on the character
         // and listens for the switch
         getCurrentCharacterId: () => 'char1',
@@ -76,11 +91,21 @@ vi.mock('../../utils/panel-geometry.js', () => ({
     saveOpenState: async () => {},
     wasOpen: async () => false,
     reopenIfLeftOpen: async () => {},
+    // Called from a deferred callback, so only a test that waits past it sees
+    // the panel complain that the mock is missing it
+    clampPanelToViewport: () => {},
 }));
 vi.mock('../../utils/marketplace-tabs.js', () => ({ navigateToMarketplace: () => {} }));
 vi.mock('../../utils/game-lookups.js', () => ({ getItemHridFromName: () => null }));
 vi.mock('../../utils/overlay-rows.js', () => ({ registerRow: () => {} }));
-vi.mock('../../api/marketplace.js', () => ({ default: { getDataAge: () => 60_000, fetch: async () => {} } }));
+vi.mock('../../api/marketplace.js', () => ({
+    default: {
+        getDataAge: () => 60_000,
+        fetch: async () => {},
+        // The book price, which is what an ability level is actually bought with
+        getPrice: (hrid) => game.bookPrices[hrid] || null,
+    },
+}));
 vi.mock('../networth/networth-history.js', () => ({
     default: { recentSeries: (hours) => game.networthSeries(hours) },
 }));
@@ -108,6 +133,12 @@ const {
     isLaddering,
     enhancementCost,
     resetEquipmentSavings,
+    setLocked,
+    watchAbility,
+    unwatchAbility,
+    watchedAbilityGoals,
+    abilityBookCost,
+    abilityChoices,
 } = await import('./equipment-savings-row.js');
 
 beforeEach(() => {
@@ -148,6 +179,15 @@ beforeEach(() => {
     game.artisan = 0;
     game.networthSeries = () => [];
     game.writes = [];
+    // One learned ability at Lv40 with the experience of exactly that level, and
+    // an experience table where every level is a round million
+    game.abilities = [{ abilityHrid: '/abilities/fierce_aura', level: 40, experience: 40_000_000 }];
+    game.abilityDetails = {
+        '/abilities/fierce_aura': { name: 'Fierce Aura' },
+        '/abilities/toxic_pollen': { name: 'Toxic Pollen' },
+    };
+    game.levelXp = Array.from({ length: 101 }, (_, level) => level * 1_000_000);
+    game.bookPrices = { '/items/fierce_aura': { ask: 12_000, bid: 8_000 } };
     resetEquipmentSavings();
 });
 
@@ -1302,5 +1342,197 @@ describe('what a run costs, through the real Markov chain', () => {
         delete game.details['/items/mirror_of_protection'];
 
         expect(enhancementCost('/items/sinister_cape', 7, 5)).toBeGreaterThan(400_000_000);
+    });
+});
+
+describe('ability levels on the savings list', () => {
+    test('a goal is costed in books at what the market wants for them', async () => {
+        // Lv40 → Lv46 is 6M experience at 500 an advanced book, so twelve
+        // thousand books at the mid of 12k/8k
+        await watchAbility('/abilities/fierce_aura', 46);
+
+        const [goal] = watchedAbilityGoals();
+        expect(goal.cost).toBe(120_000_000);
+        expect(goal.name).toBe('Fierce Aura Lv46');
+        expect(goal.currentLevel).toBe(40);
+        expect(goal.targetLevel).toBe(46);
+    });
+
+    test('the books point at the item, which is the thing with a price', async () => {
+        await watchAbility('/abilities/fierce_aura', 46);
+        expect(watchedAbilityGoals()[0].itemHrid).toBe('/items/fierce_aura');
+    });
+
+    test('progress is the same question the gear asks: coins against the cost', async () => {
+        await watchAbility('/abilities/fierce_aura', 46);
+
+        const [goal] = watchedAbilityGoals();
+        expect(goal.fraction).toBe(0.5);
+        expect(goal.needed).toBe(60_000_000);
+        expect(goal.affordable).toBe(false);
+    });
+
+    test('adding a goal for an ability that has one replaces it', async () => {
+        // A later sim run refines the same intention; two rows would show both
+        await watchAbility('/abilities/fierce_aura', 46);
+        await watchAbility('/abilities/fierce_aura', 50);
+
+        const goals = watchedAbilityGoals();
+        expect(goals).toHaveLength(1);
+        expect(goals[0].targetLevel).toBe(50);
+        expect(goals[0].cost).toBe(200_000_000);
+    });
+
+    test('a level already reached is done rather than lingering at full price', async () => {
+        await watchAbility('/abilities/fierce_aura', 30);
+
+        const [goal] = watchedAbilityGoals();
+        expect(goal.done).toBe(true);
+        expect(goal.cost).toBe(0);
+        expect(goal.affordable).toBe(true);
+    });
+
+    test('a book nobody is selling is unpriced rather than free', async () => {
+        game.bookPrices = {};
+        await watchAbility('/abilities/fierce_aura', 46);
+
+        const [goal] = watchedAbilityGoals();
+        expect(goal.cost).toBeNull();
+        expect(goal.affordable).toBe(false);
+    });
+
+    test('a cost can be given when the market has none', async () => {
+        game.bookPrices = {};
+        await watchAbility('/abilities/fierce_aura', 46, 30_000_000);
+
+        expect(watchedAbilityGoals()[0].cost).toBe(30_000_000);
+    });
+
+    test('an unlearned ability starts from nothing, and pays for the book that learns it', async () => {
+        game.bookPrices['/items/toxic_pollen'] = { ask: 1_000, bid: 1_000 };
+        // 30M of experience at 500 a book, plus the one that learns it
+        expect(abilityBookCost('/abilities/toxic_pollen', 30)).toBe(60_001_000);
+    });
+
+    test('removing one takes it off the list', async () => {
+        await watchAbility('/abilities/fierce_aura', 46);
+        await unwatchAbility('/abilities/fierce_aura');
+
+        expect(watchedAbilityGoals()).toEqual([]);
+    });
+
+    test('a goal with no level is not a goal', async () => {
+        await watchAbility('/abilities/fierce_aura', 0);
+        expect(watchedAbilityGoals()).toEqual([]);
+    });
+
+    test('goals are written into the same record the gear is', async () => {
+        watchTarget('/items/holy_sword');
+        game.writes = [];
+        await watchAbility('/abilities/fierce_aura', 46);
+
+        const last = game.writes[game.writes.length - 1];
+        expect(last.key).toContain('equipmentSavings');
+        // Both sides survive one write, because there is only one writer
+        expect(last.value.targets['/items/holy_sword']).toBeDefined();
+        expect(last.value.abilities['/abilities/fierce_aura'].targetLevel).toBe(46);
+    });
+});
+
+describe('the whole list, with levels on it', () => {
+    test('a level to save for is part of what the plan costs', async () => {
+        watchTarget('/items/rough_boots');
+        await watchAbility('/abilities/fierce_aura', 46);
+
+        const plan = everything();
+        expect(plan.abilities).toHaveLength(1);
+        expect(plan.cost).toBe(125_000_000);
+    });
+
+    test('a level already reached is not still being saved for', async () => {
+        watchTarget('/items/rough_boots');
+        await watchAbility('/abilities/fierce_aura', 30);
+
+        const plan = everything();
+        expect(plan.cost).toBe(5_000_000);
+        expect(plan.abilities[0].done).toBe(true);
+    });
+});
+
+describe('the panel draws levels', () => {
+    test('a goal appears with its label, its cost and where it is', async () => {
+        await watchAbility('/abilities/fierce_aura', 46);
+        equipmentSavingsPanel.show();
+
+        expect(text()).not.toContain(FAILED);
+        expect(text()).toContain('Ability Levels');
+        expect(text()).toContain('Fierce Aura Lv46');
+        expect(text()).toContain('40 → 46');
+    });
+
+    test('a goal that has happened says so rather than showing a full bar and nothing else', async () => {
+        await watchAbility('/abilities/fierce_aura', 30);
+        equipmentSavingsPanel.show();
+
+        expect(text()).not.toContain(FAILED);
+        expect(text()).toContain('Reached at Lv40');
+    });
+
+    test('the panel offers to add one, and the picker lists the abilities', async () => {
+        equipmentSavingsPanel.show();
+        expect(text()).not.toContain(FAILED);
+
+        const add = equipmentSavingsPanel.panel.querySelector('[data-add-ability]');
+        expect(add).not.toBeNull();
+
+        add.click();
+        expect(equipmentSavingsPanel.panel.querySelector('[data-pick-ability]')).not.toBeNull();
+        expect(text()).toContain('Pick an ability.');
+    });
+
+    test('picking, levelling and watching puts it on the list', async () => {
+        equipmentSavingsPanel.show();
+        equipmentSavingsPanel.panel.querySelector('[data-add-ability]').click();
+
+        const picker = equipmentSavingsPanel.panel.querySelector('[data-pick-ability]');
+        picker.value = '/abilities/fierce_aura';
+        picker.dispatchEvent(new Event('change'));
+
+        const level = equipmentSavingsPanel.panel.querySelector('[data-ability-level]');
+        // The form opens on the next level up rather than on one already had
+        expect(level.value).toBe('41');
+        level.value = '46';
+        level.dispatchEvent(new Event('input'));
+
+        equipmentSavingsPanel.panel.querySelector('[data-save-ability]').click();
+        await vi.waitFor(() => expect(watchedAbilityGoals()).toHaveLength(1));
+
+        expect(watchedAbilityGoals()[0].targetLevel).toBe(46);
+        expect(watchedAbilityGoals()[0].cost).toBe(120_000_000);
+    });
+
+    test('a goal can be taken off from its card', async () => {
+        await watchAbility('/abilities/fierce_aura', 46);
+        equipmentSavingsPanel.show();
+
+        equipmentSavingsPanel.panel.querySelector('[data-remove-ability]').click();
+        await vi.waitFor(() => expect(watchedAbilityGoals()).toHaveLength(0));
+    });
+
+    test('the abilities you have learned lead the picker, the rest follow', () => {
+        const choices = abilityChoices();
+        expect(choices[0]).toMatchObject({ abilityHrid: '/abilities/fierce_aura', level: 40, learned: true });
+        expect(choices.map((choice) => choice.abilityHrid)).toContain('/abilities/toxic_pollen');
+        expect(choices.find((choice) => choice.abilityHrid === '/abilities/toxic_pollen').learned).toBe(false);
+    });
+
+    test('a panel with only levels on it is not an empty panel', async () => {
+        setLocked(true);
+        await watchAbility('/abilities/fierce_aura', 46);
+        equipmentSavingsPanel.show();
+
+        expect(text()).not.toContain(FAILED);
+        expect(text()).toContain('Fierce Aura Lv46');
+        expect(text()).not.toContain('Nothing being saved for yet');
     });
 });

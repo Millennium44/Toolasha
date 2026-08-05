@@ -17,6 +17,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - **The Task Tokens tile earns its rate line**: `tokens/hr this week` beneath the board value, on wall-clock time between your first and last claim (the tooltip names the sample and the basis; under two claims shows no rate rather than a fake one).
 - **Task statistics gains "Claimed Tasks (last 7 days)"**: tasks, tokens, coins, both hourly rates, the measured span — and reroll spend over the same window tied in for a **Net Task Income** figure, plus your last five completions.
 
+### eWatch learns abilities
+
+- **Ability levels are savings goals now**: an "Ability Levels" card in Equipment Savings tracks "Fierce Aura Lv46"-style targets — book cost at market (unpriced stays unpriced, never free), progress bar and ETA from your gold, green "Reached" when you get there, ✕ to remove. Add them by hand from Edit mode (learned abilities first, next level pre-filled), or hand them over from the sims. Ability goals join the headline candidates, the overlay tile's "what's next", and the Everything total.
+- Under the hood the savings record has one writer now — the panel and the goals API go through the same door, so neither can drop the other's edits.
+
 ### The overlay fits the screen it's on
 
 - **A floating launcher on mobile**: the overlay switch lived in the character column's tab strip, which a phone only shows on the inventory screen — so the overlay was unreachable everywhere else. Mobile mode now gets a small draggable round launcher pinned above the game UI on every screen (position remembered); the desktop tab switch is unchanged.
