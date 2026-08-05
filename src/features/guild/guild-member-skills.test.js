@@ -321,9 +321,10 @@ describe('people in the battle come first', () => {
      * A spectated fight: unit boxes with a name line and a health reading.
      * @param {Array<[string, string]>} units - [name, hp] pairs
      */
-    function fightView(units) {
+    function fightView(units, { boss = 'Trial Chameleon' } = {}) {
         const view = document.createElement('div');
-        for (const [name, hp] of units) {
+        const rows = boss ? [[boss, '454,807/618,000'], ...units] : units;
+        for (const [name, hp] of rows) {
             const box = document.createElement('div');
             const nameEl = document.createElement('div');
             nameEl.textContent = name;
@@ -337,13 +338,19 @@ describe('people in the battle come first', () => {
     }
 
     test('finds roster members by their unit boxes, and the boss never', () => {
-        fightView([
-            ['Ada', '2,612/2,612'],
-            ['Trial Chameleon', '454,807/618,000'],
-        ]);
+        fightView([['Ada', '2,612/2,612']]);
         const units = findBattleUnits(game.members);
         expect(units.map((u) => u.name)).toEqual(['Ada']);
         expect(units[0].dead).toBe(false);
+    });
+
+    test('a panel with no boss in it offers nobody — those units are inert', () => {
+        // The skilling instance draws members too (this is how Liqueur, off
+        // foraging, came to be offered during a fight), but only the fight's
+        // own subtree holds a "Trial …" boss
+        fightView([['Ada', '1,436/1,923']], { boss: null });
+        expect(findBattleUnits(game.members)).toEqual([]);
+        expect(guildMemberSkills.nextBattleUnit(now)).toBeNull();
     });
 
     test('a dead unit is skipped and counted, never clicked', () => {

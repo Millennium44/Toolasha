@@ -67,6 +67,38 @@ export const REQUEST_TIMEOUT_MS = 20_000;
 export const UNIT_FRESH_MS = 15 * 60 * 1000;
 
 /**
+ * The subtree the spectated fight is drawn in, found by its boss.
+ *
+ * The In Progress tab draws the skilling instance and the combat fight side by
+ * side, and the skilling panel's participant units are inert — clicking one
+ * opens nothing, which is how the button came to offer somebody who was off
+ * foraging while a fight was on screen. The one thing only the fight view has
+ * is the encounter itself, so the boss's own "Trial …" name is the anchor: the
+ * fight is the smallest subtree holding both the boss and at least one roster
+ * member.
+ *
+ * @param {Map<string, string>} wanted - lowercased name → display name
+ * @param {Document|Element} root - Where to look
+ * @returns {Element|null} The fight subtree, or null when no fight is on screen
+ */
+function findFightArea(wanted, root) {
+    for (const leaf of root.querySelectorAll('div, span')) {
+        if (leaf.childElementCount) continue;
+        if (!/^trial\s+\S/i.test((leaf.textContent || '').trim())) continue;
+
+        let area = leaf;
+        for (let up = 0; up < 8 && area.parentElement; up += 1) {
+            area = area.parentElement;
+            for (const inner of area.querySelectorAll('div, span')) {
+                if (inner.childElementCount) continue;
+                if (wanted.has((inner.textContent || '').trim().toLowerCase())) return area;
+            }
+        }
+    }
+    return null;
+}
+
+/**
  * Player unit boxes in a spectated guild fight, matched to roster names.
  *
  * The fight view draws each participant as a small box: the member's name as
@@ -75,6 +107,9 @@ export const UNIT_FRESH_MS = 15 * 60 * 1000;
  * stat sheet (`battle_unit_fetched`) — the only source a combat loadout has;
  * `/profile` carries skills but no sheet. The boss is drawn the same way but is
  * not a member, so only roster names are matched and it can never be offered.
+ *
+ * Only units inside the fight's own subtree count — see {@link findFightArea};
+ * the skilling panel beside it draws members too, and those boxes are inert.
  *
  * @param {Array} members - Roster, `{name}` each
  * @param {Document|Element|null} [root] - Injectable for tests
@@ -89,9 +124,12 @@ export function findBattleUnits(members, root = typeof document === 'undefined' 
     }
     if (!wanted.size) return [];
 
+    const fight = findFightArea(wanted, root);
+    if (!fight) return [];
+
     const units = [];
     const taken = new Set();
-    for (const leaf of root.querySelectorAll('div, span')) {
+    for (const leaf of fight.querySelectorAll('div, span')) {
         if (leaf.childElementCount) continue;
         const name = wanted.get((leaf.textContent || '').trim().toLowerCase());
         if (!name || taken.has(name)) continue;
