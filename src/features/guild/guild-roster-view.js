@@ -277,14 +277,8 @@ export function drawProfileCycler(body, capture = guildMemberSkills) {
 
         status.style.color = ROW_COLORS.dim;
         if (result?.how === 'unit') {
-            const dead = result.deadSkipped ? ` (${result.deadSkipped} dead skipped — abilities hide on death)` : '';
-            status.textContent = `Waiting for ${result.opened}’s battle info…${dead}`;
+            status.textContent = `Waiting for ${result.opened}’s battle info…`;
             button.textContent = `Asked for ${result.opened}…`;
-        } else if (result?.how === 'unit-dead') {
-            status.textContent =
-                'Everyone still uncaptured in this fight is dead — a dead unit’s popup hides its abilities. ' +
-                'Ask again after a revive.';
-            status.style.color = ROW_COLORS.bad;
         } else if (result?.how === 'chat') {
             status.textContent = `Press Enter in chat to open ${result.opened}.`;
             button.textContent = `Asked for ${result.opened}…`;

@@ -341,7 +341,6 @@ describe('people in the battle come first', () => {
         fightView([['Ada', '2,612/2,612']]);
         const units = findBattleUnits(game.members);
         expect(units.map((u) => u.name)).toEqual(['Ada']);
-        expect(units[0].dead).toBe(false);
     });
 
     test('a panel with no boss in it offers nobody — those units are inert', () => {
@@ -353,11 +352,11 @@ describe('people in the battle come first', () => {
         expect(guildMemberSkills.nextBattleUnit(now)).toBeNull();
     });
 
-    test('a dead unit is skipped and counted, never clicked', () => {
+    test('a dead unit is clicked like anyone else', () => {
+        // Death hides nothing — a popup shows whatever the build holds, and a
+        // unit without abilities simply has none
         fightView([['Ada', '0/1,923']]);
-        const unit = guildMemberSkills.nextBattleUnit(now);
-        expect(unit.el).toBeNull();
-        expect(unit.deadSkipped).toBe(1);
+        expect(guildMemberSkills.nextBattleUnit(now)?.name).toBe('Ada');
     });
 
     test('openNext clicks the alive unit before walking the roster', () => {

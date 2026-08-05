@@ -139,10 +139,9 @@ export function findBattleUnits(members, root = typeof document === 'undefined' 
         let box = leaf;
         for (let up = 0; up < 4 && box.parentElement; up += 1) {
             box = box.parentElement;
-            const reading = (box.textContent || '').match(/(\d[\d,]*)\s*\/\s*\d[\d,]*/);
-            if (!reading) continue;
+            if (!/\d[\d,]*\s*\/\s*\d[\d,]*/.test(box.textContent || '')) continue;
             taken.add(name);
-            units.push({ name, el: box, dead: /^0+$/.test(reading[1].replace(/,/g, '')) });
+            units.push({ name, el: box });
             break;
         }
     }
@@ -398,12 +397,13 @@ class GuildMemberSkills {
      *
      * Only the people in the battle matter here — their Battle Info popup is
      * what carries a combat sheet, and a fight on screen is the only time it
-     * can be asked for. A dead unit's popup hides its abilities, so the dead
-     * are skipped and counted rather than half-captured.
+     * can be asked for. Dead units are clicked like anyone else: a popup shows
+     * whatever the build holds, dead or alive (a unit with no abilities simply
+     * has none).
      *
      * @param {number} [now] - Clock
      * @param {Object} [capture] - The loadout store, injectable for tests
-     * @returns {{name: string|null, el: Element|null, deadSkipped: number}|null}
+     * @returns {{name: string, el: Element}|null}
      */
     nextBattleUnit(now = Date.now(), capture = guildLoadoutCapture) {
         const members = guildXPTracker.getMemberList?.() || [];
@@ -415,22 +415,14 @@ class GuildMemberSkills {
             seen.set(String(entry?.name || '').toLowerCase(), Number(entry?.at) || 0);
         }
 
-        let deadSkipped = 0;
-        let pick = null;
         for (const unit of units) {
             const key = unit.name.toLowerCase();
             const at = seen.get(key) || 0;
             if (at > this.dueBefore && now - at < UNIT_FRESH_MS) continue;
             if (now - (Number(this.unitRequests[key]) || 0) < REQUEST_TIMEOUT_MS) continue;
-            if (unit.dead) {
-                deadSkipped += 1;
-                continue;
-            }
-            pick = pick || unit;
+            return unit;
         }
-
-        if (pick) return { ...pick, deadSkipped };
-        return deadSkipped ? { name: null, el: null, deadSkipped } : null;
+        return null;
     }
 
     openNext(now = Date.now()) {
@@ -442,24 +434,7 @@ class GuildMemberSkills {
         if (unit?.el) {
             this.unitRequests[unit.name.toLowerCase()] = now;
             unit.el.click();
-            return {
-                opened: unit.name,
-                how: 'unit',
-                deadSkipped: unit.deadSkipped,
-                logged: state.logged,
-                total: state.total,
-            };
-        }
-        if (unit?.deadSkipped && !state.next) {
-            // Everyone left uncaptured in the fight is dead, and a dead unit's
-            // popup hides its abilities — worth saying instead of clicking one
-            return {
-                opened: null,
-                how: 'unit-dead',
-                deadSkipped: unit.deadSkipped,
-                logged: state.logged,
-                total: state.total,
-            };
+            return { opened: unit.name, how: 'unit', logged: state.logged, total: state.total };
         }
 
         if (!state.next) return { opened: null, how: 'done', logged: state.logged, total: state.total };
