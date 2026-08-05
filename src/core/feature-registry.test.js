@@ -36,9 +36,7 @@ beforeEach(() => {
 describe('initializeFeatures', () => {
     test('returns [] immediately during a character switch', async () => {
         state.isCharacterSwitching = true;
-        featureRegistry.replaceFeatures([
-            { key: 'a', name: 'A', initialize: vi.fn() },
-        ]);
+        featureRegistry.replaceFeatures([{ key: 'a', name: 'A', initialize: vi.fn() }]);
         const errors = await featureRegistry.initializeFeatures();
         expect(errors).toEqual([]);
         expect(featureRegistry.getFeature('a').initialize).not.toHaveBeenCalled();
@@ -61,9 +59,7 @@ describe('initializeFeatures', () => {
 
     test('uses customCheck instead of config when provided', async () => {
         const initialize = vi.fn();
-        featureRegistry.replaceFeatures([
-            { key: 'custom', name: 'Custom', initialize, customCheck: () => true },
-        ]);
+        featureRegistry.replaceFeatures([{ key: 'custom', name: 'Custom', initialize, customCheck: () => true }]);
         await featureRegistry.initializeFeatures();
         expect(initialize).toHaveBeenCalledTimes(1);
     });
@@ -142,17 +138,13 @@ describe('checkFeatureHealth', () => {
     });
 
     test('skips disabled features even if they define healthCheck', () => {
-        featureRegistry.replaceFeatures([
-            { key: 'a', name: 'A', initialize: () => {}, healthCheck: () => false },
-        ]);
+        featureRegistry.replaceFeatures([{ key: 'a', name: 'A', initialize: () => {}, healthCheck: () => false }]);
         expect(featureRegistry.checkFeatureHealth()).toEqual([]);
     });
 
     test('reports a feature whose healthCheck returns false', () => {
         state.enabledFeatures.add('a');
-        featureRegistry.replaceFeatures([
-            { key: 'a', name: 'A', initialize: () => {}, healthCheck: () => false },
-        ]);
+        featureRegistry.replaceFeatures([{ key: 'a', name: 'A', initialize: () => {}, healthCheck: () => false }]);
         const failed = featureRegistry.checkFeatureHealth();
         expect(failed).toEqual([{ key: 'a', name: 'A', reason: 'Health check returned false' }]);
     });
@@ -186,17 +178,13 @@ describe('checkFeatureHealth', () => {
 
 describe('retryFailedFeatures', () => {
     test('re-runs initialize and reports still-failing features via a false health check', async () => {
-        featureRegistry.replaceFeatures([
-            { key: 'a', name: 'A', initialize: vi.fn(), healthCheck: () => false },
-        ]);
+        featureRegistry.replaceFeatures([{ key: 'a', name: 'A', initialize: vi.fn(), healthCheck: () => false }]);
         const stillFailed = await featureRegistry.retryFailedFeatures([{ key: 'a', name: 'A' }]);
         expect(stillFailed).toEqual([{ key: 'a', name: 'A', reason: 'Retried, but its health check still fails' }]);
     });
 
     test('does not report a feature that recovers on retry', async () => {
-        featureRegistry.replaceFeatures([
-            { key: 'a', name: 'A', initialize: vi.fn(), healthCheck: () => true },
-        ]);
+        featureRegistry.replaceFeatures([{ key: 'a', name: 'A', initialize: vi.fn(), healthCheck: () => true }]);
         const stillFailed = await featureRegistry.retryFailedFeatures([{ key: 'a', name: 'A' }]);
         expect(stillFailed).toEqual([]);
     });

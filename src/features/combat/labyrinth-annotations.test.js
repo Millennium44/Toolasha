@@ -2,7 +2,11 @@
  * @vitest-environment happy-dom
  */
 import { describe, test, expect, beforeEach } from 'vitest';
-import { ANNOTATION_CONTAINER_CLASS, getAnnotationContainer, pruneEmptyAnnotationContainers } from './labyrinth-annotations.js';
+import {
+    ANNOTATION_CONTAINER_CLASS,
+    getAnnotationContainer,
+    pruneEmptyAnnotationContainers,
+} from './labyrinth-annotations.js';
 
 describe('getAnnotationContainer', () => {
     let cell;

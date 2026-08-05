@@ -97,7 +97,9 @@ describe('getDrinkConcentration', () => {
         const pouch = {
             equipmentDetail: { type: '/equipment_types/pouch', noncombatStats: { drinkConcentration: 0.1 } },
         };
-        const equipment = new Map([['/item_locations/pouch', { itemHrid: '/items/guzzling_pouch', enhancementLevel: 10 }]]);
+        const equipment = new Map([
+            ['/item_locations/pouch', { itemHrid: '/items/guzzling_pouch', enhancementLevel: 10 }],
+        ]);
         const map = { '/items/guzzling_pouch': pouch };
         // pouch is 1x slot: enhancement level 10 => multiplier 1.29
         expect(getDrinkConcentration(equipment, map)).toBeCloseTo(0.1 * 1.29, 6);
@@ -120,7 +122,10 @@ describe('parseArtisanBonus / parseGourmetBonus / parseProcessingBonus / parseGa
     test('scale their respective buff types with drink concentration', () => {
         expect(parseArtisanBonus([{ itemHrid: '/items/artisan_tea' }], itemDetailMap, 0.12)).toBeCloseTo(0.112, 6);
         expect(parseGourmetBonus([{ itemHrid: '/items/gourmet_tea' }], itemDetailMap, 0.12)).toBeCloseTo(0.1344, 6);
-        expect(parseProcessingBonus([{ itemHrid: '/items/processing_tea' }], itemDetailMap, 0.12)).toBeCloseTo(0.168, 6);
+        expect(parseProcessingBonus([{ itemHrid: '/items/processing_tea' }], itemDetailMap, 0.12)).toBeCloseTo(
+            0.168,
+            6
+        );
         expect(parseGatheringBonus([{ itemHrid: '/items/gathering_tea' }], itemDetailMap, 0.12)).toBeCloseTo(0.2016, 6);
     });
 

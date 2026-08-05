@@ -56,7 +56,11 @@ describe('registerObserver', () => {
 
     test('an observer that throws on disconnect does not stop other cleanup', () => {
         const registry = createCleanupRegistry();
-        const throwing = { disconnect: () => { throw new Error('boom'); } };
+        const throwing = {
+            disconnect: () => {
+                throw new Error('boom');
+            },
+        };
         const target = makeTarget();
         registry.registerObserver(throwing);
         registry.registerListener(target, 'click', () => {});
@@ -118,7 +122,9 @@ describe('registerCleanup', () => {
     test('a throwing cleanup does not prevent the next one from running', () => {
         const registry = createCleanupRegistry();
         const fn2 = vi.fn();
-        registry.registerCleanup(() => { throw new Error('boom'); });
+        registry.registerCleanup(() => {
+            throw new Error('boom');
+        });
         registry.registerCleanup(fn2);
 
         registry.cleanupAll();

@@ -63,7 +63,10 @@ beforeEach(() => {
         actionDetailMap: {
             '/actions/crafting/table': {
                 type: '/action_types/crafting',
-                inputItems: [{ itemHrid: '/items/plank', count: 4 }, { itemHrid: '/items/nail', count: 2 }],
+                inputItems: [
+                    { itemHrid: '/items/plank', count: 4 },
+                    { itemHrid: '/items/nail', count: 2 },
+                ],
             },
         },
     };
@@ -239,26 +242,14 @@ describe('calculateEnhancementMaterialRequirements', () => {
     test('adds a protection item entry when protectionCount > 0', () => {
         state.enhancementResult = { attempts: 10, protectionCount: 2.5 };
         state.gameData.itemDetailMap['/items/protection_scroll'] = { name: 'Protection Scroll', isTradable: true };
-        const result = calculateEnhancementMaterialRequirements(
-            '/items/sword',
-            0,
-            5,
-            '/items/protection_scroll',
-            2
-        );
+        const result = calculateEnhancementMaterialRequirements('/items/sword', 0, 5, '/items/protection_scroll', 2);
         const protection = result.find((m) => m.itemHrid === '/items/protection_scroll');
         expect(protection.required).toBe(3); // ceil(2.5)
     });
 
     test("never lists Philosopher's Mirror as a consumed protection item", () => {
         state.enhancementResult = { attempts: 10, protectionCount: 3 };
-        const result = calculateEnhancementMaterialRequirements(
-            '/items/sword',
-            0,
-            5,
-            '/items/philosophers_mirror',
-            2
-        );
+        const result = calculateEnhancementMaterialRequirements('/items/sword', 0, 5, '/items/philosophers_mirror', 2);
         expect(result.find((m) => m.itemHrid === '/items/philosophers_mirror')).toBeUndefined();
     });
 });

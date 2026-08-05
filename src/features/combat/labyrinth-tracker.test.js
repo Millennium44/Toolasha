@@ -130,7 +130,10 @@ describe('labyrinth tracker', () => {
     });
 
     test('a missing recommendedLevel is looked up from game data', async () => {
-        game.clientData.combatMonsterDetailMap['/monsters/chimerical_beast'] = { name: 'Chimerical Beast', recommendedLevel: 45 };
+        game.clientData.combatMonsterDetailMap['/monsters/chimerical_beast'] = {
+            name: 'Chimerical Beast',
+            recommendedLevel: 45,
+        };
         await labyrinthTracker.initialize();
 
         game.wsHandlers.labyrinth_updated({

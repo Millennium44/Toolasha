@@ -55,9 +55,7 @@ describe('detectSkillGear', () => {
     });
 
     test('picks the tool with the highest item level per slot', () => {
-        const equipment = new Map([
-            ['/item_locations/main_hand', { itemHrid: '/items/forge_hammer' }],
-        ]);
+        const equipment = new Map([['/item_locations/main_hand', { itemHrid: '/items/forge_hammer' }]]);
         const gear = detectSkillGear('enhancing', equipment, itemDetailMap);
         expect(gear.toolSlot.name).toBe('Forge Hammer');
         expect(gear.toolBonus).toBeCloseTo(5, 6); // 0.05 * 100
@@ -72,7 +70,9 @@ describe('detectSkillGear', () => {
             equipmentDetail: { type: '/equipment_types/enhancing_tool', noncombatStats: { enhancingSuccess: 0.03 } },
         };
         const map = { ...itemDetailMap, '/items/tied_hammer': tied };
-        const equipment = new Map([['/item_locations/main_hand', { itemHrid: '/items/tied_hammer', enhancementLevel: 5 }]]);
+        const equipment = new Map([
+            ['/item_locations/main_hand', { itemHrid: '/items/tied_hammer', enhancementLevel: 5 }],
+        ]);
         const gear = detectSkillGear('enhancing', equipment, map);
         expect(gear.toolSlot.enhancementLevel).toBe(5);
     });

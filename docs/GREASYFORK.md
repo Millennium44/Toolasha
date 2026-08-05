@@ -51,7 +51,7 @@ biggest changes since forking, in rough order of how much they change the game:
   time), labyrinth run finished, and more.
 - **Task tools** — measured tokens/hour and net task income, reroll protection
   that respects free MooPass rerolls, task sorting and inventory highlighting.
-- **Equipment Savings ("eWatch")** — savings goals for gear *and* ability levels,
+- **Equipment Savings ("eWatch")** — savings goals for gear _and_ ability levels,
   fed straight from the simulators, with progress and ETA from your gold.
 - **Storage that survives months** — chunked per-period history records, honest
   quota handling, per-character backups that say whose they are.
