@@ -31,65 +31,24 @@ export function isStarterAbility(abilityHrid) {
 }
 
 /**
- * Calculate the cost to reach a specific ability level from level 0
- * @param {string} abilityHrid - Ability HRID (e.g., '/abilities/fireball')
- * @param {number} targetLevel - Target level to reach
- * @returns {number} Total cost in coins
+ * What it costs to own an ability at a level, from nothing.
+ *
+ * The books to learn it plus the books to level it, at the book's market price —
+ * which is what `explainAbilityLevelUpCost` already answers, starting from level
+ * zero with zero XP.
+ *
+ * There used to be a `calculateAbilityCost` here that returned this number and
+ * `0` when the book had no listing, so an unpriced ability was reported as free.
+ * It is gone: `null` is the honest answer to "what does the market say", and
+ * every caller now has to decide what to draw for it. See
+ * `explainAbilityLevelUpCost` below.
+ *
+ * @param {string} abilityHrid - Ability HRID, e.g. `/abilities/fireball`
+ * @param {number} targetLevel - Level being priced
+ * @returns {Object} Same shape as `explainAbilityLevelUpCost`; `total` is null when unpriced
  */
-export function calculateAbilityCost(abilityHrid, targetLevel) {
-    const gameData = dataManager.getInitClientData();
-    if (!gameData) return 0;
-
-    const levelXpTable = gameData.levelExperienceTable;
-    if (!levelXpTable) return 0;
-
-    // Get XP needed to reach target level from level 0
-    const targetXp = levelXpTable[targetLevel] || 0;
-
-    // Determine XP per book (50 for starters, 500 for advanced)
-    const xpPerBook = isStarterAbility(abilityHrid) ? 50 : 500;
-
-    // Calculate books needed
-    let booksNeeded = targetXp / xpPerBook;
-    booksNeeded += 1; // +1 book to learn the ability initially
-
-    // Get market price for ability book
-    const itemHrid = abilityHrid.replace('/abilities/', '/items/');
-    const prices = marketAPI.getPrice(itemHrid, 0);
-
-    if (!prices) return 0;
-
-    // Match MCS behavior: if only one side of the order book exists, use it for both
-    // (getPrice normalizes missing sides to null)
-    let ask = prices.ask;
-    let bid = prices.bid;
-
-    if (ask != null && bid == null) {
-        bid = ask;
-    }
-    if (bid != null && ask == null) {
-        ask = bid;
-    }
-    if (ask == null && bid == null) {
-        return 0;
-    }
-
-    // Use weighted average
-    const weightedPrice = (ask + bid) / 2;
-
-    return booksNeeded * weightedPrice;
-}
-
-/**
- * Calculate the cost to level up an ability from current level to target level
- * @param {string} abilityHrid - Ability HRID
- * @param {number} currentLevel - Current ability level
- * @param {number} currentXp - Current ability XP
- * @param {number} targetLevel - Target ability level
- * @returns {number} Cost in coins
- */
-export function calculateAbilityLevelUpCost(abilityHrid, currentLevel, currentXp, targetLevel) {
-    return explainAbilityLevelUpCost(abilityHrid, currentLevel, currentXp, targetLevel).total ?? 0;
+export function explainAbilityCost(abilityHrid, targetLevel) {
+    return explainAbilityLevelUpCost(abilityHrid, 0, 0, targetLevel);
 }
 
 /**

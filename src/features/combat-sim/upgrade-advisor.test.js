@@ -126,7 +126,6 @@ vi.mock('../enhancement/tooltip-enhancement.js', () => ({
     getProductionCost: vi.fn(),
 }));
 vi.mock('../../utils/ability-cost-calculator.js', () => ({
-    calculateAbilityLevelUpCost: vi.fn(),
     explainAbilityLevelUpCost: vi.fn(() => ({
         bookHrid: '/items/fireball',
         bookName: 'Fireball',
@@ -170,6 +169,7 @@ const {
     generateDrinkCandidates,
     generateCommunityBuffCandidates,
     conflictKey,
+    conflictKeys,
     planWithinBudget,
     explainUpgradeCost,
     computeEconomics,
@@ -1499,6 +1499,13 @@ describe('whether an upgrade is about this loadout at all', () => {
 });
 
 describe('generateSkillingEquipmentCandidates targetSkill filtering', () => {
+    beforeEach(() => {
+        // Every candidate is now priced *and* explained on generation, so both
+        // price lookups have to answer rather than leaking from another describe
+        resolveItemPrice.mockImplementation(() => ({ price: 1_000_000 }));
+        getItemPrices.mockReturnValue({ ask: 5_000_000, bid: 4_000_000 });
+    });
+
     function skillingGameData() {
         return {
             itemDetailMap: {
@@ -1539,6 +1546,49 @@ describe('generateSkillingEquipmentCandidates targetSkill filtering', () => {
 
         const alchemyOnly = generateSkillingEquipmentCandidates(editorDTO, skillingGameData(), map, '/skills/alchemy');
         expect(alchemyOnly.map((c) => c.currentHrid)).toEqual(['/items/wisdom_necklace']);
+    });
+
+    test('every candidate carries the breakdown its row can be expanded into', () => {
+        // Without it the Skilling tab had a Cost column and no way to ask what
+        // the number was made of — the one place a dash reads as free
+        const editorDTO = {
+            equipment: { '/equipment_types/tool': { hrid: '/items/spatula', enhancementLevel: 0 } },
+        };
+
+        const all = generateSkillingEquipmentCandidates(editorDTO, skillingGameData(), {});
+
+        expect(all.length).toBeGreaterThan(0);
+        expect(all.every((c) => c.costDetail)).toBe(true);
+        for (const candidate of all) {
+            expect(Array.isArray(candidate.costDetail.buys)).toBe(true);
+            expect(Array.isArray(candidate.costDetail.unpriced)).toBe(true);
+        }
+    });
+
+    test('a skilling piece replacing combat gear records what it keeps, so the row can say why it costs so much', () => {
+        const gameData = skillingGameData();
+        gameData.itemDetailMap['/items/plate_body'] = {
+            name: 'Plate Body',
+            itemLevel: 80,
+            equipmentDetail: { type: '/equipment_types/body', combatStats: { armor: 20 }, noncombatStats: {} },
+        };
+        gameData.itemDetailMap['/items/lumberjack_top'] = {
+            name: "Lumberjack's Top",
+            itemLevel: 80,
+            equipmentDetail: { type: '/equipment_types/body', noncombatStats: { woodcuttingSpeed: 0.2 } },
+        };
+        const editorDTO = {
+            equipment: { '/equipment_types/body': { hrid: '/items/plate_body', enhancementLevel: 3 } },
+        };
+
+        const all = generateSkillingEquipmentCandidates(editorDTO, gameData, {}, '/skills/woodcutting');
+        const swap = all.find((c) => c.upgradeHrid === '/items/lumberjack_top');
+
+        expect(swap).toBeDefined();
+        expect(swap.costDetail.kept?.map((k) => k.name)).toEqual(['Plate Body']);
+        // The resale it deliberately does not credit, which is the whole
+        // explanation for a cost that looks too high
+        expect(swap.costDetail.keptValue).toBeGreaterThanOrEqual(0);
     });
 });
 
@@ -1907,6 +1957,12 @@ describe('how much of a gain is measurement', () => {
 });
 
 describe('what cannot be bought together', () => {
+    const SMACK = '/abilities/smack';
+    const POKE = '/abilities/poke';
+    const FIREBALL = '/abilities/fireball';
+    /** Whether the planner would refuse to buy both */
+    const sharesConflict = (a, b) => conflictKeys(a).some((key) => conflictKeys(b).includes(key));
+
     test('two upgrades to one slot are alternatives', () => {
         const boots = (hrid) => ({ type: 'tier', slot: '/equipment_types/feet', upgradeHrid: hrid });
 
@@ -1947,6 +2003,56 @@ describe('what cannot be bought together', () => {
         expect(conflictKey({ type: 'combat_level', skillKey: 'meleeLevel', upgradeLevel: 105 })).toBe(
             conflictKey({ type: 'combat_level', skillKey: 'meleeLevel', upgradeLevel: 110 })
         );
+    });
+
+    test('a swap conflicts at both ends: the book it buys and the ability it displaces', () => {
+        const swap = { type: 'ability_swap', slot: 'ability_1', replacesHrid: SMACK, upgradeHrid: FIREBALL };
+
+        expect(conflictKeys(swap)).toEqual(expect.arrayContaining([`ability:${SMACK}`, `ability:${FIREBALL}`]));
+    });
+
+    test('two swaps into one equipped ability share a key', () => {
+        const into = (newcomer) => ({
+            type: 'ability_swap',
+            slot: 'ability_1',
+            replacesHrid: SMACK,
+            upgradeHrid: newcomer,
+        });
+
+        expect(sharesConflict(into(FIREBALL), into(POKE))).toBe(true);
+    });
+
+    test('so do two offers of one newcomer', () => {
+        const from = (outgoing, slot) => ({
+            type: 'ability_swap',
+            slot,
+            replacesHrid: outgoing,
+            upgradeHrid: FIREBALL,
+        });
+
+        expect(sharesConflict(from(SMACK, 'ability_1'), from(POKE, 'ability_2'))).toBe(true);
+    });
+
+    test('a free-slot fill has only the one end, and still collides with a swap for the same book', () => {
+        const fill = { type: 'ability_swap', slot: 'ability_2', fillsFreeSlot: true, upgradeHrid: FIREBALL };
+        const swap = { type: 'ability_swap', slot: 'ability_1', replacesHrid: SMACK, upgradeHrid: FIREBALL };
+
+        expect(conflictKeys(fill)).toEqual([`ability:${FIREBALL}`]);
+        expect(sharesConflict(fill, swap)).toBe(true);
+    });
+
+    test('levelling an ability collides with swapping it away', () => {
+        const level = { type: 'ability_level', slot: 'ability_1', upgradeHrid: SMACK, upgradeLevel: 60 };
+        const swap = { type: 'ability_swap', slot: 'ability_1', replacesHrid: SMACK, upgradeHrid: FIREBALL };
+
+        expect(sharesConflict(level, swap)).toBe(true);
+    });
+
+    test('unrelated swaps share nothing', () => {
+        const a = { type: 'ability_swap', slot: 'ability_1', replacesHrid: SMACK, upgradeHrid: FIREBALL };
+        const b = { type: 'ability_swap', slot: 'ability_2', replacesHrid: POKE, upgradeHrid: '/abilities/entangle' };
+
+        expect(sharesConflict(a, b)).toBe(false);
     });
 });
 
@@ -2084,6 +2190,73 @@ describe('what a budget buys', () => {
 
         expect(plan.totalCost).toBe(350);
         expect(plan.attemptsSaved).toBe(3);
+    });
+
+    describe('one book, one slot', () => {
+        // A budget planner that keyed a swap on the incoming ability alone bought
+        // two books to read one; keyed on the outgoing one alone it bought the
+        // same stack twice. Both directions have to hold at once.
+        const swap = (replacesHrid, upgradeHrid, over = {}) => ({
+            ...covering([0, 1, 2], over),
+            candidate: {
+                type: 'ability_swap',
+                slot: over.slot || 'ability_1',
+                replacesHrid,
+                upgradeHrid,
+            },
+        });
+
+        test('two swaps into the same equipped ability buy one book', () => {
+            const plan = planFor(
+                [
+                    swap('/abilities/smack', '/abilities/fireball', { cost: 10 }),
+                    swap('/abilities/smack', '/abilities/poke', { cost: 10 }),
+                ],
+                1000
+            );
+
+            expect(plan.picks).toHaveLength(1);
+            expect(plan.totalCost).toBe(10);
+        });
+
+        test('one newcomer offered for two slots is still one book', () => {
+            const plan = planFor(
+                [
+                    swap('/abilities/smack', '/abilities/fireball', { cost: 10, slot: 'ability_1' }),
+                    swap('/abilities/poke', '/abilities/fireball', { cost: 10, slot: 'ability_2' }),
+                ],
+                1000
+            );
+
+            expect(plan.picks).toHaveLength(1);
+            expect(plan.totalCost).toBe(10);
+        });
+
+        test('two swaps sharing neither end are two purchases', () => {
+            const plan = planFor(
+                [
+                    swap('/abilities/smack', '/abilities/fireball', { cost: 10, slot: 'ability_1' }),
+                    swap('/abilities/poke', '/abilities/entangle', { cost: 10, slot: 'ability_2' }),
+                ],
+                1000
+            );
+
+            expect(plan.picks).toHaveLength(2);
+            expect(plan.totalCost).toBe(20);
+        });
+
+        test('the loser is skipped for the reason it was actually skipped', () => {
+            const plan = planFor(
+                [
+                    swap('/abilities/smack', '/abilities/fireball', { cost: 10 }),
+                    swap('/abilities/smack', '/abilities/poke', { cost: 10 }),
+                ],
+                1000
+            );
+
+            expect(plan.skipped).toHaveLength(1);
+            expect(plan.skipped[0].reason).toBe('a pick already uses what this needs');
+        });
     });
 
     test('and the saving counts each room once, not once per piece', () => {
@@ -3017,6 +3190,44 @@ describe('what an ability upgrade costs', () => {
 
         expect(detail.books.books).toBe(0);
         expect(detail.net).toBe(0);
+    });
+
+    test('a fill of a book already at the level wanted is marked as owned, not slotted', () => {
+        character.characterAbilities = [{ abilityHrid: '/abilities/critical_aura', level: 20, experience: 50_000 }];
+        explainAbilityLevelUpCost.mockReturnValueOnce({
+            bookName: 'Critical Aura',
+            books: 0,
+            bookPrice: 1000,
+            total: 0,
+        });
+        const detail = explainUpgradeCost({ ...swap, fillsFreeSlot: true }, gameData);
+
+        expect(detail.ownedNotSlotted).toBe(true);
+        expect(detail.net).toBe(0);
+    });
+
+    test('and one you own that still needs books is not', () => {
+        character.characterAbilities = [{ abilityHrid: '/abilities/critical_aura', level: 14, experience: 12_345 }];
+        const detail = explainUpgradeCost(swap, gameData);
+
+        expect(detail.ownedNotSlotted).toBe(false);
+    });
+
+    test('an unlisted book you already own is free, not unpriceable', () => {
+        // Zero books is free whatever the market says; reading the clamp off the
+        // price left an ability you own showing "no price" for buying nothing
+        character.characterAbilities = [{ abilityHrid: '/abilities/critical_aura', level: 20, experience: 50_000 }];
+        explainAbilityLevelUpCost.mockReturnValueOnce({
+            bookName: 'Critical Aura',
+            books: -3,
+            bookPrice: null,
+            total: null,
+        });
+        const detail = explainUpgradeCost({ ...swap, fillsFreeSlot: true }, gameData);
+
+        expect(detail.net).toBe(0);
+        expect(detail.unpriced).toEqual([]);
+        expect(detail.ownedNotSlotted).toBe(true);
     });
 
     test('a level-up is never a fresh book, however the swap rule reads', () => {

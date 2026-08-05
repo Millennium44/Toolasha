@@ -247,6 +247,39 @@ describe('expandable sections', () => {
         expect(line.title).toContain('110,000,000 coins');
     });
 
+    test('an ability nobody is selling the book for says so, rather than showing a 0', () => {
+        setScoreSource(() =>
+            scored({
+                breakdown: {
+                    ...scored().breakdown,
+                    abilities: [
+                        {
+                            name: 'Ice Spear 40',
+                            value: 'no price',
+                            cost: 0,
+                            unpriced: true,
+                            books: 41,
+                            hrid: '/abilities/ice_spear',
+                            itemHrid: '/items/ice_spear',
+                            level: 40,
+                        },
+                    ],
+                },
+            })
+        );
+        buildScorePanel.show();
+        header('combat-abilities').click();
+
+        const line = [...buildScorePanel.panel.querySelectorAll('div')].find((el) =>
+            el.title.startsWith('Ice Spear 40:')
+        );
+
+        expect(body('combat-abilities').textContent).toContain('no price');
+        expect(line.title).toContain('41 books');
+        expect(line.title).toContain('not counted in the score');
+        expect(line.title).not.toContain('0 coins');
+    });
+
     test('folding is per section — opening abilities leaves equipment folded', () => {
         buildScorePanel.show();
         header('combat-abilities').click();

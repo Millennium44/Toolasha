@@ -2720,12 +2720,21 @@ function explainAbilityCandidateCost(candidate, gameData) {
     const currentXp = swap ? owned?.experience || levelFloorXp : levelFloorXp;
 
     const priced = explainAbilityLevelUpCost(hrid, fromLevel, currentXp, candidate.upgradeLevel || 0);
-    // A book already past the target buys nothing rather than a negative number
-    // of books, which is what the level arithmetic hands back for it
-    const books = priced.total !== null && priced.total < 0 ? { ...priced, books: 0, total: 0 } : priced;
+    // A book already at or past the target buys nothing rather than a negative
+    // number of books, which is what the level arithmetic hands back for it.
+    // Zero books is free whether or not the market lists the book, so this is
+    // decided on the count and not on the price — reading it off the price left
+    // an unlisted book you already own showing as unpriceable
+    const nothingToBuy = (priced.books ?? 0) <= 0;
+    const books = nothingToBuy ? { ...priced, books: 0, total: 0 } : priced;
 
     return {
         books,
+        // The one free row that is genuinely free: an ability sitting in the book
+        // bag at the level the row wants, which costs nothing because it is not a
+        // purchase at all — it is a slot that is empty. Without saying so the row
+        // shows a bare 0 and the `from LvN` chip explains a cost never paid.
+        ownedNotSlotted: swap && Boolean(owned) && nothingToBuy,
         // A swap of an ability you do not own prices a book learned and levelled
         // from nothing. That is the single biggest thing about such a row and it
         // used to live only in a tab tooltip, where a row claiming a 900M cost
@@ -4249,7 +4258,7 @@ export function replacedIn(candidate, dto, gameData) {
 }
 
 /**
- * What two upgrades have to share before buying both is wasteful.
+ * Every group an upgrade belongs to.
  *
  * Some pairs are genuinely alternatives: two targets for one ability, or two
  * levels of one combat skill, where the higher already contains the lower.
@@ -4260,18 +4269,43 @@ export function replacedIn(candidate, dto, gameData) {
  * rooms as the first. Where it serves rooms the first cannot reach, it is a
  * second purchase doing a second job, and the plan treats it that way.
  *
+ * An ability swap is the one upgrade that cannot say what it conflicts with in a
+ * single string, because it has two ends and each of them is a way to waste
+ * money:
+ *
+ * - Two swaps *into the same equipped ability* ("Smack → Quick Strike" and
+ *   "Smack → Poke") are two ways to spend one slot. Keyed on the newcomer alone,
+ *   they look unrelated and the plan buys both books to read one.
+ * - The same newcomer *offered for two slots* ("Smack → Fireball" and "Poke →
+ *   Fireball", or a free-slot fill that also appears as a displacement) is one
+ *   book. Keyed on the replaced ability alone, they look unrelated and the plan
+ *   buys the stack twice.
+ *
+ * So an ability carries a key for each end, and anything sharing *either* is a
+ * conflict. This also catches levelling an ability the same plan wants to
+ * replace: the level candidate's key is the ability, and so is the swap's
+ * outgoing key.
+ *
  * @param {Object} candidate - The upgrade
- * @returns {string} Key that candidates in the same group share
+ * @returns {Array<string>} Keys; candidates sharing any one of them conflict
  */
-export function conflictKey(candidate) {
-    if (candidate.type === 'combat_level') return `skill:${candidate.skillKey}`;
-    if (candidate.type === 'house') return `house:${candidate.slot}`;
-    if (candidate.type === 'guild_shrine') return `guild:${candidate.buffHrid}`;
-    if (candidate.type === 'community_buff') return `community:${candidate.buffKey}`;
+export function conflictKeys(candidate) {
+    if (candidate.type === 'combat_level') return [`skill:${candidate.skillKey}`];
+    if (candidate.type === 'house') return [`house:${candidate.slot}`];
+    if (candidate.type === 'guild_shrine') return [`guild:${candidate.buffHrid}`];
+    if (candidate.type === 'community_buff') return [`community:${candidate.buffKey}`];
     // Two coffees of one buff family cannot both be up, whichever slots they
     // would sit in — the game's own conflict rule, keyed the same way
-    if (candidate.type === 'drink') return `drink:${candidate.buffFamily}`;
-    if (candidate.slot?.startsWith('ability_')) return `ability:${candidate.upgradeHrid}`;
+    if (candidate.type === 'drink') return [`drink:${candidate.buffFamily}`];
+    if (candidate.slot?.startsWith('ability_')) {
+        const keys = [`ability:${candidate.upgradeHrid}`];
+        // `replacesHrid` is absent on a free-slot fill, which displaces nothing
+        // and so has only the one end
+        if (candidate.replacesHrid && candidate.replacesHrid !== candidate.upgradeHrid) {
+            keys.push(`ability:${candidate.replacesHrid}`);
+        }
+        return keys;
+    }
 
     const slots = candidate.addedSlots
         ? [...Object.keys(candidate.addedSlots), ...(candidate.clearedSlots || [])]
@@ -4279,8 +4313,22 @@ export function conflictKey(candidate) {
     // A two-hander and a main-hand+off-hand pair are competing for the same
     // hands even though they name different slots
     const hands = ['/equipment_types/two_hand', '/equipment_types/main_hand', '/equipment_types/off_hand'];
-    if (slots.some((slot) => hands.includes(slot))) return 'slot:weapon';
-    return `slot:${[...new Set(slots)].sort().join('+')}`;
+    if (slots.some((slot) => hands.includes(slot))) return ['slot:weapon'];
+    return [`slot:${[...new Set(slots)].sort().join('+')}`];
+}
+
+/**
+ * The group an upgrade is filed under, for the places that need one name for it
+ * — grouping picks per loadout, and tracking what a slot has already gained.
+ *
+ * Use `conflictKeys` for the question "may these two both be bought": an ability
+ * swap has two ends and this reports only the first.
+ *
+ * @param {Object} candidate - The upgrade
+ * @returns {string} Key that candidates in the same group share
+ */
+export function conflictKey(candidate) {
+    return conflictKeys(candidate)[0];
 }
 
 /**
@@ -4364,7 +4412,10 @@ export function planWithinBudget(results, budget, { baselineFights = [], include
             skipped.push({ result, reason: 'within the noise of the simulation' });
             continue;
         }
-        eligible.push({ result, savings: savingsOf(result), key: conflictKey(result.candidate) });
+        // `keys` is every group it conflicts with; `key` is the one it is filed
+        // under for marginal-value bookkeeping (see `conflictKeys`)
+        const keys = conflictKeys(result.candidate);
+        eligible.push({ result, savings: savingsOf(result), key: keys[0], keys });
     }
 
     const picks = [];
@@ -4389,7 +4440,10 @@ export function planWithinBudget(results, budget, { baselineFights = [], include
     while (remaining.length) {
         let best = null;
         for (const entry of remaining) {
-            if (isExclusive(entry.result.candidate) && taken.has(entry.key)) continue;
+            // Sharing *any* key is a conflict: one ability swap rules out both
+            // the other swaps into the slot it empties and the other offers of
+            // the book it buys
+            if (isExclusive(entry.result.candidate) && entry.keys.some((key) => taken.has(key))) continue;
             if (spent + entry.result.cost > budget) continue;
             const marginal = marginalOf(entry);
             if (marginal <= 0) continue;
@@ -4417,7 +4471,7 @@ export function planWithinBudget(results, budget, { baselineFights = [], include
 
         const { entry, marginal } = best;
         remaining.splice(remaining.indexOf(entry), 1);
-        taken.add(entry.key);
+        for (const key of entry.keys) taken.add(key);
         spent += entry.result.cost;
         picks.push({
             ...entry.result,
@@ -4447,10 +4501,17 @@ export function planWithinBudget(results, budget, { baselineFights = [], include
     }
 
     for (const entry of remaining) {
-        skipped.push({
-            result: entry.result,
-            reason: spent + entry.result.cost > budget ? 'over budget' : 'adds nothing the picks do not already cover',
-        });
+        let reason;
+        if (isExclusive(entry.result.candidate) && entry.keys.some((key) => taken.has(key))) {
+            // Otherwise this reads as "worthless", when it may well be the
+            // second-best swap into a slot the plan has already filled
+            reason = 'a pick already uses what this needs';
+        } else if (spent + entry.result.cost > budget) {
+            reason = 'over budget';
+        } else {
+            reason = 'adds nothing the picks do not already cover';
+        }
+        skipped.push({ result: entry.result, reason });
     }
 
     // What the set saves across the run, if gains in different slots add up
@@ -4564,6 +4625,47 @@ function allFightsPoolKey(candidate) {
         return `ability_fill:${candidate.upgradeHrid}`;
     }
     return candidateAssignmentKey(candidate);
+}
+
+/**
+ * Which build guide each distinct loadout in a run was read as playing.
+ *
+ * Ability Swaps asks a much smaller question when it can name the archetype —
+ * the archetype's own ability set instead of every ability in the game — and
+ * silently falls back to the wide search when it cannot. Pooling then merges
+ * everything into one table, so the finished results carry no trace of which
+ * loadouts got which question. That is exactly the thing a reader needs to know
+ * before trusting a short swap list, and it costs one guide lookup per loadout
+ * to say.
+ *
+ * One entry per distinct loadout name, in the order the fights name them, so a
+ * ten-room run with three loadouts produces three lines rather than ten.
+ *
+ * @param {Array<Object>} fights - `[{ dto, loadoutName }]`
+ * @param {Object} gameData - Game data payload
+ * @param {boolean} signatureOnly - Whether the run restricted swaps to aura + signature
+ * @returns {Array<{loadoutName: string, archetype: string|null, label: string|null}>}
+ */
+function summariseArchetypes(fights, gameData, signatureOnly) {
+    const seen = new Map();
+    for (const fight of fights || []) {
+        const loadoutName = fight?.loadoutName || 'Loadout';
+        if (seen.has(loadoutName)) continue;
+        let plan = null;
+        try {
+            plan = buildGuidePlan(fight.dto, gameData, { signatureOnly });
+        } catch (error) {
+            // A guide that cannot be read is the same answer as no archetype,
+            // and is never worth failing a whole analysis over
+            console.error('[UpgradeAdvisor] Archetype lookup failed for', loadoutName, error);
+        }
+        seen.set(loadoutName, {
+            loadoutName,
+            archetype: plan?.archetype ?? null,
+            label: plan?.label ?? null,
+        });
+    }
+    return [...seen.values()];
 }
 
 /**
@@ -4812,6 +4914,13 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
         const key = allFightsPoolKey(candidate);
         if (!candidatesByKey.has(key)) candidatesByKey.set(key, candidate);
     }
+    // Which archetype each loadout resolved to, for the panel to say out loud.
+    // The guide narrows a loadout's swaps from every ability in the game to the
+    // archetype's own set, and a loadout whose weapon does not name one falls
+    // back to the wide search — a difference of thousands of simulations and of
+    // what the table can be trusted to have looked at. After pooling, nothing in
+    // the results says which loadout went which way.
+    const archetypes = modes.includes('ability_swap') ? summariseArchetypes(fights, gameData, signatureSwapsOnly) : [];
     // Which fights each candidate is actually about. A combat level is every
     // fight; a piece of gear is only the fights whose loadout wears the piece it
     // replaces — installing a melee sword into a magic loadout measures a
@@ -5046,6 +5155,9 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
             trialScale: budget.scale,
             reduced: budget.reduced,
         },
+        // Which build guide each loadout was read as playing — see
+        // `summariseArchetypes`. Empty when swaps were not part of the run.
+        archetypes,
         // Handed back so a combination check re-runs against the same random
         // draws and the same trial counts, rather than against a fresh sample
         pairing: { seed: simSeed, rules: [...pairedRules.entries()] },
@@ -5453,9 +5565,16 @@ export function generateLabyrinthBuffCandidatesFromEditor(tokenUpgrades) {
  * skill's room (its loadout override, or the base equipment) is considered.
  * @param {Object} editorDTO - Player DTO from editor
  * @param {Object} gameData - From buildGameDataPayload()
+ * Every candidate carries a `costDetail` beside its `cost`, so a Skilling row can
+ * be expanded into what it is actually buying the way a combat row can. Without
+ * it the Gear Upgrades table had a Cost column and no way to ask what the number
+ * was made of — including the rows where the answer is "nothing, the market has
+ * no listing" and the rows priced as the new piece alone because the combat gear
+ * they replace is kept.
+ *
  * @param {Object} [skillEquipmentMap] - Per-skill equipment overrides
  * @param {string|null} [targetSkill] - Skill HRID to restrict candidates to
- * @returns {Array} Enhancement candidates with gold cost
+ * @returns {Array} Enhancement candidates with gold cost and `costDetail`
  */
 export function generateSkillingEquipmentCandidates(editorDTO, gameData, skillEquipmentMap = {}, targetSkill = null) {
     const itemDetailMap = gameData.itemDetailMap || {};
@@ -5501,6 +5620,7 @@ export function generateSkillingEquipmentCandidates(editorDTO, gameData, skillEq
                 type: 'enhancement',
             };
             candidate.cost = calculateUpgradeCost(candidate, gameData);
+            candidate.costDetail = explainLabCandidateCost(candidate, gameData);
             candidates.push(candidate);
         }
 
@@ -5513,6 +5633,7 @@ export function generateSkillingEquipmentCandidates(editorDTO, gameData, skillEq
             if (seen.has(dedupKey)) continue;
             seen.add(dedupKey);
             candidate.cost = calculateUpgradeCost(candidate, gameData);
+            candidate.costDetail = explainLabCandidateCost(candidate, gameData);
             candidates.push(candidate);
         }
     }
@@ -5538,6 +5659,11 @@ export function generateSkillingEquipmentCandidates(editorDTO, gameData, skillEq
             if (seen.has(dedupKey)) continue;
             seen.add(dedupKey);
             candidate.cost = calculateUpgradeCost(candidate, gameData);
+            // `explainLabCandidateCost` rather than `explainUpgradeCost`: a
+            // skilling piece replacing combat armour records the armour as kept,
+            // and the kept-gear note is the whole explanation for a cost that
+            // looks too high
+            candidate.costDetail = explainLabCandidateCost(candidate, gameData);
             candidates.push(candidate);
         }
     }
@@ -6071,6 +6197,9 @@ export async function runSkillingUpgradeAnalysis(params, onProgress, options = {
                 description: evalCandidate.description.replace(/\+\d+$/, `+${nextLevel}`),
             };
             bumped.cost = calculateUpgradeCost(bumped, gameData);
+            // Re-explained at the level it was bumped to, or the expansion would
+            // itemise a purchase the row is no longer quoting
+            bumped.costDetail = explainLabCandidateCost(bumped, gameData);
             const freshDTO = JSON.parse(JSON.stringify(editorDTO));
             const freshEquipMap = JSON.parse(JSON.stringify(skillEquipmentMap));
             modifiedClearRate = evaluate(bumped, freshDTO, freshEquipMap);
@@ -6082,6 +6211,7 @@ export async function runSkillingUpgradeAnalysis(params, onProgress, options = {
             candidate: evalCandidate,
             costType: 'gold',
             cost: evalCandidate.cost,
+            costDetail: evalCandidate.costDetail ?? null,
             clearRate: modifiedClearRate,
             clearRateDelta,
             // Unknown cost (null) must rank as Infinity, never as free

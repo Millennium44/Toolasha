@@ -594,7 +594,7 @@ class NetworthInventoryDisplay {
 
     /**
      * Render abilities breakdown HTML
-     * @param {Array} breakdown - Array of {name, cost}
+     * @param {Array} breakdown - Array of {name, cost, unpriced}
      * @returns {string} HTML string
      */
     renderAbilitiesBreakdown(breakdown) {
@@ -604,6 +604,9 @@ class NetworthInventoryDisplay {
 
         return breakdown
             .map((ability) => {
+                // Nobody is selling the book, so the total below does not
+                // include it — which is worth saying rather than drawing a 0
+                if (ability.unpriced) return `${ability.name}: no price`;
                 return `${ability.name}: ${networthFormatter(Math.round(ability.cost))}`;
             })
             .join('\n');

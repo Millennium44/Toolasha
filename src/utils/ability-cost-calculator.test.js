@@ -20,7 +20,8 @@ vi.mock('../api/marketplace.js', () => ({
     default: { getPrice: (hrid) => game.prices[hrid] ?? null },
 }));
 
-const { explainAbilityLevelUpCost, calculateAbilityLevelUpCost } = await import('./ability-cost-calculator.js');
+const abilityCostCalculator = await import('./ability-cost-calculator.js');
+const { explainAbilityLevelUpCost, explainAbilityCost } = abilityCostCalculator;
 
 const FIREBALL = '/abilities/fireball';
 const SMOKE = '/abilities/smoke_burst';
@@ -99,14 +100,25 @@ describe('what it comes to', () => {
     });
 });
 
-describe('the number the older callers take', () => {
-    test('is the same total', () => {
-        expect(calculateAbilityLevelUpCost(FIREBALL, 2, 500, 4)).toBe(50_000);
+describe('owning it from nothing', () => {
+    test('is the levelling cost starting from zero', () => {
+        // 3000 XP at 50 per book, plus the book that learns it
+        expect(explainAbilityCost(FIREBALL, 4)).toMatchObject({ books: 61, total: 61_000 });
     });
 
-    test('and still zero when nothing is known, as it always was', () => {
-        game.data = null;
+    test('and is null, not zero, when the book has no listing', () => {
+        // The whole reason the old `calculateAbilityCost` was retired: a score
+        // or a networth that reads an unpriceable ability as free is wrong in
+        // the direction nobody checks
+        game.prices = {};
 
-        expect(calculateAbilityLevelUpCost(FIREBALL, 2, 500, 4)).toBe(0);
+        expect(explainAbilityCost(FIREBALL, 4).total).toBe(null);
+    });
+});
+
+describe('the retired zero-returning wrappers', () => {
+    test('are gone rather than deprecated, so nothing can reach for them', () => {
+        expect(abilityCostCalculator.calculateAbilityCost).toBeUndefined();
+        expect(abilityCostCalculator.calculateAbilityLevelUpCost).toBeUndefined();
     });
 });

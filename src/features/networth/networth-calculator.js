@@ -11,7 +11,7 @@
 
 import dataManager from '../../core/data-manager.js';
 import marketAPI from '../../api/marketplace.js';
-import { calculateAbilityCost } from '../../utils/ability-cost-calculator.js';
+import { explainAbilityCost } from '../../utils/ability-cost-calculator.js';
 import { calculateHouseBuildCost } from '../../utils/house-cost-calculator.js';
 import { calculateEnhancementPath } from '../enhancement/tooltip-enhancement.js';
 import { getEnhancingParams } from '../../utils/enhancement-config.js';
@@ -354,7 +354,12 @@ export function calculateAllAbilitiesCost(characterAbilities, abilityCombatTrigg
     for (const ability of characterAbilities) {
         if (!ability.abilityHrid || ability.level === 0) continue;
 
-        const cost = calculateAbilityCost(ability.abilityHrid, ability.level);
+        // No listing for the book is no price, not a free ability. Counting it
+        // as zero quietly understated the total and put the row at the bottom
+        // of the list as though it were worthless
+        const priced = explainAbilityCost(ability.abilityHrid, ability.level);
+        const unpriced = priced?.total == null;
+        const cost = unpriced ? 0 : priced.total;
         totalCost += cost;
 
         // Format ability name for display
@@ -368,6 +373,8 @@ export function calculateAllAbilitiesCost(characterAbilities, abilityCombatTrigg
             hrid: ability.abilityHrid,
             name: `${abilityName} ${ability.level}`,
             cost: cost,
+            unpriced,
+            books: priced?.books ?? 0,
         };
 
         breakdown.push(abilityData);

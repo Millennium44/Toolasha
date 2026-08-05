@@ -157,10 +157,18 @@ function breakdownLine(entry, suffix = '') {
 
     const value = document.createElement('span');
     value.textContent = entry.value;
-    Object.assign(value.style, { color: ROW_COLORS.gold, whiteSpace: 'nowrap' });
+    // A row nobody is selling the parts for is dim rather than gold: it is not a
+    // small contribution, it is one the market cannot put a number on, and it is
+    // not in the total above it
+    Object.assign(value.style, { color: entry.unpriced ? ROW_COLORS.dim : ROW_COLORS.gold, whiteSpace: 'nowrap' });
     line.appendChild(value);
 
-    line.title = `${entry.name}: ${formatWithSeparator(Math.round(rowCost(entry)))} coins`;
+    if (entry.unpriced) {
+        const books = entry.books ? `${formatWithSeparator(Math.ceil(entry.books))} books, ` : '';
+        line.title = `${entry.name}: ${books}none of them listed on the market, so it is not counted in the score`;
+    } else {
+        line.title = `${entry.name}: ${formatWithSeparator(Math.round(rowCost(entry)))} coins`;
+    }
     if (entry.tokens > 0) line.title += `, and ${formatWithSeparator(entry.tokens)} guild tokens, which have no price`;
     return line;
 }

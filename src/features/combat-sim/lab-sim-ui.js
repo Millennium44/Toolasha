@@ -188,6 +188,24 @@ function escapeHtmlAttribute(value) {
         .replace(/>/g, '&gt;');
 }
 
+/**
+ * Why a forced labyrinth armor swap does not credit the resale of what it
+ * replaces: the run wants every element available, so the replaced set is kept.
+ * A setting exists because these two really are alternatives.
+ */
+const KEPT_REASON_LABYRINTH =
+    'since the labyrinth needs every set. Turn off "Keep gear the forced armor swaps replace" in settings to ' +
+    'price these as straight swaps.';
+
+/**
+ * Why a *skilling* piece does not credit it. Different answer, and deliberately
+ * not a setting: the body slot holds a plate while you fight and an outfit while
+ * you chop, and nobody sells the plate to buy the outfit — so there is no second
+ * position to switch to.
+ */
+const KEPT_REASON_SKILLING =
+    'since it is combat gear you keep in a loadout — selling it to fund skilling gear is not a trade anybody makes.';
+
 const ACCENT = '#4a9eff';
 const ACCENT_BORDER = 'rgba(74, 158, 255, 0.5)';
 const ACCENT_BG = 'rgba(74, 158, 255, 0.12)';
@@ -3314,6 +3332,7 @@ class LabSimUI {
                 (budget?.reduced
                     ? ` at ${Math.round(budget.trialScale * 100)}% of the ${budget.requestedHours}h per fight — every fight simulated, win rates noisier.`
                     : '.') +
+                describeArchetypes(analysisResult.archetypes) +
                 (this._houseScanNote ? ` House rooms: ${this._houseScanNote}.` : '')
         );
     }
@@ -3751,8 +3770,6 @@ class LabSimUI {
      * @private
      */
     _renderUpgradeCostDetail(result, baseline) {
-        const detail = result.costDetail;
-        const money = (value) => formatWithSeparator(Math.round(value));
         const line = (text, color = '#aaa') => `<div style="color:${color}; font-size:11px;">${text}</div>`;
 
         const parts = [];
@@ -3786,9 +3803,98 @@ class LabSimUI {
             );
         }
 
+        parts.push(this._renderCostBreakdown(result.costDetail));
+        return parts.join('');
+    }
+
+    /**
+     * The same expansion, for a table ranked on clear rate rather than win rate.
+     *
+     * The Skilling tab's Gear Upgrades rows had a Cost column and no way to ask
+     * what the number was made of — including the two cases where the number is
+     * least self-explanatory: a dash, which means the market has no listing at
+     * that enhancement rather than that the piece is free; and a cost that looks
+     * far too high, which is a skilling piece priced without crediting the combat
+     * armour it goes in place of, because that armour stays in its loadout.
+     *
+     * Everything below the header lines is the same breakdown the combat rows
+     * draw. What differs is the header: the rate this table measures, and what
+     * kind of purchase the row is, since "enhance what you wear" and "buy a piece
+     * you do not own yet, at +5" are priced in completely different ways.
+     *
+     * @param {Object} result - Skilling analysis result row
+     * @param {Object} [baseline] - `{ clearRate }` from the analysis
+     * @returns {string} HTML
+     * @private
+     */
+    _renderClearRateCostDetail(result, baseline) {
+        const line = (text, color = '#aaa') => `<div style="color:${color}; font-size:11px;">${text}</div>`;
+        const parts = [];
+        const candidate = result.candidate || {};
+
+        const baseRate = baseline?.clearRate != null ? (baseline.clearRate * 100).toFixed(2) + '%' : null;
+        const delta = (result.clearRateDelta || 0) * 100;
+        parts.push(
+            line(
+                `Avg clear rate ${((result.clearRate || 0) * 100).toFixed(2)}%` +
+                    (baseRate ? ` vs ${baseRate} baseline` : '') +
+                    ` · ${delta >= 0 ? '+' : ''}${delta.toFixed(2)}%`,
+                '#ccc'
+            )
+        );
+
+        if (candidate.type === 'enhancement') {
+            parts.push(
+                line(
+                    `Enhancing a piece you already wear, +${candidate.currentLevel} → +${candidate.upgradeLevel}. ` +
+                        'Cost is the cheapest priced way to reach that level — the piece itself is already yours, ' +
+                        'so nothing is bought and nothing is sold back.'
+                )
+            );
+        } else if (candidate.type === 'skilling_gear') {
+            parts.push(
+                line(
+                    `A piece you do not own yet, priced and simulated at +${candidate.upgradeLevel}. Nobody buys ` +
+                        'one of these and leaves it at +0, so costing it there would understate both the price ' +
+                        'and the gain against every other row.'
+                )
+            );
+            if (candidate.skillKey) {
+                parts.push(
+                    line(
+                        `Counted for ${String(candidate.skillKey).replace('/skills/', '')} alone — its stats do ` +
+                            'nothing in any other skill’s room.',
+                        '#888'
+                    )
+                );
+            }
+        }
+
+        parts.push(this._renderCostBreakdown(result.costDetail, { keptReason: KEPT_REASON_SKILLING }));
+        return parts.join('');
+    }
+
+    /**
+     * What a cost is made of: bought, credited, kept, or missing a price.
+     *
+     * Shared by every expandable row in the panel, because the answer does not
+     * depend on which rate the table above it is ranked on. Only the header lines
+     * differ, and those belong to the renderers that call this.
+     *
+     * @param {Object|null} detail - `costDetail` from the analysis
+     * @param {Object} [options] - `keptReason`: why an uncredited resale is uncredited,
+     *   which is a different answer for the labyrinth's forced armor sets than for a
+     *   skilling piece that goes in place of combat gear
+     * @returns {string} HTML
+     * @private
+     */
+    _renderCostBreakdown(detail, { keptReason = KEPT_REASON_LABYRINTH } = {}) {
+        const money = (value) => formatWithSeparator(Math.round(value));
+        const line = (text, color = '#aaa') => `<div style="color:${color}; font-size:11px;">${text}</div>`;
+        const parts = [];
+
         if (!detail) {
-            parts.push(line('No cost breakdown available for this candidate.', '#666'));
-            return parts.join('');
+            return line('No cost breakdown available for this candidate.', '#666');
         }
 
         // A shrine level is bought with guild credits and guild tokens. Credits
@@ -3843,19 +3949,23 @@ class LabSimUI {
             parts.push(line('Abilities cannot be sold back, so nothing is credited against this.', '#888'));
         }
 
-        for (const buy of detail.buys) {
+        for (const buy of detail.buys || []) {
             const price = buy.price === null ? '<span style="color:#ff9800;">no price found</span>' : money(buy.price);
             parts.push(line(`Buy ${buy.name} +${buy.enhancementLevel} — ${price}`));
         }
 
-        if (detail.unpriced.length > 0) {
+        if (detail.unpriced?.length > 0) {
+            // "The measured delta is still accurate" rather than naming win rate:
+            // the same breakdown is drawn under a table ranked on clear rate, and
+            // the point holds either way — a missing listing costs the row its
+            // price, not its measurement
             parts.push(
                 line(
                     detail.books
                         ? `Cost shows as \u2014 because ${detail.unpriced.join(' and ')} has no market listing ` +
-                              'right now. The win-rate delta is still accurate.'
+                              'right now. The measured delta is still accurate.'
                         : `Cost shows as \u2014 because ${detail.unpriced.join(' and ')} has no market listing at ` +
-                              'that enhancement and no priced path to reach it. The win-rate delta is still accurate.',
+                              'that enhancement and no priced path to reach it. The measured delta is still accurate.',
                     '#ff9800'
                 )
             );
@@ -3865,13 +3975,11 @@ class LabSimUI {
             parts.push(
                 line(
                     `Keeping ${detail.kept.map((k) => `${k.name} +${k.enhancementLevel}`).join(', ')} ` +
-                        `— resale of ${money(detail.keptValue)} deliberately not credited, since the labyrinth ` +
-                        'needs every set. Turn off "Keep gear the forced armor swaps replace" in settings to ' +
-                        'price these as straight swaps.',
+                        `— resale of ${money(detail.keptValue)} deliberately not credited, ${keptReason}`,
                     '#8ab4f8'
                 )
             );
-        } else if (detail.credits.length > 0) {
+        } else if (detail.credits?.length > 0) {
             for (const credit of detail.credits) {
                 parts.push(
                     line(`Sell ${credit.name} +${credit.enhancementLevel} — ${money(credit.price)} back`, '#8bc34a')
@@ -4493,6 +4601,10 @@ class LabSimUI {
                               ', '
                           )} is combat gear you keep in a loadout, so its resale is deliberately not credited — selling it to fund skilling gear is not a trade anybody makes.`
                     : '',
+                // The same click-to-expand the combat tab's gold rows carry. A
+                // Cost column with no way to ask what is behind it is exactly
+                // where a dash reads as free and a kept-gear price reads as wrong
+                detailHtml: this._renderClearRateCostDetail(r, baseline),
             };
         });
 
@@ -4707,16 +4819,21 @@ class LabSimUI {
                 ${th('Gold/1%', 'goldPerPct', 'right')}
             </tr></thead><tbody>`;
 
-            for (const row of goldRows) {
-                const note = row.keptNote ? ` title="${escapeHtmlAttribute(row.keptNote)}"` : '';
-                html += `<tr style="border-bottom:1px solid #1a1a1a;"${note}>
+            goldRows.forEach((row, i) => {
+                const note = ` title="${escapeHtmlAttribute(row.keptNote || 'Click for the cost breakdown')}"`;
+                html += `<tr data-skilling-gold-row="${i}" style="border-bottom:1px solid #1a1a1a; cursor:pointer;"${note}>
                     <td style="${tdNameStyle}">${row.desc}${row.actions}${row.keptNote ? ' <span style="color:#ff9800;">*</span>' : ''}</td>
                     <td style="${tdStyle} color:#ccc;">${row.costStr}</td>
                     <td style="${tdStyle} color:#ccc;">${row.clearRateStr}</td>
                     <td style="${tdStyle} color:${row.deltaColor}; font-weight:600;">${row.deltaStr}</td>
                     <td style="${tdStyle} color:#888;">${row.goldPerPctStr}</td>
+                </tr>
+                <tr data-skilling-gold-detail="${i}" style="display:none;">
+                    <td colspan="5" style="padding:6px 10px; background:#0d0d1a; border-bottom:1px solid #222;">
+                        ${row.detailHtml}
+                    </td>
                 </tr>`;
-            }
+            });
             html += '</tbody></table>';
             if (goldRows.some((row) => row.keptNote)) {
                 html += `<div style="color:#666; font-size:10px; margin-top:4px;">
@@ -4788,6 +4905,16 @@ class LabSimUI {
             container.removeEventListener('click', this._skillingSortHandler);
         }
         this._skillingSortHandler = (e) => {
+            // A row's own handoff buttons come first — a click on "Buy" is not a
+            // request to unfold the row it sits in
+            const expandable = e.target.closest('tr[data-skilling-gold-row]');
+            if (expandable && !e.target.closest('[data-buy-action]')) {
+                const detail = container.querySelector(
+                    `[data-skilling-gold-detail="${expandable.dataset.skillingGoldRow}"]`
+                );
+                if (detail) detail.style.display = detail.style.display === 'none' ? 'table-row' : 'none';
+                return;
+            }
             const th = e.target.closest('th[data-sort-key]');
             if (!th) return;
             const table = th.dataset.table;
@@ -5073,6 +5200,30 @@ export function describeAllFightsPlan(plan) {
         `${head}. Big enough that each one runs ${Math.round(plan.trialScale * 100)}% of the ${plan.requestedHours}h ` +
         'asked for — every fight is still simulated, the win rates are just noisier. Stop cancels at any point.'
     );
+}
+
+/**
+ * Which build guide each loadout was read as playing, in one clause.
+ *
+ * The swap generator narrows a loadout to its archetype's own ability set when
+ * it can name the archetype off the weapon, and falls back to offering every
+ * style-compatible ability in the game when it cannot. Those are different
+ * questions producing differently trustworthy tables, and after pooling the
+ * results carry no trace of which loadout got which. A loadout that fell back is
+ * the one a reader most needs to know about: its rows came out of a search wide
+ * enough that the guide's own answer may not be in them at all.
+ *
+ * @param {Array<Object>} archetypes - `[{loadoutName, archetype, label}]` from the analysis
+ * @returns {string} Status clause, empty when there is nothing to report
+ */
+export function describeArchetypes(archetypes) {
+    if (!archetypes?.length) return '';
+    const parts = archetypes.map((entry) => {
+        const name = entry.loadoutName || 'Loadout';
+        if (!entry.archetype) return `${name} → no archetype (all abilities offered)`;
+        return `${name} → ${entry.label || entry.archetype}`;
+    });
+    return ` Swaps: ${parts.join(', ')}.`;
 }
 
 const labSimUI = new LabSimUI();

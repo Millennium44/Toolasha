@@ -497,12 +497,14 @@ const ROW_NOTE_STYLE = 'font-size:9px; margin-left:4px; padding:0 3px; border-ra
  *
  * Both of them were previously invisible or buried in a tab tooltip:
  *
- * - **fresh book** / **from LvN** — which book an ability *swap* was priced
- *   from. An ability you have never read is a book learned and levelled from
- *   zero; one already in your book bag is topped up from the level it is at,
- *   which is a completely different figure. That term is the largest in the
- *   cost, and it lived only in the Ability Swaps checkbox tooltip, where a row
- *   quoting 900M gave no hint of which of the two it meant.
+ * - **fresh book** / **from LvN** / **book owned** — which book an ability
+ *   *swap* was priced from. An ability you have never read is a book learned and
+ *   levelled from zero; one already in your book bag is topped up from the level
+ *   it is at, which is a completely different figure; and one already *at* the
+ *   level the row wants costs nothing at all, because slotting it is not a
+ *   purchase. That term is the largest in the cost, and it lived only in the
+ *   Ability Swaps checkbox tooltip, where a row quoting 900M gave no hint of
+ *   which of the three it meant — and a row quoting 0 gave none either.
  * - **on task** — the row's ranked gain was simulated off task, where taskDamage
  *   pays nothing, so a task trinket's headline stat is deliberately not in the
  *   number. The chip's tooltip names what it would add on task instead.
@@ -527,16 +529,29 @@ export function upgradeRowNotesHtml(result) {
         // learned again — two different costs, and the chip is where the reader
         // finds out which one the row is quoting
         const owned = detail?.ownedFromLevel != null;
-        const label = owned ? `from Lv${detail.ownedFromLevel}` : 'fresh book';
-        const title = owned
-            ? `You already own this ability at Lv${detail.ownedFromLevel}, so the cost is the ` +
-              `${count ? `${count} ${books.bookName}${count === 1 ? '' : 's'}` : 'books'} that take it from there to ` +
-              'the target — not a book learned from nothing.'
-            : count
-              ? `Cost assumes ${count} ${books.bookName}${count === 1 ? '' : 's'} — learning the ability and ` +
-                'levelling it from nothing, which is what an ability you do not own costs.'
-              : 'Cost assumes learning the ability and levelling a book from nothing, which is what an ability ' +
-                'you do not own costs.';
+        let label;
+        let title;
+        if (detail?.ownedNotSlotted) {
+            // A row costing nothing is the one row a reader is right to distrust,
+            // so it says what makes it free rather than leaving a 0 unattributed
+            label = 'book owned';
+            title =
+                `Free because you already own this ability at Lv${detail.ownedFromLevel ?? 0} — it is just not ` +
+                'slotted. Nothing to buy; the only cost is the slot it goes in.';
+        } else if (owned) {
+            label = `from Lv${detail.ownedFromLevel}`;
+            title =
+                `You already own this ability at Lv${detail.ownedFromLevel}, so the cost is the ` +
+                `${count ? `${count} ${books.bookName}${count === 1 ? '' : 's'}` : 'books'} that take it from there ` +
+                'to the target — not a book learned from nothing.';
+        } else {
+            label = 'fresh book';
+            title = count
+                ? `Cost assumes ${count} ${books.bookName}${count === 1 ? '' : 's'} — learning the ability and ` +
+                  'levelling it from nothing, which is what an ability you do not own costs.'
+                : 'Cost assumes learning the ability and levelling a book from nothing, which is what an ability ' +
+                  'you do not own costs.';
+        }
         notes.push(
             `<span title="${title}" style="${ROW_NOTE_STYLE} background:#1a2030; color:#8ab4f8;">${label}</span>`
         );
@@ -5734,9 +5749,10 @@ class CombatSimUI {
         // One tracker per run: it starts its clock where it is made
         const eta = createEtaTracker();
 
-        const communityBuffs = getCommunityBuffs();
-
         try {
+            // Reading the buffs can throw on unexpected game data, and outside the
+            // try that left the progress bar up and the Stop button stuck forever
+            const communityBuffs = getCommunityBuffs();
             const skipBackSlot = this.panel.querySelector('#mwi-csim-upgrade-skip-back')?.checked || false;
             const isHouseMode = upgradeModes.includes('house');
             const houseTargetLevel = isHouseMode
