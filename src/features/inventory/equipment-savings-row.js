@@ -34,6 +34,11 @@
  * a sim run that has just costed one — and a goal you have read your way past
  * says so rather than sitting there at full price forever.
  *
+ * A house room is the same again: "Mystical Study to 5" is the coins each level
+ * asks for outright plus the materials it wants, at what the market would charge
+ * to go and buy them. Rooms get their own set of cards beside the levels, and a
+ * room you have since built says Reached rather than staying on the bill.
+ *
  * ## Everything, not just each thing
  *
  * A slot at a time answers the wrong question when you want three pieces. The
@@ -59,7 +64,15 @@ import { shopPurchasePrice } from '../../utils/token-valuation.js';
 import { calculateArtisanBonus } from '../../utils/material-calculator.js';
 import { explainAbilityLevelUpCost } from '../../utils/ability-cost-calculator.js';
 import { formatWithSeparator, formatKMB } from '../../utils/formatters.js';
-import { itemIcon, linkToMarketplace, drawLine, blank, shortDuration, ROW_COLORS } from '../../utils/overlay-format.js';
+import {
+    itemIcon,
+    skillIcon,
+    linkToMarketplace,
+    drawLine,
+    blank,
+    shortDuration,
+    ROW_COLORS,
+} from '../../utils/overlay-format.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { createPanel, panelCard, panelNote } from '../../utils/simple-panel.js';
 import { registerRow } from '../../utils/overlay-rows.js';
@@ -79,6 +92,13 @@ import {
     addAbilityGoal,
     removeAbilityGoal,
     resetAbilityGoals,
+    houseGoals,
+    houseGoalLabel,
+    houseGoalReached,
+    addHouseGoal,
+    removeHouseGoal,
+    resetHouseGoals,
+    MAX_HOUSE_ROOM_LEVEL,
 } from '../../utils/equipment-savings.js';
 
 const MENU_BUTTON_CLASS = 'toolasha-savings-button';
@@ -86,6 +106,15 @@ const MENU_BUTTON_SETTING = 'equipmentSavings_menuButton';
 
 /** The enhancement levels the game allows, which is what the picker offers */
 const MAX_ENHANCEMENT = 20;
+
+/**
+ * The colour the house cards are drawn in.
+ *
+ * A third colour rather than the abilities' purple: the two sets sit under one
+ * another and a reader scrolling past should be able to tell which list they are
+ * in without reading the heading.
+ */
+const HOUSE_ACCENT = '#f59e0b';
 
 /**
  * The slots EWatch lists, in its order.
@@ -129,8 +158,8 @@ const state = { targets: {}, noSell: false, marketValue: true, selected: null, l
 /**
  * The picker's own state, which is not worth persisting — it is a form.
  *
- * `ability*` is the second picker's: which ability, what level, and a cost only
- * used when the market cannot supply one.
+ * `ability*` is the second picker's and `house*` the third's: which one, what
+ * level, and a cost only used when the market cannot supply one.
  */
 const editing = {
     itemHrid: '',
@@ -140,6 +169,10 @@ const editing = {
     abilityLevel: 0,
     abilityCost: '',
     addingAbility: false,
+    houseRoomHrid: '',
+    houseLevel: 0,
+    houseCost: '',
+    addingHouse: false,
 };
 
 // Kept asking until the database opens: it is opened after the libraries are
@@ -361,12 +394,17 @@ export function resetEquipmentSavings() {
     editing.abilityLevel = 0;
     editing.abilityCost = '';
     editing.addingAbility = false;
+    editing.houseRoomHrid = '';
+    editing.houseLevel = 0;
+    editing.houseCost = '';
+    editing.addingHouse = false;
     state.targets = {};
     state.noSell = false;
     state.marketValue = true;
     state.selected = null;
     state.locked = false;
     resetAbilityGoals();
+    resetHouseGoals();
 }
 
 /**
@@ -491,6 +529,188 @@ export async function watchAbility(abilityHrid, targetLevel, cost = undefined) {
  */
 export async function unwatchAbility(abilityHrid) {
     await removeAbilityGoal(abilityHrid);
+}
+
+/**
+ * Which skill's artwork stands for a room.
+ *
+ * A room is recognised by its skill far faster than by its name — a sword says
+ * Dojo before "Dojo" has been read — and the game has artwork for every skill
+ * but none for a room. The same association JHouse and the Houses panel make;
+ * hardcoded in both because the room detail does not carry the link.
+ *
+ * A room the game adds and this does not know falls back to its own name, which
+ * finds no sprite and draws a spacer: a missing icon rather than a wrong one.
+ */
+const ROOM_SKILLS = {
+    dairy_barn: 'milking',
+    garden: 'foraging',
+    log_shed: 'woodcutting',
+    forge: 'cheesesmithing',
+    workshop: 'crafting',
+    sewing_parlor: 'tailoring',
+    kitchen: 'cooking',
+    brewery: 'brewing',
+    laboratory: 'alchemy',
+    observatory: 'enhancing',
+    dining_room: 'stamina',
+    library: 'intelligence',
+    dojo: 'attack',
+    armory: 'defense',
+    gym: 'melee',
+    archery_range: 'ranged',
+    mystical_study: 'magic',
+};
+
+/**
+ * @param {string} houseRoomHrid - The room
+ * @returns {string} The skill sprite's id
+ */
+function roomSkill(houseRoomHrid) {
+    const key = String(houseRoomHrid || '')
+        .split('/')
+        .pop();
+    return ROOM_SKILLS[key] || key;
+}
+
+/**
+ * Where the character's rooms actually are.
+ *
+ * @returns {Map<string, number>} Room hrid → the level it is built to
+ */
+export function houseRoomLevels() {
+    const built = dataManager.getHouseRooms?.() || new Map();
+    return new Map(
+        [...built.entries()].map(([houseRoomHrid, room]) => [
+            houseRoomHrid,
+            Math.max(0, Math.floor(Number(room?.level) || 0)),
+        ])
+    );
+}
+
+/**
+ * A room's name as the game gives it, rather than as its hrid spells it.
+ * @param {string} houseRoomHrid - The room
+ * @returns {string}
+ */
+function houseRoomName(houseRoomHrid) {
+    return dataManager.getInitClientData?.()?.houseRoomDetailMap?.[houseRoomHrid]?.name || '';
+}
+
+/**
+ * What building a room up to a level would cost today.
+ *
+ * The same basis the sim's upgrade advisor costs a house upgrade on: every level
+ * from the one the room is at up to the target, coins in the list at face value
+ * and materials at what it would cost to go and buy them. A material nobody is
+ * selling makes the whole goal unpriced rather than cheap — a total that quietly
+ * leaves out its most expensive line is worse than no total.
+ *
+ * @param {string} houseRoomHrid - The room
+ * @param {number} targetLevel - The level being built to
+ * @returns {number|null} Coins, or null when some part of it has no price
+ */
+export function houseUpgradeCost(houseRoomHrid, targetLevel) {
+    if (!houseRoomHrid || !(targetLevel > 0)) return null;
+
+    const currentLevel = houseRoomLevels().get(houseRoomHrid) || 0;
+    if (currentLevel >= targetLevel) return 0;
+
+    const costs = dataManager.getInitClientData?.()?.houseRoomDetailMap?.[houseRoomHrid]?.upgradeCostsMap;
+    if (!costs) return null;
+
+    let total = 0;
+    for (let level = currentLevel + 1; level <= targetLevel; level++) {
+        // Keyed by number in the payload and by string once it has been through
+        // storage, and a missing level is a level this cannot price
+        const materials = costs[level] ?? costs[String(level)];
+        if (!Array.isArray(materials) || !materials.length) return null;
+
+        for (const material of materials) {
+            const count = Number(material?.count) || 0;
+            if (!material?.itemHrid || count <= 0) continue;
+
+            // Coins have no order book: they are worth exactly themselves
+            if (material.itemHrid === '/items/coin') {
+                total += count;
+                continue;
+            }
+
+            const ask = getItemPrices(material.itemHrid, 0)?.ask;
+            if (!(ask > 0)) return null;
+            total += ask * count;
+        }
+    }
+    return total;
+}
+
+/**
+ * Every house room goal, against the level the room is at and the coins you have.
+ *
+ * @returns {Array<Object>} `{houseRoomHrid, skill, name, targetLevel, currentLevel, done, cost, ...}`
+ */
+export function watchedHouseGoals() {
+    const coins = spendable();
+    const perDay = incomePerDay();
+    const levels = houseRoomLevels();
+
+    const goals = houseGoals().map((goal) => {
+        const currentLevel = levels.get(goal.houseRoomHrid) || 0;
+        const done = houseGoalReached(goal, currentLevel);
+        // A room already built costs nothing more, whatever it was costed at
+        // when it went on the list
+        const cost = done ? 0 : (goal.cost ?? null);
+        const progress = savingsProgress(cost, coins);
+
+        return {
+            houseRoomHrid: goal.houseRoomHrid,
+            // A room is built rather than bought, so there is no item to point
+            // the marketplace at — the skill's artwork stands in for the icon
+            itemHrid: '',
+            skill: roomSkill(goal.houseRoomHrid),
+            name: goal.label || houseGoalLabel(goal.houseRoomHrid, goal.targetLevel, houseRoomName(goal.houseRoomHrid)),
+            targetLevel: goal.targetLevel,
+            currentLevel,
+            done,
+            house: true,
+            enhancementLevel: 0,
+            cost,
+            ...progress,
+            seconds: timeToAffordSeconds(progress.needed, perDay),
+        };
+    });
+
+    return orderTargets(goals);
+}
+
+/**
+ * Save towards a level of a house room, from the panel.
+ *
+ * @param {string} houseRoomHrid - The room
+ * @param {number} targetLevel - The level wanted, capped at the one the game builds to
+ * @param {number|null} [cost] - Coins, when the market cannot be asked
+ * @returns {Promise<void>}
+ */
+export async function watchHouse(houseRoomHrid, targetLevel, cost = undefined) {
+    if (!houseRoomHrid || !(targetLevel > 0)) return;
+
+    const wanted = Math.min(MAX_HOUSE_ROOM_LEVEL, Math.floor(Number(targetLevel) || 0));
+    const priced = cost === undefined ? houseUpgradeCost(houseRoomHrid, wanted) : cost;
+    await addHouseGoal({
+        houseRoomHrid,
+        targetLevel: wanted,
+        cost: priced,
+        label: houseGoalLabel(houseRoomHrid, wanted, houseRoomName(houseRoomHrid)),
+    });
+}
+
+/**
+ * Stop saving for a level of a house room.
+ * @param {string} houseRoomHrid - The room
+ * @returns {Promise<void>}
+ */
+export async function unwatchHouse(houseRoomHrid) {
+    await removeHouseGoal(houseRoomHrid);
 }
 
 /**
@@ -1202,9 +1422,10 @@ export function watchedTargets() {
 export function everything() {
     const targets = watchedTargets();
     const abilities = watchedAbilityGoals();
+    const houses = watchedHouseGoals();
     // A level already reached is not part of what is left to save for, and
     // totalling it would keep the plan expensive after it got cheaper
-    const outstanding = [...targets, ...abilities.filter((goal) => !goal.done)];
+    const outstanding = [...targets, ...abilities.filter((goal) => !goal.done), ...houses.filter((goal) => !goal.done)];
 
     const { cost, unpriced } = totalSavings(outstanding);
     const progress = savingsProgress(outstanding.length ? cost : null, spendable());
@@ -1212,6 +1433,7 @@ export function everything() {
     return {
         targets,
         abilities,
+        houses,
         cost,
         unpriced,
         ...progress,
@@ -1507,7 +1729,9 @@ function headline(target) {
     const line = document.createElement('div');
     Object.assign(line.style, { display: 'flex', alignItems: 'center', gap: '7px' });
 
-    const icon = itemIcon(target.itemHrid, 20);
+    // A room has no item to draw or to open, so it is headlined by the artwork
+    // of the skill it boosts instead
+    const icon = target.house ? skillIcon(target.skill, 20) : itemIcon(target.itemHrid, 20);
     linkToMarketplace(icon, target.itemHrid, navigateToMarketplace);
 
     const name = document.createElement('span');
@@ -2368,6 +2592,374 @@ export function abilityChoices() {
 }
 
 /**
+ * One house room goal: the level wanted, what the build comes to, and how far along.
+ *
+ * The same layout as an ability goal's, which is the same layout as a target's:
+ * it is the same question — a number of coins you do not have yet — and a reader
+ * scanning the list should not have to learn a third card to read it.
+ *
+ * @param {Object} goal - From `watchedHouseGoals`
+ * @returns {HTMLElement}
+ */
+function houseCard(goal) {
+    const card = document.createElement('div');
+    Object.assign(card.style, {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '3px',
+        padding: '6px 7px',
+        borderRadius: '3px',
+        // Green once it has happened, so a finished goal reads as good news
+        // rather than as an entry that has stopped moving
+        borderLeft: `2px solid ${goal.done ? '#4ade80' : HOUSE_ACCENT}`,
+        background: goal.done ? 'rgba(74, 222, 128, 0.08)' : 'rgba(245, 158, 11, 0.07)',
+    });
+
+    const heading = document.createElement('div');
+    Object.assign(heading.style, { display: 'flex', alignItems: 'center', gap: '7px' });
+
+    const name = document.createElement('span');
+    name.textContent = goal.name;
+    Object.assign(name.style, { flex: '1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
+
+    const cost = document.createElement('span');
+    cost.textContent = goal.done ? 'Reached' : goal.cost === null ? 'no price' : formatKMB(goal.cost);
+    cost.style.color = goal.done ? ROW_COLORS.good : goal.cost === null ? ROW_COLORS.bad : ROW_COLORS.gold;
+    cost.title = goal.done
+        ? `Already built to Lv${goal.currentLevel}, so there is nothing left to buy.`
+        : goal.cost === null
+          ? 'Some material for these levels has no listing, so the build costs an unknown amount rather than nothing.'
+          : 'The coins and the materials for every level up to this one, at what the market wants for them.';
+
+    const remove = document.createElement('button');
+    remove.textContent = '✕';
+    remove.dataset.removeHouse = goal.houseRoomHrid;
+    Object.assign(remove.style, {
+        background: 'none',
+        border: 'none',
+        color: 'rgba(232, 236, 245, 0.5)',
+        cursor: 'pointer',
+        fontSize: '12px',
+        padding: '0 2px',
+    });
+    remove.title = 'Stop saving for this room level.';
+    remove.addEventListener('click', async () => {
+        await unwatchHouse(goal.houseRoomHrid);
+        equipmentSavingsPanel.render();
+    });
+
+    heading.append(skillIcon(goal.skill, 22), name, cost, remove);
+    card.appendChild(heading);
+
+    card.appendChild(
+        priceLine(
+            'Level:',
+            `${goal.currentLevel} → ${goal.targetLevel}`,
+            goal.done ? ROW_COLORS.good : 'rgba(232, 236, 245, 0.75)'
+        )
+    );
+
+    const bar = document.createElement('div');
+    Object.assign(bar.style, { display: 'flex', alignItems: 'center', gap: '7px' });
+    bar.appendChild(progressBar(goal.fraction));
+
+    const status = document.createElement('span');
+    status.textContent = goal.done ? `Reached at Lv${goal.currentLevel}` : statusText(goal);
+    Object.assign(status.style, {
+        color: goal.done || goal.affordable ? ROW_COLORS.good : 'rgba(232, 236, 245, 0.6)',
+        fontSize: '11px',
+        flex: '0 0 auto',
+        minWidth: '96px',
+        textAlign: 'right',
+    });
+    bar.appendChild(status);
+    card.appendChild(bar);
+
+    if (!goal.done) card.appendChild(percentLine(goal));
+    return card;
+}
+
+/**
+ * The rooms being saved for, and the way to add one.
+ *
+ * @param {HTMLElement} body - The panel body
+ * @param {Array<Object>} goals - From `watchedHouseGoals`
+ */
+function houseSection(body, goals) {
+    const card = panelCard(body, 'House Levels', HOUSE_ACCENT);
+
+    for (const goal of goals) card.appendChild(houseCard(goal));
+
+    if (!goals.length && state.locked) {
+        card.appendChild(panelNote('No house levels being saved for — press Edit to add one.'));
+        return;
+    }
+    // Adding is an editing act, and the panel is a reading list until it is
+    // unlocked. The same switch the slots and the abilities are behind.
+    if (state.locked) return;
+
+    if (!editing.addingHouse) {
+        const add = document.createElement('button');
+        add.textContent = '+ Add house level';
+        add.dataset.addHouse = 'true';
+        Object.assign(add.style, {
+            background: 'rgba(245, 158, 11, 0.15)',
+            border: `1px solid ${HOUSE_ACCENT}`,
+            borderRadius: '3px',
+            color: HOUSE_ACCENT,
+            cursor: 'pointer',
+            fontSize: '11px',
+            marginTop: '4px',
+            padding: '3px 9px',
+        });
+        add.title = 'Save towards a level of one of your house rooms.';
+        add.addEventListener('click', () => {
+            editing.addingHouse = true;
+            equipmentSavingsPanel.render();
+        });
+        card.appendChild(add);
+        return;
+    }
+
+    card.appendChild(housePicker());
+}
+
+/**
+ * The rooms a goal can be set for.
+ *
+ * The ones the character has built lead, because those are the ones with a level
+ * to improve on. Everything else follows, so a room you have not started can
+ * still be planned for. A room already at the cap is left out entirely: there is
+ * no level left to save for, and offering one would be offering nothing.
+ *
+ * @returns {Array<{houseRoomHrid: string, name: string, level: number, built: boolean}>}
+ */
+export function houseChoices() {
+    const levels = houseRoomLevels();
+    const all = dataManager.getInitClientData?.()?.houseRoomDetailMap || {};
+
+    const named = (houseRoomHrid) =>
+        all?.[houseRoomHrid]?.name ||
+        houseRoomHrid
+            .split('/')
+            .pop()
+            .replace(/_/g, ' ')
+            .replace(/\b\w/g, (letter) => letter.toUpperCase());
+
+    const rooms = Object.keys(all).map((houseRoomHrid) => ({
+        houseRoomHrid,
+        name: named(houseRoomHrid),
+        level: levels.get(houseRoomHrid) || 0,
+        built: (levels.get(houseRoomHrid) || 0) > 0,
+    }));
+
+    const byName = (a, b) => a.name.localeCompare(b.name);
+    return [
+        ...rooms.filter((room) => room.built && room.level < MAX_HOUSE_ROOM_LEVEL).sort(byName),
+        ...rooms.filter((room) => !room.built).sort(byName),
+    ];
+}
+
+/**
+ * The form: which room, to what level, and what that costs.
+ *
+ * The cost is the market's whenever it can price every material, and typed in
+ * when it cannot — refusing the goal because one ingredient has an empty order
+ * book helps nobody.
+ *
+ * @returns {HTMLElement}
+ */
+function housePicker() {
+    const wrap = document.createElement('div');
+    Object.assign(wrap.style, {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '5px',
+        marginTop: '5px',
+        borderLeft: `2px solid ${HOUSE_ACCENT}`,
+        background: 'rgba(255, 255, 255, 0.03)',
+        borderRadius: '3px',
+        padding: '7px',
+    });
+
+    const choices = houseChoices();
+    const chosen = choices.find((choice) => choice.houseRoomHrid === editing.houseRoomHrid) || null;
+
+    const list = document.createElement('select');
+    list.dataset.pickHouse = 'true';
+    Object.assign(list.style, {
+        background: 'rgba(0, 0, 0, 0.35)',
+        border: '1px solid rgba(255, 255, 255, 0.12)',
+        borderRadius: '3px',
+        color: '#e8ecf5',
+        fontSize: '11px',
+        padding: '2px',
+        width: '100%',
+    });
+
+    const none = document.createElement('option');
+    none.value = '';
+    none.textContent = '-- Select Room --';
+    list.appendChild(none);
+
+    for (const choice of choices) {
+        const option = document.createElement('option');
+        option.value = choice.houseRoomHrid;
+        option.textContent = choice.built ? `${choice.name} (Lv${choice.level})` : `${choice.name} (not built)`;
+        option.selected = choice.houseRoomHrid === editing.houseRoomHrid;
+        list.appendChild(option);
+    }
+    list.addEventListener('change', () => {
+        editing.houseRoomHrid = list.value;
+        // A level below the one the room is already at is not a goal, so the
+        // form opens on the next one up rather than on zero
+        const at = choices.find((choice) => choice.houseRoomHrid === list.value)?.level || 0;
+        if (editing.houseLevel <= at) editing.houseLevel = Math.min(MAX_HOUSE_ROOM_LEVEL, at + 1);
+        equipmentSavingsPanel.render();
+    });
+    list.addEventListener('keydown', (event) => event.stopPropagation());
+    wrap.appendChild(list);
+
+    const row = document.createElement('div');
+    Object.assign(row.style, { display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' });
+
+    const levelLabel = document.createElement('span');
+    levelLabel.textContent = 'Level:';
+    Object.assign(levelLabel.style, { color: 'rgba(232, 236, 245, 0.6)', fontSize: '11px' });
+
+    const level = document.createElement('input');
+    level.type = 'number';
+    level.min = '1';
+    level.max = String(MAX_HOUSE_ROOM_LEVEL);
+    level.dataset.houseLevel = 'true';
+    level.value = String(editing.houseLevel || '');
+    Object.assign(level.style, {
+        background: 'rgba(0, 0, 0, 0.35)',
+        border: '1px solid rgba(255, 255, 255, 0.12)',
+        borderRadius: '3px',
+        color: '#e8ecf5',
+        fontSize: '11px',
+        padding: '2px 4px',
+        width: '60px',
+    });
+    level.addEventListener('input', () => {
+        // Capped as it is typed: the game stops at MAX_HOUSE_ROOM_LEVEL, and a
+        // goal past it would be costed for levels that cannot be built
+        editing.houseLevel = Math.min(MAX_HOUSE_ROOM_LEVEL, Math.max(0, Math.floor(Number(level.value) || 0)));
+    });
+    // On change rather than on every keystroke: the estimate below is worth
+    // redrawing once the number has settled, not three times while it is typed
+    level.addEventListener('change', () => equipmentSavingsPanel.render());
+    level.addEventListener('keydown', (event) => event.stopPropagation());
+
+    row.append(levelLabel, level);
+
+    const estimate = chosen ? houseUpgradeCost(editing.houseRoomHrid, editing.houseLevel) : null;
+    const priced = estimate !== null;
+
+    const figure = document.createElement('span');
+    figure.style.flex = '1';
+    figure.style.fontSize = '11px';
+    if (!chosen) {
+        figure.textContent = 'Pick a room.';
+        figure.style.color = 'rgba(232, 236, 245, 0.5)';
+    } else if (priced) {
+        figure.textContent = `${formatKMB(estimate)} to build`;
+        figure.style.color = ROW_COLORS.gold;
+        figure.title = 'Every level from where the room is now: coins at face value, materials at the asking price.';
+    } else {
+        figure.textContent = 'Materials unpriced — type a cost';
+        figure.style.color = ROW_COLORS.bad;
+    }
+    row.appendChild(figure);
+    wrap.appendChild(row);
+
+    // Only when the market cannot answer, so the usual case is two fields rather
+    // than three
+    if (chosen && !priced) {
+        const cost = document.createElement('input');
+        cost.type = 'number';
+        cost.min = '0';
+        cost.placeholder = 'Cost in coins';
+        cost.dataset.houseCost = 'true';
+        cost.value = String(editing.houseCost || '');
+        Object.assign(cost.style, {
+            background: 'rgba(0, 0, 0, 0.35)',
+            border: '1px solid rgba(255, 255, 255, 0.12)',
+            borderRadius: '3px',
+            color: '#e8ecf5',
+            fontSize: '11px',
+            padding: '2px 4px',
+            width: '100%',
+        });
+        cost.addEventListener('input', () => {
+            editing.houseCost = cost.value;
+        });
+        cost.addEventListener('keydown', (event) => event.stopPropagation());
+        wrap.appendChild(cost);
+    }
+
+    const buttons = document.createElement('div');
+    Object.assign(buttons.style, { display: 'flex', gap: '6px' });
+
+    const save = document.createElement('button');
+    save.textContent = '\u{1F441} Watch';
+    save.dataset.saveHouse = 'true';
+    Object.assign(save.style, {
+        background: 'rgba(245, 158, 11, 0.18)',
+        border: `1px solid ${HOUSE_ACCENT}`,
+        borderRadius: '3px',
+        color: HOUSE_ACCENT,
+        cursor: 'pointer',
+        fontSize: '11px',
+        padding: '2px 10px',
+    });
+    const ready = Boolean(chosen) && editing.houseLevel > 0;
+    save.disabled = !ready;
+    save.style.opacity = ready ? '1' : '0.4';
+    save.title = 'Add this room level to the savings list.';
+    save.addEventListener('click', async () => {
+        if (!ready) return;
+
+        // Costed here rather than reusing the figure above it: the level field
+        // changes what the goal is worth without redrawing on every keystroke,
+        // so the estimate on screen can be one level behind the one being saved
+        const fresh = houseUpgradeCost(editing.houseRoomHrid, editing.houseLevel);
+        const typed = editing.houseCost === '' ? null : Number(editing.houseCost);
+        await watchHouse(
+            editing.houseRoomHrid,
+            editing.houseLevel,
+            fresh !== null ? fresh : Number.isFinite(typed) ? typed : null
+        );
+        editing.houseRoomHrid = '';
+        editing.houseLevel = 0;
+        editing.houseCost = '';
+        editing.addingHouse = false;
+        equipmentSavingsPanel.render();
+    });
+
+    const cancel = document.createElement('button');
+    cancel.textContent = 'Cancel';
+    Object.assign(cancel.style, {
+        background: 'rgba(255, 255, 255, 0.06)',
+        border: '1px solid rgba(255, 255, 255, 0.12)',
+        borderRadius: '3px',
+        color: 'rgba(232, 236, 245, 0.6)',
+        cursor: 'pointer',
+        fontSize: '11px',
+        padding: '2px 10px',
+    });
+    cancel.addEventListener('click', () => {
+        editing.addingHouse = false;
+        equipmentSavingsPanel.render();
+    });
+
+    buttons.append(save, cancel);
+    wrap.appendChild(buttons);
+    return wrap;
+}
+
+/**
  * An ability's name, from a map already in hand.
  * @param {string} abilityHrid - The ability
  * @param {Object} abilityDetailMap - The game's ability map
@@ -2605,7 +3197,7 @@ export const equipmentSavingsPanel = createPanel({
         // things on the list the one you are actually saving for is the only
         // figure you want at a glance. Levels are candidates too — a panel with
         // only ability goals on it would otherwise have no headline at all.
-        const headlines = [...plan.targets, ...plan.abilities];
+        const headlines = [...plan.targets, ...plan.abilities, ...plan.houses];
         const watched =
             headlines.find((target) => target.itemHrid === state.selected) ||
             headlines
@@ -2737,7 +3329,7 @@ export const equipmentSavingsPanel = createPanel({
         // is a great deal longer, which is why it is not the resting state.
         const list = panelCard(body, undefined, '#6495ed');
 
-        const watching = plan.targets.length + plan.abilities.length;
+        const watching = plan.targets.length + plan.abilities.length + plan.houses.length;
 
         if (state.locked) {
             if (!watching) {
@@ -2762,6 +3354,10 @@ export const equipmentSavingsPanel = createPanel({
         // sword swings is half a plan
         abilitySection(body, plan.abilities);
 
+        // And rooms, for the same reason: the Dojo you are saving for is money
+        // that will not be there for the sword
+        houseSection(body, plan.houses);
+
         if (!watching) return;
 
         // One at a time answers the wrong question when you want three pieces
@@ -2783,10 +3379,12 @@ export const equipmentSavingsPanel = createPanel({
         all.appendChild(line);
         all.appendChild(percentLine(plan));
         const pending = plan.abilities.filter((goal) => !goal.done).length;
+        const building = plan.houses.filter((goal) => !goal.done).length;
         all.appendChild(
             panelNote(
                 `${formatKMB(plan.cost)} for ${plan.targets.length} pieces` +
-                    (pending ? ` and ${pending} ability level${pending === 1 ? '' : 's'}` : '') +
+                    (pending ? `, ${pending} ability level${pending === 1 ? '' : 's'}` : '') +
+                    (building ? `, ${building} house level${building === 1 ? '' : 's'}` : '') +
                     (plan.unpriced ? ` (+${plan.unpriced} unpriced)` : '')
             )
         );
@@ -2872,11 +3470,11 @@ registerRow({
     defaultSize: { width: 240, height: 46 },
     render: (container) => {
         const plan = everything();
-        if (!plan.targets.length && !plan.abilities.length) return blank(container);
+        if (!plan.targets.length && !plan.abilities.length && !plan.houses.length) return blank(container);
 
         // Gear and levels together: the tile answers "what is next", and a level
         // you are three days from is the answer as readily as a sword is
-        const entries = [...plan.targets, ...plan.abilities];
+        const entries = [...plan.targets, ...plan.abilities, ...plan.houses];
 
         // The pinned one if the eye has picked one, and otherwise the nearest,
         // because that is the next thing that happens. The pin matters: the
@@ -2905,7 +3503,11 @@ registerRow({
 
         const top = document.createElement('div');
         drawLine(top, [
-            shown.itemHrid ? { icon: shown.itemHrid, size: 18 } : { text: '\u{1F3AF}', color: ROW_COLORS.dim },
+            shown.house
+                ? { icon: shown.skill, sheet: 'skills', size: 18 }
+                : shown.itemHrid
+                  ? { icon: shown.itemHrid, size: 18 }
+                  : { text: '\u{1F3AF}', color: ROW_COLORS.dim },
             {
                 // With the enhancement, because a Plate Body and a Plate Body +10
                 // are different purchases at very different prices, and the tile
@@ -2958,7 +3560,8 @@ registerRow({
                         `${formatWithSeparator(Math.round(next.cost))}.`)
                 : 'Everything on the list is affordable now.') +
             `\n${plan.targets.length} pieces` +
-            (plan.abilities.length ? ` and ${plan.abilities.length} ability levels` : '') +
+            (plan.abilities.length ? `, ${plan.abilities.length} ability levels` : '') +
+            (plan.houses.length ? `, ${plan.houses.length} house levels` : '') +
             `, ${formatKMB(plan.cost)} altogether.` +
             (plan.unpriced ? `\n${plan.unpriced} of them have no market price.` : '') +
             '\nDouble-click for the whole list.';

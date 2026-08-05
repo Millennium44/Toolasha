@@ -29,6 +29,15 @@ const {
     addAbilityGoal,
     removeAbilityGoal,
     resetAbilityGoals,
+    houseGoalLabel,
+    houseGoalReached,
+    houseGoals,
+    houseGoalFor,
+    hasHouseGoal,
+    addHouseGoal,
+    removeHouseGoal,
+    resetHouseGoals,
+    MAX_HOUSE_ROOM_LEVEL,
     loadSavingsRecord,
     saveSavingsRecord,
 } = await import('./equipment-savings.js');
@@ -37,6 +46,7 @@ beforeEach(() => {
     stored.record = null;
     stored.writes = [];
     resetAbilityGoals();
+    resetHouseGoals();
 });
 
 describe('upgradeCost', () => {
@@ -257,6 +267,91 @@ describe('ability goals', () => {
     });
 });
 
+describe('house room goals', () => {
+    test('a goal is the room, the level, the cost and how it reads', async () => {
+        await addHouseGoal({
+            houseRoomHrid: '/house_rooms/mystical_study',
+            targetLevel: 5,
+            cost: 40_000_000,
+            label: 'Mystical Study Lv5',
+        });
+
+        expect(houseGoals()).toEqual([
+            {
+                houseRoomHrid: '/house_rooms/mystical_study',
+                targetLevel: 5,
+                cost: 40_000_000,
+                label: 'Mystical Study Lv5',
+                updatedAt: expect.any(Number),
+            },
+        ]);
+        expect(hasHouseGoal('/house_rooms/mystical_study')).toBe(true);
+    });
+
+    test('adding one for a room that has one replaces it rather than stacking', async () => {
+        await addHouseGoal({ houseRoomHrid: '/house_rooms/dojo', targetLevel: 5, cost: 40_000_000 });
+        await addHouseGoal({ houseRoomHrid: '/house_rooms/dojo', targetLevel: 7, cost: 90_000_000 });
+
+        expect(houseGoals()).toHaveLength(1);
+        expect(houseGoalFor('/house_rooms/dojo')).toMatchObject({ targetLevel: 7, cost: 90_000_000 });
+    });
+
+    test('an unpriced goal costs nothing known rather than nothing', async () => {
+        await addHouseGoal({ houseRoomHrid: '/house_rooms/dojo', targetLevel: 5, cost: null });
+        expect(houseGoalFor('/house_rooms/dojo').cost).toBeNull();
+
+        await addHouseGoal({ houseRoomHrid: '/house_rooms/gym', targetLevel: 5 });
+        expect(houseGoalFor('/house_rooms/gym').cost).toBeNull();
+    });
+
+    test('a level above what the game builds is capped rather than stored', async () => {
+        // Costing levels that cannot be built would price a goal that can never
+        // be reached, so it sits on the list forever at a made-up figure
+        await addHouseGoal({ houseRoomHrid: '/house_rooms/dojo', targetLevel: 12, cost: 1 });
+        expect(houseGoalFor('/house_rooms/dojo').targetLevel).toBe(MAX_HOUSE_ROOM_LEVEL);
+    });
+
+    test('a goal with no room is not a goal', async () => {
+        await addHouseGoal({ targetLevel: 5, cost: 1 });
+        await addHouseGoal();
+        expect(houseGoals()).toEqual([]);
+    });
+
+    test('a label is derived when none was supplied', async () => {
+        await addHouseGoal({ houseRoomHrid: '/house_rooms/mystical_study', targetLevel: 5, cost: 1 });
+        expect(houseGoalFor('/house_rooms/mystical_study').label).toBe('Mystical Study Lv5');
+    });
+
+    test('removing one takes it off the list', async () => {
+        await addHouseGoal({ houseRoomHrid: '/house_rooms/dojo', targetLevel: 5, cost: 1 });
+        await addHouseGoal({ houseRoomHrid: '/house_rooms/gym', targetLevel: 4, cost: 2 });
+
+        await removeHouseGoal('/house_rooms/dojo');
+
+        expect(houseGoals().map((goal) => goal.houseRoomHrid)).toEqual(['/house_rooms/gym']);
+        expect(hasHouseGoal('/house_rooms/dojo')).toBe(false);
+    });
+
+    test('removing one that is not there writes nothing', async () => {
+        await addHouseGoal({ houseRoomHrid: '/house_rooms/dojo', targetLevel: 5, cost: 1 });
+        const writes = stored.writes.length;
+
+        await removeHouseGoal('/house_rooms/nothing');
+        expect(stored.writes).toHaveLength(writes);
+    });
+
+    test('a room goal is reached at the level it was built to', () => {
+        expect(houseGoalReached({ targetLevel: 5 }, 5)).toBe(true);
+        expect(houseGoalReached({ targetLevel: 5 }, 4)).toBe(false);
+        expect(houseGoalReached({ targetLevel: 0 }, 3)).toBe(false);
+    });
+
+    test('a label names the room and the level it is going to', () => {
+        expect(houseGoalLabel('/house_rooms/mystical_study', 5)).toBe('Mystical Study Lv5');
+        expect(houseGoalLabel('/house_rooms/mystical_study', 5, 'Mystical Study')).toBe('Mystical Study Lv5');
+    });
+});
+
 describe('a goal that has happened', () => {
     test('is reached at the level, not only past it', () => {
         expect(abilityGoalReached({ targetLevel: 46 }, 46)).toBe(true);
@@ -301,6 +396,49 @@ describe('the stored record', () => {
             locked: true,
         });
         expect(abilityGoals()).toEqual([]);
+        expect(houseGoals()).toEqual([]);
+    });
+
+    test('room goals are absorbed rather than handed back with the gear', async () => {
+        stored.record = {
+            targets: {},
+            houses: { '/house_rooms/dojo': { targetLevel: 6, cost: 40_000_000, label: 'Dojo Lv6' } },
+        };
+
+        const gear = await loadSavingsRecord();
+
+        expect(gear.houses).toBeUndefined();
+        expect(houseGoalFor('/house_rooms/dojo')).toMatchObject({ targetLevel: 6, cost: 40_000_000 });
+    });
+
+    test('gear, abilities and rooms all survive one write, because there is one writer', async () => {
+        await saveSavingsRecord({ targets: { '/items/holy_sword': { enhancementLevel: 0 } } });
+        await addAbilityGoal({ abilityHrid: '/abilities/fierce_aura', targetLevel: 46, cost: 1 });
+        await addHouseGoal({ houseRoomHrid: '/house_rooms/dojo', targetLevel: 6, cost: 2 });
+
+        expect(stored.record.targets['/items/holy_sword']).toBeDefined();
+        expect(stored.record.abilities['/abilities/fierce_aura'].targetLevel).toBe(46);
+        expect(stored.record.houses['/house_rooms/dojo'].targetLevel).toBe(6);
+
+        await saveSavingsRecord({ targets: {} });
+        expect(stored.record.houses['/house_rooms/dojo'].targetLevel).toBe(6);
+    });
+
+    test('garbage in the room goals is skipped rather than drawn', async () => {
+        stored.record = { houses: { '/house_rooms/dojo': null, '/house_rooms/gym': { targetLevel: 4 } } };
+        await loadSavingsRecord();
+
+        expect(houseGoals().map((goal) => goal.houseRoomHrid)).toEqual(['/house_rooms/gym']);
+    });
+
+    test('a room goal added before anything was loaded still finds what is stored', async () => {
+        stored.record = { targets: { '/items/holy_sword': { enhancementLevel: 0 } } };
+        resetHouseGoals({ loaded: false });
+
+        await addHouseGoal({ houseRoomHrid: '/house_rooms/dojo', targetLevel: 6, cost: 1 });
+
+        expect(stored.record.targets).toEqual({ '/items/holy_sword': { enhancementLevel: 0 } });
+        expect(stored.record.houses['/house_rooms/dojo']).toBeDefined();
     });
 
     test('goals are absorbed rather than handed back with the gear', async () => {

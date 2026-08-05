@@ -36,6 +36,10 @@ const game = vi.hoisted(() => ({
     // helper, as the sim's own ability costing is
     bookPrices: {},
     levelXp: [],
+    // The character's house rooms, which is where a room goal's progress comes
+    // from, and the game's own build costs, which is where its price does
+    houseRooms: new Map(),
+    houseDetails: {},
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
@@ -44,12 +48,14 @@ vi.mock('../../core/data-manager.js', () => ({
         getEquipment: () => game.equipment,
         getItemDetails: (hrid) => game.details[hrid],
         getLearnedAbilities: () => game.abilities,
+        getHouseRooms: () => game.houseRooms,
         // The picker builds its list from the whole item map, which is the same
         // fixture the per-item lookups read
         getInitClientData: () => ({
             itemDetailMap: game.details,
             actionDetailMap: game.actions,
             abilityDetailMap: game.abilityDetails,
+            houseRoomDetailMap: game.houseDetails,
             levelExperienceTable: game.levelXp,
             ...game.shops,
         }),
@@ -139,6 +145,12 @@ const {
     watchedAbilityGoals,
     abilityBookCost,
     abilityChoices,
+    watchHouse,
+    unwatchHouse,
+    watchedHouseGoals,
+    houseUpgradeCost,
+    houseChoices,
+    houseRoomLevels,
 } = await import('./equipment-savings-row.js');
 
 beforeEach(() => {
@@ -188,6 +200,34 @@ beforeEach(() => {
     };
     game.levelXp = Array.from({ length: 101 }, (_, level) => level * 1_000_000);
     game.bookPrices = { '/items/fierce_aura': { ask: 12_000, bid: 8_000 } };
+    // A room part-built, one at the cap the game stops at, and one never started
+    game.houseRooms = new Map([
+        ['/house_rooms/mystical_study', { houseRoomHrid: '/house_rooms/mystical_study', level: 3 }],
+        ['/house_rooms/dojo', { houseRoomHrid: '/house_rooms/dojo', level: 8 }],
+    ]);
+    game.houseDetails = {
+        // Lv4 is 10M of coins and 10 lumber, Lv5 is 20M and 40 lumber, so
+        // 3 → 5 is 80M with lumber asking a million
+        '/house_rooms/mystical_study': {
+            name: 'Mystical Study',
+            upgradeCostsMap: {
+                4: [
+                    { itemHrid: '/items/coin', count: 10_000_000 },
+                    { itemHrid: '/items/lumber', count: 10 },
+                ],
+                5: [
+                    { itemHrid: '/items/coin', count: 20_000_000 },
+                    { itemHrid: '/items/lumber', count: 40 },
+                ],
+            },
+        },
+        '/house_rooms/dojo': { name: 'Dojo', upgradeCostsMap: { 4: [{ itemHrid: '/items/coin', count: 1 }] } },
+        '/house_rooms/gym': {
+            name: 'Gym',
+            upgradeCostsMap: { 1: [{ itemHrid: '/items/coin', count: 1_000_000 }] },
+        },
+    };
+    game.prices['/items/lumber:0'] = { ask: 1_000_000, bid: 900_000 };
     resetEquipmentSavings();
 });
 
@@ -1439,6 +1479,113 @@ describe('ability levels on the savings list', () => {
     });
 });
 
+describe('house levels on the savings list', () => {
+    test('a goal is costed across every level from where the room is', async () => {
+        // Lv3 → Lv5: 10M + 10 lumber, then 20M + 40 lumber, at a million a log
+        await watchHouse('/house_rooms/mystical_study', 5);
+
+        const [goal] = watchedHouseGoals();
+        expect(goal.cost).toBe(80_000_000);
+        expect(goal.name).toBe('Mystical Study Lv5');
+        expect(goal.currentLevel).toBe(3);
+        expect(goal.targetLevel).toBe(5);
+    });
+
+    test('coins in the build list count at face value rather than being priced', () => {
+        // A coin has no order book; leaving it out understates the level by
+        // exactly the coin part of it
+        expect(houseUpgradeCost('/house_rooms/mystical_study', 4)).toBe(20_000_000);
+    });
+
+    test('the room the character has is where the count starts', () => {
+        expect(houseRoomLevels().get('/house_rooms/mystical_study')).toBe(3);
+        expect(houseRoomLevels().get('/house_rooms/gym')).toBeUndefined();
+    });
+
+    test('a room never built pays for every level from the first', () => {
+        expect(houseUpgradeCost('/house_rooms/gym', 1)).toBe(1_000_000);
+    });
+
+    test('progress is the same question the gear asks: coins against the cost', async () => {
+        await watchHouse('/house_rooms/mystical_study', 5);
+
+        const [goal] = watchedHouseGoals();
+        expect(goal.fraction).toBe(0.75);
+        expect(goal.needed).toBe(20_000_000);
+        expect(goal.affordable).toBe(false);
+    });
+
+    test('adding a goal for a room that has one replaces it', async () => {
+        await watchHouse('/house_rooms/mystical_study', 4);
+        await watchHouse('/house_rooms/mystical_study', 5);
+
+        const goals = watchedHouseGoals();
+        expect(goals).toHaveLength(1);
+        expect(goals[0].targetLevel).toBe(5);
+        expect(goals[0].cost).toBe(80_000_000);
+    });
+
+    test('a level already built is done rather than lingering at full price', async () => {
+        await watchHouse('/house_rooms/mystical_study', 3);
+
+        const [goal] = watchedHouseGoals();
+        expect(goal.done).toBe(true);
+        expect(goal.cost).toBe(0);
+        expect(goal.affordable).toBe(true);
+    });
+
+    test('a material nobody is selling makes the build unpriced rather than cheap', async () => {
+        delete game.prices['/items/lumber:0'];
+        await watchHouse('/house_rooms/mystical_study', 5);
+
+        const [goal] = watchedHouseGoals();
+        expect(goal.cost).toBeNull();
+        expect(goal.affordable).toBe(false);
+    });
+
+    test('a cost can be given when the market has none', async () => {
+        delete game.prices['/items/lumber:0'];
+        await watchHouse('/house_rooms/mystical_study', 5, 30_000_000);
+
+        expect(watchedHouseGoals()[0].cost).toBe(30_000_000);
+    });
+
+    test('a room the game has no build costs for is unpriced', () => {
+        expect(houseUpgradeCost('/house_rooms/unknown', 4)).toBeNull();
+    });
+
+    test('a level past the one the game builds to is capped rather than costed', async () => {
+        await watchHouse('/house_rooms/mystical_study', 12);
+        expect(watchedHouseGoals()[0].targetLevel).toBe(8);
+    });
+
+    test('removing one takes it off the list', async () => {
+        await watchHouse('/house_rooms/mystical_study', 5);
+        await unwatchHouse('/house_rooms/mystical_study');
+
+        expect(watchedHouseGoals()).toEqual([]);
+    });
+
+    test('a goal with no level is not a goal', async () => {
+        await watchHouse('/house_rooms/mystical_study', 0);
+        expect(watchedHouseGoals()).toEqual([]);
+    });
+
+    test('goals are written into the same record the gear and the abilities are', async () => {
+        watchTarget('/items/holy_sword');
+        await watchAbility('/abilities/fierce_aura', 46);
+        game.writes = [];
+        await watchHouse('/house_rooms/mystical_study', 5);
+
+        const last = game.writes[game.writes.length - 1];
+        expect(last.key).toContain('equipmentSavings');
+        // All three sides survive one write, because there is only one writer
+        expect(last.value.targets['/items/holy_sword']).toBeDefined();
+        expect(last.value.abilities['/abilities/fierce_aura'].targetLevel).toBe(46);
+        expect(last.value.houses['/house_rooms/mystical_study'].targetLevel).toBe(5);
+    });
+});
+
 describe('the whole list, with levels on it', () => {
     test('a level to save for is part of what the plan costs', async () => {
         watchTarget('/items/rough_boots');
@@ -1456,6 +1603,24 @@ describe('the whole list, with levels on it', () => {
         const plan = everything();
         expect(plan.cost).toBe(5_000_000);
         expect(plan.abilities[0].done).toBe(true);
+    });
+
+    test('a room to build is part of what the plan costs', async () => {
+        watchTarget('/items/rough_boots');
+        await watchHouse('/house_rooms/mystical_study', 5);
+
+        const plan = everything();
+        expect(plan.houses).toHaveLength(1);
+        expect(plan.cost).toBe(85_000_000);
+    });
+
+    test('a room already built is not still being saved for', async () => {
+        watchTarget('/items/rough_boots');
+        await watchHouse('/house_rooms/mystical_study', 3);
+
+        const plan = everything();
+        expect(plan.cost).toBe(5_000_000);
+        expect(plan.houses[0].done).toBe(true);
     });
 });
 
@@ -1534,5 +1699,110 @@ describe('the panel draws levels', () => {
         expect(text()).not.toContain(FAILED);
         expect(text()).toContain('Fierce Aura Lv46');
         expect(text()).not.toContain('Nothing being saved for yet');
+    });
+});
+
+describe('the panel draws house levels', () => {
+    test('a goal appears with its label, its cost and where the room is', async () => {
+        await watchHouse('/house_rooms/mystical_study', 5);
+        equipmentSavingsPanel.show();
+
+        expect(text()).not.toContain(FAILED);
+        expect(text()).toContain('House Levels');
+        expect(text()).toContain('Mystical Study Lv5');
+        expect(text()).toContain('3 → 5');
+    });
+
+    test('a room already built says so rather than showing a full bar and nothing else', async () => {
+        await watchHouse('/house_rooms/mystical_study', 3);
+        equipmentSavingsPanel.show();
+
+        expect(text()).not.toContain(FAILED);
+        expect(text()).toContain('Reached at Lv3');
+    });
+
+    test('the panel offers to add one, and the picker lists the rooms', async () => {
+        equipmentSavingsPanel.show();
+        expect(text()).not.toContain(FAILED);
+
+        const add = equipmentSavingsPanel.panel.querySelector('[data-add-house]');
+        expect(add).not.toBeNull();
+
+        add.click();
+        expect(equipmentSavingsPanel.panel.querySelector('[data-pick-house]')).not.toBeNull();
+        expect(text()).toContain('Pick a room.');
+    });
+
+    test('picking, levelling and watching puts it on the list', async () => {
+        equipmentSavingsPanel.show();
+        equipmentSavingsPanel.panel.querySelector('[data-add-house]').click();
+
+        const picker = equipmentSavingsPanel.panel.querySelector('[data-pick-house]');
+        picker.value = '/house_rooms/mystical_study';
+        picker.dispatchEvent(new Event('change'));
+
+        const level = equipmentSavingsPanel.panel.querySelector('[data-house-level]');
+        // The form opens on the next level up rather than on one already built
+        expect(level.value).toBe('4');
+        level.value = '5';
+        level.dispatchEvent(new Event('input'));
+
+        equipmentSavingsPanel.panel.querySelector('[data-save-house]').click();
+        await vi.waitFor(() => expect(watchedHouseGoals()).toHaveLength(1));
+
+        expect(watchedHouseGoals()[0].targetLevel).toBe(5);
+        expect(watchedHouseGoals()[0].cost).toBe(80_000_000);
+    });
+
+    test('a typed level past the cap is held at the cap', async () => {
+        equipmentSavingsPanel.show();
+        equipmentSavingsPanel.panel.querySelector('[data-add-house]').click();
+
+        const picker = equipmentSavingsPanel.panel.querySelector('[data-pick-house]');
+        picker.value = '/house_rooms/mystical_study';
+        picker.dispatchEvent(new Event('change'));
+
+        const level = equipmentSavingsPanel.panel.querySelector('[data-house-level]');
+        level.value = '12';
+        level.dispatchEvent(new Event('input'));
+        level.dispatchEvent(new Event('change'));
+
+        expect(equipmentSavingsPanel.panel.querySelector('[data-house-level]').value).toBe('8');
+    });
+
+    test('a goal can be taken off from its card', async () => {
+        await watchHouse('/house_rooms/mystical_study', 5);
+        equipmentSavingsPanel.show();
+
+        equipmentSavingsPanel.panel.querySelector('[data-remove-house]').click();
+        await vi.waitFor(() => expect(watchedHouseGoals()).toHaveLength(0));
+    });
+
+    test('the rooms you have built lead the picker, and a maxed one is not offered', () => {
+        const choices = houseChoices();
+        expect(choices[0]).toMatchObject({ houseRoomHrid: '/house_rooms/mystical_study', level: 3, built: true });
+        // The Dojo is already at the level the game stops at, so there is
+        // nothing left to save for
+        expect(choices.map((choice) => choice.houseRoomHrid)).not.toContain('/house_rooms/dojo');
+        expect(choices.find((choice) => choice.houseRoomHrid === '/house_rooms/gym').built).toBe(false);
+    });
+
+    test('a panel with only rooms on it is not an empty panel', async () => {
+        setLocked(true);
+        await watchHouse('/house_rooms/mystical_study', 5);
+        equipmentSavingsPanel.show();
+
+        expect(text()).not.toContain(FAILED);
+        expect(text()).toContain('Mystical Study Lv5');
+        expect(text()).not.toContain('Nothing being saved for yet');
+    });
+
+    test('the room is what the header watches when it is the nearest thing to done', async () => {
+        await watchHouse('/house_rooms/mystical_study', 5);
+        equipmentSavingsPanel.show();
+
+        expect(text()).not.toContain(FAILED);
+        // The headline names it, and Everything counts it
+        expect(text()).toContain('1 house level');
     });
 });
