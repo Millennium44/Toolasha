@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The lab sims the run you choose
+
+- **Token buffs are settable from Configure**: the four combat token buffs take inputs (defaulting to live levels, orange with "live N" beside them when overridden, Reset-to-live one click away, remembered per character), and every sim path honours them — Configure/Max Level sims, Find Max, both Upgrade scopes, and the combination check. The Token Upgrades rows step up from the level being simulated, so a run under Damage 8 offers Lv8→9, not a purchase the table already assumed. Skilling tokens stay a readout here — nothing in a combat sim reads them, and the Skilling tab's own setup owns those.
+- **All-fights ability targets show every checked loadout's abilities** — the union, labelled by loadout where they differ ("Fireball (48) [Fire Lab]"), levels shown as a range when loadouts disagree, targets prefilled off the highest so a boost is real everywhere. Was silently showing only the Configure loadout's five.
+- **Guild shrines get a per-shrine Targets grid** like houses — set Force to 4 and Scholar to 2 in one run instead of one +Lv for all, combat shrines only (a skilling shrine has no win-rate column to move).
+
 ### Rates bounded by the market and your wallet
 
 - **A rate is capped by how fast its output actually sells**: using the market history Toolasha already fetches, any method that depends on selling an item is throttled to a conservative quarter-share of its observed 30-day sale velocity — so a charm that trades once a week collapses from "134.3B/hr" to its honest few hundred K and loses to milking naturally, labelled "limited by market volume (~1/week)". History showing no trades bounds to zero; history being *unavailable* bounds nothing and the panel says the check is off (absence of data is not data of absence).

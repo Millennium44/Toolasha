@@ -152,6 +152,7 @@ const {
     MIN_TRIAL_FRACTION,
     generateSkillingEquipmentCandidates,
     runSkillingUpgradeAnalysis,
+    generateLabyrinthBuffCandidates,
     generateLabyrinthBuffCandidatesFromEditor,
     generateGuildShrineCandidates,
     generateHouseCandidates,
@@ -2271,6 +2272,57 @@ describe('what a budget buys', () => {
     });
 });
 
+/**
+ * A token row steps up from a level, and which level that is stopped being
+ * obvious once the Lab Sim could simulate tokens the character has not bought.
+ * A run made under Damage 8 that offers "Damage Lv3 → Lv4" is pricing a
+ * purchase the sims already assumed — the row and the simulation have to agree
+ * on where the character is standing.
+ */
+describe('which levels the labyrinth token rows step up from', () => {
+    const byName = (candidates, name) => candidates.find((c) => c.description.startsWith(name));
+
+    test('the live character, when nothing else is said', () => {
+        character.characterInfo = { labyrinthCombatDamageLevel: 3 };
+
+        expect(byName(generateLabyrinthBuffCandidates(), 'Combat Damage')).toMatchObject({
+            currentLevel: 3,
+            description: 'Combat Damage Lv3→4',
+        });
+
+        delete character.characterInfo;
+    });
+
+    test('and the levels being simulated, when they are', () => {
+        character.characterInfo = { labyrinthCombatDamageLevel: 3 };
+
+        const candidate = byName(generateLabyrinthBuffCandidates({ labyrinthCombatDamageLevel: 8 }), 'Combat Damage');
+
+        expect(candidate).toMatchObject({ currentLevel: 8, description: 'Combat Damage Lv8→9' });
+        // Nine levels in rather than one, so the token price is the ninth's
+        expect(candidate.tokenCost).toBe(40 * 9);
+
+        delete character.characterInfo;
+    });
+
+    test('a token simulated at its cap stops being offered, whatever the character owns', () => {
+        character.characterInfo = { labyrinthCombatDamageLevel: 0 };
+
+        const candidates = generateLabyrinthBuffCandidates({ labyrinthCombatDamageLevel: 12 });
+
+        expect(byName(candidates, 'Combat Damage')).toBeUndefined();
+        expect(byName(candidates, 'Attack Speed')).toBeDefined();
+
+        delete character.characterInfo;
+    });
+
+    test('and a character the client cannot read is offered nothing rather than nine level-ones', () => {
+        delete character.characterInfo;
+
+        expect(generateLabyrinthBuffCandidates()).toEqual([]);
+    });
+});
+
 describe('labyrinth token candidates for the skilling tab', () => {
     const byName = (candidates, name) => candidates.find((c) => c.description.startsWith(name));
 
@@ -3674,6 +3726,98 @@ describe('guild shrine candidates', () => {
 
             expect(generateGuildShrineCandidates(dto, { targetLevel: 0 })[0].upgradeLevel).toBe(4);
             expect(generateGuildShrineCandidates(dto)[0].upgradeLevel).toBe(4);
+        });
+    });
+
+    /**
+     * One Lv box across five shrines sitting at five different levels is the
+     * same complaint the House grid answered: the number that is a two-level
+     * purchase for one shrine is a no-op for the next. These are the House
+     * grid's semantics, which is the point — the two grids must mean the same
+     * thing by a blank box or neither can be trusted.
+     */
+    describe('per-shrine targets', () => {
+        const AEGIS = {
+            hrid: '/guild_buffs/aegis_combat',
+            shrineHrid: '/guild_shrines/aegis',
+            isCombat: true,
+            buffs: [{ typeHrid: '/buff_types/armor', flatBoost: 1, flatBoostLevelBonus: 1 }],
+            levelCosts: {
+                2: { guildTokenCost: 20, creditCosts: [] },
+                3: { guildTokenCost: 30, creditCosts: [] },
+                4: { guildTokenCost: 40, creditCosts: [] },
+            },
+        };
+
+        beforeEach(() => {
+            guild.detailMap['/guild_buffs/aegis_combat'] = AEGIS;
+        });
+
+        const dto = () => ({
+            guildShrineLevels: { '/guild_buffs/force_combat': 3, '/guild_buffs/aegis_combat': 1 },
+        });
+
+        test('each shrine gets the level its own box asks for', () => {
+            const byHrid = Object.fromEntries(
+                generateGuildShrineCandidates(dto(), {
+                    perBuffTargets: { '/guild_buffs/force_combat': 5, '/guild_buffs/aegis_combat': 3 },
+                }).map((candidate) => [candidate.buffHrid, candidate])
+            );
+
+            expect(byHrid['/guild_buffs/force_combat'].upgradeLevel).toBe(5);
+            expect(byHrid['/guild_buffs/aegis_combat'].upgradeLevel).toBe(3);
+            expect(byHrid['/guild_buffs/aegis_combat'].levelsBought).toBe(2);
+        });
+
+        test('a shrine the grid does not name is left out — a blank box means skip', () => {
+            const hrids = generateGuildShrineCandidates(dto(), {
+                perBuffTargets: { '/guild_buffs/aegis_combat': 3 },
+            }).map((candidate) => candidate.buffHrid);
+
+            expect(hrids).toEqual(['/guild_buffs/aegis_combat']);
+        });
+
+        test('and one named at or below where it already is, the same way', () => {
+            expect(
+                generateGuildShrineCandidates(dto(), { perBuffTargets: { '/guild_buffs/force_combat': 3 } })
+            ).toEqual([]);
+        });
+
+        test('the grid wins over the single Lv box while it is open', () => {
+            const hrids = generateGuildShrineCandidates(dto(), {
+                targetLevel: 5,
+                perBuffTargets: { '/guild_buffs/aegis_combat': 4 },
+            }).map((candidate) => candidate.buffHrid);
+
+            expect(hrids).toEqual(['/guild_buffs/aegis_combat']);
+        });
+
+        test('a target past the cost table is clamped rather than priced off the end', () => {
+            const [candidate] = generateGuildShrineCandidates(dto(), {
+                perBuffTargets: { '/guild_buffs/aegis_combat': 40 },
+            });
+
+            expect(candidate.upgradeLevel).toBe(4);
+        });
+
+        test('and the whole map reaches the set through generateCandidates', () => {
+            const hrids = generateCandidates(
+                { equipment: {}, ...dto() },
+                buildGameData(),
+                'guild_shrine',
+                0,
+                'increment',
+                false,
+                null,
+                null,
+                0,
+                null,
+                null,
+                0,
+                { guildShrineTargets: { '/guild_buffs/aegis_combat': 4 } }
+            ).map((candidate) => candidate.buffHrid);
+
+            expect(hrids).toEqual(['/guild_buffs/aegis_combat']);
         });
     });
 
