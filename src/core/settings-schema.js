@@ -2593,6 +2593,16 @@ export const settingsGroups = {
                     'current tier, how many tiers the hour is on pace for, the next tier’s projected size, and the ' +
                     'Guild Points and token payout the week’s tiers are worth.',
             },
+            guildTrialAutoRecord: {
+                id: 'guildTrialAutoRecord',
+                label: 'Guild Trials: Record a trial automatically when one starts',
+                type: 'checkbox',
+                default: true,
+                help:
+                    'Starts a recording session by itself when a trial fight is seen or the In Progress tab ' +
+                    'shows a live reading, so the whole hour is captured without having to press anything. ' +
+                    'The Record button on the trials block starts and stops one by hand either way.',
+            },
             guildTrialsBuildersHallBonus: {
                 id: 'guildTrialsBuildersHallBonus',
                 label: 'Guild Trials: Builders Hall bonus override (%)',

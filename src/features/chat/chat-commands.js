@@ -20,9 +20,7 @@ import {
 } from '../guild/guild-token-value.js';
 import { moveScopedData, claimLegacyData } from '../../utils/scoped-data-repair.js';
 import { resetAdoptionDecision, requestAdoptionConsent } from '../../utils/adoption-consent.js';
-import { loadTrialRecord } from '../guild/guild-trials-store.js';
-import { loadLoadouts } from '../guild/guild-loadouts.js';
-import { guildTrialDamage } from '../guild/guild-trial-damage.js';
+import { buildTrialExport, downloadTrialExport } from '../guild/guild-trial-recorder.js';
 import guildXPTracker from '../guild/guild-xp-tracker.js';
 import { guildTrials } from '../guild/guild-trials.js';
 
@@ -168,34 +166,15 @@ export function exposeShrineDebug() {
         // signups), this character's seen loadouts, and the live per-player
         // damage breakdown. For saving a trial before it ends and analysing later.
         target.Toolasha.debug.exportTrialData = async () => {
-            // The trials feature's own answer first: it has three sources for
-            // the guild's name and the XP tracker is only one of them, so asking
-            // the tracker alone exported the `default` record while the feature
-            // was writing to the guild's
+            // The builder and the download both live with the feature now, so the
+            // panel's button and this console helper cannot drift apart. The
+            // trials feature's own answer for the guild name comes first: it has
+            // three sources and the XP tracker is only one of them, so asking the
+            // tracker alone exported the `default` record while the feature was
+            // writing to the guild's.
             const guildName = guildTrials?.guildName || guildXPTracker.getOwnGuildName?.() || null;
-            const record = await loadTrialRecord(guildName);
-            const characterId = dataManager.getCurrentCharacterId?.() ?? null;
-            const loadouts = characterId ? await loadLoadouts(characterId) : null;
-            const trialDamage = guildTrialDamage.breakdown?.() ?? null;
-            const bundle = {
-                exportedAt: new Date().toISOString(),
-                guildName,
-                characterId,
-                record,
-                loadouts,
-                trialDamage,
-            };
-            try {
-                const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
-                const url = URL.createObjectURL(blob);
-                const link = document.createElement('a');
-                link.href = url;
-                link.download = `toolasha-trial-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
-                link.click();
-                URL.revokeObjectURL(url);
-            } catch (error) {
-                console.error('[Toolasha] Trial export download failed (data still returned):', error);
-            }
+            const bundle = await buildTrialExport({ guildName });
+            downloadTrialExport(bundle);
             console.log('[Toolasha] Trial data exported', bundle);
             return bundle;
         };

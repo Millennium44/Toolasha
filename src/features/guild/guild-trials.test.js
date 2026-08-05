@@ -30,6 +30,8 @@ const game = vi.hoisted(() => ({
     currentWeek: '2026-07-31T00:00:00Z',
     members: [],
     characterId: null,
+    recorder: { recording: false, activity: [], downloads: [], startedBy: null, endedBy: null },
+    scoreboardToggles: 0,
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -81,6 +83,30 @@ vi.mock('../../core/storage.js', () => ({
 // mocked here so the real marketplace client is never pulled into this file
 vi.mock('../../utils/market-data.js', () => ({
     getItemPrice: (itemHrid, { mode } = {}) => game.prices[itemHrid]?.[mode] ?? 0,
+}));
+vi.mock('./guild-trial-recorder.js', () => ({
+    default: {
+        initialize: vi.fn(),
+        cleanup: vi.fn(),
+        setGuildName: vi.fn(),
+        noteActivity: (kind) => game.recorder.activity.push(kind),
+        start: (reason) => {
+            game.recorder.recording = true;
+            game.recorder.startedBy = reason;
+        },
+        stop: (reason) => {
+            game.recorder.recording = false;
+            game.recorder.endedBy = reason;
+        },
+        get recording() {
+            return game.recorder.recording;
+        },
+    },
+    buildTrialExport: async () => ({ exportedAt: 'now', bundle: true }),
+    downloadTrialExport: (bundle) => game.recorder.downloads.push(bundle),
+}));
+vi.mock('./guild-trial-scoreboard.js', () => ({
+    default: { toggle: () => (game.scoreboardToggles += 1), close: vi.fn() },
 }));
 vi.mock('./guild-xp-tracker.js', () => ({
     guildXPTracker: {
@@ -555,6 +581,8 @@ describe('the panel, end to end', () => {
         game.store = {};
         game.members = [];
         game.characterId = null;
+        game.recorder = { recording: false, activity: [], downloads: [], startedBy: null, endedBy: null };
+        game.scoreboardToggles = 0;
         await trialsFeature.initialize();
     });
 
@@ -828,6 +856,60 @@ describe('the panel, end to end', () => {
         expect(guildTrials.record.tiles['skilling::alchemy'].samples.length).toBeGreaterThan(2);
     });
 
+    test('the controls sit on the payout block and drive the recorder', () => {
+        // The console command is no longer the only way in. The button calls the
+        // same builder, so the two cannot drift apart.
+        fire(buildTab([{ name: 'Trial Chameleon', level: 140, bar: '618,000 / 618,000' }]));
+
+        const buttons = [...document.querySelectorAll('button')];
+        const record = buttons.find((button) => button.textContent.includes('Record trial'));
+        expect(record).toBeTruthy();
+
+        record.click();
+        expect(game.recorder.recording).toBe(true);
+        expect(game.recorder.startedBy).toBe('button');
+
+        // Redrawn, the same button is now the way to stop
+        const stop = [...document.querySelectorAll('button')].find((button) => button.textContent.includes('Stop'));
+        expect(stop).toBeTruthy();
+        stop.click();
+        expect(game.recorder.recording).toBe(false);
+    });
+
+    test('the export button downloads the same bundle the console helper returns', async () => {
+        fire(buildTab([{ name: 'Trial Chameleon', level: 140, bar: '618,000 / 618,000' }]));
+
+        [...document.querySelectorAll('button')].find((button) => button.textContent.includes('Export')).click();
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(game.recorder.downloads).toEqual([{ exportedAt: 'now', bundle: true }]);
+    });
+
+    test('the per-player button opens the panel', () => {
+        fire(buildTab([{ name: 'Trial Chameleon', level: 140, bar: '618,000 / 618,000' }]));
+        [...document.querySelectorAll('button')].find((button) => button.textContent.includes('Per-player')).click();
+
+        expect(game.scoreboardToggles).toBe(1);
+    });
+
+    test('a live reading tells the recorder a trial is running', () => {
+        fire(buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]));
+        expect(game.recorder.activity).toContain('tab-reading');
+    });
+
+    test('the tab’s own footer stats are kept with the trial that produced them', () => {
+        const root = buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]);
+        const footer = document.createElement('div');
+        footer.innerHTML = '<div>Work Time</div><div>3.14s</div><div>Success Rate</div><div>60.8%</div>';
+        root.appendChild(footer);
+        fire(root);
+
+        expect(guildTrials.record.tiles['skilling::alchemy'].personal).toMatchObject({
+            'Work Time': '3.14s',
+            'Success Rate': '60.8%',
+        });
+    });
+
     test('the card block is a block of its own, never inside the card', () => {
         // Appended into the card it sat on top of the game's own footer —
         // "Completed", "1/28 signed up" — because a card places its last rows
@@ -950,6 +1032,8 @@ describe('the two trial tabs, as the game draws them', () => {
         game.store = {};
         game.members = [];
         game.characterId = null;
+        game.recorder = { recording: false, activity: [], downloads: [], startedBy: null, endedBy: null };
+        game.scoreboardToggles = 0;
         guildTrials.record = null;
         guildTrials.guildName = null;
         await trialsFeature.initialize();
@@ -1349,6 +1433,8 @@ describe('the payout block, audited', () => {
         game.store = {};
         game.members = [];
         game.characterId = null;
+        game.recorder = { recording: false, activity: [], downloads: [], startedBy: null, endedBy: null };
+        game.scoreboardToggles = 0;
         await trialsFeature.initialize();
     });
 

@@ -94,6 +94,7 @@ import guildXPDisplay from '../features/guild/guild-xp-display.js';
 import guildCreditValue from '../features/guild/guild-credit-value.js';
 import guildRosterView from '../features/guild/guild-roster-view.js';
 import guildTrials from '../features/guild/guild-trials.js';
+import guildTrialScoreboard from '../features/guild/guild-trial-scoreboard.js';
 // Side-effect import: registers the Guild Trials overlay row
 import '../features/guild/guild-trials-row.js';
 
@@ -206,6 +207,7 @@ toolashaRoot.UI = {
     guildCreditValue,
     guildRosterView,
     guildTrials,
+    guildTrialScoreboard,
     predictionCalibration,
     leaderboardXPTracker,
     leaderboardXPDisplay,

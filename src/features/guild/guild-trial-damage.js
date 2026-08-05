@@ -60,6 +60,7 @@
 import dataManager from '../../core/data-manager.js';
 import webSocketHook from '../../core/websocket.js';
 import { attributeTick, foldEvents, newAttributionState, noteActions } from '../../utils/damage-attribution.js';
+import { foldSupportTick, newSupportState, summariseSupport, supportCoverage } from './guild-trial-support.js';
 import { COMBAT_ENCOUNTERS, TRIAL_ACTIVE_MS } from './guild-trials-math.js';
 
 /** Below this the per-player rates are one exchange's luck rather than a rate */
@@ -227,6 +228,7 @@ class GuildTrialDamage {
     /** Forget the trial and measure the next one from scratch */
     reset() {
         this.state = newAttributionState();
+        this.support = newSupportState();
         this.tally = {};
         this.names = {};
         this.deaths = {};
@@ -374,6 +376,10 @@ class GuildTrialDamage {
             foldEvents(this.tally, events);
             this._noteDeaths(data?.pMap);
 
+            // Damage taken, healing, mana and casts, from the same tick and the
+            // same before-picture of who was preparing what
+            foldSupportTick(this.support, data?.pMap, this.state.actions);
+
             // After attributing, never before: the hit on this tick was cast by
             // what was prepared before it
             noteActions(this.state, data?.pMap);
@@ -444,6 +450,10 @@ class GuildTrialDamage {
             // closed can be diagnosed from a bug report rather than guessed at
             monsterNames: [...this.monsterNames],
             trialNames: [...this.trialNames],
+            // Everything a tick says about a player besides damage, and a note
+            // of what it cannot say — see `guild-trial-support.js`
+            support: summariseSupport(this.support, this.names),
+            supportCoverage: supportCoverage(),
             ...summary,
         };
     }

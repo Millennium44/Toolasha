@@ -119,6 +119,8 @@ import {
 } from './guild-trials-math.js';
 import guildTrialDamage from './guild-trial-damage.js';
 import guildLoadoutCapture from './guild-loadout-capture.js';
+import guildTrialRecorder, { buildTrialExport, downloadTrialExport } from './guild-trial-recorder.js';
+import guildTrialScoreboard from './guild-trial-scoreboard.js';
 import { describeGuildTokenGold } from './guild-token-value.js';
 import {
     classifyReadings,
@@ -126,6 +128,7 @@ import {
     findTrialsRoot,
     matchTrialHrid,
     parseClockMs,
+    readPersonalStats,
     readTrialTiles,
 } from './guild-trials-scrape.js';
 import {
@@ -853,10 +856,12 @@ class GuildTrials {
         // arms the damage gate from last session's record, so a fight is
         // recognised without the tab having been opened this session.
         guildTrialDamage.initialize();
+        guildTrialRecorder.initialize(this.guildName);
 
         this.initialized = true;
 
         this.guildName = this._resolveGuildName();
+        guildTrialRecorder.setGuildName(this.guildName);
         const stored = await loadTrialRecord(this.guildName);
         this.record = mergeTrialRecords(stored, this.record);
         this._publishTrialNames();
@@ -956,6 +961,7 @@ class GuildTrials {
             const stored = await loadTrialRecord(name);
             this.record = mergeTrialRecords(stored, this.record);
             this.guildName = name;
+            guildTrialRecorder.setGuildName(name);
             await saveTrialRecord(name, this.record);
         } catch (error) {
             console.error('[GuildTrials] Moving the record onto the guild key failed:', error);
@@ -985,8 +991,20 @@ class GuildTrials {
             // has something moving on it, and both write the identity of the same
             // trial under the same key.
             const tiles = readTrialTiles(root);
-            for (const tile of tiles) this.record = recordTileSample(this.record, tile, now);
+            // The player's own action stats live in the tab's footer rather than
+            // on a card, so they are read once and attached to whichever trial
+            // is the live one — the only card that can have produced them
+            const personal = readPersonalStats(root);
+            const live = tiles.find((tile) => tile.readings.length > 0) || null;
+            for (const tile of tiles) {
+                const withPersonal = tile === live ? { ...tile, personal } : tile;
+                this.record = recordTileSample(this.record, withPersonal, now);
+            }
             if (tiles.length) saveTrialRecord(this.guildName, this.record);
+
+            // A reading is a trial in progress, which is one of the two things
+            // the recorder starts itself on
+            if (live) guildTrialRecorder.noteActivity('tab-reading', now);
 
             // Which encounters count as a trial fight this week. Pushed rather
             // than pulled so the damage module never imports this one
@@ -1262,6 +1280,7 @@ class GuildTrials {
         }
 
         wrapper.innerHTML = rows.join('');
+        wrapper.appendChild(this._controls());
 
         // Under the game's own status row when there is one. Otherwise directly
         // above the first card, which is where it belongs and — unlike the
@@ -1271,6 +1290,63 @@ class GuildTrials {
         if (statusRow) statusRow.insertAdjacentElement('afterend', wrapper);
         else if (firstTile?.isConnected) firstTile.insertAdjacentElement('beforebegin', wrapper);
         else root.insertAdjacentElement('afterbegin', wrapper);
+    }
+
+    /**
+     * The recorder's controls, and the way to the scoreboard.
+     *
+     * On the payout block because that is the one part of this feature the
+     * player is already looking at while a trial runs. The console helper still
+     * works and is still the programmatic path — the button calls the same
+     * builder rather than a second copy of it, so the two cannot drift.
+     *
+     * @returns {Element} A row of buttons
+     */
+    _controls() {
+        // No class of its own: it lives inside the payout block, which already
+        // carries the one the redraw clears by
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex; gap:6px; margin-top:6px; flex-wrap:wrap;';
+
+        const button = (label, color, title, onClick) => {
+            const element = document.createElement('button');
+            element.textContent = label;
+            element.title = title;
+            element.style.cssText =
+                `flex:1 1 auto; cursor:pointer; padding:3px 8px; border-radius:4px; font-size:11px;` +
+                `border:1px solid ${color}66; background:transparent; color:${color};`;
+            element.addEventListener('click', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                onClick();
+            });
+            row.appendChild(element);
+            return element;
+        };
+
+        const recording = guildTrialRecorder.recording;
+        button(
+            recording ? '■ Stop recording' : '● Record trial',
+            recording ? WARN : GOOD,
+            recording
+                ? 'Stop the session and write it down. The export keeps it either way.'
+                : 'Start a session now. One starts by itself when a trial fight or a live reading is seen, ' +
+                      'unless that is switched off in settings.',
+            () => {
+                if (guildTrialRecorder.recording) guildTrialRecorder.stop('button');
+                else guildTrialRecorder.start('button');
+                this._render(findTrialsRoot());
+            }
+        );
+
+        button('⤓ Export', ACCENT, 'Download everything captured this week as one JSON file.', async () => {
+            const bundle = await buildTrialExport({ guildName: this.guildName });
+            downloadTrialExport(bundle);
+        });
+
+        button('Per-player', ACCENT, 'Damage and healing per player, ranked.', () => guildTrialScoreboard.toggle());
+
+        return row;
     }
 
     /**
@@ -1313,6 +1389,8 @@ class GuildTrials {
         this.samplerId = null;
         this.lastTickAt = 0;
         guildTrialDamage.cleanup();
+        guildTrialRecorder.cleanup();
+        guildTrialScoreboard.close();
         guildLoadoutCapture.cleanup();
         document.querySelectorAll(`.${CSS_CLASS}`).forEach((el) => el.remove());
         this.initialized = false;

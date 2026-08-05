@@ -160,6 +160,10 @@ export function recordTileSample(record, tile, at) {
         // Sticky: a finished trial does not become unfinished, and the In
         // Progress card that carries the reading does not carry the word
         completed: Boolean(tile?.completed) || Boolean(existing.completed),
+        // The player's own action stats, from the In Progress footer. Merged
+        // rather than replaced: the footer shows what it shows, and a redraw
+        // that omits one stat is not the stat going away
+        personal: { ...(existing.personal || {}), ...(tile?.personal || {}) },
         signups: tile?.signups || existing.signups || null,
         pointsByTier,
         samples: samples.slice(-MAX_SAMPLES),
@@ -231,6 +235,7 @@ export function mergeTrialRecords(base, incoming) {
             name: fresher.name || existing.name,
             kind: fresher.kind || existing.kind,
             completed: Boolean(existing.completed) || Boolean(tile.completed),
+            personal: { ...(staler.personal || {}), ...(fresher.personal || {}) },
             level: Number.isFinite(fresher.level) ? fresher.level : existing.level,
             tier: Number.isFinite(fresher.tier) ? fresher.tier : existing.tier,
             // Carried across rather than dropped. Both come off the Trials tab
@@ -303,6 +308,7 @@ export { GUILD_BUILDING_MAX_LEVEL };
 export const BUILDING_PATTERNS = {
     buildersHall: /buildershall/,
     treasury: /treasury/,
+    archives: /archives/,
     skillingEncampment: /skillingencampment/,
     combatEncampment: /combatencampment/,
 };
@@ -322,7 +328,7 @@ const DETAIL_MAP_KEYS = ['guildBuildingDetailMap', 'guildBuildingDetailDict', 'g
  * Reading them beats the constant: it is the same number today, and it is
  * whatever the number becomes after a rebalance.
  */
-const PER_LEVEL_FIELDS = ['guildPointsBonusPerLevel', 'guildTokenBonusPerLevel'];
+const PER_LEVEL_FIELDS = ['guildPointsBonusPerLevel', 'guildTokenBonusPerLevel', 'guildExperienceBonusPerLevel'];
 
 /** Remembered once found: `initClientData` is large and its shape does not change mid-session */
 let detailMapKey = null;
