@@ -30,6 +30,7 @@ vi.mock('../../core/config.js', () => ({
         getSetting: (key) => settings.values[key] ?? false,
         getSettingValue: (key, fallback) => settings.values[key] ?? fallback,
         isFeatureEnabled: (key) => settings.values[key] ?? false,
+        onSettingChange: () => {},
         COLOR_TEXT_SECONDARY: '#888',
         COLOR_ACCENT: '#0f0',
     },
@@ -55,7 +56,11 @@ vi.mock('../../core/data-manager.js', () => ({
     },
 }));
 
-vi.mock('../../core/websocket.js', () => ({ default: { on: () => {}, off: () => {} } }));
+// onSocketEvent is reached through the profit display's marketplace import,
+// which the bulk reroller pulls in to read the board's task ratings
+vi.mock('../../core/websocket.js', () => ({
+    default: { on: () => {}, off: () => {}, onSocketEvent: () => {}, offSocketEvent: () => {} },
+}));
 vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: () => () => {} } }));
 vi.mock('../../utils/character-key.js', () => ({
     characterKey: (key) => `${key}_7`,
@@ -65,6 +70,7 @@ vi.mock('../../utils/character-key.js', () => ({
 
 const { default: taskRerollProtection } = await import('./task-reroll-protection.js');
 const { default: taskRerollTracker } = await import('./task-reroll-tracker.js');
+const { TaskBulkReroll } = await import('./task-bulk-reroll.js');
 const { stopConfirmSettleWatch } = await import('./task-card-state.js');
 
 const MILKING = '/actions/milking/cow';
@@ -411,6 +417,42 @@ describe('a card mid-flow is left alone', () => {
 
         // Orange: this card has spent its coin rerolls up to the configured cap
         expect(card.style.boxShadow).toContain('251, 146, 60');
+    });
+
+    test('a bulk reroll that lands on a protected task still paints its green edge', async () => {
+        // The report: the outline is missing, and only after a bulk reroll.
+        // Rerolling by hand ends with the player pressing Back, which settles
+        // the board and lets every pass run again. The bulk reroller pressed
+        // nothing — it left the chooser it had opened standing on the card it
+        // had just rerolled — so that card stayed mid-flow, every pass went on
+        // declining to touch it, and the protected task it had landed on kept
+        // no highlight at all
+        vi.useFakeTimers();
+        const card = await protectedCard(['Back', '10,000', 'MooPass Free Reroll']);
+        expect(card.style.boxShadow).toBe('');
+
+        buttonNamed(card, 'Back').addEventListener('click', () => {
+            closeChooser(card);
+            reactTreeOver(card, { actionHrid: MILKING, coinRerollCount: 1, cowbellRerollCount: 0 });
+        });
+
+        const reroller = new TaskBulkReroll();
+        const settling = reroller._settleCard(card);
+        await vi.advanceTimersByTimeAsync(300);
+        await settling;
+        await vi.advanceTimersByTimeAsync(300);
+
+        // Green: the task on this card is one the player asked to keep
+        expect(card.style.boxShadow).toContain('76, 175, 80');
+    });
+
+    test('and left to itself that board never settles, so the edge never arrives', async () => {
+        vi.useFakeTimers();
+        const card = await protectedCard(['Back', '10,000', 'MooPass Free Reroll']);
+
+        await vi.advanceTimersByTimeAsync(60 * 1000);
+
+        expect(card.style.boxShadow).toBe('');
     });
 
     test('the protection pass does not repaint a card mid-flow', async () => {

@@ -18,6 +18,7 @@
 import { describe, test, expect, vi, afterEach } from 'vitest';
 
 import { isAtRerollCap, questSignature, TaskBulkReroll } from './task-bulk-reroll.js';
+import { armConfirmSettleWatch, onConfirmFlowSettled, stopConfirmSettleWatch } from './task-card-state.js';
 
 // Thresholds as the shield popup stores them
 const bothOpen = { coin: 320000, cowbell: 32 };
@@ -317,6 +318,266 @@ describe('the free reroll is demoted, not exiled', () => {
 
         await reroller._actOnCard(card, 'coin');
         expect(card.dataset.pressed).toBe('MooPass Free Reroll');
+    });
+});
+
+describe('a free reroll nobody had seen yet', () => {
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    /**
+     * A card at rest, whose Reroll button opens the chooser the way the game
+     * draws it: the paid options first, and the full-width MooPass row a beat
+     * behind them.
+     *
+     * @param {Object} [options] - How this card's chooser behaves
+     * @param {boolean} [options.free=true] - Does a free reroll ever appear?
+     * @param {number} [options.freeAfterMs=0] - How late the free row is
+     * @returns {HTMLElement} The card, showing Go / Reroll / trash
+     */
+    function restingCard({ free = true, freeAfterMs = 0 } = {}) {
+        const card = document.createElement('div');
+        card.className = 'RandomTask_randomTask__1abc';
+        const row = document.createElement('div');
+        row.className = 'RandomTask_action__4jkl';
+        card.appendChild(row);
+
+        const option = (label, icon) => {
+            const button = document.createElement('button');
+            button.className = 'Button_button__1Fe9z';
+            if (icon) {
+                const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+                const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+                use.setAttribute('href', `/static/media/misc_sprite.svg#${icon}`);
+                svg.appendChild(use);
+                button.appendChild(svg);
+            }
+            button.appendChild(document.createTextNode(label));
+            button.addEventListener('click', () => {
+                card.dataset.pressed = label;
+            });
+            return button;
+        };
+
+        const go = document.createElement('button');
+        go.textContent = 'Go';
+        const trash = document.createElement('button');
+        const reroll = document.createElement('button');
+        reroll.textContent = 'Reroll';
+        reroll.addEventListener('click', () => {
+            row.replaceChildren(option('Back'), option('10,000', 'coin'), option('1', 'cowbell'));
+            if (free) {
+                setTimeout(() => row.appendChild(option('MooPass Free Reroll')), freeAfterMs);
+            }
+        });
+        row.append(go, reroll, trash);
+        return card;
+    }
+
+    /** A reroller that has been shown a working free reroll recently */
+    function withKnownFree(available) {
+        const reroller = new TaskBulkReroll();
+        reroller.lastFreeOffer = { known: true, available, remaining: null };
+        reroller.lastFreeOfferAt = Date.now();
+        return reroller;
+    }
+
+    test('the first click opens the menu and takes the free reroll it finds there', async () => {
+        // The whole of the request: a click made while the free reroll's
+        // availability was unknown should still end up using it
+        vi.useFakeTimers();
+        const reroller = new TaskBulkReroll();
+        const card = restingCard();
+
+        const acting = reroller._actOnCard(card, 'coin');
+        await vi.advanceTimersByTimeAsync(600);
+
+        expect(await acting).toBe(true);
+        expect(card.dataset.pressed).toBe('MooPass Free Reroll');
+        expect(reroller.lastClickWasFree).toBe(true);
+    });
+
+    test('a MooPass row drawn a beat after the paid ones is still the one pressed', async () => {
+        // The difference the player saw between the first click and every click
+        // after it. A chooser that is already open finished drawing long ago;
+        // one this click opened draws its paid options first, and a pass that
+        // read the card one fixed beat later found coins and pressed them
+        vi.useFakeTimers();
+        const reroller = withKnownFree(true);
+        const card = restingCard({ freeAfterMs: 350 });
+
+        const acting = reroller._actOnCard(card, 'coin');
+        await vi.advanceTimersByTimeAsync(800);
+
+        expect(await acting).toBe(true);
+        expect(card.dataset.pressed).toBe('MooPass Free Reroll');
+    });
+
+    test('but a chooser that will never draw one does not hold the click up forever', async () => {
+        vi.useFakeTimers();
+        const reroller = withKnownFree(true);
+        const card = restingCard({ free: false });
+
+        const acting = reroller._actOnCard(card, 'coin');
+        await vi.advanceTimersByTimeAsync(2000);
+
+        expect(await acting).toBe(true);
+        expect(card.dataset.pressed).toBe('10,000');
+    });
+
+    test('a pass already seen to be spent is not waited for again', async () => {
+        // The answer converges: one chooser that showed no free reroll is
+        // enough, and later clicks pay at the old speed
+        vi.useFakeTimers();
+        const reroller = withKnownFree(false);
+        const card = restingCard({ freeAfterMs: 350 });
+
+        const acting = reroller._actOnCard(card, 'coin');
+        await vi.advanceTimersByTimeAsync(800);
+
+        expect(await acting).toBe(true);
+        expect(card.dataset.pressed).toBe('10,000');
+    });
+
+    test('what the chooser said survives the chooser being closed', async () => {
+        // The reroller shuts the chooser when it is done, and the chooser is
+        // the only place the free reroll can be seen — so the label would go
+        // straight back to a starred guess one moment after knowing the answer
+        vi.useFakeTimers();
+        const reroller = new TaskBulkReroll();
+        expect(reroller._readFreeOffer().known).toBe(false);
+
+        reroller.lastFreeOffer = { known: true, available: true, remaining: 2 };
+        reroller.lastFreeOfferAt = Date.now();
+        expect(reroller._readFreeOffer()).toEqual({ known: true, available: true, remaining: 2 });
+
+        await vi.advanceTimersByTimeAsync(61 * 1000);
+        expect(reroller._readFreeOffer().known).toBe(false);
+    });
+});
+
+describe('the board the reroller leaves behind', () => {
+    afterEach(() => {
+        stopConfirmSettleWatch();
+        document.body.replaceChildren();
+        vi.useRealTimers();
+    });
+
+    /**
+     * A card on the board with its chooser open, whose Back button closes it
+     * the way the game's does.
+     *
+     * @returns {HTMLElement} The card
+     */
+    function midFlowCard() {
+        const card = document.createElement('div');
+        card.className = 'RandomTask_randomTask__1abc';
+        const row = document.createElement('div');
+        row.className = 'RandomTask_action__4jkl';
+        for (const label of ['Back', '10,000', 'MooPass Free Reroll']) {
+            const button = document.createElement('button');
+            button.textContent = label;
+            row.appendChild(button);
+        }
+        card.appendChild(row);
+        row.firstChild.addEventListener('click', () => {
+            row.replaceChildren(
+                ...['Go', 'Reroll', ''].map((label) => {
+                    const button = document.createElement('button');
+                    button.textContent = label;
+                    return button;
+                })
+            );
+        });
+        document.body.appendChild(card);
+        return card;
+    }
+
+    test('a chooser left open is a board that never settles', async () => {
+        // The reported bug, at its root. Every Toolasha pass refuses to touch a
+        // card that is mid-flow, and the redraw they book instead only happens
+        // once the board is at rest — which, for a chooser the script opened
+        // and nobody ever closes, is never
+        vi.useFakeTimers();
+        midFlowCard();
+        const repaint = vi.fn();
+        const unsubscribe = onConfirmFlowSettled(repaint);
+        armConfirmSettleWatch();
+
+        await vi.advanceTimersByTimeAsync(60 * 1000);
+        unsubscribe();
+
+        expect(repaint).not.toHaveBeenCalled();
+    });
+
+    test('so the reroller closes the one it opened, and every decorator runs again', async () => {
+        vi.useFakeTimers();
+        const reroller = new TaskBulkReroll();
+        const card = midFlowCard();
+        const repaint = vi.fn();
+        const unsubscribe = onConfirmFlowSettled(repaint);
+
+        const settling = reroller._settleCard(card);
+        await vi.advanceTimersByTimeAsync(300);
+        await settling;
+        await vi.advanceTimersByTimeAsync(300);
+        unsubscribe();
+
+        expect([...card.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['Go', 'Reroll', '']);
+        expect(repaint).toHaveBeenCalled();
+    });
+
+    test('and the repaint does not wait on some other feature having skipped a card first', async () => {
+        // The settle watch is armed from inside each injector's per-card skip,
+        // so a reroll whose quest update never arrived — no pass ran, nothing
+        // was skipped — used to leave nothing armed at all
+        vi.useFakeTimers();
+        const reroller = new TaskBulkReroll();
+        const card = midFlowCard();
+        card.querySelector('button').click(); // the chooser is already closed
+        const repaint = vi.fn();
+        const unsubscribe = onConfirmFlowSettled(repaint);
+
+        await reroller._settleCard(card);
+        await vi.advanceTimersByTimeAsync(300);
+        unsubscribe();
+
+        expect(repaint).toHaveBeenCalled();
+    });
+
+    test('a discard confirmation it could not finish is backed out of too', async () => {
+        // The other way a card is left asking a question nobody is going to
+        // answer: the trash can was pressed and the confirmation never found
+        vi.useFakeTimers();
+        const reroller = new TaskBulkReroll();
+        const card = document.createElement('div');
+        card.className = 'RandomTask_randomTask__1abc';
+        for (const label of ['Cancel', 'Confirm Discard']) {
+            const button = document.createElement('button');
+            button.textContent = label;
+            card.appendChild(button);
+        }
+        card.querySelector('button').addEventListener('click', () => card.replaceChildren());
+        document.body.appendChild(card);
+
+        const settling = reroller._settleCard(card);
+        await vi.advanceTimersByTimeAsync(300);
+        await settling;
+
+        expect(card.querySelector('button')).toBe(null);
+    });
+
+    test('what the chooser was offering is read before it is closed', async () => {
+        vi.useFakeTimers();
+        const reroller = new TaskBulkReroll();
+        const card = midFlowCard();
+
+        const settling = reroller._settleCard(card);
+        await vi.advanceTimersByTimeAsync(300);
+        await settling;
+
+        expect(reroller.lastFreeOffer).toEqual({ known: true, available: true, remaining: null });
     });
 });
 
