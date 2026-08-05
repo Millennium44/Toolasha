@@ -38,6 +38,7 @@ import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } fro
 import guildTrialDamage from './guild-trial-damage.js';
 import { guildLoadoutCapture } from './guild-loadout-capture.js';
 import { guildTrialRecorder } from './guild-trial-recorder.js';
+import { buildGuildReport } from './guild-trial-report.js';
 
 /** Class every part of this panel carries, so teardown is one query */
 export const PANEL_CLASS = 'mwi-trial-scoreboard';
@@ -163,6 +164,8 @@ class GuildTrialScoreboard {
         this.refreshId = null;
         /** The trials feature's expected-tier forecast, pushed in rather than imported */
         this.forecast = null;
+        /** The trial's name, tier and shortfall, likewise pushed in */
+        this.context = null;
     }
 
     /**
@@ -302,13 +305,45 @@ class GuildTrialScoreboard {
             });
         });
         body.querySelector('[data-action="copy"]')?.addEventListener('click', () => {
-            const text = scoreboardText(breakdown, this.tab);
-            navigator.clipboard?.writeText?.(text).catch(() => {});
+            this._copy(scoreboardText(breakdown, this.tab));
+        });
+        body.querySelector('[data-action="report"]')?.addEventListener('click', () => {
+            this._copy(this.reportText(breakdown));
         });
         body.querySelector('[data-action="restart"]')?.addEventListener('click', () => {
             guildTrialRecorder.restart();
             this.render();
         });
+    }
+
+    /**
+     * Put something on the clipboard.
+     * @param {string} text - What to copy
+     */
+    _copy(text) {
+        navigator.clipboard?.writeText?.(text)?.catch?.(() => {});
+    }
+
+    /**
+     * The guild-shareable report, with whatever context the panel has.
+     *
+     * The trial's name, the tiers it banked and how close it came all live with
+     * the trials feature, which pushes them here the same way it pushes the
+     * forecast — this panel imports neither.
+     *
+     * @param {Object} [breakdown] - From `guildTrialDamage.breakdown()`
+     * @returns {string} The report
+     */
+    reportText(breakdown = guildTrialDamage.breakdown?.()) {
+        return buildGuildReport({ ...(this.context || {}), breakdown });
+    }
+
+    /**
+     * Take the trial's own context from the trials feature.
+     * @param {Object} context - `{trialName, tier, tiersCleared, shortfall}`
+     */
+    noteContext(context) {
+        this.context = context || null;
     }
 
     /**
@@ -371,16 +406,31 @@ class GuildTrialScoreboard {
                   `${forecast.limitedBy === 'enrage' ? ', walled by the ten-minute enrage' : ''}.</div>`
                 : '';
 
+        // One line rather than a tab of its own: running dry is worth knowing
+        // and is not worth a page
+        const dry = (breakdown?.support?.players || []).filter((row) => row.manaOuts > 0);
+        const manaLine = dry.length
+            ? `<div style="color:${DIM}; font-size:10px; margin-top:4px;">Ran out of mana: ` +
+              dry
+                  .map((row) => `${row.name} ${row.manaOuts}×`)
+                  .slice(0, 4)
+                  .join(', ') +
+              '</div>'
+            : '';
+
         const buttons =
             `<div style="display:flex; gap:6px; margin-top:8px;">` +
             `<button data-action="copy" style="flex:1; cursor:pointer; padding:4px 0; border-radius:4px;` +
             `border:1px solid rgba(255,255,255,0.15); background:transparent; color:${DIM}; font-size:11px;">` +
             'Copy stats</button>' +
+            `<button data-action="report" style="flex:1; cursor:pointer; padding:4px 0; border-radius:4px;` +
+            `border:1px solid ${ACCENT}66; background:transparent; color:${ACCENT}; font-size:11px;">` +
+            'Copy guild report</button>' +
             `<button data-action="restart" style="flex:1; cursor:pointer; padding:4px 0; border-radius:4px;` +
             `border:1px solid rgba(240,168,48,0.5); background:transparent; color:${WARN}; font-size:11px;">` +
             'End &amp; start new</button></div>';
 
-        return head + tabs + disclaimer + list + footnote + expected + buttons;
+        return head + tabs + disclaimer + list + footnote + manaLine + expected + buttons;
     }
 
     /**

@@ -57,7 +57,7 @@ function breakdown(overrides = {}) {
         support: {
             players: [
                 { index: '0', name: 'Tib', healingDone: 0, damageTaken: 200_000 },
-                { index: '2', name: 'Ada', healingDone: 150_000, damageTaken: 0 },
+                { index: '2', name: 'Ada', healingDone: 150_000, damageTaken: 0, manaOuts: 3, emptyManaMs: 240_000 },
             ],
             unattributedHealing: 25_000,
         },
@@ -79,6 +79,7 @@ afterEach(() => {
     // and wrong for the next test
     guildTrialScoreboard.tab = 'damage';
     guildTrialScoreboard.noteForecast(null);
+    guildTrialScoreboard.noteContext(null);
     vi.restoreAllMocks();
     vi.useRealTimers();
     document.body.innerHTML = '';
@@ -243,9 +244,43 @@ describe('the panel', () => {
 
     test('no forecast is no row rather than an empty one', () => {
         guildTrialScoreboard.noteForecast(null);
+        guildTrialScoreboard.noteContext(null);
         guildTrialScoreboard.open();
 
         expect(text()).not.toContain('Expected to reach');
+    });
+
+    test('running dry gets a line, not a tab', () => {
+        guildTrialScoreboard.open();
+        expect(text()).toContain('Ran out of mana');
+        expect(text()).toContain('Ada 3×');
+    });
+
+    test('the guild report is copied from the same plumbing as the stats', () => {
+        const written = [];
+        Object.defineProperty(navigator, 'clipboard', {
+            value: {
+                writeText: (value) => {
+                    written.push(value);
+                    return Promise.resolve();
+                },
+            },
+            configurable: true,
+        });
+
+        guildTrialScoreboard.noteContext({
+            trialName: 'Trial Chameleon',
+            tier: 4,
+            tiersCleared: 3,
+            shortfall: { remaining: 112_000, total: 669_500, unit: 'HP' },
+        });
+        guildTrialScoreboard.open();
+        document.querySelector('[data-action="report"]').click();
+
+        expect(written[0]).toContain('Trial Chameleon — cleared 3 tiers');
+        expect(written[0]).toContain('83% into T4');
+        expect(written[0]).toContain('died 1×');
+        expect(written[0]).not.toMatch(/<[a-z]/i);
     });
 
     test('toggling twice leaves nothing behind', () => {

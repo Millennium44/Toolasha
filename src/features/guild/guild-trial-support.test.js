@@ -161,6 +161,49 @@ describe('foldSupportTick', () => {
     });
 });
 
+describe('running out of mana', () => {
+    test('a dry spell is counted once, however many ticks it lasts', () => {
+        const state = newSupportState();
+        foldSupportTick(state, { 0: unit({ cMP: 100 }) }, {}, detailMap, 0);
+        foldSupportTick(state, { 0: unit({ cMP: 0 }) }, {}, detailMap, 1000);
+        foldSupportTick(state, { 0: unit({ cMP: 0 }) }, {}, detailMap, 2000);
+        foldSupportTick(state, { 0: unit({ cMP: 0 }) }, {}, detailMap, 3000);
+        foldSupportTick(state, { 0: unit({ cMP: 50 }) }, {}, detailMap, 4000);
+
+        expect(state.players[0].manaOuts).toBe(1);
+        // Empty from 1s to 4s
+        expect(state.players[0].emptyManaMs).toBe(3000);
+    });
+
+    test('recovering and running dry again is two', () => {
+        const state = newSupportState();
+        foldSupportTick(state, { 0: unit({ cMP: 100 }) }, {}, detailMap, 0);
+        foldSupportTick(state, { 0: unit({ cMP: 0 }) }, {}, detailMap, 1000);
+        foldSupportTick(state, { 0: unit({ cMP: 80 }) }, {}, detailMap, 2000);
+        foldSupportTick(state, { 0: unit({ cMP: 0 }) }, {}, detailMap, 3000);
+
+        expect(state.players[0].manaOuts).toBe(2);
+    });
+
+    test('a caster who never empties has nothing to report', () => {
+        const state = newSupportState();
+        foldSupportTick(state, { 0: unit({ cMP: 500 }) }, {}, detailMap, 0);
+        foldSupportTick(state, { 0: unit({ cMP: 40 }) }, {}, detailMap, 1000);
+
+        expect(state.players[0].manaOuts).toBe(0);
+        expect(state.players[0].emptyManaMs).toBe(0);
+    });
+
+    test('the totals carry it, and so does the coverage note', () => {
+        const state = newSupportState();
+        foldSupportTick(state, { 0: unit({ cMP: 10 }), 1: unit({ cMP: 10 }) }, {}, detailMap, 0);
+        foldSupportTick(state, { 0: unit({ cMP: 0 }), 1: unit({ cMP: 0 }) }, {}, detailMap, 1000);
+
+        expect(summariseSupport(state).totals.manaOuts).toBe(2);
+        expect(supportCoverage().manaOuts).toMatch(/^measured/);
+    });
+});
+
 describe('summariseSupport', () => {
     test('rows carry names and the totals add up', () => {
         const state = newSupportState();
