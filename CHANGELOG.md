@@ -6,6 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Three more reasons to look up
+
+- **Labyrinth run finished**: fires once per run when a run stops being active, reporting the deepest floor reached. The game's payload carries no outcome field, so the alert honestly covers all three endings — cleared, lost, or exited — and the help text says it can't tell which.
+- **Combat death**: your own death count rising (party deaths ignored), edge-triggered with the running total, capped to one message per killing zone.
+- **Enhancement target reached**: when an enhance-until-+N action hits its target, read from the game's own action data rather than the switchable tracker.
+- All three are off by default; the "market listing filled" idea was skipped because it already ships.
+
 ### The listing says who built what
 
 - **`docs/GREASYFORK.md`**: a paste-ready "Additional info" body for the GreasyFork listing — the fork's biggest changes since diverging from upstream, and a Credits section that makes every attributed script visible from the listing itself (bot7420's MWITools, Celasha's Toolasha, Frotty's MWI Combat Suite/Scaley Way Idle/OPanel, Q7's market history, jigglymoose's JIGS, dakonglong's labyrinth calculator, and the combat-sim team), linking the full per-file licence record.

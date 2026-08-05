@@ -1233,6 +1233,32 @@ function registerFeatures() {
             customCheck: () => config.getSetting('notifications_communityBuffExpiring'),
         },
         {
+            key: 'labyrinthRunAlerts',
+            name: 'Labyrinth Run Finished Alerts',
+            category: 'Notifications',
+            module: UI.labyrinthRunAlerts,
+            async: true,
+            // As above: no feature-map entry, so the schema setting is the only
+            // gate and an unknown registry key would otherwise default to on
+            customCheck: () => config.getSetting('notifications_labyrinthRunFinished'),
+        },
+        {
+            key: 'combatDeathAlerts',
+            name: 'Combat Death Alerts',
+            category: 'Notifications',
+            module: UI.combatDeathAlerts,
+            async: true,
+            customCheck: () => config.getSetting('notifications_combatDeath'),
+        },
+        {
+            key: 'enhancementTargetAlerts',
+            name: 'Enhancement Target Alerts',
+            category: 'Notifications',
+            module: UI.enhancementTargetAlerts,
+            async: true,
+            customCheck: () => config.getSetting('notifications_enhancementTarget'),
+        },
+        {
             key: 'queueMonitor',
             name: 'Queue Monitor',
             category: 'General',

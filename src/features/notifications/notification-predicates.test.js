@@ -13,7 +13,61 @@ import {
     thresholdCrossing,
     isQueueExhausted,
     newlyIdleCharacters,
+    labyrinthRunState,
+    newDeaths,
 } from './notification-predicates.js';
+
+describe('labyrinthRunState', () => {
+    test('the server’s own flag is believed either way', () => {
+        expect(labyrinthRunState({ isActive: true })).toBe('active');
+        expect(labyrinthRunState({ isActive: false })).toBe('ended');
+    });
+
+    test('the flag wins over the grid, so an ended run with a stale grid still reads ended', () => {
+        expect(labyrinthRunState({ isActive: false, roomData: [[{}]], pathData: '[{"x":0,"y":0}]' })).toBe('ended');
+    });
+
+    test('without the flag, a grid or a queued path is what says a run is going', () => {
+        expect(labyrinthRunState({ roomData: [[{}]] })).toBe('active');
+        expect(labyrinthRunState({ pathData: '[{"x":0,"y":0}]' })).toBe('active');
+        expect(labyrinthRunState({ roomData: '[[{}]]' })).toBe('active');
+        expect(labyrinthRunState({ pathData: [{ x: 0, y: 0 }] })).toBe('active');
+    });
+
+    test('a payload that describes neither is unknown, never ended', () => {
+        expect(labyrinthRunState({ currentFloor: 4 })).toBe('unknown');
+        expect(labyrinthRunState({ roomData: [], pathData: '[]' })).toBe('unknown');
+        expect(labyrinthRunState(null)).toBe('unknown');
+        expect(labyrinthRunState(undefined)).toBe('unknown');
+        expect(labyrinthRunState('nope')).toBe('unknown');
+    });
+});
+
+describe('newDeaths', () => {
+    test('a rise is the number of new deaths', () => {
+        expect(newDeaths(0, 1)).toBe(1);
+        expect(newDeaths(2, 5)).toBe(3);
+    });
+
+    test('the same count is nothing new', () => {
+        expect(newDeaths(3, 3)).toBe(0);
+    });
+
+    test('a new session takes the count down, which is not a resurrection', () => {
+        expect(newDeaths(7, 0)).toBe(0);
+    });
+
+    test('the first sighting is a baseline, not a death', () => {
+        expect(newDeaths(null, 4)).toBe(0);
+        expect(newDeaths(undefined, 4)).toBe(0);
+    });
+
+    test('an unreadable count on either side reports nothing', () => {
+        expect(newDeaths(1, 'two')).toBe(0);
+        expect(newDeaths('one', 2)).toBe(0);
+        expect(newDeaths(1, undefined)).toBe(0);
+    });
+});
 
 describe('listingsNewlyFinished', () => {
     test('a rise is news', () => {
