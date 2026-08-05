@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The budget planner spends the money
+
+- **The empty 500M plan is fixed**: the planner demanded every gain clear the run's 1.96σ noise bar, and on the profit axis a real 0.4% improvement never can — so everything was skipped as "within noise" and the plan came back empty. It now prefers statistically-measured rows exactly as before, and only when that buys nothing re-plans on the estimates with an amber "Ranked on estimates" note, so you always see the best affordable set. Multiple ability upgrades can share one plan (each ability is its own key; two targets for the same ability still pick the better one).
+- **Market on an ability row pre-fills the book count**: the Buy Listing quantity arrives set to the books the upgrade actually needs (the button's tooltip names the count); gear rows still fill 1.
+- **Score is configurable**: choose the scoring depth (Top 5/10/15/All, default 5 — the header says which is active), and optionally paint the top nine scores in a green→yellow→red gradient ranked by score, not table order. Both live in the ⚙ Columns popover.
+
 ### Three more reasons to look up
 
 - **Labyrinth run finished**: fires once per run when a run stops being active, reporting the deepest floor reached. The game's payload carries no outcome field, so the alert honestly covers all three endings — cleared, lost, or exited — and the help text says it can't tell which.

@@ -11,6 +11,7 @@ import { watchTarget } from '../inventory/equipment-savings-row.js';
 import { watchItem } from '../inventory/watchlist.js';
 import { addAbilityGoal } from '../../utils/equipment-savings.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
+import { createAutofillManager } from '../../utils/marketplace-autofill.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable } from '../../utils/floating-panel.js';
 import { restoreGeometry, saveGeometry, saveOpenState, reopenIfLeftOpen } from '../../utils/panel-geometry.js';
@@ -112,6 +113,110 @@ const MIN_PANEL_HEIGHT = 300;
 const DEFAULT_HIDDEN_COLUMNS = ['deltaDps', 'deltaXp', 'deltaProfit', 'deltaEph', 'deltaDph', 'roi'];
 
 /**
+ * How deep into each metric's ladder the Score pays points.
+ *
+ * Five was the only depth there was, and it is a strong opinion: on a run of a
+ * hundred and forty candidates it means a hundred and thirty-five of them score
+ * literally zero, and the column stops separating anything below the podium.
+ * That is the right answer when the question is "what is the shortlist" and the
+ * wrong one when it is "where does *this* row sit" — so the depth is a choice,
+ * with five kept as the default so nobody's table changes under them.
+ *
+ * `null` means every distinct value on the ladder places, which turns the score
+ * from a podium into a full ranking.
+ */
+export const SCORE_DEPTHS = [
+    { key: '5', places: 5, label: 'Top 5' },
+    { key: '10', places: 10, label: 'Top 10' },
+    { key: '15', places: 15, label: 'Top 15' },
+    { key: 'all', places: null, label: 'All rows' },
+];
+
+/** The depth used when nothing has been chosen — the behaviour that predates the option. */
+export const DEFAULT_SCORE_DEPTH = '5';
+
+/**
+ * How many placings a depth key actually pays out over.
+ * @param {string} depthKey - A `SCORE_DEPTHS` key
+ * @param {number} rowCount - Rows being scored, for the "all" case
+ * @returns {number} Placings that earn points
+ */
+export function scoreDepthPlaces(depthKey, rowCount) {
+    const depth = SCORE_DEPTHS.find((d) => d.key === depthKey);
+    if (!depth) return RANK_PLACES;
+    return depth.places ?? Math.max(1, rowCount || 1);
+}
+
+/** What a depth key is called, for a header that has to say which one is on. */
+export function scoreDepthLabel(depthKey) {
+    return (SCORE_DEPTHS.find((d) => d.key === depthKey) || SCORE_DEPTHS[0]).label;
+}
+
+/**
+ * How many places down the Score gradient reaches.
+ *
+ * Nine, because it is what a reader can hold: green for the ones worth looking
+ * at, amber for the middle, red for the tail of what still ranked at all. Past
+ * that the colour would be saying "worse than ninth", which the position in the
+ * table already says.
+ */
+export const SCORE_GRADIENT_PLACES = 9;
+
+/**
+ * Green → amber → red across the top nine scores.
+ *
+ * The three stops are the table's own colours — the same `#4caf50` that marks a
+ * best-in-column cell and the same `#f44336` that marks a regression — so the
+ * gradient reads as more of the vocabulary already in use rather than a second
+ * palette laid over it. Interpolated in plain RGB: over this short a span the
+ * difference from a perceptual blend is not visible, and the endpoints are
+ * exactly the two colours everything else in the table uses.
+ *
+ * @param {number} place - 1-based rank among the scored rows
+ * @returns {string|null} A CSS colour, or null past the ninth place
+ */
+export function scoreGradientColor(place) {
+    if (!Number.isFinite(place) || place < 1 || place > SCORE_GRADIENT_PLACES) return null;
+
+    const stops = [
+        [76, 175, 80], // #4caf50 — best
+        [255, 152, 0], // #ff9800 — middle
+        [244, 67, 54], // #f44336 — ninth
+    ];
+    // 0 at first place, 1 at the ninth, so the middle stop lands on fifth
+    const t = (place - 1) / (SCORE_GRADIENT_PLACES - 1);
+    const half = t < 0.5 ? 0 : 1;
+    const local = t < 0.5 ? t * 2 : (t - 0.5) * 2;
+    const from = stops[half];
+    const to = stops[half + 1];
+    const channel = (i) => Math.round(from[i] + (to[i] - from[i]) * local);
+    return `rgb(${channel(0)}, ${channel(1)}, ${channel(2)})`;
+}
+
+/**
+ * Where each row's Score places among the rows shown, ties sharing a place.
+ *
+ * Built from the scores rather than from the table order so a sort by Cost does
+ * not repaint the gradient — the colour is about the score, and it has to mean
+ * the same thing whichever column the table is sorted on. Rows that scored
+ * nothing never place: a zero is the absence of a ranking, not the bottom of one.
+ *
+ * @param {Array<Object>} rows - Scored result rows
+ * @returns {Map<Object, number>} Row → 1-based place
+ */
+export function scorePlaces(rows) {
+    const ladder = [...new Set((rows || []).map((r) => r?.score).filter((s) => Number.isFinite(s) && s > 0))].sort(
+        (a, b) => b - a
+    );
+    const places = new Map();
+    for (const row of rows || []) {
+        const index = ladder.indexOf(row?.score);
+        if (index >= 0) places.set(row, index + 1);
+    }
+    return places;
+}
+
+/**
  * What the Upgrade-tab budget planner can shop for.
  *
  * A labyrinth plan has one axis — attempts saved — because every fight is the
@@ -155,11 +260,28 @@ export const UPGRADE_PLAN_METRICS = [
  * Combat levels are dropped: they are not purchases, so a list of what a budget
  * buys has nothing to say about them.
  *
+ * ## Why it plans twice
+ *
+ * `planWithinBudget` throws away every row whose gain has not cleared the
+ * simulation's own error bar, and on the profit axis that is very nearly every
+ * row. The error model is per-encounter and deliberately coarse — a run of a few
+ * thousand encounters carries a couple of percent of noise, and 1.96σ of it is
+ * four or five — while a real profit gain from one piece of gear is a fraction
+ * of a percent. So a table full of affordable, positive, sensibly-priced rows
+ * planned to *nothing at all*, and the panel said "nothing fits 500M", which is
+ * not what it had measured and not what the reader could see.
+ *
+ * "Not proven" is not "worth zero". The first pass still prefers the rows that
+ * cleared their error bar, because a plan made of measurements is worth more
+ * than one made of point estimates. Only when that pass buys nothing does the
+ * second one run over everything, and what comes back is flagged `provisional`
+ * so the panel can say which of the two it is looking at.
+ *
  * @param {Array<Object>} rows - Upgrade results (`{candidate, cost, metrics, economics}`)
  * @param {number} budget - Coins available
  * @param {Object} [options] - `{ baseline, metricKey }`
  * @returns {{picks: Array<Object>, totalCost: number, gainTotal: number,
- *   skipped: Array<Object>, budget: number, metric: Object}}
+ *   skipped: Array<Object>, budget: number, metric: Object, provisional: boolean}}
  */
 export function planUpgradeBudget(rows, budget, { baseline = {}, metricKey = 'profit' } = {}) {
     const metric = UPGRADE_PLAN_METRICS.find((m) => m.key === metricKey) || UPGRADE_PLAN_METRICS[0];
@@ -168,15 +290,26 @@ export function planUpgradeBudget(rows, budget, { baseline = {}, metricKey = 'pr
         .map((row) => ({
             ...row,
             attemptsDelta: -metric.gain(row, baseline),
-            // The planner drops anything whose gain is inside the simulation's
-            // own error, and "inside the error" is a question about one metric
-            // at a time — a swap can move DPS well clear of the noise while its
-            // profit delta is pure sampling. The axis being shopped for is the
-            // one that has to clear it
+            // "Inside the error" is a question about one metric at a time — a
+            // swap can move DPS well clear of the noise while its profit delta
+            // is pure sampling. The axis being shopped for is the one that has
+            // to clear it
             significant: row.significantBy?.[metric.key] ?? row.significant ?? true,
         }));
-    const plan = planWithinBudget(planRows, Number.isFinite(budget) ? budget : 0);
-    return { ...plan, gainTotal: plan.attemptsSaved, metric };
+    const coins = Number.isFinite(budget) ? budget : 0;
+
+    const measured = planWithinBudget(planRows, coins);
+    if (measured.picks.length) {
+        return { ...measured, gainTotal: measured.attemptsSaved, metric, provisional: false };
+    }
+
+    const estimated = planWithinBudget(planRows, coins, { includeUnmeasured: true });
+    return {
+        ...estimated,
+        gainTotal: estimated.attemptsSaved,
+        metric,
+        provisional: estimated.picks.length > 0,
+    };
 }
 
 /**
@@ -637,8 +770,15 @@ export async function loadAllZonesSnapshot() {
  * gear targets. `ability` carries what that goal needs, and `savable` stays
  * about the slot reservation so nothing downstream conflates the two.
  *
+ * `quantity` is how many of the item the row actually has you buy. For gear that
+ * is one — a slot holds one sword — but an ability row is priced in *books*, and
+ * "go to the market" for a row costing 140M of Berserk books meant arriving at a
+ * buy box defaulted to 1 with the real figure left in the table behind you. It
+ * is the same book count the cost was computed from, rounded up, because there
+ * is no such thing as buying four-fifths of a book.
+ *
  * @param {Object} result - A row from the upgrade analysis, or a budget pick
- * @returns {Object|null} `{itemHrid, enhancementLevel, name, savable, ability}`, or null
+ * @returns {Object|null} `{itemHrid, enhancementLevel, name, quantity, savable, ability}`, or null
  */
 export function upgradeRowPurchase(result) {
     const candidate = result?.candidate;
@@ -670,6 +810,7 @@ export function upgradeRowPurchase(result) {
         itemHrid,
         enhancementLevel,
         name: enhancementLevel > 0 ? `${baseName} +${enhancementLevel}` : baseName,
+        quantity: isBook ? abilityBookCount(result) : 1,
         savable: !isBook && !isConsumable,
         ability: isBook
             ? {
@@ -680,6 +821,51 @@ export function upgradeRowPurchase(result) {
               }
             : null,
     };
+}
+
+/**
+ * How many books an ability row buys.
+ *
+ * The advisor already worked this out to price the row — `costDetail.books.books`
+ * is the fractional count the cost was multiplied out of — so it is read back
+ * rather than derived a second time from levels and XP tables that could drift
+ * out of step with it. Fractional because the last book is usually a partial
+ * one; you still have to buy it, hence the ceiling.
+ *
+ * @param {Object} result - An upgrade result row
+ * @returns {number} Books to buy, at least one, or 1 when the row never priced
+ */
+export function abilityBookCount(result) {
+    const books = result?.costDetail?.books?.books;
+    if (!Number.isFinite(books) || books <= 0) return 1;
+    return Math.max(1, Math.ceil(books));
+}
+
+/**
+ * The buy-modal autofill the Market button arms, made on first use.
+ *
+ * Lazy because it registers a document-wide modal observer, and a panel nobody
+ * has clicked Market in has no business watching for marketplace modals. One
+ * manager for the whole module: two rows cannot be handed off at once.
+ */
+let marketAutofill = null;
+
+/** @returns {Object} The shared autofill manager, initialising it once */
+function upgradeMarketAutofill() {
+    if (!marketAutofill) {
+        marketAutofill = createAutofillManager('CombatSimUpgrade-Market');
+        marketAutofill.initialize();
+    }
+    return marketAutofill;
+}
+
+/**
+ * Stop watching for buy modals and forget any armed quantity.
+ * Called when the panel goes away, so a closed simulator leaves nothing behind.
+ */
+export function cleanupUpgradeMarketAutofill() {
+    marketAutofill?.cleanup();
+    marketAutofill = null;
 }
 
 /** Shared styling for the small per-row handoff buttons */
@@ -697,7 +883,8 @@ const ROW_ACTION_STYLE =
  * Both kinds of row can be saved for, by two different routes: gear reserves a
  * slot in Equipment Savings, an ability book records a level goal. Market opens
  * whatever the row actually buys — for an ability that is the book, which is an
- * ordinary marketplace item — so it is offered by anything that buys at all.
+ * ordinary marketplace item — so it is offered by anything that buys at all, and
+ * carries the count so the buy box can be filled in with it.
  *
  * @param {Object} result - A row from the upgrade analysis, or a budget pick
  * @returns {string} HTML, empty for rows that buy nothing
@@ -706,7 +893,9 @@ export function upgradeRowActionsHtml(result) {
     const buy = upgradeRowPurchase(result);
     if (!buy) return '';
 
-    const attrs = `data-buy-hrid="${buy.itemHrid}" data-buy-level="${buy.enhancementLevel}"`;
+    const attrs =
+        `data-buy-hrid="${buy.itemHrid}" data-buy-level="${buy.enhancementLevel}" ` +
+        `data-buy-quantity="${buy.quantity}"`;
     let save = '';
     if (buy.savable) {
         save = `<button type="button" ${attrs} data-buy-action="save" title="Save for this in Equipment Savings"
@@ -720,9 +909,14 @@ export function upgradeRowActionsHtml(result) {
             style="${ROW_ACTION_STYLE}">Save for this</button>`;
     }
 
+    const marketTitle =
+        buy.quantity > 1
+            ? `Open this in the marketplace, with ${buy.quantity} ready in the buy box — what this upgrade needs`
+            : 'Open this in the marketplace';
+
     return `${save}<button type="button" ${attrs} data-buy-action="watch" title="Add to the watchlist"
         style="${ROW_ACTION_STYLE}">Watch</button><button type="button" ${attrs} data-buy-action="market"
-        title="Open this in the marketplace" style="${ROW_ACTION_STYLE}">Market</button>`;
+        title="${escapeAttribute(marketTitle)}" style="${ROW_ACTION_STYLE}">Market</button>`;
 }
 
 /**
@@ -749,7 +943,8 @@ function escapeAttribute(value) {
  *
  * Four handoffs, told apart by `data-buy-action`: `save` reserves a gear slot,
  * `save-ability` records a book-level goal, `market` opens the item's
- * marketplace tab, and anything else watches the item.
+ * marketplace tab with the row's quantity waiting in the buy box, and anything
+ * else watches the item.
  *
  * @param {HTMLElement} container - Anything containing rendered rows
  * @param {string} [logPrefix] - Module name for error logs
@@ -782,6 +977,16 @@ export function wireUpgradeRowActions(container, logPrefix = 'CombatSimUI') {
                     });
                     button.textContent = 'Saving ✓';
                 } else if (action === 'market') {
+                    // An ability row buys a stack of books, so the buy box is
+                    // armed with the count before the marketplace opens; gear
+                    // buys one of a thing and clears any arming left over from
+                    // the last row, so a sword never inherits a book's quantity
+                    const quantity = Number(button.getAttribute('data-buy-quantity')) || 1;
+                    if (quantity > 1) {
+                        upgradeMarketAutofill().setPendingCalculation(() => quantity);
+                    } else {
+                        marketAutofill?.clearQuantity();
+                    }
                     navigateToMarketplace(itemHrid, enhancementLevel);
                     button.textContent = 'Opened ✓';
                 } else {
@@ -4804,6 +5009,7 @@ class CombatSimUI {
         }
         this._detachDrag?.();
         this._detachDrag = null;
+        cleanupUpgradeMarketAutofill();
         if (this.panel) {
             unregisterFloatingPanel(this.panel);
             this.panel.remove();
@@ -5694,7 +5900,7 @@ class CombatSimUI {
         if (!this._upgradeSort) this._upgradeSort = { key: 'dps', asc: true };
         const { key: sortKey, asc: sortAsc } = this._upgradeSort;
 
-        const columns = this._upgradeColumns(baseline).filter((c) => c.visible);
+        const columns = this._upgradeColumns(baseline, rows).filter((c) => c.visible);
         const column = columns.find((c) => c.key === sortKey) || columns[0];
         // Higher-is-better columns are negated so one ascending sort serves all
         const sortValue = (r) => (column.lowerIsBetter === false ? -column.value(r) : column.value(r));
@@ -5799,6 +6005,14 @@ class CombatSimUI {
             </label>`
         ).join('');
 
+        const depthKey = this._upgradeScoreDepth || DEFAULT_SCORE_DEPTH;
+        const depthOptions = SCORE_DEPTHS.map(
+            (d) => `<option value="${d.key}"${d.key === depthKey ? ' selected' : ''}>${d.label}</option>`
+        ).join('');
+        const selectStyle =
+            'background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:3px; padding:1px 4px; ' +
+            'font-size:11px; font-family:inherit;';
+
         return `<div style="position:relative; margin-bottom:6px;">
             <button id="mwi-csim-upgrade-cols-btn" style="background:#1a1a2e; color:#ccc; border:1px solid #333;
                 border-radius:3px; padding:2px 8px; font-size:11px; cursor:pointer;">⚙ Columns</button>
@@ -5815,6 +6029,20 @@ class CombatSimUI {
                     <div style="color:#666; margin-top:6px; max-width:190px; line-height:1.35;">
                         Repay and ROI are the same ratio inverted — scoring both counts it twice.
                     </div>
+                    <div style="color:#888; font-weight:600; margin:8px 0 4px;">Score</div>
+                    <label style="${box}" title="How far down each metric's ladder a row can still earn points.
+                        Five is a podium and leaves most of a long run on zero; deeper turns the column into a
+                        ranking of the whole table.">
+                        <span>Places</span>
+                        <select id="mwi-csim-score-depth" style="${selectStyle}">${depthOptions}</select>
+                    </label>
+                    <label style="${box}" title="Colour the nine best Scores green through amber to red, so the
+                        shortlist can be found without reading the numbers. Rows below ninth stay uncoloured —
+                        the position in the table already says they placed lower.">
+                        <input type="checkbox" id="mwi-csim-score-gradient"
+                            ${this._upgradeScoreGradient ? 'checked' : ''}>
+                        Colour the top ${SCORE_GRADIENT_PLACES}
+                    </label>
                 </div>
             </div>
         </div>`;
@@ -5827,12 +6055,18 @@ class CombatSimUI {
      * to draw it, whether lower is better and whether it is currently shown, so
      * sorting, highlighting, the visibility menu and rendering cannot drift apart.
      *
+     * @param {Object} [baseline] - Baseline metrics
+     * @param {Array<Object>} [rows] - The rows about to be drawn, for the Score gradient
      * @returns {Array<Object>} Column definitions
      * @private
      */
-    _upgradeColumns(baseline = {}) {
+    _upgradeColumns(baseline = {}, rows = []) {
         const hidden = this._upgradeHiddenColumns || new Set(DEFAULT_HIDDEN_COLUMNS);
         const scored = new Set(this._upgradeScoreKeys || DEFAULT_SCORE_KEYS);
+        const depthKey = this._upgradeScoreDepth || DEFAULT_SCORE_DEPTH;
+        // Only paid for when the gradient is on: the ladder is a sort over every
+        // row, and the popover is where a reader says they want it
+        const gradientPlaces = this._upgradeScoreGradient ? scorePlaces(rows) : null;
 
         // At or below zero cost the figure stops being a rate and becomes the
         // net gold itself (see computeGoldPerImprovement), so it is drawn as
@@ -6028,12 +6262,18 @@ class CombatSimUI {
                 numeric: true,
                 lowerIsBetter: false,
                 highlight: true,
+                sub: scoreDepthLabel(depthKey),
                 title:
-                    `Points for placing in the top ${RANK_PLACES} of each scored metric, summed. Finds ` +
-                    'all-rounders that never top a single column. Ordinal, so winning a metric narrowly ' +
-                    'scores the same as winning it outright. Use ⚙ Columns to choose what counts.',
+                    `Points for placing in each scored metric's ${scoreDepthLabel(depthKey).toLowerCase()}, ` +
+                    'summed. Finds all-rounders that never top a single column. Ordinal, so winning a metric ' +
+                    'narrowly scores the same as winning it outright. Use ⚙ Columns to choose what counts, ' +
+                    'how deep the placings go, and whether to colour them.',
                 value: (r) => r.score ?? 0,
-                render: (r, v) => v || '—',
+                render: (r, v) => {
+                    if (!v) return '—';
+                    const color = gradientPlaces && scoreGradientColor(gradientPlaces.get(r));
+                    return color ? `<span style="color:${color};">${v}</span>` : String(v);
+                },
             },
         ];
 
@@ -6273,9 +6513,11 @@ class CombatSimUI {
      *
      * The table answers "what is the best single thing"; nobody buys one thing.
      * This answers the question people actually have — "I have 500M, what should
-     * I get" — by walking the ranked list and taking what fits, at most one
-     * purchase per equipment slot, so it can never suggest two chestpieces where
-     * only one can be worn.
+     * I get" — by walking the ranked list and taking what fits. Exclusivity is by
+     * what a purchase actually competes with rather than by kind: two chestpieces
+     * fight over one slot, two targets for one ability are the same purchase
+     * twice, and two *different* abilities are simply two purchases, so a plan
+     * can hold as many of them as the budget covers.
      *
      * @param {Array<Object>} rows - Purchasable upgrade results
      * @param {Object} baseline - Baseline metrics
@@ -6313,6 +6555,16 @@ class CombatSimUI {
                         </div>`
                     )
                     .join('');
+                // A plan built from gains that never cleared their error bar is
+                // still the best reading of what was measured — it just must not
+                // be presented as a measurement
+                const provisional = plan.provisional
+                    ? `<div style="margin-top:4px; color:#e8a87c; font-size:10px; line-height:1.35;"
+                        title="Every gain on this axis is smaller than the simulation's own sampling error, so
+                        nothing here is proven. Ranked on the point estimates, which is the best the run can say.
+                        Simulate for longer to separate them.">Ranked on estimates: no gain on
+                        ${plan.metric.label} clears the run's error bar.</div>`
+                    : '';
                 body =
                     picks +
                     `<div style="margin-top:4px; padding-top:4px; border-top:1px solid #222; color:#aaa; font-size:11px;">
@@ -6320,7 +6572,7 @@ class CombatSimUI {
                         ${money(plan.totalCost)} of ${money(budget)} ·
                         <span style="color:#4caf50; font-weight:600;">${plan.metric.format(plan.gainTotal)}</span>
                         <span style="color:#666;"> if gains in different slots add up</span>
-                    </div>`;
+                    </div>${provisional}`;
             }
         }
 
@@ -6337,7 +6589,10 @@ class CombatSimUI {
                 <span style="color:#666;">for</span>
                 <select id="mwi-csim-budget-metric" style="${selectStyle}">${options}</select>
                 <button id="mwi-csim-budget-plan" style="${btnStyle}">Plan</button>
-                <span style="color:#555;">best set that fits, one purchase per slot</span>
+                <span style="color:#555;" title="Two pieces for one equipment slot cannot both be worn, and two
+                    targets for one ability are the same purchase twice — so the plan takes the better of each.
+                    Different abilities are different purchases and can all be in the same plan.">best set that
+                    fits — one per slot, one per ability</span>
             </div>
             ${body ? `<div style="margin-top:6px;">${body}</div>` : ''}
         </div>`;
@@ -6603,6 +6858,20 @@ class CombatSimUI {
                 this._renderUpgradeResults(this._upgradeResultsData);
             });
         });
+
+        menu.querySelector('#mwi-csim-score-depth')?.addEventListener('change', (event) => {
+            this._upgradeScoreDepth = event.target.value || DEFAULT_SCORE_DEPTH;
+            this._persistUpgradeColumnPrefs();
+            this._rescoreUpgrades();
+            this._renderUpgradeResults(this._upgradeResultsData);
+        });
+
+        // Colour only — the scores are unchanged, so there is nothing to re-rank
+        menu.querySelector('#mwi-csim-score-gradient')?.addEventListener('change', (event) => {
+            this._upgradeScoreGradient = Boolean(event.target.checked);
+            this._persistUpgradeColumnPrefs();
+            this._renderUpgradeResults(this._upgradeResultsData);
+        });
     }
 
     /**
@@ -6644,10 +6913,11 @@ class CombatSimUI {
     _rescoreUpgrades() {
         const rows = this._upgradeResultsData?.results;
         if (!rows) return;
-        assignRankScores(
-            rows.filter((r) => r.candidate?.type !== 'combat_level'),
-            { keys: this._upgradeScoreKeys || DEFAULT_SCORE_KEYS }
-        );
+        const scorable = rows.filter((r) => r.candidate?.type !== 'combat_level');
+        assignRankScores(scorable, {
+            keys: this._upgradeScoreKeys || DEFAULT_SCORE_KEYS,
+            places: scoreDepthPlaces(this._upgradeScoreDepth || DEFAULT_SCORE_DEPTH, scorable.length),
+        });
     }
 
     /** @private */
@@ -6658,6 +6928,8 @@ class CombatSimUI {
                 {
                     hidden: [...(this._upgradeHiddenColumns || DEFAULT_HIDDEN_COLUMNS)],
                     scored: this._upgradeScoreKeys || DEFAULT_SCORE_KEYS,
+                    scoreDepth: this._upgradeScoreDepth || DEFAULT_SCORE_DEPTH,
+                    scoreGradient: Boolean(this._upgradeScoreGradient),
                 },
                 'settings'
             );
@@ -6673,6 +6945,11 @@ class CombatSimUI {
             if (!saved) return;
             this._upgradeHiddenColumns = new Set(Array.isArray(saved.hidden) ? saved.hidden : []);
             if (Array.isArray(saved.scored)) this._upgradeScoreKeys = saved.scored;
+            // A depth key from a build that offered a different set is ignored
+            // rather than trusted, so the column cannot end up scoring over a
+            // ladder length nothing in the menu can name
+            if (SCORE_DEPTHS.some((d) => d.key === saved.scoreDepth)) this._upgradeScoreDepth = saved.scoreDepth;
+            this._upgradeScoreGradient = Boolean(saved.scoreGradient);
         } catch (error) {
             console.error('[CombatSimUI] Failed to load upgrade column preferences:', error);
         }
