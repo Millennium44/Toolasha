@@ -27,6 +27,13 @@ const mocks = vi.hoisted(() => ({
     drops: new Map(),
     /** itemHrid → { bid, ask }; anything absent is unlisted, as most things are */
     prices: {},
+    /** What `buildGameDataPayload` and `buildAllPlayerDTOs` hand the panel */
+    gameData: { itemDetailMap: {} },
+    playerDTOs: [{ hrid: 'player1', equipment: {} }],
+    /** The params the last all-zones run was started with */
+    allZonesArgs: null,
+    /** itemHrid → unit price, what `resolveItemPrice` answers with */
+    itemPrices: {},
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -132,8 +139,8 @@ vi.mock('../../utils/panel-geometry.js', () => ({
 }));
 
 vi.mock('./combat-sim-adapter.js', () => ({
-    buildGameDataPayload: () => ({ itemDetailMap: {} }),
-    buildAllPlayerDTOs: async () => ({ players: [{ hrid: 'player1', equipment: {} }] }),
+    buildGameDataPayload: () => mocks.gameData,
+    buildAllPlayerDTOs: async () => ({ players: mocks.playerDTOs }),
     getCombatZones: () => mocks.zones,
     getCurrentCombatZone: () => null,
     getCommunityBuffs: () => ({}),
@@ -154,7 +161,11 @@ vi.mock('./combat-sim-runner.js', () => ({
 // The upgrade advisor is kept real for `planWithinBudget`, which drags in the
 // market and enhancement stack behind it — none of which this file is about
 vi.mock('../combat/labyrinth-clear-rate.js', () => ({ default: {} }));
-vi.mock('../../utils/profit-helpers.js', () => ({ resolveItemPrice: () => 0 }));
+// The real one returns `{ price, source }`; the food substitution reads `.price`
+// off it, so the stub has to be that shape rather than a bare number
+vi.mock('../../utils/profit-helpers.js', () => ({
+    resolveItemPrice: (hrid) => ({ price: mocks.itemPrices[hrid] ?? 0 }),
+}));
 vi.mock('../../utils/market-data.js', () => ({ getItemPrices: () => ({}) }));
 vi.mock('../../utils/enhancement-calculator.js', () => ({ calculateEnhancement: () => ({}) }));
 vi.mock('../../utils/enhancement-config.js', () => ({
@@ -172,7 +183,10 @@ vi.mock('../../utils/ability-cost-calculator.js', () => ({
 vi.mock('./skilling-sim-helpers.js', () => ({ buildOverridesForSkill: () => ({}) }));
 
 vi.mock('./all-zones-runner.js', () => ({
-    runAllZonesSimulation: async () => [],
+    runAllZonesSimulation: async (params) => {
+        mocks.allZonesArgs = params;
+        return [];
+    },
     cancelAllZonesSimulation: () => {},
 }));
 
@@ -706,6 +720,23 @@ describe('all-zones snapshot', () => {
     test('nothing stored reads as nothing, not as an empty run', async () => {
         expect(await loadAllZonesSnapshot()).toBeNull();
     });
+
+    test('carries whether the run was simulated on substituted food', async () => {
+        const snapshot = buildAllZonesSnapshot([zoneResult('Fly')], { hours: 4, maxTierFood: true });
+
+        expect(snapshot.maxTierFood).toBe(true);
+        expect(await saveAllZonesSnapshot(snapshot)).toBe(true);
+        expect((await loadAllZonesSnapshot()).maxTierFood).toBe(true);
+    });
+
+    test('says false rather than nothing for an ordinary run, so a reader can tell them apart', () => {
+        const snapshot = buildAllZonesSnapshot([zoneResult('Fly')], { hours: 4 });
+
+        expect(snapshot.maxTierFood).toBe(false);
+        // Additive: everything a reader written before the flag looks for is untouched
+        expect(snapshot.zones).toHaveLength(1);
+        expect(snapshot).toMatchObject({ version: 1, hours: 4, fingerprint: null });
+    });
 });
 
 describe('the all-zones table', () => {
@@ -881,6 +912,143 @@ describe('the all-zones table', () => {
             // And the rows themselves carry the badge, so a sort keeps it with them
             expect(shown).toContain('best XP');
             expect(shown).toContain('best profit');
+        });
+
+        test('a max-tier-food run says so above the table and in the export name', () => {
+            ui._allZonesMaxTierFood = true;
+            ui._allZonesFoodSwaps = [{ playerHrid: 'player1', fromName: 'Cheese', toName: 'Marsberry Cake' }];
+            ui._displayAllZonesResults([result('Fly', { xp: { defense: 900 }, profit: 10 })], 1, {});
+            const container = ui.panel.querySelector('#mwi-csim-results');
+
+            expect(container.textContent).toContain('max-tier food');
+            // The hover names the actual swap, so the claim is checkable
+            expect(container.innerHTML).toContain('Cheese → Marsberry Cake');
+            expect(container.querySelector('[data-csv-export]').dataset.csvExport).toBe('combatsim-all-zones-maxfood');
+        });
+
+        test('an ordinary run carries no food note and exports under the plain name', () => {
+            ui._allZonesMaxTierFood = false;
+            ui._displayAllZonesResults([result('Fly', { xp: { defense: 900 }, profit: 10 })], 1, {});
+            const container = ui.panel.querySelector('#mwi-csim-results');
+
+            expect(container.textContent).not.toContain('max-tier food');
+            expect(container.querySelector('[data-csv-export]').dataset.csvExport).toBe('combatsim-all-zones');
+        });
+    });
+
+    describe('the Max-tier Food checkbox', () => {
+        beforeEach(() => {
+            mocks.store.clear();
+            ui.buildPanel();
+        });
+
+        afterEach(() => {
+            ui.destroy();
+        });
+
+        test('is greyed out until an all-zones mode is picked', () => {
+            const box = ui.panel.querySelector('#mwi-csim-maxfood');
+            const label = ui.panel.querySelector('#mwi-csim-maxfood-label');
+
+            expect(box.disabled).toBe(true);
+            expect(label.style.opacity).toBe('0.45');
+
+            ui._allZonesMode = 'group';
+            ui._updateAllZonesUI();
+
+            expect(box.disabled).toBe(false);
+            expect(label.style.opacity).toBe('');
+        });
+
+        test('explains why low-tier food distorts the comparison', () => {
+            const title = ui.panel.querySelector('#mwi-csim-maxfood-label').getAttribute('title');
+
+            expect(title).toContain('the deaths are the food, not the zone');
+            expect(title).toContain('never touched');
+            // The tooltip is interpolated into an attribute; a quote in it would
+            // end the attribute early and spill the rest into the markup
+            expect(title).not.toContain('"');
+        });
+
+        test('is remembered across a rebuild, unlike the run-shape toggles beside it', async () => {
+            ui._allZonesMode = 'group';
+            ui._updateAllZonesUI();
+            const box = ui.panel.querySelector('#mwi-csim-maxfood');
+            box.checked = true;
+            box.dispatchEvent(new Event('change'));
+            await Promise.resolve();
+
+            expect(ui._maxTierFoodEnabled).toBe(true);
+
+            ui.destroy();
+            // What a fresh page would start from: the answer has to come back
+            // out of storage, not out of the surviving singleton
+            ui._maxTierFoodEnabled = false;
+            ui._allZonesMode = null;
+            ui.buildPanel();
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(ui._maxTierFoodEnabled).toBe(true);
+            expect(ui.panel.querySelector('#mwi-csim-maxfood').checked).toBe(true);
+            // Sim All Zones itself is per-session and does not come back
+            expect(ui.panel.querySelector('#mwi-csim-allzones-group').checked).toBe(false);
+        });
+    });
+
+    describe('what an all-zones run is actually simulated on', () => {
+        const FOOD_DATA = {
+            itemDetailMap: {
+                '/items/cheese': {
+                    name: 'Cheese',
+                    categoryHrid: '/item_categories/food',
+                    consumableDetail: { hitpointRestore: 50, manapointRestore: 0 },
+                },
+                '/items/marsberry_cake': {
+                    name: 'Marsberry Cake',
+                    categoryHrid: '/item_categories/food',
+                    consumableDetail: { hitpointRestore: 240, manapointRestore: 0 },
+                },
+            },
+        };
+
+        beforeEach(() => {
+            mocks.store.clear();
+            mocks.allZonesArgs = null;
+            mocks.gameData = FOOD_DATA;
+            mocks.itemPrices = { '/items/cheese': 100, '/items/marsberry_cake': 400 };
+            mocks.playerDTOs = [{ hrid: 'player1', equipment: {}, food: [{ hrid: '/items/cheese' }, null, null] }];
+            mocks.zones = [{ hrid: '/actions/combat/fly', name: 'Fly', maxSpawnCount: 3, maxDifficulty: 0 }];
+            ui.buildPanel();
+            ui._allZonesMode = 'group';
+            ui._updateAllZonesUI();
+        });
+
+        afterEach(() => {
+            ui.destroy();
+            mocks.gameData = { itemDetailMap: {} };
+            mocks.playerDTOs = [{ hrid: 'player1', equipment: {} }];
+            mocks.itemPrices = {};
+            mocks.zones = [];
+        });
+
+        test('with the option off, the run gets the food the character carries', async () => {
+            ui._maxTierFoodEnabled = false;
+            await ui._onSimulateAllZones();
+
+            expect(mocks.allZonesArgs.playerDTOs[0].food[0].hrid).toBe('/items/cheese');
+            expect((await loadAllZonesSnapshot()).maxTierFood).toBe(false);
+        });
+
+        test('with it on, the run gets the best food of that kind — and the real loadout does not change', async () => {
+            ui._maxTierFoodEnabled = true;
+            await ui._onSimulateAllZones();
+
+            expect(mocks.allZonesArgs.playerDTOs[0].food[0].hrid).toBe('/items/marsberry_cake');
+            // Sim-only: what the adapter handed over is untouched
+            expect(mocks.playerDTOs[0].food[0].hrid).toBe('/items/cheese');
+            expect((await loadAllZonesSnapshot()).maxTierFood).toBe(true);
+            expect(ui._allZonesFoodSwaps).toHaveLength(1);
         });
     });
 });

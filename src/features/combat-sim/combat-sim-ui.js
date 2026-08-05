@@ -43,6 +43,7 @@ import {
     SCORE_METRICS,
     DEFAULT_SCORE_KEYS,
 } from './upgrade-advisor.js';
+import { applyMaxTierFood } from './food-optimizer.js';
 import { SimEditor } from './sim-editor.js';
 import storage from '../../core/storage.js';
 
@@ -56,6 +57,34 @@ const ACCENT_BTN_BORDER = 'rgba(74, 158, 255, 0.4)';
 /** Storage key for the remembered Upgrade-tab candidate sets */
 const UPGRADE_MODES_KEY = 'combatSimUpgradeModes';
 const UPGRADE_COLUMNS_KEY = 'combatSimUpgradeColumns';
+
+/**
+ * Storage key for the all-zones Max-tier Food toggle.
+ *
+ * Remembered, unlike the Sim All Zones and Sim All Solo checkboxes beside it,
+ * which are deliberately per-session: those decide *what this run is*, and a
+ * panel that opens already in all-zones mode would have you simulate sixty-six
+ * zones because you did last week. This one decides how a comparison is read,
+ * which is a standing preference — whoever wants the max-food ranking wants it
+ * every time they open the ranking.
+ */
+const ALL_ZONES_MAX_FOOD_KEY = 'combatSimAllZonesMaxTierFood';
+
+/**
+ * What the Max-tier Food checkbox promises, in one hover.
+ *
+ * No double quotes anywhere in it: this string is interpolated straight into a
+ * `title="..."` attribute in two places, and one apostrophe-shaped quotation
+ * mark would end the attribute early and spill the rest into the markup.
+ */
+const MAX_FOOD_TOOLTIP =
+    'Simulate every zone with the best food of each kind you already run, instead of what you happen to be ' +
+    'carrying. Low-tier food makes hard zones look bad for the wrong reason — the deaths are the food, not the ' +
+    'zone — so a ranking taken on cheese answers which zone tolerates my cheese rather than which zone is best ' +
+    'for me. Each food slot moves to the highest-restore food of its own kind (healing stays healing, mana ' +
+    'stays mana); buff-only foods, empty slots and drinks are left alone. Nothing is capped by level: the game ' +
+    'puts no level requirement on consumables, so every substitute is one this character could eat. Your real ' +
+    'loadout is never touched — the swap exists only inside the run.';
 
 /**
  * Where this panel was left, in the shared panel-geometry store.
@@ -408,10 +437,17 @@ export async function currentGearFingerprint() {
  * @param {string} [options.playerHrid] - Which player's XP is being reported
  * @param {string|null} [options.fingerprint] - Gear signature of the run
  * @param {number} [options.savedAt] - When it finished
- * @returns {Object} `{version, savedAt, hours, fingerprint, zones}`
+ * @param {boolean} [options.maxTierFood] - Whether the run substituted max-tier food
+ * @returns {Object} `{version, savedAt, hours, fingerprint, maxTierFood, zones}`
  */
 export function buildAllZonesSnapshot(zoneResults, options = {}) {
-    const { hours = 0, playerHrid = 'player1', fingerprint = null, savedAt = Date.now() } = options;
+    const {
+        hours = 0,
+        playerHrid = 'player1',
+        fingerprint = null,
+        savedAt = Date.now(),
+        maxTierFood = false,
+    } = options;
 
     const zones = (Array.isArray(zoneResults) ? zoneResults : [])
         .filter((result) => result?.simResult && result.zone)
@@ -432,7 +468,12 @@ export function buildAllZonesSnapshot(zoneResults, options = {}) {
         })
         .filter((zone) => zone.zoneHrid);
 
-    return { version: 1, savedAt, hours, fingerprint, zones };
+    // `maxTierFood` is additive and always present, false included: a reader
+    // that has never heard of it goes on reading `zones` and `fingerprint`
+    // unchanged, and a reader that has can tell "this run was on substituted
+    // food" apart from "this run predates the flag" only if the flag is written
+    // every time rather than only when it is true.
+    return { version: 1, savedAt, hours, fingerprint, maxTierFood: Boolean(maxTierFood), zones };
 }
 
 /**
@@ -974,6 +1015,11 @@ class CombatSimUI {
         this._allZonesSortCol = null;
         this._allZonesSortAsc = true;
         this._earlyExitEnabled = true; // default on
+        this._maxTierFoodEnabled = false; // sim all zones on the best food of each kind you run
+        // What the displayed results were actually run on, so a re-sort keeps
+        // saying so and a saved comparison can never be read as a real-loadout run
+        this._allZonesMaxTierFood = false;
+        this._allZonesFoodSwaps = []; // [{playerHrid, fromName, toName}] behind the note
         // Seek state
         this._seekItems = []; // [{itemHrid, name}] — droppable items across all combat zones
         this._seekSelectedItem = null;
@@ -1134,6 +1180,10 @@ class CombatSimUI {
             <label id="mwi-csim-earlyexit-label" style="${labelStyle} display:none;" title="Stop simming higher tiers for a zone if both XP/hr and profit/hr declined vs the previous tier">
                 <input type="checkbox" id="mwi-csim-earlyexit" style="${checkboxStyle}" checked>
                 Skip Worse Tiers
+            </label>
+            <label id="mwi-csim-maxfood-label" style="${labelStyle} opacity:0.45; cursor:not-allowed;" title="${MAX_FOOD_TOOLTIP}">
+                <input type="checkbox" id="mwi-csim-maxfood" style="${checkboxStyle}" disabled>
+                Max-tier Food
             </label>
             <label style="${labelStyle}" title="Treat every fight in this run as your combat task's monster, so taskDamage from trinkets and task badges applies. Off by default: a zone is a mix of monsters and only one of them is your task, so counting the bonus everywhere overstates the run.">
                 <input type="checkbox" id="mwi-csim-taskfight" style="${checkboxStyle}">
@@ -1506,6 +1556,7 @@ class CombatSimUI {
         });
         this._restoreUpgradeModes();
         this._loadUpgradeColumnPrefs();
+        this._loadMaxTierFoodPref();
         this._restorePanelGeometry();
         this.panel.querySelector('#mwi-csim-ability-targets-toggle').addEventListener('click', () => {
             const grid = this.panel.querySelector('#mwi-csim-ability-targets');
@@ -1575,6 +1626,12 @@ class CombatSimUI {
         // Early exit toggle
         this.panel.querySelector('#mwi-csim-earlyexit').addEventListener('change', (e) => {
             this._earlyExitEnabled = e.target.checked;
+        });
+
+        // Max-tier food toggle
+        this.panel.querySelector('#mwi-csim-maxfood').addEventListener('change', (e) => {
+            this._maxTierFoodEnabled = e.target.checked;
+            this._persistMaxTierFoodPref();
         });
 
         // Seek: item search input
@@ -1678,6 +1735,12 @@ class CombatSimUI {
 
         if (!checklist) return;
 
+        // Greyed rather than hidden when all-zones is off: it is the one option
+        // here that answers a question people do not know they can ask, and a
+        // control that vanishes cannot advertise itself. It stays checkable only
+        // where it means something, since it changes nothing in a single-zone run.
+        this._setMaxTierFoodEnabled(Boolean(this._allZonesMode));
+
         if (this._allZonesMode) {
             // Hide single-zone controls
             if (zoneSelect) zoneSelect.style.display = 'none';
@@ -1707,6 +1770,42 @@ class CombatSimUI {
 
             // Hide checklist
             checklist.style.display = 'none';
+        }
+    }
+
+    /**
+     * Grey the Max-tier Food checkbox out, or bring it back.
+     * @param {boolean} enabled - Whether an all-zones mode is selected
+     * @private
+     */
+    _setMaxTierFoodEnabled(enabled) {
+        const label = this.panel?.querySelector('#mwi-csim-maxfood-label');
+        const input = this.panel?.querySelector('#mwi-csim-maxfood');
+        if (input) input.disabled = !enabled;
+        if (label) {
+            label.style.opacity = enabled ? '' : '0.45';
+            label.style.cursor = enabled ? 'pointer' : 'not-allowed';
+        }
+    }
+
+    /** @private */
+    async _persistMaxTierFoodPref() {
+        try {
+            await storage.set(ALL_ZONES_MAX_FOOD_KEY, this._maxTierFoodEnabled, 'settings');
+        } catch (error) {
+            console.error('[CombatSimUI] Failed to save the max-tier food preference:', error);
+        }
+    }
+
+    /** @private */
+    async _loadMaxTierFoodPref() {
+        try {
+            const saved = await storage.get(ALL_ZONES_MAX_FOOD_KEY, 'settings', false);
+            this._maxTierFoodEnabled = Boolean(saved);
+            const input = this.panel?.querySelector('#mwi-csim-maxfood');
+            if (input) input.checked = this._maxTierFoodEnabled;
+        } catch (error) {
+            console.error('[CombatSimUI] Failed to read the max-tier food preference:', error);
         }
     }
 
@@ -1857,6 +1956,8 @@ class CombatSimUI {
      */
     _allZonesHeadline(best) {
         const parts = [];
+        const foodNote = this._allZonesFoodNoteHtml();
+        if (foodNote) parts.push(foodNote);
         const name = (row) => `${row.zone} T${row.tier}`;
         if (best.xp) {
             parts.push(
@@ -1875,6 +1976,33 @@ class CombatSimUI {
         return `<div style="display:flex; flex-wrap:wrap; gap:6px 18px; font-size:11px; padding:0 0 6px 2px;">
             ${parts.join('')}
         </div>`;
+    }
+
+    /**
+     * The line that says this table is not about the food you carry.
+     *
+     * Above the table rather than in a column, and repeated in the status line
+     * and the exported filename: a max-food ranking mistaken for a real-loadout
+     * one is worse than no ranking, because it reads as a promise about zones
+     * you would in fact die in. The hover names the actual substitutions, so
+     * "max-tier food" is checkable rather than something to take on trust.
+     *
+     * @returns {string} HTML, empty when the run used the loadout as configured
+     * @private
+     */
+    _allZonesFoodNoteHtml() {
+        if (!this._allZonesMaxTierFood) return '';
+
+        const swaps = this._allZonesFoodSwaps || [];
+        const detail = swaps.length
+            ? swaps.map((swap) => `${swap.fromName} → ${swap.toName}`).join(', ')
+            : 'nothing to substitute — every food slot was already at the top of its kind';
+        const title = `${MAX_FOOD_TOOLTIP} This run: ${detail}.`;
+
+        return (
+            `<span title="${title}" style="${ROW_NOTE_STYLE} background:rgba(255,183,77,0.14); color:#ffb74d;">` +
+            `max-tier food</span>`
+        );
     }
 
     /**
@@ -2067,11 +2195,20 @@ class CombatSimUI {
             </div>
         `;
 
+        // A max-food run says so in the filename *and* in a column. The filename
+        // is what you see in a folder six weeks later; the column is what
+        // survives being pasted into a sheet that already has last month's run
+        // under it. Neither exists for an ordinary run, so nothing downstream
+        // of the normal export changes shape.
+        const maxTierFood = this._allZonesMaxTierFood;
+        if (maxTierFood) for (const row of rows) row.food = 'Max-tier';
+
         // Raw numbers, not the formatted cells: a spreadsheet cannot sort "1.2B"
-        this._addCsvExport(container, 'combatsim-all-zones', () => ({
+        this._addCsvExport(container, maxTierFood ? 'combatsim-all-zones-maxfood' : 'combatsim-all-zones', () => ({
             columns: [
                 { key: 'zone', label: 'Zone' },
                 { key: 'tier', label: 'Tier' },
+                ...(maxTierFood ? [{ key: 'food', label: 'Food' }] : []),
                 { key: 'encounters', label: 'Encounters/hr' },
                 { key: 'deaths', label: 'Deaths/hr' },
                 { key: 'score', label: 'Score' },
@@ -2828,6 +2965,20 @@ class CombatSimUI {
             return;
         }
 
+        // Sim-only, and only here. The substituted DTOs replace the local
+        // variable and nothing else — the editor keeps its own objects, the
+        // loadout store is never written, and the single-zone and Seek paths
+        // build their DTOs separately and never see this.
+        const useMaxTierFood = this._maxTierFoodEnabled && Boolean(this._allZonesMode);
+        let foodSwaps = [];
+        if (useMaxTierFood) {
+            const substituted = applyMaxTierFood(playerDTOs, gameData);
+            playerDTOs = substituted.playerDTOs;
+            foodSwaps = substituted.swaps;
+        }
+        this._allZonesMaxTierFood = useMaxTierFood;
+        this._allZonesFoodSwaps = foodSwaps;
+
         const communityBuffs = getCommunityBuffs();
 
         // UI: disable Simulate button, show progress
@@ -2907,12 +3058,14 @@ class CombatSimUI {
                     hours,
                     playerHrid,
                     fingerprint: gearFingerprint(playerDTOs),
+                    maxTierFood: useMaxTierFood,
                 })
             );
 
             this._switchTab('results');
             this._setStatus(
-                `All zones complete in ${totalElapsed}: ${zoneCount} zones · ${formatWithSeparator(hours)} hours each`
+                `All zones complete in ${totalElapsed}: ${zoneCount} zones · ${formatWithSeparator(hours)} hours each` +
+                    (useMaxTierFood ? ' · max-tier food' : '')
             );
         } catch (error) {
             if (error.message === 'Cancelled') {
@@ -4670,6 +4823,8 @@ class CombatSimUI {
         this._comparisonSlots = [];
         this._activeDetailIndex = null;
         this._allZonesResults = null;
+        this._allZonesMaxTierFood = false;
+        this._allZonesFoodSwaps = [];
         this._seekResults = null;
     }
 
