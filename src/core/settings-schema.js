@@ -1782,13 +1782,6 @@ export const settingsGroups = {
                 default: true,
                 help: 'Shows expected clear time and success rate on labyrinth skilling room tiles',
             },
-            labSim_critAura: {
-                id: 'labSim_critAura',
-                label: 'Lab Simulator: Analyse upgrades with the Critical Aura ability up',
-                type: 'checkbox',
-                default: false,
-                help: 'Puts the Critical Aura ability in the special slot, at the level you have learned it to, for the Upgrade analysis only. An upgrade is worth a different amount depending on what else is running, and a labyrinth fight is short enough to be decided by a crit — so the answer to "what should I buy next" can change with the aura up. Simulated at level 1 when you have not learned it, which is what buying the book would get you. Max Level is left simulating the abilities you actually have slotted. The Lab Simulator\'s Upgrade tab has the same switch',
-            },
             labyrinthRecommendTargetRate: {
                 id: 'labyrinthRecommendTargetRate',
                 label: 'Labyrinth: Recommend target clear rate (%)',

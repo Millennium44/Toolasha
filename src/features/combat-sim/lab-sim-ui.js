@@ -105,6 +105,16 @@ const UPGRADE_SCOPE_KEY = 'labSimUpgradeScope';
 const UPGRADE_LEVEL_SOURCE_KEY = 'labSimUpgradeLevelSource';
 
 /**
+ * Whether Ability Swaps is narrowed to the build guide's signature swaps.
+ *
+ * Remembered with the rest of the selection, and for the same reason: it is how
+ * swaps should be ranked rather than something about one particular run, and an
+ * unremembered narrowing means the next Analyze quietly costs several times as
+ * much across a whole labyrinth.
+ */
+const UPGRADE_SWAP_SIGNATURE_KEY = 'labSimSwapSignatureOnly';
+
+/**
  * The retired single `Mode` dropdown's value.
  *
  * Read once, on the way to the new keys, so anyone who had a mode remembered
@@ -168,6 +178,14 @@ const LAB_MODE_OPTIONS = {
                 width:55px; text-align:center; ${CHIP_INPUT_STYLE}"
                 title="Number of levels to add to each ability">
             <button id="mwi-labsim-ability-targets-toggle" title="Set a desired target level per ability instead of a uniform boost" style="${CHIP_BUTTON_STYLE}">Targets</button>
+        </span>`,
+    ability_swap: `
+        <span id="mwi-labsim-swap-group" data-lab-mode-options="ability_swap" style="display:none; align-items:center; gap:4px;">
+            <span style="color:#2a2a4a;">|</span>
+            <label id="mwi-labsim-swap-signature-label" title="Sim only the swaps that define the build: the aura the guide offers for the loadout's archetype (both sides of its OR), and the archetype's signature ability — Puncture for a spear, Maim for a sword, Shield Bash for a mace, Shield Bash or Retribution for a wark, Pestilent Shot for a bow, Steady Shot or Silencing Shot for a crossbow, Fireball, Water Strike or Entangle for magic. The rest of the guide's set is left out, which is most of the run. Across several fights each loadout is read for its own archetype, so a labyrinth mixing a melee and a magic loadout gets each build's own signature." style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;">
+                <input type="checkbox" id="mwi-labsim-swap-signature-only" style="margin:0; cursor:pointer;">
+                Signature only
+            </label>
         </span>`,
     combat_level: `
         <span id="mwi-labsim-combat-group" data-lab-mode-options="combat_level" style="display:none; align-items:center; gap:4px;">
@@ -629,10 +647,6 @@ class LabSimUI {
                 ${LAB_MODE_OPTIONS[dimension.key] || ''}
             </span>`
             ).join('')}
-            <label id="mwi-labsim-crit-aura-label" style="display:none; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;">
-                <input type="checkbox" id="mwi-labsim-crit-aura" style="margin:0; cursor:pointer;">
-                Crit Aura
-            </label>
             <button id="mwi-labsim-upgrade-run" style="
                 margin-left: auto; flex-shrink: 0;
                 background: ${ACCENT_BTN_BG};
@@ -980,12 +994,6 @@ class LabSimUI {
             .addEventListener('click', () => this._switchTab('skilling'));
 
         // Configure listeners
-        const critAura = this.panel.querySelector('#mwi-labsim-crit-aura');
-        if (critAura) {
-            critAura.checked = Boolean(config.getSetting('labSim_critAura'));
-            critAura.addEventListener('change', () => config.setSetting('labSim_critAura', critAura.checked));
-        }
-
         this.panel.querySelector('#mwi-labsim-monster').addEventListener('change', (e) => {
             this._onMonsterChange(e.target.value);
             // Every level source is per monster, so the readout is stale the
@@ -1030,6 +1038,9 @@ class LabSimUI {
         });
         this.panel.querySelector('#mwi-labsim-level-source').addEventListener('change', () => {
             this._refreshLevelSourceReadout();
+            void this._saveUpgradeSelection();
+        });
+        this.panel.querySelector('#mwi-labsim-swap-signature-only')?.addEventListener('change', () => {
             void this._saveUpgradeSelection();
         });
         void this._restoreUpgradeSelection();
@@ -1469,9 +1480,31 @@ class LabSimUI {
                 'settings'
             );
             await writeScoped(UPGRADE_LEVEL_SOURCE_KEY, this._getLevelSource(), 'settings');
+            // The box's own state, not the gated answer below: unchecking
+            // Ability Swaps would otherwise save a false over the tick and lose
+            // it the moment the set is checked again
+            await writeScoped(
+                UPGRADE_SWAP_SIGNATURE_KEY,
+                Boolean(this.panel?.querySelector('#mwi-labsim-swap-signature-only')?.checked),
+                'settings'
+            );
         } catch (error) {
             console.error('[LabSimUI] Failed to save upgrade selection:', error);
         }
+    }
+
+    /**
+     * Whether Ability Swaps is narrowed to the guide's signature swaps.
+     *
+     * False whenever the set itself is unchecked: the flag only ever qualifies
+     * swaps, and a remembered tick sitting behind an unchecked box should not
+     * read as an instruction to anything.
+     * @returns {boolean}
+     * @private
+     */
+    _getSignatureSwapsOnly() {
+        if (!this._getUpgradeDimensions().includes('ability_swap')) return false;
+        return Boolean(this.panel?.querySelector('#mwi-labsim-swap-signature-only')?.checked);
     }
 
     /**
@@ -1482,10 +1515,12 @@ class LabSimUI {
     async _restoreUpgradeSelection() {
         let selection;
         let savedLevelSource = null;
+        let savedSignatureOnly = false;
         try {
             const savedDimensions = await readScoped(UPGRADE_DIMENSIONS_KEY, 'settings', null);
             const savedScope = await readScoped(UPGRADE_SCOPE_KEY, 'settings', null);
             savedLevelSource = await readScoped(UPGRADE_LEVEL_SOURCE_KEY, 'settings', null);
+            savedSignatureOnly = Boolean(await readScoped(UPGRADE_SWAP_SIGNATURE_KEY, 'settings', false));
             const legacyMode =
                 savedDimensions === null && savedScope === null
                     ? await readScoped(LEGACY_UPGRADE_MODE_KEY, 'settings', null)
@@ -1510,6 +1545,8 @@ class LabSimUI {
         if (levelSourceSelect) {
             levelSourceSelect.value = sanitizeLabLevelSource(savedLevelSource, this._configureLevel());
         }
+        const signatureBox = this.panel.querySelector('#mwi-labsim-swap-signature-only');
+        if (signatureBox) signatureBox.checked = savedSignatureOnly;
         this._populateUpgradeTargets(selection.monsters);
         this._onUpgradeSelectionChanged();
     }
@@ -1625,10 +1662,9 @@ class LabSimUI {
             upgradeContent.style.display = 'flex';
             tabUpgrade.style.cssText = activeStyle;
             this._populateUpgradePlayerSelector();
-            // Both redrawn on the way in rather than only when the panel opens:
-            // an aura bought mid-session should not need a reload to be
-            // noticed, and neither should a skip level that has moved on
-            this._paintCritAura();
+            // Redrawn on the way in rather than only when the panel opens: a
+            // skip level that has moved on should not need a reload to be
+            // noticed
             this._populateUpgradeTargets();
             this._onUpgradeSelectionChanged();
         } else if (tab === 'skilling') {
@@ -2191,7 +2227,7 @@ class LabSimUI {
                         combatLevelTargets,
                         abilityTargets,
                         modes: plan.modes,
-                        extraCandidates: this._critAuraCandidates(fights[0]?.dto),
+                        signatureSwapsOnly: this._getSignatureSwapsOnly(),
                     },
                     ({ current, total, description, plan: runPlan }) => {
                         if (this._upgradeAborted) return;
@@ -2238,19 +2274,23 @@ class LabSimUI {
                     abilityTargetLevel,
                     combatLevelTargets,
                     abilityTargets,
+                    signatureSwapsOnly: this._getSignatureSwapsOnly(),
                     // The single-fight analysis takes one mode, and ranks
                     // anything else it is handed beside whatever that mode
                     // generated — which is how a multi-set selection lands in
                     // one table, against one baseline, at one shared seed
-                    extraCandidates: [
-                        ...this._extraDimensionCandidates(plan.extraModes, playerDTOs[playerIndex], gameData, {
+                    extraCandidates: this._extraDimensionCandidates(
+                        plan.extraModes,
+                        playerDTOs[playerIndex],
+                        gameData,
+                        {
                             abilityTargetLevel,
                             abilityLevelType,
                             combatLevelTargets,
                             abilityTargets,
-                        }),
-                        ...this._critAuraCandidates(playerDTOs[playerIndex]),
-                    ],
+                            signatureSwapsOnly: this._getSignatureSwapsOnly(),
+                        }
+                    ),
                 },
                 ({ current, total, description }) => {
                     if (this._upgradeAborted) return;
@@ -2292,15 +2332,25 @@ class LabSimUI {
      * @param {string[]} modes - Sets the analysis's own mode does not cover
      * @param {Object} playerDTO - The loadout being analyzed
      * @param {Object} gameData - From `buildGameDataPayload`
-     * @param {Object} options - `{ abilityTargetLevel, abilityLevelType, combatLevelTargets, abilityTargets }`
+     * @param {Object} options - `{ abilityTargetLevel, abilityLevelType, combatLevelTargets, abilityTargets,
+     *   signatureSwapsOnly }`
      * @returns {Array<Object>} Candidates, deduplicated by the analysis itself
      * @private
      */
     _extraDimensionCandidates(modes, playerDTO, gameData, options = {}) {
         if (!modes?.length || !playerDTO || !gameData) return [];
-        const { abilityTargetLevel, abilityLevelType, combatLevelTargets, abilityTargets } = options;
+        const {
+            abilityTargetLevel,
+            abilityLevelType,
+            combatLevelTargets,
+            abilityTargets,
+            signatureSwapsOnly = false,
+        } = options;
         try {
             return modes.flatMap((mode) =>
+                // The four zeros and nulls are the house and shrine arguments
+                // this call has no use for; the generator's options object is
+                // the last positional and has to be reached past them
                 generateCandidates(
                     playerDTO,
                     gameData,
@@ -2309,7 +2359,12 @@ class LabSimUI {
                     abilityLevelType,
                     false,
                     combatLevelTargets,
-                    abilityTargets
+                    abilityTargets,
+                    0,
+                    null,
+                    null,
+                    0,
+                    { signatureSwapsOnly }
                 )
             );
         } catch (error) {
@@ -4338,7 +4393,6 @@ class LabSimUI {
         this.panel.style.display = 'flex';
         bringPanelToFront(this.panel);
         this._populateMonsters();
-        this._paintCritAura();
 
         if (!this._editor.isInitialized()) {
             this._editor.initEditor();
@@ -4378,44 +4432,6 @@ class LabSimUI {
      */
     restore() {
         reopenIfLeftOpen(GEOMETRY_KEY, () => this.show({ remember: false }));
-    }
-
-    /**
-     * The DTO the simulation should use, given the Crit aura switch.
-     * @private
-     * @param {Object} dto - A player DTO
-     * @returns {Object} The same one, or a copy wearing the aura
-     */
-    _critAuraCandidates(playerDTO) {
-        if (!config.getSetting('labSim_critAura')) return [];
-        const candidate = criticalAuraCandidate(playerDTO, criticalAuraAbility());
-        return candidate ? [candidate] : [];
-    }
-
-    /**
-     * Draw the Crit Aura switch, and say which aura it means.
-     *
-     * Shown whether or not one is owned. Hidden only when the game data has no
-     * such item, which is not a state anybody is in.
-     * @private
-     */
-    _paintCritAura() {
-        const label = this.panel?.querySelector('#mwi-labsim-crit-aura-label');
-        const box = this.panel?.querySelector('#mwi-labsim-crit-aura');
-        if (!label || !box) return;
-
-        const aura = criticalAuraAbility();
-        label.style.display = aura ? 'inline-flex' : 'none';
-        if (!aura) return;
-
-        box.checked = Boolean(config.getSetting('labSim_critAura'));
-        const which = aura.learned
-            ? `your Critical Aura at level ${aura.level}`
-            : 'Critical Aura at level 1 — you have not learned it, so this is what the book would get you';
-        label.title =
-            `Weigh slotting ${which} as one of the upgrades, ranked beside the rest with its own cost. It is not ` +
-            'applied to the others: what you want to know is what the aura is worth compared with what you were ' +
-            'already considering, not what everything else is worth once you are wearing it.';
     }
 
     /**
@@ -4608,41 +4624,6 @@ class LabSimUI {
 }
 
 /**
- * The Critical Aura you have learned, at the level you have it at.
- *
- * It is an **ability**, not a trinket — a special-slot ability with a cooldown
- * that buffs the party's critical rate and damage. The first version of this
- * looked for it in the equipment, found nothing, and hid its own switch.
- *
- * Not gated on having learned it, which was the other mistake: the commonest
- * reason to ask what a fight looks like with a crit aura up is that you are
- * deciding whether to buy the book. Having learned it sets the level, since that
- * is the aura you would actually cast; not having it simulates level 1, which is
- * what the book would get you.
- *
- * Found by name in the ability data rather than by a hardcoded hrid, so one
- * renamed by an update is still found.
- *
- * @returns {{hrid: string, level: number, special: boolean, learned: boolean}|null}
- *   Null only when the game data has no such ability at all
- */
-export function criticalAuraAbility() {
-    const abilityDetailMap = dataManager.getInitClientData()?.abilityDetailMap || {};
-    const hrid = Object.keys(abilityDetailMap).find((key) =>
-        /critical\s*aura/i.test(abilityDetailMap[key]?.name || key.split('/').pop().replace(/_/g, ' '))
-    );
-    if (!hrid) return null;
-
-    const learned = (dataManager.characterData?.characterAbilities || []).find((entry) => entry?.abilityHrid === hrid);
-    return {
-        hrid,
-        level: Math.max(1, Math.floor(Number(learned?.level) || 1)),
-        special: Boolean(abilityDetailMap[hrid]?.isSpecialAbility),
-        learned: Boolean(learned),
-    };
-}
-
-/**
  * What a whole-run analysis has just committed to, in one sentence.
  *
  * Nothing about the Upgrade tab is refused for being large any more — ability
@@ -4666,51 +4647,6 @@ export function describeAllFightsPlan(plan) {
         `${head}. Big enough that each one runs ${Math.round(plan.trialScale * 100)}% of the ${plan.requestedHours}h ` +
         'asked for — every fight is still simulated, the win rates are just noisier. Stop cancels at any point.'
     );
-}
-
-/**
- * The Critical Aura as one upgrade to weigh, rather than a change to everything.
- *
- * The first version put the aura on before the analysis ran, which answered a
- * different question: every upgrade was then measured against a build already
- * wearing it. What you want to know is what the aura is worth *compared with*
- * the upgrades you were considering — so it goes in as a candidate and gets
- * ranked beside them, with its own cost.
- *
- * A special-slot ability replaces the special slot, which holds exactly one
- * thing. A non-special one takes the first free slot, and finding none, is left
- * out rather than dropping a combat ability chosen on purpose.
- *
- * @param {Object} playerDTO - The player it would be slotted on
- * @param {{hrid: string, level: number, special: boolean}} aura - From `criticalAuraAbility`
- * @returns {Object|null} A candidate for the upgrade analysis, or null when it
- *   is already slotted at that level or there is nowhere to put it
- */
-export function criticalAuraCandidate(playerDTO, aura) {
-    if (!playerDTO || !aura) return null;
-
-    const abilities = playerDTO.abilities || [];
-    const slotIndex = aura.special ? 0 : abilities.findIndex((ability, index) => index > 0 && !ability);
-    if (slotIndex < 0) return null;
-
-    const current = abilities[slotIndex];
-    // Already running it at that level: there is no upgrade to measure
-    if (current?.hrid === aura.hrid && current.level >= aura.level) return null;
-
-    const name = 'Critical Aura';
-    const from = current
-        ? `${dataManager.getInitClientData()?.abilityDetailMap?.[current.hrid]?.name || current.hrid.split('/').pop()} → `
-        : '';
-
-    return {
-        slot: `ability_${slotIndex}`,
-        currentHrid: current?.hrid || aura.hrid,
-        currentLevel: current?.level || 0,
-        upgradeHrid: aura.hrid,
-        upgradeLevel: aura.level,
-        description: `${from}${name} (Lv${aura.level})`,
-        type: 'ability_swap',
-    };
 }
 
 const labSimUI = new LabSimUI();

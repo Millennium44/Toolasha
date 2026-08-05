@@ -17,6 +17,7 @@ import {
 import { runSimulation, runLabyrinthSimulation, getMaxWorkers } from './combat-sim-runner.js';
 import { buildBuffDrinkPools, estimateFoodSimCount, runFoodOptimization } from './food-optimizer.js';
 import { generateLabArmorCandidates, labelItemWithLevel } from './lab-armor-candidates.js';
+import { buildGuidePlan } from './build-guide.js';
 import { bestGearForSkill } from './skilling-gear-candidates.js';
 import { deriveSeed, randomSeed } from './engine/rng.js';
 import labyrinthClearRate from '../combat/labyrinth-clear-rate.js';
@@ -279,12 +280,18 @@ function addPhiloAccessoryCandidates(playerDTO, gameData, candidates) {
 
 /**
  * Get the player's primary combat style from their weapon.
+ *
+ * Both weapon slots, because a two-handed weapon leaves `main_hand` empty — and
+ * reading only the main hand made every bow, staff, bulwark and trident come
+ * back 'unknown', which `isAbilityCompatible` reads as "offer universal
+ * abilities only". Two-handed builds were silently getting no elemental or
+ * ranged swap candidates at all.
  * @param {Object} playerDTO
  * @param {Object} gameData
  * @returns {string} e.g., 'slash', 'stab', 'smash', 'ranged', 'magic'
  */
 function getPlayerCombatStyle(playerDTO, gameData) {
-    const weapon = playerDTO.equipment['/equipment_types/main_hand'];
+    const weapon = playerDTO.equipment?.[MAIN_HAND_SLOT] || playerDTO.equipment?.[TWO_HAND_SLOT];
     if (!weapon) return 'unknown';
     const weaponDetails = gameData.itemDetailMap[weapon.hrid];
     const stats = weaponDetails?.equipmentDetail?.combatStats;
@@ -947,6 +954,106 @@ function candidateTaskDamage(candidate, gameData) {
 }
 
 /**
+ * The slot a fill candidate should land in on this particular ability bar.
+ *
+ * The special slot holds exactly one thing and is the same slot on every
+ * loadout, so a special-slot fill is slot 0 or nowhere. Anything else takes the
+ * first free slot past it, which differs from bar to bar — hence resolving it
+ * against the bar in hand rather than trusting the index the candidate was born
+ * with.
+ *
+ * @param {Array} abilities - A loadout's ability bar
+ * @param {string} slot - The candidate's slot, e.g. `ability_3`
+ * @returns {number} The slot index, or -1 when this bar has nothing free
+ */
+function freeAbilitySlot(abilities, slot) {
+    if (slot === 'ability_0') return abilities.length > 0 && !abilities[0] ? 0 : -1;
+    return abilities.findIndex((ability, index) => index > 0 && !ability);
+}
+
+/**
+ * Whether the guide would let one ability replace another.
+ *
+ * Two rules, and they are the whole of what "based on the build guide" means
+ * for a swap:
+ *
+ * - An ability the guide does **not** ask for is fair game to replace. That is
+ *   the point — the off-guide ability in slot 4 is what a spear build wants
+ *   Puncture in.
+ * - An ability the guide **does** ask for is left alone, unless the newcomer is
+ *   its OR-alternative. This is what keeps `Critical Aura → Fierce Aura` and
+ *   `Shield Bash → Retribution` on the table while stopping the generator
+ *   proposing that a spear build drop the Frenzy the guide just asked it to
+ *   run in favour of Puncture.
+ *
+ * Group membership is always read from the archetype's *whole* set, never from
+ * the signature-only subset — otherwise signature-only mode would treat every
+ * non-signature guide ability as off-guide and offer to replace it.
+ *
+ * @param {Object} guide - From `buildGuidePlan`
+ * @param {string} currentHrid - The equipped ability that would be displaced
+ * @param {string} incomingHrid - The ability being offered
+ * @returns {boolean}
+ */
+function guideSwapAllowed(guide, currentHrid, incomingHrid) {
+    const currentGroup = guide.memberOf.get(currentHrid);
+    if (currentGroup === undefined) return true;
+    return guide.memberOf.get(incomingHrid) === currentGroup;
+}
+
+/**
+ * Guide abilities for the slots a loadout has left empty.
+ *
+ * An empty slot is the commonest reason a build is missing its aura, and the
+ * slot loop above skips empty slots entirely — it is built around replacing one
+ * ability with another. This fills them instead: each guide ability the loadout
+ * is not already casting goes into the first slot that can hold it, once, at
+ * the level of the book you already own (Lv1 when you own none, which is what
+ * buying the book would get you).
+ *
+ * Only on the guide path. Doing it for the fallback path would offer every
+ * ability in the game for every empty slot.
+ *
+ * @param {Object} playerDTO - Player DTO with abilities
+ * @param {Object} gameData - Game data payload
+ * @param {Object} guide - From `buildGuidePlan`
+ * @param {string} playerStyle - From `getPlayerCombatStyle`
+ * @param {Array} candidates - Candidate list (mutated)
+ */
+function addGuideEmptySlotCandidates(playerDTO, gameData, guide, playerStyle, candidates) {
+    const abilities = playerDTO.abilities || [];
+    const equipped = new Set(abilities.filter((a) => a).map((a) => a.hrid));
+    const specialSlotFree = abilities.length > 0 && !abilities[0];
+    const firstFreeNormal = abilities.findIndex((ability, index) => index > 0 && !ability);
+
+    for (const abHrid of guide.offers) {
+        const abDetail = gameData.abilityDetailMap?.[abHrid];
+        if (!abDetail || equipped.has(abHrid)) continue;
+        const slotIdx = abDetail.isSpecialAbility ? (specialSlotFree ? 0 : -1) : firstFreeNormal;
+        if (slotIdx < 0) continue;
+        if (!isAbilityCompatible(getAbilityCombatStyle(abDetail), playerStyle)) continue;
+
+        const level = Math.max(1, ownedAbility(abHrid)?.level || 0);
+        const swapName = abDetail.name || abHrid.split('/').pop();
+        candidates.push({
+            slot: `ability_${slotIdx}`,
+            // No `replacesHrid`: this one is about filling a slot rather than
+            // displacing an ability. `fillsFreeSlot` says so out loud, because
+            // the slot number on it belongs to the loadout it was generated
+            // from — pooled across a labyrinth it would otherwise be written
+            // over whatever another loadout keeps in that slot.
+            fillsFreeSlot: true,
+            currentHrid: abHrid,
+            currentLevel: 0,
+            upgradeHrid: abHrid,
+            upgradeLevel: level,
+            description: `Empty slot → ${swapName} (Lv${level})`,
+            type: 'ability_swap',
+        });
+    }
+}
+
+/**
  * Generate upgrade candidates for a player's equipment and/or abilities.
  * @param {Object} playerDTO - Player DTO with equipment
  * @param {Object} gameData - Game data from buildGameDataPayload()
@@ -955,6 +1062,7 @@ function candidateTaskDamage(candidate, gameData) {
  * @param {string} [abilityLevelType='increment'] - 'increment' (add N levels) or 'target' (absolute level)
  * @param {Object} [communityBuffs=null] - Configured community buffs, for the 'community_buff' set
  * @param {number} [guildShrineTargetLevel=0] - Absolute shrine buff level to buy up to; 0 means one level up
+ * @param {Object} [options] - `{ signatureSwapsOnly }`; see the ability_swap branch
  * @returns {Array} Candidates: [{slot, currentHrid, currentLevel, upgradeHrid, upgradeLevel, description, type}]
  */
 export function generateCandidates(
@@ -969,7 +1077,8 @@ export function generateCandidates(
     houseTargetLevel = 0,
     houseTargets = null,
     communityBuffs = null,
-    guildShrineTargetLevel = 0
+    guildShrineTargetLevel = 0,
+    options = {}
 ) {
     const candidates = [];
 
@@ -1303,6 +1412,15 @@ export function generateCandidates(
     } else if (mode === 'ability_level' || mode === 'ability_swap') {
         const playerStyle = getPlayerCombatStyle(playerDTO, gameData);
         const equippedAbilityHrids = new Set(playerDTO.abilities.filter((a) => a).map((a) => a.hrid));
+        // What the community build guide says this loadout should be casting.
+        // Null when the archetype cannot be read off the weapon, or when the
+        // guide's abilities are not in this game data at all — either way the
+        // loop below falls back to offering every style-compatible ability,
+        // which is the behaviour this set has always had.
+        const guide =
+            mode === 'ability_swap'
+                ? buildGuidePlan(playerDTO, gameData, { signatureOnly: Boolean(options.signatureSwapsOnly) })
+                : null;
         const abilityTargetsMap =
             abilityTargets && typeof abilityTargets === 'object' && Object.keys(abilityTargets).length > 0
                 ? abilityTargets
@@ -1345,12 +1463,18 @@ export function generateCandidates(
                     });
                 }
             } else {
-                // Swap candidates: other compatible abilities not already equipped
-                for (const [abHrid, abDetail] of Object.entries(gameData.abilityDetailMap)) {
+                // Swap candidates: other compatible abilities not already equipped.
+                // With a guide, "other" is the archetype's own ability set rather
+                // than every ability in the game — see `guideSwapAllowed`.
+                const offered = guide ? guide.offers : Object.keys(gameData.abilityDetailMap);
+                for (const abHrid of offered) {
+                    const abDetail = gameData.abilityDetailMap[abHrid];
+                    if (!abDetail) continue;
                     if (equippedAbilityHrids.has(abHrid)) continue;
                     if (abDetail.isSpecialAbility && slotIdx !== 0) continue;
                     if (!abDetail.isSpecialAbility && slotIdx === 0) continue;
                     if (abHrid === '/abilities/promote') continue;
+                    if (guide && !guideSwapAllowed(guide, ability.hrid, abHrid)) continue;
 
                     const abStyle = getAbilityCombatStyle(abDetail);
                     if (!isAbilityCompatible(abStyle, playerStyle)) continue;
@@ -1375,6 +1499,8 @@ export function generateCandidates(
                 }
             }
         }
+
+        if (guide) addGuideEmptySlotCandidates(playerDTO, gameData, guide, playerStyle, candidates);
     }
 
     if (mode === 'combat_level') {
@@ -2556,7 +2682,7 @@ export function explainUpgradeCost(candidate, gameData) {
  * Run the full upgrade analysis: baseline sim + one sim per candidate.
  * @param {Object} params - { playerDTOs, playerIndex, zoneHrid, difficultyTier, hours, communityBuffs, upgradeModes,
  *   upgradeMode, abilityLevelType, abilityTargetLevel, skipBackSlot, combatLevelTargets, charmTier,
- *   houseTargetLevel, houseTargets, guildShrineTargetLevel, optimizeFood }
+ *   houseTargetLevel, houseTargets, guildShrineTargetLevel, optimizeFood, signatureSwapsOnly }
  * @param {Function} onProgress - Called with { current, total, description }
  * @param {Object} [options] - { abortSignal: () => boolean }
  * @returns {Promise<Object>} { baseline, results: [{candidate, cost, metrics, deltas, goldPer}], food }
@@ -2581,6 +2707,7 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
         houseTargets = null,
         guildShrineTargetLevel = 0,
         optimizeFood = false,
+        signatureSwapsOnly = false,
         extraCandidates = [],
     } = params;
     const { abortSignal } = options;
@@ -2609,7 +2736,8 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
             houseTargetLevel,
             houseTargets,
             communityBuffs,
-            guildShrineTargetLevel
+            guildShrineTargetLevel,
+            { signatureSwapsOnly }
         )
     );
     // Candidates the caller asked for by name, alongside whatever the mode
@@ -3511,6 +3639,8 @@ function explainLabCandidateCost(candidate, gameData) {
  * @param {Array} [params.labyrinthCombatBuffs] - Combat buffs from labyrinth upgrades
  * @param {string} params.upgradeMode - 'equipment', 'ability_level', or 'ability_swap'
  * @param {number} [params.abilityTargetLevel] - Target ability level
+ * @param {boolean} [params.signatureSwapsOnly] - Restrict ability swaps to the build guide's
+ *   aura options and the archetype's signature ability
  * @param {Function} onProgress - Called with { current, total, description }
  * @param {Object} [options] - { abortSignal: () => boolean }
  * @returns {Promise<Object>} { baseline, results: [{candidate, costType, ...}] }
@@ -3531,6 +3661,7 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
         skipBackSlot,
         combatLevelTargets,
         abilityTargets,
+        signatureSwapsOnly = false,
         extraCandidates = [],
     } = params;
     const { abortSignal } = options;
@@ -3557,7 +3688,12 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
             abilityLevelType,
             skipBackSlot,
             combatLevelTargets,
-            abilityTargets
+            abilityTargets,
+            0,
+            null,
+            null,
+            0,
+            { signatureSwapsOnly }
         )
     );
 
@@ -4118,6 +4254,11 @@ function allFightsPoolKey(candidate) {
     if (candidate.type === 'ability_swap' && candidate.replacesHrid) {
         return `ability_swap:${candidate.replacesHrid}->${candidate.upgradeHrid}`;
     }
+    // Filling a free slot is one decision too — "start casting Fireball" — and
+    // the slot it lands in is whichever one each loadout has going spare
+    if (candidate.type === 'ability_swap' && candidate.fillsFreeSlot) {
+        return `ability_fill:${candidate.upgradeHrid}`;
+    }
     return candidateAssignmentKey(candidate);
 }
 
@@ -4142,6 +4283,17 @@ function pooledSwapCandidate(candidate, gameData) {
             .split('/')
             .pop()
             .replace(/_/g, ' ');
+    // A fill displaces nothing, so there is no "X → Y" to draw and its own
+    // description already says what it is
+    if (candidate.fillsFreeSlot) {
+        return {
+            ...candidate,
+            description: `Free slot → ${nameOf(candidate.upgradeHrid)}`,
+            caveat:
+                'Weighed in every loadout with a slot free for it, at the level of the book you own. The cost is ' +
+                'for taking that book to the level shown.',
+        };
+    }
     return {
         ...candidate,
         description: `${nameOf(candidate.replacesHrid || candidate.currentHrid)} → ${nameOf(candidate.upgradeHrid)}`,
@@ -4240,7 +4392,8 @@ export function labAllFightsTrialBudget(sims, hours) {
  * coverage — see `labAllFightsTrialBudget`. A fight a candidate touches is
  * always simulated.
  *
- * @param {Object} params - { fights, crates, hours, communityBuffs, labyrinthCombatBuffs, abilityTargetLevel, combatLevelTargets }
+ * @param {Object} params - { fights, crates, hours, communityBuffs, labyrinthCombatBuffs, abilityTargetLevel,
+ *   combatLevelTargets, signatureSwapsOnly }
  *   where fights = [{ monsterHrid, monsterName, roomLevel, dto, loadoutName }]
  * @param {Function} onProgress - Called with { current, total, description }, and
  *   once before anything runs with a `plan` of what the run comes to
@@ -4260,6 +4413,7 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
         combatLevelTargets,
         abilityTargets,
         modes = ['combat_level'],
+        signatureSwapsOnly = false,
         extraCandidates = [],
     } = params;
     const { abortSignal } = options;
@@ -4312,7 +4466,12 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
                 'increment',
                 false,
                 combatLevelTargets,
-                abilityTargets
+                abilityTargets,
+                0,
+                null,
+                null,
+                0,
+                { signatureSwapsOnly }
             );
             for (const candidate of fightCandidates) {
                 pool(candidate.type === 'ability_swap' ? pooledSwapCandidate(candidate, gameData) : candidate);
@@ -5093,10 +5252,19 @@ export function candidateAppliesToDTO(candidate, dto, gameData = null) {
             if (abilities.some((ability) => ability?.hrid === candidate.upgradeHrid)) return false;
             return abilities.some((ability) => ability?.hrid === candidate.replacesHrid);
         }
-        // A hand-built swap that names no such ability — the Critical Aura row,
-        // which is about filling a slot rather than replacing one thing with
-        // another — brings its own, so it applies unless this loadout is already
-        // running it at least that high
+        // A swap that fills a free slot rather than replacing anything. The slot
+        // number on it belongs to the loadout it was generated from, so what is
+        // asked here is whether *this* loadout has one going spare — a loadout
+        // with a full bar would have the newcomer written over an ability it
+        // chose on purpose, which is a different change from the one the row
+        // names.
+        if (candidate.fillsFreeSlot) {
+            if (abilities.some((ability) => ability?.hrid === candidate.upgradeHrid)) return false;
+            return freeAbilitySlot(abilities, candidate.slot) >= 0;
+        }
+        // A hand-built swap that names no such ability — a row about filling a
+        // slot rather than replacing one thing with another — brings its own, so
+        // it applies unless this loadout is already running it at least that high
         const slotIdx = parseInt(candidate.slot.split('_')[1]);
         const existing = abilities[slotIdx];
         return !(existing?.hrid === candidate.upgradeHrid && (existing.level || 0) >= candidate.upgradeLevel);
@@ -5243,7 +5411,10 @@ export function applyCandidateToDTO(playerDTO, candidate) {
                   ? candidate.replacesHrid
                   : null;
         const byName = follows ? (dto.abilities || []).findIndex((ability) => ability?.hrid === follows) : -1;
-        const slotIdx = byName >= 0 ? byName : parseInt(candidate.slot.split('_')[1]);
+        // A fill goes into whichever slot *this* loadout has spare, for the same
+        // reason: the index it was generated with belongs to another bar
+        const fillIdx = candidate.fillsFreeSlot ? freeAbilitySlot(dto.abilities || [], candidate.slot) : -1;
+        const slotIdx = byName >= 0 ? byName : fillIdx >= 0 ? fillIdx : parseInt(candidate.slot.split('_')[1]);
         const existing = dto.abilities[slotIdx];
         const swapLevel =
             candidate.type === 'ability_swap' && byName >= 0 ? (existing?.level ?? candidate.upgradeLevel) : null;

@@ -4060,3 +4060,265 @@ describe('the XP a skilling labyrinth room pays out', () => {
         expect(experience.xpPerRoom).toBeCloseTo(1300, 6);
     });
 });
+
+/**
+ * Ability swaps, once the community build guide decides what to offer.
+ *
+ * The old generator offered every style-compatible ability for every slot,
+ * which for a fire mage meant simulating Puncture — a stab ability the build
+ * cannot use, in a slot the guide has an answer for. The guide narrows the
+ * question to the build the weapon says you are playing, and these tests are
+ * about the three rules that narrowing has to obey: only this archetype's
+ * abilities, only in place of abilities the guide did not ask for (the aura's
+ * OR-half excepted), and a full fallback to the old behaviour whenever the
+ * archetype cannot be read rather than a confident wrong answer.
+ */
+describe('guide-driven ability swaps', () => {
+    const TWO_HAND_SLOT = '/equipment_types/two_hand';
+
+    /** Every ability these tests need, as game data. Auras are special-slot. */
+    const ABILITIES = {
+        '/abilities/critical_aura': { name: 'Critical Aura', isSpecialAbility: true },
+        '/abilities/fierce_aura': { name: 'Fierce Aura', isSpecialAbility: true },
+        '/abilities/mystic_aura': { name: 'Mystic Aura', isSpecialAbility: true },
+        '/abilities/invincible': { name: 'Invincible', isSpecialAbility: true },
+        '/abilities/frenzy': { name: 'Frenzy' },
+        '/abilities/berserk': { name: 'Berserk' },
+        '/abilities/precision': { name: 'Precision' },
+        '/abilities/puncture': { name: 'Puncture' },
+        '/abilities/maim': { name: 'Maim' },
+        '/abilities/shield_bash': { name: 'Shield Bash' },
+        '/abilities/retribution': { name: 'Retribution' },
+        '/abilities/toughness': { name: 'Toughness' },
+        '/abilities/spikeshell': { name: 'Spikeshell' },
+        '/abilities/elemental_affinity': { name: 'Elemental Affinity' },
+        '/abilities/smoke_burst': { name: 'Smoke Burst' },
+        '/abilities/fireball': { name: 'Fireball' },
+        '/abilities/entangle': { name: 'Entangle' },
+        '/abilities/smack': { name: 'Smack' },
+    };
+
+    const ITEMS = {
+        '/items/blazing_trident': {
+            name: 'Blazing Trident',
+            equipmentDetail: {
+                type: TWO_HAND_SLOT,
+                combatStats: { magicDamage: 50, damageType: '/damage_types/fire' },
+            },
+        },
+        '/items/griffin_bulwark': {
+            name: 'Griffin Bulwark',
+            equipmentDetail: { type: TWO_HAND_SLOT, combatStats: { smashDamage: 40 } },
+        },
+        '/items/furious_spear': {
+            name: 'Furious Spear',
+            equipmentDetail: { type: MAIN_HAND, combatStats: { stabDamage: 40 } },
+        },
+        '/items/driftwood_bat': {
+            name: 'Driftwood Bat',
+            equipmentDetail: { type: MAIN_HAND, combatStats: {} },
+        },
+    };
+
+    const data = () => ({ actionDetailMap: {}, itemDetailMap: ITEMS, abilityDetailMap: ABILITIES });
+
+    /** A loadout: one weapon in `slot`, and the ability bar as given */
+    const loadout = (slot, hrid, abilities) => ({ equipment: { [slot]: { hrid } }, abilities });
+
+    const swaps = (dto, options) =>
+        generateCandidates(dto, data(), 'ability_swap', 0, 'increment', false, null, null, 0, null, null, 0, options);
+
+    const incoming = (candidates) => [...new Set(candidates.map((c) => c.upgradeHrid))].sort();
+
+    beforeEach(() => {
+        character.characterAbilities = [];
+    });
+
+    /** A fire mage with one off-guide ability and two empty slots */
+    const fireMage = () =>
+        loadout(TWO_HAND_SLOT, '/items/blazing_trident', [
+            { hrid: '/abilities/critical_aura', level: 20 },
+            { hrid: '/abilities/elemental_affinity', level: 40 },
+            { hrid: '/abilities/smack', level: 30 },
+            null,
+            null,
+        ]);
+
+    test('a fire mage is offered the fire set and nothing from another build', () => {
+        const candidates = swaps(fireMage());
+
+        expect(incoming(candidates)).toEqual([
+            '/abilities/fireball',
+            '/abilities/mystic_aura',
+            '/abilities/precision',
+            '/abilities/smoke_burst',
+        ]);
+        // Not one melee, ranged or other-element ability in sight — the old
+        // generator offered all of them
+        for (const stranger of ['/abilities/puncture', '/abilities/maim', '/abilities/entangle', '/abilities/frenzy']) {
+            expect(incoming(candidates)).not.toContain(stranger);
+        }
+    });
+
+    test('the off-guide ability is what gets replaced', () => {
+        const candidates = swaps(fireMage());
+        const replaced = new Set(candidates.filter((c) => c.replacesHrid).map((c) => c.replacesHrid));
+
+        // Smack is not in the fire set, so it is the one on the way out; the
+        // Elemental Affinity the guide asked for is left exactly where it is
+        expect(replaced).toContain('/abilities/smack');
+        expect(replaced).not.toContain('/abilities/elemental_affinity');
+    });
+
+    test('except the aura, which its OR-alternative may replace', () => {
+        const candidates = swaps(fireMage());
+        const auraSwap = candidates.find((c) => c.upgradeHrid === '/abilities/mystic_aura');
+
+        // Critical Aura is on-guide, and would be untouchable under the rule
+        // above — but Mystic Aura is the other half of the same OR, which is
+        // the choice the guide is actually asking the player to make
+        expect(auraSwap).toMatchObject({
+            slot: 'ability_0',
+            replacesHrid: '/abilities/critical_aura',
+            upgradeLevel: 20,
+        });
+    });
+
+    test('and the empty slots get filled, at the level of the book you own', () => {
+        character.characterAbilities = [{ abilityHrid: '/abilities/fireball', level: 37, experience: 0 }];
+        const filled = swaps(fireMage()).filter((c) => !c.replacesHrid);
+
+        // One candidate per ability, into the first free slot — not one per
+        // ability per empty slot
+        expect(filled.every((c) => c.slot === 'ability_3')).toBe(true);
+        expect(incoming(filled)).toEqual(['/abilities/fireball', '/abilities/precision', '/abilities/smoke_burst']);
+        const fireball = filled.find((c) => c.upgradeHrid === '/abilities/fireball');
+        expect(fireball.upgradeLevel).toBe(37);
+        expect(fireball.description).toBe('Empty slot → Fireball (Lv37)');
+        // One you have never read is what the book would get you
+        expect(filled.find((c) => c.upgradeHrid === '/abilities/precision').upgradeLevel).toBe(1);
+    });
+
+    test('a wark gets the defensive set, not the mace set its damage type says', () => {
+        const wark = loadout(TWO_HAND_SLOT, '/items/griffin_bulwark', [
+            { hrid: '/abilities/invincible', level: 10 },
+            { hrid: '/abilities/smack', level: 30 },
+            null,
+            null,
+            null,
+        ]);
+        const candidates = swaps(wark);
+
+        expect(incoming(candidates)).toEqual([
+            '/abilities/precision',
+            '/abilities/retribution',
+            '/abilities/shield_bash',
+            '/abilities/spikeshell',
+            '/abilities/toughness',
+        ]);
+        // A bulwark measures as smash, and the mace build's Frenzy/Berserk/aura
+        // are exactly what a wark does not run
+        expect(incoming(candidates)).not.toContain('/abilities/frenzy');
+        expect(incoming(candidates)).not.toContain('/abilities/critical_aura');
+        // Invincible fills the special slot and is already slotted, so nothing
+        // is offered against it
+        expect(candidates.some((c) => c.replacesHrid === '/abilities/invincible')).toBe(false);
+    });
+
+    test('signature-only narrows to the aura choice and the build-defining ability', () => {
+        const candidates = swaps(fireMage(), { signatureSwapsOnly: true });
+
+        expect(incoming(candidates)).toEqual(['/abilities/fireball', '/abilities/mystic_aura']);
+        // Precision is still on-guide even though it is not offered here, so
+        // nothing proposes replacing the guide's own Elemental Affinity with
+        // the signature
+        expect(candidates.some((c) => c.replacesHrid === '/abilities/elemental_affinity')).toBe(false);
+    });
+
+    test('a wark signature keeps both halves of its OR', () => {
+        const wark = loadout(TWO_HAND_SLOT, '/items/griffin_bulwark', [
+            { hrid: '/abilities/invincible', level: 10 },
+            { hrid: '/abilities/smack', level: 30 },
+            null,
+            null,
+            null,
+        ]);
+        expect(incoming(swaps(wark, { signatureSwapsOnly: true }))).toEqual([
+            '/abilities/retribution',
+            '/abilities/shield_bash',
+        ]);
+    });
+
+    test('a loadout already running the whole guide is offered nothing at all', () => {
+        const done = loadout(MAIN_HAND, '/items/furious_spear', [
+            { hrid: '/abilities/fierce_aura', level: 20 },
+            { hrid: '/abilities/frenzy', level: 20 },
+            { hrid: '/abilities/berserk', level: 20 },
+            { hrid: '/abilities/precision', level: 20 },
+            { hrid: '/abilities/puncture', level: 20 },
+        ]);
+
+        // Everything but the other aura, which is the one comparison left
+        expect(incoming(swaps(done))).toEqual(['/abilities/critical_aura']);
+    });
+
+    test('a slot fill goes into whichever slot the loadout it is measured against has spare', () => {
+        // Pooled across a labyrinth, a fill is one decision — "start casting
+        // Fireball" — measured against every loadout with room for it. The slot
+        // index it was generated with belongs to one bar, and writing to it in
+        // another would overwrite an ability that loadout chose on purpose
+        const fill = swaps(fireMage()).find((c) => c.upgradeHrid === '/abilities/fireball' && c.fillsFreeSlot);
+        expect(fill.slot).toBe('ability_3');
+
+        const otherBar = {
+            abilities: [
+                { hrid: '/abilities/mystic_aura', level: 20 },
+                null,
+                { hrid: '/abilities/precision', level: 10 },
+                { hrid: '/abilities/smoke_burst', level: 10 },
+                { hrid: '/abilities/elemental_affinity', level: 10 },
+            ],
+        };
+        expect(candidateAppliesToDTO(fill, otherBar)).toBe(true);
+        expect(applyCandidateToDTO(otherBar, fill).abilities[1]).toMatchObject({ hrid: '/abilities/fireball' });
+        // And the abilities it had are all still there
+        expect(applyCandidateToDTO(otherBar, fill).abilities[3].hrid).toBe('/abilities/smoke_burst');
+    });
+
+    test('and does not apply to a loadout with no room for it', () => {
+        const fill = swaps(fireMage()).find((c) => c.upgradeHrid === '/abilities/fireball' && c.fillsFreeSlot);
+        const fullBar = {
+            abilities: [
+                { hrid: '/abilities/mystic_aura', level: 20 },
+                { hrid: '/abilities/precision', level: 10 },
+                { hrid: '/abilities/smoke_burst', level: 10 },
+                { hrid: '/abilities/elemental_affinity', level: 10 },
+                { hrid: '/abilities/smack', level: 10 },
+            ],
+        };
+        expect(candidateAppliesToDTO(fill, fullBar)).toBe(false);
+        // Nor to one already casting it
+        const already = { abilities: [null, { hrid: '/abilities/fireball', level: 5 }, null, null, null] };
+        expect(candidateAppliesToDTO(fill, already)).toBe(false);
+    });
+
+    test('an unreadable weapon falls all the way back to every compatible ability', () => {
+        // A weapon with no damage stats places no build, and a wrong build
+        // would hide the swaps that matter — so the old behaviour stands
+        const unknown = loadout(MAIN_HAND, '/items/driftwood_bat', [
+            { hrid: '/abilities/critical_aura', level: 20 },
+            { hrid: '/abilities/smack', level: 30 },
+            null,
+            null,
+            null,
+        ]);
+        const offered = incoming(swaps(unknown));
+
+        expect(offered).toContain('/abilities/puncture');
+        expect(offered).toContain('/abilities/entangle');
+        expect(offered).toContain('/abilities/maim');
+        // And it is genuinely everything: every non-special ability in the data
+        // bar the one already slotted
+        expect(offered.length).toBe(Object.keys(ABILITIES).length - 2);
+    });
+});

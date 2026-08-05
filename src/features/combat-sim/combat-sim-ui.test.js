@@ -2079,3 +2079,104 @@ describe('the guild shrine target level', () => {
         expect(group.style.display).toBe('inline-flex');
     });
 });
+
+/**
+ * The Ability Swaps sub-option.
+ *
+ * Swaps are now generated from the community build guide, which means there is
+ * a smaller question inside the small one: the aura and the archetype's
+ * signature ability are the two choices that define a build, and the rest of
+ * the guide's set is what everybody runs anyway. Restricting to those two is
+ * most of the run's cost, so the switch has to survive being closed.
+ */
+describe('the Signature-only swap option', () => {
+    beforeEach(() => {
+        mocks.upgradeResult = { baseline: null, results: [], food: null };
+        mocks.onRun = null;
+        mocks.store.clear();
+        ui.buildPanel();
+    });
+
+    afterEach(() => {
+        ui.destroy();
+    });
+
+    /** Set up a runnable Upgrade tab with only the swap set checked */
+    function swapsOnly() {
+        const zone = ui.panel.querySelector('#mwi-csim-zone');
+        zone.innerHTML = '<option value="/zones/a">A</option>';
+        zone.value = '/zones/a';
+        for (const box of ui.panel.querySelectorAll('[data-upgrade-mode]')) {
+            box.checked = box.getAttribute('data-upgrade-mode') === 'ability_swap';
+        }
+    }
+
+    test('sits inside the Ability Swaps chip and is hidden until it is checked', () => {
+        const group = ui.panel.querySelector('[data-mode-options="ability_swap"]');
+        const chip = ui.panel.querySelector('[data-mode-chip="ability_swap"]');
+
+        // Inside the chip, so it reads as "this option belongs to that checkbox"
+        expect(chip.contains(group)).toBe(true);
+
+        ui.panel.querySelector('[data-upgrade-mode="ability_swap"]').checked = false;
+        ui._onUpgradeModesChanged();
+        expect(group.style.display).toBe('none');
+
+        ui.panel.querySelector('[data-upgrade-mode="ability_swap"]').checked = true;
+        ui._onUpgradeModesChanged();
+        expect(group.style.display).toBe('inline-flex');
+    });
+
+    test('rides along with the analysis', async () => {
+        swapsOnly();
+        ui.panel.querySelector('#mwi-csim-swap-signature-only').checked = true;
+
+        let seen = null;
+        mocks.onRun = (params) => {
+            seen = params;
+        };
+        await ui._onUpgradeAnalyze();
+
+        expect(seen.signatureSwapsOnly).toBe(true);
+    });
+
+    test('and means nothing when swaps are not being generated at all', async () => {
+        const zone = ui.panel.querySelector('#mwi-csim-zone');
+        zone.innerHTML = '<option value="/zones/a">A</option>';
+        zone.value = '/zones/a';
+        ui.panel.querySelector('[data-upgrade-mode="ability_swap"]').checked = false;
+        ui.panel.querySelector('#mwi-csim-swap-signature-only').checked = true;
+
+        let seen = null;
+        mocks.onRun = (params) => {
+            seen = params;
+        };
+        await ui._onUpgradeAnalyze();
+
+        expect(seen.signatureSwapsOnly).toBe(false);
+    });
+
+    test('is remembered across a rebuild', async () => {
+        const box = ui.panel.querySelector('#mwi-csim-swap-signature-only');
+        box.checked = true;
+        box.dispatchEvent(new window.Event('change'));
+        await Promise.resolve();
+
+        ui.destroy();
+        ui.buildPanel();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(ui.panel.querySelector('#mwi-csim-swap-signature-only').checked).toBe(true);
+    });
+
+    test('says which ability it means for each build', () => {
+        const title = ui.panel.querySelector('#mwi-csim-swap-signature-label').getAttribute('title');
+
+        expect(title).toContain('Puncture');
+        expect(title).toContain('Retribution');
+        expect(title).toContain('Entangle');
+        // Interpolated into a title attribute: a double quote would end it early
+        expect(title).not.toContain('"');
+    });
+});

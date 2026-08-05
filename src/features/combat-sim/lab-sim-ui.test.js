@@ -242,9 +242,18 @@ function pointer(type, x, y) {
     return event;
 }
 
-/** Let the panel's storage-backed restore finish before asserting on it. */
+/**
+ * Let the panel's storage-backed restore finish before asserting on it.
+ *
+ * Generous rather than exact: the restore reads several keys in sequence and
+ * each read is two awaits deep (scoped key, then the legacy one), so the number
+ * of ticks it takes grows every time a remembered control is added. Eight was
+ * enough until the signature-swap key made it nine, and the failure that caused
+ * was a restore landing *after* the test body — a control quietly reset to its
+ * stored value half way through an assertion.
+ */
 async function settle() {
-    for (let i = 0; i < 8; i++) await Promise.resolve();
+    for (let i = 0; i < 30; i++) await Promise.resolve();
 }
 
 describe('the Lab Sim panel remembers where it was left', () => {
@@ -493,12 +502,58 @@ describe('the Upgrade tab asks two questions instead of one', () => {
         });
     });
 
+    test('the Crit Aura switch is gone, superseded by the guide-based aura swaps', () => {
+        // It was a hand-built one-off candidate for one ability. Ability Swaps
+        // now offers whichever aura the loadout's archetype actually calls for,
+        // both sides of the OR, ranked with everything else and priced the same
+        expect(ui.panel.querySelector('#mwi-labsim-crit-aura')).toBeNull();
+        expect(ui.panel.querySelector('#mwi-labsim-crit-aura-label')).toBeNull();
+    });
+
+    test('Signature only sits inside the Ability Swaps chip and hides with it', () => {
+        const group = ui.panel.querySelector('[data-lab-mode-options="ability_swap"]');
+        expect(ui.panel.querySelector('[data-lab-mode-chip="ability_swap"]').contains(group)).toBe(true);
+
+        check('ability_swap', false);
+        expect(group.style.display).toBe('none');
+        check('ability_swap', true);
+        expect(group.style.display).toBe('inline-flex');
+    });
+
+    test('and means nothing while Ability Swaps is unchecked', () => {
+        ui.panel.querySelector('#mwi-labsim-swap-signature-only').checked = true;
+        check('ability_swap', false);
+        expect(ui._getSignatureSwapsOnly()).toBe(false);
+
+        check('ability_swap', true);
+        expect(ui._getSignatureSwapsOnly()).toBe(true);
+    });
+
+    test('the choice is written down like its neighbours, box state and all', async () => {
+        check('ability_swap', true);
+        const signature = ui.panel.querySelector('#mwi-labsim-swap-signature-only');
+        signature.checked = true;
+        signature.dispatchEvent(new window.Event('change', { bubbles: true }));
+        await settle();
+        expect(storage.written['labSimSwapSignatureOnly_me']).toBe(true);
+
+        // Unchecking the set must not save a false over the tick — it would be
+        // lost the moment Ability Swaps was checked again
+        check('ability_swap', false);
+        await settle();
+        expect(storage.written['labSimSwapSignatureOnly_me']).toBe(true);
+    });
+
     test('the size of a swap run across every fight is said before it starts', () => {
         check('ability_swap', true);
         setScope('all');
 
         const estimate = estimateLabUpgradeSims(ui._getUpgradeDimensions(), ui._upgradeTargetCount());
-        expect(estimate.heavy).toBe(true);
+        // The count and the fights it covers, before the first simulation and
+        // while Stop still costs nothing. Not flagged heavy any more: the build
+        // guide narrowed swaps from every style-compatible ability to one
+        // archetype's set, which is what took this run under the warning bar
+        expect(estimate.heavy).toBe(false);
         expect(estimate.text).toMatch(/about [\d,]+ simulations \(3 fights\)/);
     });
 
