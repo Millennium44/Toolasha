@@ -156,13 +156,25 @@ describe('how big a run the checkboxes are asking for', () => {
         expect(estimate.text).toContain('1 fight');
     });
 
-    test('swaps across a full labyrinth are, and the count is in the text', () => {
+    test('swaps across a full labyrinth no longer are, since the guide narrowed them', () => {
+        // This used to be the heaviest thing the tab could be asked for: every
+        // style-compatible ability in every slot, in every room. The build
+        // guide cut the offers to one archetype's own set, and a whole
+        // labyrinth of them now fits under the bar that triggers the warning
         const estimate = estimateLabUpgradeSims(['ability_swap'], 12);
-        expect(estimate.heavy).toBe(true);
-        expect(estimate.sims).toBeGreaterThan(LAB_HEAVY_RUN_SIMS);
+        expect(estimate.heavy).toBe(false);
+        expect(estimate.sims).toBeLessThan(LAB_HEAVY_RUN_SIMS);
         // The number is rounded, because it is an estimate and printing 1,043
         // would claim a precision it has not got
         expect(estimate.text).toMatch(/about [\d,]+ simulations \(12 fights\)/);
+    });
+
+    test('a run big enough to warn about still says so', () => {
+        // Equipment is now the expensive set, and the warning still fires for
+        // the shape that earns it
+        const estimate = estimateLabUpgradeSims(['equipment', 'ability_swap'], 12);
+        expect(estimate.heavy).toBe(true);
+        expect(estimate.sims).toBeGreaterThan(LAB_HEAVY_RUN_SIMS);
     });
 
     test('more fights and more sets is more work, monotonically', () => {

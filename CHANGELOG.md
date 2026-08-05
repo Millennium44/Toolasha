@@ -6,6 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Ability swaps follow the guide
+
+- **Swap candidates come from the community build guide now**: each loadout's archetype is detected from its weapon (spear/sword/mace/wark/bow/crossbow/fire/water/nature — any bulwark reads as wark, staff element from the weapon or robes), and only that archetype's guide abilities are offered — replacing off-guide abilities or filling empty slots, never touching an on-guide one except for its OR-alternative (Critical ↔ Fierce/Mystic Aura). A fire mage's ~100+ swap rows become ~7. Unknown weapons fall back to the old behaviour rather than guessing.
+- **"Signature swaps only"** sub-toggle in both sims: restrict to the archetype-defining ability (Puncture, Maim, Shield Bash/Retribution, Pestilent Shot, Steady/Silencing Shot, Fireball, Water Strike, Entangle) plus the aura choice.
+- **The lab's Crit Aura option is retired** — subsumed by guide-based aura swaps that respect each fight's own loadout; the estimated sims-per-fight for swaps drops an order of magnitude with it.
+- **Found and fixed underneath**: the style detector read only the main-hand slot, so every two-handed build (bows, staves, tridents, bulwarks) was silently offered universal abilities only — no elemental or ranged swaps at all.
+
 ### The lab reads the same buffs as the sim
 
 - **The live clear-rate readout was scoring against buff levels frozen at page load** — its community buffs came from a map written once at login, so tiles and hovers drifted from the Lab Sim (which reads live levels) for the whole session. Both now build community buffs through the same code, so they cannot diverge. Combat XP readouts also gained the community Experience bonus they'd always ignored, and the sim baseline for Moo Pass subscribers no longer understates XP.

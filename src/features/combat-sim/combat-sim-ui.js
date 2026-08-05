@@ -60,6 +60,16 @@ const UPGRADE_MODES_KEY = 'combatSimUpgradeModes';
 const UPGRADE_COLUMNS_KEY = 'combatSimUpgradeColumns';
 
 /**
+ * Storage key for the Ability Swaps "Signature only" sub-option.
+ *
+ * Remembered with the candidate sets themselves, and for the same reason: it is
+ * how you want swaps ranked rather than something about one particular run, and
+ * an unremembered narrowing means the next Analyze quietly costs several times
+ * as much.
+ */
+const SWAP_SIGNATURE_ONLY_KEY = 'combatSimSwapSignatureOnly';
+
+/**
  * Storage key for the all-zones Max-tier Food toggle.
  *
  * Remembered, unlike the Sim All Zones and Sim All Solo checkboxes beside it,
@@ -1066,6 +1076,14 @@ const MODE_OPTIONS = {
                 title="Number of levels to add to each ability">
             <button id="mwi-csim-ability-targets-toggle" title="Set a desired target level per ability instead of a uniform boost" style="${CHIP_BUTTON_STYLE}">Targets</button>
         </span>`,
+    ability_swap: `
+        <span data-mode-options="ability_swap" style="display:none; align-items:center; gap:4px;">
+            <span style="color:#2a2a4a;">|</span>
+            <label id="mwi-csim-swap-signature-label" title="Sim only the swaps that define the build: the aura the guide offers for your archetype (both sides of its OR), and the archetype's signature ability — Puncture for a spear, Maim for a sword, Shield Bash for a mace, Shield Bash or Retribution for a wark, Pestilent Shot for a bow, Steady Shot or Silencing Shot for a crossbow, Fireball, Water Strike or Entangle for magic. The rest of the guide's set is left out, which is most of the run." style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;">
+                <input type="checkbox" id="mwi-csim-swap-signature-only" style="margin:0; cursor:pointer;">
+                Signature only
+            </label>
+        </span>`,
     combat_level: `
         <span id="mwi-csim-charm-group" data-mode-options="combat_level" style="display:none; align-items:center; gap:4px;">
             <span style="color:#2a2a4a;">|</span>
@@ -1119,12 +1137,17 @@ const UPGRADE_MODES = [
         defaultOn: false,
         title:
             'Replacing an equipped ability with a different one.\n\n' +
-            'Slow and rough. It sims every style-compatible ability for every slot, so it adds far more sims than ' +
-            'the other sets — expect a long run. And a swapped-in ability is simmed at the level of the ability it ' +
-            'replaces with that ability book’s default triggers, so it gets none of the trigger tuning your ' +
-            'equipped abilities have. Cost is counted from the book you actually own — from its current level for ' +
-            'an ability in your book bag, from scratch only for one you have never read. Treat the ranking as a ' +
-            'hint about which abilities are worth trying by hand, not a verdict.',
+            'Offers come from the community build guide. Your weapon says which build you are playing — spear, ' +
+            'sword, mace, wark, bow, crossbow, or fire/water/nature magic — and the swaps offered are that ' +
+            "build's own ability set, both sides of every OR, minus what you already run. Abilities the guide " +
+            'asks for are left where they are; the ones it does not are what the newcomers replace. A weapon ' +
+            'the guide cannot place falls back to offering every style-compatible ability for every slot, which ' +
+            'is far slower.\n\n' +
+            'A swapped-in ability is simmed at the level of the ability it replaces with that ability book’s ' +
+            'default triggers, so it gets none of the trigger tuning your equipped abilities have. Cost is ' +
+            'counted from the book you actually own — from its current level for an ability in your book bag, ' +
+            'from scratch only for one you have never read. Treat the ranking as a hint about which abilities ' +
+            'are worth trying by hand, not a verdict.',
     },
     {
         key: 'combat_level',
@@ -1759,7 +1782,11 @@ class CombatSimUI {
                 this._saveUpgradeModes();
             });
         });
+        this.panel.querySelector('#mwi-csim-swap-signature-only')?.addEventListener('change', () => {
+            this._saveSwapSignatureOnly();
+        });
         this._restoreUpgradeModes();
+        this._restoreSwapSignatureOnly();
         this._loadUpgradeColumnPrefs();
         this._loadMaxTierFoodPref();
         this._restorePanelGeometry();
@@ -5423,6 +5450,33 @@ class CombatSimUI {
     }
 
     /**
+     * Persist the Ability Swaps "Signature only" sub-option.
+     * @private
+     */
+    async _saveSwapSignatureOnly() {
+        try {
+            const box = this.panel?.querySelector('#mwi-csim-swap-signature-only');
+            await writeScoped(SWAP_SIGNATURE_ONLY_KEY, Boolean(box?.checked));
+        } catch (error) {
+            console.error('[CombatSimUI] Failed to save the signature-swap option:', error);
+        }
+    }
+
+    /**
+     * Restore the remembered "Signature only" sub-option.
+     * @private
+     */
+    async _restoreSwapSignatureOnly() {
+        try {
+            const saved = await readScoped(SWAP_SIGNATURE_ONLY_KEY, 'settings', false);
+            const box = this.panel?.querySelector('#mwi-csim-swap-signature-only');
+            if (box) box.checked = Boolean(saved);
+        } catch (error) {
+            console.error('[CombatSimUI] Failed to restore the signature-swap option:', error);
+        }
+    }
+
+    /**
      * Run upgrade analysis when Analyze button is clicked.
      * @private
      */
@@ -5519,6 +5573,9 @@ class CombatSimUI {
             const abilityTargets = upgradeModes.includes('ability_level')
                 ? this._getAbilityTargets('#mwi-csim-ability-targets')
                 : null;
+            const signatureSwapsOnly =
+                upgradeModes.includes('ability_swap') &&
+                Boolean(this.panel.querySelector('#mwi-csim-swap-signature-only')?.checked);
             const results = await runUpgradeAnalysis(
                 {
                     playerDTOs,
@@ -5538,6 +5595,7 @@ class CombatSimUI {
                     houseTargetLevel,
                     houseTargets,
                     guildShrineTargetLevel,
+                    signatureSwapsOnly,
                 },
                 ({ current, total, description }) => {
                     if (this._upgradeAborted) return;

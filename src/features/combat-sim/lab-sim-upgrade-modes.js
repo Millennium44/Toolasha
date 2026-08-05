@@ -46,12 +46,17 @@ export const LAB_UPGRADE_DIMENSIONS = [
         defaultOn: false,
         title:
             'Replacing a slotted ability with a different one.\n\n' +
-            'Slow and rough: it sims every style-compatible ability for every slot, and a swapped-in ability is ' +
-            'simmed at the level of the one it replaces with default triggers. Treat it as a hint about what to ' +
-            'try by hand rather than a verdict.\n\n' +
+            "Offers come from the community build guide. Each loadout's weapon says which build it is playing — " +
+            'spear, sword, mace, wark, bow, crossbow, or fire/water/nature magic — and the swaps offered are that ' +
+            "build's own ability set, both sides of every OR, minus what the loadout already runs. Abilities the " +
+            'guide asks for are left where they are; the ones it does not are what the newcomers replace. A weapon ' +
+            'the guide cannot place falls back to offering every style-compatible ability for every slot, which is ' +
+            'far slower.\n\n' +
+            'A swapped-in ability is simmed at the level of the one it replaces with default triggers, so treat it ' +
+            'as a hint about what to try by hand rather than a verdict.\n\n' +
             'Across several fights a swap is only weighed in the loadouts that actually cast the ability it ' +
-            'replaces, and a big run shortens each simulation rather than leaving fights out — the status line ' +
-            'says how many simulations it comes to before it starts.',
+            'replaces, each loadout read for its own archetype, and a big run shortens each simulation rather than ' +
+            'leaving fights out — the status line says how many simulations it comes to before it starts.',
     },
     {
         key: 'house',
@@ -378,9 +383,12 @@ export const LAB_DIMENSION_SIMS_PER_FIGHT = {
     // other loadouts contribute that this one can also wear
     equipment: 60,
     ability_level: 6,
-    // Every style-compatible ability in every slot, weighed in the loadouts
-    // that cast the ability it replaces
-    ability_swap: 100,
+    // The build guide's own set for the loadout's archetype — five or six
+    // abilities against the slots holding something the guide did not ask for,
+    // plus the free slots — weighed in the loadouts that cast what it replaces.
+    // Was 100 back when every style-compatible ability was offered for every
+    // slot; the guide is what took an order of magnitude off it.
+    ability_swap: 12,
     // One per combat skill, and a combat level is every fight
     combat_level: 6,
     guild_shrine: 6,
