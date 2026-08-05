@@ -214,12 +214,19 @@ export function recordTileSample(record, tile, at) {
     // on the record is what lets the growth curve be fitted at all — requiring
     // one card to carry both means no observation is ever recorded.
     const tier = Number.isFinite(tile?.tier) ? tile.tier : existing.tier;
+
+    // Which tier the *reading* belongs to, which is not the tier the card is
+    // badged with. The badge counts tiers finished, so a live pool on a card
+    // badged T2 is T3's pool — filing it under the badge put two different
+    // tiers' pool sizes under one number and broke the ladder that is fitted
+    // from them. The caller says so explicitly rather than this file guessing.
+    const observationTier = Number.isFinite(tile?.readingTier) ? tile.readingTier : tier;
     const tiers = [...(existing.tiers || [])];
-    if (Number.isFinite(tier)) {
+    if (Number.isFinite(observationTier)) {
         for (const reading of readings) {
             if (!(reading.max > 0)) continue;
-            const seen = tiers.find((entry) => entry.tier === tier && entry.total === reading.max);
-            if (!seen) tiers.push({ tier, total: reading.max });
+            const seen = tiers.find((entry) => entry.tier === observationTier && entry.total === reading.max);
+            if (!seen) tiers.push({ tier: observationTier, total: reading.max });
         }
     }
 

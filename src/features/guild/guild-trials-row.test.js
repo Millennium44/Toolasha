@@ -123,7 +123,8 @@ describe('the guild trials tile', () => {
         };
 
         expect(latestTrialTile(game.record).tile.name).toBe('Badger');
-        expect(draw().textContent).toContain('T7');
+        // The badge counts banked tiers, so the tile shows the one being fought
+        expect(draw().textContent).toContain('T8');
     });
 
     test('the age of the reading is on the tile, not only in the tooltip', () => {
@@ -169,7 +170,7 @@ describe('the guild trials tile', () => {
         };
 
         const container = draw();
-        expect(container.textContent).toContain('T4');
+        expect(container.textContent).toContain('T5');
         expect(container.textContent).toContain('measuring…');
         expect(container.title).toContain('One reading so far');
     });
@@ -190,6 +191,6 @@ describe('the guild trials tile', () => {
     test('the tier and what is banked are both said, since they differ by one', () => {
         game.record = { weekStart: 0, tiles: { a: tile({ name: 'Brewing', tier: 4, at: Date.now() - 5000 }) } };
 
-        expect(draw().title).toContain('3 banked');
+        expect(draw().title).toContain('4 banked');
     });
 });

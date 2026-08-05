@@ -46,7 +46,14 @@
  * 3. **Nothing** — reported as unavailable, never as zero.
  */
 
-import { estimateGrowthPerTier, levelFromTier, projectTierTotal, TRIAL_MAX_TIER } from './guild-trials-math.js';
+import {
+    baseWorkFromObservations,
+    estimateGrowthPerTier,
+    levelFromTier,
+    projectTierTotal,
+    tierPoolWork,
+    TRIAL_MAX_TIER,
+} from './guild-trials-math.js';
 
 /** The constant in the game's own health formula, `10 × (10 + level)` */
 export const HEALTH_LEVEL_OFFSET = 10;
@@ -265,12 +272,32 @@ export function forecastCombatTier({
  * @returns {{finalTier: number|null, tiersCleared: number, clears: Array<Object>, limitedBy: string}|null}
  *   The projection, or null when nothing has been measured
  */
-export function forecastSkillingTier({ tier, rate, timeLeftMs, observations = [], remainingInTier = null } = {}) {
+export function forecastSkillingTier({
+    tier,
+    rate,
+    timeLeftMs,
+    observations = [],
+    remainingInTier = null,
+    participants = 0,
+} = {}) {
     if (!Number.isFinite(tier) || !Number.isFinite(rate) || rate <= 0) return null;
     if (!Number.isFinite(timeLeftMs) || timeLeftMs < 0) return null;
 
+    // Derived first, from the rule the observed pools reproduce exactly — one
+    // tier seen anywhere on the ladder gives the whole of it. The growth *fit*
+    // is the fallback for a trial whose participant count is not known, and it
+    // is what used to stall the whole forecast at "needs a second tier".
+    const baseWork = baseWorkFromObservations(observations, participants);
     const growthPerTier = estimateGrowthPerTier(observations);
-    const totalFor = (candidate) => projectTierTotal({ observations, tier: candidate, growthPerTier });
+    const totalFor = (candidate) => {
+        const seen = observations.find((entry) => entry.tier === candidate && entry.total > 0)?.total;
+        if (Number.isFinite(seen)) return seen;
+
+        const derived = tierPoolWork({ baseWork, tier: candidate, participants });
+        if (Number.isFinite(derived)) return derived;
+
+        return projectTierTotal({ observations, tier: candidate, growthPerTier });
+    };
 
     const clears = [];
     let spentMs = 0;
@@ -354,9 +381,19 @@ export function forecastTrial({
             timeLeftMs,
             observations: analysis.tiers || [],
             remainingInTier: analysis.remaining,
+            participants,
         });
         if (!walk) return nothing('nothing measured yet');
-        return { ...walk, tier: walk.finalTier, source: 'measured', coverage: null, reason: null };
+        // The tiers already banked are part of where this trial ends up
+        const banked = Number.isFinite(analysis.tiersClearedSoFar) ? analysis.tiersClearedSoFar : 0;
+        return {
+            ...walk,
+            tier: walk.finalTier ?? (banked > 0 ? banked : null),
+            tiersCleared: banked + walk.tiersCleared,
+            source: 'measured',
+            coverage: null,
+            reason: null,
+        };
     }
 
     const wave = trialWave(name, clientData);
@@ -379,9 +416,11 @@ export function forecastTrial({
     });
     if (!walk) return nothing('nothing to project from');
 
+    const banked = Number.isFinite(analysis.tiersClearedSoFar) ? analysis.tiersClearedSoFar : 0;
     return {
         ...walk,
-        tier: walk.finalTier,
+        tier: walk.finalTier ?? (banked > 0 ? banked : null),
+        tiersCleared: banked + walk.tiersCleared,
         source: measured === null ? 'estimated' : 'measured',
         coverage: estimate ? { known: estimate.members, of: Math.max(estimate.members, participants) } : null,
         reason: null,

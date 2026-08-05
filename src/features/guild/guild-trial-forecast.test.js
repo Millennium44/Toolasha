@@ -183,16 +183,34 @@ describe('forecastSkillingTier', () => {
         expect(walk.finalTier).toBeGreaterThanOrEqual(8);
     });
 
-    test('with one tier seen there is no curve to walk past it', () => {
+    test('one tier seen is now enough to walk the whole ladder', () => {
+        // The rule the live pools proved — 40,800 / 44,880 / 48,960 is the first
+        // tier's work plus a tenth of it per tier, times the participant
+        // multiplier — means a single observation gives every tier. This used to
+        // stop dead at "needs a second tier to fit the curve".
         const walk = forecastSkillingTier({
             tier: 8,
             rate: 106,
             timeLeftMs: 60 * 60_000,
             observations: [{ tier: 8, total: 69_360 }],
+            participants: 2,
         });
 
-        expect(walk.tiersCleared).toBe(1);
-        expect(walk.limitedBy).toBe('unknown-next-tier');
+        expect(walk.tiersCleared).toBeGreaterThan(1);
+        expect(walk.limitedBy).toBe('time');
+    });
+
+    test('the derived pools reproduce the live trial exactly', () => {
+        const walk = forecastSkillingTier({
+            tier: 1,
+            rate: 1_000_000,
+            timeLeftMs: 60 * 60_000,
+            observations: [{ tier: 1, total: 40_800 }],
+            participants: 2,
+        });
+
+        const sizes = walk.clears.slice(0, 3).map((clear) => Math.round(clear.work));
+        expect(sizes).toEqual([40_800, 44_880, 48_960]);
     });
 
     test('no measured rate is no forecast at all', () => {
