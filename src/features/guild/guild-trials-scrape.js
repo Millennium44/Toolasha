@@ -75,7 +75,7 @@
  * drawing.
  */
 
-import { COMBAT_ENCOUNTERS, isTrialName, tierFromLevel } from './guild-trials-math.js';
+import { COMBAT_ENCOUNTERS, TRIAL_MAX_TIER, isTrialName, tierFromLevel } from './guild-trials-math.js';
 
 /** Suffix multipliers on abbreviated numbers the game renders in bars */
 const SUFFIXES = { k: 1e3, m: 1e6, b: 1e9, t: 1e12 };
@@ -176,6 +176,31 @@ export function parseTrialLevel(text) {
     if (!match) return null;
     const level = Number(match[1]);
     return Number.isFinite(level) ? level : null;
+}
+
+/**
+ * The tier a card states outright, from its `T6` or `Tier 6` badge.
+ *
+ * The tier used to be derived from the level and only from the level, which
+ * meant a card that states its tier and not its level — which is how the Trials
+ * tab's cards were found to be drawn — recorded no tier at all. Everything the
+ * tier unlocks went with it: `tiers` stayed empty so no growth curve could be
+ * fitted, `pointsByTier` stayed empty because filing a points figure requires a
+ * tier to file it under, and the banked-points arithmetic reported "unknown"
+ * beside a card that was plainly showing T6.
+ *
+ * Bounded by the ladder rather than accepting any `T<n>`: a stray "T3" in prose
+ * is not a tier, and a tier above {@link module:./guild-trials-math.TRIAL_MAX_TIER}
+ * is not one either.
+ *
+ * @param {string} text - A card line
+ * @returns {number|null} The tier, or null when the line does not state one
+ */
+export function parseTrialTier(text) {
+    const match = typeof text === 'string' ? text.match(/\b(?:tier\s*|T)(\d{1,2})\b/i) : null;
+    if (!match) return null;
+    const tier = Number(match[1]);
+    return Number.isFinite(tier) && tier >= 1 && tier <= TRIAL_MAX_TIER ? tier : null;
 }
 
 /**
@@ -462,8 +487,19 @@ export function readTrialTiles(root) {
         if (el.closest?.('[class*="mwi-"]')) return false;
         if (typeof el.className === 'string' && el.className.includes('GuildPanel_tileSummary')) return true;
 
+        // A stated tier or a points line anchors a card too. Without them a
+        // Trials card that carries neither a level nor a bar — which is how the
+        // live tab was found to draw them, "840 pts" over "T6" — has nothing to
+        // be found by, and the tab that holds the tier and the points is read as
+        // holding no trials at all. Everything found here is still filtered by
+        // `isTrialName` below, so a stray "T3" in prose costs one climb.
         const own = ownText(el);
-        return parseTrialLevel(own) !== null || parseBarReadings(own).length > 0;
+        return (
+            parseTrialLevel(own) !== null ||
+            parseBarReadings(own).length > 0 ||
+            parseTrialTier(own) !== null ||
+            parsePoints(own) !== null
+        );
     });
 
     const tiles = [];
@@ -485,12 +521,17 @@ export function readTrialTiles(root) {
 
         const level = lines.map(parseTrialLevel).find((candidate) => candidate !== null) ?? null;
         const signups = lines.map(parseSignups).find((candidate) => candidate !== null) ?? null;
+        // A stated tier beats a derived one, and is available on a card that
+        // carries no level at all. `textLines` skips this script's own elements,
+        // so the `T<n>` badge `guild-credit-value.js` writes into the level line
+        // is never read back as if the game had said it
+        const statedTier = lines.map(parseTrialTier).find((candidate) => candidate !== null) ?? null;
 
         tiles.push({
             element: tile,
             name,
             level,
-            tier: level === null ? null : tierFromLevel(level),
+            tier: statedTier ?? (level === null ? null : tierFromLevel(level)),
             kind: isCombatTrialName(name) ? 'combat' : 'skilling',
             // Sign-up counts are excluded rather than filtered afterwards:
             // "1/28 signed up" has precisely the shape of a progress bar, and a

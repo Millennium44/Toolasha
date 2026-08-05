@@ -25,6 +25,7 @@ import {
     parseBarReadings,
     parseClockMs,
     parseTrialLevel,
+    parseTrialTier,
     parseWordyDurationMs,
     readTrialTiles,
     textLines,
@@ -502,6 +503,83 @@ describe('the cards on the two live tabs', () => {
         expect(trials.name).toBe(live.name);
         expect(trials.tier).toBe(6);
         expect(live.readings).toHaveLength(1);
+    });
+});
+
+describe('a card that states its tier instead of its level', () => {
+    /**
+     * A guild panel holding one card.
+     * @param {string} html - The card's markup
+     * @returns {Element} The panel
+     */
+    function panelWith(html) {
+        document.body.innerHTML = `<div class="GuildPanel_guildPanel__r">${html}</div>`;
+        return document.querySelector('[class*="GuildPanel_guildPanel"]');
+    }
+
+    test('the stated tier is read, and the points file under it', () => {
+        // From the live export: the record held `tiers: []` and `pointsByTier:
+        // {}` for a week whose cards were plainly showing "840 pts" and "T6".
+        // The tier was only ever derived from `Lv.<n>`, so a card without one
+        // recorded no tier — and a points figure with no tier to file it under
+        // is dropped, which is why both were empty at once.
+        const tile = readTrialTiles(
+            panelWith(
+                '<div class="GuildPanel_tile__a"><div class="GuildPanel_tileName__n">Alchemy</div>' +
+                    '<div>840 pts</div><div>T6</div><div>1/28 signed up</div></div>'
+            )
+        )[0];
+
+        expect(tile).toMatchObject({ name: 'Alchemy', level: null, tier: 6, points: 840 });
+    });
+
+    test('"Tier 8" spelled out is the same claim', () => {
+        const tile = readTrialTiles(
+            panelWith(
+                '<div class="GuildPanel_tile__a"><div class="GuildPanel_tileName__n">Trial Chameleon</div>' +
+                    '<div>Tier 8</div><div>1,080 pts</div></div>'
+            )
+        )[0];
+        expect(tile).toMatchObject({ tier: 8, points: 1080, kind: 'combat' });
+    });
+
+    test('a level still decides when the card carries no tier of its own', () => {
+        const tile = readTrialTiles(
+            panelWith(
+                '<div class="GuildPanel_tile__a"><div class="GuildPanel_tileName__n">Milking</div>' +
+                    '<div class="GuildPanel_tileSummary__s">Lv.130</div></div>'
+            )
+        )[0];
+        expect(tile).toMatchObject({ level: 130, tier: 4 });
+    });
+
+    test("this script's own tier badge is not read back as the game's", () => {
+        // `guild-credit-value.js` writes a `T<n>` span into the level line. It
+        // carries an `mwi-` class and `textLines` skips it, so the tier here is
+        // still the one derived from the level rather than the one this drew
+        const tile = readTrialTiles(
+            panelWith(
+                '<div class="GuildPanel_tile__a"><div class="GuildPanel_tileName__n">Milking</div>' +
+                    '<div class="GuildPanel_tileSummary__s">Lv.130<span class="mwi-trial-tier">T9</span></div></div>'
+            )
+        )[0];
+        expect(tile.tier).toBe(4);
+    });
+});
+
+describe('parseTrialTier', () => {
+    test('reads a tier a card states', () => {
+        expect(parseTrialTier('T6')).toBe(6);
+        expect(parseTrialTier('840 pts T6')).toBe(6);
+        expect(parseTrialTier('Tier 12')).toBe(12);
+    });
+
+    test('anything outside the ladder is not a tier', () => {
+        expect(parseTrialTier('T0')).toBeNull();
+        expect(parseTrialTier('T99')).toBeNull();
+        expect(parseTrialTier('Lv.130')).toBeNull();
+        expect(parseTrialTier('20m 53s')).toBeNull();
+        expect(parseTrialTier(null)).toBeNull();
     });
 });
 
