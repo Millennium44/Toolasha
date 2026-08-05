@@ -1983,3 +1983,199 @@ describe('the hover preview does not outlive its anchor', () => {
         labyrinthClearRate._previewScrollHandler = null;
     });
 });
+
+/**
+ * Re-planning a route on a floor that has moved on.
+ *
+ * From a live run: "fix pathing in cases where I have already shrouded the path
+ * and click path again". A shroud clears its room outright, so a room that was
+ * "Shroud" a moment ago is now just floor — but the planner classified the
+ * board when the button went down and then spent seconds running fight sims,
+ * and drew its answer against that snapshot. Pressing Path again during a run
+ * that keeps moving reproduces it, which is exactly when anyone would press it.
+ */
+describe('re-planning a route after shrouds have been spent', () => {
+    /** A 4x4 floor, its grid, and the toolbar the planner writes to */
+    function buildBoard(rooms, unknownMode = 'clearable') {
+        document.body.innerHTML = '';
+        const parent = document.createElement('div');
+        for (let i = 0; i < rooms.length; i++) {
+            const cell = document.createElement('div');
+            cell.className = 'LabyrinthPanel_roomCell_abc';
+            parent.appendChild(cell);
+        }
+        document.body.appendChild(parent);
+
+        const status = document.createElement('span');
+        status.className = 'mwi-labyrinth-tile-controls-status';
+        document.body.appendChild(status);
+
+        const mode = document.createElement('select');
+        mode.className = 'mwi-labyrinth-tile-controls-path-unknown';
+        for (const value of ['clearable', 'shroud', 'avoid']) {
+            const option = document.createElement('option');
+            option.value = value;
+            option.textContent = value;
+            mode.appendChild(option);
+        }
+        mode.value = unknownMode;
+        document.body.appendChild(mode);
+
+        labyrinthClearRate.roomData = [rooms.slice(0, 4), rooms.slice(4, 8), rooms.slice(8, 12), rooms.slice(12, 16)];
+        labyrinthClearRate.currentFloor = 5;
+        return { status, parent };
+    }
+
+    /** What each room ended up marked as: '', 'Shroud', '?', '⚑'… */
+    const marks = (parent) =>
+        [...parent.children].map((cell) =>
+            cell.querySelector('.mwi-labyrinth-path-overlay') ? cell.textContent || 'route' : ''
+        );
+
+    /** A revealed fight the sims judge unbeatable, so the route must shroud it */
+    const fight = () => ({
+        roomType: '/labyrinth_room_types/combat',
+        monsterHrid: '/monsters/gobo',
+        recommendedLevel: 100,
+    });
+
+    /** What the server sends for a room a shroud has cleared: stripped bare */
+    const shrouded = () => ({ isCleared: true });
+
+    /** A fully revealed floor of unbeatable fights, entrance cleared, exit at the corner */
+    const unbeatableFloor = () => {
+        const rooms = new Array(16).fill(null).map(() => fight());
+        rooms[0] = { isCleared: true };
+        rooms[15] = { roomType: '/labyrinth_room_types/descend' };
+        return rooms;
+    };
+
+    beforeEach(() => {
+        settings.map.clear();
+        bag.items = null;
+    });
+
+    afterEach(() => {
+        document.body.innerHTML = '';
+        labyrinthClearRate.roomData = null;
+        bag.items = null;
+    });
+
+    test('a second press on an unchanged board plans exactly what the first did', async () => {
+        const { status, parent } = buildBoard(unbeatableFloor());
+
+        await labyrinthClearRate.runPathCalculation();
+        const first = { text: status.textContent, marks: marks(parent) };
+
+        await labyrinthClearRate.runPathCalculation();
+
+        expect(status.textContent).toBe(first.text);
+        expect(marks(parent)).toEqual(first.marks);
+        // …and it is the right plan: six rooms to the corner, five of them
+        // fights it cannot win, the exit itself free to walk into
+        expect(first.text).toBe('Path: 6 rooms · 5 shrouds · 0 chests');
+    });
+
+    test('rooms already shrouded are not planned to be shrouded again', async () => {
+        const { status, parent } = buildBoard(unbeatableFloor());
+
+        await labyrinthClearRate.runPathCalculation();
+        expect(status.textContent).toBe('Path: 6 rooms · 5 shrouds · 0 chests');
+        expect(marks(parent)[1]).toBe('Shroud');
+        expect(marks(parent)[2]).toBe('Shroud');
+
+        // The player spends two shrouds on the rooms it marked; the server
+        // sends those rooms back cleared and stripped of everything else
+        labyrinthClearRate.roomData[0][1] = shrouded();
+        labyrinthClearRate.roomData[0][2] = shrouded();
+
+        await labyrinthClearRate.runPathCalculation();
+
+        expect(status.textContent).toBe('Path: 4 rooms · 3 shrouds · 0 chests');
+        expect(marks(parent)[1]).toBe('');
+        expect(marks(parent)[2]).toBe('');
+    });
+
+    test('a shroud spent while the sims are still running is not planned for either', async () => {
+        const { status, parent } = buildBoard(unbeatableFloor());
+
+        // The run does not stop for the sims: the player shrouds the first two
+        // rooms of the route while the fights are still being simulated
+        const spy = vi.spyOn(labyrinthClearRate, 'computeCombatClear').mockImplementation(async () => {
+            labyrinthClearRate.roomData[0][1] = shrouded();
+            labyrinthClearRate.roomData[0][2] = shrouded();
+            return { clearChance: 0, failed: false };
+        });
+
+        await labyrinthClearRate.runPathCalculation();
+        spy.mockRestore();
+
+        // The answer is about the floor as it stands, not as it was when the
+        // button went down — no "Shroud" over a room already shrouded
+        expect(status.textContent).toBe('Path: 4 rooms · 3 shrouds · 0 chests');
+        expect(marks(parent)[1]).toBe('');
+        expect(marks(parent)[2]).toBe('');
+    });
+
+    test('a room revealed mid-sim is costed like any other room nothing is known about', async () => {
+        // Pessimistic ? mode: an unrevealed room on the route costs a shroud
+        const rooms = unbeatableFloor();
+        rooms[1] = null; // still dark when the button goes down
+        const { status, parent } = buildBoard(rooms, 'shroud');
+
+        const spy = vi.spyOn(labyrinthClearRate, 'computeCombatClear').mockImplementation(async () => {
+            // It comes into view mid-sim — a fight nothing else on the floor
+            // shares, so no sim of this pass has anything to say about it
+            labyrinthClearRate.roomData[0][1] = {
+                roomType: '/labyrinth_room_types/combat',
+                monsterHrid: '/monsters/latecomer',
+                recommendedLevel: 150,
+            };
+            return { clearChance: 0, failed: false };
+        });
+
+        await labyrinthClearRate.runPathCalculation();
+        spy.mockRestore();
+
+        // Being looked at is not the same as being judged: it keeps the same
+        // posture it had while it was dark rather than turning free
+        expect(marks(parent)[1]).toBe('Shroud?');
+        expect(status.textContent).toContain('6 rooms');
+        expect(status.textContent).toContain('5 shrouds');
+    });
+
+    test('a floor that changes shape mid-sim is refused rather than drawn stale', async () => {
+        const { status } = buildBoard(unbeatableFloor());
+
+        const spy = vi.spyOn(labyrinthClearRate, 'computeCombatClear').mockImplementation(async () => {
+            // The next floor: a different grid entirely
+            labyrinthClearRate.roomData = [
+                [null, null, null],
+                [null, null, null],
+                [null, null, null],
+            ];
+            return { clearChance: 0, failed: false };
+        });
+
+        await labyrinthClearRate.runPathCalculation();
+        spy.mockRestore();
+
+        expect(status.textContent).toContain('press Path again');
+    });
+
+    test('the beacon planner counts a shrouded room as revealed, and plans no coverage over it', () => {
+        const rooms = new Array(16).fill(null);
+        rooms[0] = { isCleared: true };
+        for (const i of [1, 2, 5, 6]) rooms[i] = shrouded();
+        const { parent } = buildBoard(rooms);
+
+        labyrinthClearRate.runBeaconCalculation();
+
+        // Coverage is only ever planned over rooms still in the dark — a room a
+        // shroud cleared is one of the ones already seen
+        for (const i of [0, 1, 2, 5, 6]) {
+            expect(parent.children[i].querySelector('.mwi-labyrinth-beacon-overlay')).toBeNull();
+        }
+        expect(document.querySelectorAll('.mwi-labyrinth-beacon-overlay').length).toBeGreaterThan(0);
+    });
+});

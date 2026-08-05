@@ -12,6 +12,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - **The count is a per-floor override again**: a number chosen because one map was worth four beacons no longer follows you onto every floor after it. Each new floor starts back on the automatic minimum.
 - **A ⟲ button beside the count** puts it back to the fewest that cover a path, without spinning the field down a step at a time.
 
+### Path stops planning a floor that has already moved on
+
+- **Rooms you have already shrouded are no longer marked "Shroud" again**: the route planner classified the board the moment the button went down, then spent seconds running fight sims, and drew its answer against that snapshot. A run does not stop for the sims — a shroud clears its room outright — so pressing Path during a run could come back demanding shrouds for rooms that had been shrouded while it was thinking. The plan is now classified twice: once to find the fights worth simulating, once against the board as it stands when the plan is actually drawn (grid cells included, so a plan can no longer be drawn into a grid React has since rebuilt). Pressing Path twice on an unchanged board gives the same answer; pressing it after spending shrouds re-plans from what is revealed now.
+- **A room that comes into view mid-sim is costed like any other room nothing is known about**, taking the `?` mode's posture instead of defaulting to "free" because it happened to be looked at after the sims had moved past it.
+- **A floor that changes shape mid-sim says so** rather than drawing a route for a floor you have already left.
+
 ### Trial cards say what their phase can know, and stay off the notice board
 
 - **No more trial card built out of the Overview tab**: the name test was a substring match, so a notice-board paragraph containing "milking" passed it, and the guild XP bar (4,120 / 20,000) read exactly like a progress bar and anchored the card. Names now match whole strings after stripping the game's real decorations, a positive tab gate refuses pages legibly showing another tab (permissive when the tab strip can't be read — failing closed on an unverified class name is how this feature went dark twice before), and stale blocks are reaped document-wide on every pass.
