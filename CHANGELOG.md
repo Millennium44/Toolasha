@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Beacons cover the way out before they chase dark corners
+
+- **A set beacon count is planned against the same objective the automatic one uses**: cover a revealed path to the exit first, a second independent route next, and only then reveal as many rooms as the count allows. Set counts used to maximise rooms and nothing else, which is how four beacons could be planned onto the fattest dark pockets of a floor while the plan's own caption admitted "a covered path to the exit needs 3". A count too small to cover a path now spends itself getting as close as it can — and still says what it would take.
+- **The count is a per-floor override again**: a number chosen because one map was worth four beacons no longer follows you onto every floor after it. Each new floor starts back on the automatic minimum.
+- **A ⟲ button beside the count** puts it back to the fewest that cover a path, without spinning the field down a step at a time.
+
 ### Trial cards say what their phase can know, and stay off the notice board
 
 - **No more trial card built out of the Overview tab**: the name test was a substring match, so a notice-board paragraph containing "milking" passed it, and the guild XP bar (4,120 / 20,000) read exactly like a progress bar and anchored the card. Names now match whole strings after stripping the game's real decorations, a positive tab gate refuses pages legibly showing another tab (permissive when the tab strip can't be read — failing closed on an unverified class name is how this feature went dark twice before), and stale blocks are reaped document-wide on every pass.

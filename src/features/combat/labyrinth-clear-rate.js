@@ -498,6 +498,9 @@ class LabyrinthClearRate {
             if (previousFloor !== this.currentFloor) {
                 this.clearPathOverlays();
                 this.clearBeaconOverlays();
+                // A beacon count was chosen for the floor that just ended; the
+                // next one starts back on the automatic minimum
+                this.resetBeaconCountToAuto();
                 document.querySelectorAll(`.${TILE_BADGE_CLASS}`).forEach((el) => this.removeTileBadge(el));
                 this.calculatedTileKeys?.clear();
             }
@@ -2235,7 +2238,8 @@ class LabyrinthClearRate {
         beaconButton.className = `${TILE_CONTROLS_CLASS}-beacon-button`;
         beaconButton.textContent = 'Beacons';
         beaconButton.title =
-            'Plan beacon placements: a set count goes wherever it reveals the most rooms on the way out; 0 finds the fewest beacons that cover a revealed path to the exit';
+            'Plan beacon placements: cover a path to the exit first, a second independent route next, ' +
+            'then reveal as many rooms as the count allows. 0 uses the fewest beacons that cover a path.';
         beaconButton.style.cssText =
             'min-width:54px; padding:0 10px; height:20px; border:0; border-radius:5px; background:#1d9e83; ' +
             'color:#fff; font-size:11px; font-weight:700; line-height:1; white-space:nowrap; cursor:pointer;';
@@ -2249,7 +2253,9 @@ class LabyrinthClearRate {
         beaconInput.max = '20';
         beaconInput.step = '1';
         beaconInput.value = String(config.getSettingValue('labyrinthBeaconCount', 0));
-        beaconInput.title = 'Beacons to place — 0 uses the fewest that cover a path to the exit';
+        beaconInput.title =
+            'Beacons to place on this floor — 0 uses the fewest that cover a path to the exit, and every ' +
+            'new floor starts back there';
         beaconInput.style.cssText = precisionInput.style.cssText;
         beaconInput.addEventListener('change', () => {
             const n = Math.min(20, Math.max(0, Math.floor(Number(beaconInput.value) || 0)));
@@ -2257,6 +2263,18 @@ class LabyrinthClearRate {
             config.setSettingValue('labyrinthBeaconCount', n);
         });
         container.appendChild(beaconInput);
+
+        // One click back to the automatic count, rather than spinning the field
+        // down to zero a step at a time
+        const beaconAutoButton = document.createElement('button');
+        beaconAutoButton.className = `${TILE_CONTROLS_CLASS}-beacon-auto`;
+        beaconAutoButton.textContent = '⟲';
+        beaconAutoButton.title = 'Back to the fewest beacons that cover a path to the exit (min)';
+        beaconAutoButton.style.cssText =
+            'width:20px; height:20px; padding:0; border:0; border-radius:5px; background:rgba(29,158,131,0.6); ' +
+            'color:#fff; font-size:12px; font-weight:700; line-height:1; cursor:pointer;';
+        beaconAutoButton.addEventListener('click', () => this.resetBeaconCountToAuto(true));
+        container.appendChild(beaconAutoButton);
 
         // What is actually in the bag, beside the controls that spend it. The
         // planners read this fresh at plan time; this is only so the numbers a
@@ -2944,9 +2962,10 @@ class LabyrinthClearRate {
     }
 
     /**
-     * Compute and highlight optimal beacon placements: the fewest beacons (or
-     * the configured count) whose reveal areas cover a walkable corridor to
-     * the floor exit, revealing as many new rooms as possible.
+     * Compute and highlight beacon placements — the fewest beacons, or the
+     * count set for this floor, put where they cover a path to the exit first,
+     * a second independent route next, and as many new rooms as what is left
+     * over allows.
      */
     runBeaconCalculation() {
         if (!this.roomData) {
@@ -3039,8 +3058,8 @@ class LabyrinthClearRate {
             `reveals ${plan.revealedNew} new rooms`,
             plan.routes >= 2 ? `${plan.routes} independent routes` : '1 route',
         ];
-        // With a count you chose, whether the way out ends up covered is an
-        // outcome worth reporting rather than a condition on the plan
+        // A plan only leaves the way out dark when the count was too small to
+        // cover it, and then the honest thing is to say what it would take
         if (count > 0 && !plan.corridorOpen && Number.isFinite(plan.minNeeded)) {
             parts.push(`a covered path to the exit needs ${plan.minNeeded}`);
         }
@@ -3069,6 +3088,33 @@ class LabyrinthClearRate {
             }
         }
         this.setTileStatus(parts.join(' · '), needed.over || !!budget?.clamped);
+    }
+
+    /**
+     * Put the beacon count back to the automatic "fewest that cover a path to
+     * the exit" mode.
+     *
+     * A count answers a question about the floor in front of you — how many
+     * beacons this map is worth — so it is a per-floor override rather than a
+     * standing preference. Both the button beside the field and arriving on a
+     * new floor clear it.
+     *
+     * @param {boolean} [announce=false] - Say so in the status line
+     * @returns {boolean} Whether a manual count was actually cleared
+     */
+    resetBeaconCountToAuto(announce = false) {
+        const current = Math.max(0, Math.floor(Number(config.getSettingValue('labyrinthBeaconCount', 0)) || 0));
+        config.setSettingValue('labyrinthBeaconCount', 0);
+        const countInput = document.querySelector(`.${TILE_CONTROLS_CLASS}-beacon-count`);
+        if (countInput) countInput.value = '0';
+        if (announce) {
+            this.setTileStatus(
+                current > 0
+                    ? 'Beacon count back to the fewest that cover a path (min)'
+                    : 'Already on the fewest that cover a path (min)'
+            );
+        }
+        return current > 0;
     }
 
     /**

@@ -25,6 +25,24 @@ const BEACON_CHAIN_DIST = 2 * BEACON_RADIUS + 1;
 /** Re-placement sweeps over a greedy coverage plan before settling */
 const BEACON_SWAP_PASSES = 4;
 
+/**
+ * A second independent covered route is worth trading rooms for; a third is
+ * not — one blocked room can only sever a floor that has a single way out.
+ */
+const BEACON_ROUTE_TARGET = 2;
+
+/** Stand-in for "no chain of beacons reaches the exit" in the residual ordering */
+const RESIDUAL_UNREACHABLE = 999;
+
+/** Minimum-length chains carried out of the beam search as placement seeds */
+const CHAIN_CANDIDATES = 40;
+
+/** How many scored seeds get the full re-placement search */
+const REFINE_SEEDS = 4;
+
+/** Above this many beacons the search is trimmed rather than left to grow */
+const BEACON_SEARCH_WIDE_LIMIT = 6;
+
 /** Lexicographic weight: one shroud outweighs any number of torches */
 const PATH_SHROUD_WEIGHT = 1e6;
 
@@ -389,183 +407,195 @@ function detourCosts(grid, n, startRegion, exitIdx) {
 }
 
 /**
- * Place exactly `count` beacons to reveal as much of the floor as possible,
- * settling ties toward rooms on the way out. Greedy by marginal gain, then a
- * re-placement pass per beacon: greedy alone takes the densest spot first even
- * when two beacons placed together would tile the dark region better.
+ * Grow a placement to `count` beacons by marginal rooms revealed, settling ties
+ * toward rooms on the way out. A seed, not an answer: it knows nothing about
+ * the way to the exit, and stops early rather than placing a beacon over rooms
+ * another beacon already reveals.
  *
  * @param {Object} grid - beaconGrid helpers
  * @param {boolean[]} revealed - Flat grid of already-revealed rooms
- * @param {number} count - Beacons to place
+ * @param {number} count - Beacons the placement should end up with
  * @param {number[]} detour - Per-cell detour cost, the tie-break
+ * @param {number[]} [preset=[]] - Beacons already placed, kept as they are
  * @returns {number[]} Beacon centers
  */
-function placeBeaconsForCoverage(grid, revealed, count, detour) {
+function growForCoverage(grid, revealed, count, detour, preset = []) {
     const { diamond } = grid;
     const n = revealed.length;
 
-    // Rooms revealed first, total detour second — a placement that uncovers
-    // more of the floor always wins, however far off the route it sits
-    const gainOf = (c, union) => {
-        let rooms = 0;
-        let cost = 0;
+    const beacons = preset.slice(0, count);
+    const taken = new Set(beacons);
+    const union = new Set();
+    for (const c of beacons) {
         for (const d of diamond(c)) {
-            if (revealed[d] || union.has(d)) continue;
-            rooms++;
-            cost += detour[d];
+            if (!revealed[d]) union.add(d);
         }
-        return { rooms, cost };
-    };
-    const better = (a, b) => a.rooms > b.rooms || (a.rooms === b.rooms && a.cost < b.cost);
-    const coverageOf = (centers) => {
-        const union = new Set();
-        for (const c of centers) {
-            for (const d of diamond(c)) {
-                if (!revealed[d]) union.add(d);
-            }
-        }
-        return union;
-    };
-    const bestCenterAgainst = (union, taken, incumbent) => {
-        let center = incumbent;
-        let best = incumbent >= 0 ? gainOf(incumbent, union) : { rooms: 0, cost: Infinity };
+    }
+
+    while (beacons.length < count) {
+        let center = -1;
+        let bestRooms = 0;
+        let bestCost = Infinity;
         for (let c = 0; c < n; c++) {
-            if (c === incumbent || taken.has(c)) continue;
-            const gain = gainOf(c, union);
-            if (better(gain, best)) {
-                best = gain;
+            if (taken.has(c)) continue;
+            let rooms = 0;
+            let cost = 0;
+            for (const d of diamond(c)) {
+                if (revealed[d] || union.has(d)) continue;
+                rooms++;
+                cost += detour[d];
+            }
+            if (rooms > bestRooms || (rooms > 0 && rooms === bestRooms && cost < bestCost)) {
+                bestRooms = rooms;
+                bestCost = cost;
                 center = c;
             }
         }
-        return best.rooms > 0 ? center : -1;
-    };
-
-    const beacons = [];
-    while (beacons.length < count) {
-        const chosen = bestCenterAgainst(coverageOf(beacons), new Set(beacons), -1);
-        if (chosen < 0) break; // nothing left worth revealing
-        beacons.push(chosen);
-    }
-
-    for (let pass = 0; pass < BEACON_SWAP_PASSES; pass++) {
-        let moved = false;
-        for (let slot = 0; slot < beacons.length; slot++) {
-            const others = beacons.filter((_, i) => i !== slot);
-            const chosen = bestCenterAgainst(coverageOf(others), new Set(others), beacons[slot]);
-            if (chosen >= 0 && chosen !== beacons[slot]) {
-                beacons[slot] = chosen;
-                moved = true;
-            }
+        if (center < 0) break; // nothing left worth revealing
+        beacons.push(center);
+        taken.add(center);
+        for (const d of diamond(center)) {
+            if (!revealed[d]) union.add(d);
         }
-        if (!moved) break;
     }
 
     return beacons;
 }
 
 /**
- * Plan beacon placements on a labyrinth floor. Beacons reveal a 13-room
- * diamond (Manhattan radius 2), and the two questions worth asking of them get
- * different answers:
+ * Rank beacon placements the way the floor is actually played, in this order:
  *
- * - **A set count** (`beaconCount > 0`): place that many to reveal as much of
- *   the floor as possible, biased toward rooms on the way to the exit. The
- *   answer is always a plan — the count is what you have, not a target to be
- *   declared infeasible.
- * - **No count** (`beaconCount === 0`): the fewest beacons whose reveal areas
- *   chain into a fully revealed corridor from the entrance to the exit,
- *   maximizing new rooms among the minimal chains (beam search).
+ * 1. **A covered path to the exit**, scored as the beacons a placement still
+ *    leaves to be found — 0 means the way out is covered. When the budget can
+ *    reach 0, everything that does not is simply inadmissible; only a budget
+ *    too small to ever get there needs to know how much closer it got.
+ * 2. **A second independent covered route**, so no single blocked room can
+ *    sever the way out.
+ * 3. **Rooms revealed**, then how far off the way out those rooms sit.
  *
- * The corridor is a convenience, not a requirement: unrevealed rooms are
- * walkable, so a floor can always be crossed without beacons. That is why it
- * only constrains the mode that asks for it — making it a hard constraint on a
- * set count drags every beacon onto the entrance-to-exit line.
+ * Route counting treats unrevealed rooms as blocked (they are not — they are
+ * walkable, just unknown), so it is capped at two rather than chased.
  *
- * Pure function so the planning logic is testable without DOM.
+ * @param {Object} grid - beaconGrid helpers
  * @param {boolean[]} revealed - Flat grid of already-revealed rooms
  * @param {number} cols - Grid width
- * @param {number} [beaconCount=0] - Beacons to place; 0 = minimum for a corridor
- * @returns {Object|null} { feasible, beacons: [index...], covered: Set<number>,
- *   revealedNew, minNeeded, routes, corridorOpen } or null on empty input
+ * @param {number[]} detour - Per-cell detour cost
+ * @param {boolean} gradient - Whether "how much closer" has to be measured
+ * @returns {Object} { score, compare, routesOf }
  */
-export function computeBeaconPlan(revealed, cols, beaconCount = 0) {
+function createPlacementScorer(grid, revealed, cols, detour, gradient) {
     const n = revealed.length;
-    if (!n || !cols) return null;
-    const entranceIdx = LABYRINTH_ENTRANCE;
     const exitIdx = labyrinthExit(n);
-    const grid = beaconGrid(n, cols);
-    const { manhattan, neighbors, diamond, regionFrom } = grid;
+    const { neighbors, diamond, regionFrom } = grid;
 
-    // Revealed regions walkable from the entrance and from the exit
-    const isRevealed = (i) => revealed[i];
-    const startRegion = regionFrom(entranceIdx, isRevealed);
-    const endRegion = regionFrom(exitIdx, isRevealed);
-
-    const touches = (region, open) => {
-        for (const i of regionFrom(entranceIdx, open)) {
-            if (region.has(i) || neighbors(i).some((nb) => region.has(nb))) return true;
+    /** Beacons still needed after this placement; 0 = the way out is covered */
+    const residualOf = (union) => {
+        const isOpen = (i) => revealed[i] || union.has(i);
+        const startRegion = regionFrom(LABYRINTH_ENTRANCE, isOpen);
+        const endRegion = regionFrom(exitIdx, isOpen);
+        for (const i of startRegion) {
+            if (endRegion.has(i) || neighbors(i).some((nb) => endRegion.has(nb))) return 0;
         }
-        return false;
+        if (!gradient) return 1;
+        const { minNeeded } = beaconChainReach(grid, n, startRegion, endRegion);
+        return Number.isFinite(minNeeded) ? minNeeded : RESIDUAL_UNREACHABLE;
     };
-    const connected = touches(endRegion, isRevealed);
 
-    const passableWith = (union) => {
-        const passable = new Array(n);
-        for (let i = 0; i < n; i++) passable[i] = revealed[i] || union.has(i);
-        return passable;
-    };
-    const { startOK, distToEnd, minNeeded } = connected
-        ? { startOK: [], distToEnd: [], minNeeded: 0 }
-        : beaconChainReach(grid, n, startRegion, endRegion);
-
-    // A set count answers "where do I put the beacons I have", so it is planned
-    // for coverage whether or not the way out is already open
-    if (beaconCount > 0) {
-        const detour = detourCosts(grid, n, startRegion, exitIdx);
-        const beacons = placeBeaconsForCoverage(grid, revealed, beaconCount, detour);
-        const covered = new Set();
-        for (const c of beacons) {
+    const score = (centers) => {
+        const union = new Set();
+        for (const c of centers) {
             for (const d of diamond(c)) {
-                if (!revealed[d]) covered.add(d);
+                if (!revealed[d]) union.add(d);
             }
         }
-        return {
-            feasible: true,
-            beacons,
-            covered,
-            revealedNew: covered.size,
-            minNeeded,
-            routes: countDisjointRoutes(passableWith(covered), cols),
-            corridorOpen: connected || touches(endRegion, (i) => revealed[i] || covered.has(i)),
-        };
-    }
+        let cost = 0;
+        for (const d of union) cost += detour[d];
+        return { centers: [...centers], union, rooms: union.size, cost, residual: residualOf(union), routes: -1 };
+    };
 
-    if (connected) {
-        return {
-            feasible: true,
-            beacons: [],
-            covered: new Set(),
-            revealedNew: 0,
-            minNeeded: 0,
-            routes: countDisjointRoutes(revealed, cols),
-            corridorOpen: true,
-        };
-    }
-    if (!Number.isFinite(minNeeded)) {
-        return {
-            feasible: false,
-            beacons: [],
-            covered: new Set(),
-            revealedNew: 0,
-            minNeeded: Infinity,
-            routes: 0,
-            corridorOpen: false,
-        };
-    }
+    // Max-flow is the expensive part of a score, and an uncovered way out has
+    // no routes to count — so it is computed only when a comparison needs it
+    const routesOf = (state) => {
+        if (state.routes < 0) {
+            if (state.residual > 0) {
+                state.routes = 0;
+            } else {
+                const passable = new Array(n);
+                for (let i = 0; i < n; i++) passable[i] = revealed[i] || state.union.has(i);
+                state.routes = countDisjointRoutes(passable, cols, exitIdx);
+            }
+        }
+        return state.routes;
+    };
 
-    // Beam search over minimum-length chains, maximizing newly revealed rooms
+    const compare = (a, b) => {
+        if (a.residual !== b.residual) return a.residual - b.residual;
+        const routes = Math.min(BEACON_ROUTE_TARGET, routesOf(b)) - Math.min(BEACON_ROUTE_TARGET, routesOf(a));
+        if (routes !== 0) return routes;
+        if (a.rooms !== b.rooms) return b.rooms - a.rooms;
+        return a.cost - b.cost;
+    };
+
+    return { score, compare, routesOf };
+}
+
+/**
+ * Re-place one beacon at a time until no single move improves the placement,
+ * judged by the full objective rather than by rooms alone: greedy coverage
+ * takes the densest spot first even when moving one beacon onto the way out
+ * would cover it at the cost of a room or two.
+ *
+ * @param {Object} scorer - createPlacementScorer result
+ * @param {number} n - Cell count
+ * @param {number[]} seed - Starting centers
+ * @param {number} passes - Sweeps over the placement before settling
+ * @returns {Object} Scored placement
+ */
+function refinePlacement(scorer, n, seed, passes) {
+    const centers = [...seed];
+    let best = scorer.score(centers);
+    for (let pass = 0; pass < passes; pass++) {
+        let moved = false;
+        for (let slot = 0; slot < centers.length; slot++) {
+            const incumbent = centers[slot];
+            let chosen = incumbent;
+            for (let c = 0; c < n; c++) {
+                if (c === incumbent || centers.includes(c)) continue;
+                const trial = [...centers];
+                trial[slot] = c;
+                const scored = scorer.score(trial);
+                if (scorer.compare(scored, best) < 0) {
+                    best = scored;
+                    chosen = c;
+                }
+            }
+            if (chosen !== incumbent) {
+                centers[slot] = chosen;
+                moved = true;
+            }
+        }
+        if (!moved) break;
+    }
+    return best;
+}
+
+/**
+ * Minimum-length beacon chains from the entrance region to the exit region,
+ * the ones worth trying first — beam search, widest coverage kept.
+ *
+ * @param {Object} grid - beaconGrid helpers
+ * @param {boolean[]} revealed - Flat grid of already-revealed rooms
+ * @param {boolean[]} startOK - Per cell: reveal area touches the entrance region
+ * @param {number[]} distToEnd - Per cell: beacons still needed after it
+ * @param {number} minNeeded - Chain length
+ * @returns {number[][]} Chains, best coverage first
+ */
+function minimalChains(grid, revealed, startOK, distToEnd, minNeeded) {
+    const n = revealed.length;
+    const { manhattan, diamond } = grid;
     const newCells = (c, union) => diamond(c).filter((d) => !revealed[d] && !union.has(d));
     const BEAM_WIDTH = 300;
+
     let states = [];
     for (let c = 0; c < n; c++) {
         if (!startOK[c] || distToEnd[c] > minNeeded - 1) continue;
@@ -588,35 +618,123 @@ export function computeBeaconPlan(revealed, cols, beaconCount = 0) {
         states = expanded.slice(0, BEAM_WIDTH);
     }
     states = states.filter((s) => distToEnd[s.chain[s.chain.length - 1]] === 0);
-    if (!states.length) {
-        return {
-            feasible: false,
-            beacons: [],
-            covered: new Set(),
-            revealedNew: 0,
-            minNeeded,
-            routes: 0,
-            corridorOpen: false,
-        };
-    }
-
-    // Coverage decides between equal-length chains; route redundancy only
-    // breaks the ties it leaves. Redundancy counts unrevealed rooms as blocked,
-    // which they are not, so it is worth reporting but not worth paying rooms for.
     states.sort((a, b) => b.union.size - a.union.size);
-    const finalists = states
-        .slice(0, 40)
-        .map((s) => ({ ...s, routes: Math.min(2, countDisjointRoutes(passableWith(s.union), cols)) }));
-    finalists.sort((a, b) => b.union.size - a.union.size || b.routes - a.routes);
-    const best = finalists[0];
+    return states.slice(0, CHAIN_CANDIDATES).map((s) => s.chain);
+}
+
+/**
+ * Plan beacon placements on a labyrinth floor. Beacons reveal a 13-room
+ * diamond (Manhattan radius 2), and wherever they go they are judged the same
+ * way, in this order:
+ *
+ * 1. **Cover a path to the exit.** A placement that could have covered one and
+ *    does not is inadmissible, whatever it reveals. Only a budget too small to
+ *    ever cover one falls back to getting as close as it can, and the caller is
+ *    told how many it would take (`minNeeded`, `corridorOpen`).
+ * 2. **Cover a second independent route**, so no single blocked room can sever
+ *    the way out.
+ * 3. **Reveal as many new rooms as possible**, ties settled toward rooms on the
+ *    way out.
+ *
+ * The count is the only thing the two modes disagree about:
+ *
+ * - **A set count** (`beaconCount > 0`): plan exactly that many. The count is
+ *   what you have, not a target to be declared infeasible.
+ * - **No count** (`beaconCount === 0`): the fewest that cover a path to the
+ *   exit — the minimum is the budget, and the objective above does the rest.
+ *
+ * Coverage used to be the whole objective for a set count, which is how four
+ * beacons could be planned onto the densest dark pockets of a floor while the
+ * way out stayed dark. It is now a constraint the placement has to clear first.
+ *
+ * Pure function so the planning logic is testable without DOM.
+ * @param {boolean[]} revealed - Flat grid of already-revealed rooms
+ * @param {number} cols - Grid width
+ * @param {number} [beaconCount=0] - Beacons to place; 0 = fewest that cover a path
+ * @returns {Object|null} { feasible, beacons: [index...], covered: Set<number>,
+ *   revealedNew, minNeeded, routes, corridorOpen } or null on empty input
+ */
+export function computeBeaconPlan(revealed, cols, beaconCount = 0) {
+    const n = revealed.length;
+    if (!n || !cols) return null;
+    const entranceIdx = LABYRINTH_ENTRANCE;
+    const exitIdx = labyrinthExit(n);
+    const grid = beaconGrid(n, cols);
+    const { neighbors, regionFrom } = grid;
+
+    // Revealed regions walkable from the entrance and from the exit
+    const isRevealed = (i) => revealed[i];
+    const startRegion = regionFrom(entranceIdx, isRevealed);
+    const endRegion = regionFrom(exitIdx, isRevealed);
+
+    const touches = (region, open) => {
+        for (const i of regionFrom(entranceIdx, open)) {
+            if (region.has(i) || neighbors(i).some((nb) => region.has(nb))) return true;
+        }
+        return false;
+    };
+    const connected = touches(endRegion, isRevealed);
+
+    const { startOK, distToEnd, minNeeded } = connected
+        ? { startOK: [], distToEnd: [], minNeeded: 0 }
+        : beaconChainReach(grid, n, startRegion, endRegion);
+
+    const nothingPlanned = (feasible) => ({
+        feasible,
+        beacons: [],
+        covered: new Set(),
+        revealedNew: 0,
+        minNeeded,
+        routes: connected ? countDisjointRoutes(revealed, cols, exitIdx) : 0,
+        corridorOpen: connected,
+    });
+
+    // Without a count, the budget is the minimum that covers a path — which is
+    // nothing at all when one is already revealed, and nothing possible when no
+    // chain of beacons reaches the exit
+    if (beaconCount <= 0) {
+        if (connected) return nothingPlanned(true);
+        if (!Number.isFinite(minNeeded)) return nothingPlanned(false);
+    }
+    const count = beaconCount > 0 ? beaconCount : minNeeded;
+
+    // A budget that cannot cover a path has to be ranked by how close it gets;
+    // one that can treats every placement that fails to as inadmissible
+    const coversPath = Number.isFinite(minNeeded) && count >= minNeeded;
+    const detour = detourCosts(grid, n, startRegion, exitIdx);
+    const scorer = createPlacementScorer(grid, revealed, cols, detour, !coversPath);
+
+    const seeds = [];
+    const coverageSeed = growForCoverage(grid, revealed, count, detour, []);
+    if (coverageSeed.length) seeds.push(coverageSeed);
+    if (!connected && coversPath) {
+        const chains = minimalChains(grid, revealed, startOK, distToEnd, minNeeded);
+        // Asked for the minimum and there is no chain to be found: the honest
+        // answer is that the exit cannot be covered, not a plan that misses it
+        if (!chains.length && beaconCount <= 0) return nothingPlanned(false);
+        for (const chain of chains) seeds.push(growForCoverage(grid, revealed, count, detour, chain));
+    }
+    if (!seeds.length) return nothingPlanned(beaconCount > 0);
+
+    // The chain seeds already cover a path, so ranking them settles on route
+    // redundancy and rooms; the re-placement search is expensive enough to be
+    // spent on the few that come out on top
+    const wide = count <= BEACON_SEARCH_WIDE_LIMIT;
+    const scored = seeds.map((seed) => scorer.score(seed));
+    scored.sort(scorer.compare);
+    let best = scored[0];
+    for (const seed of scored.slice(0, wide ? REFINE_SEEDS : 2)) {
+        const refined = refinePlacement(scorer, n, seed.centers, wide ? BEACON_SWAP_PASSES : 2);
+        if (scorer.compare(refined, best) < 0) best = refined;
+    }
 
     return {
         feasible: true,
-        beacons: [...best.chain],
+        beacons: [...best.centers],
         covered: new Set(best.union),
         revealedNew: best.union.size,
         minNeeded,
-        routes: best.routes,
-        corridorOpen: true,
+        routes: scorer.routesOf(best),
+        corridorOpen: best.residual === 0,
     };
 }
