@@ -74,7 +74,23 @@ export const DETAIL_ROWS = [
     { key: 'magicEvasionRating', label: 'Magic evasion' },
 ];
 
-/** Fields read off `combatDetails.combatStats`, all of them ratios unless said otherwise */
+/**
+ * Fields read off `combatDetails.combatStats`.
+ *
+ * `combatStats` is not one kind of number, which is the trap this walked into:
+ * it mixes ratios (`criticalRate: 0.2097`, `castSpeed: 0.1155`) with flat
+ * ratings (`tenacity: 165.79`, `threat: 239.22`) under one roof, and treating
+ * the whole map as ratios drew a real player's sheet as "Tenacity 16579%" and
+ * "Threat 23922%". A stat's kind is therefore declared per row rather than
+ * assumed, and `percent` is opt-in: a row that says nothing is a flat number,
+ * which is the safe direction — a rating shown as a rating is merely
+ * uninformative, while a rating shown as a percentage is off by a hundred.
+ *
+ * The kinds are read off a live sheet (`Toolasha.debug.exportTrialData()`), where
+ * every ratio sits under 5 and every rating is in the hundreds:
+ * crit/regen/amplify/speed/XP/find are ratios; tenacity, threat, armour,
+ * resistances and ability haste are flat.
+ */
 export const STAT_ROWS = [
     { key: 'criticalRate', label: 'Crit rate', percent: true },
     { key: 'criticalDamage', label: 'Crit damage', percent: true },
@@ -86,12 +102,13 @@ export const STAT_ROWS = [
     { key: 'mpRegenPer10', label: 'MP regen /10s', percent: true },
     { key: 'lifeSteal', label: 'Life steal', percent: true },
     { key: 'parry', label: 'Parry', percent: true },
-    { key: 'tenacity', label: 'Tenacity', percent: true },
     { key: 'armorPenetration', label: 'Armor pen', percent: true },
     { key: 'physicalAmplify', label: 'Physical amplify', percent: true },
     { key: 'attackSpeed', label: 'Attack speed', percent: true },
     { key: 'castSpeed', label: 'Cast speed', percent: true },
-    { key: 'threat', label: 'Threat', percent: true },
+    // Flat ratings, both of them, and both were drawn as percentages
+    { key: 'tenacity', label: 'Tenacity' },
+    { key: 'threat', label: 'Threat' },
     { key: 'abilityHaste', label: 'Ability haste' },
 ];
 
@@ -123,9 +140,11 @@ function figure(value, percent = false) {
 /**
  * The rows a stat sheet is worth showing.
  *
- * A ratio of zero is dropped — every player has a `curse` of zero and a sheet
- * padded with them buries the four numbers that differ. A flat rating of zero is
- * kept, because "no armor" is a fact about a build rather than an absent field.
+ * A `combatStats` entry of zero is dropped, ratio or rating alike — every one of
+ * them is a bonus on top of a base the sheet states elsewhere, so zero means
+ * "nothing from gear" and a sheet padded with them buries the four numbers that
+ * differ. A `combatDetails` figure of zero is kept, because "no armor" is a fact
+ * about a build rather than an absent field.
  *
  * @param {Object} details - `combatDetails`
  * @param {Object} stats - `combatDetails.combatStats`
@@ -142,8 +161,7 @@ export function buildLoadoutRows(details = {}, stats = {}) {
 
     for (const { key, label, percent } of STAT_ROWS) {
         const value = Number(stats?.[key]);
-        if (!Number.isFinite(value)) continue;
-        if (percent && value === 0) continue;
+        if (!Number.isFinite(value) || value === 0) continue;
         rows.push({ label, value: figure(value, percent) });
     }
 

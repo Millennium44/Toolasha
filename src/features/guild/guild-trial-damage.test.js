@@ -88,6 +88,19 @@ describe('isTrialBattle', () => {
         const verdict = isTrialBattle({ monsterNames: ['Chimerical Beast'], trialNames: ['Trial Chameleon'] });
         expect(verdict.isTrial).toBe(false);
         expect(verdict.reason).toMatch(/not this week/i);
+        // Names what it saw and what it wanted: the reason as it stood could not
+        // be acted on from a bug report, which is how a broken gate survived
+        expect(verdict.reason).toContain('Chimerical Beast');
+        expect(verdict.reason).toContain('chameleon');
+    });
+
+    test('an hrid is as good as a name', () => {
+        const verdict = isTrialBattle({
+            monsterNames: ['/monsters/chameleon'],
+            trialNames: ['Trial Chameleon'],
+        });
+        expect(verdict.isTrial).toBe(true);
+        expect(verdict.encounter).toBe('chameleon');
     });
 
     test('with no combat trial on record nothing but a named trial counts', () => {
@@ -101,14 +114,44 @@ describe('battleMonsterNames', () => {
         expect(battleMonsterNames({ monsters: [{ name: 'Trial Swarm' }] })).toEqual(['Trial Swarm']);
     });
 
+    test('every spelling, not the first one that exists', () => {
+        // The live payload carries both, and the display name is the one that a
+        // localised client changes — taking it and stopping threw away the only
+        // stable identifier the battle had
+        game.clientData = { combatMonsterDetailMap: { '/monsters/chameleon': { name: 'Chameleon' } } };
+        const names = battleMonsterNames({
+            monsters: [{ hrid: '/monsters/chameleon', name: 'Chamäleon' }],
+        });
+        expect(names).toContain('/monsters/chameleon');
+        expect(names).toContain('Chamäleon');
+        expect(names).toContain('Chameleon');
+    });
+
     test('falls back to the hrid, through client data where it has it', () => {
         game.clientData = { combatMonsterDetailMap: { '/monsters/trial_badger': { name: 'Trial Badger' } } };
         expect(battleMonsterNames({ monsters: { 0: { combatMonsterHrid: '/monsters/trial_badger' } } })).toEqual([
+            '/monsters/trial_badger',
             'Trial Badger',
         ]);
 
         game.clientData = {};
-        expect(battleMonsterNames({ monsters: { 0: { hrid: '/monsters/trial_badger' } } })).toEqual(['trial badger']);
+        expect(battleMonsterNames({ monsters: { 0: { hrid: '/monsters/trial_badger' } } })).toEqual([
+            '/monsters/trial_badger',
+        ]);
+    });
+
+    test('a fight this client would otherwise not have recognised, from the live export', () => {
+        // The reported case: the party was visibly fighting the week's combat
+        // trial and the gate reported "the monsters are not this week's trial
+        // encounter", with fights: 0. An hrid nobody looked at said otherwise.
+        game.clientData = {};
+        const names = battleMonsterNames({
+            monsters: [{ hrid: '/monsters/trial_chameleon', isPlayer: false }],
+        });
+        expect(isTrialBattle({ monsterNames: names, trialNames: ['Trial Chameleon'] })).toMatchObject({
+            isTrial: true,
+            encounter: 'chameleon',
+        });
     });
 });
 
@@ -288,6 +331,38 @@ describe('the live tracker', () => {
         const breakdown = guildTrialDamage.breakdown();
         expect(breakdown.totalDamage).toBe(first + 100);
         expect(breakdown.fights).toBe(2);
+    });
+
+    test('the week’s trial name arriving mid-fight arms the tally', () => {
+        // The record learns this week's combat card when the guild panel is
+        // first drawn, which is routinely after the party has started swinging.
+        // Deciding only on `new_battle` left that whole fight unattributed.
+        guildTrialDamage.setTrialNames([]);
+        game.wsHandlers.new_battle({
+            battleId: 11,
+            monsters: [{ hrid: '/monsters/chameleon', name: 'Chameleon' }],
+            players: [{ character: { name: 'Tib' }, isPreparingAutoAttack: true }],
+        });
+        expect(guildTrialDamage.breakdown().active).toBe(false);
+
+        guildTrialDamage.setTrialNames(['Trial Chameleon']);
+
+        const armed = guildTrialDamage.breakdown();
+        expect(armed.active).toBe(true);
+        expect(armed.encounter).toBe('chameleon');
+        expect(armed.fights).toBe(1);
+
+        game.wsHandlers.battle_updated({ battleId: 11, pMap: { 0: player(5) }, mMap: { 0: monster(900, 0) } });
+        vi.advanceTimersByTime(1000);
+        game.wsHandlers.battle_updated({ battleId: 11, pMap: { 0: player(6) }, mMap: { 0: monster(800, 1) } });
+        expect(guildTrialDamage.breakdown().totalDamage).toBe(100);
+    });
+
+    test('what the fight was called is carried into the breakdown', () => {
+        fight('Chimerical Beast');
+        const breakdown = guildTrialDamage.breakdown();
+        expect(breakdown.monsterNames).toContain('Chimerical Beast');
+        expect(breakdown.trialNames).toEqual(['Trial Chameleon']);
     });
 
     test('a reading older than the hour a trial runs for is withdrawn', () => {

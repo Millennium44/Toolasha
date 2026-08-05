@@ -76,6 +76,7 @@
  */
 
 import config from '../../core/config.js';
+import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import webSocketHook from '../../core/websocket.js';
 import { formatKMB, formatWithSeparator } from '../../utils/formatters.js';
@@ -494,30 +495,47 @@ class GuildTrials {
         this.guildName = null;
         /** Guards the one-shot adoption below against a second render starting it again */
         this.adopting = false;
+        /** When the sampler last ran, so a sampler that has stopped can be noticed */
+        this.lastTickAt = 0;
+        /** The sampler's interval id, kept so it can be re-armed */
+        this.samplerId = null;
+        /** Guild name seen on the socket, when the XP tracker is not the one who saw it */
+        this.socketGuildName = null;
     }
 
     async initialize() {
         if (this.initialized) return;
         if (!config.getSetting('guildTrialsInfo', true)) return;
 
-        this.guildName = guildXPTracker.getOwnGuildName?.() || null;
-        this.record = await loadTrialRecord(this.guildName);
+        // Whatever a previous life left behind is not this one's. The merge
+        // below is for readings taken by a tick that beat the load, not for a
+        // record from before a cleanup
+        this.record = null;
 
-        // Both listen to the socket rather than to the panel, so they are
-        // started here rather than on the tab appearing: a trial fight and a
-        // unit popup both happen while the guild page is shut. `_publishTrialNames`
-        // arms the damage gate from last session's record, so a fight is
-        // recognised without the tab having been opened this session.
-        guildTrialDamage.initialize();
-        this._publishTrialNames();
-        await guildLoadoutCapture.initialize();
+        // Listeners and the sampler first, before anything is awaited.
+        //
+        // This ordering is the fix for a recording that produced two samples in
+        // forty minutes of a live trial with the tab open. Everything below the
+        // first `await` — which is to say the sampler — only exists if every
+        // promise above it settles, and a rejected or slow one takes the
+        // five-second reading with it while leaving the DOM observer (registered
+        // first, at the time) drawing blocks. The panel therefore *looked* like
+        // it was working: it drew, on whatever DOM churn or guild message
+        // happened to arrive, and sampled at that cadence rather than its own.
+        //
+        // Nothing here needs the record, because `_render` tolerates not having
+        // one yet: a tick before the load lands writes into a fresh record and
+        // the load merges into it rather than replacing it.
+        this._armSampler();
 
         // Any guild panel node at all, rather than a list of guesses at what the
         // two trial tabs are called. The In Progress tab's card carries neither
         // a tile summary nor a level, so there is no narrower class this could
         // wait for without being wrong about one of the two tabs again — and
         // `findTrialsRoot` costs two `querySelector`s to answer "not this tab".
-        // Debounced, so React's render burst is one call rather than hundreds.
+        // Debounced, so React's render burst is one call rather than hundreds —
+        // which is also why it cannot be the sampler: a bar that ticks every
+        // second re-arms the debounce timer forever and the callback starves.
         this.unregister.push(
             domObserver.onClass('GuildTrials', 'GuildPanel_', () => this._onTab(findTrialsRoot()), {
                 debounce: true,
@@ -525,7 +543,10 @@ class GuildTrials {
             })
         );
 
-        this._refresh = () => this._render(findTrialsRoot());
+        this._refresh = (data) => {
+            this._noteGuildName(data);
+            this._render(findTrialsRoot());
+        };
         for (const type of ['guild_updated', 'guild_characters_updated', 'guild_trial_signup_updated']) {
             webSocketHook.on(type, this._refresh);
         }
@@ -535,14 +556,43 @@ class GuildTrials {
             }
         });
 
-        this.timers.registerInterval(
-            setInterval(() => {
-                const el = findTrialsRoot();
-                if (el?.isConnected) this._render(el);
-            }, SAMPLE_MS)
-        );
+        // Both listen to the socket rather than to the panel, so they are
+        // started here rather than on the tab appearing: a trial fight and a
+        // unit popup both happen while the guild page is shut. `_publishTrialNames`
+        // arms the damage gate from last session's record, so a fight is
+        // recognised without the tab having been opened this session.
+        guildTrialDamage.initialize();
 
         this.initialized = true;
+
+        this.guildName = this._resolveGuildName();
+        const stored = await loadTrialRecord(this.guildName);
+        this.record = mergeTrialRecords(stored, this.record);
+        this._publishTrialNames();
+
+        await guildLoadoutCapture.initialize();
+    }
+
+    /**
+     * Start the five-second sampler, replacing any that is already running.
+     *
+     * Separate from {@link initialize} so it can be re-armed: the reading only
+     * exists because something took it, and an interval that has been cleared —
+     * by a cleanup that raced a re-initialisation, by a browser that throttled a
+     * background tab into never rescheduling it — is indistinguishable on screen
+     * from a trial nobody is running.
+     */
+    _armSampler() {
+        if (this.samplerId) clearInterval(this.samplerId);
+        this.samplerId = setInterval(() => this._tick(), SAMPLE_MS);
+        this.timers.registerInterval(this.samplerId);
+    }
+
+    /** One sampler tick: read the tab if it is open, and note that the sampler is alive */
+    _tick() {
+        this.lastTickAt = Date.now();
+        const el = findTrialsRoot();
+        if (el?.isConnected) this._render(el);
     }
 
     /**
@@ -550,7 +600,42 @@ class GuildTrials {
      * @param {Element|null} el - The trials content element
      */
     _onTab(el) {
+        // A tab event is also proof of life for the sampler: if ticks have
+        // stopped while the panel is plainly being drawn, the interval is gone
+        // and the readings with it, so it is started again
+        if (this.initialized && this.lastTickAt && Date.now() - this.lastTickAt > SAMPLE_MS * 3) {
+            this._armSampler();
+        }
         this._render(el);
+    }
+
+    /**
+     * The guild's name, from whichever source has it.
+     *
+     * Three, in order of how directly they saw it. The XP tracker is the one
+     * that is *supposed* to know, and it is also the one that can be switched
+     * off in settings or can simply never have received a `guild_updated` — in
+     * which case it answers null for the whole session and every reading is
+     * filed under the `default` key, which is what was reported. The character's
+     * own init payload carries `guild.name` and is present from login; the
+     * socket's own `guild_updated` carries it too and is captured here rather
+     * than being asked for.
+     *
+     * @returns {string|null} The name, or null when nothing has seen one
+     */
+    _resolveGuildName() {
+        return (
+            guildXPTracker.getOwnGuildName?.() || this.socketGuildName || dataManager.characterData?.guild?.name || null
+        );
+    }
+
+    /**
+     * Note a guild name off a guild message.
+     * @param {Object} [data] - A `guild_updated`-shaped payload
+     */
+    _noteGuildName(data) {
+        const name = data?.guild?.name;
+        if (typeof name === 'string' && name.trim()) this.socketGuildName = name.trim();
     }
 
     /**
@@ -572,7 +657,7 @@ class GuildTrials {
      * @returns {Promise<void>}
      */
     async _adoptGuildName() {
-        const name = guildXPTracker.getOwnGuildName?.() || null;
+        const name = this._resolveGuildName();
         if (!name || name === this.guildName || this.adopting) return;
 
         this.adopting = true;
@@ -653,11 +738,27 @@ class GuildTrials {
 
                 const block = document.createElement('div');
                 block.className = CSS_CLASS;
+                // Its own block, in normal flow, and never inside the card.
+                //
+                // Appended *into* the card it described the game's own footer —
+                // "Completed", "1/28 signed up" — sat on top of these lines, because
+                // a card is a fixed-height box whose last rows are placed against
+                // its bottom edge rather than stacked after whatever it contains.
+                // Nothing this script can set on a child fixes that. Placed after
+                // the card instead, it cannot overlap anything: `flex-basis` and
+                // `grid-column` make it take a whole row of its own in the two
+                // layouts a card list is ever built out of.
                 block.style.cssText =
-                    'margin:6px 0 2px; padding:6px 10px; background:rgba(0,0,0,0.25);' +
+                    'position:static; display:block; width:100%; box-sizing:border-box; clear:both;' +
+                    'flex-basis:100%; grid-column:1 / -1;' +
+                    'margin:6px 0 8px; padding:6px 10px; background:rgba(0,0,0,0.25);' +
                     'border-radius:6px; font-size:11px; line-height:1.6;';
                 block.innerHTML = renderTrialBlock(analysis, participants);
-                tile.element.appendChild(block);
+                // Inside the root either way: the redraw clears its own output by
+                // querying the root, so a block placed outside it would stack
+                const parent = tile.element.parentElement;
+                if (parent && root.contains(parent)) tile.element.insertAdjacentElement('afterend', block);
+                else tile.element.appendChild(block);
             }
 
             this._renderPayout(root, trialsForPayout, tiles[0]?.element || null);
@@ -836,6 +937,8 @@ class GuildTrials {
         for (const unregister of this.unregister) unregister();
         this.unregister = [];
         this.timers.clearAll();
+        this.samplerId = null;
+        this.lastTickAt = 0;
         guildTrialDamage.cleanup();
         guildLoadoutCapture.cleanup();
         document.querySelectorAll(`.${CSS_CLASS}`).forEach((el) => el.remove());

@@ -6,6 +6,15 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The trial export was read, and it proved six defects — all fixed
+
+- **Per-player DPS now arms during real trial fights**: the gate compared only the payload's display names against the trial card, but live payloads name monsters by hrid too (`/monsters/trial_chameleon`), and the old reader threw the hrid away — so a party visibly fighting Trial Chameleon measured nothing. Every spelling is now collected (name, character name, the hrid itself, the client's name for the hrid) and matched with separators flattened; and the verdict on a fight already in progress is re-taken when the trials record learns the week's card, since the panel is routinely opened _after_ the party starts swinging. When the gate still says no, its reason now lists what the payload called the monsters, so the next export answers the question instead of repeating it.
+- **The 5-second sampler actually runs**: it was armed after two awaits (behind the record load), and the DOM fallback debounce starves under a bar that redraws every second — the export showed two samples seven minutes apart. The sampler is now armed before anything can fail ahead of it, a tab event revives it if ticks stop, and an early tick no longer loses to the record load.
+- **Stated tiers and points persist**: a card saying "840 pts" and "T6" but showing no level recorded neither — tier was only ever derived from `Lv.`, and a card without a level marker wasn't even read as a card. A stated `T6`/`Tier 8` now beats the derived tier and anchors the card, as does a points line.
+- **The record learns your guild name** from the `guild_updated` payload the feature already receives and from character data — not just the XP tracker, which is null whenever it's off. Exports read the feature's record, not a parallel guess.
+- **Tenacity and Threat are flat ratings, not ratios** — no more "Tenacity 16579%" in seen loadouts; every other stat row was audited against the export and zero-valued gear bonuses are dropped.
+- **Trial annotations no longer overlap the game's cards**: the game's tiles are fixed 126×126 grid cells and our block was injected inside them; it now renders as its own full-width row after the card.
+
 ### Trials know who hit what, and why the payout was blank
 
 - **Per-player DPS on combat trials**: one line per player under the trial card — DPS, share of party damage, deaths — using the exact same damage attribution as the DPS panel, gated so only real trial fights count (a mid-trial reload measures nothing rather than the wrong thing, and the next zone can't inherit the tally). Spans the trial's tiers; prints its reason when nothing is measured.

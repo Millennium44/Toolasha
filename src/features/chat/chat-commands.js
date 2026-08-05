@@ -24,6 +24,7 @@ import { loadTrialRecord } from '../guild/guild-trials-store.js';
 import { loadLoadouts } from '../guild/guild-loadouts.js';
 import { guildTrialDamage } from '../guild/guild-trial-damage.js';
 import guildXPTracker from '../guild/guild-xp-tracker.js';
+import { guildTrials } from '../guild/guild-trials.js';
 
 /**
  * Everything the client currently believes about guild shrines.
@@ -167,7 +168,11 @@ export function exposeShrineDebug() {
         // signups), this character's seen loadouts, and the live per-player
         // damage breakdown. For saving a trial before it ends and analysing later.
         target.Toolasha.debug.exportTrialData = async () => {
-            const guildName = guildXPTracker.getOwnGuildName?.() || null;
+            // The trials feature's own answer first: it has three sources for
+            // the guild's name and the XP tracker is only one of them, so asking
+            // the tracker alone exported the `default` record while the feature
+            // was writing to the guild's
+            const guildName = guildTrials?.guildName || guildXPTracker.getOwnGuildName?.() || null;
             const record = await loadTrialRecord(guildName);
             const characterId = dataManager.getCurrentCharacterId?.() ?? null;
             const loadouts = characterId ? await loadLoadouts(characterId) : null;

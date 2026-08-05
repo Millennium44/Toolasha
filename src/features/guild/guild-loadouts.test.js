@@ -31,6 +31,7 @@ vi.mock('../../core/storage.js', () => ({
 
 const {
     buildLoadoutRows,
+    STAT_ROWS,
     describeLoadoutAge,
     extractLoadout,
     extractPartyLoadouts,
@@ -79,6 +80,42 @@ describe('buildLoadoutRows', () => {
 
     test('absent fields are absent rather than nought', () => {
         expect(buildLoadoutRows({}, {})).toEqual([]);
+    });
+
+    test('a flat rating is not a ratio — the live sheet, to the digit', () => {
+        // Straight off `Toolasha.debug.exportTrialData()`: this player's rows
+        // read "Tenacity 16579%" and "Threat 23922%", because every `combatStats`
+        // entry was assumed to be a ratio. Two of them are ratings.
+        const rows = buildLoadoutRows(
+            {},
+            {
+                tenacity: 165.79080000000002,
+                threat: 239.21999999999997,
+                criticalRate: 0.20972800000000003,
+                castSpeed: 0.1155,
+                hpRegenPer10: 0.07166299999999999,
+                combatRareFind: 0.632,
+            }
+        );
+        const value = (label) => rows.find((entry) => entry.label === label)?.value;
+
+        expect(value('Tenacity')).toBe('166');
+        expect(value('Threat')).toBe('239');
+        expect(value('Crit rate')).toBe('21%');
+        expect(value('Cast speed')).toBe('12%');
+        expect(value('HP regen /10s')).toBe('7.2%');
+        expect(value('Rare find')).toBe('63%');
+    });
+
+    test('no row on the sheet reads as a hundredfold of itself', () => {
+        // The audit, rather than the two rows that were caught: every ratio row
+        // drawn from a plausible ratio stays under 1,000%, and every flat row
+        // drawn from a plausible rating is not marked as a percentage at all
+        const stats = Object.fromEntries(STAT_ROWS.map(({ key, percent }) => [key, percent ? 0.25 : 250]));
+        for (const row of buildLoadoutRows({}, stats)) {
+            const shown = Number(row.value.replace(/[%,]/g, ''));
+            expect(shown).toBeLessThanOrEqual(1000);
+        }
     });
 });
 

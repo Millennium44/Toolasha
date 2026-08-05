@@ -571,6 +571,92 @@ describe('the panel, end to end', () => {
         expect(game.observers['GuildPanel_trialsContent']).toBeUndefined();
         expect(guildTrials.initialized).toBe(false);
     });
+
+    test('an open tab is sampled every five seconds, not whenever the DOM churns', () => {
+        // The reported recording: two samples in forty minutes of a live trial
+        // with the tab open and the pool ticking every second. A rate cannot be
+        // fitted to that, and the tile said "measuring…" for the whole event.
+        const root = buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]);
+        const bar = root.querySelector('[class*="ProgressBar_text"]');
+
+        for (let step = 1; step <= 6; step += 1) {
+            bar.textContent = `${18_850 + step * 100} / 65,280`;
+            vi.setSystemTime(now + step * 5000);
+            vi.advanceTimersByTime(5000);
+        }
+
+        const samples = guildTrials.record.tiles['skilling::alchemy'].samples;
+        expect(samples).toHaveLength(6);
+        expect(samples[5].readings[0].current).toBe(19_450);
+    });
+
+    test('the sampler is running before the record has finished loading', async () => {
+        // The ordering that made the above possible: everything below the first
+        // `await` only exists once every promise above it settles, and the
+        // sampler was below all of them. A tick that beats the load writes into
+        // a fresh record, and the load merges into it rather than replacing it.
+        trialsFeature.cleanup();
+        game.store = {};
+
+        const pending = trialsFeature.initialize();
+        buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]);
+        vi.advanceTimersByTime(5000);
+
+        expect(guildTrials.record.tiles['skilling::alchemy'].samples).toHaveLength(1);
+        await pending;
+        expect(guildTrials.record.tiles['skilling::alchemy'].samples).toHaveLength(1);
+    });
+
+    test('a sampler that has stopped is started again by the next tab event', () => {
+        buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]);
+        vi.advanceTimersByTime(5000);
+        expect(guildTrials.record.tiles['skilling::alchemy'].samples).toHaveLength(1);
+
+        // Whatever killed it — a cleanup racing a re-initialisation, a
+        // throttled background tab — the panel being drawn is proof it should
+        // be running
+        clearInterval(guildTrials.samplerId);
+        vi.setSystemTime(now + 60_000);
+        fire();
+
+        vi.setSystemTime(now + 65_000);
+        vi.advanceTimersByTime(5000);
+        expect(guildTrials.record.tiles['skilling::alchemy'].samples.length).toBeGreaterThan(2);
+    });
+
+    test('the card block is a block of its own, never inside the card', () => {
+        // Appended into the card it sat on top of the game's own footer —
+        // "Completed", "1/28 signed up" — because a card places its last rows
+        // against its bottom edge rather than after whatever it contains
+        const root = buildTab([{ name: 'Trial Chameleon', level: 140, bar: '618,000 / 618,000' }]);
+        fire(root);
+
+        const card = root.querySelector('[class*="GuildPanel_tile__"]');
+        const block = [...document.querySelectorAll('.mwi-trial-info')].find((el) => el.textContent.includes('Banked'));
+
+        expect(card.contains(block)).toBe(false);
+        expect(block.previousElementSibling).toBe(card);
+        expect(block.style.position).toBe('static');
+    });
+
+    test('the guild name is taken off a guild message when the XP tracker never saw one', async () => {
+        // Reported: every session filed its samples under `guildTrials_default`
+        // because the tracker answered null all the way through — it can be
+        // switched off, and it only ever learns the name from traffic it may not
+        // have received.
+        trialsFeature.cleanup();
+        game.guildName = null;
+        game.store = {};
+        await trialsFeature.initialize();
+
+        buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]);
+        game.wsHandlers.guild_updated({ guild: { name: 'Milky Way', experience: 10 } });
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(guildTrials.guildName).toBe('Milky Way');
+        expect(Object.keys(game.store)).toContain('guildTrials_Milky Way');
+        game.guildName = 'Milky Way';
+    });
 });
 
 /**

@@ -70,11 +70,19 @@ const MAX_TICK_GAP_MS = 2000;
 
 /**
  * Which of the five encounters a name is, if any.
- * @param {string} name - A monster or trial card name
+ *
+ * Hrids as well as display names: `/monsters/trial_chameleon` and "Trial
+ * Chameleon" are the same encounter, and only one of the two is guaranteed to be
+ * in English. Separators are flattened to spaces so a name is compared on its
+ * letters rather than on how the payload happened to punctuate them.
+ *
+ * @param {string} name - A monster name, a monster hrid, or a trial card name
  * @returns {string|null} The encounter, lowercased, or null
  */
 export function encounterOf(name) {
-    const lowered = String(name || '').toLowerCase();
+    const lowered = String(name || '')
+        .toLowerCase()
+        .replace(/[/_-]+/g, ' ');
     return COMBAT_ENCOUNTERS.find((encounter) => lowered.includes(encounter)) || null;
 }
 
@@ -108,27 +116,57 @@ export function isTrialBattle({ monsterNames = [], trialNames = [] } = {}) {
         }
     }
 
-    return { isTrial: false, encounter: null, reason: 'the monsters are not this week’s trial encounter' };
+    // Names the battle carried, in the reason. A gate that fails closed and says
+    // only *that* it failed cannot be diagnosed from a bug report — this one was
+    // reported as "no per-player split during a Trial Chameleon fight" and the
+    // one fact needed to explain it, what the payload actually called those
+    // monsters, was the one fact nothing recorded.
+    const seen = [...new Set(monsterNames.map((name) => String(name || '').trim()).filter(Boolean))];
+    const listed = seen.length ? ` (${seen.slice(0, 4).join(', ')})` : '';
+    return {
+        isTrial: false,
+        encounter: null,
+        reason: `the monsters${listed} are not this week’s trial encounter (${[...wanted].join(', ')})`,
+    };
 }
 
 /**
- * Every monster name in a `new_battle`, however the payload spells them.
+ * Every way a `new_battle` names the monsters in it.
+ *
+ * Every spelling, not the first one that exists. The payload observed from a
+ * live client carries both — `hrid: '/monsters/the_watcher'` and `name: 'The
+ * Watcher'` — and the previous version took the display name and stopped, which
+ * threw away the only identifier that is stable across a localised client, a
+ * renamed monster, or a trial whose boss the game displays under a title it does
+ * not put in `name`. A trial fight that went unrecognised while the party was
+ * visibly fighting "Trial Chameleon" is what that cost.
+ *
+ * `monsters` is an array on the wire; `Object.values` reads an array and a map
+ * alike, so both shapes are handled without asking which one this is.
+ *
  * @param {Object} data - `new_battle` payload
- * @returns {string[]} Names, in payload order
+ * @returns {string[]} Names and hrids, in payload order, without duplicates
  */
 export function battleMonsterNames(data) {
     const names = [];
-    for (const monster of Object.values(data?.monsters || {})) {
-        if (monster?.name) {
-            names.push(monster.name);
-            continue;
-        }
+    const add = (value) => {
+        const text = String(value || '').trim();
+        if (text && !names.includes(text)) names.push(text);
+    };
 
-        const hrid = monster?.combatMonsterHrid || monster?.monsterHrid || monster?.hrid;
+    for (const monster of Object.values(data?.monsters || {})) {
+        if (!monster || typeof monster !== 'object') continue;
+
+        add(monster.name);
+        add(monster.character?.name);
+
+        const hrid = monster.combatMonsterHrid || monster.monsterHrid || monster.hrid;
         if (!hrid) continue;
 
-        const detail = dataManager.getInitClientData?.()?.combatMonsterDetailMap?.[hrid];
-        names.push(detail?.name || String(hrid).split('/').pop().replace(/_/g, ' '));
+        // The hrid itself, so `encounterOf` can match on it directly, and the
+        // client's own name for it, which is what the panel displays
+        add(hrid);
+        add(dataManager.getInitClientData?.()?.combatMonsterDetailMap?.[hrid]?.name);
     }
     return names;
 }
@@ -201,6 +239,8 @@ class GuildTrialDamage {
         this.reason = 'no trial fight seen yet';
         this.fights = 0;
         this.startedAt = 0;
+        /** Every spelling of the monsters in the fight in progress, for a late verdict */
+        this.monsterNames = [];
     }
 
     /**
@@ -210,10 +250,38 @@ class GuildTrialDamage {
      * module does not import the feature that draws it — the dependency runs one
      * way and a cycle cannot form.
      *
+     * The verdict on the fight already in progress is re-taken, because the
+     * order these two arrive in is not controllable: the trials record learns
+     * this week's combat card when the guild panel is first drawn, which is
+     * routinely *after* the party has started swinging. Deciding only on
+     * `new_battle` meant a trial joined before the panel was ever opened stayed
+     * unattributed for its whole first fight, with the record sitting there
+     * naming the encounter.
+     *
      * @param {string[]} names - Combat trial card names, e.g. `['Trial Chameleon']`
      */
     setTrialNames(names) {
-        this.trialNames = Array.isArray(names) ? names.filter(Boolean) : [];
+        const next = Array.isArray(names) ? names.filter(Boolean) : [];
+        const changed = next.join('|') !== this.trialNames.join('|');
+        this.trialNames = next;
+        if (changed && !this.active && this.monsterNames.length) this._reconsider();
+    }
+
+    /**
+     * Judge the fight in progress again, against the trial names now known.
+     *
+     * Only ever arms — a fight that has been counted is not un-counted here,
+     * because the tally already holds its damage.
+     */
+    _reconsider() {
+        const verdict = isTrialBattle({ monsterNames: this.monsterNames, trialNames: this.trialNames });
+        this.reason = verdict.reason;
+        if (!verdict.isTrial) return;
+
+        this.active = true;
+        this.encounter = verdict.encounter;
+        if (!this.startedAt) this.startedAt = Date.now();
+        if (!this.fights) this.fights = 1;
     }
 
     initialize() {
@@ -241,10 +309,9 @@ class GuildTrialDamage {
      */
     _onNewBattle(data) {
         try {
-            const verdict = isTrialBattle({
-                monsterNames: battleMonsterNames(data),
-                trialNames: this.trialNames,
-            });
+            const monsterNames = battleMonsterNames(data);
+            const verdict = isTrialBattle({ monsterNames, trialNames: this.trialNames });
+            this.monsterNames = monsterNames;
 
             this.battleId = data?.battleId ?? null;
             this.active = verdict.isTrial;
@@ -263,6 +330,7 @@ class GuildTrialDamage {
                 const names = this.names;
                 this.reset();
                 this.names = names;
+                this.monsterNames = monsterNames;
                 this.active = true;
                 this.battleId = data?.battleId ?? null;
                 this.reason = verdict.reason;
@@ -371,6 +439,11 @@ class GuildTrialDamage {
             seconds: this.seconds,
             fights: this.fights,
             ageMs,
+            // What the last fight's payload called its monsters, and what the
+            // gate was looking for. Both are in the export, so a gate that fails
+            // closed can be diagnosed from a bug report rather than guessed at
+            monsterNames: [...this.monsterNames],
+            trialNames: [...this.trialNames],
             ...summary,
         };
     }
