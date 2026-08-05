@@ -57,6 +57,14 @@ vi.mock('../alchemy/alchemy-rankings.js', () => ({
     },
 }));
 vi.mock('./combat-rates.js', () => ({ loadCombatRates: async () => rates.combat }));
+const liquidity = vi.hoisted(() => ({ measured: true }));
+// Bounding rates by market volume reaches a third-party history server, and what
+// this file is about is which rates get ranked, not how fast they sell. The
+// liquidity bound has its own tests; here it passes everything through and says
+// it measured, so the "not being checked" note stays out of the note assertions.
+vi.mock('./market-liquidity.js', () => ({
+    applyLiquidityLimits: async (rates) => ({ rates, measured: liquidity.measured }),
+}));
 vi.mock('../crafting-plan/crafting-plan-calculator.js', () => ({ computeBestCraftingPlan: () => null }));
 vi.mock('../enhancement/tooltip-enhancement.js', () => ({
     calculateEnhancementPath: () => null,
@@ -98,6 +106,7 @@ function combat(goldPerHour, extra = {}) {
 }
 
 beforeEach(() => {
+    liquidity.measured = true;
     game.actionDetailMap = {
         '/actions/milking/cow': {
             type: '/action_types/milking',
@@ -253,6 +262,16 @@ describe('rateNotes — what the panel says about a provider', () => {
         rates.combat = combat(2_100_000);
         const context = await buildPlannerContext();
         expect(context.rateNotes).toEqual([]);
+    });
+
+    test('says out loud when market volume could not be checked at all', async () => {
+        // The pooled-history setting is off, or the server did not answer. A rate
+        // here is then what its output is *worth*, which is not the same claim.
+        rates.combat = combat(2_100_000);
+        liquidity.measured = false;
+
+        const context = await buildPlannerContext();
+        expect(context.rateNotes.join(' ')).toContain('Market volume is not being checked');
     });
 
     test('a provider that throws is reported rather than swallowed', async () => {

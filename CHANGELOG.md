@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Rates bounded by the market and your wallet
+
+- **A rate is capped by how fast its output actually sells**: using the market history Toolasha already fetches, any method that depends on selling an item is throttled to a conservative quarter-share of its observed 30-day sale velocity — so a charm that trades once a week collapses from "134.3B/hr" to its honest few hundred K and loses to milking naturally, labelled "limited by market volume (~1/week)". History showing no trades bounds to zero; history being *unavailable* bounds nothing and the panel says the check is off (absence of data is not data of absence).
+- **You can't be told to start what you can't afford**: a method whose first action's inputs cost more than your available gold (after earlier goals' claims) is excluded with "needs ~X upfront — you have Y", and returns the moment gold suffices. Decomposing what's already in your bag needs no capital and stays available.
+- Thin *input* markets get a warning note rather than a cap, and every reduction is printed beside the number it reduced.
+
 ### The reroll chooser is finally read as it is
 
 - **The MooPass reroll failure's real cause**: the code assumed paid reroll buttons say "Pay …" — they never have; they're a currency icon plus a bare number. So the chooser reader recognised *only* the free button, silently did nothing when free wasn't choosable, and a stall latch (armed by a confirmation check that accepted any task progress as "the reroll worked") could permanently kill free rerolls for the session — all while the bulk button kept quoting a 10.0K reroll it would never make. A new structural chooser reader identifies options by their sprite icon and number, the stall latch became a 10-minute cooldown, reroll confirmation now requires *this* task to actually change, and a card that can't be rerolled says so instead of wedging the queue.

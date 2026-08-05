@@ -180,6 +180,18 @@ const marketExternalGlobals = new Map([
     // reference. Left inline they were copied whole into every bundle that
     // imports them, which is ~29 KB of source each time and the largest single
     // contributor to the ui bundle sitting over its bundle-size ceiling (2.5 MiB in CI — a duplication guard, not a hosting limit).
+    // The pooled market history: fetched by the mooket panel, read by the goal
+    // planner in the actions bundle to bound a rate by how fast its output sells.
+    // The API is a cache in front of a third-party server, so two copies means
+    // two caches and twice the requests.
+    [
+        normalize(join(__dirname, 'src/features/market/mooket/market-history-api.js')),
+        'Toolasha.Market.marketHistoryAPI',
+    ],
+    [
+        normalize(join(__dirname, 'src/features/market/mooket/market-history-data.js')),
+        'Toolasha.Market.marketHistoryData',
+    ],
     [normalize(join(__dirname, 'src/features/actions/gathering-profit.js')), 'Toolasha.Market.gatheringProfit'],
     [normalize(join(__dirname, 'src/features/actions/production-profit.js')), 'Toolasha.Market.productionProfit'],
 ]);

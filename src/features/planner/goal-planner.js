@@ -444,12 +444,54 @@ export function createResourceLedger(startingGold = 0) {
          */
         view(context) {
             let decorated = null;
+            let unaffordable = [];
+
+            /**
+             * The rates this goal can both reach and *afford to start*.
+             *
+             * A method whose inputs have to be bought is not available to
+             * somebody who cannot buy them, however well it pays. The planner
+             * recommended one — the failure being fixed here is a recommendation
+             * the player literally cannot act on — so a rate whose cost to run
+             * once exceeds the coins left after the goals above have claimed
+             * theirs is not offered, and says why rather than vanishing.
+             *
+             * One action's worth, not an hour's: the question is whether you can
+             * start, and a method you can start you can compound into.
+             * @returns {void}
+             */
+            function build() {
+                const available = Math.max(0, startingGold - goldClaimed);
+                const affordable = [];
+                unaffordable = [];
+
+                for (const rate of ask(context, 'goldRates', [], []) || []) {
+                    const claimed = afterClaims(rate);
+                    const upfront = num(claimed.upfrontCost);
+                    if (upfront > available) {
+                        unaffordable.push({
+                            label: claimed.label || 'that method',
+                            goldPerHour: num(claimed.goldPerHour),
+                            upfront,
+                            available,
+                        });
+                        continue;
+                    }
+                    affordable.push(claimed);
+                }
+                decorated = affordable;
+            }
+
             return {
                 ...context,
                 gold: Math.max(0, startingGold - goldClaimed),
                 goldRates: () => {
-                    if (!decorated) decorated = (ask(context, 'goldRates', [], []) || []).map(afterClaims);
+                    if (!decorated) build();
                     return decorated;
+                },
+                capitalBlocks: () => {
+                    if (!decorated) build();
+                    return unaffordable.map((entry) => ({ ...entry }));
                 },
                 // What the planner needs to say *why* a rate it would have used is
                 // not on offer. Read only by the steps that do the earning.
@@ -547,6 +589,16 @@ function ledgerNotes(context, best) {
         notes.push(`${coins(total)} of your coins is already committed to ${who}`);
     }
 
+    // Same shape as a spent stack: a cap with a reason. A method you cannot
+    // start is the one thing worse than a method that runs out, because the
+    // plan reads as though you could begin it today.
+    for (const blocked of ask(context, 'capitalBlocks', [], []) || []) {
+        if (!(num(blocked.goldPerHour) >= floor)) continue;
+        notes.push(
+            `${blocked.label} needs ~${coins(blocked.upfront)} upfront to start — you have ${coins(blocked.available)}`
+        );
+    }
+
     return notes;
 }
 
@@ -570,16 +622,22 @@ export function describeLeg(leg) {
     const rate = leg?.rate || {};
     const cap = rate.sustainable || {};
 
+    // A bound the number was already reduced by belongs beside the number. A
+    // reader who sees 1.2M/hr for a method they know is worth billions will
+    // assume the planner is broken unless it says what it took off.
+    const bounds = (rate.limits || []).map((limit) => limit?.note).filter(Boolean);
+    const because = bounds.length ? ` — ${bounds.join(', ')}` : '';
+
     if (leg?.oneOff) {
         const noun = cap.unitLabel || rate.itemName || rate.label || 'unit';
         const units = leg.units > 0 ? `${formatKMB(Math.ceil(leg.units))} ` : '';
         const what = cap.verb ? `${cap.verb} ${units}${noun}` : `${units}${noun}`.trim() || rate.label;
-        return `${what} (+${coins(leg.gold)} one-off)`;
+        return `${what} (+${coins(leg.gold)} one-off)${because}`;
     }
 
     const label = rate.label || 'an unnamed activity';
     const rest = leg?.exhausts ? `, for ${coins(leg.gold)}` : '';
-    return `${label} at ${coins(rate.goldPerHour)}/hr${rest}`;
+    return `${label} at ${coins(rate.goldPerHour)}/hr${rest}${because}`;
 }
 
 /**
