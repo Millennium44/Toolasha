@@ -4,9 +4,11 @@
  * Manages equipment, abilities, consumables, skill levels, and house rooms.
  */
 
+import dataManager from '../../core/data-manager.js';
 import {
     buildGameDataPayload,
     buildAllPlayerDTOs,
+    buildPlayerDTO,
     parseShykaiImport,
     applyLoadoutSnapshotToDTO,
     getGuildBuffDetailMap,
@@ -21,6 +23,16 @@ const ACCENT_BG = 'rgba(74, 158, 255, 0.12)';
 const ACCENT_BORDER = 'rgba(74, 158, 255, 0.5)';
 const ACCENT_BTN_BG = 'rgba(74, 158, 255, 0.2)';
 const ACCENT_BTN_BORDER = 'rgba(74, 158, 255, 0.4)';
+
+/**
+ * Highest level a community buff reaches in game — a maxed one reads
+ * "Level: 20 (Max)".
+ *
+ * The inputs used to accept 30, which let the editor sim a state the game
+ * cannot reach and put the sim at odds with the upgrade advisor's own ceiling
+ * (`MAX_COMMUNITY_BUFF_LEVEL` in upgrade-advisor.js, the same 20).
+ */
+const MAX_COMMUNITY_BUFF_LEVEL = 20;
 
 export class SimEditor {
     /**
@@ -166,6 +178,77 @@ export class SimEditor {
     }
 
     /**
+     * Is there a party the editor could load right now?
+     *
+     * A solo character still carries a `partySlotMap` with one filled slot in it,
+     * so "in a party" is two or more slots with a character in them — anything
+     * less and "Reset to Party" would be the same button as "Reset to Me" with a
+     * more interesting name.
+     *
+     * @returns {boolean} True when the character is grouped with someone
+     */
+    hasPartyData() {
+        const slots = dataManager.characterData?.partyInfo?.partySlotMap;
+        if (!slots) return false;
+        return Object.values(slots).filter((member) => member?.characterID).length > 1;
+    }
+
+    /**
+     * Throw away the loaded players and load just this character, as they are now.
+     *
+     * The point of the button is escaping a Configure tab full of imported
+     * strangers, so it reads the character live rather than restoring
+     * `_originalDTOs` — those are a snapshot of whatever was loaded last, which
+     * after an import is the strangers. The selected loadout is cleared for the
+     * same reason: what comes back is current gear, and the dropdown must say so.
+     *
+     * Zone, tier and hours live on the panel rather than in here, so they are
+     * untouched by design.
+     *
+     * @returns {boolean} False when there is no character data to read
+     */
+    resetToSelf() {
+        const selfDTO = buildPlayerDTO();
+        if (!selfDTO) return false;
+
+        selfDTO.hrid = 'player1';
+        selfDTO.debuffOnLevelGap = 0;
+        const dtoMap = { player1: selfDTO };
+
+        this._originalDTOs = structuredClone(dtoMap);
+        this._editedDTOs = structuredClone(dtoMap);
+        this._editedPlayerInfo = [{ hrid: 'player1', name: dataManager.characterData?.character?.name || 'Player 1' }];
+        this._selfHrid = 'player1';
+        this._activeEditPlayer = 'player1';
+        this._missingMembers = [];
+        this._selectedLoadoutName = '';
+        this._editorInitialized = true;
+
+        this.renderEditor();
+        return true;
+    }
+
+    /**
+     * Throw away the loaded players and load this character plus the current party.
+     *
+     * This is `initEditor` again, which is exactly right: that is the path that
+     * reads the live party and it re-reads it every time. What a party member's
+     * loadout is built from is a cached `profile_shared` payload — their gear,
+     * skills, abilities and house from the last time their character card was
+     * opened, plus live consumables when a fight is in progress — so a member
+     * nobody has ever opened cannot be loaded at all. Those come back in
+     * `missingMembers` and the editor says so rather than inventing a body for
+     * them.
+     *
+     * @returns {Promise<void>}
+     */
+    async resetToParty() {
+        this._selectedLoadoutName = '';
+        this._editorInitialized = false;
+        await this.initEditor();
+    }
+
+    /**
      * Reset all editor state.
      */
     reset() {
@@ -176,6 +259,75 @@ export class SimEditor {
         this._selfHrid = null;
         this._missingMembers = [];
         this._selectedLoadoutName = '';
+    }
+
+    /**
+     * The two buttons that put the player list back to live data.
+     *
+     * They sit beside the chips because that is what they act on, and they are
+     * rendered in the empty state too — a list emptied by removing everyone is
+     * exactly when getting yourself back with one click is worth the most.
+     *
+     * "Reset to Party" is rendered whether or not there is a party, disabled
+     * when there is not: a button that vanishes leaves the reader wondering
+     * whether the sim can do it at all, where a greyed one with a reason
+     * answers that.
+     *
+     * @private
+     * @returns {string} HTML for the reset buttons
+     */
+    _renderResetControls() {
+        const base =
+            'padding:3px 8px; border-radius:5px; font-size:11px; font-family:inherit; ' +
+            'background:rgba(255,255,255,0.04); border:1px solid #333;';
+        const inParty = this.hasPartyData();
+        const partyStyle = inParty
+            ? `${base} color:#888; cursor:pointer;`
+            : `${base} color:#555; cursor:default; opacity:0.55;`;
+        const partyTitle = inParty
+            ? 'Reload this character and the party you are in now, replacing everyone in the list'
+            : 'You are not in a party right now';
+
+        let html = `<button data-reset-players="self" style="${base} color:#888; cursor:pointer;"
+            title="Reload just this character as they are right now, replacing everyone in the list">Reset to Me</button>`;
+        html += `<button data-reset-players="party" style="${partyStyle}" title="${partyTitle}"${
+            inParty ? '' : ' disabled'
+        }>Reset to Party</button>`;
+        return html;
+    }
+
+    /**
+     * Party members the sim could not build, and why.
+     * @private
+     * @returns {string} HTML for the note, or '' when everyone loaded
+     */
+    _renderMissingMembersNote() {
+        const missing = this._missingMembers || [];
+        if (!missing.length) return '';
+        return `<div style="color:#c9a227; font-size:11px; margin:-4px 0 8px;">
+            Not loaded: ${missing.join(', ')} — a party member's loadout comes from their shared profile.
+            Open their character card once, then reset again.
+        </div>`;
+    }
+
+    /**
+     * @private
+     * @param {HTMLElement} editorArea - Container the editor rendered into
+     */
+    _wireResetControls(editorArea) {
+        editorArea.querySelectorAll('[data-reset-players]').forEach((btn) => {
+            btn.addEventListener('click', async () => {
+                if (btn.disabled) return;
+                if (btn.dataset.resetPlayers === 'party') {
+                    await this.resetToParty();
+                    return;
+                }
+                if (!this.resetToSelf()) {
+                    editorArea.innerHTML =
+                        '<div style="color:#f66; font-size:12px; text-align:center; padding:20px 0;">No character data available.</div>';
+                }
+            });
+        });
     }
 
     /**
@@ -193,6 +345,9 @@ export class SimEditor {
             editorArea.innerHTML = `
                 <div style="text-align:center; padding:20px 0;">
                     <div style="color:#888; font-size:12px; margin-bottom:10px;">No players loaded.</div>
+                    <div style="display:flex; gap:6px; justify-content:center; margin-bottom:10px; flex-wrap:wrap;">
+                        ${this._renderResetControls()}
+                    </div>
                     <button id="mwi-csim-import-btn" style="
                         background:${ACCENT_BTN_BG}; border:1px solid ${ACCENT_BTN_BORDER}; color:${ACCENT};
                         padding:5px 14px; border-radius:5px; font-size:12px; cursor:pointer;
@@ -215,6 +370,8 @@ export class SimEditor {
                     </div>
                 </div>
             `;
+
+            this._wireResetControls(editorArea);
 
             const importBtn = editorArea.querySelector('#mwi-csim-import-btn');
             if (importBtn) {
@@ -283,7 +440,9 @@ export class SimEditor {
             background:rgba(255,255,255,0.04); border:1px solid #333; color:#888;
             padding:3px 8px; border-radius:5px; font-size:11px; cursor:pointer;
             font-family:inherit;" title="Import players from Shykai export string">+ Import</button>`;
+        html += this._renderResetControls();
         html += '</div>';
+        html += this._renderMissingMembersNote();
 
         // Import paste area (hidden by default)
         html += `<div id="mwi-csim-import-area" style="display:none; margin-bottom:10px;">
@@ -1516,7 +1675,7 @@ export class SimEditor {
             const val = levels[buff.key] || 0;
             html += `<div style="display:flex; align-items:center; gap:6px; font-size:12px;">`;
             html += `<span style="color:#888; width:100px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${buff.label}">${buff.label}</span>`;
-            html += `<input type="number" min="0" max="30" value="${val}"
+            html += `<input type="number" min="0" max="${MAX_COMMUNITY_BUFF_LEVEL}" value="${val}"
                 data-community-buff="${buff.key}"
                 style="width:40px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
                 border-radius:3px; padding:1px 3px; font-size:12px; text-align:center;">`;
@@ -1631,7 +1790,7 @@ export class SimEditor {
         editorArea.querySelectorAll('[data-community-buff]').forEach((input) => {
             input.addEventListener('change', () => {
                 const key = input.dataset.communityBuff;
-                const val = Math.max(0, Math.min(30, parseInt(input.value) || 0));
+                const val = Math.max(0, Math.min(MAX_COMMUNITY_BUFF_LEVEL, parseInt(input.value) || 0));
                 input.value = val;
                 if (!dto.communityBuffLevels) dto.communityBuffLevels = {};
                 dto.communityBuffLevels[key] = val;
@@ -1681,6 +1840,8 @@ export class SimEditor {
                 this.renderEditor();
             });
         }
+
+        this._wireResetControls(editorArea);
 
         editorArea.querySelectorAll('[data-edit-tab]').forEach((btn) => {
             btn.addEventListener('click', (e) => {

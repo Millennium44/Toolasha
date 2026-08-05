@@ -913,8 +913,8 @@ const UPGRADE_MODES = [
         label: 'Community',
         defaultOn: false,
         title:
-            'One more level on the community EXP and combat-drop buffs — or, for a buff already at the ' +
-            'ceiling, what the whole buff is currently worth to you.\n\n' +
+            'One more level on the community EXP and combat-drop buffs — or, for a buff already at Lv20 ' +
+            "(the game's max), what the whole buff is currently worth to you, measured by simulating it off.\n\n" +
             'Nobody buys these, so they carry no price and land in the "measured, but not priced" box — but ' +
             'the sim can still tell you exactly what a level is worth to you.',
     },

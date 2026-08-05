@@ -3841,24 +3841,32 @@ describe('community buff candidates', () => {
         ]);
     });
 
-    test('the server sitting at Lv20 is not "no upgrades" — that emptied the whole set', () => {
-        // Both buffs live at or near 20 most of the time, and a cap of 20 meant
-        // an analysis with only Community ticked produced zero candidates and
-        // the equipment-shaped "ensure equipment is configured" message
+    test('the server sitting at Lv20 (Max) is not "no upgrades" — that emptied the whole set', () => {
+        // 20 is the game's cap — a maxed buff reads "Level: 20 (Max)" — and both
+        // buffs live there most of the time. Returning nothing for a capped buff
+        // meant an analysis with only Community ticked produced zero candidates
+        // and the equipment-shaped "ensure equipment is configured" message
         const candidates = generateCommunityBuffCandidates({ comExp: 20, comDrop: 20 });
-
-        expect(candidates).toHaveLength(2);
-        expect(candidates.map((c) => c.upgradeLevel)).toEqual([21, 21]);
-        expect(candidates.every((c) => c.measuresLoss === false)).toBe(true);
-    });
-
-    test('a buff already at the ceiling is measured by turning it off instead', () => {
-        const candidates = generateCommunityBuffCandidates({ comExp: 30, comDrop: 31 });
 
         expect(candidates).toHaveLength(2);
         expect(candidates.every((c) => c.measuresLoss)).toBe(true);
         expect(candidates.every((c) => c.upgradeLevel === 0)).toBe(true);
         expect(candidates[0].description).toContain('what the buff is worth');
+    });
+
+    test('a buff below the cap still gets an ordinary one-level-up row', () => {
+        const candidates = generateCommunityBuffCandidates({ comExp: 3, comDrop: 19 });
+
+        expect(candidates.map((c) => c.upgradeLevel)).toEqual([4, 20]);
+        expect(candidates.every((c) => c.measuresLoss === false)).toBe(true);
+        expect(candidates[1].description).toContain('Lv19 → Lv20');
+    });
+
+    test('a level past the cap is still read as capped, not as a further upgrade', () => {
+        const candidates = generateCommunityBuffCandidates({ comExp: 21, comDrop: 30 });
+
+        expect(candidates.every((c) => c.measuresLoss)).toBe(true);
+        expect(candidates.every((c) => c.upgradeLevel === 0)).toBe(true);
     });
 
     test('a run with only Community ticked ranks both buffs', async () => {
