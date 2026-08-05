@@ -40,6 +40,7 @@ import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } fro
 import { registerRow } from '../../utils/overlay-rows.js';
 import { row, blank, ROW_COLORS } from '../../utils/overlay-format.js';
 import { makeDraggable, makeResizable } from '../../utils/floating-panel.js';
+import { isMobileMode } from '../../utils/mobile.js';
 import {
     restoreGeometry,
     saveGeometry,
@@ -77,6 +78,12 @@ const PANEL_GEOMETRY_KEY = 'treasurePanel';
 const POPUP_GEOMETRY_KEY = 'treasurePopup';
 /** What the ledger opens at before anyone has resized it */
 const DEFAULT_PANEL = { width: 720, height: 560 };
+/** How small the panel may be dragged — never wider than the phone it is on */
+const MIN_PANEL = { width: 320, height: 200 };
+/** A control a finger can hit, per the usual 32px floor */
+const TOUCH_TARGET = 32;
+/** Header space kept clear on the right, so nothing flows under the close button */
+const CLOSE_GUTTER = { pointer: 28, touch: TOUCH_TARGET + 6 };
 /** The game's own dialog, which the popup wants to sit beside */
 const LOOT_DIALOG_SELECTOR = '[class*="Modal_modal"]:not([class*="Modal_modalContainer"])';
 /** Gap between the two, and how far off a screen edge the popup may not go */
@@ -873,25 +880,38 @@ class TreasureTracker {
             saveGeometry(PANEL_GEOMETRY_KEY, { left: parseFloat(position.left), top: parseFloat(position.top) });
         });
         this._detachResize = makeResizable(this.panel, {
-            minWidth: 420,
-            minHeight: 200,
+            minWidth: MIN_PANEL.width,
+            minHeight: MIN_PANEL.height,
             onResize: (size) => saveGeometry(PANEL_GEOMETRY_KEY, size),
         });
 
         document.body.appendChild(this.panel);
         registerFloatingPanel(this.panel);
-        restoreGeometry(this.panel, PANEL_GEOMETRY_KEY, { width: 420, height: 200 });
+        // The minimum is what the clamp is allowed to shrink a restored panel
+        // to, so a 420 that no phone can honour is a minimum that hands the
+        // panel back wider than the screen
+        restoreGeometry(this.panel, PANEL_GEOMETRY_KEY, MIN_PANEL);
         this._render();
     }
 
     _createHeader() {
+        const touch = isMobileMode();
         const header = document.createElement('div');
         Object.assign(header.style, {
             display: 'flex',
             alignItems: 'center',
+            // The controls wrap onto a second line rather than pushing each
+            // other off the side. On a 400px phone the row — title, two value
+            // chips, gear, sort picker — was wider than the panel, and the one
+            // thing it pushed off the end was the close button.
+            flexWrap: 'wrap',
             gap: '6px',
             cursor: 'move',
             padding: '7px 8px 7px 11px',
+            // Room kept clear on the right for the close button, which sits
+            // outside the flow below
+            paddingRight: `${touch ? CLOSE_GUTTER.touch : CLOSE_GUTTER.pointer}px`,
+            position: 'relative',
             background: COLORS.headerBg,
             borderBottom: `1px solid ${COLORS.border}`,
             userSelect: 'none',
@@ -937,13 +957,30 @@ class TreasureTracker {
         });
         gear.title = 'Show or hide chests, and import or export your history';
 
-        const spacer = document.createElement('div');
-        spacer.style.flex = '1';
+        const picker = this._sortPicker();
+        // Pushed to the right of whichever line it lands on, which is what the
+        // old flex-1 spacer did on the one line there used to be
+        picker.style.marginLeft = 'auto';
 
+        // Out of the flow entirely and pinned to the panel's top right corner:
+        // whatever the other controls do at whatever width, the way out of the
+        // panel is in the same place and on screen.
         const closeBtn = this._headerButton('✕', () => this.hide());
         closeBtn.title = 'Close';
+        Object.assign(closeBtn.style, {
+            position: 'absolute',
+            top: '3px',
+            right: '4px',
+        });
+        if (touch) {
+            Object.assign(closeBtn.style, {
+                minWidth: `${TOUCH_TARGET}px`,
+                minHeight: `${TOUCH_TARGET}px`,
+                fontSize: '16px',
+            });
+        }
 
-        header.append(title, this.capeBtn, this.cowbellBtn, gear, spacer, this._sortPicker(), closeBtn);
+        header.append(title, this.capeBtn, this.cowbellBtn, gear, picker, closeBtn);
         this._refreshToggles();
         return header;
     }

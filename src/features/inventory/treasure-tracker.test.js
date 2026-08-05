@@ -1,12 +1,37 @@
 /** @vitest-environment happy-dom */
 
-import { describe, test, expect, vi } from 'vitest';
+import { describe, test, expect, afterEach, vi } from 'vitest';
 
-vi.mock('../../core/config.js', () => ({ default: { getSetting: () => false, Z_FLOATING_PANEL: 1100 } }));
+/** Whether the panel is being drawn for a finger or a cursor */
+const pointer = vi.hoisted(() => ({ touch: false }));
+
+vi.mock('../../core/config.js', () => ({
+    default: { getSetting: () => false, getSettingValue: (id, fallback) => fallback, Z_FLOATING_PANEL: 1100 },
+}));
 vi.mock('../../core/storage.js', () => ({ default: { getJSON: async () => ({}), setJSON: async () => {} } }));
 vi.mock('../../core/websocket.js', () => ({ default: { on: () => {}, off: () => {} } }));
 vi.mock('../../core/data-manager.js', () => ({
-    default: { getItemDetails: (hrid) => (hrid === '/items/known' ? { name: 'Known Thing' } : null) },
+    default: {
+        getItemDetails: (hrid) => (hrid === '/items/known' ? { name: 'Known Thing' } : null),
+        getInitClientData: () => ({ openableLootDropMap: {} }),
+        getCurrentCharacterId: () => 'char-1',
+        getCurrentCharacterGameMode: () => 'standard',
+        on: () => {},
+        off: () => {},
+    },
+}));
+vi.mock('../../utils/mobile.js', () => ({
+    isMobileMode: () => pointer.touch,
+    hasCoarsePointer: () => pointer.touch,
+    detectedModeLabel: () => (pointer.touch ? 'mobile' : 'desktop'),
+}));
+// Geometry lives in IndexedDB and is never what these tests are about
+vi.mock('../../utils/panel-geometry.js', () => ({
+    restoreGeometry: async () => {},
+    saveGeometry: () => {},
+    clearPosition: () => {},
+    saveOpenState: () => {},
+    reopenIfLeftOpen: () => {},
 }));
 vi.mock('../../utils/market-data.js', () => ({ getItemPrice: () => 1, getPricingMode: () => 'bid' }));
 // Pricing untradables at their token cost reaches the market API, which opens a
@@ -166,6 +191,91 @@ describe('the header when the settings arrive late', () => {
         treasureTracker._refreshToggles();
 
         expect(treasureTracker.sortPicker.value).toBe('luck');
+    });
+});
+
+describe('the header on a screen too narrow for it', () => {
+    // A phone is about 400px wide. The header carries a title, two value
+    // chips, a gear, a sort picker and a close button, which is more than fits
+    // — and the one that fell off the end was the way out of the panel.
+    const build = () => {
+        treasureTracker.settings = {
+            capeValue: 'token',
+            valueCowbells: true,
+            hiddenChests: [],
+            popupPinned: false,
+            sortMode: 'luck',
+        };
+        return treasureTracker._createHeader();
+    };
+
+    /**
+     * @param {HTMLElement} header - A built header
+     * @returns {HTMLElement|undefined} The close button
+     */
+    const closeButton = (header) => [...header.querySelectorAll('button')].find((b) => b.textContent === '✕');
+
+    afterEach(() => {
+        pointer.touch = false;
+    });
+
+    test('the controls wrap instead of pushing each other off the side', () => {
+        expect(build().style.flexWrap).toBe('wrap');
+    });
+
+    test('the close button is out of the flow, pinned to the corner', () => {
+        const close = closeButton(build());
+
+        expect(close.style.position).toBe('absolute');
+        expect(close.style.right).toBeTruthy();
+        expect(close.style.top).toBeTruthy();
+    });
+
+    test('and nothing flows underneath it', () => {
+        const header = build();
+
+        expect(parseFloat(header.style.paddingRight)).toBeGreaterThanOrEqual(28);
+    });
+
+    test('a finger gets something it can hit', () => {
+        pointer.touch = true;
+        const header = build();
+
+        expect(parseFloat(closeButton(header).style.minWidth)).toBeGreaterThanOrEqual(32);
+        expect(parseFloat(closeButton(header).style.minHeight)).toBeGreaterThanOrEqual(32);
+        // The gutter has to grow with the button, or the picker runs under it
+        expect(parseFloat(header.style.paddingRight)).toBeGreaterThanOrEqual(32);
+    });
+
+    test('pressing it closes the panel', () => {
+        const hide = vi.spyOn(treasureTracker, 'hide').mockImplementation(() => {});
+        closeButton(build()).click();
+
+        expect(hide).toHaveBeenCalled();
+        hide.mockRestore();
+    });
+});
+
+describe('the button in settings', () => {
+    afterEach(() => {
+        treasureTracker.panel = null;
+        document.body.replaceChildren();
+    });
+
+    test('opens the panel, and the second press closes it again', () => {
+        treasureTracker.settings = {
+            capeValue: 'token',
+            valueCowbells: true,
+            hiddenChests: [],
+            popupPinned: false,
+            sortMode: 'luck',
+        };
+
+        treasureTracker.toggle();
+        expect(document.getElementById('toolasha-treasure-panel')).not.toBe(null);
+
+        treasureTracker.toggle();
+        expect(document.getElementById('toolasha-treasure-panel')).toBe(null);
     });
 });
 

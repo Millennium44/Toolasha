@@ -35,3 +35,18 @@ export function isMobileMode() {
     if (mode === 'off') return false;
     return hasCoarsePointer();
 }
+
+/**
+ * What auto-detection is deciding right now, in a word.
+ *
+ * "Auto-detect" is a promise the settings page cannot keep quietly: on the one
+ * machine where the detection is wrong, the setting looks correct and the
+ * layout does not, and there is nothing on screen to tell the two apart. The
+ * settings UI shows this beside the option so the answer is visible before the
+ * override is needed.
+ *
+ * @returns {string} `'mobile'` or `'desktop'`
+ */
+export function detectedModeLabel() {
+    return hasCoarsePointer() ? 'mobile' : 'desktop';
+}

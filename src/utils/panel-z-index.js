@@ -6,7 +6,7 @@
  */
 
 import config from '../core/config.js';
-import { clampGeometry } from './panel-geometry.js';
+import { clampPanelToViewport } from './panel-geometry.js';
 
 const panels = new Set();
 
@@ -23,11 +23,34 @@ export const PANEL_Z_CAP = config.Z_FLOATING_PANEL + 99;
 const RESIZE_DEBOUNCE_MS = 200;
 
 /**
- * Register a floating panel element for z-index management
+ * Register a floating panel element for z-index management.
+ *
+ * Every floating panel in the script comes through here, which makes it the one
+ * place a viewport clamp reaches all of them — including the panels that open
+ * at a hardcoded corner and never ask `restoreGeometry` for anything. The clamp
+ * waits a frame because a panel is commonly registered in the same tick it is
+ * appended, and an element the browser has not laid out yet measures as nothing.
+ *
  * @param {HTMLElement} el - The panel element
  */
 export function registerFloatingPanel(el) {
     panels.add(el);
+    afterLayout(() => {
+        try {
+            if (panels.has(el)) clampPanelToViewport(el);
+        } catch (error) {
+            console.error('[PanelZIndex] Holding a panel inside the window failed:', error);
+        }
+    });
+}
+
+/**
+ * Run something once the browser has had a chance to lay the page out.
+ * @param {Function} run - What to run
+ */
+function afterLayout(run) {
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => run());
+    else setTimeout(run, 0);
 }
 
 /**
@@ -72,35 +95,19 @@ export function bringPanelToFront(el) {
  * A panel remembers where it was left, and a resize does not go through
  * `restoreGeometry` — nothing was re-checking the saved position against a
  * window that has since shrunk, so a panel dragged toward the right edge was
- * stranded off-screen the moment the window got smaller. Only panels that
- * `clampGeometry` actually disagrees with are touched, and the result is
- * never persisted — the saved position is still what a larger window
- * restores to.
+ * stranded off-screen the moment the window got smaller. A phone rotating is
+ * the same event, and the reason the size is re-checked here too and not only
+ * the position. Only panels that are actually out of bounds are touched, and
+ * the result is never persisted — the saved geometry is still what a larger
+ * window restores to.
  */
 function reclampRegisteredPanels() {
-    if (typeof window === 'undefined') return;
-    const viewport = { width: window.innerWidth, height: window.innerHeight };
-    if (!Number.isFinite(viewport.width) || !Number.isFinite(viewport.height)) return;
-    if (viewport.width <= 0 || viewport.height <= 0) return;
-
     for (const panel of panels) {
-        if (!panel?.isConnected) continue;
-
-        const left = parseFloat(panel.style.left);
-        const top = parseFloat(panel.style.top);
-        if (!Number.isFinite(left) || !Number.isFinite(top)) continue;
-
-        const rect = panel.getBoundingClientRect();
-        const clamped = clampGeometry({ left, top, width: rect.width, height: rect.height }, viewport);
-        if (!clamped) continue;
-
-        const nextLeft = clamped.left !== undefined ? clamped.left : left;
-        const nextTop = clamped.top !== undefined ? clamped.top : top;
-        // Still fits — leave it alone rather than snapping it for no reason
-        if (nextLeft === left && nextTop === top) continue;
-
-        panel.style.left = `${nextLeft}px`;
-        panel.style.top = `${nextTop}px`;
+        try {
+            clampPanelToViewport(panel);
+        } catch (error) {
+            console.error('[PanelZIndex] Re-clamping a panel after a resize failed:', error);
+        }
     }
 }
 

@@ -14,6 +14,20 @@ function getPerformanceMonitor() {
     return window.Toolasha?.Core?.performanceMonitor;
 }
 
+/**
+ * Turn measuring on or off, if there is anything to turn.
+ *
+ * The monitor hangs off the global the script publishes, which is not there in
+ * every context this panel can be opened from — and an assignment through
+ * nothing takes the open or the close with it.
+ *
+ * @param {boolean} enabled - Whether to measure
+ */
+function setMonitorEnabled(enabled) {
+    const monitor = getPerformanceMonitor();
+    if (monitor) monitor.enabled = enabled;
+}
+
 const COLORS = {
     background: 'rgba(5, 5, 15, 0.95)',
     headerBg: 'rgba(15, 5, 35, 0.7)',
@@ -44,13 +58,35 @@ class PFormancePanel {
     }
 
     show() {
-        if (this.panel && document.body.contains(this.panel)) {
+        if (this.isVisible()) {
             bringPanelToFront(this.panel);
             return;
         }
-        getPerformanceMonitor().enabled = true;
+        setMonitorEnabled(true);
         this._createPanel();
         this._startUpdating();
+    }
+
+    /** @returns {boolean} Whether the panel is on screen right now */
+    isVisible() {
+        return Boolean(this.panel && document.body.contains(this.panel));
+    }
+
+    /** Close it */
+    hide() {
+        this._removePanel();
+    }
+
+    /**
+     * Open if closed, close if open.
+     *
+     * The button in settings is one button, and a button that only ever opens
+     * leaves the panel with no way back except its own ✕ — which is the half of
+     * the pair a phone loses first.
+     */
+    toggle() {
+        if (this.isVisible()) this.hide();
+        else this.show();
     }
 
     disable() {
@@ -130,7 +166,7 @@ class PFormancePanel {
         const saveBtn = this._headerButton('⭳', () => this._exportReport('file'));
         saveBtn.title = 'Save the startup trace as a file (text and JSON)';
 
-        const closeBtn = this._headerButton('✕', () => this._removePanel());
+        const closeBtn = this._headerButton('✕', () => this.hide());
         closeBtn.title = 'Close';
 
         this.copyButton = copyBtn;
@@ -217,7 +253,7 @@ class PFormancePanel {
 
     _removePanel() {
         this._stopUpdating();
-        getPerformanceMonitor().enabled = false;
+        setMonitorEnabled(false);
         if (this.panel) {
             unregisterFloatingPanel(this.panel);
             this.panel.remove();

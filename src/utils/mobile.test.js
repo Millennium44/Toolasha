@@ -14,7 +14,7 @@ vi.mock('../core/config.js', () => ({
     default: { getSettingValue: (key, fallback) => (key === 'mobileMode' ? state.mode : fallback) },
 }));
 
-const { hasCoarsePointer, isMobileMode } = await import('./mobile.js');
+const { hasCoarsePointer, isMobileMode, detectedModeLabel } = await import('./mobile.js');
 
 beforeEach(() => {
     state.coarse = false;
@@ -49,6 +49,26 @@ describe('the choice', () => {
         // Testing a mobile layout from a desktop needs this to be possible
         state.mode = 'on';
 
+        expect(isMobileMode()).toBe(true);
+    });
+
+    test('what auto is currently deciding can be said out loud', () => {
+        // The settings page shows this beside the option, because "Auto-detect"
+        // alone gives no way to tell a wrong detection from a wrong setting
+        state.coarse = true;
+        expect(detectedModeLabel()).toBe('mobile');
+
+        state.coarse = false;
+        expect(detectedModeLabel()).toBe('desktop');
+    });
+
+    test('the detection reported is the hardware, not the override', () => {
+        // "Auto (currently: desktop)" while the setting is forced on is the
+        // honest reading: auto is not what is in force
+        state.coarse = false;
+        state.mode = 'on';
+
+        expect(detectedModeLabel()).toBe('desktop');
         expect(isMobileMode()).toBe(true);
     });
 

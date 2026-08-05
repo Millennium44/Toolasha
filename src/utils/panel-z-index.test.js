@@ -128,26 +128,57 @@ describe('window resize re-clamp', () => {
         window.dispatchEvent(new Event('resize'));
     }
 
+    /**
+     * Register a panel and let the frame-deferred open-time clamp run.
+     *
+     * Registration clamps too now, a frame later — a panel that opens at a
+     * hardcoded corner is off the side of a phone before any resize happens.
+     * Under fake timers that frame has to be handed over deliberately, or it
+     * lands in the middle of whatever the test does next.
+     *
+     * @param {HTMLElement} panel - The panel
+     */
+    function registerAndSettle(panel) {
+        registerFloatingPanel(panel);
+        registered.push(panel);
+        vi.advanceTimersByTime(20);
+    }
+
     test('nudges a panel stranded off-screen back into view after the debounce', () => {
         Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1600 });
         Object.defineProperty(window, 'innerHeight', { configurable: true, value: 900 });
 
-        // Positioned near the right edge of a wide window
-        const panel = makePanel({ left: 1400, top: 100, width: 300, height: 200 });
-        registerFloatingPanel(panel);
-        registered.push(panel);
+        // Near the right edge of a wide window, and comfortably inside it
+        const panel = makePanel({ left: 1200, top: 100, width: 300, height: 200 });
+        registerAndSettle(panel);
+        expect(panel.style.left).toBe('1200px');
 
         // Shrink the window so the panel is now well past the right edge
         resizeWindowTo(800, 600);
 
         // Not yet — the listener is debounced
-        expect(panel.style.left).toBe('1400px');
+        expect(panel.style.left).toBe('1200px');
 
         vi.advanceTimersByTime(250);
 
         const left = parseFloat(panel.style.left);
-        expect(left).toBeLessThan(1400);
+        expect(left).toBeLessThan(1200);
         expect(left).toBeLessThanOrEqual(800 - 60);
+    });
+
+    test('a panel opening off the side of a narrow window is pulled in on registration', () => {
+        // The phone case: nothing was saved and nothing was resized. The panel
+        // opens where it was written to open, 80px in from the right of a
+        // desktop, and on a 400px screen that is off the side with the close
+        // button on it.
+        Object.defineProperty(window, 'innerWidth', { configurable: true, value: 400 });
+        Object.defineProperty(window, 'innerHeight', { configurable: true, value: 800 });
+
+        const panel = makePanel({ left: 340, top: 80, width: 380, height: 400 });
+        registerAndSettle(panel);
+
+        expect(parseFloat(panel.style.left)).toBe(400 - 380);
+        expect(panel.style.right).toBe('auto');
     });
 
     test('leaves a panel alone when it still fits after the resize', () => {
@@ -155,8 +186,7 @@ describe('window resize re-clamp', () => {
         Object.defineProperty(window, 'innerHeight', { configurable: true, value: 900 });
 
         const panel = makePanel({ left: 100, top: 100, width: 300, height: 200 });
-        registerFloatingPanel(panel);
-        registered.push(panel);
+        registerAndSettle(panel);
 
         resizeWindowTo(1400, 900);
         vi.advanceTimersByTime(250);
@@ -165,13 +195,29 @@ describe('window resize re-clamp', () => {
         expect(panel.style.top).toBe('100px');
     });
 
+    test('a panel wider than the window it is now in is narrowed to fit', () => {
+        // A phone turned back to portrait, or a desktop-sized width restored on
+        // one: a panel wider than the screen cannot be resized back, because
+        // its resize grip is off the edge.
+        Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1200 });
+        Object.defineProperty(window, 'innerHeight', { configurable: true, value: 900 });
+
+        const panel = makePanel({ left: 0, top: 40, width: 700, height: 400 });
+        registerAndSettle(panel);
+
+        resizeWindowTo(400, 800);
+        vi.advanceTimersByTime(250);
+
+        expect(parseFloat(panel.style.width)).toBe(400);
+        expect(parseFloat(panel.style.left)).toBe(0);
+    });
+
     test('debounces rapid resize events into a single re-clamp', () => {
         Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1600 });
         Object.defineProperty(window, 'innerHeight', { configurable: true, value: 900 });
 
-        const panel = makePanel({ left: 1400, top: 100, width: 300, height: 200 });
-        registerFloatingPanel(panel);
-        registered.push(panel);
+        const panel = makePanel({ left: 1200, top: 100, width: 300, height: 200 });
+        registerAndSettle(panel);
 
         resizeWindowTo(1000, 900);
         vi.advanceTimersByTime(50);
@@ -180,7 +226,7 @@ describe('window resize re-clamp', () => {
         resizeWindowTo(700, 900);
 
         // Only the last resize's debounce window has run out so far
-        expect(panel.style.left).toBe('1400px');
+        expect(panel.style.left).toBe('1200px');
 
         vi.advanceTimersByTime(250);
 
