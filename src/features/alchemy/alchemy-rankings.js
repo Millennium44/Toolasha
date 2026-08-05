@@ -47,6 +47,25 @@
  * The *action* is gated, and that gate is real: an alchemy level below
  * `/actions/alchemy/<type>`'s requirement means the character cannot start that
  * action at all, and the whole type drops out.
+ *
+ * ## Per hour is not the whole truth, and for alchemy it is barely half of it
+ *
+ * Every alchemy action eats one copy of the item it is run on. So a rate here
+ * is only real while there are copies: decomposing a Sundering Crossbow ★ may
+ * be worth 850M in seven seconds, which is 437 *billion* an hour, and that
+ * number describes a world in which you have five hundred crossbows. You have
+ * one.
+ *
+ * {@link alchemyGoldRates} therefore ships a `sustainable` cap alongside every
+ * rate — how much gold that item can produce in total before the stack is gone
+ * — and the planner spends it as a one-off before moving down the ranking.
+ *
+ * The cap counts **stock on hand only**. Buying more input off the market and
+ * running it through is genuinely possible and genuinely unbounded in theory,
+ * but the bound in practice is order-book depth, and the game only sends a book
+ * for the one item the marketplace is open on — there is no way to ask about
+ * three hundred items without three hundred round trips. Own stock is the
+ * conservative reading, and every rate says that is what it is.
  */
 
 import dataManager from '../../core/data-manager.js';
@@ -127,6 +146,33 @@ export function calcXpPerAction(actionType, itemLevel, successRate) {
 
     // Expected value: success gives full XP, failure gives 10%
     return successRate * fullXP + (1 - successRate) * fullXP * 0.1;
+}
+
+/** What every alchemy rate says about where its ceiling came from */
+export const OWN_STOCK_NOTE = 'own stock only — market depth is not counted';
+
+const INVENTORY_LOCATION = '/item_locations/inventory';
+
+/**
+ * How many unenhanced copies of an item are in the bag.
+ *
+ * Unenhanced because that is what these rates are costed for — `rankAlchemyType`
+ * asks the calculator about enhancement level 0 — and inventory only because a
+ * cape on your back is not an input to anything.
+ *
+ * @param {Array<Object>} inventory - From `dataManager.getInventory()`
+ * @returns {Map<string, number>} Item hrid → count held
+ */
+function stockByItem(inventory) {
+    const held = new Map();
+    for (const item of inventory || []) {
+        if (!item?.itemHrid) continue;
+        if (item.itemLocationHrid !== INVENTORY_LOCATION) continue;
+        if (item.enhancementLevel) continue;
+        if (!(item.count > 0)) continue;
+        held.set(item.itemHrid, (held.get(item.itemHrid) || 0) + item.count);
+    }
+    return held;
 }
 
 /**
@@ -239,11 +285,19 @@ export function rankAlchemyType(type) {
  * rare and essence find). Any of those changing has to invalidate the cache;
  * nothing else in the character does.
  *
+ * Since the rates began carrying a stock cap, the bag does too — decomposing
+ * the last crossbow has to stop the rate being offered, and a cached answer
+ * from before it went would go on offering it. Counted rather than digested:
+ * one number over the inventory is cheap, and any consumption moves it.
+ *
  * @param {number} priceStamp - When the caller's market data was fetched
  * @returns {string} A cache key
  */
 function stateFingerprint(priceStamp) {
     const level = alchemyLevel();
+
+    const inventory = dataManager.getInventory() || [];
+    const stock = `${inventory.length}:${inventory.reduce((sum, item) => sum + (item?.count || 0), 0)}`;
 
     const drinks = (dataManager.getActionDrinkSlots('/action_types/alchemy') || [])
         .map((slot) => slot?.itemHrid || 'empty')
@@ -257,7 +311,7 @@ function stateFingerprint(priceStamp) {
               .join(',')
         : '';
 
-    return `${level}|${priceStamp}|${drinks}|${gear}`;
+    return `${level}|${priceStamp}|${drinks}|${gear}|${stock}`;
 }
 
 /**
@@ -280,14 +334,21 @@ export function clearAlchemyRateCache() {
  * every refresh — including refreshes that happen because a *house* level
  * changed and cannot have moved an alchemy rate.
  *
+ * Each rate carries a `sustainable` cap: alchemy eats one copy of its item per
+ * action, so what the method is worth in total is the margin times what is in
+ * the bag. An item with none left is not offered at all — a rate you cannot
+ * start once is not a rate, and it is exactly the kind that tops the ranking.
+ *
  * @param {Object} [options] - Options
  * @param {number} [options.priceStamp=0] - When the market data behind the prices was fetched
  * @param {number} [options.limit=PLANNER_RATE_LIMIT] - How many rates to keep
- * @returns {Array<Object>} `{actionHrid, label, goldPerHour, kind, ...}`, best first
+ * @returns {Array<Object>} `{actionHrid, label, goldPerHour, sustainable, kind, ...}`, best first
  */
 export function alchemyGoldRates({ priceStamp = 0, limit = PLANNER_RATE_LIMIT } = {}) {
     const fingerprint = stateFingerprint(priceStamp);
     if (rateCache.fingerprint === fingerprint && rateCache.rates) return rateCache.rates;
+
+    const stock = stockByItem(dataManager.getInventory());
 
     const rates = [];
     for (const type of ALCHEMY_TYPES) {
@@ -301,9 +362,21 @@ export function alchemyGoldRates({ priceStamp = 0, limit = PLANNER_RATE_LIMIT } 
 
         for (const entry of ranked) {
             if (!(entry.profitPerHour > 0)) continue;
+
+            const units = stock.get(entry.itemHrid) || 0;
+            if (units <= 0) continue;
+
+            // The calculator's own per-action margin, which already carries the
+            // tea, catalyst and coin-fee arithmetic — dividing the hourly figure
+            // here would be a second opinion about the same number
+            const goldPerUnit = Number(entry.profitData?.profitPerAction);
+            const perUnit = Number.isFinite(goldPerUnit) && goldPerUnit > 0 ? goldPerUnit : 0;
+            if (!perUnit) continue;
+
+            const name = entry.name || entry.itemHrid.split('/').pop();
             rates.push({
                 actionHrid: entry.actionHrid,
-                label: `${TYPE_LABEL[type]} ${entry.name || entry.itemHrid.split('/').pop()}`,
+                label: `${TYPE_LABEL[type]} ${name}`,
                 goldPerHour: entry.profitPerHour,
                 kind: 'alchemy',
                 action: type,
@@ -313,6 +386,15 @@ export function alchemyGoldRates({ priceStamp = 0, limit = PLANNER_RATE_LIMIT } 
                 underLevelled: entry.underLevelled,
                 xpPerHour: entry.xpPerHour,
                 catalyst: entry.catalyst,
+                sustainable: {
+                    gold: perUnit * units,
+                    goldPerUnit: perUnit,
+                    units,
+                    unitLabel: name,
+                    verb: TYPE_LABEL[type],
+                    source: 'inventory',
+                    note: OWN_STOCK_NOTE,
+                },
             });
         }
     }
@@ -325,6 +407,7 @@ export function alchemyGoldRates({ priceStamp = 0, limit = PLANNER_RATE_LIMIT } 
 
 export default {
     ALCHEMY_TYPES,
+    OWN_STOCK_NOTE,
     rankAlchemyType,
     alchemyGoldRates,
     clearAlchemyRateCache,

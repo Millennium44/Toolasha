@@ -177,6 +177,61 @@ describe('goldRates — four providers, one ranking', () => {
     });
 });
 
+describe('a cost that could not be priced is not a cost of zero', () => {
+    test('a production margin with an unpriceable material is dropped, not quoted', async () => {
+        rates.production = {
+            '/actions/cooking/stew': {
+                profitPerHour: 7_400_000_000,
+                materialCosts: [{ itemHrid: '/items/truffle', missingPrice: true }],
+            },
+        };
+
+        const context = await buildPlannerContext();
+        expect(context.goldRates().map((rate) => rate.kind)).toEqual(['gathering']);
+        expect(context.rateNotes[0]).toContain('no market listing');
+    });
+
+    test('and the experience rates lose its gold with it, rather than inheriting a fantasy', async () => {
+        rates.production = {
+            '/actions/cooking/stew': {
+                profitPerHour: 7_400_000_000,
+                materialCosts: [{ itemHrid: '/items/truffle', missingPrice: true }],
+            },
+        };
+
+        const context = await buildPlannerContext();
+        const [cooking] = context.xpRates('/skills/cooking');
+        expect(cooking.goldPerHour).toBe(0);
+    });
+
+    test('an unpriceable drink costs a gathering rate its place too', async () => {
+        rates.gathering = {
+            '/actions/milking/cow': { profitPerHour: 100_000, drinkCosts: [{ missingPrice: true }] },
+        };
+
+        const context = await buildPlannerContext();
+        expect(context.goldRates().map((rate) => rate.kind)).toEqual(['production']);
+    });
+
+    test('a missing output price is conservative, so the rate is kept', async () => {
+        // `hasMissingPrices` would be true here; only the cost side is fatal
+        rates.production = {
+            '/actions/cooking/stew': { profitPerHour: 50_000, hasMissingPrices: true, materialCosts: [{}] },
+        };
+
+        const context = await buildPlannerContext();
+        expect(context.goldRates().map((rate) => rate.kind)).toEqual(['gathering', 'production']);
+        expect(context.rateNotes).toEqual([]);
+    });
+
+    test('gathering and production say they have no ceiling, since they have none', async () => {
+        const context = await buildPlannerContext();
+        for (const rate of context.goldRates()) {
+            expect(rate.sustainable).toEqual({ unbounded: true });
+        }
+    });
+});
+
 describe('rateNotes — what the panel says about a provider', () => {
     test('carries the combat provider’s note when there is no saved run', async () => {
         rates.combat = { rates: [], best: null, status: { note: 'Combat is not ranked — run an all-zones sim.' } };

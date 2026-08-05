@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The goal planner stops promising billions
+
+- **A rate is only a rate while its inputs last**: every gold method now carries a sustainable cap — alchemy is capped at your own stock (decomposing one crossbow is a +851M _one-off_, not "437.9B/hr"), and the plan spends methods greedily: windfall first, then the next honest rate for the remainder, shown as indented sub-steps with their own durations. A method you can't run for an hour is never described per-hour; a target no method can cover says so instead of inventing a duration.
+- **Fantasy production margins fixed**: a material with no market listing was billed at zero cost, turning modest crafts into eight-figure hourly incomes. Rates with unpriceable costs are dropped (and counted); missing _output_ prices still understate conservatively. Training steps now print the rate behind their gold figure, so a broken number is attributable at a glance.
+- **"Gear changed" means your combat loadout changed** — not that you put on a chef's hat. The snapshot is judged against your combat loadout (explicit pick wins, then the combat default), with a picker when you have several and an honest fallback note when you have none.
+- **Buy-steps hand off to the marketplace**: house material steps open the shopping-list tabs with quantities armed, craft steps use the missing-materials machinery, single purchases go straight to the item.
+- **Less clunk**: step labels wrap instead of hiding behind tooltips, the pricing note appears once at the panel foot, the totals row says "Left to do — earn X, spend Y", and steps show thin progress bars where the fraction means something.
+
 ### The lab sims what can actually win
 
 - **Skilling rooms leave the lab combat list**: every house room grants global experience+rare-find just for existing, which the old filter read as "affects combat" — so all seventeen rooms qualified and Mystical Study's +1.02% was sampling noise wearing a room's name. The lab now only offers rooms whose buffs can change a fight's outcome; the combat sim's own tab keeps the wider set (its profit/XP columns make those rooms legitimate there).

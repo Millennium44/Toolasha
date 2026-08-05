@@ -3,22 +3,35 @@
  *
  * The interesting behaviour is entirely about *trust*: a rate that was measured
  * some time ago, possibly in other gear, is still worth having as long as it
- * says so. So the tests move the clock and the gear signature and read the
- * label and the note back, rather than checking arithmetic — the only
- * arithmetic here is picking the largest number in a list.
+ * says so. So the tests move the clock and the gear and read the label and the
+ * note back, rather than checking arithmetic — the only arithmetic here is
+ * picking the largest number in a list.
+ *
+ * The gear half is now the interesting half. "Different gear" has to mean *your
+ * combat loadout has changed*, not *you are dressed for cooking*, and the tests
+ * below are mostly about that distinction: a character who puts on a chef's hat
+ * must not be told to re-run a four-hour simulation.
  *
  * `combat-sim-ui.js` is mocked whole. It is a six-thousand-line panel that
  * builds workers and floating windows; what this module wants from it is one
- * stored object and one string.
+ * stored object.
  */
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
 const sim = vi.hoisted(() => ({
     snapshot: null,
-    fingerprint: null,
     loadThrows: false,
-    fingerprintThrows: false,
+}));
+
+const game = vi.hoisted(() => ({
+    /** Loadouts as `loadout-snapshot.js` keeps them */
+    loadouts: [],
+    /** Equipment worn this second */
+    equipment: new Map(),
+    /** The planner's own record of the loadout each run was first seen under */
+    gear: { preferred: null, baseline: null },
+    resolveThrows: false,
 }));
 
 // The default export, because that is what the module reads — see the note on
@@ -29,15 +42,56 @@ vi.mock('../combat-sim/combat-sim-ui.js', () => ({
             if (sim.loadThrows) throw new Error('storage is unhappy');
             return sim.snapshot;
         },
-        currentGearFingerprint: async () => {
-            if (sim.fingerprintThrows) throw new Error('no character');
-            return sim.fingerprint;
+    },
+}));
+vi.mock('../../core/data-manager.js', () => ({
+    default: { getEquipment: () => game.equipment },
+}));
+vi.mock('../combat/loadout-snapshot.js', () => ({
+    default: {
+        getAllSnapshots: () => game.loadouts,
+        resolveEquipment: (snapshot) => {
+            if (game.resolveThrows) throw new Error('no inventory');
+            return snapshot.equipment;
         },
     },
 }));
+vi.mock('./goal-planner-store.js', () => ({
+    loadCombatGear: async () => game.gear,
+    saveCombatGear: async (patch) => {
+        game.gear = { ...game.gear, ...patch };
+        return game.gear;
+    },
+}));
 
-const { combatRatesFromSnapshot, loadCombatRates, ageLabel, STALE_AFTER_MS, NO_SNAPSHOT_NOTE } =
-    await import('./combat-rates.js');
+const {
+    combatRatesFromSnapshot,
+    loadCombatRates,
+    combatLoadouts,
+    chooseCombatLoadout,
+    combatLoadoutSignature,
+    readCombatLoadout,
+    ageLabel,
+    STALE_AFTER_MS,
+    NO_SNAPSHOT_NOTE,
+} = await import('./combat-rates.js');
+
+/**
+ * A loadout as the snapshot store keeps them.
+ * @param {string} name - Its name
+ * @param {Object} [fields] - `actionTypeHrid`, `isDefault`, `ordinal`, `equipment`
+ * @returns {Object} A loadout
+ */
+function loadout(name, fields = {}) {
+    return {
+        name,
+        actionTypeHrid: '/action_types/combat',
+        isDefault: false,
+        ordinal: 0,
+        equipment: [{ itemLocationHrid: '/item_locations/main_hand', itemHrid: '/items/sword', enhancementLevel: 5 }],
+        ...fields,
+    };
+}
 
 const NOW = 1_700_000_000_000;
 const HOUR = 60 * 60 * 1000;
@@ -74,11 +128,16 @@ function snapshot(overrides = {}) {
     };
 }
 
+/** The signature `readCombatLoadout` produces for the fixture loadout above */
+const SWORD_5 = '/item_locations/main_hand=/items/sword+5';
+
 beforeEach(() => {
     sim.snapshot = null;
-    sim.fingerprint = null;
     sim.loadThrows = false;
-    sim.fingerprintThrows = false;
+    game.loadouts = [loadout('Fighting', { isDefault: true })];
+    game.equipment = new Map();
+    game.gear = { preferred: null, baseline: null };
+    game.resolveThrows = false;
 });
 
 describe('ageLabel', () => {
@@ -113,9 +172,18 @@ describe('combatRatesFromSnapshot — a run that exists', () => {
         expect(best.source).toBe('all-zones-sim');
     });
 
-    test('a fresh run in the same gear has nothing to warn about', () => {
-        const { status } = combatRatesFromSnapshot(snapshot(), { now: NOW, currentFingerprint: 'gear-a' });
+    test('a fresh run in the same loadout has nothing to warn about', () => {
+        const { status } = combatRatesFromSnapshot(snapshot(), {
+            now: NOW,
+            loadout: { name: 'Fighting', signature: SWORD_5, source: 'loadout' },
+            baseline: { savedAt: NOW - 3 * DAY, signature: SWORD_5 },
+        });
         expect(status).toMatchObject({ hasSnapshot: true, stale: false, gearChanged: false, note: null });
+    });
+
+    test('combat is unbounded — nothing it consumes runs out', () => {
+        const { best } = combatRatesFromSnapshot(snapshot(), { now: NOW });
+        expect(best.sustainable).toEqual({ unbounded: true });
     });
 
     test('carries the run’s experience, which is every combat skill at once', () => {
@@ -184,27 +252,113 @@ describe('combatRatesFromSnapshot — a run that is old', () => {
     });
 });
 
-describe('combatRatesFromSnapshot — a run in other gear', () => {
-    test('different gear is flagged without withholding the rate', () => {
-        const { best, status } = combatRatesFromSnapshot(snapshot(), { now: NOW, currentFingerprint: 'gear-b' });
+describe('combatRatesFromSnapshot — a loadout that has moved on', () => {
+    const fighting = (signature) => ({ name: 'Fighting', signature, source: 'loadout' });
+
+    test('a changed combat loadout is flagged without withholding the rate', () => {
+        const { best, status } = combatRatesFromSnapshot(snapshot(), {
+            now: NOW,
+            loadout: fighting('/item_locations/main_hand=/items/sword+10'),
+            baseline: { savedAt: NOW - 3 * DAY, signature: SWORD_5 },
+        });
 
         expect(best.goldPerHour).toBe(2_100_000);
         expect(best.gearChanged).toBe(true);
         expect(best.label).toBe('Fly Zone T2 — from your all-zones run 3d ago (gear changed)');
-        expect(status.note).toContain('different gear');
+        // Named, so the warning is about a thing the player can go and look at
+        expect(status.note).toContain('your Fighting loadout has changed');
     });
 
     test('old and re-geared says both, once', () => {
         const old = snapshot({ savedAt: NOW - 30 * DAY });
-        const { best, status } = combatRatesFromSnapshot(old, { now: NOW, currentFingerprint: 'gear-b' });
+        const { best, status } = combatRatesFromSnapshot(old, {
+            now: NOW,
+            loadout: fighting('/item_locations/main_hand=/items/sword+10'),
+            baseline: { savedAt: NOW - 30 * DAY, signature: SWORD_5 },
+        });
         expect(best.label).toBe('Fly Zone T2 — from your all-zones run 30d ago (stale, gear changed)');
-        expect(status.note).toContain('in different gear');
+        expect(status.note).toContain('your Fighting loadout has changed');
+        expect(status.note).toContain('30d ago');
     });
 
-    test('an unsigned run cannot disagree with the gear worn now', () => {
-        const unsigned = snapshot({ fingerprint: null });
-        const { status } = combatRatesFromSnapshot(unsigned, { now: NOW, currentFingerprint: 'gear-b' });
+    test('a baseline taken against a different run says nothing about this one', () => {
+        const { status } = combatRatesFromSnapshot(snapshot(), {
+            now: NOW,
+            loadout: fighting('/item_locations/main_hand=/items/sword+10'),
+            baseline: { savedAt: NOW - 20 * DAY, signature: SWORD_5 },
+        });
         expect(status.gearChanged).toBe(false);
+        expect(status.gearComparable).toBe(false);
+    });
+
+    test('with no baseline there is nothing to compare, and no warning is invented', () => {
+        const { status } = combatRatesFromSnapshot(snapshot(), { now: NOW, loadout: fighting(SWORD_5) });
+        expect(status.gearChanged).toBe(false);
+        expect(status.note).toBeNull();
+    });
+
+    test('the note says so when the check fell back to what is worn', () => {
+        const { status } = combatRatesFromSnapshot(snapshot(), {
+            now: NOW,
+            loadout: { name: null, signature: 'worn-b', source: 'worn' },
+            baseline: { savedAt: NOW - 3 * DAY, signature: 'worn-a' },
+        });
+        expect(status.note).toContain('the gear you wear has changed');
+        expect(status.loadoutSource).toBe('worn');
+    });
+});
+
+describe('which loadout the rates are judged against', () => {
+    test('a combat loadout beats an all-skills one, and a default beats the rest', () => {
+        game.loadouts = [
+            loadout('Everything', { actionTypeHrid: '', isDefault: true, ordinal: 0 }),
+            loadout('Spare', { ordinal: 2 }),
+            loadout('Fighting', { isDefault: true, ordinal: 1 }),
+        ];
+        expect(combatLoadouts().map((entry) => entry.name)).toEqual(['Fighting', 'Spare', 'Everything']);
+        expect(chooseCombatLoadout().name).toBe('Fighting');
+    });
+
+    test('a loadout for a skill is not a combat loadout, however default it is', () => {
+        game.loadouts = [loadout('Cooking', { actionTypeHrid: '/action_types/cooking', isDefault: true })];
+        expect(combatLoadouts()).toEqual([]);
+        expect(chooseCombatLoadout()).toBeNull();
+    });
+
+    test('the player’s own pick wins over the resolution order', () => {
+        game.loadouts = [loadout('Fighting', { isDefault: true }), loadout('Ranged')];
+        expect(chooseCombatLoadout('Ranged').name).toBe('Ranged');
+        // A pick naming a loadout that no longer exists falls back rather than
+        // leaving the rates unjudged
+        expect(chooseCombatLoadout('Deleted').name).toBe('Fighting');
+    });
+
+    test('the signature is the loadout’s resolved equipment, order-independent', () => {
+        const two = loadout('Fighting', {
+            equipment: [
+                { itemLocationHrid: '/item_locations/head', itemHrid: '/items/hat', enhancementLevel: 0 },
+                { itemLocationHrid: '/item_locations/main_hand', itemHrid: '/items/sword', enhancementLevel: 5 },
+            ],
+        });
+        const reversed = { ...two, equipment: [...two.equipment].reverse() };
+        expect(combatLoadoutSignature(two)).toBe(combatLoadoutSignature(reversed));
+        expect(combatLoadoutSignature(two)).toContain('/items/sword+5');
+    });
+
+    test('with no loadouts at all it falls back to what is worn, and says which', () => {
+        game.loadouts = [];
+        game.equipment = new Map([['/item_locations/main_hand', { itemHrid: '/items/spear', enhancementLevel: 2 }]]);
+        const read = readCombatLoadout();
+        expect(read.source).toBe('worn');
+        expect(read.signature).toBe('/item_locations/main_hand=/items/spear+2');
+    });
+
+    test('a loadout store that throws costs the signature, not the rates', () => {
+        game.resolveThrows = true;
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        // Falls back to the stored equipment rather than giving up on the check
+        expect(combatLoadoutSignature(loadout('Fighting'))).toBe(SWORD_5);
+        vi.restoreAllMocks();
     });
 });
 
@@ -225,32 +379,82 @@ describe('combatRatesFromSnapshot — no run at all', () => {
 });
 
 describe('loadCombatRates', () => {
-    test('reads the stored run and signs the gear worn now', async () => {
+    test('the first sight of a run records the loadout it is judged against', async () => {
         sim.snapshot = snapshot();
-        sim.fingerprint = 'gear-b';
 
         const { best, status } = await loadCombatRates({ now: NOW });
         expect(best.zoneName).toBe('Fly Zone');
+        expect(status.gearChanged).toBe(false);
+        expect(game.gear.baseline).toEqual({ savedAt: NOW - 3 * DAY, signature: SWORD_5, name: 'Fighting' });
+    });
+
+    test('changing the combat loadout afterwards is what raises the flag', async () => {
+        sim.snapshot = snapshot();
+        await loadCombatRates({ now: NOW });
+
+        game.loadouts = [
+            loadout('Fighting', {
+                isDefault: true,
+                equipment: [
+                    { itemLocationHrid: '/item_locations/main_hand', itemHrid: '/items/axe', enhancementLevel: 0 },
+                ],
+            }),
+        ];
+
+        const { status } = await loadCombatRates({ now: NOW });
         expect(status.gearChanged).toBe(true);
+        // And the baseline is not quietly rewritten to the new gear, which
+        // would clear the warning on the very next refresh
+        expect(game.gear.baseline.signature).toBe(SWORD_5);
+    });
+
+    test('putting on skilling gear is not a reason to re-run a four-hour simulation', async () => {
+        sim.snapshot = snapshot();
+        await loadCombatRates({ now: NOW });
+
+        game.equipment = new Map([['/item_locations/head', { itemHrid: '/items/chefs_hat', enhancementLevel: 0 }]]);
+
+        const { status } = await loadCombatRates({ now: NOW });
+        expect(status.gearChanged).toBe(false);
+        expect(status.note).toBeNull();
+    });
+
+    test('a newer run starts a new baseline rather than inheriting the old one', async () => {
+        sim.snapshot = snapshot();
+        await loadCombatRates({ now: NOW });
+
+        game.loadouts = [
+            loadout('Fighting', {
+                isDefault: true,
+                equipment: [
+                    { itemLocationHrid: '/item_locations/main_hand', itemHrid: '/items/axe', enhancementLevel: 0 },
+                ],
+            }),
+        ];
+        sim.snapshot = snapshot({ savedAt: NOW - HOUR });
+
+        const { status } = await loadCombatRates({ now: NOW });
+        expect(status.gearChanged).toBe(false);
+        expect(game.gear.baseline.savedAt).toBe(NOW - HOUR);
     });
 
     test('skips the gear comparison when asked to', async () => {
         sim.snapshot = snapshot();
-        sim.fingerprint = 'gear-b';
+        game.gear = { preferred: null, baseline: { savedAt: NOW - 3 * DAY, signature: 'something-else' } };
 
         const { status } = await loadCombatRates({ now: NOW, compareGear: false });
         expect(status.gearChanged).toBe(false);
+        expect(status.loadoutName).toBeNull();
     });
 
-    test('a character the simulator cannot describe costs the comparison, not the rates', async () => {
+    test('the stored pick is what the check uses', async () => {
         sim.snapshot = snapshot();
-        sim.fingerprintThrows = true;
-        vi.spyOn(console, 'error').mockImplementation(() => {});
+        game.loadouts = [loadout('Fighting', { isDefault: true }), loadout('Ranged')];
+        game.gear = { preferred: 'Ranged', baseline: null };
 
-        const { best, status } = await loadCombatRates({ now: NOW });
-        vi.restoreAllMocks();
-        expect(best.goldPerHour).toBe(2_100_000);
-        expect(status.gearChanged).toBe(false);
+        const { status } = await loadCombatRates({ now: NOW });
+        expect(status.loadoutName).toBe('Ranged');
+        expect(game.gear.baseline.name).toBe('Ranged');
     });
 
     test('a storage failure reads as "no run", not as a crash', async () => {

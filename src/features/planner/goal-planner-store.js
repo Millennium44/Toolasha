@@ -21,6 +21,8 @@ import { normalizeGoal } from './goal-planner.js';
 export const GOALS_KEY = 'goalPlannerGoals';
 /** Unscoped key for the last computed plans */
 export const SNAPSHOT_KEY = 'goalPlannerSnapshot';
+/** Unscoped key for the combat loadout the all-zones run is judged against */
+export const COMBAT_GEAR_KEY = 'goalPlannerCombatGear';
 
 /** Nobody needs a hundred goals, and a runaway list is a slow panel */
 const MAX_GOALS = 40;
@@ -123,13 +125,61 @@ export async function saveSnapshot(plans) {
     }
 }
 
+/**
+ * What the combat rates are being judged against.
+ *
+ * Two things, and they are stored together because neither is worth a key of
+ * its own:
+ *
+ * - `preferred` — which combat loadout the player picked, when they have more
+ *   than one and none of them is the default. A choice, so it is remembered.
+ * - `baseline` — `{savedAt, signature, name}`: the combat loadout as it stood
+ *   when the planner first saw the all-zones run saved at `savedAt`. This is
+ *   what "your gear has changed since the run" is measured against, because the
+ *   run itself keeps only an opaque digest of the gear it was simulated in and
+ *   the function that produced it lives in another bundle.
+ *
+ * @returns {Promise<{preferred: string|null, baseline: Object|null}>} The record
+ */
+export async function loadCombatGear() {
+    try {
+        const stored = await readScoped(COMBAT_GEAR_KEY, 'settings', null, { migrate: 'discard' });
+        return {
+            preferred: typeof stored?.preferred === 'string' ? stored.preferred : null,
+            baseline: stored?.baseline && Number.isFinite(stored.baseline.savedAt) ? stored.baseline : null,
+        };
+    } catch (error) {
+        console.error('[GoalPlanner] Loading the combat gear record failed:', error);
+        return { preferred: null, baseline: null };
+    }
+}
+
+/**
+ * Update part of the combat gear record, leaving the rest alone.
+ * @param {Object} patch - `{preferred}` and/or `{baseline}`
+ * @returns {Promise<{preferred: string|null, baseline: Object|null}>} The new record
+ */
+export async function saveCombatGear(patch) {
+    const current = await loadCombatGear();
+    const next = { ...current, ...(patch || {}) };
+    try {
+        await writeScoped(COMBAT_GEAR_KEY, next, 'settings');
+    } catch (error) {
+        console.error('[GoalPlanner] Saving the combat gear record failed:', error);
+    }
+    return next;
+}
+
 export default {
     GOALS_KEY,
     SNAPSHOT_KEY,
+    COMBAT_GEAR_KEY,
     loadGoals,
     saveGoals,
     addGoal,
     removeGoal,
     loadSnapshot,
     saveSnapshot,
+    loadCombatGear,
+    saveCombatGear,
 };

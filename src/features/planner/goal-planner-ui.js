@@ -23,17 +23,29 @@
  * A plan re-costed after you bought the base item shows that step struck
  * through rather than one step shorter. Watching steps grey out is the progress
  * bar; a list that silently gets smaller is just a list you no longer trust.
+ *
+ * ## A step that says "buy 40 materials" can go and buy them
+ *
+ * Toolasha already knows how to send a shopping list to the marketplace: the
+ * missing-materials button does it for an action, the consumables panel does it
+ * for a restock, and both are the same three pieces —
+ * `createMaterialTab`, `createAutofillManager`, `navigateToMarketplace`. A step
+ * that names a purchase gets a button onto whichever of those already fits, so
+ * the planner adds an entry point rather than a fourth implementation of
+ * marketplace tabs.
  */
 
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
+import { openMissingMaterials } from '../actions/missing-materials-button.js';
+import { openShoppingList } from '../ui/consumables-shopping-list.js';
 import { formatKMB, parseKMB, timeReadable } from '../../utils/formatters.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable, makeResizable } from '../../utils/floating-panel.js';
 import { restoreGeometry, saveGeometry, saveOpenState, reopenIfLeftOpen } from '../../utils/panel-geometry.js';
-import { planGoals, describeGoal, GOAL_TYPES } from './goal-planner.js';
+import { planGoals, describeGoal, describeLeg, GOAL_TYPES } from './goal-planner.js';
 import { buildPlannerContext, withHouseCosts } from './goal-planner-context.js';
-import { loadGoals, addGoal, removeGoal, loadSnapshot, saveSnapshot } from './goal-planner-store.js';
+import { loadGoals, addGoal, removeGoal, loadSnapshot, saveSnapshot, saveCombatGear } from './goal-planner-store.js';
 
 const PANEL_ID = 'toolasha-goal-planner-panel';
 const GEOMETRY_KEY = 'goalPlannerPanel';
@@ -149,6 +161,61 @@ function input(attributes = {}) {
 }
 
 /**
+ * What a step would have you buy, and which existing machinery buys it.
+ *
+ * Three shapes, and each one already has a home:
+ *
+ * - a craft — the action's inputs, which is exactly what the missing-materials
+ *   button computes and puts on the marketplace, so it is handed the action;
+ * - a list of house materials — a shopping list, which is what the consumables
+ *   restock built its tabs for;
+ * - one item off the market — the degenerate shopping list of one, so it goes
+ *   the same way and arrives with the quantity already filled in.
+ *
+ * @param {Object} step - A plan step
+ * @returns {{label: string, title: string, open: Function}|null} The button to draw, if any
+ */
+export function shoppingFor(step) {
+    if (!step || step.done || step.kind !== 'acquire') return null;
+    const details = step.details || {};
+
+    const materials = (details.materials || [])
+        .filter((material) => material?.itemHrid && material.missing > 0)
+        .map((material) => ({
+            itemHrid: material.itemHrid,
+            name: material.name || material.itemHrid.split('/').pop(),
+            count: Math.ceil(material.missing),
+        }));
+    if (materials.length) {
+        return {
+            label: 'Buy',
+            title: `Open the marketplace with tabs for all ${materials.length} missing materials.`,
+            open: () => openShoppingList(materials),
+        };
+    }
+
+    if (details.strategy === 'craft' && details.actionHrid) {
+        const actions = Math.max(1, Math.ceil(Number(details.actionsNeeded) || 1));
+        return {
+            label: 'Buy mats',
+            title: 'Open the marketplace on what this craft is short of.',
+            open: () => openMissingMaterials(details.actionHrid, actions),
+        };
+    }
+
+    if (details.itemHrid && details.strategy !== 'craft') {
+        const name = details.itemName || details.itemHrid.split('/').pop();
+        return {
+            label: 'Buy',
+            title: 'Open the marketplace on this item, with the quantity filled in.',
+            open: () => openShoppingList([{ itemHrid: details.itemHrid, name, count: 1 }]),
+        };
+    }
+
+    return null;
+}
+
+/**
  * @param {Array<{value: string, label: string}>} options - What can be chosen
  * @returns {HTMLSelectElement} A select
  */
@@ -181,6 +248,8 @@ class GoalPlannerPanel {
         this.plans = [];
         /** What the rate providers want said — a missing or stale combat snapshot, say */
         this.rateNotes = [];
+        /** Which combat loadout the rates were judged against, and the alternatives */
+        this.combatStatus = null;
         this.pricedAt = null;
         this.busy = false;
         this.formType = null;
@@ -257,6 +326,7 @@ class GoalPlannerPanel {
             await withHouseCosts(context, this.goals);
             this.plans = planGoals(this.goals, context);
             this.rateNotes = context.rateNotes || [];
+            this.combatStatus = context.combatStatus || null;
             this.pricedAt = Date.now();
             await saveSnapshot(this.plans);
         } catch (error) {
@@ -423,6 +493,13 @@ class GoalPlannerPanel {
             );
         }
 
+        try {
+            const picker = this._loadoutPicker();
+            if (picker) this.bodyEl.appendChild(picker);
+        } catch (error) {
+            console.error('[GoalPlanner] Drawing the loadout picker failed:', error);
+        }
+
         if (!this.goals.length) {
             this.bodyEl.appendChild(
                 span('No goals yet. Add one above and the planner will work out the order and the bill.', {
@@ -445,6 +522,63 @@ class GoalPlannerPanel {
                 );
             }
         }
+
+        // One fetch priced every card, so the sentence about that fetch belongs
+        // to the panel rather than to each of them
+        const note = this.plans.find((plan) => plan?.confidence?.note)?.confidence?.note;
+        if (note) {
+            this.bodyEl.appendChild(
+                span(note, {
+                    display: 'block',
+                    color: COLORS.textDim,
+                    fontSize: '11px',
+                    borderTop: `1px solid ${COLORS.hairline}`,
+                    paddingTop: '5px',
+                    marginTop: '2px',
+                })
+            );
+        }
+    }
+
+    /**
+     * Which loadout the combat rates are judged against.
+     *
+     * Only drawn when the answer is a genuine choice. One combat loadout, or
+     * none, is not a decision worth a control — the resolution order in
+     * `combat-rates.js` settles it and saying so in a note is enough. Two or
+     * more and the planner is guessing, so the guess is offered for correction
+     * and the correction is remembered.
+     *
+     * @returns {HTMLElement|null} The picker, or null when there is nothing to pick
+     */
+    _loadoutPicker() {
+        const status = this.combatStatus;
+        const choices = status?.loadoutChoices || [];
+        if (choices.length < 2) return null;
+
+        const strip = document.createElement('div');
+        Object.assign(strip.style, {
+            display: 'flex',
+            gap: '6px',
+            alignItems: 'center',
+            marginTop: '4px',
+            fontSize: '11px',
+            color: COLORS.textDim,
+        });
+        strip.appendChild(span('Combat rates judged against:'));
+
+        const picker = select(choices.map((name) => ({ value: name, label: name })));
+        picker.value = status.loadoutName || choices[0];
+        picker.title =
+            'Which loadout counts as your combat gear. The "gear changed" warning means this loadout no ' +
+            'longer matches the one the saved run was measured in.';
+        picker.addEventListener('change', async () => {
+            await saveCombatGear({ preferred: picker.value });
+            await this.refresh();
+        });
+        strip.appendChild(picker);
+
+        return strip;
     }
 
     /**
@@ -656,21 +790,23 @@ class GoalPlannerPanel {
             card.appendChild(span(`⚠ ${warning}`, { display: 'block', color: COLORS.warn, fontSize: '11px' }));
         }
 
-        const note = span(plan.confidence.note, {
-            display: 'block',
-            color: COLORS.textDim,
-            fontSize: '11px',
-            marginTop: '3px',
-        });
-        card.appendChild(note);
-
+        // The pricing note is the same sentence on every card, because every
+        // card was priced by the same fetch. Repeated per goal it was four
+        // copies of one fact taking up more room than some of the plans; it is
+        // drawn once at the foot of the panel instead.
         return card;
     }
 
     /**
-     * One step of a plan.
+     * One step of a plan, and anything it wants to say underneath.
+     *
+     * The description wraps rather than being cut off at the column edge. It
+     * used to be a nowrap ellipsis with the full text in a `title`, which meant
+     * the only way to read a step was to hover a tooltip that then covered the
+     * two steps below it — a plan you cannot read without hiding the plan.
+     *
      * @param {Object} step - A plan step
-     * @returns {HTMLElement} The row
+     * @returns {HTMLElement} The row, or a wrapper when the step has legs
      */
     _stepRow(step) {
         const row = document.createElement('div');
@@ -685,13 +821,37 @@ class GoalPlannerPanel {
 
         row.appendChild(span(KIND_GLYPH[step.kind] || '•', { color: COLORS.textDim }));
 
-        const label = span(step.description, {
-            whiteSpace: 'nowrap',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
+        const label = document.createElement('div');
+        Object.assign(label.style, {
+            minWidth: '0',
+            overflowWrap: 'anywhere',
             textDecoration: step.done ? 'line-through' : 'none',
         });
-        label.title = step.description;
+        label.appendChild(span(step.description));
+
+        const shopping = shoppingFor(step);
+        if (shopping) {
+            const buy = button(
+                shopping.label,
+                () => {
+                    try {
+                        shopping.open();
+                    } catch (error) {
+                        console.error('[GoalPlanner] Opening the marketplace failed:', error);
+                        this._status('The marketplace could not be opened — see the console.');
+                    }
+                },
+                { marginLeft: '6px', padding: '0 6px', verticalAlign: 'baseline' }
+            );
+            buy.title = shopping.title;
+            label.appendChild(buy);
+        }
+
+        // The planner has worked out how far along each step already is — 202M
+        // of the 903M, Cheesesmithing 105 of 108 — and until now threw it away.
+        // A hairline is the cheapest way to say it and does not cost a row.
+        const bar = this._progressBar(step);
+        if (bar) label.appendChild(bar);
         row.appendChild(label);
 
         row.appendChild(
@@ -704,11 +864,93 @@ class GoalPlannerPanel {
             span(step.done ? 'done' : duration(step.timeHours), { textAlign: 'right', color: COLORS.textDim })
         );
 
+        const legs = Array.isArray(step.details?.legs) ? step.details.legs : [];
+        if (step.done || legs.length < 2) return row;
+
+        // More than one method means the first one runs out, and *that* is the
+        // thing worth seeing — a single sentence would have to bury it
+        const wrapper = document.createElement('div');
+        wrapper.appendChild(row);
+        for (const leg of legs) wrapper.appendChild(this._legRow(leg));
+        return wrapper;
+    }
+
+    /**
+     * How far along a step already is, as a hairline under its description.
+     *
+     * Only where a fraction means something. A step is either done or not, so a
+     * bar at 0% or 100% says nothing the row does not already say and is drawn
+     * as nothing at all.
+     *
+     * @param {Object} step - A plan step
+     * @returns {HTMLElement|null} The bar, or null when there is no progress to show
+     */
+    _progressBar(step) {
+        const ratio = Number(step?.progress?.ratio);
+        if (step.done || !Number.isFinite(ratio) || ratio <= 0 || ratio >= 1) return null;
+
+        const track = document.createElement('div');
+        Object.assign(track.style, {
+            height: '2px',
+            marginTop: '2px',
+            borderRadius: '1px',
+            background: 'rgba(255, 255, 255, 0.08)',
+        });
+
+        const fill = document.createElement('div');
+        Object.assign(fill.style, {
+            height: '100%',
+            width: `${Math.round(ratio * 100)}%`,
+            borderRadius: '1px',
+            background: COLORS.accent,
+        });
+        track.appendChild(fill);
+
+        const { current, target } = step.progress;
+        track.title =
+            Number.isFinite(current) && Number.isFinite(target)
+                ? `${formatKMB(Math.round(current))} of ${formatKMB(Math.round(target))} — ${Math.round(ratio * 100)}%`
+                : `${Math.round(ratio * 100)}%`;
+        return track;
+    }
+
+    /**
+     * One method inside an earning step: what it is, what it raises, how long for.
+     * @param {Object} leg - From `planEarnings`
+     * @returns {HTMLElement} The row
+     */
+    _legRow(leg) {
+        const row = document.createElement('div');
+        Object.assign(row.style, {
+            display: 'grid',
+            gridTemplateColumns: '16px minmax(0, 1fr) 76px 92px',
+            gap: '6px',
+            alignItems: 'baseline',
+            padding: '0 0 0 0',
+            color: COLORS.textDim,
+            fontSize: '11px',
+        });
+
+        row.appendChild(span(''));
+        const text = document.createElement('div');
+        Object.assign(text.style, { minWidth: '0', overflowWrap: 'anywhere', paddingLeft: '10px' });
+        text.appendChild(span(`↳ ${describeLeg(leg)}`));
+        row.appendChild(text);
+        row.appendChild(span(signedCoins(leg.gold), { textAlign: 'right' }));
+        row.appendChild(span(duration(leg.hours), { textAlign: 'right' }));
+
         return row;
     }
 
     /**
      * The bottom line of one plan.
+     *
+     * The number in the coin column is a *net*, and a bare "-202.0M" under a
+     * heading that says "Remaining" reads as a debt rather than as the cost of
+     * finishing. So the row says which two figures it is the difference of, and
+     * the colour follows the sign of the net rather than pretending a plan that
+     * costs money is going wrong.
+     *
      * @param {Object} plan - A plan
      * @returns {HTMLElement} The row
      */
@@ -725,16 +967,31 @@ class GoalPlannerPanel {
             fontWeight: 'bold',
         });
 
+        const { goldEarn, goldSpend, netGold, timeKnown, timeHours } = plan.totals;
+        const breakdown =
+            goldEarn > 0 && goldSpend > 0
+                ? ` — earn ${formatKMB(Math.round(goldEarn))}, spend ${formatKMB(Math.round(goldSpend))}`
+                : '';
+
         row.appendChild(span(''));
-        row.appendChild(span(plan.satisfied ? 'Already there' : 'Remaining'));
+        const label = span(plan.satisfied ? 'Already there' : `Left to do${breakdown}`, {
+            overflowWrap: 'anywhere',
+        });
+        label.title = plan.satisfied
+            ? 'Nothing outstanding on this goal.'
+            : 'The steps not yet done: what they earn, what they cost, and the difference. ' +
+              'A negative net is what finishing this goal costs you overall, not a debt.';
+        row.appendChild(label);
+
+        const net = span(signedCoins(netGold), {
+            textAlign: 'right',
+            color: netGold >= 0 ? COLORS.good : COLORS.bad,
+        });
+        net.title = `Net change in coins: ${signedCoins(netGold)}`;
+        row.appendChild(net);
+
         row.appendChild(
-            span(signedCoins(plan.totals.netGold), {
-                textAlign: 'right',
-                color: plan.totals.netGold >= 0 ? COLORS.good : COLORS.bad,
-            })
-        );
-        row.appendChild(
-            span(plan.totals.timeKnown ? duration(plan.totals.timeHours) : `${duration(plan.totals.timeHours)}+`, {
+            span(timeKnown ? duration(timeHours) : `${duration(timeHours)}+`, {
                 textAlign: 'right',
             })
         );

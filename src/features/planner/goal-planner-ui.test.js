@@ -59,6 +59,17 @@ vi.mock('../../utils/experience-calculator.js', () => ({
     }),
 }));
 
+// The two marketplace hand-offs. Both reach the live DOM and the game's own
+// panels; what this file is about is that a buy step *offers* the trip, not
+// what the marketplace does when it gets there.
+const shopping = vi.hoisted(() => ({ calls: [] }));
+vi.mock('../actions/missing-materials-button.js', () => ({
+    openMissingMaterials: (actionHrid, numActions) => shopping.calls.push({ kind: 'action', actionHrid, numActions }),
+}));
+vi.mock('../ui/consumables-shopping-list.js', () => ({
+    openShoppingList: (items) => shopping.calls.push({ kind: 'list', items }),
+}));
+
 const plannerContext = vi.hoisted(() => ({ value: null }));
 vi.mock('./goal-planner-context.js', () => ({
     buildPlannerContext: async () => plannerContext.value,
@@ -129,6 +140,7 @@ function fixtureContext() {
 }
 
 beforeEach(() => {
+    shopping.calls = [];
     store.data = {
         goalPlannerGoals_char1: [
             { id: 'g-gold', type: 'gold', amount: 500_000_000 },
@@ -185,7 +197,7 @@ describe('drawing a plan', () => {
         await goalPlannerPanel.refresh();
 
         expect(text()).toContain('Already hold Sinister Cape');
-        const struck = [...document.querySelectorAll('span')].some(
+        const struck = [...document.querySelectorAll('#toolasha-goal-planner-panel *')].some(
             (element) => element.style.textDecoration === 'line-through'
         );
         expect(struck).toBe(true);
@@ -201,6 +213,128 @@ describe('drawing a plan', () => {
 
         expect(text()).not.toContain('could not be drawn');
         expect(text()).toContain('⚠');
+    });
+});
+
+describe('a step that says buy can go and buy', () => {
+    /**
+     * Click a button by its label, on the step whose text contains `within`.
+     * @param {string} label - Button text
+     * @param {string} [within] - Text the step row must contain
+     * @returns {boolean} Whether one was found
+     */
+    function press(label, within = '') {
+        const found = [...document.querySelectorAll('#toolasha-goal-planner-panel button')].find(
+            (element) =>
+                element.textContent === label && (!within || element.parentElement?.textContent.includes(within))
+        );
+        found?.click();
+        return Boolean(found);
+    }
+
+    test('house materials go across as a shopping list of what is missing', async () => {
+        goalPlannerPanel.show();
+        await goalPlannerPanel.load();
+        await goalPlannerPanel.refresh();
+
+        expect(press('Buy', 'material')).toBe(true);
+        const list = shopping.calls.find((call) => call.kind === 'list');
+        expect(list.items).toEqual([{ itemHrid: '/items/log', name: 'Log', count: 500 }]);
+    });
+
+    test('a single purchase goes the same way, named and counted', async () => {
+        goalPlannerPanel.show();
+        await goalPlannerPanel.load();
+        await goalPlannerPanel.refresh();
+
+        expect(press('Buy', 'Buy Sinister Cape')).toBe(true);
+        expect(shopping.calls[0].items).toEqual([
+            { itemHrid: '/items/sinister_cape', name: 'Sinister Cape', count: 1 },
+        ]);
+    });
+
+    test('a craft hands the action to the missing-materials machinery', async () => {
+        plannerContext.value.acquire = () => ({
+            strategy: 'craft',
+            totalCost: 9_000_000,
+            craftCost: 9_000_000,
+            buyPrice: 12_000_000,
+            actionHrid: '/actions/crafting/sinister_cape',
+            actionsNeeded: 3,
+            requires: [],
+        });
+        goalPlannerPanel.show();
+        await goalPlannerPanel.load();
+        await goalPlannerPanel.refresh();
+
+        expect(press('Buy mats')).toBe(true);
+        expect(shopping.calls[0]).toEqual({
+            kind: 'action',
+            actionHrid: '/actions/crafting/sinister_cape',
+            numActions: 3,
+        });
+    });
+
+    test('a step that is already satisfied offers no trip to the marketplace', async () => {
+        plannerContext.value.owned = () => 10_000;
+        plannerContext.value.ownedEnhancementLevel = () => 10;
+        goalPlannerPanel.show();
+        await goalPlannerPanel.load();
+        await goalPlannerPanel.refresh();
+
+        expect(press('Buy mats')).toBe(false);
+    });
+});
+
+describe('reading the plan', () => {
+    test('a step is wrapped rather than cut off, so no tooltip has to cover the plan', async () => {
+        goalPlannerPanel.show();
+        await goalPlannerPanel.load();
+        await goalPlannerPanel.refresh();
+
+        const clipped = [...document.querySelectorAll('#toolasha-goal-planner-panel *')].filter(
+            (element) => element.style.textOverflow === 'ellipsis'
+        );
+        expect(clipped).toEqual([]);
+    });
+
+    test('the pricing note is said once for the panel, not once per goal', async () => {
+        goalPlannerPanel.show();
+        await goalPlannerPanel.load();
+        await goalPlannerPanel.refresh();
+
+        const occurrences = text().split('Priced at 10:00.').length - 1;
+        expect(occurrences).toBe(1);
+    });
+
+    test('the bottom line says which two figures it is the difference of', async () => {
+        goalPlannerPanel.show();
+        await goalPlannerPanel.load();
+        await goalPlannerPanel.refresh();
+
+        expect(text()).toContain('Left to do');
+        expect(text()).toContain('earn');
+        expect(text()).toContain('spend');
+    });
+
+    test('one combat loadout is not a choice, and is not offered as one', async () => {
+        plannerContext.value.combatStatus = { loadoutName: 'Fighting', loadoutChoices: ['Fighting'] };
+        goalPlannerPanel.show();
+        await goalPlannerPanel.load();
+        await goalPlannerPanel.refresh();
+
+        expect(text()).not.toContain('Combat rates judged against');
+    });
+
+    test('two combat loadouts are a guess, so the guess can be corrected', async () => {
+        plannerContext.value.combatStatus = { loadoutName: 'Ranged', loadoutChoices: ['Fighting', 'Ranged'] };
+        goalPlannerPanel.show();
+        await goalPlannerPanel.load();
+        await goalPlannerPanel.refresh();
+
+        expect(text()).toContain('Combat rates judged against');
+        const picker = document.querySelector('#toolasha-goal-planner-panel select');
+        expect(picker.value).toBe('Ranged');
     });
 });
 

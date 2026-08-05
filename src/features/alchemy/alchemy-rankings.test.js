@@ -29,6 +29,8 @@ const mocks = vi.hoisted(() => ({
     itemPrices: {},
     actionStats: { actionTime: 20, totalEfficiency: 0, efficiencyBreakdown: {} },
     experienceMultiplier: 1,
+    /** What is in the bag — the ceiling on every alchemy rate */
+    inventory: [],
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -40,6 +42,7 @@ vi.mock('../../core/data-manager.js', () => ({
         getItemDetails: (hrid) => mocks.initClientData?.itemDetailMap?.[hrid] ?? null,
         getSkills: () => mocks.skills,
         getEquipment: () => new Map(),
+        getInventory: () => mocks.inventory,
         getActionDrinkSlots: () => mocks.drinkSlots,
         characterData: {},
         getAchievementBuffFlatBoost: () => 0,
@@ -67,7 +70,8 @@ vi.mock('../../utils/experience-parser.js', () => ({
     calculateExperienceMultiplier: () => ({ totalMultiplier: mocks.experienceMultiplier }),
 }));
 
-const { rankAlchemyType, alchemyGoldRates, clearAlchemyRateCache, isEligible } = await import('./alchemy-rankings.js');
+const { rankAlchemyType, alchemyGoldRates, clearAlchemyRateCache, isEligible, OWN_STOCK_NOTE } =
+    await import('./alchemy-rankings.js');
 const { getAlchemyCoinCost } = await import('../../utils/alchemy-fees.js');
 const { calculatePriceAfterTax } = await import('../../utils/profit-helpers.js');
 
@@ -76,6 +80,7 @@ const CATALYST_PRICE = 1e12;
 
 const ACTION_TIME = 20;
 const ACTIONS_PER_HOUR = 3600 / ACTION_TIME;
+const INVENTORY = '/item_locations/inventory';
 
 /**
  * Game data with one item per alchemy action and one item with no alchemy at all.
@@ -156,6 +161,11 @@ beforeEach(() => {
     };
     mocks.actionStats = { actionTime: ACTION_TIME, totalEfficiency: 0, efficiencyBreakdown: {} };
     mocks.experienceMultiplier = 1;
+    mocks.inventory = [
+        { itemHrid: '/items/cheese', itemLocationHrid: INVENTORY, count: 100, enhancementLevel: 0 },
+        { itemHrid: '/items/milk', itemLocationHrid: INVENTORY, count: 100, enhancementLevel: 0 },
+        { itemHrid: '/items/ore', itemLocationHrid: INVENTORY, count: 100, enhancementLevel: 0 },
+    ];
 });
 
 describe('isEligible', () => {
@@ -305,6 +315,12 @@ describe('alchemyGoldRates', () => {
                 sellPrice: 100 + i,
                 alchemyDetail: { isCoinifiable: true, bulkMultiplier: 1 },
             };
+            mocks.inventory.push({
+                itemHrid: `/items/thing_${i}`,
+                itemLocationHrid: INVENTORY,
+                count: 1,
+                enhancementLevel: 0,
+            });
         }
         mocks.initClientData = gameData(many);
 
@@ -325,6 +341,64 @@ describe('alchemyGoldRates', () => {
         expect(alchemyGoldRates({ priceStamp: 2 })[0].goldPerHour).toBeGreaterThan(first);
         clearAlchemyRateCache();
         expect(alchemyGoldRates({ priceStamp: 1 })[0].goldPerHour).toBeGreaterThan(first);
+    });
+
+    test('a rate carries the ceiling its stock puts on it', () => {
+        const ore = alchemyGoldRates().find((rate) => rate.itemHrid === '/items/ore');
+
+        expect(ore.sustainable).toMatchObject({
+            units: 100,
+            unitLabel: 'Ore',
+            verb: 'Transmute',
+            source: 'inventory',
+            note: OWN_STOCK_NOTE,
+        });
+        // A hundred goes in, a hundred margins come out — and the total is a
+        // hundredth of an hour's worth of the quoted rate, which is the point
+        expect(ore.sustainable.gold).toBeCloseTo(ore.sustainable.goldPerUnit * 100, 6);
+        expect(ore.sustainable.gold).toBeCloseTo((ore.goldPerHour * 100) / ACTIONS_PER_HOUR, 6);
+    });
+
+    test('the ceiling scales with the stack, so one crossbow is worth one crossbow', () => {
+        const hundred = alchemyGoldRates().find((rate) => rate.itemHrid === '/items/ore');
+
+        mocks.inventory = mocks.inventory.map((item) =>
+            item.itemHrid === '/items/ore' ? { ...item, count: 1 } : item
+        );
+        const one = alchemyGoldRates().find((rate) => rate.itemHrid === '/items/ore');
+
+        // The per-hour figure is untouched: it was never wrong, it was just
+        // never the whole story
+        expect(one.goldPerHour).toBeCloseTo(hundred.goldPerHour, 6);
+        expect(one.sustainable.gold).toBeCloseTo(hundred.sustainable.gold / 100, 6);
+    });
+
+    test('an item you own none of is not offered — you cannot start it once', () => {
+        mocks.inventory = mocks.inventory.filter((item) => item.itemHrid !== '/items/ore');
+        expect(alchemyGoldRates().some((rate) => rate.itemHrid === '/items/ore')).toBe(false);
+
+        // And the rest of the ranking is untouched by its absence
+        expect(alchemyGoldRates().map((rate) => rate.action)).toEqual(['coinify', 'decompose']);
+    });
+
+    test('an enhanced or equipped copy is not stock these rates can spend', () => {
+        mocks.inventory = [
+            { itemHrid: '/items/ore', itemLocationHrid: INVENTORY, count: 5, enhancementLevel: 3 },
+            { itemHrid: '/items/ore', itemLocationHrid: '/item_locations/main_hand', count: 1 },
+        ];
+        expect(alchemyGoldRates()).toEqual([]);
+    });
+
+    test('spending the stock invalidates the memo, or the last one is offered forever', () => {
+        const before = alchemyGoldRates({ priceStamp: 1 }).find((rate) => rate.itemHrid === '/items/ore');
+        expect(before.sustainable.units).toBe(100);
+
+        mocks.inventory = mocks.inventory.map((item) =>
+            item.itemHrid === '/items/ore' ? { ...item, count: 2 } : item
+        );
+
+        const after = alchemyGoldRates({ priceStamp: 1 }).find((rate) => rate.itemHrid === '/items/ore');
+        expect(after.sustainable.units).toBe(2);
     });
 
     test('a change of alchemy level invalidates the memo on its own', () => {

@@ -157,6 +157,32 @@ function humanise(hrid) {
 }
 
 /**
+ * What a rate says when nothing limits how long it can be run.
+ *
+ * Frozen and shared: it is the same statement on every gathering, production
+ * and combat rate, and a per-rate copy is weight for nothing.
+ */
+const UNBOUNDED = Object.freeze({ unbounded: true });
+
+/**
+ * Whether a profit figure had to guess at what the action costs.
+ *
+ * Only the cost side. A missing *output* price makes a profit understated,
+ * which is a conservative error and still a usable ranking; a missing *input*
+ * price makes it overstated without limit, because the calculators bill an
+ * unpriceable material at nothing.
+ *
+ * @param {Object} profit - A result from the gathering or production calculator
+ * @returns {boolean} Whether something it consumes could not be priced
+ */
+function costSideIncomplete(profit) {
+    if ((profit?.materialCosts || []).some((material) => material?.missingPrice)) return true;
+    if ((profit?.teaCosts || []).some((tea) => tea?.missingPrice)) return true;
+    if ((profit?.drinkCosts || []).some((drink) => drink?.missingPrice)) return true;
+    return false;
+}
+
+/**
  * Every action the character's levels allow, of a set of types.
  * @param {Array<string>} types - Action type hrids
  * @returns {Array<{hrid: string, action: Object}>} Actions the character can start
@@ -199,6 +225,22 @@ function availableActions(types) {
  * folding either into a map keyed by action would either clobber entries or
  * pair an experience rate with the gold from a different item.
  *
+ * ## Two kinds of rate, and only one of them has a ceiling
+ *
+ * Gathering, production and combat are marked `unbounded`. Gathering consumes
+ * nothing; production and combat pay for their inputs at ask *inside the margin
+ * they report*, so the margin is repeatable for as long as the market will sell
+ * to you. Alchemy is the exception, and says so for itself — it eats the item
+ * it is run on, and {@link alchemyGoldRates} caps each rate at what is in the
+ * bag.
+ *
+ * ## A cost that could not be priced is not a cost of zero
+ *
+ * A production margin whose material list contains an item with no market
+ * listing is computed as though that material were free, which turns a modest
+ * craft into an eight-figure hourly income. Those rates are dropped rather than
+ * quoted: an unpriceable input makes the *profit* unknown, not large.
+ *
  * @returns {Promise<{rates: Array<Object>, byAction: Map<string, number>, notes: Array<string>}>}
  *   Rates best first, gold by action for the skilling rates, and anything the panel should say
  */
@@ -206,19 +248,24 @@ async function measureGoldRates() {
     const rates = [];
     const byAction = new Map();
     const notes = [];
+    let unpriceable = 0;
 
     for (const { hrid, action } of availableActions(GATHERING_TYPES)) {
         try {
             const profit = await calculateGatheringProfit(hrid);
-            if (profit?.profitPerHour > 0) {
-                rates.push({
-                    actionHrid: hrid,
-                    label: action.name || humanise(hrid),
-                    goldPerHour: profit.profitPerHour,
-                    kind: 'gathering',
-                });
-                byAction.set(hrid, profit.profitPerHour);
+            if (!(profit?.profitPerHour > 0)) continue;
+            if (costSideIncomplete(profit)) {
+                unpriceable += 1;
+                continue;
             }
+            rates.push({
+                actionHrid: hrid,
+                label: action.name || humanise(hrid),
+                goldPerHour: profit.profitPerHour,
+                kind: 'gathering',
+                sustainable: UNBOUNDED,
+            });
+            byAction.set(hrid, profit.profitPerHour);
         } catch (error) {
             console.error(`[GoalPlanner] Costing ${hrid} failed:`, error);
         }
@@ -227,18 +274,29 @@ async function measureGoldRates() {
     for (const { hrid, action } of availableActions(PRODUCTION_TYPES)) {
         try {
             const profit = await calculateProductionProfit(hrid);
-            if (profit?.profitPerHour > 0) {
-                rates.push({
-                    actionHrid: hrid,
-                    label: action.name || humanise(hrid),
-                    goldPerHour: profit.profitPerHour,
-                    kind: 'production',
-                });
-                byAction.set(hrid, profit.profitPerHour);
+            if (!(profit?.profitPerHour > 0)) continue;
+            if (costSideIncomplete(profit)) {
+                unpriceable += 1;
+                continue;
             }
+            rates.push({
+                actionHrid: hrid,
+                label: action.name || humanise(hrid),
+                goldPerHour: profit.profitPerHour,
+                kind: 'production',
+                sustainable: UNBOUNDED,
+            });
+            byAction.set(hrid, profit.profitPerHour);
         } catch (error) {
             console.error(`[GoalPlanner] Costing ${hrid} failed:`, error);
         }
+    }
+
+    if (unpriceable > 0) {
+        notes.push(
+            `${unpriceable} action${unpriceable === 1 ? '' : 's'} could not be ranked: something they consume ` +
+                'has no market listing, and a cost that cannot be read is not a cost of zero.'
+        );
     }
 
     try {
@@ -248,9 +306,11 @@ async function measureGoldRates() {
         notes.push('Alchemy could not be ranked — see the console.');
     }
 
+    let combatStatus = null;
     try {
         const combat = await loadCombatRates();
         rates.push(...combat.rates);
+        combatStatus = combat.status;
         if (combat.status.note) notes.push(combat.status.note);
     } catch (error) {
         console.error('[GoalPlanner] Reading combat rates failed:', error);
@@ -258,7 +318,7 @@ async function measureGoldRates() {
     }
 
     rates.sort((a, b) => b.goldPerHour - a.goldPerHour);
-    return { rates, byAction, notes };
+    return { rates, byAction, notes, combatStatus };
 }
 
 /**
@@ -520,7 +580,9 @@ export async function buildPlannerContext({ measureRates = true } = {}) {
     }
 
     const gameData = dataManager.getInitClientData();
-    const measured = measureRates ? await measureGoldRates() : { rates: [], byAction: new Map(), notes: [] };
+    const measured = measureRates
+        ? await measureGoldRates()
+        : { rates: [], byAction: new Map(), notes: [], combatStatus: null };
     const rates = measured.rates;
     const goldByAction = measured.byAction;
 
@@ -538,6 +600,10 @@ export async function buildPlannerContext({ measureRates = true } = {}) {
         // What a rate provider wants said out loud: a combat snapshot that is
         // missing or stale is a fact about the ranking, not a silent omission
         rateNotes: measured.notes,
+
+        // Which loadout the combat rates were judged against, and what else
+        // could have been picked — the panel offers the choice when there is one
+        combatStatus: measured.combatStatus,
 
         itemName: (itemHrid) => dataManager.getItemDetails(itemHrid)?.name || humanise(itemHrid),
         skillName: (skillHrid) => humanise(skillHrid),

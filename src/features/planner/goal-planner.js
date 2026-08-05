@@ -36,6 +36,27 @@
  * A plan re-costed against a character who has since bought the base item
  * should show the acquisition step struck through, not silently one step
  * shorter. The struck-through step is the evidence the plan is the same plan.
+ *
+ * ## A rate is only a rate while its inputs last
+ *
+ * The single largest source of nonsense a planner can produce is treating a
+ * one-shot margin as an hourly income. Decomposing a Sundering Crossbow ★ you
+ * happen to own might net 850M in seven seconds; extrapolated that is 437
+ * *billion* an hour, and a funding step that quotes it tells you a 900M goal
+ * takes seven seconds. It does — once. You own one crossbow.
+ *
+ * So every rate may carry a {@link https://en.wikipedia.org/wiki/Working_capital
+ * sustainability cap}: `rate.sustainable.gold` is the most gold that method can
+ * produce before the thing it consumes runs out. {@link planEarnings} then
+ * spends the shortfall down the ranking — take the best rate up to its cap,
+ * then the next — so a plan reads "decompose the one crossbow you have, then
+ * grind" rather than "decompose crossbows for seven seconds". A rate with no
+ * cap (gathering, production, combat: their inputs are gathered or bought at
+ * ask) is unbounded and covers whatever is left in one leg.
+ *
+ * A leg that cannot last {@link RATE_HORIZON_HOURS} is not described as a rate
+ * at all, because "per hour" is a claim about an hour. It is described as what
+ * it is: a fixed number of units for a fixed number of coins.
  */
 
 import { formatKMB } from '../../utils/formatters.js';
@@ -53,6 +74,18 @@ export const GOAL_TYPES = {
 const MAX_ENHANCEMENT_LEVEL = 20;
 /** Highest house room level the game allows */
 const MAX_HOUSE_LEVEL = 8;
+
+/**
+ * How long a method has to last before "per hour" is a fair way to say it.
+ *
+ * Quoting X/hr for something whose inputs are gone in seven seconds is the bug
+ * this number exists to prevent. Under an hour a leg is described as the fixed
+ * thing it is — so many units, so many coins, once.
+ */
+export const RATE_HORIZON_HOURS = 1;
+
+/** How many legs a step's own sentence names before it says "then more" */
+const LEGS_IN_SENTENCE = 2;
 
 let idCounter = 0;
 
@@ -276,14 +309,138 @@ export function normalizeGoal(raw) {
 
 /**
  * The activity that earns the most, out of what the character can actually do.
+ *
+ * "Can actually do" now includes having something left to do it with: a rate
+ * whose cap has already been spent to zero — no crossbows left to decompose —
+ * is not an option, and offering it as the top of the ranking is the whole bug.
+ *
  * @param {Object} context - The planning context
  * @returns {{rates: Array<Object>, best: Object|null}} All rates and the winner
  */
 function goldRates(context) {
     const rates = ask(context, 'goldRates', [], []) || [];
-    const usable = rates.filter((rate) => rate && num(rate.goldPerHour) > 0);
+    const usable = rates.filter((rate) => rate && num(rate.goldPerHour) > 0 && sustainableGold(rate) > 0);
     usable.sort((a, b) => num(b.goldPerHour) - num(a.goldPerHour));
     return { rates: usable, best: usable[0] || null };
+}
+
+/**
+ * The most gold a method can produce before what it consumes runs out.
+ *
+ * A rate that says nothing about its inputs is unbounded, which is the right
+ * default: gathering consumes nothing, and production and combat buy their
+ * inputs at ask inside the same margin they report. Only a method that eats
+ * something you own — alchemy eats the item itself — has a ceiling.
+ *
+ * @param {Object} rate - A gold rate
+ * @returns {number} Coins, or `Infinity` when nothing limits it
+ */
+export function sustainableGold(rate) {
+    const cap = rate?.sustainable;
+    if (!cap || cap.unbounded) return Number.POSITIVE_INFINITY;
+    const gold = Number(cap.gold);
+    return Number.isFinite(gold) ? Math.max(0, gold) : Number.POSITIVE_INFINITY;
+}
+
+/**
+ * How one leg of an earning plan says itself.
+ *
+ * Two sentences, and which one is used is the whole point. A leg that outlasts
+ * {@link RATE_HORIZON_HOURS} is an income and is quoted per hour. A leg that
+ * does not is a windfall and is quoted as the thing you actually do — "Decompose
+ * 1 Sundering Crossbow ★ (+851.2M one-off)" — because there is no hour in which
+ * you earn 437.9B, and printing that number is worse than printing nothing.
+ *
+ * @param {Object} leg - From {@link planEarnings}
+ * @returns {string} A phrase
+ */
+export function describeLeg(leg) {
+    const rate = leg?.rate || {};
+    const cap = rate.sustainable || {};
+
+    if (leg?.oneOff) {
+        const noun = cap.unitLabel || rate.itemName || rate.label || 'unit';
+        const units = leg.units > 0 ? `${formatKMB(Math.ceil(leg.units))} ` : '';
+        const what = cap.verb ? `${cap.verb} ${units}${noun}` : `${units}${noun}`.trim() || rate.label;
+        return `${what} (+${coins(leg.gold)} one-off)`;
+    }
+
+    const label = rate.label || 'an unnamed activity';
+    const rest = leg?.exhausts ? `, for ${coins(leg.gold)}` : '';
+    return `${label} at ${coins(rate.goldPerHour)}/hr${rest}`;
+}
+
+/**
+ * How a shortfall actually gets earned, best method first, each until it runs dry.
+ *
+ * Greedy down the ranking, which is right because the legs do not interact:
+ * decomposing what you own does not make milking pay less, so taking the
+ * highest-paying method first and moving on when it is exhausted is optimal for
+ * total time as well as obvious to read.
+ *
+ * @param {Array<Object>} rates - Gold rates, any order
+ * @param {number} amount - Coins to raise
+ * @returns {{legs: Array<Object>, gold: number, hours: number|null, covered: boolean}}
+ *   The legs in order, what they raise between them, how long that takes, and
+ *   whether they cover the amount at all
+ */
+export function planEarnings(rates, amount) {
+    const wanted = Math.max(0, num(amount));
+    const usable = (Array.isArray(rates) ? rates : [])
+        .filter((rate) => rate && num(rate.goldPerHour) > 0 && sustainableGold(rate) > 0)
+        .sort((a, b) => num(b.goldPerHour) - num(a.goldPerHour));
+
+    const legs = [];
+    let remaining = wanted;
+    let hours = 0;
+
+    for (const rate of usable) {
+        if (remaining <= 0) break;
+
+        const cap = sustainableGold(rate);
+        const gold = Math.min(remaining, cap);
+        const perHour = num(rate.goldPerHour);
+        const legHours = perHour > 0 ? gold / perHour : 0;
+        const goldPerUnit = num(rate.sustainable?.goldPerUnit);
+        const exhausts = Number.isFinite(cap) && gold >= cap;
+
+        legs.push({
+            rate,
+            gold,
+            hours: legHours,
+            units: goldPerUnit > 0 ? gold / goldPerUnit : null,
+            exhausts,
+            // Under the horizon a leg cannot honestly be called a rate, and a
+            // leg that never runs out is an income however short this slice is
+            oneOff: exhausts && legHours < RATE_HORIZON_HOURS,
+        });
+
+        remaining -= gold;
+        hours += legHours;
+
+        // An uncapped method covers everything after it; nothing below it in
+        // the ranking can improve on that
+        if (!Number.isFinite(cap)) break;
+    }
+
+    return {
+        legs,
+        gold: wanted - remaining,
+        hours: remaining > 0 ? null : hours,
+        covered: remaining <= 0 && wanted > 0,
+    };
+}
+
+/**
+ * The legs of an earning plan, as one line of a step description.
+ * @param {Object} plan - From {@link planEarnings}
+ * @returns {string} e.g. "Decompose 1 Crossbow ★ (+851.2M one-off), then Milk a Cow at 12.4M/hr"
+ */
+function describeEarning(plan) {
+    const named = plan.legs.slice(0, LEGS_IN_SENTENCE).map(describeLeg);
+    const extra = plan.legs.length - named.length;
+    if (extra > 0) named.push(`${extra} more method${extra === 1 ? '' : 's'}`);
+    return named.join(', then ');
 }
 
 /**
@@ -306,20 +463,35 @@ function fundingStep(context, spend, spenderIds) {
     if (shortfall <= 0) return { step: null, warnings: [] };
 
     const { best, rates } = goldRates(context);
+    const earning = planEarnings(rates, shortfall);
     const warnings = [];
     if (!best) {
         warnings.push('No earning rate could be measured, so the time to raise the shortfall is unknown.');
+    } else if (!earning.covered) {
+        warnings.push(
+            `Nothing you can do covers the whole ${coins(shortfall)} — the methods ranked here run out of ` +
+                `what they consume after ${coins(earning.gold)}.`
+        );
     }
 
     const step = makeStep({
         id: 'fund',
         kind: 'earn',
-        description: best
-            ? `Earn ${coins(shortfall)} more coins — ${best.label} at ${coins(best.goldPerHour)}/hr`
+        description: earning.legs.length
+            ? `Earn ${coins(shortfall)} more coins — ${describeEarning(earning)}`
             : `Earn ${coins(shortfall)} more coins`,
         goldDelta: shortfall,
-        timeHours: best ? shortfall / num(best.goldPerHour) : null,
-        details: { have, spend, shortfall, rate: best || null, alternatives: rates.slice(0, 5), spenders: spenderIds },
+        timeHours: earning.hours,
+        details: {
+            have,
+            spend,
+            shortfall,
+            rate: best || null,
+            legs: earning.legs,
+            covered: earning.covered,
+            alternatives: rates.slice(0, 5),
+            spenders: spenderIds,
+        },
         progress: { current: have, target: spend, ratio: spend > 0 ? Math.min(1, have / spend) : 1 },
     });
 
@@ -353,9 +525,15 @@ function planGoldGoal(goal, context) {
     const satisfied = shortfall <= 0;
 
     const { best, rates } = goldRates(context);
+    const earning = planEarnings(rates, shortfall);
     const warnings = [];
     if (!satisfied && !best) {
         warnings.push('No earning rate could be measured — train a gathering or production skill first.');
+    } else if (!satisfied && !earning.covered) {
+        warnings.push(
+            `Nothing you can do covers the whole ${coins(shortfall)} — the methods ranked here run out of ` +
+                `what they consume after ${coins(earning.gold)}.`
+        );
     }
 
     const step = makeStep({
@@ -363,12 +541,20 @@ function planGoldGoal(goal, context) {
         kind: 'earn',
         description: satisfied
             ? `Already holding ${coins(have)} coins`
-            : best
-              ? `Earn ${coins(shortfall)} coins — ${best.label} at ${coins(best.goldPerHour)}/hr`
+            : earning.legs.length
+              ? `Earn ${coins(shortfall)} coins — ${describeEarning(earning)}`
               : `Earn ${coins(shortfall)} coins`,
         goldDelta: satisfied ? 0 : shortfall,
-        timeHours: satisfied ? 0 : best ? shortfall / num(best.goldPerHour) : null,
-        details: { target, have, shortfall, rate: best || null, alternatives: rates.slice(0, 5) },
+        timeHours: satisfied ? 0 : earning.hours,
+        details: {
+            target,
+            have,
+            shortfall,
+            rate: best || null,
+            legs: satisfied ? [] : earning.legs,
+            covered: earning.covered,
+            alternatives: rates.slice(0, 5),
+        },
         done: satisfied,
         progress: { current: Math.min(have, target), target, ratio: target > 0 ? Math.min(1, have / target) : 1 },
     });
@@ -472,7 +658,9 @@ function planEquipmentGoal(goal, context) {
                 goldDelta: -cost,
                 timeHours: num(acquisition?.timeHours),
                 prerequisites: trainIds,
-                details: { itemHrid, ...(acquisition || {}) },
+                // The name rides along so anything that offers to go and buy
+                // this can say what it is buying without re-deriving it
+                details: { itemHrid, itemName: name, ...(acquisition || {}) },
             })
         );
     } else {
@@ -604,12 +792,19 @@ function planSkillGoal(goal, context, stepId = 'train') {
     // dropped because production skills would make it negative.
     const goldDelta = timeHours !== null && best ? num(best.goldPerHour) * timeHours : 0;
 
+    // The gold on a training step is a rate multiplied by a duration, and both
+    // are estimates. Naming the rate is what makes an implausible total
+    // attributable — "+523.2M" alone reads as a promise, "+523.2M at 7.4B/hr"
+    // reads as the broken rate it came from.
+    const goldNote = best && goldDelta !== 0 ? `, ${coins(best.goldPerHour)}/hr` : '';
+
     const step = makeStep({
         id: stepId,
         kind: 'train',
         description: best
             ? `Train ${label} ${level} → ${target} — ${best.label}` +
-              (actionsNeeded !== null ? `, ${formatKMB(Math.round(actionsNeeded))} actions` : '')
+              (actionsNeeded !== null ? `, ${formatKMB(Math.round(actionsNeeded))} actions` : '') +
+              goldNote
             : `Train ${label} ${level} → ${target}`,
         goldDelta,
         timeHours,
@@ -834,10 +1029,14 @@ export function planGoals(goals, context = {}) {
 
 export default {
     GOAL_TYPES,
+    RATE_HORIZON_HOURS,
     normalizeGoal,
     describeGoal,
     planGoal,
     planGoals,
+    planEarnings,
+    describeLeg,
+    sustainableGold,
     orderSteps,
     summarize,
 };

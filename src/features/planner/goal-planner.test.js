@@ -14,7 +14,16 @@
 import { describe, test, expect, beforeAll } from 'vitest';
 import * as mathjs from 'mathjs';
 import { calculateEnhancement } from '../../utils/enhancement-calculator.js';
-import { planGoal, normalizeGoal, orderSteps, summarize, GOAL_TYPES } from './goal-planner.js';
+import {
+    planGoal,
+    normalizeGoal,
+    orderSteps,
+    summarize,
+    planEarnings,
+    describeLeg,
+    sustainableGold,
+    GOAL_TYPES,
+} from './goal-planner.js';
 
 beforeAll(() => {
     globalThis.math = mathjs;
@@ -186,6 +195,121 @@ describe('a gold target', () => {
 
         expect(step(plan, 'earn').timeHours).toBeNull();
         expect(plan.warnings.join(' ')).toContain('No earning rate');
+    });
+});
+
+describe('a rate is only a rate while its inputs last', () => {
+    /** The bug in one object: one crossbow, decomposed, at a fantasy hourly rate */
+    const crossbow = {
+        label: 'Decompose Sundering Crossbow ★',
+        kind: 'alchemy',
+        goldPerHour: 437_900_000_000,
+        sustainable: {
+            gold: 851_200_000,
+            goldPerUnit: 851_200_000,
+            units: 1,
+            unitLabel: 'Sundering Crossbow ★',
+            verb: 'Decompose',
+            source: 'inventory',
+        },
+    };
+    const milking = { label: 'Milk a Cow', kind: 'gathering', goldPerHour: 12_400_000 };
+
+    test('a rate with no ceiling is unbounded, which is the default', () => {
+        expect(sustainableGold(milking)).toBe(Infinity);
+        expect(sustainableGold({ sustainable: { unbounded: true } })).toBe(Infinity);
+        expect(sustainableGold(crossbow)).toBe(851_200_000);
+    });
+
+    test('the windfall is taken once, and the rest is earned honestly', () => {
+        const { legs, hours, covered } = planEarnings([milking, crossbow], 903_400_000);
+
+        expect(legs).toHaveLength(2);
+        expect(legs[0].rate.label).toBe('Decompose Sundering Crossbow ★');
+        expect(legs[0].gold).toBe(851_200_000);
+        expect(legs[0].units).toBe(1);
+        expect(legs[0].oneOff).toBe(true);
+
+        expect(legs[1].rate.label).toBe('Milk a Cow');
+        expect(legs[1].gold).toBe(903_400_000 - 851_200_000);
+        expect(legs[1].oneOff).toBe(false);
+
+        // Seven seconds of crossbow plus four hours of cow, not seven seconds
+        expect(hours).toBeCloseTo(851_200_000 / 437_900_000_000 + 52_200_000 / 12_400_000, 6);
+        expect(covered).toBe(true);
+    });
+
+    test('the step says what you actually do, not a per-hour figure nobody can earn', () => {
+        const plan = planGoal(
+            { type: 'gold', amount: 903_400_000 },
+            context({ gold: 0, goldRates: () => [milking, crossbow] })
+        );
+
+        const earn = step(plan, 'earn');
+        expect(earn.description).toContain('Decompose 1 Sundering Crossbow ★ (+851.2M one-off)');
+        expect(earn.description).toContain('Milk a Cow at 12.4M/hr');
+        // The number that started all this is nowhere on the step
+        expect(earn.description).not.toContain('437.9B');
+    });
+
+    test('a ceiling that outlasts an hour is still an income, and is quoted as one', () => {
+        const ore = {
+            label: 'Transmute Ore',
+            goldPerHour: 30_000_000,
+            sustainable: { gold: 90_000_000, goldPerUnit: 3_000, units: 30_000, unitLabel: 'Ore', verb: 'Transmute' },
+        };
+        const { legs } = planEarnings([ore, milking], 120_000_000);
+
+        expect(legs[0].oneOff).toBe(false);
+        expect(legs[0].hours).toBeCloseTo(3, 6);
+        expect(describeLeg(legs[0])).toBe('Transmute Ore at 30.0M/hr, for 90.0M');
+        expect(legs[1].rate.label).toBe('Milk a Cow');
+    });
+
+    test('an uncapped method covers the remainder in one leg, whatever is below it', () => {
+        const { legs } = planEarnings([crossbow, milking, { label: 'Slow', goldPerHour: 1 }], 5_000_000_000);
+        expect(legs.map((leg) => leg.rate.label)).toEqual(['Decompose Sundering Crossbow ★', 'Milk a Cow']);
+    });
+
+    test('a stack that has run out is not offered at all', () => {
+        const empty = { ...crossbow, sustainable: { ...crossbow.sustainable, gold: 0, units: 0 } };
+        const plan = planGoal(
+            { type: 'gold', amount: 10_000_000 },
+            context({ gold: 0, goldRates: () => [empty, milking] })
+        );
+
+        const earn = step(plan, 'earn');
+        expect(earn.details.rate.label).toBe('Milk a Cow');
+        expect(earn.details.alternatives.map((rate) => rate.label)).toEqual(['Milk a Cow']);
+    });
+
+    test('when nothing can cover the target the plan says so rather than inventing time', () => {
+        const { covered, gold, hours } = planEarnings([crossbow], 2_000_000_000);
+        expect(covered).toBe(false);
+        expect(gold).toBe(851_200_000);
+        expect(hours).toBeNull();
+
+        const plan = planGoal(
+            { type: 'gold', amount: 2_000_000_000 },
+            context({ gold: 0, goldRates: () => [crossbow] })
+        );
+        expect(step(plan, 'earn').timeHours).toBeNull();
+        expect(plan.warnings.join(' ')).toContain('run out of what they consume');
+    });
+
+    test('the same ceiling applies to the funding a purchase needs', () => {
+        const plan = planGoal(
+            { type: 'equipment', itemHrid: '/items/cape', enhancementLevel: 0 },
+            context({
+                gold: 0,
+                goldRates: () => [milking, crossbow],
+                acquire: () => ({ strategy: 'buy', totalCost: 900_000_000, buyPrice: 900_000_000, requires: [] }),
+            })
+        );
+
+        const fund = step(plan, 'fund');
+        expect(fund.details.legs.map((leg) => leg.oneOff)).toEqual([true, false]);
+        expect(fund.description).toContain('one-off');
     });
 });
 
