@@ -26,6 +26,14 @@
  * reached from your *second*-best copy, or from a base you buy or make when
  * there is no second copy, leaving what you fight in untouched.
  *
+ * ## Levels are on the list too
+ *
+ * "Fierce Aura to 46" is a savings goal in every way a sword is: a pile of books
+ * at what the market wants for them, against the coins you have. So ability
+ * levels sit on the same list — added by hand from the panel, or handed over by
+ * a sim run that has just costed one — and a goal you have read your way past
+ * says so rather than sitting there at full price forever.
+ *
  * ## Everything, not just each thing
  *
  * A slot at a time answers the wrong question when you want three pieces. The
@@ -43,14 +51,13 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
-import storage from '../../core/storage.js';
 import marketAPI from '../../api/marketplace.js';
 import networthHistory from '../networth/networth-history.js';
-import { readScoped, writeScoped } from '../../utils/character-key.js';
 import { getItemPrices } from '../../utils/market-data.js';
 import { getItemHridFromName } from '../../utils/game-lookups.js';
 import { shopPurchasePrice } from '../../utils/token-valuation.js';
 import { calculateArtisanBonus } from '../../utils/material-calculator.js';
+import { explainAbilityLevelUpCost } from '../../utils/ability-cost-calculator.js';
 import { formatWithSeparator, formatKMB } from '../../utils/formatters.js';
 import { itemIcon, linkToMarketplace, drawLine, blank, shortDuration, ROW_COLORS } from '../../utils/overlay-format.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
@@ -63,9 +70,17 @@ import {
     timeToAffordSeconds,
     totalSavings,
     orderTargets,
+    loadSavingsRecord,
+    saveSavingsRecord,
+    abilityGoals,
+    abilityGoalLabel,
+    abilityGoalReached,
+    abilityBookHrid,
+    addAbilityGoal,
+    removeAbilityGoal,
+    resetAbilityGoals,
 } from '../../utils/equipment-savings.js';
 
-const STORAGE_KEY = 'equipmentSavings';
 const MENU_BUTTON_CLASS = 'toolasha-savings-button';
 const MENU_BUTTON_SETTING = 'equipmentSavings_menuButton';
 
@@ -111,17 +126,33 @@ const slotLabel = (slot) => slot.replace(/_/g, ' ').replace(/\b\w/g, (letter) =>
  */
 const state = { targets: {}, noSell: false, marketValue: true, selected: null, locked: false };
 
-/** The picker's own state, which is not worth persisting — it is a form */
-const editing = { itemHrid: '', enhancementLevel: 0, slot: '' };
+/**
+ * The picker's own state, which is not worth persisting — it is a form.
+ *
+ * `ability*` is the second picker's: which ability, what level, and a cost only
+ * used when the market cannot supply one.
+ */
+const editing = {
+    itemHrid: '',
+    enhancementLevel: 0,
+    slot: '',
+    abilityHrid: '',
+    abilityLevel: 0,
+    abilityCost: '',
+    addingAbility: false,
+};
 
 // Kept asking until the database opens: it is opened after the libraries are
 // evaluated, so a read at module scope always returns the default and the list
 // looks like it forgot everything. It waits for a character too: gear targets
 // belong to the character wearing the gear, so the key it reads is theirs.
+//
+// The read goes through `utils/equipment-savings.js`, which keeps the ability
+// goals out of the state below and hands back the gear side. Two writers of one
+// key lose each other's edits, so there is only the one.
 async function reload() {
     try {
-        await storage.ready;
-        const saved = await readScoped(STORAGE_KEY, 'settings', null, { migrate: 'adopt' });
+        const saved = await loadSavingsRecord();
         Object.assign(
             state,
             { targets: {}, noSell: false, marketValue: true, selected: null, locked: false },
@@ -139,7 +170,7 @@ dataManager.on('character_switched', reload);
 
 /** Write the list back, without making anybody wait for it */
 function persist() {
-    writeScoped(STORAGE_KEY, { ...state }, 'settings').catch((error) =>
+    saveSavingsRecord({ ...state }).catch((error) =>
         console.error('[EquipmentSavings] Saving the list failed:', error)
     );
 }
@@ -326,11 +357,140 @@ export function resetEquipmentSavings() {
     editing.itemHrid = '';
     editing.enhancementLevel = 0;
     editing.slot = '';
+    editing.abilityHrid = '';
+    editing.abilityLevel = 0;
+    editing.abilityCost = '';
+    editing.addingAbility = false;
     state.targets = {};
     state.noSell = false;
     state.marketValue = true;
     state.selected = null;
     state.locked = false;
+    resetAbilityGoals();
+}
+
+/**
+ * Where the character's abilities actually are.
+ *
+ * The learned list rather than the equipped kit: a goal is worth having for a
+ * book you own but are not fighting with, and reading the kit would report it at
+ * level 0 and quote the whole path again.
+ *
+ * @returns {Map<string, {level: number, experience: number}>}
+ */
+export function learnedAbilityLevels() {
+    const learned = dataManager.getLearnedAbilities?.() || [];
+    return new Map(
+        learned
+            .filter((entry) => entry?.abilityHrid)
+            .map((entry) => [
+                entry.abilityHrid,
+                { level: Math.floor(Number(entry.level) || 0), experience: Number(entry.experience) || 0 },
+            ])
+    );
+}
+
+/**
+ * An ability's name as the game gives it, rather than as its hrid spells it.
+ * @param {string} abilityHrid - The ability
+ * @returns {string}
+ */
+function abilityName(abilityHrid) {
+    return dataManager.getInitClientData?.()?.abilityDetailMap?.[abilityHrid]?.name || '';
+}
+
+/**
+ * What the books to a level would cost today, when the market can say.
+ *
+ * The same costing the sim's upgrade advisor uses — books at the market price,
+ * from where the ability actually is, and null rather than zero when nobody is
+ * selling the book. A manual goal is then estimated by the same arithmetic that
+ * a sim-made one arrives with, so the two are comparable on the list.
+ *
+ * @param {string} abilityHrid - The ability
+ * @param {number} targetLevel - The level being saved for
+ * @returns {number|null} Coins, or null when the book has no listing
+ */
+export function abilityBookCost(abilityHrid, targetLevel) {
+    if (!abilityHrid || !(targetLevel > 0)) return null;
+
+    const owned = learnedAbilityLevels().get(abilityHrid) || null;
+    const level = owned?.level || 0;
+    if (level >= targetLevel) return 0;
+
+    // The experience on a book already read is a position within its level, not
+    // the floor of it — those books count towards the next one
+    const floorXp = dataManager.getInitClientData?.()?.levelExperienceTable?.[level] || 0;
+    const total = explainAbilityLevelUpCost(abilityHrid, level, owned?.experience ?? floorXp, targetLevel)?.total;
+
+    return Number.isFinite(total) ? Math.max(0, total) : null;
+}
+
+/**
+ * Every ability goal, against the level it is at and the coins you have.
+ *
+ * @returns {Array<Object>} `{abilityHrid, itemHrid, name, targetLevel, currentLevel, done, cost, ...}`
+ */
+export function watchedAbilityGoals() {
+    const coins = spendable();
+    const perDay = incomePerDay();
+    const levels = learnedAbilityLevels();
+
+    const goals = abilityGoals().map((goal) => {
+        const currentLevel = levels.get(goal.abilityHrid)?.level || 0;
+        const done = abilityGoalReached(goal, currentLevel);
+        // A goal already reached costs nothing more, whatever it was costed at
+        // when it went on the list
+        const cost = done ? 0 : (goal.cost ?? null);
+        const progress = savingsProgress(cost, coins);
+
+        return {
+            abilityHrid: goal.abilityHrid,
+            // The book, so the icon and the marketplace link have something to
+            // point at — an ability itself is not a tradeable thing
+            itemHrid: abilityBookHrid(goal.abilityHrid),
+            name: goal.label || abilityGoalLabel(goal.abilityHrid, goal.targetLevel, abilityName(goal.abilityHrid)),
+            targetLevel: goal.targetLevel,
+            currentLevel,
+            done,
+            ability: true,
+            enhancementLevel: 0,
+            cost,
+            ...progress,
+            seconds: timeToAffordSeconds(progress.needed, perDay),
+        };
+    });
+
+    return orderTargets(goals);
+}
+
+/**
+ * Save towards a level of an ability, from the panel.
+ *
+ * @param {string} abilityHrid - The ability
+ * @param {number} targetLevel - The level wanted
+ * @param {number|null} [cost] - Coins, when the market cannot be asked
+ * @returns {Promise<void>}
+ */
+export async function watchAbility(abilityHrid, targetLevel, cost = undefined) {
+    if (!abilityHrid || !(targetLevel > 0)) return;
+
+    const priced = cost === undefined ? abilityBookCost(abilityHrid, targetLevel) : cost;
+    await addAbilityGoal({
+        abilityHrid,
+        targetLevel,
+        cost: priced,
+        label: abilityGoalLabel(abilityHrid, targetLevel, abilityName(abilityHrid)),
+    });
+}
+
+/**
+ * Stop saving for a level of an ability.
+ * @param {string} abilityHrid - The ability
+ * @returns {Promise<void>}
+ */
+export async function unwatchAbility(abilityHrid) {
+    await removeAbilityGoal(abilityHrid);
 }
 
 /**
@@ -1041,11 +1201,17 @@ export function watchedTargets() {
 /** @returns {Object} The whole list against your coins */
 export function everything() {
     const targets = watchedTargets();
-    const { cost, unpriced } = totalSavings(targets);
-    const progress = savingsProgress(targets.length ? cost : null, spendable());
+    const abilities = watchedAbilityGoals();
+    // A level already reached is not part of what is left to save for, and
+    // totalling it would keep the plan expensive after it got cheaper
+    const outstanding = [...targets, ...abilities.filter((goal) => !goal.done)];
+
+    const { cost, unpriced } = totalSavings(outstanding);
+    const progress = savingsProgress(outstanding.length ? cost : null, spendable());
 
     return {
         targets,
+        abilities,
         cost,
         unpriced,
         ...progress,
@@ -2036,6 +2202,385 @@ function emptySlotRow(slot) {
 }
 
 /**
+ * One ability goal: the level wanted, what the books come to, and how far along.
+ *
+ * Shaped like a target card rather than like a new kind of row, because it is
+ * the same question — a number of coins you do not have yet — and a reader
+ * scanning the list should not have to learn a second layout to read it.
+ *
+ * @param {Object} goal - From `watchedAbilityGoals`
+ * @returns {HTMLElement}
+ */
+function abilityCard(goal) {
+    const card = document.createElement('div');
+    Object.assign(card.style, {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '3px',
+        padding: '6px 7px',
+        borderRadius: '3px',
+        // Green once it has happened, so a finished goal reads as good news
+        // rather than as an entry that has stopped moving
+        borderLeft: `2px solid ${goal.done ? '#4ade80' : '#c084fc'}`,
+        background: goal.done ? 'rgba(74, 222, 128, 0.08)' : 'rgba(192, 132, 252, 0.07)',
+    });
+
+    const heading = document.createElement('div');
+    Object.assign(heading.style, { display: 'flex', alignItems: 'center', gap: '7px' });
+
+    const icon = itemIcon(goal.itemHrid, 22);
+    linkToMarketplace(icon, goal.itemHrid, navigateToMarketplace);
+
+    const name = document.createElement('span');
+    name.textContent = goal.name;
+    Object.assign(name.style, { flex: '1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
+    linkToMarketplace(name, goal.itemHrid, navigateToMarketplace);
+
+    const cost = document.createElement('span');
+    cost.textContent = goal.done ? 'Reached' : goal.cost === null ? 'no price' : formatKMB(goal.cost);
+    cost.style.color = goal.done ? ROW_COLORS.good : goal.cost === null ? ROW_COLORS.bad : ROW_COLORS.gold;
+    cost.title = goal.done
+        ? `Already at Lv${goal.currentLevel}, so there is nothing left to buy.`
+        : goal.cost === null
+          ? 'Nobody is selling the book, so what the levels would cost is unknown rather than nothing.'
+          : 'The books to this level, at what the market wants for them.';
+
+    const remove = document.createElement('button');
+    remove.textContent = '✕';
+    remove.dataset.removeAbility = goal.abilityHrid;
+    Object.assign(remove.style, {
+        background: 'none',
+        border: 'none',
+        color: 'rgba(232, 236, 245, 0.5)',
+        cursor: 'pointer',
+        fontSize: '12px',
+        padding: '0 2px',
+    });
+    remove.title = 'Stop saving for this level.';
+    remove.addEventListener('click', async () => {
+        await unwatchAbility(goal.abilityHrid);
+        equipmentSavingsPanel.render();
+    });
+
+    heading.append(icon, name, cost, remove);
+    card.appendChild(heading);
+
+    card.appendChild(
+        priceLine(
+            'Level:',
+            `${goal.currentLevel} → ${goal.targetLevel}`,
+            goal.done ? ROW_COLORS.good : 'rgba(232, 236, 245, 0.75)'
+        )
+    );
+
+    const bar = document.createElement('div');
+    Object.assign(bar.style, { display: 'flex', alignItems: 'center', gap: '7px' });
+    bar.appendChild(progressBar(goal.fraction));
+
+    const status = document.createElement('span');
+    status.textContent = goal.done ? `Reached at Lv${goal.currentLevel}` : statusText(goal);
+    Object.assign(status.style, {
+        color: goal.done || goal.affordable ? ROW_COLORS.good : 'rgba(232, 236, 245, 0.6)',
+        fontSize: '11px',
+        flex: '0 0 auto',
+        minWidth: '96px',
+        textAlign: 'right',
+    });
+    bar.appendChild(status);
+    card.appendChild(bar);
+
+    if (!goal.done) card.appendChild(percentLine(goal));
+    return card;
+}
+
+/**
+ * The abilities being saved for, and the way to add one.
+ *
+ * @param {HTMLElement} body - The panel body
+ * @param {Array<Object>} goals - From `watchedAbilityGoals`
+ */
+function abilitySection(body, goals) {
+    const card = panelCard(body, 'Ability Levels', '#c084fc');
+
+    for (const goal of goals) card.appendChild(abilityCard(goal));
+
+    if (!goals.length && state.locked) {
+        card.appendChild(panelNote('No ability levels being saved for — press Edit to add one.'));
+        return;
+    }
+    // Adding is an editing act, and the panel is a reading list until it is
+    // unlocked. The same switch the slots are behind.
+    if (state.locked) return;
+
+    if (!editing.addingAbility) {
+        const add = document.createElement('button');
+        add.textContent = '+ Add ability level';
+        add.dataset.addAbility = 'true';
+        Object.assign(add.style, {
+            background: 'rgba(192, 132, 252, 0.15)',
+            border: '1px solid #c084fc',
+            borderRadius: '3px',
+            color: '#c084fc',
+            cursor: 'pointer',
+            fontSize: '11px',
+            marginTop: '4px',
+            padding: '3px 9px',
+        });
+        add.title = 'Save towards a level of one of your abilities.';
+        add.addEventListener('click', () => {
+            editing.addingAbility = true;
+            equipmentSavingsPanel.render();
+        });
+        card.appendChild(add);
+        return;
+    }
+
+    card.appendChild(abilityPicker());
+}
+
+/**
+ * The abilities a goal can be set for.
+ *
+ * The ones the character has learned lead, because those are the ones with a
+ * level to improve on and the ones a goal is nearly always about. Everything
+ * else follows, so a book you have not bought yet can still be planned for.
+ *
+ * @returns {Array<{abilityHrid: string, name: string, level: number, learned: boolean}>}
+ */
+export function abilityChoices() {
+    const levels = learnedAbilityLevels();
+    const all = dataManager.getInitClientData?.()?.abilityDetailMap || {};
+
+    const named = (abilityHrid) => abilityDetailName(abilityHrid, all);
+    const learned = [...levels.entries()].map(([abilityHrid, owned]) => ({
+        abilityHrid,
+        name: named(abilityHrid),
+        level: owned.level,
+        learned: true,
+    }));
+
+    const rest = Object.keys(all)
+        .filter((abilityHrid) => !levels.has(abilityHrid))
+        .map((abilityHrid) => ({ abilityHrid, name: named(abilityHrid), level: 0, learned: false }));
+
+    const byName = (a, b) => a.name.localeCompare(b.name);
+    return [...learned.sort(byName), ...rest.sort(byName)];
+}
+
+/**
+ * An ability's name, from a map already in hand.
+ * @param {string} abilityHrid - The ability
+ * @param {Object} abilityDetailMap - The game's ability map
+ * @returns {string}
+ */
+function abilityDetailName(abilityHrid, abilityDetailMap) {
+    return (
+        abilityDetailMap?.[abilityHrid]?.name ||
+        abilityHrid
+            .split('/')
+            .pop()
+            .replace(/_/g, ' ')
+            .replace(/\b\w/g, (letter) => letter.toUpperCase())
+    );
+}
+
+/**
+ * The form: which ability, to what level, and what that costs.
+ *
+ * The cost is the market's when the book is listed, and typed in when it is not
+ * — a goal nobody is selling the book for still has a price somebody has in
+ * mind, and refusing the goal because the order book is empty helps nobody.
+ *
+ * @returns {HTMLElement}
+ */
+function abilityPicker() {
+    const wrap = document.createElement('div');
+    Object.assign(wrap.style, {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '5px',
+        marginTop: '5px',
+        borderLeft: '2px solid #c084fc',
+        background: 'rgba(255, 255, 255, 0.03)',
+        borderRadius: '3px',
+        padding: '7px',
+    });
+
+    const choices = abilityChoices();
+    const chosen = choices.find((choice) => choice.abilityHrid === editing.abilityHrid) || null;
+
+    const list = document.createElement('select');
+    list.dataset.pickAbility = 'true';
+    Object.assign(list.style, {
+        background: 'rgba(0, 0, 0, 0.35)',
+        border: '1px solid rgba(255, 255, 255, 0.12)',
+        borderRadius: '3px',
+        color: '#e8ecf5',
+        fontSize: '11px',
+        padding: '2px',
+        width: '100%',
+    });
+
+    const none = document.createElement('option');
+    none.value = '';
+    none.textContent = '-- Select Ability --';
+    list.appendChild(none);
+
+    for (const choice of choices) {
+        const option = document.createElement('option');
+        option.value = choice.abilityHrid;
+        option.textContent = choice.learned ? `${choice.name} (Lv${choice.level})` : `${choice.name} (not learned)`;
+        option.selected = choice.abilityHrid === editing.abilityHrid;
+        list.appendChild(option);
+    }
+    list.addEventListener('change', () => {
+        editing.abilityHrid = list.value;
+        // A level below the one you are already at is not a goal, so the form
+        // opens on the next one up rather than on zero
+        const at = choices.find((choice) => choice.abilityHrid === list.value)?.level || 0;
+        if (editing.abilityLevel <= at) editing.abilityLevel = at + 1;
+        equipmentSavingsPanel.render();
+    });
+    list.addEventListener('keydown', (event) => event.stopPropagation());
+    wrap.appendChild(list);
+
+    const row = document.createElement('div');
+    Object.assign(row.style, { display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' });
+
+    const levelLabel = document.createElement('span');
+    levelLabel.textContent = 'Level:';
+    Object.assign(levelLabel.style, { color: 'rgba(232, 236, 245, 0.6)', fontSize: '11px' });
+
+    const level = document.createElement('input');
+    level.type = 'number';
+    level.min = '1';
+    level.dataset.abilityLevel = 'true';
+    level.value = String(editing.abilityLevel || '');
+    Object.assign(level.style, {
+        background: 'rgba(0, 0, 0, 0.35)',
+        border: '1px solid rgba(255, 255, 255, 0.12)',
+        borderRadius: '3px',
+        color: '#e8ecf5',
+        fontSize: '11px',
+        padding: '2px 4px',
+        width: '60px',
+    });
+    level.addEventListener('input', () => {
+        editing.abilityLevel = Math.max(0, Math.floor(Number(level.value) || 0));
+    });
+    // On change rather than on every keystroke: the estimate below is worth
+    // redrawing once the number has settled, not three times while it is typed
+    level.addEventListener('change', () => equipmentSavingsPanel.render());
+    level.addEventListener('keydown', (event) => event.stopPropagation());
+
+    row.append(levelLabel, level);
+
+    const estimate = chosen ? abilityBookCost(editing.abilityHrid, editing.abilityLevel) : null;
+    const priced = estimate !== null;
+
+    const figure = document.createElement('span');
+    figure.style.flex = '1';
+    figure.style.fontSize = '11px';
+    if (!chosen) {
+        figure.textContent = 'Pick an ability.';
+        figure.style.color = 'rgba(232, 236, 245, 0.5)';
+    } else if (priced) {
+        figure.textContent = `${formatKMB(estimate)} of books`;
+        figure.style.color = ROW_COLORS.gold;
+        figure.title = 'The books from where the ability is now, at the market price of the book.';
+    } else {
+        figure.textContent = 'Book unpriced — type a cost';
+        figure.style.color = ROW_COLORS.bad;
+    }
+    row.appendChild(figure);
+    wrap.appendChild(row);
+
+    // Only when the market cannot answer, so the usual case is two fields rather
+    // than three
+    if (chosen && !priced) {
+        const cost = document.createElement('input');
+        cost.type = 'number';
+        cost.min = '0';
+        cost.placeholder = 'Cost in coins';
+        cost.dataset.abilityCost = 'true';
+        cost.value = String(editing.abilityCost || '');
+        Object.assign(cost.style, {
+            background: 'rgba(0, 0, 0, 0.35)',
+            border: '1px solid rgba(255, 255, 255, 0.12)',
+            borderRadius: '3px',
+            color: '#e8ecf5',
+            fontSize: '11px',
+            padding: '2px 4px',
+            width: '100%',
+        });
+        cost.addEventListener('input', () => {
+            editing.abilityCost = cost.value;
+        });
+        cost.addEventListener('keydown', (event) => event.stopPropagation());
+        wrap.appendChild(cost);
+    }
+
+    const buttons = document.createElement('div');
+    Object.assign(buttons.style, { display: 'flex', gap: '6px' });
+
+    const save = document.createElement('button');
+    save.textContent = '\u{1F441} Watch';
+    save.dataset.saveAbility = 'true';
+    Object.assign(save.style, {
+        background: 'rgba(192, 132, 252, 0.18)',
+        border: '1px solid #c084fc',
+        borderRadius: '3px',
+        color: '#c084fc',
+        cursor: 'pointer',
+        fontSize: '11px',
+        padding: '2px 10px',
+    });
+    const ready = Boolean(chosen) && editing.abilityLevel > 0;
+    save.disabled = !ready;
+    save.style.opacity = ready ? '1' : '0.4';
+    save.title = 'Add this level to the savings list.';
+    save.addEventListener('click', async () => {
+        if (!ready) return;
+
+        // Costed here rather than reusing the figure above it: the level field
+        // changes what the goal is worth without redrawing on every keystroke,
+        // so the estimate on screen can be one level behind the one being saved
+        const fresh = abilityBookCost(editing.abilityHrid, editing.abilityLevel);
+        const typed = editing.abilityCost === '' ? null : Number(editing.abilityCost);
+        await watchAbility(
+            editing.abilityHrid,
+            editing.abilityLevel,
+            fresh !== null ? fresh : Number.isFinite(typed) ? typed : null
+        );
+        editing.abilityHrid = '';
+        editing.abilityLevel = 0;
+        editing.abilityCost = '';
+        editing.addingAbility = false;
+        equipmentSavingsPanel.render();
+    });
+
+    const cancel = document.createElement('button');
+    cancel.textContent = 'Cancel';
+    Object.assign(cancel.style, {
+        background: 'rgba(255, 255, 255, 0.06)',
+        border: '1px solid rgba(255, 255, 255, 0.12)',
+        borderRadius: '3px',
+        color: 'rgba(232, 236, 245, 0.6)',
+        cursor: 'pointer',
+        fontSize: '11px',
+        padding: '2px 10px',
+    });
+    cancel.addEventListener('click', () => {
+        editing.addingAbility = false;
+        equipmentSavingsPanel.render();
+    });
+
+    buttons.append(save, cancel);
+    wrap.appendChild(buttons);
+    return wrap;
+}
+
+/**
  * Which slot a piece of equipment fills.
  * @param {string} itemHrid - The piece
  * @returns {string} e.g. `main_hand`, or '' when it is not equipment
@@ -2058,13 +2603,15 @@ export const equipmentSavingsPanel = createPanel({
 
         // The one the header watches, as EWatch's eye picks it: with several
         // things on the list the one you are actually saving for is the only
-        // figure you want at a glance
+        // figure you want at a glance. Levels are candidates too — a panel with
+        // only ability goals on it would otherwise have no headline at all.
+        const headlines = [...plan.targets, ...plan.abilities];
         const watched =
-            plan.targets.find((target) => target.itemHrid === state.selected) ||
-            plan.targets
+            headlines.find((target) => target.itemHrid === state.selected) ||
+            headlines
                 .filter((target) => target.cost !== null && !target.affordable)
                 .sort((a, b) => a.needed - b.needed)[0] ||
-            plan.targets[0];
+            headlines[0];
         if (watched) body.appendChild(headline(watched));
 
         const purse = panelCard(body, undefined, '#6495ed');
@@ -2190,8 +2737,10 @@ export const equipmentSavingsPanel = createPanel({
         // is a great deal longer, which is why it is not the resting state.
         const list = panelCard(body, undefined, '#6495ed');
 
+        const watching = plan.targets.length + plan.abilities.length;
+
         if (state.locked) {
-            if (!plan.targets.length) {
+            if (!watching) {
                 body.appendChild(
                     panelNote('Nothing being saved for yet — press Edit to open the slots and click one.')
                 );
@@ -2206,9 +2755,14 @@ export const equipmentSavingsPanel = createPanel({
             // odd section than a target that silently disappears.
             const stray = plan.targets.filter((target) => !SLOTS.includes(slotOf(target.itemHrid)));
             for (const target of stray) list.appendChild(targetCard(target));
-
-            if (!plan.targets.length) return;
         }
+
+        // Levels, on the same list as the gear: it is the same savings question,
+        // and a plan that answers it for a sword but not for the ability the
+        // sword swings is half a plan
+        abilitySection(body, plan.abilities);
+
+        if (!watching) return;
 
         // One at a time answers the wrong question when you want three pieces
         const all = panelCard(body, 'Everything', '#6495ed');
@@ -2228,9 +2782,11 @@ export const equipmentSavingsPanel = createPanel({
         line.appendChild(status);
         all.appendChild(line);
         all.appendChild(percentLine(plan));
+        const pending = plan.abilities.filter((goal) => !goal.done).length;
         all.appendChild(
             panelNote(
                 `${formatKMB(plan.cost)} for ${plan.targets.length} pieces` +
+                    (pending ? ` and ${pending} ability level${pending === 1 ? '' : 's'}` : '') +
                     (plan.unpriced ? ` (+${plan.unpriced} unpriced)` : '')
             )
         );
@@ -2316,16 +2872,20 @@ registerRow({
     defaultSize: { width: 240, height: 46 },
     render: (container) => {
         const plan = everything();
-        if (!plan.targets.length) return blank(container);
+        if (!plan.targets.length && !plan.abilities.length) return blank(container);
+
+        // Gear and levels together: the tile answers "what is next", and a level
+        // you are three days from is the answer as readily as a sword is
+        const entries = [...plan.targets, ...plan.abilities];
 
         // The pinned one if the eye has picked one, and otherwise the nearest,
         // because that is the next thing that happens. The pin matters: the
         // thing somebody is saving for is often not the cheapest, and a tile
         // that always shows the cheapest cannot be told otherwise.
-        const pinned = plan.targets.find((target) => target.itemHrid === state.selected && target.cost !== null);
+        const pinned = entries.find((target) => target.itemHrid === state.selected && target.cost !== null);
         const next =
             pinned ||
-            plan.targets
+            entries
                 .filter((target) => target.cost !== null && !target.affordable)
                 .sort((a, b) => a.needed - b.needed)[0];
         const shown = next || plan;
@@ -2397,7 +2957,9 @@ registerRow({
                       : `${formatWithSeparator(Math.round(next.needed))} to go of ` +
                         `${formatWithSeparator(Math.round(next.cost))}.`)
                 : 'Everything on the list is affordable now.') +
-            `\n${plan.targets.length} pieces, ${formatKMB(plan.cost)} altogether.` +
+            `\n${plan.targets.length} pieces` +
+            (plan.abilities.length ? ` and ${plan.abilities.length} ability levels` : '') +
+            `, ${formatKMB(plan.cost)} altogether.` +
             (plan.unpriced ? `\n${plan.unpriced} of them have no market price.` : '') +
             '\nDouble-click for the whole list.';
     },
