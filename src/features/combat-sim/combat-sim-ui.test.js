@@ -211,7 +211,6 @@ vi.mock('../enhancement/tooltip-enhancement.js', () => ({
     getProductionCost: () => 0,
 }));
 vi.mock('../../utils/ability-cost-calculator.js', () => ({
-    calculateAbilityLevelUpCost: () => 0,
     explainAbilityLevelUpCost: () => null,
 }));
 vi.mock('./skilling-sim-helpers.js', () => ({ buildOverridesForSkill: () => ({}) }));
@@ -1548,6 +1547,27 @@ describe('the qualifiers a row carries', () => {
         expect(html).toContain('from Lv14');
         expect(html).not.toContain('>fresh book<');
         expect(html).toContain('4 Ice Spears');
+    });
+
+    test('a free fill of an owned book says that is why it is free', () => {
+        // A row costing 0 is the one a reader is right to distrust. "from Lv14"
+        // explains a cost that was never paid; this says there was nothing to pay
+        const html = upgradeRowNotesHtml({
+            candidate: { description: 'Free slot → Ice Spear', type: 'ability_swap', fillsFreeSlot: true },
+            costDetail: {
+                freshBook: false,
+                ownedFromLevel: 14,
+                ownedNotSlotted: true,
+                books: { books: 0, bookName: 'Ice Spear' },
+            },
+            significantBy: { dps: true, profit: true },
+        });
+
+        expect(html).toContain('book owned');
+        expect(html).toContain('just not slotted');
+        expect(html).toContain('Lv14');
+        expect(html).not.toContain('>from Lv14<');
+        expect(html).not.toContain('>fresh book<');
     });
 
     test('and a trinket says its gain is the on-task one', () => {

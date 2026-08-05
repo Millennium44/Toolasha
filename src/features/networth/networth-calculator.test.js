@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
     taskTokenValue: null,
     dungeonTokenValues: {},
     shopCosts: {},
+    unpricedAbilities: new Set(),
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -33,7 +34,9 @@ vi.mock('../../core/data-manager.js', () => ({
 }));
 vi.mock('../../api/marketplace.js', () => ({ default: { getPrice: (hrid) => mocks.itemPrices[hrid] ?? null } }));
 vi.mock('../../utils/ability-cost-calculator.js', () => ({
-    calculateAbilityCost: (hrid, level) => level * 1000,
+    // Null total is "the book has no listing", which the caller must not read as free
+    explainAbilityCost: (hrid, level) =>
+        mocks.unpricedAbilities.has(hrid) ? { books: 7, total: null } : { books: level, total: level * 1000 },
 }));
 vi.mock('../../utils/house-cost-calculator.js', () => ({
     calculateHouseBuildCost: (hrid, level) => level * 500,
@@ -96,6 +99,7 @@ beforeEach(() => {
     mocks.taskTokenValue = null;
     mocks.dungeonTokenValues = {};
     mocks.shopCosts = {};
+    mocks.unpricedAbilities = new Set();
 });
 
 describe('calculateItemValue', () => {
@@ -228,6 +232,22 @@ describe('calculateAllAbilitiesCost', () => {
         expect(result.equippedCost).toBe(3000);
         expect(result.equippedBreakdown.map((a) => a.hrid)).toEqual(['/abilities/fireball']);
         expect(result.otherBreakdown.map((a) => a.hrid)).toEqual(['/abilities/heal']);
+    });
+
+    test('an ability whose book has no listing is marked unpriced, not counted as free', () => {
+        mocks.unpricedAbilities.add('/abilities/heal');
+        const abilities = [
+            { abilityHrid: '/abilities/fireball', level: 3 },
+            { abilityHrid: '/abilities/heal', level: 2 },
+        ];
+
+        const result = calculateAllAbilitiesCost(abilities, {});
+
+        expect(result.totalCost).toBe(3000);
+        const heal = result.breakdown.find((a) => a.hrid === '/abilities/heal');
+        expect(heal.unpriced).toBe(true);
+        // Still says how many books, which is the part the market cannot answer
+        expect(heal.books).toBe(7);
     });
 
     test('level-0 abilities are skipped entirely', () => {

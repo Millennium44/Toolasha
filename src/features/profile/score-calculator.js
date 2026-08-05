@@ -6,7 +6,7 @@
  * - Equipment Score: Cost to enhance equipped items
  */
 
-import { calculateAbilityCost } from '../../utils/ability-cost-calculator.js';
+import { explainAbilityCost } from '../../utils/ability-cost-calculator.js';
 import { calculateBattleHousesCost } from '../../utils/house-cost-calculator.js';
 import dataManager from '../../core/data-manager.js';
 import { getEnhancingParams } from '../../utils/enhancement-config.js';
@@ -297,8 +297,13 @@ function calculateAbilityScore(profileData) {
     for (const ability of equippedAbilities) {
         if (!ability.abilityHrid || ability.level === 0) continue;
 
-        const cost = calculateAbilityCost(ability.abilityHrid, ability.level);
-        totalCost += cost;
+        // A book nobody is selling has no price, and the old calculator called
+        // that zero — which put an unpriceable ability at the *bottom* of a
+        // score it should not have been contributing to silently at all
+        const priced = explainAbilityCost(ability.abilityHrid, ability.level);
+        const cost = priced?.total ?? null;
+        const unpriced = cost === null;
+        if (!unpriced) totalCost += cost;
 
         // Format ability name for display
         const abilityName = ability.abilityHrid
@@ -309,8 +314,12 @@ function calculateAbilityScore(profileData) {
 
         breakdown.push({
             name: `${abilityName} ${ability.level}`,
-            value: (cost / 1_000_000).toFixed(1),
-            cost,
+            value: unpriced ? 'no price' : (cost / 1_000_000).toFixed(1),
+            cost: unpriced ? 0 : cost,
+            unpriced,
+            // How many books it would take, which is the part the market cannot
+            // answer away — worth carrying even when the price is missing
+            books: priced?.books ?? 0,
             // The book that teaches it, which is both what was priced and the
             // only icon an ability has
             hrid: ability.abilityHrid,
@@ -322,8 +331,9 @@ function calculateAbilityScore(profileData) {
     // Convert to score (cost / 1 million)
     const score = totalCost / 1_000_000;
 
-    // Sort by value descending
-    breakdown.sort((a, b) => parseFloat(b.value) - parseFloat(a.value));
+    // By cost rather than by `value`, which is now a string that is sometimes
+    // 'no price' — and an unpriced row belongs at the bottom, not at NaN
+    breakdown.sort((a, b) => b.cost - a.cost);
 
     return { score, breakdown };
 }

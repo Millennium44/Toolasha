@@ -232,7 +232,7 @@ vi.mock('../combat/labyrinth-clear-rate.js', () => ({
 }));
 vi.mock('../combat/loadout-snapshot.js', () => ({ default: { get: () => null, snapshots: {} } }));
 
-const { default: ui, describeAllFightsPlan } = await import('./lab-sim-ui.js');
+const { default: ui, describeAllFightsPlan, describeArchetypes } = await import('./lab-sim-ui.js');
 const { estimateLabUpgradeSims } = await import('./lab-sim-upgrade-modes.js');
 
 /** A pointer event happy-dom will hand to the drag helper's listeners. */
@@ -592,6 +592,30 @@ describe('the Upgrade tab asks two questions instead of one', () => {
 
         expect(text).toContain('64 simulations');
         expect(text).not.toContain('%');
+    });
+
+    test('the finished run says which loadout resolved to which archetype', () => {
+        // Pooling merges everything into one table, so without this nothing says
+        // which loadouts got the guide's narrow question and which fell back to
+        // being offered every ability in the game
+        const text = describeArchetypes([
+            { loadoutName: 'Fire Lab', archetype: 'fire', label: 'Fire' },
+            { loadoutName: 'Wark Lab', archetype: 'wark', label: 'Wark' },
+            { loadoutName: 'Old Setup', archetype: null, label: null },
+        ]);
+
+        expect(text).toContain('Fire Lab → Fire');
+        expect(text).toContain('Wark Lab → Wark');
+        expect(text).toContain('Old Setup → no archetype (all abilities offered)');
+    });
+
+    test('and says nothing at all when swaps were not part of the run', () => {
+        expect(describeArchetypes([])).toBe('');
+        expect(describeArchetypes(null)).toBe('');
+    });
+
+    test('an archetype with no label still names itself rather than going blank', () => {
+        expect(describeArchetypes([{ loadoutName: 'Lab', archetype: 'wark', label: null }])).toContain('Lab → wark');
     });
 
     test('the per-ability Target Lv rule is disabled where it cannot be honoured', () => {
@@ -1468,5 +1492,156 @@ describe('the skilling upgrade tables give a community buff one of its own', () 
         ui._renderSkillingUpgradeResults(result, container);
 
         expect(container.textContent).not.toContain('Community Buffs');
+    });
+});
+
+describe('a Skilling gear row unfolds into what it is buying', () => {
+    /** A gold row with a breakdown behind it, as the analysis now hands one over */
+    const geared = (over = {}) => ({
+        baseline: { clearRate: 0.62 },
+        results: [
+            {
+                candidate: {
+                    type: over.type || 'skilling_gear',
+                    description: over.description || "Plate Body +3 → Lumberjack's Top +5 (woodcutting)",
+                    skillKey: '/skills/woodcutting',
+                    currentLevel: 3,
+                    upgradeLevel: 5,
+                    ...(over.candidate || {}),
+                },
+                costType: 'gold',
+                cost: over.cost ?? 40_000_000,
+                costDetail:
+                    'costDetail' in over
+                        ? over.costDetail
+                        : {
+                              buys: [{ name: "Lumberjack's Top", enhancementLevel: 5, price: 40_000_000 }],
+                              credits: [],
+                              unpriced: [],
+                              gross: 40_000_000,
+                              net: 40_000_000,
+                          },
+                clearRate: 0.68,
+                clearRateDelta: 0.06,
+                metricType: 'clearRate',
+            },
+        ],
+    });
+
+    let container;
+
+    beforeEach(async () => {
+        ui.buildPanel();
+        await settle();
+        container = document.createElement('div');
+        document.body.appendChild(container);
+    });
+
+    afterEach(() => {
+        container.remove();
+        ui.destroy();
+    });
+
+    test('the detail is folded away until the row is clicked', () => {
+        ui._renderSkillingUpgradeResults(geared(), container);
+
+        const detail = container.querySelector('[data-skilling-gold-detail="0"]');
+        expect(detail).not.toBeNull();
+        expect(detail.style.display).toBe('none');
+
+        container.querySelector('[data-skilling-gold-row="0"]').click();
+        expect(detail.style.display).toBe('table-row');
+    });
+
+    test('and names the rate it moved, against the baseline it moved it from', () => {
+        ui._renderSkillingUpgradeResults(geared(), container);
+        const detail = container.querySelector('[data-skilling-gold-detail="0"]');
+
+        // The clear-rate equivalent of the combat table's win-rate line
+        expect(detail.textContent).toContain('68.00%');
+        expect(detail.textContent).toContain('62.00%');
+        expect(detail.textContent).toContain('+6.00%');
+    });
+
+    test('says what kind of purchase it is, since a piece you do not own is priced at +5', () => {
+        ui._renderSkillingUpgradeResults(geared(), container);
+        const detail = container.querySelector('[data-skilling-gold-detail="0"]');
+
+        expect(detail.textContent).toContain('do not own yet');
+        expect(detail.textContent).toContain('+5');
+        expect(detail.textContent).toContain('woodcutting');
+    });
+
+    test('an enhancement of what you already wear says that instead', () => {
+        ui._renderSkillingUpgradeResults(
+            geared({ type: 'enhancement', description: 'Holy Hatchet +3 → +5' }),
+            container
+        );
+        const detail = container.querySelector('[data-skilling-gold-detail="0"]');
+
+        expect(detail.textContent).toContain('already wear');
+        expect(detail.textContent).toContain('+3 → +5');
+        expect(detail.textContent).not.toContain('do not own yet');
+    });
+
+    test('itemises the purchase and totals it', () => {
+        ui._renderSkillingUpgradeResults(geared(), container);
+        const detail = container.querySelector('[data-skilling-gold-detail="0"]');
+
+        expect(detail.textContent).toContain("Buy Lumberjack's Top +5");
+        expect(detail.textContent).toContain('40,000,000');
+    });
+
+    test('a dash in the Cost column is explained as no listing, not as free', () => {
+        ui._renderSkillingUpgradeResults(
+            geared({
+                cost: null,
+                costDetail: {
+                    buys: [{ name: "Lumberjack's Top", enhancementLevel: 5, price: null }],
+                    credits: [],
+                    unpriced: ["Lumberjack's Top"],
+                    gross: null,
+                    net: null,
+                },
+            }),
+            container
+        );
+        const detail = container.querySelector('[data-skilling-gold-detail="0"]');
+
+        expect(detail.textContent).toContain('no market listing');
+        // The measurement survives a missing price — and the sentence is shared
+        // with a table ranked on win rate, so it names neither
+        expect(detail.textContent).toContain('measured delta is still accurate');
+    });
+
+    test('and a cost that looks too high says which gear it is not crediting, and why', () => {
+        ui._renderSkillingUpgradeResults(
+            geared({
+                costDetail: {
+                    buys: [{ name: "Lumberjack's Top", enhancementLevel: 5, price: 40_000_000 }],
+                    credits: [],
+                    unpriced: [],
+                    kept: [{ name: 'Plate Body', enhancementLevel: 3, price: 410_000_000 }],
+                    keptValue: 410_000_000,
+                    gross: 40_000_000,
+                    net: 40_000_000,
+                },
+            }),
+            container
+        );
+        const detail = container.querySelector('[data-skilling-gold-detail="0"]');
+
+        expect(detail.textContent).toContain('Keeping Plate Body +3');
+        expect(detail.textContent).toContain('410,000,000');
+        expect(detail.textContent).toContain('combat gear you keep in a loadout');
+        // Not the labyrinth armor wording: there is no setting for this one
+        expect(detail.textContent).not.toContain('Keep gear the forced armor swaps replace');
+    });
+
+    test('a row the analysis could not explain says so rather than drawing an empty box', () => {
+        ui._renderSkillingUpgradeResults(geared({ costDetail: null }), container);
+        const detail = container.querySelector('[data-skilling-gold-detail="0"]');
+
+        expect(detail.textContent).toContain('No cost breakdown available');
     });
 });

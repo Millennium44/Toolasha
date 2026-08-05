@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The sims finish their own homework
+
+- **Skilling gear rows expand like combat rows**: click for the full cost breakdown — clear-rate baseline, per-piece cost basis ("enhancing a piece you already wear" vs "a piece you don't own yet"), and the kept-gear reason where combat gear was displaced.
+- **Unpriced never reads as free, anywhere**: the old ability-cost helpers that returned 0 for an unlisted book are deleted outright (a test pins them gone); Build Score and networth now say "no price" and exclude the figure rather than counting zero — and an owned-but-unslotted book's genuinely free fill says why with a "book owned" chip.
+- **The budget planner understands swap rivalry properly**: candidates carry key *sets*, so two swaps into one slot, a fill and a displacement of the same book, and levelling-vs-swapping-away an ability all correctly exclude each other — with a distinct "a pick already uses what this needs" skip reason instead of a misleading one.
+- **The lab names each loadout's archetype** after a swaps run ("Fire Lab → Fire, Old Setup → no archetype (all abilities offered)"), so a fallback is visible instead of inferred.
+- Plus: the analyze progress bar can no longer stick on an early throw, and a pre-existing formatting failure in the engine is cleaned up.
+
 ### Nine small debts paid
 
 - **The lab supplies planner believes the server**: a just-ended run no longer reads as active off a stale grid — the game's own isActive flag wins, with the grid test kept only as fallback.

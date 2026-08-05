@@ -1,8 +1,6 @@
 import Buff from './buff.js';
 import { getGameData } from './game-data.js';
 
-
-
 class HouseRoom {
     constructor(hrid, level) {
         this.hrid = hrid;
