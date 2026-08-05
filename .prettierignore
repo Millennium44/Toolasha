@@ -2,3 +2,8 @@ dist/
 node_modules/
 *.min.js
 package-lock.json
+
+# Vendored while the port is in progress — not ours to reformat, and 42,155
+# lines of it. The notes and licence beside it stay formatted; only the script
+# itself is off limits.
+third-party/**/*.user.js

@@ -1,25 +1,48 @@
 /**
  * Enhancement Tracker Storage
  * Handles persistence of enhancement sessions using IndexedDB
+ *
+ * Sessions belong to the character that ran them: the iron cow's overnight
+ * enhancing run has nothing to do with the market cow's, and a shared key put
+ * both in the same list. Keys are therefore scoped per character and derived at
+ * every read and write — the user switches characters without reloading the
+ * page, so a key resolved once at module load would be the wrong one afterwards.
+ * The legacy global value is adopted by the main character exactly once.
  */
 
+import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
+import { characterKey, readScoped, writeScoped } from '../../utils/character-key.js';
 
 const STORAGE_KEY = 'enhancementTracker_sessions';
 const CURRENT_SESSION_KEY = 'enhancementTracker_currentSession';
 const STORAGE_STORE = 'settings'; // Use existing 'settings' store
 
 /**
- * Save all sessions to storage
+ * What has been handed to the debounced writer but may not have landed yet.
+ *
+ * Every session update used to write all sessions as one immediate blob into
+ * the settings store — an enhancement run is a write per attempt, of a document
+ * containing every session ever kept. Debouncing coalesces a run into one write,
+ * at the cost of storage lagging memory; these hold the truth in the meantime so
+ * a load during the lag cannot read back a stale blob.
+ */
+let pendingSessions = null;
+let pendingCurrentSessionId;
+let hasPendingCurrentSessionId = false;
+
+/**
+ * Save all sessions to storage.
+ *
+ * Queued rather than awaited: the debounced write's promise resolves when its
+ * timer fires, so awaiting it would stall every caller for the debounce delay.
+ * `storage.flushAll()` on `beforeunload` is what makes the last one land.
  * @param {Object} sessions - Sessions object (keyed by session ID)
  * @returns {Promise<void>}
  */
 export async function saveSessions(sessions) {
-    try {
-        await storage.setJSON(STORAGE_KEY, sessions, STORAGE_STORE, true); // immediate=true for rapid updates
-    } catch (error) {
-        throw error;
-    }
+    pendingSessions = sessions;
+    writeScoped(STORAGE_KEY, sessions, STORAGE_STORE);
 }
 
 /**
@@ -27,9 +50,9 @@ export async function saveSessions(sessions) {
  * @returns {Promise<Object>} Sessions object (keyed by session ID)
  */
 export async function loadSessions() {
+    if (pendingSessions !== null) return pendingSessions;
     try {
-        const sessions = await storage.getJSON(STORAGE_KEY, STORAGE_STORE, {});
-        return sessions;
+        return await readScoped(STORAGE_KEY, STORAGE_STORE, {}, { migrate: 'adopt' });
     } catch (error) {
         console.error('[EnhancementStorage] Failed to load sessions:', error);
         return {};
@@ -42,11 +65,9 @@ export async function loadSessions() {
  * @returns {Promise<void>}
  */
 export async function saveCurrentSessionId(sessionId) {
-    try {
-        await storage.set(CURRENT_SESSION_KEY, sessionId, STORAGE_STORE, true); // immediate=true for rapid updates
-    } catch (error) {
-        console.error('[EnhancementStorage] Failed to save current session ID:', error);
-    }
+    pendingCurrentSessionId = sessionId;
+    hasPendingCurrentSessionId = true;
+    writeScoped(CURRENT_SESSION_KEY, sessionId, STORAGE_STORE);
 }
 
 /**
@@ -54,8 +75,9 @@ export async function saveCurrentSessionId(sessionId) {
  * @returns {Promise<string|null>} Current session ID or null
  */
 export async function loadCurrentSessionId() {
+    if (hasPendingCurrentSessionId) return pendingCurrentSessionId;
     try {
-        return await storage.get(CURRENT_SESSION_KEY, STORAGE_STORE, null);
+        return await readScoped(CURRENT_SESSION_KEY, STORAGE_STORE, null, { migrate: 'adopt' });
     } catch (error) {
         console.error('[EnhancementStorage] Failed to load current session ID:', error);
         return null;
@@ -134,9 +156,29 @@ export function importSession(jsonStr) {
  */
 export async function clearAllSessions() {
     try {
-        await storage.setJSON(STORAGE_KEY, {}, STORAGE_STORE);
-        await storage.set(CURRENT_SESSION_KEY, null, STORAGE_STORE);
+        pendingSessions = {};
+        pendingCurrentSessionId = null;
+        hasPendingCurrentSessionId = true;
+        // Immediate: a clear is a one-off the user asked for and waited on, and
+        // awaiting the debounced path would mean waiting out its timer
+        await storage.set(characterKey(STORAGE_KEY), {}, STORAGE_STORE, true);
+        await storage.set(characterKey(CURRENT_SESSION_KEY), null, STORAGE_STORE, true);
     } catch (error) {
         console.error('[EnhancementStorage] Failed to clear sessions:', error);
     }
 }
+
+/**
+ * Drop the in-memory mirror of the queued writes — for tests, and for anything
+ * that needs the next load to come from storage.
+ */
+export function resetPendingSessionCache() {
+    pendingSessions = null;
+    pendingCurrentSessionId = undefined;
+    hasPendingCurrentSessionId = false;
+}
+
+// The mirror holds one character's sessions. Switching characters without a
+// reload would otherwise serve the departing character's list to the arriving
+// one — and, worse, write it back under the arriving character's key.
+dataManager.on('character_switching', () => resetPendingSessionCache());

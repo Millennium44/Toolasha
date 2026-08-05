@@ -8,7 +8,10 @@ import domObserver from '../../core/dom-observer.js';
 import webSocketHook from '../../core/websocket.js';
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
+import { markAsProfileLink } from '../chat/chat-profile-link.js';
 import { guildXPTracker } from './guild-xp-tracker.js';
+import { findTrialsRoot, isTrialsSetupTab } from './guild-trials-scrape.js';
+import { BUILDING_PATTERNS, readBuildingBonus } from './guild-trials-store.js';
 import { formatDateTime } from '../../utils/formatters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { fNum, rankBadge, addColumn, makeColumnSortable } from '../../utils/table-columns.js';
@@ -208,8 +211,19 @@ class GuildXPDisplay {
         );
         this.unregisterObservers.push(unregLeaderboard);
 
-        const unregTrials = domObserver.onClass('GuildXPDisplay-Trials', 'GuildPanel_trialsContent', (el) =>
-            this._renderTrialSignups(el)
+        // The trials tab's own container class has never been verified against a
+        // live client, and hanging the whole injection off it means one wrong
+        // guess takes the block off the screen with nothing logged — which is
+        // what happened to `guild-trials.js`. `GuildPanel_tileSummary` is
+        // verified and every trial card carries one, so a card appearing is the
+        // signal, and `findTrialsRoot` works out what to draw into.
+        const unregTrials = domObserver.onClass(
+            'GuildXPDisplay-Trials',
+            ['GuildPanel_trialsContent', 'GuildPanel_trialsTab', 'GuildPanel_tileSummary'],
+            () => {
+                const root = findTrialsRoot();
+                if (root) this._renderTrialSignups(root);
+            }
         );
         this.unregisterObservers.push(unregTrials);
 
@@ -217,7 +231,7 @@ class GuildXPDisplay {
         this._boundRefreshOverview = () => this._refreshOverviewIfVisible();
         this._boundRefreshMembers = () => this._refreshMembersIfVisible();
         this._boundRefreshTrials = () => {
-            const el = document.querySelector('[class*="GuildPanel_trialsContent"]');
+            const el = findTrialsRoot();
             if (el) this._renderTrialSignups(el);
         };
         this._boundRefreshLeaderboard = (data) => {
@@ -315,7 +329,15 @@ class GuildXPDisplay {
             </div>`;
 
         const idleHTML = this._buildIdleHTML();
-        dataGridEl.insertAdjacentHTML('beforeend', statsHTML + idleHTML + chartHTML);
+        dataGridEl.insertAdjacentHTML(
+            'beforeend',
+            statsHTML + this._buildArchivesHTML(rateValue) + idleHTML + chartHTML
+        );
+
+        // Idle names fill "/profile Name" on click, same as chat names do
+        dataGridEl.querySelectorAll('[data-idle-member]').forEach((el) => {
+            markAsProfileLink(el, el.dataset.idleMember);
+        });
 
         // Attach chart bar event listeners
         dataGridEl.querySelectorAll(`.${CSS_PREFIX}__bar`).forEach((bar) => {
@@ -336,6 +358,62 @@ class GuildXPDisplay {
                     break;
                 }
             }
+        }
+    }
+
+    /**
+     * What the Archives is worth, without pretending it is missing from the figures.
+     *
+     * The Archives grants "+5% Guild Experience" per level, and the obvious
+     * wiring — multiply the tracked XP by it — would be wrong twice over. Every
+     * figure on this panel is a *measurement*: guild XP is read from
+     * `guild.experience` and each member's from `guildChar.guildExperience`, and
+     * the rates are differences between two of those readings over real time.
+     * The game reports XP it has already awarded, so the Archives bonus is
+     * inside every one of those numbers before this script ever sees them.
+     * Applying it again would inflate the panel by the bonus, and the more a
+     * guild had invested in the Archives the more wrong it would be.
+     *
+     * So the honest use of the bonus is the counterfactual the player cannot
+     * measure: what the *next* level would add, at the rate they are already
+     * earning. That is a projection and is labelled as one.
+     *
+     * @param {number} rateValue - The XP/h figure above this row
+     * @returns {string} HTML, or '' when no Archives level has been seen
+     */
+    _buildArchivesHTML(rateValue) {
+        try {
+            const archives = readBuildingBonus({ pattern: BUILDING_PATTERNS.archives });
+            if (!archives.hrid || !(archives.level > 0) || !Number.isFinite(archives.bonus)) return '';
+
+            const perLevel = archives.rules?.bonusPerLevel ?? 0.05;
+            const current = Math.round(archives.bonus * 100);
+            const next = Math.round((archives.bonus + perLevel) * 100);
+
+            // At the measured rate, one more level is worth this much an hour.
+            // Derived from the *base* rate the bonus is applied to, not from the
+            // bonused rate, or the step would be overstated by the bonus itself
+            const base = Number.isFinite(rateValue) ? rateValue / (1 + archives.bonus) : null;
+            const gain = base === null ? null : base * perLevel;
+
+            const detail =
+                gain === null || !(gain > 0)
+                    ? ''
+                    : ` — Lv.${archives.level + 1} would add about ${fNum(Math.round(gain))} XP/h at this rate`;
+
+            return `
+            <div class="GuildPanel_dataBlockGroup__1d2rR ${CSS_PREFIX}" style="grid-column: 1 / 3; max-width: none;">
+                <div class="GuildPanel_dataBlock__3qVhK" style="padding: 8px 12px; height: auto; min-height: 0;">
+                    <div class="GuildPanel_label__-A63g">Archives Lv.${archives.level} · +${current}% guild XP</div>
+                    <div style="font-size: 12px; line-height: 1.6; color: var(--color-space-300);">
+                        Already included in the figures above — the game reports the experience it has awarded,
+                        bonus and all${detail} (+${next}% total).
+                    </div>
+                </div>
+            </div>`;
+        } catch (error) {
+            console.error('[GuildXPDisplay] Reading the Archives bonus failed:', error);
+            return '';
         }
     }
 
@@ -362,7 +440,7 @@ class GuildXPDisplay {
                           const title = m.hideOnlineStatus
                               ? 'No action running'
                               : `${m.isOnline ? 'Online' : 'Offline'}, no action running`;
-                          return `<span style="color: ${online ? '#f0a830' : '#8a90a5'};" title="${title}">${m.name}</span>`;
+                          return `<span style="color: ${online ? '#f0a830' : '#8a90a5'}; cursor: pointer;" title="${title}" data-idle-member="${m.name}">${m.name}</span>`;
                       })
                       .join(', ');
 
@@ -741,8 +819,16 @@ class GuildXPDisplay {
     _renderTrialSignups(trialsContentEl) {
         if (!config.getSetting('guildTrialSignupDisplay', true)) return;
 
-        // Remove previous injection
-        trialsContentEl.querySelectorAll('.mwi-trial-signups').forEach((el) => el.remove());
+        // Remove previous injection — everywhere it may have landed, not only
+        // under the root being drawn into now, or the copy left on the tab this
+        // is no longer allowed to draw on would stay there
+        document.querySelectorAll('.mwi-trial-signups').forEach((el) => el.remove());
+
+        // Who has not signed up is a question about the *setup* tab. The root
+        // finder answers for either tab, so this drew the roster over the In
+        // Progress tab as well — reported after a trial advanced a tier, which
+        // is when that tab redraws and the observer fires again.
+        if (!isTrialsSetupTab(trialsContentEl)) return;
 
         const memberList = guildXPTracker.getMemberList();
         if (!memberList.length) return;
@@ -771,9 +857,6 @@ class GuildXPDisplay {
         unsignedSkilling.sort((a, b) => a.localeCompare(b));
         unsignedCombat.sort((a, b) => a.localeCompare(b));
 
-        const statusRow = trialsContentEl.querySelector('[class*="GuildPanel_eventStatusRow"]');
-        if (!statusRow) return;
-
         const wrapper = document.createElement('div');
         wrapper.className = 'mwi-trial-signups';
         wrapper.style.cssText = `
@@ -801,7 +884,17 @@ class GuildXPDisplay {
 
         wrapper.innerHTML = makeList('Skilling', unsignedSkilling) + makeList('Combat', unsignedCombat);
 
-        statusRow.insertAdjacentElement('afterend', wrapper);
+        // The status row is a place to put this, not a condition for having it.
+        // Requiring it meant an unverified class name could withhold the whole
+        // block — the list of who has not signed up does not depend on the game
+        // drawing a status line above it, and the tab's first card is a
+        // perfectly good anchor when there is none.
+        const statusRow = trialsContentEl.querySelector('[class*="GuildPanel_eventStatusRow"]');
+        const firstCard = trialsContentEl.querySelector('[class*="GuildPanel_tileSummary"]');
+        const anchor = firstCard?.closest('[class*="GuildPanel_tile"]:not([class*="GuildPanel_tileSummary"])');
+        if (statusRow) statusRow.insertAdjacentElement('afterend', wrapper);
+        else if (anchor) anchor.insertAdjacentElement('beforebegin', wrapper);
+        else trialsContentEl.insertAdjacentElement('afterbegin', wrapper);
 
         wrapper.querySelectorAll('.mwi-trial-name').forEach((el) => {
             el.addEventListener('click', () => {
@@ -973,3 +1066,7 @@ export default {
     initialize: () => guildXPDisplay.initialize(),
     cleanup: () => guildXPDisplay.disable(),
 };
+
+// Named alongside the default the same way `guild-trials.js` exports its
+// singleton, so the tab injections can be driven directly in tests
+export { guildXPDisplay };

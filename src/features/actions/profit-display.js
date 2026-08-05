@@ -22,9 +22,16 @@ import { MARKET_TAX } from '../../utils/profit-constants.js';
 import loadoutSnapshot from '../combat/loadout-snapshot.js';
 import scrollSimulator from '../combat/scroll-simulator.js';
 import { SCROLL_BUFF_ITEMS } from '../../utils/scroll-buff-values.js';
+import { isPriceOverridden, getPriceAgeString } from '../../utils/market-data.js';
 
 const getMissingPriceIndicator = (isMissing) => (isMissing ? ' ⚠' : '');
 export const formatMissingLabel = (isMissing, value) => (isMissing ? '-- ⚠' : value);
+
+// Superscript marker for figures priced from the user's own custom price override rather
+// than the live market — kept as one helper so gathering and production stay consistent.
+const OVERRIDE_TITLE = 'Uses your custom price override';
+const getOverrideIndicatorHtml = (isOverridden) =>
+    isOverridden ? `<sup title="${OVERRIDE_TITLE}" style="cursor: help;">✱</sup>` : '';
 
 let _spriteUrl = null;
 function scrollSpriteHtml(buffTypeHrid, size = 14) {
@@ -168,7 +175,8 @@ async function renderGatheringProfit(panel, actionHrid, dropTableSelector, gathe
             const line = document.createElement('div');
             line.style.marginLeft = '8px';
             const missingPriceNote = getMissingPriceIndicator(output.missingPrice);
-            line.textContent = `• ${output.name} (Base): ${output.itemsPerHour.toFixed(decimals)}/hr @ ${formatWithSeparator(output.priceEach)}${missingPriceNote} each → ${formatLargeNumber(Math.round(output.revenuePerHour))}/hr`;
+            const overrideNote = getOverrideIndicatorHtml(isPriceOverridden(output.itemHrid, 0, 'sell'));
+            line.innerHTML = `• ${output.name} (Base): ${output.itemsPerHour.toFixed(decimals)}/hr @ ${formatWithSeparator(output.priceEach)}${missingPriceNote}${overrideNote} each → ${formatLargeNumber(Math.round(output.revenuePerHour))}/hr`;
             primaryDropsContent.appendChild(line);
         }
     }
@@ -518,7 +526,8 @@ async function renderGatheringProfit(panel, actionHrid, dropTableSelector, gathe
     const gatheringLoadoutLabel = gatheringSnapshotInfo
         ? `${gatheringSnapshotInfo.name}${gatheringSnapshotInfo.isDefault ? ' (Default)' : ''}`
         : 'Equipped';
-    modeDiv.textContent = `Pricing Mode: ${modeLabel}  •  Loadout: ${gatheringLoadoutLabel}`;
+    const priceAge = getPriceAgeString();
+    modeDiv.textContent = `Pricing Mode: ${modeLabel}  •  Loadout: ${gatheringLoadoutLabel}${priceAge ? `  •  ${priceAge}` : ''}`;
     topLevelContent.appendChild(modeDiv);
 
     const detailedBreakdownSection = createCollapsibleSection(
@@ -787,13 +796,14 @@ async function renderProductionProfit(panel, actionHrid, dropTableSelector, prod
     const baseOutputMissingNote = getMissingPriceIndicator(
         profitData.outputPriceMissing || profitData.outputPriceEstimated
     );
-    baseOutputLine.textContent = `• ${profitData.itemName} (Base): ${profitData.itemsPerHour.toFixed(2)}/hr @ ${formatWithSeparator(Math.round(profitData.outputPrice))}${baseOutputMissingNote} each → ${formatLargeNumber(Math.round(profitData.itemsPerHour * profitData.outputPrice))}/hr`;
+    const baseOutputOverrideNote = getOverrideIndicatorHtml(isPriceOverridden(profitData.itemHrid, 0, 'sell'));
+    baseOutputLine.innerHTML = `• ${profitData.itemName} (Base): ${profitData.itemsPerHour.toFixed(2)}/hr @ ${formatWithSeparator(Math.round(profitData.outputPrice))}${baseOutputMissingNote}${baseOutputOverrideNote} each → ${formatLargeNumber(Math.round(profitData.itemsPerHour * profitData.outputPrice))}/hr`;
     primaryOutputContent.appendChild(baseOutputLine);
 
     if (profitData.gourmetBonusItems > 0) {
         const gourmetLine = document.createElement('div');
         gourmetLine.style.marginLeft = '8px';
-        gourmetLine.textContent = `• ${profitData.itemName} (Gourmet +${formatPercentage(profitData.gourmetBonus, 1)}): ${profitData.gourmetBonusItems.toFixed(2)}/hr @ ${formatWithSeparator(Math.round(profitData.outputPrice))}${baseOutputMissingNote} each → ${formatLargeNumber(Math.round(profitData.gourmetBonusItems * profitData.outputPrice))}/hr`;
+        gourmetLine.innerHTML = `• ${profitData.itemName} (Gourmet +${formatPercentage(profitData.gourmetBonus, 1)}): ${profitData.gourmetBonusItems.toFixed(2)}/hr @ ${formatWithSeparator(Math.round(profitData.outputPrice))}${baseOutputMissingNote}${baseOutputOverrideNote} each → ${formatLargeNumber(Math.round(profitData.gourmetBonusItems * profitData.outputPrice))}/hr`;
         primaryOutputContent.appendChild(gourmetLine);
     }
 
@@ -915,10 +925,10 @@ async function renderProductionProfit(panel, actionHrid, dropTableSelector, prod
             }
 
             const missingPriceNote = getMissingPriceIndicator(material.missingPrice);
-            const customPriceNote = material.customPrice ? ' *' : '';
-            materialText += ` @ ${formatWithSeparator(Math.round(material.askPrice))}${missingPriceNote}${customPriceNote} → ${formatLargeNumber(Math.round(material.totalCost * profitData.actionsPerHour * efficiencyMultiplier))}/hr`;
+            const overrideNote = getOverrideIndicatorHtml(material.customPrice);
+            materialText += ` @ ${formatWithSeparator(Math.round(material.askPrice))}${missingPriceNote}${overrideNote} → ${formatLargeNumber(Math.round(material.totalCost * profitData.actionsPerHour * efficiencyMultiplier))}/hr`;
 
-            line.textContent = materialText;
+            line.innerHTML = materialText;
             materialCostsContent.appendChild(line);
         }
     }
@@ -942,9 +952,10 @@ async function renderProductionProfit(panel, actionHrid, dropTableSelector, prod
         for (const tea of profitData.teaCosts) {
             const line = document.createElement('div');
             line.style.marginLeft = '8px';
-            // Tea structure: { itemName, pricePerDrink, drinksPerHour, totalCost }
+            // Tea structure: { itemHrid, itemName, pricePerDrink, drinksPerHour, totalCost }
             const missingPriceNote = getMissingPriceIndicator(tea.missingPrice);
-            line.textContent = `• ${tea.itemName}: ${tea.drinksPerHour.toFixed(2)}/hr @ ${formatWithSeparator(Math.round(tea.pricePerDrink))}${missingPriceNote} → ${formatLargeNumber(Math.round(tea.totalCost))}/hr`;
+            const overrideNote = getOverrideIndicatorHtml(isPriceOverridden(tea.itemHrid, 0, 'buy'));
+            line.innerHTML = `• ${tea.itemName}: ${tea.drinksPerHour.toFixed(2)}/hr @ ${formatWithSeparator(Math.round(tea.pricePerDrink))}${missingPriceNote}${overrideNote} → ${formatLargeNumber(Math.round(tea.totalCost))}/hr`;
             teaCostsContent.appendChild(line);
         }
     }
@@ -1159,7 +1170,8 @@ async function renderProductionProfit(panel, actionHrid, dropTableSelector, prod
     const productionLoadoutLabel = productionSnapshotInfo
         ? `${productionSnapshotInfo.name}${productionSnapshotInfo.isDefault ? ' (Default)' : ''}`
         : 'Equipped';
-    modeDiv.textContent = `Pricing Mode: ${modeLabel}  •  Loadout: ${productionLoadoutLabel}`;
+    const priceAge = getPriceAgeString();
+    modeDiv.textContent = `Pricing Mode: ${modeLabel}  •  Loadout: ${productionLoadoutLabel}${priceAge ? `  •  ${priceAge}` : ''}`;
     topLevelContent.appendChild(modeDiv);
 
     const detailedBreakdownSection = createCollapsibleSection(

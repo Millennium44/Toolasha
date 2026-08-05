@@ -156,36 +156,37 @@ class ZoneIndices {
         const taskNameElements = document.querySelectorAll('div[class*="RandomTask_name"]');
 
         for (const nameElement of taskNameElements) {
-            // Always remove any existing index first (in case task was rerolled)
             const existingIndex = nameElement.querySelector('span.script_taskMapIndex');
+
+            // Read the task text with our own span excluded, so a present
+            // index never feeds back into the monster-name parse
+            let taskText = '';
+            for (const node of nameElement.childNodes) {
+                if (node.nodeType === 1 && node.classList?.contains('script_taskMapIndex')) continue;
+                taskText += node.textContent;
+            }
+
+            // Check if this is a combat task (contains "Kill" or "Defeat");
+            // format: "Defeat - Jerry" or "Kill - Monster Name"
+            const match =
+                taskText.includes('Kill') || taskText.includes('Defeat') ? taskText.match(REGEX_COMBAT_TASK) : null;
+            const zoneIndex = match ? this.getZoneIndexForMonster(match[1].trim()) : null;
+            const desired = zoneIndex ? `Z${zoneIndex}` : null;
+
+            // Touch the DOM only on an actual change. The always-remove-then-
+            // reinsert version was its own mutation source: the observer fired
+            // on the reinsert, which reinserted, forever — and each cycle
+            // yanked a React-owned node mid-click.
+            if (existingIndex && existingIndex.textContent === desired) {
+                continue;
+            }
             if (existingIndex) {
                 existingIndex.remove();
             }
-
-            const taskText = nameElement.textContent;
-
-            // Check if this is a combat task (contains "Kill" or "Defeat")
-            if (!taskText.includes('Kill') && !taskText.includes('Defeat')) {
-                continue; // Not a combat task, skip
-            }
-
-            // Extract monster name from task text
-            // Format: "Defeat - Jerry" or "Kill - Monster Name"
-            const match = taskText.match(REGEX_COMBAT_TASK);
-            if (!match) {
-                continue; // Couldn't parse monster name
-            }
-
-            const monsterName = match[1].trim();
-
-            // Find the combat action for this monster
-            const zoneIndex = this.getZoneIndexForMonster(monsterName);
-
-            if (zoneIndex) {
-                // Add index to the name element
+            if (desired) {
                 nameElement.insertAdjacentHTML(
                     'beforeend',
-                    `<span class="script_taskMapIndex" style="margin-left: 4px; color: ${config.SCRIPT_COLOR_MAIN};">Z${zoneIndex}</span>`
+                    `<span class="script_taskMapIndex" style="margin-left: 4px; color: ${config.SCRIPT_COLOR_MAIN};">${desired}</span>`
                 );
             }
         }

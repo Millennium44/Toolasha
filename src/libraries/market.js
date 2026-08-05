@@ -24,6 +24,12 @@ import bulkSellAssistant from '../features/market/bulk-sell-assistant.js';
 import listingMarkers from '../features/market/listing-markers.js';
 import marketplaceBadgeFilter from '../features/market/marketplace-badge-filter.js';
 import marketHistoryPanel from '../features/market/mooket/index.js';
+// The pooled history and the arithmetic over it, shared rather than copied: the
+// goal planner (actions bundle) bounds its gold rates by how fast an item
+// actually sells, and a second copy would mean a second five-minute fetch cache
+// asking the same third-party server the same questions.
+import marketHistoryAPI from '../features/market/mooket/market-history-api.js';
+import * as marketHistoryData from '../features/market/mooket/market-history-data.js';
 import philoCalculator from '../features/market/philo-calculator.js';
 import tradeHistory from '../features/market/trade-history.js';
 import tradeHistoryDisplay from '../features/market/trade-history-display.js';
@@ -34,17 +40,32 @@ import marketplaceShortcuts from '../features/market/marketplace-shortcuts.js';
 import sellQueue from '../features/market/sell-queue.js';
 import milkywayMarketLink from '../features/market/milkyway-market-link.js';
 
+// Not market features, but this is the bundle that owns them: the actions,
+// combat and ui bundles all import these two calculators and all load after
+// market, so exporting them here is what stops each of those bundles carrying
+// its own copy. See marketExternalGlobals in rollup.config.js.
+import * as gatheringProfit from '../features/actions/gathering-profit.js';
+import * as productionProfit from '../features/actions/production-profit.js';
+
 // Networth/Economy features
 import networthFeature from '../features/networth/index.js';
+// Side-effect import: registers the coins, listings, inventory and books overlay rows
+import '../features/networth/networth-rows.js';
+import { abilityBookPanel } from '../features/abilities/ability-book-panel.js';
+// Side-effect import: registers the Charm Value overlay row
+import '../features/inventory/charm-value-row.js';
 
 // Inventory features
 import inventoryBadgeManager from '../features/inventory/inventory-badge-manager.js';
 import inventorySort from '../features/inventory/inventory-sort.js';
 import inventoryBadgePrices from '../features/inventory/inventory-badge-prices.js';
 import dungeonTokenTooltips from '../features/inventory/dungeon-token-tooltips.js';
+import treasureTracker from '../features/inventory/treasure-tracker.js';
+import watchlist, { watchlistPanel } from '../features/inventory/watchlist.js';
 import autoAllButton from '../features/inventory/auto-all-button.js';
 import inventoryCategoryTotals from '../features/inventory/inventory-category-totals.js';
 import customTabsFeature from '../features/inventory/custom-tabs/custom-tabs-feature.js';
+import equipmentSavings, { equipmentSavingsPanel } from '../features/inventory/equipment-savings-row.js';
 
 // Export to global namespace
 const toolashaRoot = window.Toolasha || {};
@@ -73,6 +94,8 @@ toolashaRoot.Market = {
     listingMarkers,
     marketplaceBadgeFilter,
     marketHistoryPanel,
+    marketHistoryAPI,
+    marketHistoryData,
     philoCalculator,
     tradeHistory,
     tradeHistoryDisplay,
@@ -84,12 +107,28 @@ toolashaRoot.Market = {
     inventorySort,
     inventoryBadgePrices,
     dungeonTokenTooltips,
+    treasureTracker,
+    abilityBookPanel,
+    watchlist,
+    watchlistPanel,
     autoAllButton,
     inventoryCategoryTotals,
     customTabsFeature,
+    equipmentSavings,
+    equipmentSavingsPanel,
     marketplaceShortcuts,
     sellQueue,
     milkywayMarketLink,
+    gatheringProfit,
+    productionProfit,
+};
+
+// Why the sidebar's Marketplace badge is or is not showing. The feature's only
+// output is the absence of a badge, which looks the same as the setting being
+// off, the game not badging, and every listing still working.
+toolashaRoot.Debug = {
+    ...(toolashaRoot.Debug || {}),
+    marketBadge: () => marketplaceBadgeFilter.describe(),
 };
 
 console.log('[Toolasha] Market library loaded');

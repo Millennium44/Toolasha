@@ -14,6 +14,7 @@ import {
     removeMaterialTabs,
     setupMarketplaceCleanupObserver,
     navigateToMarketplace,
+    visibleTabsContainer,
 } from '../../utils/marketplace-tabs.js';
 
 class HouseCostDisplay {
@@ -236,7 +237,7 @@ class HouseCostDisplay {
         `;
 
         pricingCell.innerHTML = `
-            <span style="color: ${config.SCRIPT_COLOR_SECONDARY};">@ ${coinFormatter(materialData.marketPrice)}</span>
+            <span style="color: ${config.COLOR_TEXT_SECONDARY};">@ ${coinFormatter(materialData.marketPrice)}</span>
             <span style="color: ${config.COLOR_ACCENT}; font-weight: bold;">= ${coinFormatter(materialData.totalValue)}</span>
             <span style="color: ${hasEnough ? '#4ade80' : '#f87171'}; margin-left: auto; text-align: right;">${coinFormatter(amountNeeded)}</span>
         `;
@@ -280,7 +281,7 @@ class HouseCostDisplay {
             padding: 8px;
             background: rgba(0, 0, 0, 0.3);
             border-radius: 8px;
-            border: 1px solid ${config.SCRIPT_COLOR_SECONDARY};
+            border: 1px solid ${config.COLOR_BORDER};
             min-height: 0;
             overflow-y: auto;
         `;
@@ -307,7 +308,7 @@ class HouseCostDisplay {
         dropdown.style.cssText = `
             padding: 4px 8px;
             background: rgba(0, 0, 0, 0.3);
-            border: 1px solid ${config.SCRIPT_COLOR_SECONDARY};
+            border: 1px solid ${config.COLOR_BORDER};
             color: ${config.SCRIPT_COLOR_MAIN};
             border-radius: 4px;
             cursor: pointer;
@@ -639,7 +640,7 @@ class HouseCostDisplay {
         const delayMs = 100;
 
         for (let i = 0; i < maxAttempts; i++) {
-            const tabsContainer = document.querySelector('.MuiTabs-flexContainer[role="tablist"]');
+            const tabsContainer = visibleTabsContainer();
             if (tabsContainer) {
                 const hasMarketListings = Array.from(tabsContainer.children).some((btn) =>
                     btn.textContent.includes('Market Listings')
@@ -664,7 +665,7 @@ class HouseCostDisplay {
      * @param {Array} missingMaterials - Array of missing material objects
      */
     createMissingMaterialTabs(missingMaterials) {
-        const tabsContainer = document.querySelector('.MuiTabs-flexContainer[role="tablist"]');
+        const tabsContainer = visibleTabsContainer();
         if (!tabsContainer) {
             console.error('[HouseCostDisplay] Tabs container not found');
             return;

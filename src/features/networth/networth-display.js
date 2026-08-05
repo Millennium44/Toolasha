@@ -12,7 +12,7 @@ import marketAPI from '../../api/marketplace.js';
 import { networthFormatter, formatKMB } from '../../utils/formatters.js';
 import networthHistoryChart, { CHART_BUTTON_ID } from './networth-history-chart.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
-import { DUNGEON_CHEST_CHEST_KEYS } from '../combat-stats/combat-stats-calculator.js';
+import { DUNGEON_CHEST_CHEST_KEYS } from '../../utils/dungeon-keys.js';
 import networthExclusionPopup from './networth-exclusion-popup.js';
 import { removeExclusion } from './networth-exclusions.js';
 
@@ -362,6 +362,10 @@ class NetworthInventoryDisplay {
         const showFixedAssets = fa.total > 0;
         const showHouses = fa.houses.totalCost > 0;
         const showAbilities = fa.abilities.totalCost > 0;
+        // Shrine levels arrive on guild traffic and may never have been seen.
+        // No row at all beats a row reading zero for something unknown.
+        const guildShrines = fa.guildShrines ?? { totalCost: 0, tokens: 0, breakdown: [] };
+        const showGuildShrines = (guildShrines.breakdown?.length ?? 0) > 0;
         const showExcluded = excl.total > 0;
 
         this.container.innerHTML = `
@@ -500,6 +504,18 @@ class NetworthInventoryDisplay {
                     `
                             : ''
                     }
+
+                    ${
+                        showGuildShrines
+                            ? `
+                        <!-- Guild Shrines -->
+                        <div style="cursor: pointer; margin-top: 4px;" id="mwi-guild-shrines-toggle" title="Guild credits spent on every shrine level bought. ${formatKMB(guildShrines.tokens || 0)} guild tokens were also spent — nothing converts into tokens, so they carry no gold value here.">
+                            + Guild Shrines: ${networthFormatter(Math.round(guildShrines.totalCost))}
+                        </div>
+                        <div id="mwi-guild-shrines-breakdown" style="display: none; margin-left: 20px; font-size: 0.8rem; color: #bbb; white-space: pre-line;">${this.renderGuildShrinesBreakdown(guildShrines.breakdown)}</div>
+                    `
+                            : ''
+                    }
                 </div>
                 `
                         : ''
@@ -578,7 +594,7 @@ class NetworthInventoryDisplay {
 
     /**
      * Render abilities breakdown HTML
-     * @param {Array} breakdown - Array of {name, cost}
+     * @param {Array} breakdown - Array of {name, cost, unpriced}
      * @returns {string} HTML string
      */
     renderAbilitiesBreakdown(breakdown) {
@@ -588,6 +604,9 @@ class NetworthInventoryDisplay {
 
         return breakdown
             .map((ability) => {
+                // Nobody is selling the book, so the total below does not
+                // include it — which is worth saying rather than drawing a 0
+                if (ability.unpriced) return `${ability.name}: no price`;
                 return `${ability.name}: ${networthFormatter(Math.round(ability.cost))}`;
             })
             .join('\n');
@@ -606,6 +625,29 @@ class NetworthInventoryDisplay {
         return breakdown
             .map((book) => {
                 return `${book.name} (${formatKMB(book.count)}): ${networthFormatter(Math.round(book.value))}`;
+            })
+            .join('\n');
+    }
+
+    /**
+     * Render guild shrines breakdown HTML.
+     *
+     * Each line carries its token cost beside the gold one, because the gold
+     * figure alone understates what a shrine level took to buy and the tokens
+     * have no price that could be folded in.
+     *
+     * @param {Array} breakdown - Array of {name, cost, tokens}
+     * @returns {string} HTML string
+     */
+    renderGuildShrinesBreakdown(breakdown) {
+        if (!breakdown || breakdown.length === 0) {
+            return '<div>No shrine levels bought</div>';
+        }
+
+        return breakdown
+            .map((shrine) => {
+                const tokens = shrine.tokens > 0 ? ` (+${formatKMB(shrine.tokens)} tokens)` : '';
+                return `${shrine.name}: ${networthFormatter(Math.round(shrine.cost))}${tokens}`;
             })
             .join('\n');
     }
@@ -863,6 +905,15 @@ class NetworthInventoryDisplay {
                 'mwi-ability-books-toggle',
                 'mwi-ability-books-breakdown',
                 `Ability Books: ${networthFormatter(Math.round(fa.abilityBooks.totalCost))}`
+            );
+        }
+
+        // Guild shrines toggle (only when levels are actually known)
+        if ((fa.guildShrines?.breakdown?.length ?? 0) > 0) {
+            this.setupToggle(
+                'mwi-guild-shrines-toggle',
+                'mwi-guild-shrines-breakdown',
+                `Guild Shrines: ${networthFormatter(Math.round(fa.guildShrines.totalCost))}`
             );
         }
 

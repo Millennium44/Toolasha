@@ -9,6 +9,9 @@ import {
     accuracySummary,
     foldRoomResult,
     roomMeasurements,
+    accuracyBySubject,
+    accuracyReport,
+    totalsSince,
 } from './labyrinth-outcome-log.js';
 import { wilsonInterval } from '../combat-sim/engine/wilson.js';
 
@@ -253,8 +256,17 @@ describe('roomMeasurements', () => {
             successes: 28,
             doubles: 6,
         });
-        expect(measured).toMatchObject({ rooms: 2, secondsPerRoom: 60, success: 0.7, double: 0.15 });
+        // Doubles against successes, not against every action: a double rolls on
+        // a success. Counted per action it read about a quarter of the stated
+        // rate — a denominator, not a fault, and the loudest thing in the record
+        expect(measured).toMatchObject({ rooms: 2, secondsPerRoom: 60, success: 0.7, double: 6 / 28 });
         expect(measured.xpPerHour).toBe(720000);
+    });
+
+    test('no successes means no double rate to report, rather than a zero', () => {
+        const measured = roomMeasurements({ rooms: 1, seconds: 120, actions: 40, successes: 0, doubles: 0 });
+        expect(measured.double).toBeNull();
+        expect(measured.success).toBe(0);
     });
 
     test('says nothing about a room never entered', () => {
@@ -415,5 +427,606 @@ describe('binomialTailLikelihood', () => {
         expect(binomialTailLikelihood(5, 10, 0)).toBe(1);
         expect(binomialTailLikelihood(5, 10, 1)).toBe(1);
         expect(binomialTailLikelihood(0, 0, 0.5)).toBe(1);
+    });
+});
+
+describe('accuracyBySubject', () => {
+    // Crafting at three levels. Every level is a small sample the interval
+    // cannot condemn; pooled, the sim is plainly high.
+    const crafting = (level, attempts, clears, predicted) => ({
+        subjectHrid: '/skills/crafting',
+        kind: 'skilling',
+        monster: 'crafting',
+        level,
+        attempts,
+        clears,
+        predicted,
+    });
+
+    const pooled = (rows) => accuracyBySubject(rows, wilsonInterval);
+
+    test('pools every level of one room type into one reading', () => {
+        const [group] = pooled([crafting(190, 5, 1, 0.64), crafting(196, 5, 1, 0.6), crafting(202, 10, 2, 0.62)]);
+
+        expect(group.attempts).toBe(20);
+        expect(group.clears).toBe(4);
+        expect(group.levels).toBe(3);
+        expect(group.lowestLevel).toBe(190);
+        expect(group.highestLevel).toBe(202);
+    });
+
+    test('and catches what no single level could', () => {
+        // Five fights at 64% cannot be condemned; twenty at 62% can
+        const [group] = pooled([crafting(190, 5, 1, 0.64), crafting(196, 5, 1, 0.6), crafting(202, 10, 2, 0.62)]);
+        expect(group.verdict).toBe('sim too high');
+        expect(group.offBy).toBeLessThan(0);
+    });
+
+    test('the pooled prediction is weighted by how often each level was fought', () => {
+        // Not the mean of the rates: one level fought a hundred times says more
+        // about the total than one fought twice
+        const [group] = pooled([crafting(190, 1, 0, 0.9), crafting(202, 99, 0, 0.1)]);
+
+        expect(group.predicted).toBeCloseTo((1 * 0.9 + 99 * 0.1) / 100, 6);
+    });
+
+    test('unsimmed levels count towards the record but not towards what was owed', () => {
+        const [group] = pooled([crafting(190, 10, 5, 0.5), crafting(202, 6, 6, null)]);
+
+        expect(group.attempts).toBe(16);
+        expect(group.clears).toBe(11);
+        expect(group.judged).toBe(10);
+        expect(group.expected).toBeCloseTo(5, 6);
+    });
+
+    test('a subject with no prediction anywhere says so rather than reading as a disaster', () => {
+        const [group] = pooled([crafting(190, 4, 4, null)]);
+
+        expect(group.verdict).toBe('not simmed');
+        expect(group.offBy).toBeNull();
+    });
+
+    test('room types are kept apart, most-fought first', () => {
+        const groups = pooled([
+            crafting(190, 5, 1, 0.6),
+            {
+                subjectHrid: '/monsters/mimic',
+                kind: 'combat',
+                monster: 'mimic',
+                level: 250,
+                attempts: 40,
+                clears: 20,
+                predicted: 0.5,
+            },
+        ]);
+
+        expect(groups.map((group) => group.subjectHrid)).toEqual(['/monsters/mimic', '/skills/crafting']);
+    });
+
+    test('survives an empty record', () => {
+        expect(pooled([])).toEqual([]);
+        expect(pooled(null)).toEqual([]);
+    });
+});
+
+describe('accuracyReport', () => {
+    const snapshot = {
+        summary: { buckets: 1, attempts: 20, clears: 4, judged: 20, judgedClears: 4, expected: 12.4, contested: 1 },
+        bySubject: [
+            {
+                subjectHrid: '/skills/crafting',
+                kind: 'skilling',
+                levels: 2,
+                lowestLevel: 190,
+                highestLevel: 202,
+                attempts: 20,
+                clears: 4,
+                judged: 20,
+                judgedClears: 4,
+                expected: 12.4,
+                predicted: 0.62,
+                observed: 0.2,
+                low: 0.08,
+                high: 0.42,
+                offBy: -8.4,
+                verdict: 'sim too high',
+            },
+        ],
+        rows: [
+            {
+                subjectHrid: '/skills/crafting',
+                level: 190,
+                attempts: 20,
+                clears: 4,
+                predicted: 0.62,
+                observed: 0.2,
+                low: 0.08,
+                high: 0.42,
+                verdict: 'sim too high',
+                likelihood: 0.0002,
+                timing: { predicted: 162, actual: 362, ratio: 2.23, rooms: 4 },
+                measured: { actions: 117 },
+                rates: {
+                    success: { predicted: 0.34, server: 0.34, observed: 0.26, formulaOff: false },
+                    double: { predicted: 0.1, server: 0.12, observed: 0.11, formulaOff: true },
+                },
+            },
+        ],
+    };
+
+    const report = () => accuracyReport(snapshot);
+
+    test('carries the counts, not just the rates', () => {
+        // The rates can be recomputed from the counts and not the other way
+        // round, and somebody checking the arithmetic needs the counts
+        expect(report()).toContain('20');
+        expect(report()).toContain('12.4');
+        expect(report()).toContain('-8.4');
+    });
+
+    test('has a section per question being asked', () => {
+        expect(report()).toContain('BY ROOM TYPE');
+        expect(report()).toContain('BY ROOM AND LEVEL');
+        expect(report()).toContain('PER-ACTION RATES');
+    });
+
+    test('flags a formula that disagrees with the server outright', () => {
+        // No amount of play makes a wrong formula right, so this is the loudest
+        // thing the record can say
+        expect(report()).toContain('YES');
+    });
+
+    test('names things the way the panel does when told how', () => {
+        const named = accuracyReport(snapshot, { name: () => 'Crafting' });
+        expect(named).toContain('Crafting');
+    });
+
+    test('a record with nothing in it is still a readable report', () => {
+        const empty = accuracyReport({ rows: [], summary: {}, bySubject: [] });
+        expect(empty).toContain('labyrinth sim accuracy');
+        expect(empty).not.toContain('PER-ACTION RATES');
+    });
+});
+
+describe('per-room rates', () => {
+    const room = (actions, successes, doubles) => ({
+        subjectHrid: '/skills/milking',
+        roomLevel: 200,
+        kind: 'skilling',
+        cleared: true,
+        seconds: 60,
+        actions,
+        successes,
+        doubles,
+        serverSuccess: 0.5,
+        serverDouble: 0.18,
+    });
+    const KEY = outcomeKey('/skills/milking', 200);
+    const fold = (rooms) => rooms.reduce((totals, next) => foldRoomResult(totals, next), {});
+
+    test('a room contributes its own rate once, however many actions it took', () => {
+        // The whole point: a room that ended after four actions and one that
+        // ran the full budget are one sample each
+        const totals = fold([room(4, 2, 0), room(40, 10, 0)]);
+        const measured = roomMeasurements(totals[KEY]);
+
+        // Pooled: 12/44 = 27%. Per room: mean of 50% and 25%.
+        expect(measured.success).toBeCloseTo(12 / 44, 6);
+        expect(measured.perRoom.success.rate).toBeCloseTo(0.375, 6);
+    });
+
+    test('which is what stops the stopping rule dragging the figure down', () => {
+        // Nine rooms cleared quickly at a high rate and one that ran long at a
+        // low one. Pooled, the long room is most of the actions and wins.
+        const rooms = [...Array(9)].map(() => room(4, 3, 0));
+        rooms.push(room(120, 24, 0));
+        const measured = roomMeasurements(fold(rooms)[KEY]);
+
+        expect(measured.success).toBeLessThan(0.4);
+        expect(measured.perRoom.success.rate).toBeGreaterThan(0.65);
+    });
+
+    test('the spread comes from how much the rooms differed', () => {
+        const agreed = roomMeasurements(fold([room(10, 5, 0), room(10, 5, 0), room(10, 5, 0)])[KEY]);
+        const varied = roomMeasurements(fold([room(10, 1, 0), room(10, 5, 0), room(10, 9, 0)])[KEY]);
+        const width = (m) => m.perRoom.success.high - m.perRoom.success.low;
+
+        expect(width(varied)).toBeGreaterThan(width(agreed));
+    });
+
+    test('rooms that agree exactly still do not pin the rate to a point', () => {
+        // Zero variance between rooms would give a zero-width interval, and any
+        // difference at all would then read as a contradiction. Three rooms of
+        // 5-for-10 do not settle the question.
+        const agreed = roomMeasurements(fold([room(10, 5, 0), room(10, 5, 0), room(10, 5, 0)])[KEY]);
+
+        expect(agreed.perRoom.success.high - agreed.perRoom.success.low).toBeGreaterThan(0.1);
+    });
+
+    test('one room gives a rate but no spread, because one room has none', () => {
+        const measured = roomMeasurements(fold([room(10, 5, 0)])[KEY]);
+
+        expect(measured.perRoom.success.rate).toBe(0.5);
+        expect(measured.perRoom.success.low).toBeNull();
+    });
+
+    test('doubles are per room over successes, and a room with none is not a room', () => {
+        const measured = roomMeasurements(fold([room(10, 5, 1), room(10, 0, 0)])[KEY]);
+
+        expect(measured.perRoom.double.rooms).toBe(1);
+        expect(measured.perRoom.double.rate).toBeCloseTo(0.2, 6);
+    });
+
+    test('a record written before rooms were measured separately still reads', () => {
+        // There is nothing to recover the per-room sums from, so the pooled
+        // figure is what it has and the caller falls back to it
+        const measured = roomMeasurements({ rooms: 2, seconds: 60, actions: 40, successes: 20, doubles: 4 });
+
+        expect(measured.perRoom.success).toBeNull();
+        expect(measured.success).toBe(0.5);
+    });
+});
+
+describe('judging the per-action rates', () => {
+    const bucketOf = (rooms, stamp = {}) => {
+        const totals = rooms.reduce(
+            (acc, next) => foldRoomResult(acc, { subjectHrid: '/skills/milking', roomLevel: 200, ...stamp, ...next }),
+            {}
+        );
+        return totals[outcomeKey('/skills/milking', 200)];
+    };
+
+    const rates = (bucket) => {
+        const [row] = accuracyRows({ k: bucket }, { interval: wilsonInterval });
+        return row.rates;
+    };
+
+    test('the reading is the per-room mean, with the pooled one kept beside it', () => {
+        const bucket = bucketOf(
+            [
+                { actions: 4, successes: 3, doubles: 0, seconds: 10 },
+                { actions: 120, successes: 24, doubles: 0, seconds: 120 },
+            ],
+            { serverSuccess: 0.5, predictedSuccess: 0.5, serverDouble: 0.18, predictedDouble: 0.18 }
+        );
+
+        expect(rates(bucket).success.observed).toBeCloseTo((0.75 + 0.2) / 2, 6);
+        expect(rates(bucket).success.pooled).toBeCloseTo(27 / 124, 6);
+    });
+
+    test('a server rate outside the spread of the rooms is called out', () => {
+        const bucket = bucketOf(
+            [...Array(6)].map(() => ({ actions: 10, successes: 2, doubles: 0, seconds: 30 })),
+            { serverSuccess: 0.6, predictedSuccess: 0.6, serverDouble: 0.18, predictedDouble: 0.18 }
+        );
+
+        expect(rates(bucket).success.verdict).toBe('sim too high');
+    });
+
+    test('and one inside it is not', () => {
+        const bucket = bucketOf(
+            [...Array(6)].map(() => ({ actions: 10, successes: 6, doubles: 0, seconds: 30 })),
+            { serverSuccess: 0.6, predictedSuccess: 0.6, serverDouble: 0.18, predictedDouble: 0.18 }
+        );
+
+        expect(rates(bucket).success.verdict).toBe('consistent');
+    });
+
+    test('one room is not enough to contradict anything', () => {
+        const bucket = bucketOf([{ actions: 10, successes: 1, doubles: 0, seconds: 30 }], {
+            serverSuccess: 0.9,
+            predictedSuccess: 0.9,
+            serverDouble: 0.18,
+            predictedDouble: 0.18,
+        });
+
+        expect(rates(bucket).success.verdict).toBe('too few rooms');
+    });
+
+    test('the double rate is judged against successes, so a right rate reads right', () => {
+        // The reported case: 18% doubles on ~22% successes read as 4% against
+        // every action, and the panel called it a fourfold shortfall
+        const bucket = bucketOf(
+            [...Array(6)].map(() => ({ actions: 100, successes: 22, doubles: 4, seconds: 60 })),
+            { serverSuccess: 0.22, predictedSuccess: 0.22, serverDouble: 0.18, predictedDouble: 0.18 }
+        );
+
+        expect(rates(bucket).double.observed).toBeCloseTo(4 / 22, 6);
+        expect(rates(bucket).double.verdict).toBe('consistent');
+    });
+
+    test('the calculator disagreeing with the server is still the loudest thing it can say', () => {
+        const bucket = bucketOf([{ actions: 10, successes: 5, doubles: 1, seconds: 30 }], {
+            serverSuccess: 0.5,
+            predictedSuccess: 0.62,
+            serverDouble: 0.18,
+            predictedDouble: 0.18,
+        });
+
+        expect(rates(bucket).success.formulaOff).toBe(true);
+        expect(rates(bucket).double.formulaOff).toBe(false);
+    });
+});
+
+describe('how long a clear costs', () => {
+    const visit = (over = {}) => ({
+        subjectHrid: '/skills/brewing',
+        roomLevel: 181,
+        kind: 'skilling',
+        cleared: false,
+        seconds: 120,
+        actions: 40,
+        successes: 10,
+        doubles: 2,
+        predictedSeconds: 137,
+        ...over,
+    });
+    const fold = (visits) => visits.reduce((totals, next) => foldRoomResult(totals, next), {});
+    const timing = (visits) => accuracyRows(fold(visits), { interval: wilsonInterval })[0].timing;
+
+    test('every second in the room counts, not only the winning visit', () => {
+        // Three failed attempts at the two-minute cap and a fourth that landed
+        // in 40s: a clear cost 400s, not 40
+        const t = timing([visit(), visit(), visit(), visit({ cleared: true, seconds: 40 })]);
+
+        expect(t.actual).toBeCloseTo(400, 6);
+        expect(t.perFinishedVisit).toBeCloseTo(40, 6);
+    });
+
+    test('which is the same thing the calculator predicts', () => {
+        // `expectedSeconds` is time per clear across attempts — a room cleared
+        // one visit in four is predicted to cost about four visits of seconds.
+        // Compared against the winning visit alone it read 3.4x too fast.
+        const t = timing([visit(), visit(), visit(), visit({ cleared: true, seconds: 40 })]);
+
+        expect(t.ratio).toBeCloseTo(400 / 137, 6);
+        expect(t.perFinishedVisit / t.predicted).toBeLessThan(0.5);
+    });
+
+    test('a room cleared first time is not credited with being four times fast', () => {
+        // The other half of the same error: conditioning on the visits that went
+        // well made lucky rooms look like the calculator was wildly pessimistic
+        const t = timing([visit({ cleared: true, seconds: 100 })]);
+
+        expect(t.actual).toBeCloseTo(100, 6);
+        expect(t.ratio).toBeCloseTo(100 / 137, 6);
+    });
+
+    test('the sample is carried, because a ratio off two clears is not a claim', () => {
+        const t = timing([visit(), visit({ cleared: true, seconds: 60 })]);
+
+        expect(t).toMatchObject({ clears: 1, visits: 2, seconds: 180 });
+    });
+
+    test('a room never cleared has no cost per clear rather than a zero', () => {
+        // What a clear costs when you have not had one is unknown, and the
+        // calculator's own figure for such a room is infinite
+        expect(timing([visit(), visit()])).toBeNull();
+    });
+
+    test('and a room with no prediction is not judged on timing at all', () => {
+        expect(timing([visit({ cleared: true, predictedSeconds: undefined })])).toBeNull();
+    });
+});
+
+describe('the order the record is listed in', () => {
+    const bucket = (subjectHrid, roomLevel, attempts) => ({
+        subjectHrid,
+        roomLevel,
+        kind: subjectHrid.startsWith('/skills/') ? 'skilling' : 'combat',
+        attempts,
+        clears: 1,
+        predicted: 0.5,
+    });
+
+    const totals = {
+        a: bucket('/skills/brewing', 181, 4),
+        b: bucket('/monsters/mimic', 200, 40),
+        c: bucket('/skills/brewing', 120, 1),
+        d: bucket('/skills/milking', 203, 5),
+    };
+
+    // What the client data says, which is what the panel passes in
+    const ORDER = { '/skills/milking': 1, '/skills/brewing': 8, '/monsters/mimic': 30 };
+    const listed = (orderOf) =>
+        accuracyRows(totals, { interval: wilsonInterval, orderOf }).map((row) => `${row.monster}@${row.level}`);
+
+    test('the game’s order, and by level inside a room type', () => {
+        expect(listed((hrid) => ORDER[hrid])).toEqual(['milking@203', 'brewing@120', 'brewing@181', 'mimic@200']);
+    });
+
+    test('a room type the game data has never heard of goes last, not first', () => {
+        // An undefined sort key would otherwise win every comparison
+        expect(listed((hrid) => (hrid === '/monsters/mimic' ? undefined : ORDER[hrid]))).toEqual([
+            'milking@203',
+            'brewing@120',
+            'brewing@181',
+            'mimic@200',
+        ]);
+    });
+
+    test('a name is still an order when there is no index', () => {
+        const byName = { '/skills/brewing': 'Brewing', '/skills/milking': 'Milking', '/monsters/mimic': 'Mimic' };
+        expect(listed((hrid) => byName[hrid])).toEqual(['brewing@120', 'brewing@181', 'milking@203', 'mimic@200']);
+    });
+
+    test('with no order given it falls back to most-fought first', () => {
+        expect(listed(undefined)[0]).toBe('mimic@200');
+    });
+
+    test('and the pooled rows follow the same order as the rows under them', () => {
+        const rows = accuracyRows(totals, { interval: wilsonInterval, orderOf: (hrid) => ORDER[hrid] });
+        const pooled = accuracyBySubject(rows, wilsonInterval, (hrid) => ORDER[hrid]);
+
+        expect(pooled.map((group) => group.monster)).toEqual(['milking', 'brewing', 'mimic']);
+    });
+});
+
+describe('putting the headline figures on a scale', () => {
+    const row = (attempts, clears, predicted, verdict = 'consistent') => ({
+        attempts,
+        clears,
+        predicted,
+        verdict,
+    });
+
+    test('the spread of expected clears comes from the uncertain rooms', () => {
+        // A hundred near-certain rooms barely move; ten coin flips do all the
+        // wandering, which is why a raw "ten below" cannot be read on its own
+        const certain = accuracySummary([row(100, 100, 0.999)], wilsonInterval);
+        const uncertain = accuracySummary([row(100, 50, 0.5)], wilsonInterval);
+
+        expect(certain.sd).toBeLessThan(1);
+        expect(uncertain.sd).toBeCloseTo(5, 0);
+    });
+
+    test('and the shortfall is reported in units of it', () => {
+        const summary = accuracySummary([row(100, 40, 0.5)], wilsonInterval);
+
+        expect(summary.expected).toBeCloseTo(50, 6);
+        expect(summary.sigma).toBeCloseTo(-2, 1);
+    });
+
+    test('a record with nothing uncertain in it has no scale to give', () => {
+        expect(accuracySummary([row(2, 2, 1)], wilsonInterval).sd).toBeNull();
+        expect(accuracySummary([], wilsonInterval).sigma).toBeNull();
+    });
+
+    test('rooms too small to contradict anything are not counted as tests', () => {
+        // Two attempts give an interval so wide nothing falls outside it, so
+        // calling it a test at one-in-twenty would overstate the chance level
+        const tiny = accuracySummary([row(2, 1, 0.5)], wilsonInterval);
+
+        expect(tiny.contestedByChance).toBeLessThan(0.01);
+    });
+
+    test('a room big enough to be wrong contributes about the interval’s own error rate', () => {
+        const big = accuracySummary([row(200, 100, 0.5)], wilsonInterval);
+
+        expect(big.contestedByChance).toBeGreaterThan(0.01);
+        expect(big.contestedByChance).toBeLessThan(0.1);
+    });
+
+    test('which is what the count of contradicted rooms has to be read against', () => {
+        // Twenty coin-flip rooms: some will be flagged whatever the model does
+        const rows = [...Array(20)].map(() => row(200, 100, 0.5));
+        const summary = accuracySummary(rows, wilsonInterval);
+
+        expect(summary.contestedByChance).toBeGreaterThan(0.5);
+    });
+
+    test('and is simply absent when nothing was passed to compute it with', () => {
+        expect(accuracySummary([row(200, 100, 0.5)]).contestedByChance).toBeNull();
+    });
+});
+
+describe('reading the record since a mark', () => {
+    const bucket = (over = {}) => ({
+        subjectHrid: '/skills/milking',
+        roomLevel: 200,
+        kind: 'skilling',
+        attempts: 10,
+        clears: 5,
+        rooms: 10,
+        seconds: 600,
+        actions: 100,
+        successes: 40,
+        predictedSuccess: 0.5,
+        ...over,
+    });
+
+    test('the difference between then and now, field by field', () => {
+        const before = { a: bucket() };
+        const now = { a: bucket({ attempts: 14, clears: 8, rooms: 14, seconds: 900, actions: 150, successes: 62 }) };
+
+        expect(totalsSince(now, before).a).toMatchObject({
+            attempts: 4,
+            clears: 3,
+            rooms: 4,
+            seconds: 300,
+            actions: 50,
+            successes: 22,
+        });
+    });
+
+    test('the prediction is carried through rather than subtracted', () => {
+        // It is the claim being tested, not a quantity
+        const since = totalsSince({ a: bucket({ attempts: 12 }) }, { a: bucket() });
+        expect(since.a.predictedSuccess).toBe(0.5);
+    });
+
+    test('a room untouched since the mark is not in the period at all', () => {
+        // Listing it would fill the panel with rooms showing nothing
+        expect(totalsSince({ a: bucket() }, { a: bucket() })).toEqual({});
+    });
+
+    test('a room first entered after the mark belongs to the period whole', () => {
+        const since = totalsSince({ b: bucket() }, { a: bucket() });
+        expect(since.b.attempts).toBe(10);
+    });
+
+    test('a record that has gone backwards means the mark is stale, not that nothing happened', () => {
+        // Wiped and rebuilt, or imported over. Subtracting a history this
+        // bucket never had would leave it reading empty.
+        const since = totalsSince({ a: bucket({ attempts: 3, clears: 1 }) }, { a: bucket() });
+
+        expect(since.a.attempts).toBe(3);
+        expect(since.a.clears).toBe(1);
+    });
+
+    test('no mark means the whole record', () => {
+        const now = { a: bucket() };
+        expect(totalsSince(now, null)).toBe(now);
+    });
+});
+
+describe('how long a fight ran', () => {
+    const fight = (over = {}) => ({
+        subjectHrid: '/monsters/mimic',
+        roomLevel: 200,
+        kind: 'combat',
+        cleared: false,
+        seconds: 40,
+        fights: 1,
+        fightSeconds: 40,
+        fightSquares: 1600,
+        predictedFightSeconds: 30,
+        ...over,
+    });
+    const fold = (visits) => visits.reduce((totals, next) => foldRoomResult(totals, next), {});
+    const length = (visits) => accuracyRows(fold(visits), { interval: wilsonInterval })[0].fightLength;
+
+    test('every attempt counts, won or lost', () => {
+        // Which is what makes this usable where a clear rate is not: the sim's
+        // own figure averages its losses in too
+        const fl = length([fight(), fight({ cleared: true, fightSeconds: 20, fightSquares: 400 })]);
+
+        expect(fl.fights).toBe(2);
+        expect(fl.actual).toBeCloseTo(30, 6);
+    });
+
+    test('fights that consistently run long are called out', () => {
+        const fl = length([...Array(8)].map(() => fight({ fights: 1, fightSeconds: 45, fightSquares: 2025 })));
+
+        expect(fl.verdict).toBe('sim too fast');
+        expect(fl.ratio).toBeCloseTo(1.5, 6);
+    });
+
+    test('and ones that run short the other way', () => {
+        const fl = length([...Array(8)].map(() => fight({ fights: 1, fightSeconds: 18, fightSquares: 324 })));
+
+        expect(fl.verdict).toBe('sim too slow');
+    });
+
+    test('one fight is a reading, not a verdict', () => {
+        expect(length([fight()]).verdict).toBe('too few fights');
+    });
+
+    test('a room with no simulated fight length has nothing to compare', () => {
+        expect(length([fight({ predictedFightSeconds: undefined })])).toBeNull();
+    });
+
+    test('and a skilling room has no fights at all', () => {
+        expect(length([fight({ fights: 0, fightSeconds: 0, fightSquares: 0 })])).toBeNull();
     });
 });

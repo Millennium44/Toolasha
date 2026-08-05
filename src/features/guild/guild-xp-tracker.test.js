@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest';
-import { pushXP, dropFlatRepeats, calcStats } from './guild-xp-tracker.js';
+import { pushXP, dropFlatRepeats, calcStats, guildLevelFromXP } from './guild-xp-tracker.js';
 
 const MIN = 60 * 1000;
 
@@ -68,5 +68,31 @@ describe('the blank-column bug', () => {
         expect(calcStats([{ t: 0, xp: 5 }]).lastXPH).toBe(0);
         expect(calcStats([]).lastXPH).toBe(0);
         expect(calcStats(null).lastXPH).toBe(0);
+    });
+});
+
+describe('guildLevelFromXP', () => {
+    // The table is indexed from level 1 at zero XP, so an off-by-one here shows
+    // up as a guild being told it is a level above or below the one the game
+    // shows it — the kind of wrong that is noticed immediately and trusted never
+    // again.
+    test('a guild with no experience is level 1', () => {
+        expect(guildLevelFromXP(0)).toMatchObject({ level: 1, nextLevelXP: 33, xpToNext: 33 });
+    });
+
+    test('crossing a threshold is the level', () => {
+        expect(guildLevelFromXP(33).level).toBe(2);
+        expect(guildLevelFromXP(75).level).toBe(2);
+        expect(guildLevelFromXP(76).level).toBe(3);
+    });
+
+    test('past the end of the table there is nothing left to work towards', () => {
+        const maxed = guildLevelFromXP(200_000_000_000);
+        expect(maxed.nextLevelXP).toBeNull();
+        expect(maxed.xpToNext).toBeNull();
+    });
+
+    test('a missing total is level 1 rather than a crash', () => {
+        expect(guildLevelFromXP(undefined).level).toBe(1);
     });
 });

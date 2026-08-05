@@ -9,6 +9,7 @@ import config from '../../core/config.js';
 import storage from '../../core/storage.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { bringPanelToFront } from '../../utils/panel-z-index.js';
+import { askChoice } from '../../utils/choice-dialog.js';
 
 class DungeonTrackerUIInteractions {
     constructor(state, chartRef, historyRef) {
@@ -41,7 +42,8 @@ class DungeonTrackerUIInteractions {
         this.setupClearAll();
         this.setupChartToggle();
         this.setupChartPopout();
-        this.setupKeyboardShortcut();
+        this.setupResetPositionButton();
+        this.setupFilterIndicator();
     }
 
     /**
@@ -51,9 +53,12 @@ class DungeonTrackerUIInteractions {
         const header = this.container.querySelector('#mwi-dt-header');
         if (!header) return;
 
-        header.addEventListener('mousedown', (e) => {
-            // Don't drag if clicking collapse button
-            if (e.target.id === 'mwi-dt-collapse-btn') return;
+        // A finger has to work like a cursor: mousedown never fires on touch,
+        // and without touch-action the browser claims the gesture for scrolling
+        header.style.touchAction = 'none';
+        header.addEventListener('pointerdown', (e) => {
+            // Don't drag if clicking collapse or reset-position buttons
+            if (e.target.id === 'mwi-dt-collapse-btn' || e.target.id === 'mwi-dt-reset-position-btn') return;
 
             bringPanelToFront(this.container);
             this.isDragging = true;
@@ -67,10 +72,11 @@ class DungeonTrackerUIInteractions {
 
         // Remove old handlers if they exist
         if (this.dragMoveHandler) {
-            document.removeEventListener('mousemove', this.dragMoveHandler);
+            document.removeEventListener('pointermove', this.dragMoveHandler);
         }
         if (this.dragUpHandler) {
-            document.removeEventListener('mouseup', this.dragUpHandler);
+            document.removeEventListener('pointerup', this.dragUpHandler);
+            document.removeEventListener('pointercancel', this.dragUpHandler);
         }
 
         // Create and store new handlers
@@ -110,8 +116,9 @@ class DungeonTrackerUIInteractions {
             }
         };
 
-        document.addEventListener('mousemove', this.dragMoveHandler);
-        document.addEventListener('mouseup', this.dragUpHandler);
+        document.addEventListener('pointermove', this.dragMoveHandler);
+        document.addEventListener('pointerup', this.dragUpHandler);
+        document.addEventListener('pointercancel', this.dragUpHandler);
     }
 
     /**
@@ -177,6 +184,7 @@ class DungeonTrackerUIInteractions {
             filterDungeonSelect.addEventListener('change', (e) => {
                 this.state.filterDungeon = e.target.value;
                 this.state.save();
+                this.updateFilterIndicator();
                 if (this.callbacks.onUpdateHistory) this.callbacks.onUpdateHistory();
                 if (this.callbacks.onUpdateChart) this.callbacks.onUpdateChart();
             });
@@ -188,10 +196,65 @@ class DungeonTrackerUIInteractions {
             filterTeamSelect.addEventListener('change', (e) => {
                 this.state.filterTeam = e.target.value;
                 this.state.save();
+                this.updateFilterIndicator();
                 if (this.callbacks.onUpdateHistory) this.callbacks.onUpdateHistory();
                 if (this.callbacks.onUpdateChart) this.callbacks.onUpdateChart();
             });
         }
+
+        // Filter character dropdown. Unlike the two above it has a value the
+        // moment the panel opens — "this character" — so the control is seeded
+        // from state rather than left on its first option.
+        const filterCharacterSelect = this.container.querySelector('#mwi-dt-filter-character');
+        if (filterCharacterSelect) {
+            filterCharacterSelect.value = this.state.filterCharacter;
+            filterCharacterSelect.addEventListener('change', (e) => {
+                this.state.filterCharacter = e.target.value;
+                this.state.save();
+                // The dungeon and team lists are built from the runs on show,
+                // and a different character has different teams
+                this.state.expandedGroups.clear();
+                if (this.callbacks.onUpdateHistory) this.callbacks.onUpdateHistory();
+                if (this.callbacks.onUpdateChart) this.callbacks.onUpdateChart();
+            });
+        }
+    }
+
+    /**
+     * Setup the always-visible "filtered" indicator. The dungeon/team filters
+     * persist across sessions while their controls sit inside the collapsed run
+     * history section, so a returning session with a stale filter would
+     * otherwise show "No runs match filters" with no visible cause.
+     */
+    setupFilterIndicator() {
+        const indicator = this.container.querySelector('#mwi-dt-filter-indicator');
+        if (!indicator) return;
+
+        indicator.addEventListener('click', () => {
+            this.state.clearFilters();
+            this.state.save();
+
+            const filterDungeonSelect = this.container.querySelector('#mwi-dt-filter-dungeon');
+            if (filterDungeonSelect) filterDungeonSelect.value = 'all';
+            const filterTeamSelect = this.container.querySelector('#mwi-dt-filter-team');
+            if (filterTeamSelect) filterTeamSelect.value = 'all';
+
+            this.updateFilterIndicator();
+
+            if (this.callbacks.onUpdateHistory) this.callbacks.onUpdateHistory();
+            if (this.callbacks.onUpdateChart) this.callbacks.onUpdateChart();
+        });
+
+        this.updateFilterIndicator();
+    }
+
+    /**
+     * Show or hide the "filtered" indicator based on current filter state.
+     */
+    updateFilterIndicator() {
+        const indicator = this.container.querySelector('#mwi-dt-filter-indicator');
+        if (!indicator) return;
+        indicator.style.display = this.state.hasActiveFilters() ? 'inline-flex' : 'none';
     }
 
     /**
@@ -202,7 +265,15 @@ class DungeonTrackerUIInteractions {
         if (!clearBtn) return;
 
         clearBtn.addEventListener('click', async () => {
-            if (confirm('Delete ALL run history data?\n\nThis cannot be undone!')) {
+            const confirmed = await askChoice({
+                title: 'Delete all run history',
+                message: 'Delete ALL run history data?\n\nThis cannot be undone!',
+                choices: [
+                    { value: 'delete', label: 'Delete everything', tone: 'danger' },
+                    { value: null, label: 'Cancel' },
+                ],
+            });
+            if (confirmed) {
                 try {
                     // Clear unified storage completely
                     await storage.setJSON('allRuns', [], 'unifiedRuns', true);
@@ -306,8 +377,11 @@ class DungeonTrackerUIInteractions {
         if (!this.state.position) {
             this.state.updatePosition(this.container);
         } else {
-            // Just update width for custom positions
-            this.container.style.minWidth = this.state.isCollapsed ? '250px' : '480px';
+            // Just update width for custom positions — same screen-width clamp
+            // as updatePosition, or collapsing on a phone re-widens the panel
+            this.container.style.minWidth = this.state.isCollapsed
+                ? 'min(250px, calc(100vw - 20px))'
+                : 'min(480px, calc(100vw - 20px))';
         }
 
         this.state.save();
@@ -483,18 +557,18 @@ class DungeonTrackerUIInteractions {
     }
 
     /**
-     * Setup keyboard shortcut for resetting position
-     * Ctrl+Shift+D to reset dungeon tracker to default position
+     * Setup the in-header button that resets the tracker to its default position.
+     * Position clamping keeps a dragged panel on-screen, but a user who just wants
+     * it back in the default spot still needs a manual way to do that.
      */
-    setupKeyboardShortcut() {
-        this.keydownHandler = (e) => {
-            // Ctrl+Shift+D - Reset dungeon tracker position
-            if (e.ctrlKey && e.shiftKey && e.key === 'D') {
-                e.preventDefault();
-                this.resetPosition();
-            }
-        };
-        document.addEventListener('keydown', this.keydownHandler);
+    setupResetPositionButton() {
+        const resetBtn = this.container.querySelector('#mwi-dt-reset-position-btn');
+        if (!resetBtn) return;
+
+        resetBtn.addEventListener('click', (e) => {
+            e.stopPropagation(); // Don't start a drag from the header
+            this.resetPosition();
+        });
     }
 
     /**
@@ -551,19 +625,14 @@ class DungeonTrackerUIInteractions {
     }
 
     cleanup() {
-        // Remove keyboard shortcut listener
-        if (this.keydownHandler) {
-            document.removeEventListener('keydown', this.keydownHandler);
-            this.keydownHandler = null;
-        }
-
         // Remove document-level drag listeners
         if (this.dragMoveHandler) {
-            document.removeEventListener('mousemove', this.dragMoveHandler);
+            document.removeEventListener('pointermove', this.dragMoveHandler);
             this.dragMoveHandler = null;
         }
         if (this.dragUpHandler) {
-            document.removeEventListener('mouseup', this.dragUpHandler);
+            document.removeEventListener('pointerup', this.dragUpHandler);
+            document.removeEventListener('pointercancel', this.dragUpHandler);
             this.dragUpHandler = null;
         }
 

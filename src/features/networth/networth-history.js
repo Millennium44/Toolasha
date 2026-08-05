@@ -8,13 +8,92 @@ import storage from '../../core/storage.js';
 import dataManager from '../../core/data-manager.js';
 import connectionState from '../../core/connection-state.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
+import { createChunkedHistory, timeChunkId } from '../../utils/chunked-history.js';
 
 const STORE_NAME = 'networthHistory';
 const SNAPSHOT_INTERVAL = 60 * 60 * 1000; // 1 hour
 const MAX_DETAIL_SNAPSHOTS = 25; // ~24h of hourly snapshots + 1 buffer
 
+/** Beyond this age, the history is thinned rather than kept point for point */
+const RETENTION_FULL_MS = 365 * 24 * 60 * 60 * 1000;
+
+/** One point per day is all a year-old trend can usefully say */
+const TAIL_BUCKET_MS = 24 * 60 * 60 * 1000;
+
+/** A hard ceiling under the thinning, so nothing can grow without bound */
+const MAX_HISTORY_POINTS = 12000;
+
 /** Gap threshold for chart line breaks (2 hours) */
 export const GAP_THRESHOLD_MS = 2 * 60 * 60 * 1000;
+
+/**
+ * The compact series, one record per calendar month.
+ *
+ * The whole series — up to `MAX_HISTORY_POINTS` of them — used to be rewritten
+ * every hour to append one point, and a year of history is most of a megabyte.
+ * A month's record holds the points recorded since the month began, so the
+ * hourly write is that month and nothing else; every earlier month is settled
+ * and never touched again.
+ *
+ * A month rather than something finer because the points are small and there are
+ * a lot of them: the key count has to stay inside `STORE_KEY_BUDGETS`, which
+ * this store already spends on twenty-five item-level detail snapshots.
+ *
+ * The prefix deliberately does not begin `networth_`, which the account view
+ * scans for character ids (`account-data.js`) and `character-key.js` matches
+ * against `^networth_[0-9a-zA-Z]+$` when deciding who adopts legacy data. A
+ * chunked key under that prefix would read as a character called
+ * `<id>_2026-08`.
+ */
+const SERIES_PREFIX = 'networthSeries';
+
+const seriesStore = createChunkedHistory({
+    storeName: STORE_NAME,
+    prefix: SERIES_PREFIX,
+    legacyKey: (charId) => `networth_${charId}`,
+    groupOf: (point) => timeChunkId(point?.t, 'month'),
+    compare: (a, b) => (a?.t || 0) - (b?.t || 0),
+    label: 'NetworthHistory',
+});
+
+export { SERIES_PREFIX, seriesStore };
+
+/**
+ * Keep the recent year whole and the rest as a daily outline.
+ *
+ * The alternative retentions are both wrong: dropping everything past a cutoff
+ * loses the only record of what the account looked like a year ago, and keeping
+ * every hourly point forever means an ever-growing array rewritten on every
+ * snapshot. A day is the finest resolution anyone reads a year-old trend at.
+ *
+ * @param {Array<Object>} history - Snapshots, oldest first
+ * @param {number} [now] - Clock, injectable for tests
+ * @returns {Array<Object>} Retained snapshots, oldest first
+ */
+export function pruneHistory(history, now = Date.now()) {
+    if (!Array.isArray(history) || history.length === 0) return [];
+
+    const cutoff = now - RETENTION_FULL_MS;
+    const tail = [];
+    const recent = [];
+    let lastBucket = null;
+
+    for (const point of history) {
+        if (!point || typeof point.t !== 'number') continue;
+        if (point.t >= cutoff) {
+            recent.push(point);
+            continue;
+        }
+        const bucket = Math.floor(point.t / TAIL_BUCKET_MS);
+        if (bucket !== lastBucket) {
+            tail.push(point);
+            lastBucket = bucket;
+        }
+    }
+
+    const pruned = tail.concat(recent);
+    return pruned.length > MAX_HISTORY_POINTS ? pruned.slice(pruned.length - MAX_HISTORY_POINTS) : pruned;
+}
 
 class NetworthHistory {
     constructor() {
@@ -23,6 +102,19 @@ class NetworthHistory {
         this.characterId = null;
         this.timerRegistry = createTimerRegistry();
         this.networthFeature = null;
+    }
+
+    /**
+     * @param {number} t - Snapshot timestamp
+     * @returns {string} The key that one detail snapshot lives under
+     */
+    _detailKey(t) {
+        return `networthDetail_${this.characterId}_${t}`;
+    }
+
+    /** @returns {string} The pre-split key that held the whole detail array */
+    _legacyDetailKey() {
+        return `networthDetail_${this.characterId}`;
     }
 
     /**
@@ -38,13 +130,19 @@ class NetworthHistory {
             return;
         }
 
-        // Load existing history from storage
-        const storageKey = `networth_${this.characterId}`;
-        this.history = await storage.get(storageKey, STORE_NAME, []);
+        // Load existing history from storage, thinning anything past retention.
+        // Done on load rather than only on write so a history that grew under an
+        // older build is brought back inside budget without waiting an hour.
+        // Thinning drops points out of the oldest months entirely, and the save
+        // that follows deletes those months' records.
+        const loaded = await seriesStore.load(this.characterId);
+        this.history = pruneHistory(loaded);
+        if (this.history.length !== loaded.length) {
+            seriesStore.save(this.characterId, this.history);
+        }
 
         // Load existing detail history from storage
-        const detailKey = `networthDetail_${this.characterId}`;
-        this.detailHistory = await storage.get(detailKey, STORE_NAME, []);
+        this.detailHistory = await this._loadDetailHistory();
 
         // Take an immediate first snapshot
         await this.takeSnapshot();
@@ -55,12 +153,62 @@ class NetworthHistory {
     }
 
     /**
+     * The detail snapshots, one key each, migrating anything left in the old
+     * single-array key.
+     *
+     * The array was rewritten whole on every hourly snapshot — twenty-five
+     * item-level maps of an entire inventory, to append one of them. Per-snapshot
+     * keys make the hourly write the one snapshot that is new.
+     * @returns {Promise<Array<{t: number, items: Object}>>} Snapshots, oldest first
+     * @private
+     */
+    async _loadDetailHistory() {
+        const legacy = await storage.get(this._legacyDetailKey(), STORE_NAME, null);
+
+        if (Array.isArray(legacy) && legacy.length > 0) {
+            const kept = legacy.slice(-MAX_DETAIL_SNAPSHOTS);
+            const entries = {};
+            for (const snapshot of kept) {
+                if (typeof snapshot?.t === 'number') entries[this._detailKey(snapshot.t)] = snapshot;
+            }
+            await storage.putAll(STORE_NAME, entries);
+            await storage.delete(this._legacyDetailKey(), STORE_NAME);
+            return kept;
+        }
+
+        // Already split: gather this character's snapshot keys back into order
+        const prefix = `${this._legacyDetailKey()}_`;
+        const keys = (await storage.getAllKeys(STORE_NAME)).filter(
+            (key) => typeof key === 'string' && key.startsWith(prefix)
+        );
+
+        const snapshots = [];
+        for (const key of keys) {
+            const snapshot = await storage.get(key, STORE_NAME, null);
+            if (snapshot && typeof snapshot.t === 'number') snapshots.push(snapshot);
+        }
+        snapshots.sort((a, b) => a.t - b.t);
+
+        // A window that grew past its cap (an interrupted trim, an older build)
+        // is brought back to size here rather than left to accumulate
+        while (snapshots.length > MAX_DETAIL_SNAPSHOTS) {
+            const dropped = snapshots.shift();
+            await storage.delete(this._detailKey(dropped.t), STORE_NAME);
+        }
+
+        return snapshots;
+    }
+
+    /**
      * Take a snapshot of the current networth data
      */
     async takeSnapshot() {
         if (!connectionState.isConnected()) return;
         if (!this.networthFeature?.currentData) return;
         if (!this.characterId) return;
+        // Nothing below can be stored, and an item-level snapshot of a whole
+        // inventory is not cheap to build for a write that will be refused
+        if (storage.isQuotaExceeded()) return;
 
         const data = this.networthFeature.currentData;
 
@@ -76,17 +224,28 @@ class NetworthHistory {
             abilities: Math.round(data.fixedAssets.abilities.totalCost + data.fixedAssets.abilityBooks.totalCost),
         };
 
-        this.pushSnapshot(snapshot);
+        // Written only when the calculator actually costed the shrines. A zero
+        // would be a claim — "this account has no shrines" — and the snapshots
+        // taken before the calculator knew about shrines cannot make it. The
+        // chart draws a missing field as a gap, which is the honest reading.
+        const shrineCost = data.fixedAssets.guildShrines?.totalCost;
+        if (Number.isFinite(shrineCost)) {
+            snapshot.guildShrines = Math.round(shrineCost);
+        }
 
-        // Take item-level detail snapshot for 24h breakdown
+        this.pushSnapshot(snapshot);
+        this.history = pruneHistory(this.history);
+
+        // Take item-level detail snapshot for 24h breakdown, which persists
+        // itself — only the new snapshot is written, not the whole window
         this.takeDetailSnapshot(data);
 
-        // Persist to storage
-        const storageKey = `networth_${this.characterId}`;
-        await storage.set(storageKey, this.history, STORE_NAME);
-
-        const detailKey = `networthDetail_${this.characterId}`;
-        await storage.set(detailKey, this.detailHistory, STORE_NAME);
+        // Persist — queued, not awaited. The debounced set's promise resolves
+        // only when its 3-second timer fires, so awaiting two in series was six
+        // seconds of waiting for timers that exist to postpone the write. This
+        // runs hourly and at startup; nothing downstream needs the write landed.
+        // Only the current month's record is written; the rest have not moved.
+        seriesStore.save(this.characterId, this.history);
     }
 
     /**
@@ -168,12 +327,18 @@ class NetworthHistory {
             }
         }
 
-        this.detailHistory.push({ t: Date.now(), items });
+        const snapshot = { t: Date.now(), items };
+        this.detailHistory.push(snapshot);
 
-        // Trim to rolling window
+        // Trim to rolling window, taking the dropped snapshots' keys with it
         if (this.detailHistory.length > MAX_DETAIL_SNAPSHOTS) {
-            this.detailHistory.splice(0, this.detailHistory.length - MAX_DETAIL_SNAPSHOTS);
+            const dropped = this.detailHistory.splice(0, this.detailHistory.length - MAX_DETAIL_SNAPSHOTS);
+            for (const old of dropped) {
+                storage.delete(this._detailKey(old.t), STORE_NAME);
+            }
         }
+
+        storage.set(this._detailKey(snapshot.t), snapshot, STORE_NAME);
     }
 
     /**
@@ -208,6 +373,25 @@ class NetworthHistory {
     }
 
     /**
+     * The recent slice of the history, for a trend rather than the whole record.
+     *
+     * A read rather than exposing `history` itself: a caller outside this
+     * module wants the last `hours` of points, not this class's storage shape,
+     * and reaching into `.history` directly would tie it to both. `history` is
+     * only ever the current character's — it is loaded fresh in `initialize`
+     * keyed by `characterId` and cleared in `disable` — so a character switch
+     * cannot leave a discontinuity in the middle of what this returns.
+     *
+     * @param {number} hours - How far back to look
+     * @returns {Array<Object>} Snapshots within the window, oldest first
+     */
+    recentSeries(hours) {
+        if (!(hours > 0)) return [];
+        const cutoff = Date.now() - hours * 60 * 60 * 1000;
+        return this.history.filter((point) => point.t >= cutoff);
+    }
+
+    /**
      * Delete a snapshot by timestamp and persist the change to storage.
      * @param {number} timestamp - The `t` value of the snapshot to remove
      */
@@ -215,8 +399,7 @@ class NetworthHistory {
         const idx = this.history.findIndex((s) => s.t === timestamp);
         if (idx === -1) return;
         this.history.splice(idx, 1);
-        const storageKey = `networth_${this.characterId}`;
-        await storage.set(storageKey, this.history, STORE_NAME);
+        await seriesStore.save(this.characterId, this.history);
     }
 
     /**
@@ -224,6 +407,10 @@ class NetworthHistory {
      */
     disable() {
         this.timerRegistry.clearAll();
+        // The records in memory belong to the character being left; serving them
+        // to the next one would be wrong, and writing them back under its keys
+        // would be worse
+        seriesStore.forget();
         this.history = [];
         this.detailHistory = [];
         this.characterId = null;

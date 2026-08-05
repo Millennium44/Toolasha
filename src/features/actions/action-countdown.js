@@ -112,6 +112,13 @@ class ActionCountdown {
     _tick() {
         this.rafId = requestAnimationFrame(() => this._tick());
 
+        // The readout shows tenths of a second, so ~10 redraws a second is all
+        // it can display — running the getComputedStyle work at 60–120fps just
+        // burns battery on style recalculation
+        const now = performance.now();
+        if (this._lastTickAt && now - this._lastTickAt < 100) return;
+        this._lastTickAt = now;
+
         if (!this.textEl || !this.textEl.isConnected || !this.totalTime) return;
 
         const span = this.textEl.querySelector('span');

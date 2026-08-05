@@ -1,6 +1,27 @@
 import { random } from './rng.js';
+import { recordUnknown } from './sim-warnings.js';
 
 class CombatUtilities {
+    /**
+     * The result of an attack the engine could not model, shaped like a real
+     * one so callers need no special case: nothing hit, nothing was drained,
+     * and no unit's state was touched.
+     * @returns {Object} A zeroed attack result
+     */
+    static skippedAttackResult() {
+        return {
+            damageDone: 0,
+            didHit: false,
+            thornDamageDone: 0,
+            thornType: undefined,
+            retaliationDamageDone: 0,
+            lifeStealHeal: 0,
+            hpDrain: 0,
+            manaLeechMana: 0,
+            isCrit: false,
+        };
+    }
+
     static getTarget(enemies) {
         if (!enemies) {
             return null;
@@ -48,7 +69,21 @@ class CombatUtilities {
         }
     }
 
-    static processAttack(source, target, abilityEffect = null) {
+    /**
+     * Resolve one attack.
+     *
+     * @param {Object} source - Attacking unit
+     * @param {Object} target - Defending unit
+     * @param {Object} [abilityEffect] - Ability effect, or null for an auto attack
+     * @param {boolean} [isTaskFight] - Whether this fight is the player's active
+     *   combat task. `taskDamage` is a conditional stat in the live game: it pays
+     *   only while the monster in front of you is your task monster. A simulation
+     *   has no way to know that on its own, so the caller says. Left false — the
+     *   default — a task trinket or task badge contributes nothing, which is what
+     *   a generic zone sim or a gear ranking should measure.
+     * @returns {Object} Attack result
+     */
+    static processAttack(source, target, abilityEffect = null, isTaskFight = false) {
         const combatStyle = abilityEffect
             ? abilityEffect.combatStyleHrid
             : source.combatDetails.combatStats.combatStyleHrid;
@@ -57,6 +92,10 @@ class CombatUtilities {
         let sourceAccuracyRating = 1;
         let sourceAutoAttackMaxDamage = 1;
         let targetEvasionRating = 1;
+        // An unrecognized style or damage type used to throw and take the whole
+        // run with it. Neither switch mutates anything, so the attack can be
+        // dropped after both have looked, leaving every unit untouched.
+        let unknownMechanic = null;
 
         switch (combatStyle) {
             case '/combat_styles/stab':
@@ -85,7 +124,8 @@ class CombatUtilities {
                 targetEvasionRating = target.combatDetails.magicEvasionRating;
                 break;
             default:
-                throw new Error('Unknown combat style: ' + combatStyle);
+                unknownMechanic = { category: 'combat style', value: combatStyle };
+                break;
         }
 
         let sourceDamageMultiplier = 1;
@@ -134,7 +174,13 @@ class CombatUtilities {
                 thornType = 'elementalThorns';
                 break;
             default:
-                throw new Error('Unknown damage type: ' + damageType);
+                unknownMechanic = unknownMechanic || { category: 'damage type', value: damageType };
+                break;
+        }
+
+        if (unknownMechanic) {
+            recordUnknown(unknownMechanic.category, unknownMechanic.value);
+            return CombatUtilities.skippedAttackResult();
         }
 
         let hitChance = 1;
@@ -176,8 +222,19 @@ class CombatUtilities {
         }
 
         let damageRoll = CombatUtilities.randomInt(sourceMinDamage, sourceMaxDamage);
-        // taskDamage intentionally excluded — trinket slot not exported by reference sims
-        // damageRoll *= 1 + source.combatDetails.combatStats.taskDamage;
+        // A deliberate divergence from the reference sims, which leave taskDamage
+        // out of the attacker's roll. The stat is real — the game applies it, and
+        // this engine already applies it to the same unit's thorns and
+        // retaliation. Omitting it here understated anyone wearing a task
+        // trinket, and made the two paths disagree about the same number.
+        //
+        // But the game only applies it while the monster is your task, so this
+        // is gated on the caller having said so. Applied unconditionally it
+        // inflated every generic sim and let task badges rank in the upgrade
+        // advisor on damage they would never deal off task.
+        if (isTaskFight) {
+            damageRoll *= 1 + source.combatDetails.combatStats.taskDamage;
+        }
         damageRoll *= 1 + target.combatDetails.combatStats.damageTaken;
         if (!abilityEffect) {
             damageRoll += damageRoll * source.combatDetails.combatStats.autoAttackDamage;
@@ -219,7 +276,9 @@ class CombatUtilities {
                 sourceDamageTakenRatio = (100 - penetratedSourceResistance) / 100;
             }
 
-            const targetTaskDamageMultiplier = 1.0 + target.combatDetails.combatStats.taskDamage;
+            // Same conditional stat, same gate: off task the defender's task
+            // bonus does nothing to their thorns either
+            const targetTaskDamageMultiplier = isTaskFight ? 1.0 + target.combatDetails.combatStats.taskDamage : 1.0;
             const sourceDamageTakenMultiplier = 1.0 + source.combatDetails.combatStats.damageTaken;
             const targetDamageMultiplier = targetTaskDamageMultiplier * sourceDamageTakenMultiplier;
 
@@ -256,7 +315,9 @@ class CombatUtilities {
                     sourceDamageTakenRatio = (100.0 - sourceEffectiveArmor) / 100.0;
                 }
 
-                const targetTaskDamageMultiplier = 1.0 + target.combatDetails.combatStats.taskDamage;
+                const targetTaskDamageMultiplier = isTaskFight
+                    ? 1.0 + target.combatDetails.combatStats.taskDamage
+                    : 1.0;
                 const sourceDamageTakenMultiplier = 1.0 + source.combatDetails.combatStats.damageTaken;
                 const retaliationDamageMultiplier = targetTaskDamageMultiplier * sourceDamageTakenMultiplier;
 
@@ -306,6 +367,11 @@ class CombatUtilities {
         };
     }
 
+    // The combat-style guards on processHeal and processRevive stay fatal on
+    // purpose: CombatSimulator screens for an unsupported style before it
+    // touches anything, so reaching one of these means a new caller skipped
+    // that screen and is about to heal or revive off a formula that does not
+    // apply. Better a loud stop than a silently wrong heal.
     static processHeal(source, abilityEffect, target) {
         if (abilityEffect.combatStyleHrid !== '/combat_styles/magic') {
             throw new Error('Heal ability effect not supported for combat style: ' + abilityEffect.combatStyleHrid);

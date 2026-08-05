@@ -169,6 +169,11 @@ function renderBlock({ directCost, directComplete, missingCost, missingComplete,
     container.style.cssText = `
         margin: 8px 0 16px 0;
         padding: 10px 14px;
+        /* Without this the padding and border are added to a full-width block,
+           so the card renders thirty pixels wider than the column holding it —
+           which is what put a horizontal scrollbar across the action panel */
+        box-sizing: border-box;
+        max-width: 100%;
         background: linear-gradient(180deg, rgba(91, 141, 239, 0.12) 0%, rgba(91, 141, 239, 0.05) 100%);
         border: 1px solid rgba(91, 141, 239, 0.3);
         border-radius: 8px;

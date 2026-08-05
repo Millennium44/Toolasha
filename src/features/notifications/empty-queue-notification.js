@@ -1,20 +1,34 @@
 /**
  * Empty Queue Notification
- * Sends browser notification when action queue becomes empty
+ *
+ * Says so when the logged-in character stops having anything to do.
+ *
+ * The deciding and the telling used to be one thing here: this file requested
+ * notification permission, built a `Notification`, and gave up entirely when
+ * permission was refused. All three of those are now the notification service's
+ * problem, and what is left is the only part that is about queues — the
+ * transition from having actions to having none.
+ *
+ * Two behaviours changed in the move, both for the better. Permission is no
+ * longer requested at initialize: it is asked for when the player ticks a
+ * notification setting, which is a gesture that means yes. And a refused
+ * permission no longer means silence — a visible tab gets a toast and a hidden
+ * one gets a marked tab title.
  */
 
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import webSocketHook from '../../core/websocket.js';
-import { createTimerRegistry } from '../../utils/timer-registry.js';
+import notificationService from './notification-service.js';
+
+/** One key for the whole feature, so the service's cooldown applies to it */
+const EVENT_KEY = 'empty-queue';
 
 class EmptyQueueNotification {
     constructor() {
         this.wasEmpty = false;
         this.unregisterHandlers = [];
-        this.permissionGranted = false;
         this.characterSwitchingHandler = null;
-        this.timerRegistry = createTimerRegistry();
     }
 
     /**
@@ -25,10 +39,6 @@ class EmptyQueueNotification {
             return;
         }
 
-        // Request notification permission
-        await this.requestPermission();
-
-        // Listen for action updates
         this.registerWebSocketListeners();
 
         this.characterSwitchingHandler = () => {
@@ -36,30 +46,6 @@ class EmptyQueueNotification {
         };
 
         dataManager.on('character_switching', this.characterSwitchingHandler);
-    }
-
-    /**
-     * Request browser notification permission
-     */
-    async requestPermission() {
-        if (!('Notification' in window)) {
-            console.warn('[Empty Queue Notification] Browser notifications not supported');
-            return;
-        }
-
-        if (Notification.permission === 'granted') {
-            this.permissionGranted = true;
-            return;
-        }
-
-        if (Notification.permission !== 'denied') {
-            try {
-                const permission = await Notification.requestPermission();
-                this.permissionGranted = permission === 'granted';
-            } catch (error) {
-                console.warn('[Empty Queue Notification] Permission request failed:', error);
-            }
-        }
     }
 
     /**
@@ -86,60 +72,17 @@ class EmptyQueueNotification {
             return;
         }
 
-        if (!this.permissionGranted) {
-            return;
-        }
-
-        // Get current actions from dataManager (source of truth for all queued actions)
+        // From dataManager rather than the payload: it is the source of truth for
+        // every queued action, and the payload is only the part that changed
         const allActions = dataManager.getCurrentActions();
         const isEmpty = allActions.length === 0;
 
         // Only notify on transition from not-empty to empty
         if (isEmpty && !this.wasEmpty) {
-            this.sendNotification();
+            notificationService.notify(EVENT_KEY, 'Your action queue is empty!');
         }
 
         this.wasEmpty = isEmpty;
-    }
-
-    /**
-     * Send browser notification
-     */
-    sendNotification() {
-        try {
-            if (typeof Notification === 'undefined') {
-                console.error('[Empty Queue Notification] Notification API not available');
-                return;
-            }
-
-            if (Notification.permission !== 'granted') {
-                console.error('[Empty Queue Notification] Notification permission not granted');
-                return;
-            }
-
-            // Use standard Notification API
-            const notification = new Notification('Milky Way Idle', {
-                body: 'Your action queue is empty!',
-                icon: 'https://www.milkywayidle.com/favicon.ico',
-                tag: 'empty-queue',
-                requireInteraction: false,
-            });
-
-            notification.onclick = () => {
-                window.focus();
-                notification.close();
-            };
-
-            notification.onerror = (error) => {
-                console.error('[Empty Queue Notification] Notification error:', error);
-            };
-
-            // Auto-close after 5 seconds
-            const closeTimeout = setTimeout(() => notification.close(), 5000);
-            this.timerRegistry.registerTimeout(closeTimeout);
-        } catch (error) {
-            console.error('[Empty Queue Notification] Failed to send notification:', error);
-        }
     }
 
     /**
@@ -154,7 +97,6 @@ class EmptyQueueNotification {
         this.unregisterHandlers.forEach((unregister) => unregister());
         this.unregisterHandlers = [];
         this.wasEmpty = false;
-        this.timerRegistry.clearAll();
     }
 }
 

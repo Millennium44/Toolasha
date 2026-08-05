@@ -6,11 +6,12 @@
  * - Market listings
  * - Houses (all 17)
  * - Abilities (equipped + others)
+ * - Guild shrine levels bought (credits only — tokens have no gold price)
  */
 
 import dataManager from '../../core/data-manager.js';
 import marketAPI from '../../api/marketplace.js';
-import { calculateAbilityCost } from '../../utils/ability-cost-calculator.js';
+import { explainAbilityCost } from '../../utils/ability-cost-calculator.js';
 import { calculateHouseBuildCost } from '../../utils/house-cost-calculator.js';
 import { calculateEnhancementPath } from '../enhancement/tooltip-enhancement.js';
 import { getEnhancingParams } from '../../utils/enhancement-config.js';
@@ -21,10 +22,11 @@ import config from '../../core/config.js';
 import networthCache from './networth-cache.js';
 import { getItemPrice, getItemPrices } from '../../utils/market-data.js';
 import { calculateItemValueBatch } from '../../utils/networth-worker-manager.js';
-import { DUNGEON_CHEST_CHEST_KEYS } from '../combat-stats/combat-stats-calculator.js';
+import { DUNGEON_CHEST_CHEST_KEYS } from '../../utils/dungeon-keys.js';
 import { getShopCoinCost } from '../../utils/game-lookups.js';
 import { isExcluded, getExclusions } from './networth-exclusions.js';
 import loadoutSnapshot from '../combat/loadout-snapshot.js';
+import { buildGoldPerCredit, priceGuildCreditCosts } from '../../utils/guild-credit-pricing.js';
 
 /**
  * Calculate the value of a single item
@@ -352,7 +354,12 @@ export function calculateAllAbilitiesCost(characterAbilities, abilityCombatTrigg
     for (const ability of characterAbilities) {
         if (!ability.abilityHrid || ability.level === 0) continue;
 
-        const cost = calculateAbilityCost(ability.abilityHrid, ability.level);
+        // No listing for the book is no price, not a free ability. Counting it
+        // as zero quietly understated the total and put the row at the bottom
+        // of the list as though it were worthless
+        const priced = explainAbilityCost(ability.abilityHrid, ability.level);
+        const unpriced = priced?.total == null;
+        const cost = unpriced ? 0 : priced.total;
         totalCost += cost;
 
         // Format ability name for display
@@ -366,6 +373,8 @@ export function calculateAllAbilitiesCost(characterAbilities, abilityCombatTrigg
             hrid: ability.abilityHrid,
             name: `${abilityName} ${ability.level}`,
             cost: cost,
+            unpriced,
+            books: priced?.books ?? 0,
         };
 
         breakdown.push(abilityData);
@@ -391,6 +400,75 @@ export function calculateAllAbilitiesCost(characterAbilities, abilityCombatTrigg
         equippedBreakdown,
         otherBreakdown,
     };
+}
+
+/**
+ * Cumulative cost of every guild shrine level the character has bought.
+ *
+ * A shrine level is paid for in guild credits and guild tokens. Credits have a
+ * gold value — the cheapest tradeable items that convert into them, the rate the
+ * guild exchange table quotes — so levels 1..current can be priced the way
+ * houses and abilities are, at the same pricing mode as the rest of net worth.
+ * Tokens cannot: nothing converts into them, so they are returned as a count for
+ * the row's tooltip and never added to a gold figure.
+ *
+ * The levels ride on guild traffic that may not have arrived this session, in
+ * which case data-manager hands back the reading it persisted, or nothing at
+ * all. Nothing at all is reported as `known: false` so the display omits the row
+ * rather than claiming the character has bought no shrine levels.
+ *
+ * @param {Object} characterGuildBuffMap - buffHrid → `{guildBuffHrid, level}`
+ * @param {string} [pricingMode='ask'] - Pricing side, as the net worth setting selects it
+ * @returns {{totalCost: number, tokens: number, breakdown: Array<Object>, known: boolean}}
+ */
+export function calculateGuildShrinesCost(characterGuildBuffMap, pricingMode = 'ask') {
+    const detailMap = dataManager.getInitClientData()?.guildBuffDetailMap;
+    if (!detailMap || !characterGuildBuffMap || Object.keys(characterGuildBuffMap).length === 0) {
+        return { totalCost: 0, tokens: 0, breakdown: [], known: false };
+    }
+
+    // Built once and shared: every level of every shrine prices the same credits
+    const goldPerCredit = buildGoldPerCredit(pricingMode);
+
+    let totalCost = 0;
+    let totalTokens = 0;
+    const breakdown = [];
+
+    for (const [buffHrid, entry] of Object.entries(characterGuildBuffMap)) {
+        const level = Math.max(0, Math.floor(Number(entry?.level) || 0));
+        const detail = detailMap[buffHrid];
+        if (!detail || level <= 0) continue;
+
+        let cost = 0;
+        let tokens = 0;
+        for (let step = 1; step <= level; step++) {
+            const levelCost = detail.levelCosts?.[String(step)];
+            if (!levelCost) continue;
+            tokens += Math.max(0, Math.floor(Number(levelCost.guildTokenCost) || 0));
+            // An unpriced credit contributes nothing rather than blocking the
+            // whole row: this is a running total of what was spent, and one
+            // credit type without a conversion should not blank the other four
+            const { lines } = priceGuildCreditCosts(levelCost.creditCosts, { mode: pricingMode, goldPerCredit });
+            for (const line of lines) cost += line.gold || 0;
+        }
+
+        totalCost += cost;
+        totalTokens += tokens;
+
+        // Named off the buff, not the shrine: Force sells a combat buff and a
+        // skilling one, and two rows both called "Force" would be unreadable
+        const buffName = buffHrid
+            .replace('/guild_buffs/', '')
+            .split('_')
+            .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+            .join(' ');
+
+        breakdown.push({ hrid: buffHrid, name: `${buffName} ${level}`, level, cost, tokens });
+    }
+
+    breakdown.sort((a, b) => b.cost - a.cost);
+
+    return { totalCost, tokens: totalTokens, breakdown, known: true };
 }
 
 /**
@@ -884,13 +962,47 @@ export async function calculateNetworth() {
         }
     }
 
+    // Calculate guild shrines value — apply per-shrine and whole-section exclusions.
+    // The levels are not part of getCombinedData(): they arrive on guild traffic
+    // rather than with the character, and data-manager holds them separately.
+    let guildShrinesData = calculateGuildShrinesCost(
+        dataManager.characterGuildBuffMap,
+        config.getSettingValue('networth_pricingMode') || 'ask'
+    );
+    if (isExcluded('assetType', 'guildShrines') && guildShrinesData.totalCost > 0) {
+        trackExcluded('assetType', 'guildShrines', 'All Guild Shrines', guildShrinesData.totalCost);
+        guildShrinesData = { totalCost: 0, tokens: 0, breakdown: [], known: guildShrinesData.known };
+    } else {
+        let excludedShrineCost = 0;
+        let excludedShrineTokens = 0;
+        const remainingShrines = [];
+        for (const shrine of guildShrinesData.breakdown) {
+            if (isExcluded('guildShrine', shrine.hrid)) {
+                trackExcluded('guildShrine', shrine.hrid, shrine.name, shrine.cost);
+                excludedShrineCost += shrine.cost;
+                excludedShrineTokens += shrine.tokens;
+            } else {
+                remainingShrines.push(shrine);
+            }
+        }
+        if (excludedShrineCost > 0 || excludedShrineTokens > 0) {
+            guildShrinesData = {
+                totalCost: guildShrinesData.totalCost - excludedShrineCost,
+                tokens: guildShrinesData.tokens - excludedShrineTokens,
+                breakdown: remainingShrines,
+                known: guildShrinesData.known,
+            };
+        }
+    }
+
     // Build excluded summary
     const excludedItems = [...excludedByKey.values()].sort((a, b) => b.amount - a.amount);
     const excludedTotal = excludedItems.reduce((sum, e) => sum + e.amount, 0);
 
     // Calculate totals
     const currentAssetsTotal = equippedValue + inventoryValue + listingsValue;
-    const fixedAssetsTotal = housesData.totalCost + abilitiesData.totalCost + abilityBooksValue;
+    const fixedAssetsTotal =
+        housesData.totalCost + abilitiesData.totalCost + abilityBooksValue + guildShrinesData.totalCost;
     const totalNetworth = currentAssetsTotal + fixedAssetsTotal;
 
     // Sort breakdowns by value descending
@@ -919,6 +1031,7 @@ export async function calculateNetworth() {
                 totalCost: abilityBooksValue,
                 breakdown: abilityBooksBreakdown,
             },
+            guildShrines: guildShrinesData,
         },
     };
 }
@@ -952,6 +1065,7 @@ function createEmptyNetworthData() {
                 totalCost: 0,
                 breakdown: [],
             },
+            guildShrines: { totalCost: 0, tokens: 0, breakdown: [], known: false },
         },
     };
 }

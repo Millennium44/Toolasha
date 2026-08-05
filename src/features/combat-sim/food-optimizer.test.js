@@ -12,8 +12,12 @@ vi.mock('../../utils/profit-helpers.js', () => ({ resolveItemPrice: vi.fn() }));
 const {
     restoreSignature,
     buildConsumablePools,
+    buildBuffDrinkPools,
     buildSearchSlots,
     cheapestAtLeast,
+    strongestInPool,
+    maxTierFoodSlots,
+    applyMaxTierFood,
     estimateFoodSimCount,
     readViability,
     runFoodOptimization,
@@ -164,6 +168,113 @@ describe('buildSearchSlots', () => {
         const pools = buildConsumablePools(gameData);
         expect(buildSearchSlots([null, null, null], gameData.itemDetailMap, pools)).toHaveLength(0);
         expect(buildSearchSlots([], gameData.itemDetailMap, pools)).toHaveLength(0);
+    });
+});
+
+describe('strongestInPool', () => {
+    test('picks the most restored', () => {
+        const pool = [
+            { hrid: 'a', totalRestore: 50, pricePerPoint: 1 },
+            { hrid: 'b', totalRestore: 500, pricePerPoint: 9 },
+        ];
+        expect(strongestInPool(pool).hrid).toBe('b');
+    });
+
+    test('breaks a tie on restore with price per point', () => {
+        const pool = [
+            { hrid: 'dear', totalRestore: 500, pricePerPoint: 9 },
+            { hrid: 'cheap', totalRestore: 500, pricePerPoint: 2 },
+        ];
+        expect(strongestInPool(pool).hrid).toBe('cheap');
+    });
+
+    test('has nothing to say about an empty or missing pool', () => {
+        expect(strongestInPool([])).toBe(null);
+        expect(strongestInPool(undefined)).toBe(null);
+    });
+});
+
+describe('maxTierFoodSlots', () => {
+    test('takes each slot to the top of its own kind', () => {
+        const { food, swaps } = maxTierFoodSlots(
+            [{ hrid: '/items/cheese' }, null, { hrid: '/items/donut' }],
+            foodGameData()
+        );
+
+        // Healing stays healing, mana stays mana
+        expect(food[0].hrid).toBe('/items/marsberry_cake');
+        expect(food[2].hrid).toBe('/items/star_fruit_yogurt');
+        expect(food[1]).toBe(null);
+        expect(swaps.map((s) => s.toName)).toEqual(['Marsberry Cake', 'Star Fruit Yogurt']);
+        expect(swaps[0]).toMatchObject({ index: 0, fromHrid: '/items/cheese', fromName: 'Cheese' });
+    });
+
+    test('keeps the slot when it is already the best of its kind', () => {
+        const { food, swaps } = maxTierFoodSlots([{ hrid: '/items/marsberry_cake' }], foodGameData());
+        expect(food[0].hrid).toBe('/items/marsberry_cake');
+        expect(swaps).toHaveLength(0);
+    });
+
+    test('never touches a buff-only food', () => {
+        const { food, swaps } = maxTierFoodSlots([{ hrid: '/items/lucky_coffee_cake' }], foodGameData());
+        expect(food[0].hrid).toBe('/items/lucky_coffee_cake');
+        expect(swaps).toHaveLength(0);
+    });
+
+    test('will not substitute something nobody sells', () => {
+        // The unpriced cake restores more than the marsberry cake and is still
+        // not the answer: a food with no market cannot be bought and would cost
+        // the run nothing, inflating profit/hr
+        const { food } = maxTierFoodSlots([{ hrid: '/items/cheese' }], foodGameData());
+        expect(food[0].hrid).toBe('/items/marsberry_cake');
+    });
+
+    test('keeps the player own eat-at thresholds, only changing the tier', () => {
+        const triggers = [{ conditionHrid: '/combat_trigger_conditions/current_hitpoints', value: 40 }];
+        const { food } = maxTierFoodSlots([{ hrid: '/items/cheese', triggers }], foodGameData());
+        expect(food[0].triggers).toEqual(triggers);
+    });
+
+    test('leaves the input array alone', () => {
+        const original = [{ hrid: '/items/cheese' }];
+        maxTierFoodSlots(original, foodGameData());
+        expect(original[0].hrid).toBe('/items/cheese');
+    });
+
+    test('survives an empty loadout and missing game data', () => {
+        expect(maxTierFoodSlots([], foodGameData()).food).toEqual([]);
+        expect(maxTierFoodSlots(null, foodGameData()).swaps).toEqual([]);
+        expect(maxTierFoodSlots([{ hrid: '/items/cheese' }], null).food[0].hrid).toBe('/items/cheese');
+    });
+});
+
+describe('applyMaxTierFood', () => {
+    test('substitutes every party member and says whose food changed', () => {
+        const dtos = [
+            { hrid: 'player1', food: [{ hrid: '/items/cheese' }] },
+            { hrid: 'player2', food: [{ hrid: '/items/donut' }] },
+        ];
+        const { playerDTOs, swaps } = applyMaxTierFood(dtos, foodGameData());
+
+        expect(playerDTOs[0].food[0].hrid).toBe('/items/marsberry_cake');
+        expect(playerDTOs[1].food[0].hrid).toBe('/items/star_fruit_yogurt');
+        expect(swaps.map((s) => s.playerHrid)).toEqual(['player1', 'player2']);
+    });
+
+    test('does not touch the DTOs it was handed', () => {
+        const dtos = [{ hrid: 'player1', food: [{ hrid: '/items/cheese' }] }];
+        const { playerDTOs } = applyMaxTierFood(dtos, foodGameData());
+
+        expect(dtos[0].food[0].hrid).toBe('/items/cheese');
+        expect(playerDTOs[0]).not.toBe(dtos[0]);
+    });
+
+    test('passes a player through untouched when nothing improves', () => {
+        const dtos = [{ hrid: 'player1', food: [{ hrid: '/items/marsberry_cake' }] }];
+        const { playerDTOs, swaps } = applyMaxTierFood(dtos, foodGameData());
+
+        expect(playerDTOs[0]).toBe(dtos[0]);
+        expect(swaps).toEqual([]);
     });
 });
 
@@ -525,5 +636,80 @@ describe('estimateFoodSimCount', () => {
 
     test('counts only the fixed probes with no searchable slots', () => {
         expect(estimateFoodSimCount(foodGameData(), [])).toBe(2);
+    });
+});
+
+describe('buff drink pools', () => {
+    function drinkGameData() {
+        const coffee = (hrid, name, itemLevel, family) => [
+            hrid,
+            {
+                name,
+                itemLevel,
+                categoryHrid: '/item_categories/drink',
+                consumableDetail: {
+                    cooldownDuration: 300,
+                    buffs: [{ uniqueHrid: family, typeHrid: '/buff_types/damage' }],
+                    defaultCombatTriggers: [{ value: 1 }],
+                },
+            },
+        ];
+        return {
+            itemDetailMap: Object.fromEntries([
+                coffee('/items/super_power_coffee', 'Super Power Coffee', 50, '/buff_uniques/power_coffee'),
+                coffee('/items/power_coffee', 'Power Coffee', 20, '/buff_uniques/power_coffee'),
+                coffee('/items/wisdom_coffee', 'Wisdom Coffee', 30, '/buff_uniques/wisdom_coffee'),
+                // A restore drink: the food search owns it
+                [
+                    '/items/tea',
+                    {
+                        name: 'Tea',
+                        categoryHrid: '/item_categories/drink',
+                        consumableDetail: {
+                            manapointRestore: 50,
+                            cooldownDuration: 5,
+                            buffs: [{ uniqueHrid: '/buff_uniques/tea' }],
+                        },
+                    },
+                ],
+                // A buff drink with no buff at all is nothing to rank
+                [
+                    '/items/plain_water',
+                    { name: 'Water', categoryHrid: '/item_categories/drink', consumableDetail: { buffs: [] } },
+                ],
+            ]),
+        };
+    }
+
+    beforeEach(() => {
+        resolveItemPrice.mockImplementation(() => ({ price: 250 }));
+    });
+
+    test('groups by the buff family the game uses for conflicts', () => {
+        const pools = buildBuffDrinkPools(drinkGameData());
+
+        expect([...pools.keys()].sort()).toEqual(['/buff_uniques/power_coffee', '/buff_uniques/wisdom_coffee']);
+    });
+
+    test('and orders each family weakest first, whatever order the data arrived in', () => {
+        const pools = buildBuffDrinkPools(drinkGameData());
+
+        expect(pools.get('/buff_uniques/power_coffee').map((e) => e.hrid)).toEqual([
+            '/items/power_coffee',
+            '/items/super_power_coffee',
+        ]);
+    });
+
+    test('an unpriced drink is still a candidate — the price is not what ranks it', () => {
+        resolveItemPrice.mockImplementation(() => ({ price: 0 }));
+        const pools = buildBuffDrinkPools(drinkGameData());
+
+        expect(pools.get('/buff_uniques/wisdom_coffee')[0].price).toBe(null);
+    });
+
+    test('the drink carries its own default triggers, so the sim drinks it as the game would', () => {
+        const pools = buildBuffDrinkPools(drinkGameData());
+
+        expect(pools.get('/buff_uniques/wisdom_coffee')[0].triggers).toEqual([{ value: 1 }]);
     });
 });

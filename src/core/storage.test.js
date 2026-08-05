@@ -1,0 +1,472 @@
+/**
+ * Tests for Storage's listStores() and putAll() (fake-indexeddb is not set up,
+ * so these drive the real Storage class against a hand-rolled fake IDBDatabase),
+ * and for the quota path — the one failure where a write is refused and
+ * everything upstream carries on believing it recorded.
+ */
+
+import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
+
+const { default: storage, STORE_KEY_BUDGETS } = await import('./storage.js');
+
+/**
+ * Build a minimal fake IDBDatabase supporting only what Storage's
+ * listStores()/putAll() touch: objectStoreNames and a readwrite transaction
+ * whose store exposes put(). Handlers are invoked via microtasks so they
+ * behave like real IDB requests firing after handler assignment.
+ * @param {Array<string>} storeNames - Store names the fake database exposes
+ * @param {Record<string, Record<string, *>>} [initialData] - Seed data per store
+ * @returns {{db: object, dataByStore: Map<string, Map<string, *>>}} Fake db and its backing data
+ */
+function createFakeDb(storeNames, initialData = {}) {
+    const dataByStore = new Map(storeNames.map((name) => [name, new Map(Object.entries(initialData[name] || {}))]));
+
+    const db = {
+        objectStoreNames: storeNames,
+        transaction(names) {
+            const storeName = names[0];
+            const storeData = dataByStore.get(storeName);
+            const pendingPuts = [];
+            const txn = { oncomplete: null, onerror: null };
+
+            const store = {
+                put(value, key) {
+                    const request = { onsuccess: null, onerror: null };
+                    pendingPuts.push(() => {
+                        if (storeData) {
+                            storeData.set(key, value);
+                            request.onsuccess?.();
+                        } else {
+                            request.onerror?.();
+                        }
+                    });
+                    return request;
+                },
+            };
+
+            queueMicrotask(() => {
+                for (const run of pendingPuts) run();
+                queueMicrotask(() => txn.oncomplete?.());
+            });
+
+            return {
+                objectStore: () => store,
+                get oncomplete() {
+                    return txn.oncomplete;
+                },
+                set oncomplete(fn) {
+                    txn.oncomplete = fn;
+                },
+                get onerror() {
+                    return txn.onerror;
+                },
+                set onerror(fn) {
+                    txn.onerror = fn;
+                },
+            };
+        },
+    };
+
+    return { db, dataByStore };
+}
+
+describe('Storage.listStores', () => {
+    beforeEach(() => {
+        storage.db = null;
+    });
+
+    test('returns every object store name in the database', async () => {
+        const { db } = createFakeDb(['settings', 'dungeonRuns', 'xpHistory']);
+        storage.db = db;
+
+        const stores = await storage.listStores();
+
+        expect(stores).toEqual(['settings', 'dungeonRuns', 'xpHistory']);
+    });
+
+    test('returns an empty array when the database is unavailable', async () => {
+        storage.db = null;
+
+        const stores = await storage.listStores();
+
+        expect(stores).toEqual([]);
+    });
+});
+
+describe('Storage.putAll', () => {
+    beforeEach(() => {
+        storage.db = null;
+    });
+
+    test('writes every entry to the target store in one transaction', async () => {
+        const { db, dataByStore } = createFakeDb(['xpHistory']);
+        storage.db = db;
+
+        const count = await storage.putAll('xpHistory', { a: 1, b: 2, c: 3 });
+
+        expect(count).toBe(3);
+        expect(Object.fromEntries(dataByStore.get('xpHistory'))).toEqual({ a: 1, b: 2, c: 3 });
+    });
+
+    test('returns 0 and writes nothing for an empty entries object', async () => {
+        const { db, dataByStore } = createFakeDb(['xpHistory']);
+        storage.db = db;
+
+        const count = await storage.putAll('xpHistory', {});
+
+        expect(count).toBe(0);
+        expect(dataByStore.get('xpHistory').size).toBe(0);
+    });
+
+    test('returns 0 when the database is unavailable', async () => {
+        storage.db = null;
+
+        const count = await storage.putAll('xpHistory', { a: 1 });
+
+        expect(count).toBe(0);
+    });
+});
+
+/**
+ * A database whose writes are refused for space, and whose deletes still work —
+ * the shape of a full origin, where freeing something is the only way out.
+ * @param {*} error - The error every put reports
+ * @returns {object} Fake IDBDatabase
+ */
+function createFullDb(error) {
+    return {
+        objectStoreNames: ['networthHistory'],
+        transaction() {
+            const txn = { oncomplete: null, onerror: null, onabort: null, error };
+            const requests = [];
+
+            const store = {
+                put() {
+                    const request = { onsuccess: null, onerror: null, error };
+                    requests.push(() => request.onerror?.());
+                    return request;
+                },
+                delete() {
+                    const request = { onsuccess: null, onerror: null };
+                    requests.push(() => request.onsuccess?.());
+                    return request;
+                },
+            };
+
+            queueMicrotask(() => {
+                for (const run of requests) run();
+                queueMicrotask(() => txn.onabort?.());
+            });
+
+            return {
+                objectStore: () => store,
+                get error() {
+                    return error;
+                },
+                set oncomplete(fn) {
+                    txn.oncomplete = fn;
+                },
+                set onerror(fn) {
+                    txn.onerror = fn;
+                },
+                set onabort(fn) {
+                    txn.onabort = fn;
+                },
+            };
+        },
+    };
+}
+
+const QUOTA_ERROR = Object.assign(new Error('The quota has been exceeded.'), { name: 'QuotaExceededError' });
+
+describe('Storage quota handling', () => {
+    let errorSpy;
+
+    beforeEach(() => {
+        storage.db = null;
+        storage.clearQuotaState();
+        storage._quotaFailures = 0;
+        storage._quotaListeners.clear();
+        errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+        errorSpy.mockRestore();
+        storage.clearQuotaState();
+        storage._quotaListeners.clear();
+        storage.db = null;
+    });
+
+    test('a refused write is reported as a failure, not as a success', async () => {
+        storage.db = createFullDb(QUOTA_ERROR);
+
+        const ok = await storage._saveToIndexedDB('networth_1', [1, 2, 3], 'networthHistory');
+
+        expect(ok).toBe(false);
+        expect(storage.isQuotaExceeded()).toBe(true);
+        expect(storage.diagnostics().quotaExceeded).toBe(true);
+        expect(storage.diagnostics().lastQuotaTarget).toEqual({ key: 'networth_1', storeName: 'networthHistory' });
+    });
+
+    test('the listener is told once, however many writes are refused after it', async () => {
+        storage.db = createFullDb(QUOTA_ERROR);
+        const listener = vi.fn();
+        storage.onQuotaExceeded(listener);
+
+        await storage._saveToIndexedDB('a', [1], 'networthHistory');
+        await storage._saveToIndexedDB('b', [2], 'networthHistory');
+        await storage._saveToIndexedDB('c', [3], 'networthHistory');
+
+        expect(listener).toHaveBeenCalledTimes(1);
+        expect(listener.mock.calls[0][0]).toMatchObject({ key: 'a', storeName: 'networthHistory' });
+        // Every failure is still counted, even though only the first is announced
+        expect(storage.diagnostics().quotaFailures).toBe(3);
+    });
+
+    test('a write refused for some other reason is not mistaken for a full disk', async () => {
+        storage.db = createFullDb(Object.assign(new Error('nope'), { name: 'ConstraintError' }));
+
+        const ok = await storage._saveToIndexedDB('a', [1], 'networthHistory');
+
+        expect(ok).toBe(false);
+        expect(storage.isQuotaExceeded()).toBe(false);
+    });
+
+    test('deleting something lets recording resume', async () => {
+        storage.db = createFullDb(QUOTA_ERROR);
+        await storage._saveToIndexedDB('a', [1], 'networthHistory');
+        expect(storage.isQuotaExceeded()).toBe(true);
+
+        await storage.delete('a', 'networthHistory');
+
+        expect(storage.isQuotaExceeded()).toBe(false);
+    });
+
+    test('the promise settles once, though both the request and the transaction fail', async () => {
+        storage.db = createFullDb(QUOTA_ERROR);
+        const listener = vi.fn();
+        storage.onQuotaExceeded(listener);
+
+        await storage._saveToIndexedDB('a', [1], 'networthHistory');
+        // Let the transaction's abort land after the request's error
+        await new Promise((r) => setTimeout(r, 0));
+
+        expect(storage.diagnostics().quotaFailures).toBe(1);
+        expect(listener).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('Storage.estimate', () => {
+    // Node only grew a global `navigator` in v21 — CI's Node 20 has none, so
+    // the suite provides one rather than assuming the runtime's
+    const runtimeNavigator = typeof globalThis.navigator !== 'undefined';
+
+    beforeEach(() => {
+        if (!runtimeNavigator) {
+            Object.defineProperty(globalThis, 'navigator', { value: {}, configurable: true, writable: true });
+        }
+    });
+
+    afterEach(() => {
+        if (runtimeNavigator) {
+            delete globalThis.navigator.storage;
+        } else {
+            delete globalThis.navigator;
+        }
+        storage._lastEstimate = null;
+    });
+
+    test('reports usage, quota and the percentage between them', async () => {
+        Object.defineProperty(globalThis.navigator, 'storage', {
+            value: { estimate: async () => ({ usage: 25_000_000, quota: 100_000_000 }) },
+            configurable: true,
+        });
+
+        const estimate = await storage.estimate();
+
+        expect(estimate.usage).toBe(25_000_000);
+        expect(estimate.quota).toBe(100_000_000);
+        expect(estimate.percent).toBeCloseTo(25);
+        expect(storage.lastEstimate()).toBe(estimate);
+        expect(storage.diagnostics().estimate).toBe(estimate);
+    });
+
+    test('a browser that does not report is null rather than a throw', async () => {
+        Object.defineProperty(globalThis.navigator, 'storage', { value: {}, configurable: true });
+        expect(await storage.estimate()).toBeNull();
+    });
+});
+
+describe('Storage.budgetReport', () => {
+    beforeEach(() => {
+        storage.db = null;
+    });
+
+    afterEach(() => {
+        storage.db = null;
+    });
+
+    test('counts keys per store and flags the ones past their soft budget', async () => {
+        const budget = STORE_KEY_BUDGETS.lootLogHistory;
+        const keysByStore = {
+            lootLogHistory: Array.from({ length: budget + 1 }, (_, i) => `k${i}`),
+            settings: ['a', 'b'],
+            somethingUnbudgeted: ['x'],
+        };
+        storage.db = { objectStoreNames: Object.keys(keysByStore) };
+        vi.spyOn(storage, 'getAllKeys').mockImplementation(async (name) => keysByStore[name] || []);
+
+        const rows = await storage.budgetReport();
+
+        // Over-budget first, so a report that is skimmed still says the thing
+        expect(rows[0]).toEqual({ storeName: 'lootLogHistory', keys: budget + 1, budget, over: true });
+        const unbudgeted = rows.find((row) => row.storeName === 'somethingUnbudgeted');
+        expect(unbudgeted).toEqual({ storeName: 'somethingUnbudgeted', keys: 1, budget: null, over: false });
+        expect(rows.every((row) => row.storeName === 'lootLogHistory' || !row.over)).toBe(true);
+
+        storage.getAllKeys.mockRestore();
+    });
+});
+
+/**
+ * The debounced write queue, tested at its one dangerous moment: the gap between
+ * "the timer fired" and "IndexedDB confirmed". A write that is dropped from the
+ * queue before it lands is a write that is silently lost, with no retry path.
+ */
+describe('Storage debounced write durability', () => {
+    let saves;
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        storage.db = {}; // set() only checks for truthiness before debouncing
+        storage.saveDebounceTimers.clear();
+        storage.pendingWrites.clear();
+        storage._writeGeneration.clear();
+        saves = [];
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+        storage.saveDebounceTimers.clear();
+        storage.pendingWrites.clear();
+        storage._writeGeneration.clear();
+        storage._saveToIndexedDB.mockRestore?.();
+        storage.db = null;
+    });
+
+    /**
+     * Stand in for IndexedDB, recording each attempt and answering as told.
+     * @param {boolean|Function} outcome - Fixed result, or a function of the attempt
+     */
+    function stubSaves(outcome) {
+        vi.spyOn(storage, '_saveToIndexedDB').mockImplementation(async (key, value, storeName) => {
+            const attempt = { key, value, storeName };
+            saves.push(attempt);
+            return typeof outcome === 'function' ? outcome(attempt) : outcome;
+        });
+    }
+
+    /** Let the debounce timer fire and its async body settle */
+    const runDebounce = () => vi.advanceTimersByTimeAsync(storage.SAVE_DEBOUNCE_DELAY + 1);
+
+    test('a write that fails stays queued instead of being dropped', async () => {
+        stubSaves(false);
+        storage.set('loot', [1, 2, 3], 'settings');
+
+        await runDebounce();
+
+        expect(saves).toHaveLength(1);
+        expect(storage.pendingWrites.get('settings:loot')).toMatchObject({
+            value: [1, 2, 3],
+            storeName: 'settings',
+        });
+    });
+
+    test('a write that succeeds leaves nothing queued behind it', async () => {
+        stubSaves(true);
+        const done = storage.set('loot', [1], 'settings');
+
+        await runDebounce();
+
+        expect(await done).toBe(true);
+        expect(storage.pendingWrites.size).toBe(0);
+    });
+
+    test('a failed write tells its caller so, rather than leaving it awaiting forever', async () => {
+        // Two dozen callers `await storage.set(...)`; a promise held open until some later
+        // flush would hang them for the session.
+        stubSaves(false);
+
+        const done = storage.set('loot', [1], 'settings');
+        await runDebounce();
+
+        expect(await done).toBe(false);
+        expect(storage.pendingWrites.has('settings:loot')).toBe(true);
+    });
+
+    test('flushAll retries the value a failed write left queued', async () => {
+        stubSaves(false);
+        const done = storage.set('loot', [1, 2, 3], 'settings');
+        await runDebounce();
+        expect(await done).toBe(false);
+        expect(storage.pendingWrites.size).toBe(1);
+
+        // The database comes back; the queued value is what gets written
+        storage._saveToIndexedDB.mockImplementation(async (key, value, storeName) => {
+            saves.push({ key, value, storeName });
+            return true;
+        });
+        await storage.flushAll();
+
+        expect(saves[1]).toEqual({ key: 'loot', value: [1, 2, 3], storeName: 'settings' });
+        expect(storage.pendingWrites.size).toBe(0);
+    });
+
+    test('flushAll leaves a still-failing write queued rather than clearing it', async () => {
+        stubSaves(false);
+        const done = storage.set('loot', [1], 'settings');
+        await runDebounce();
+
+        await storage.flushAll();
+
+        expect(await done).toBe(false);
+        expect(storage.pendingWrites.has('settings:loot')).toBe(true);
+    });
+
+    test('the newest write to a key wins and the superseded timer writes nothing', async () => {
+        stubSaves(true);
+        const first = storage.set('loot', 'old', 'settings');
+        vi.advanceTimersByTime(1000); // not yet fired
+        const second = storage.set('loot', 'new', 'settings');
+
+        await runDebounce();
+
+        expect(saves).toEqual([{ key: 'loot', value: 'new', storeName: 'settings' }]);
+        expect(await first).toBe(true);
+        expect(await second).toBe(true);
+    });
+
+    test('a write to a different store is queued separately', async () => {
+        stubSaves(false);
+        storage.set('loot', [1], 'settings');
+        storage.set('loot', [2], 'networthHistory');
+
+        await runDebounce();
+
+        expect(storage.pendingWrites.size).toBe(2);
+        expect(storage.pendingWrites.get('networthHistory:loot')).toMatchObject({ value: [2] });
+    });
+
+    test('cleanupPendingWrites drops the queue and its generation counters', async () => {
+        stubSaves(false);
+        const done = storage.set('loot', [1], 'settings');
+        await runDebounce();
+        expect(storage._writeGeneration.size).toBe(1);
+
+        storage.cleanupPendingWrites();
+
+        expect(await done).toBe(false);
+        expect(storage.pendingWrites.size).toBe(0);
+        expect(storage._writeGeneration.size).toBe(0);
+    });
+});

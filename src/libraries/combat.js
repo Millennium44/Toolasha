@@ -9,6 +9,7 @@
 import zoneIndices from '../features/combat/zone-indices.js';
 import loadoutEnhancementDisplay from '../features/combat/loadout-enhancement-display.js';
 import loadoutSnapshot from '../features/combat/loadout-snapshot.js';
+import combatRecorder from '../features/combat/combat-recorder.js';
 import scrollSimulator from '../features/combat/scroll-simulator.js';
 import scrollSimulatorUI from '../features/combat/scroll-simulator-ui.js';
 import dungeonTracker from '../features/combat/dungeon-tracker.js';
@@ -16,6 +17,14 @@ import dungeonTrackerUI from '../features/combat/dungeon-tracker-ui.js';
 import dungeonTrackerChatAnnotations from '../features/combat/dungeon-tracker-chat-annotations.js';
 import combatSummary from '../features/combat/combat-summary.js';
 import combatBattleCounter from '../features/combat/combat-battle-counter.js';
+import combatDropLuck from '../features/combat/combat-drop-luck.js';
+import { partyLuckPanel } from '../features/combat/party-luck-panel.js';
+import combatDPS from '../features/combat/combat-dps.js';
+import portraitDps from '../features/combat/portrait-dps.js';
+// Side-effect import: registers the Build Score overlay row
+import '../features/profile/build-score-row.js';
+// Side-effect import: registers the Sim Accuracy overlay row and its panel
+import '../features/combat/combat-replay-check.js';
 import labyrinthTracker from '../features/combat/labyrinth-tracker.js';
 import labyrinthBestLevel from '../features/combat/labyrinth-best-level.js';
 import labyrinthShopPrices from '../features/combat/labyrinth-shop-prices.js';
@@ -30,14 +39,33 @@ import labSim from '../features/combat-sim/lab-sim.js';
 
 // Combat stats
 import combatStats from '../features/combat-stats/combat-stats.js';
+import combatStatsDataCollector from '../features/combat-stats/combat-stats-data-collector.js';
+import * as combatStatsCalculator from '../features/combat-stats/combat-stats-calculator.js';
 
 // Abilities
 import abilityBookCalculator from '../features/abilities/ability-book-calculator.js';
+import manaTracker from '../features/combat/mana-tracker.js';
+// Namespaces, not default exports: both are in rollup's externals map, so
+// another bundle importing `{ damageBreakdown }` from one of them compiles to
+// `Toolasha.Combat.damageTracker.damageBreakdown` — which is undefined unless
+// what sits at that global is the module itself
+import * as damageTracker from '../features/combat/damage-tracker.js';
+import * as damageTakenTracker from '../features/combat/damage-taken-tracker.js';
 import abilityDictionaryButton from '../features/abilities/ability-dictionary-button.js';
 
 // Profile (combat score)
 import combatScore from '../features/profile/combat-score.js';
 import characterCardButton from '../features/profile/character-card-button.js';
+
+// Guild
+import guildXPTracker from '../features/guild/guild-xp-tracker.js';
+import guildXPDisplay from '../features/guild/guild-xp-display.js';
+import guildCreditValue from '../features/guild/guild-credit-value.js';
+import guildRosterView from '../features/guild/guild-roster-view.js';
+import guildTrials from '../features/guild/guild-trials.js';
+import guildTrialScoreboard from '../features/guild/guild-trial-scoreboard.js';
+// Side-effect import: registers the Guild Trials overlay row
+import '../features/guild/guild-trials-row.js';
 
 // Export to global namespace
 const toolashaRoot = window.Toolasha || {};
@@ -51,6 +79,7 @@ toolashaRoot.Combat = {
     zoneIndices,
     loadoutEnhancementDisplay,
     loadoutSnapshot,
+    combatRecorder,
     scrollSimulator,
     scrollSimulatorUI,
     dungeonTracker,
@@ -58,6 +87,10 @@ toolashaRoot.Combat = {
     dungeonTrackerChatAnnotations,
     combatSummary,
     combatBattleCounter,
+    combatDropLuck,
+    partyLuckPanel,
+    combatDPS,
+    portraitDps,
     labyrinthTracker,
     labyrinthBestLevel,
     labyrinthShopPrices,
@@ -70,12 +103,23 @@ toolashaRoot.Combat = {
         constructMilkonomyExport,
     },
     combatStats,
+    combatStatsDataCollector,
+    combatStatsCalculator,
     abilityBookCalculator,
+    manaTracker,
+    damageTracker,
+    damageTakenTracker,
     abilityDictionaryButton,
     combatScore,
     characterCardButton,
     combatSim,
     labSim,
+    guildXPTracker,
+    guildXPDisplay,
+    guildCreditValue,
+    guildRosterView,
+    guildTrials,
+    guildTrialScoreboard,
 };
 
 // Console-driven debug tools, kept out of the feature namespaces because
@@ -85,6 +129,7 @@ toolashaRoot.Debug = {
     ...labyrinthCapture,
     labAccuracy: () => labyrinthClearRate.labAccuracy(),
     labRooms: () => labyrinthClearRate.labRooms(),
+    guildXp: () => guildXPTracker.debugState(),
 };
 
 console.log('[Toolasha] Combat library loaded');

@@ -6,6 +6,7 @@
  * postMessage and returns results.
  */
 
+import { buildPlayerExtraBuffs } from './engine/extra-buffs.js';
 import { setGameData } from './engine/game-data.js';
 import CombatSimulator from './engine/combat-simulator.js';
 import Labyrinth from './engine/labyrinth.js';
@@ -29,6 +30,7 @@ onmessage = function (event) {
             labyrinth: labyrinthData,
             precision,
             seed,
+            isTaskFight,
         } = event.data;
 
         // Set game data for the engine singleton
@@ -63,7 +65,10 @@ onmessage = function (event) {
             const player = Player.createFromDTO(cloned);
             // Labyrinth: crate buffs go to zoneBuffs; otherwise use zone buffs
             player.zoneBuffs = labyrinth ? labyrinth.buffs : zone.buffs;
-            player.extraBuffs = extraBuffs;
+            // Guild and achievement buffs come from each player's own DTO — the
+            // shared extraBuffs used to carry player 1's, handing their guild's
+            // bonuses to every teammate in a party sim
+            player.extraBuffs = buildPlayerExtraBuffs(extraBuffs, cloned);
             return player;
         });
 
@@ -78,7 +83,10 @@ onmessage = function (event) {
                     progress: Math.round(progressData.progress * 100),
                 });
             },
-            labyrinth
+            labyrinth,
+            // Absent (every caller that has not opted in) this is false, and
+            // taskDamage sits out the run
+            Boolean(isTaskFight)
         );
 
         // Run simulation

@@ -1,14 +1,66 @@
 /**
  * Labyrinth Level Finder
- * Binary search to find the highest beatable roomLevel at a given win-rate threshold.
+ *
+ * The highest room level a character still clears at a given rate, found by
+ * binary search over simulated fights.
+ *
+ * This is the same question the labyrinth panel's Recommend button asks, and it
+ * is deliberately answered over the same window and against the same bar. The
+ * two used to disagree: this search ran a fixed 20–300 at a fixed 95%, which
+ * stopped short of what a high-level character can clear, wasted probes below
+ * the floor for a low-level one, and measured against a bar nothing else in the
+ * script uses. The window now comes from the character — every room level the
+ * automation table could send them to — and the bar from the shared setting.
  */
 
+import config from '../../core/config.js';
 import { runLabyrinthSimulation } from './combat-sim-runner.js';
+import { SKIP_THRESHOLD_RANGE } from '../combat/labyrinth-clear-rate.js';
 
-const DEFAULT_MIN_LEVEL = 20;
-const DEFAULT_MAX_LEVEL = 300;
-const DEFAULT_THRESHOLD = 0.95; // 95% win rate
-const DEFAULT_SIM_HOURS = 2; // 2 hours per level gives ~50-100+ encounters depending on fight time
+/** Hours to simulate per probe: ~50-100+ encounters depending on fight time */
+const DEFAULT_SIM_HOURS = 2;
+/** No probe decides on fewer fights than this, however lopsided they look */
+const DECISION_MIN_TRIALS = 40;
+/** A level genuinely on the bar never decides; this is where it gives up */
+const DECISION_MAX_TRIALS = 4000;
+/** The lowest room the labyrinth has */
+const MIN_ROOM_LEVEL = 1;
+
+/**
+ * The room levels worth searching for a character at this level.
+ *
+ * Room level is `effectiveLevel + skip - 1` and the skip threshold runs
+ * ±SKIP_THRESHOLD_RANGE, so those two ends are every room the game could send
+ * them to — nothing outside it is reachable, and everything inside it is.
+ *
+ * @param {number} referenceLevel - The character's effective combat level
+ * @returns {{minLevel: number, maxLevel: number}}
+ */
+export function searchWindowFor(referenceLevel) {
+    const anchor = Number.isFinite(referenceLevel) && referenceLevel > 0 ? Math.floor(referenceLevel) : null;
+    if (anchor === null) {
+        // Nothing to anchor to. Searching the full positive range is slower but
+        // is at least not wrong, and beats inventing a level for the character.
+        return { minLevel: MIN_ROOM_LEVEL, maxLevel: SKIP_THRESHOLD_RANGE };
+    }
+    return {
+        minLevel: Math.max(MIN_ROOM_LEVEL, anchor - SKIP_THRESHOLD_RANGE),
+        maxLevel: Math.max(MIN_ROOM_LEVEL, anchor + SKIP_THRESHOLD_RANGE - 1),
+    };
+}
+
+/**
+ * The clear-rate bar, as a ratio. The panel's Target Win % setting, so Find Max
+ * and Recommend aim at the same thing unless the caller says otherwise.
+ * @returns {number} 0-1
+ */
+export function defaultThreshold() {
+    const pct = Math.min(
+        100,
+        Math.max(1, Math.floor(Number(config.getSettingValue('labyrinthRecommendTargetRate', 70)) || 70))
+    );
+    return pct / 100;
+}
 
 /**
  * Find the highest room level where win rate >= threshold.
@@ -20,18 +72,19 @@ const DEFAULT_SIM_HOURS = 2; // 2 hours per level gives ~50-100+ encounters depe
  * @param {string} params.monsterHrid - Labyrinth monster HRID
  * @param {string[]} params.crates - Crate item HRIDs
  * @param {Object} params.communityBuffs - Community buff config
- * @param {number} [params.threshold=0.95] - Win rate threshold (0-1)
- * @param {number} [params.minLevel=20] - Minimum room level to search
- * @param {number} [params.maxLevel=300] - Maximum room level to search
+ * @param {Object} [params.labyrinthCombatBuffs] - Labyrinth-only combat buffs
+ * @param {number} [params.threshold] - Win rate bar (0-1); defaults to the
+ *   labyrinthRecommendTargetRate setting
+ * @param {number} [params.referenceLevel] - The character's effective combat
+ *   level, which sets the search window when minLevel/maxLevel are not given
+ * @param {number} [params.minLevel] - Lowest room level to search
+ * @param {number} [params.maxLevel] - Highest room level to search
  * @param {number} [params.simHours=2] - Hours to simulate per level
  * @param {Function} [onProgress] - Progress callback ({ level, winRate, step, totalSteps })
- * @returns {Promise<Object>} { maxLevel, winRate, attempts, encounters }
+ * @returns {Promise<Object>} { maxLevel, winRate, steps, threshold, minLevel,
+ *   maxSearched, cleared, atCeiling } — `cleared` is false when nothing in the
+ *   window met the bar, in which case `maxLevel` is 0 rather than a level
  */
-/** No probe decides on fewer fights than this, however lopsided they look */
-const DECISION_MIN_TRIALS = 40;
-/** A level genuinely on the bar never decides; this is where it gives up */
-const DECISION_MAX_TRIALS = 4000;
-
 export async function findMaxLabyrinthLevel(params, onProgress) {
     const {
         gameData,
@@ -41,16 +94,20 @@ export async function findMaxLabyrinthLevel(params, onProgress) {
         crates,
         communityBuffs,
         labyrinthCombatBuffs,
-        threshold = DEFAULT_THRESHOLD,
-        minLevel = DEFAULT_MIN_LEVEL,
-        maxLevel = DEFAULT_MAX_LEVEL,
+        threshold = defaultThreshold(),
+        referenceLevel = null,
         simHours = DEFAULT_SIM_HOURS,
     } = params;
+
+    const window = searchWindowFor(referenceLevel);
+    const minLevel = Math.max(MIN_ROOM_LEVEL, Math.floor(Number(params.minLevel) || window.minLevel));
+    const maxLevel = Math.max(minLevel, Math.floor(Number(params.maxLevel) || window.maxLevel));
 
     let low = minLevel;
     let high = maxLevel;
     let bestLevel = 0;
     let bestWinRate = 0;
+    let bestAvgFightSeconds = 0;
     let step = 0;
     const totalSteps = Math.ceil(Math.log2(maxLevel - minLevel + 1)) + 1;
 
@@ -87,6 +144,10 @@ export async function findMaxLabyrinthLevel(params, onProgress) {
         if (winRate >= threshold) {
             bestLevel = mid;
             bestWinRate = winRate;
+            // Kept so the caller can quote a throughput at the level it lands
+            // on. The search itself is indifferent to it — the objective is
+            // still the highest level that clears at the bar.
+            bestAvgFightSeconds = attempts > 0 ? simResult.simulatedTime / 1e9 / attempts : 0;
             low = mid + 1;
         } else {
             high = mid - 1;
@@ -96,6 +157,16 @@ export async function findMaxLabyrinthLevel(params, onProgress) {
     return {
         maxLevel: bestLevel,
         winRate: bestWinRate,
+        avgFightSeconds: bestAvgFightSeconds,
         steps: step,
+        threshold,
+        minLevel,
+        maxSearched: maxLevel,
+        // Nothing in the window met the bar. Distinct from "level 0", which is
+        // not a room — the caller has to say so rather than do arithmetic on it.
+        cleared: bestLevel > 0,
+        // Still clearing at the top of the window, so the true answer is at
+        // least this and possibly higher
+        atCeiling: bestLevel === maxLevel,
     };
 }

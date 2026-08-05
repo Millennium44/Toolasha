@@ -100,7 +100,7 @@ class DraggableModals {
         let startDx = 0;
         let startDy = 0;
 
-        const onMouseDown = (e) => {
+        const onPointerDown = (e) => {
             if (e.button !== 0) return;
             dragging = true;
             startMouseX = e.clientX;
@@ -114,24 +114,26 @@ class DraggableModals {
             e.preventDefault();
 
             // Attach document listeners only for the duration of the drag
-            document.addEventListener('mousemove', onMouseMove);
-            document.addEventListener('mouseup', onMouseUp);
+            document.addEventListener('pointermove', onPointerMove);
+            document.addEventListener('pointerup', onPointerUp);
+            document.addEventListener('pointercancel', onPointerUp);
         };
 
-        const onMouseMove = (e) => {
+        const onPointerMove = (e) => {
             if (!dragging) return;
             const dx = startDx + (e.clientX - startMouseX);
             const dy = startDy + (e.clientY - startMouseY);
             this._applyTransform(modalBox, dx, dy);
         };
 
-        const onMouseUp = () => {
+        const onPointerUp = () => {
             if (!dragging) return;
             dragging = false;
             bar.style.cursor = 'grab';
 
-            document.removeEventListener('mousemove', onMouseMove);
-            document.removeEventListener('mouseup', onMouseUp);
+            document.removeEventListener('pointermove', onPointerMove);
+            document.removeEventListener('pointerup', onPointerUp);
+            document.removeEventListener('pointercancel', onPointerUp);
 
             const t = new DOMMatrix(window.getComputedStyle(modalBox).transform);
             const dx = isNaN(t.m41) ? 0 : t.m41;
@@ -140,7 +142,9 @@ class DraggableModals {
             storage.set(STORAGE_KEY, this.offsets, STORE_NAME);
         };
 
-        bar.addEventListener('mousedown', onMouseDown);
+        // A finger works like a cursor, and the bar's gesture is a drag, not a scroll
+        bar.style.touchAction = 'none';
+        bar.addEventListener('pointerdown', onPointerDown);
     }
 
     disable() {

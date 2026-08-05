@@ -19,8 +19,13 @@ import {
     removeMaterialTabs,
     removeShrineMarketTabs,
     updateTabBadge,
+    visibleTabsContainer,
 } from '../../utils/marketplace-tabs.js';
 import { createAutofillManager } from '../../utils/marketplace-autofill.js';
+import { tierFromLevel } from './guild-trials-math.js';
+import { GUILD_BUILDING_MAX_LEVEL } from './guild-trials-store.js';
+import { describeGuildTokenGold } from './guild-token-value.js';
+import { captureTokenExchangeFromModal, hydrateCapturedTokenExchanges } from './guild-token-exchange-capture.js';
 
 const CSS_CLASS = 'mwi-guild-credit-value';
 
@@ -104,9 +109,17 @@ class GuildCreditValue {
 
         this.autofillManager.initialize();
 
-        const unregister = domObserver.onClass('GuildCreditValue', 'GuildPanel_exchangeModalContent', (el) =>
-            this._render(el)
-        );
+        // The stored token exchange, read once so the synchronous valuation can
+        // see it. Nothing waits on it: until it lands, tokens are priced the way
+        // they were before.
+        hydrateCapturedTokenExchanges();
+
+        const unregister = domObserver.onClass('GuildCreditValue', 'GuildPanel_exchangeModalContent', (el) => {
+            // Before the table is drawn, because the reading is of the game's
+            // own markup and this script is about to add markup of its own
+            this._captureTokenExchange(el);
+            this._render(el);
+        });
         this.unregisterObservers.push(unregister);
 
         const unregisterShrine = domObserver.onClass('GuildCreditValue-Shrine', 'GuildPanel_guildModalContent', (el) =>
@@ -127,6 +140,45 @@ class GuildCreditValue {
         this.unregisterObservers.push(unregisterTileSummary);
 
         this.initialized = true;
+    }
+
+    /**
+     * Read the token→credit rate off an open exchange dialog.
+     *
+     * The Guild Shop states this rate and nothing in the client data has been
+     * found that does, so this dialog is where it comes from. Runs regardless of
+     * the `guildCreditValue` setting: that setting governs a table this script
+     * draws, and reading a number off the game's own markup is not drawing
+     * anything. Failures are swallowed inside the capture module — a dialog that
+     * does not parse must never stop the table below it from rendering.
+     *
+     * @param {Element} modalEl - The exchange modal
+     * @returns {void}
+     */
+    _captureTokenExchange(modalEl) {
+        const gameData = dataManager.getInitClientData();
+        const itemDetailMap = gameData?.itemDetailMap;
+        if (!itemDetailMap) return;
+
+        const titleText = modalEl.querySelector('[class*="GuildPanel_header"]')?.textContent?.trim() || '';
+        if (!titleText) return;
+
+        const creditHrid = Object.keys(itemDetailMap).find(
+            (hrid) => hrid.includes('guild_credit') && itemDetailMap[hrid].name === titleText
+        );
+        if (!creditHrid) return;
+
+        const tokenHrid = Object.keys(itemDetailMap).find((hrid) => hrid.includes('guild_token'));
+        const selectorContainer = modalEl.querySelector('[class*="ItemSelector_itemContainer"]');
+        const selectedItemName =
+            selectorContainer?.querySelector('svg[aria-label]')?.getAttribute('aria-label') || null;
+
+        captureTokenExchangeFromModal(modalEl, {
+            creditItemHrid: creditHrid,
+            creditName: titleText,
+            selectedItemName,
+            tokenName: (tokenHrid && itemDetailMap[tokenHrid]?.name) || 'Guild Token',
+        });
     }
 
     _render(modalEl) {
@@ -348,7 +400,10 @@ class GuildCreditValue {
         wrapper.appendChild(header);
 
         const body = document.createElement('div');
-        body.style.display = 'none';
+        // Bounded like the ranking table above: the game's exchange modal does not grow
+        // for injected content, so an unbounded planner body renders past the modal's
+        // bottom edge instead of scrolling within it
+        body.style.cssText = 'display:none; max-height:260px; overflow-y:auto;';
         wrapper.appendChild(body);
 
         header.addEventListener('click', () => {
@@ -389,11 +444,18 @@ class GuildCreditValue {
             titleEl.textContent = 'Total upgrade cost';
             totalsEl.appendChild(titleEl);
 
-            // Guild tokens row
+            // Guild tokens row. Tokens are not listed on the market, but the
+            // guild shop trades them for credits and credits have a gold value,
+            // so the row can carry an approximate one — labelled as derived,
+            // never presented as a price
             if (tokens.total > 0) {
+                const tokenGold = describeGuildTokenGold(tokens.total, 'ask');
+                const goldStr = tokenGold
+                    ? ` <span style="color:#6b7280; font-weight:400;" title="${tokenGold.title.replace(/"/g, '&quot;')}">(${tokenGold.text})</span>`
+                    : '';
                 const row = document.createElement('div');
                 row.style.cssText = 'display:flex; justify-content:space-between; padding:2px 0; font-size:12px;';
-                row.innerHTML = `<span style="color:#aaa;">Guild Tokens</span><span style="color:#e0e0e0; font-weight:600;">${tokens.total.toLocaleString()}</span>`;
+                row.innerHTML = `<span style="color:#aaa;">Guild Tokens</span><span style="color:#e0e0e0; font-weight:600;">${tokens.total.toLocaleString()}${goldStr}</span>`;
                 totalsEl.appendChild(row);
             }
 
@@ -428,7 +490,12 @@ class GuildCreditValue {
                 const buffLabel = isCombat ? 'Combat' : 'Skilling';
                 const currentLevel = dataManager.getCharacterGuildBuffLevel(buffHrid);
                 const maxLevel = Math.max(...Object.keys(buff.levelCosts).map(Number));
-                const capLevel = shrineCapLevel > 0 ? Math.min(shrineCapLevel, maxLevel) : maxLevel;
+                const rawCap = shrineCapLevel > 0 ? Math.min(shrineCapLevel, maxLevel) : maxLevel;
+                // Buildings and shrines cap at level 20 in-game (Buildings tab:
+                // "Lv. x / 20") — a different ladder from the 21 trial tiers, and a
+                // shrine level or levelCosts table that claims more than that is
+                // not one to plan an upgrade past.
+                const capLevel = Math.min(rawCap, GUILD_BUILDING_MAX_LEVEL);
 
                 const row = document.createElement('div');
                 row.style.cssText = 'display:flex; align-items:center; gap:6px; padding:2px 0; font-size:11px;';
@@ -892,7 +959,7 @@ class GuildCreditValue {
                 let referenceTab = null;
                 for (let i = 0; i < 20; i++) {
                     await new Promise((r) => setTimeout(r, 100));
-                    tabsContainer = document.querySelector('.MuiTabs-flexContainer[role="tablist"]');
+                    tabsContainer = visibleTabsContainer();
                     referenceTab = tabsContainer
                         ? Array.from(tabsContainer.children).find((btn) => btn.textContent.includes('My Listings'))
                         : null;
@@ -1002,9 +1069,19 @@ class GuildCreditValue {
         if (!match) return;
 
         const level = parseInt(match[1], 10);
-        if (level < 100) return;
 
-        const tier = Math.min(20, Math.floor((level - 100) / 10) + 1);
+        // The ladder itself is `guild-trials-math.js`'s to define — tiers start
+        // at level 100, step 10, and stop at 300, which is 21 tiers and not the
+        // 20 this used to cap at.
+        //
+        // `GuildPanel_tileSummary` is not exclusive to trial tiles — the same
+        // class also carries a guild building's "Lv. x / 20" (GUILD_BUILDING_MAX_LEVEL,
+        // from guild-trials-store.js). tierFromLevel() already keeps the two apart:
+        // it returns null below TRIAL_START_LEVEL (100), which sits well above
+        // GUILD_BUILDING_MAX_LEVEL, so a building tile's level never resolves to a
+        // trial tier and never gets a "T<n>" badge.
+        const tier = tierFromLevel(level);
+        if (tier === null) return;
 
         const tierSpan = document.createElement('span');
         tierSpan.className = 'mwi-trial-tier';

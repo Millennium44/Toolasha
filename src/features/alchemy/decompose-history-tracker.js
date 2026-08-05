@@ -15,17 +15,22 @@
  */
 
 import config from '../../core/config.js';
-import storage from '../../core/storage.js';
 import webSocketHook from '../../core/websocket.js';
 import dataManager from '../../core/data-manager.js';
 import { getItemPrice } from '../../utils/market-data.js';
+import { createAlchemySessionStore, NO_CHARACTER } from './alchemy-session-store.js';
 
 const DECOMPOSE_ACTION_HRID = '/actions/alchemy/decompose';
 const CATALYST_OF_DECOMPOSITION_HRID = '/items/catalyst_of_decomposition';
 const PRIME_CATALYST_HRID = '/items/prime_catalyst';
 const COIN_ITEM_HRID = '/items/coin';
 const STORAGE_KEY = 'decomposeSessions';
-const STORAGE_STORE = 'alchemyHistory';
+
+/**
+ * The sessions, one record per day rather than one array rewritten per action.
+ * See `alchemy-session-store.js` for what that is worth.
+ */
+const sessionStore = createAlchemySessionStore(STORAGE_KEY, 'DecomposeHistoryTracker');
 
 class DecomposeHistoryTracker {
     constructor() {
@@ -40,8 +45,12 @@ class DecomposeHistoryTracker {
         };
     }
 
-    getStorageKey() {
-        return this.characterId ? `${STORAGE_KEY}_${this.characterId}` : STORAGE_KEY;
+    /**
+     * Whose sessions these are.
+     * @returns {string} The character id, or the pre-login scope
+     */
+    getCharacterScope() {
+        return this.characterId || NO_CHARACTER;
     }
 
     /**
@@ -78,6 +87,7 @@ class DecomposeHistoryTracker {
             this.endSession();
         }
 
+        sessionStore.forget();
         this.isInitialized = false;
         this.characterId = null;
     }
@@ -242,6 +252,7 @@ class DecomposeHistoryTracker {
         if (this.activeSession) {
             await this.endSession();
         }
+        sessionStore.forget();
         this.characterId = data.newId || null;
     }
 
@@ -297,7 +308,9 @@ class DecomposeHistoryTracker {
                 sessions.push(this.activeSession);
             }
 
-            await storage.setJSON(this.getStorageKey(), sessions, STORAGE_STORE, true);
+            // Only the record for the day this session started is written;
+            // every earlier day is settled and never touched again
+            await sessionStore.save(this.getCharacterScope(), sessions);
         } catch (error) {
             console.error('[DecomposeHistoryTracker] Failed to save session:', error);
         }
@@ -309,7 +322,7 @@ class DecomposeHistoryTracker {
      */
     async loadSessions() {
         try {
-            return await storage.getJSON(this.getStorageKey(), STORAGE_STORE, []);
+            return await sessionStore.load(this.getCharacterScope());
         } catch (error) {
             console.error('[DecomposeHistoryTracker] Failed to load sessions:', error);
             return [];
@@ -322,7 +335,7 @@ class DecomposeHistoryTracker {
     async clearHistory() {
         try {
             this.activeSession = null;
-            await storage.setJSON(this.getStorageKey(), [], STORAGE_STORE, true);
+            await sessionStore.clear(this.getCharacterScope());
         } catch (error) {
             console.error('[DecomposeHistoryTracker] Failed to clear history:', error);
         }
@@ -334,7 +347,7 @@ class DecomposeHistoryTracker {
      */
     async deleteSessions(sessions) {
         try {
-            await storage.setJSON(this.getStorageKey(), sessions, STORAGE_STORE, true);
+            await sessionStore.save(this.getCharacterScope(), sessions);
         } catch (error) {
             console.error('[DecomposeHistoryTracker] Failed to save sessions after delete:', error);
         }

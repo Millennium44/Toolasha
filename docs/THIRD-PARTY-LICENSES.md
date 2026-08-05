@@ -20,6 +20,57 @@ repositioning of the two areas by drag handle is not reproduced.
 Credit for the idea and for working out which parts of the battle panel are worth resizing
 belongs to Frotty.
 
+## MWI Combat Suite
+
+The ports below come from **MWI Combat Suite v0.9.36235** by Frotty, under the MIT licence it
+declares in its own userscript header. The script itself is **not kept in this repository** — it
+is ~2 MB and 42,155 lines, which is not worth carrying in the history for a file nothing builds
+against. `third-party/mwi-combat-suite/` keeps its licence and a record of what was taken and
+from which lines of that exact version.
+
+Same author as Scaley Way Idle above, but not the same situation. Scaley Way Idle carries no
+licence, so that feature could take the idea and nothing else. This one is MIT, which permits the
+code itself to be reused.
+
+Ported so far, all of it the analysis rather than the panels around it:
+
+- `src/utils/drop-luck.js` and `src/utils/complex-fft.js` — the drop-luck analysis, from
+  `SimpleFFT`, `CharaFunc`, `CDFDropAnalyzer` and `RuckBattleDropAnalyzer`. The algorithm is
+  Frotty's throughout: modelling session income as a product of characteristic functions, the
+  three-case discretisation of a drop's count, the guard band and re-basing that contain
+  wrap-around, and the shrinking search for a transform window. Restructured into modules with
+  the dead FFT twiddle cache dropped and the four-at-a-time vector loops replaced by plain ones
+  (they overran any length that was not a multiple of four), and the spawn-table weights are now
+  normalised.
+- `src/utils/spawn-expectation.js` — the expected-spawn dynamic programme, from
+  `LuckyDropAnalyzer.computeExpectedSpawns`. Same states and recurrence; spawn rates normalised
+  by the table's total, matching how the game draws.
+- `src/utils/combat-drop-model.js` — the drop-rate and quantity arithmetic from
+  `RuckBattleData.getDropData` and `LuckyDropAnalyzer.getTierDropRate`: how difficulty tier,
+  `combatDropRate`, `combatRareFind`, `combatDropQuantity`, party size and the dungeon multiplier
+  turn a table's numbers into the rates a player actually sees.
+
+- `src/utils/chest-tally.js` — the chest ledger from TReasure: fold each opening into a running
+  total, compare it against what the drop table owed, and break the verdict down per item. The
+  idea and the ledger's shape are Frotty's; the code is written against Toolasha's own storage
+  and pricing.
+
+`src/features/ui/overlay-panel.js` takes its shape from OPanel — one overlay with a toggleable,
+reorderable row per feature — but none of its code. OPanel is a switch statement with a branch
+per row inside a 42,000-line file; this is a registry a feature adds itself to.
+
+`src/features/combat/combat-drop-luck.js` and `src/features/inventory/treasure-tracker.js`
+display the results. The panels, their wording and their placement are Toolasha's own — LYuck and
+TReasure are floating windows in a suite of twenty-one, while these are a line in the game's own
+battle panel and a single panel opened from the settings page.
+
+Deliberately not ported: the chest expected-value fixed point and token-shop valuation.
+`src/features/market/expected-value-calculator.js` and `src/utils/token-valuation.js` already do
+both, across a worker pool and from the game's own shop data rather than a hardcoded table.
+
+Full terms in `third-party/mwi-combat-suite/LICENSE.md`; what else the script contains in
+`third-party/mwi-combat-suite/README.md`.
+
 ## mooket II
 
 `src/features/market/mooket/` is adapted from **mooket II** by Q7, used under the MIT

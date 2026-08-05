@@ -20,6 +20,7 @@ import {
     removeMaterialTabs,
     setupMarketplaceCleanupObserver,
     navigateToMarketplace,
+    visibleTabsContainer,
 } from '../../utils/marketplace-tabs.js';
 import { getProtectionItemFromUI, getProtectFromLevelFromUI } from './enhancement-display.js';
 import { calculateEnhancementPath } from '../enhancement/tooltip-enhancement.js';
@@ -493,6 +494,7 @@ function createEnhancementMissingMaterialsButton(
     button.disabled = disabled;
     button.style.cssText = `
         width: 100%;
+        box-sizing: border-box;
         padding: 10px 16px;
         margin: 8px 0 16px 0;
         background: linear-gradient(180deg, rgba(91, 141, 239, 0.2) 0%, rgba(91, 141, 239, 0.1) 100%);
@@ -616,6 +618,7 @@ function createMissingMaterialsButton(missingMaterials, actionHrid, numActions, 
     button.title = disabled && numActions <= 0 ? 'Enter a quantity to check missing materials' : '';
     button.style.cssText = `
         width: 100%;
+        box-sizing: border-box;
         padding: 10px 16px;
         margin: 8px 0 16px 0;
         background: linear-gradient(180deg, rgba(91, 141, 239, 0.2) 0%, rgba(91, 141, 239, 0.1) 100%);
@@ -727,7 +730,7 @@ async function waitForMarketplace() {
 
     for (let i = 0; i < maxAttempts; i++) {
         // Check for marketplace panel by looking for tabs container
-        const tabsContainer = document.querySelector('.MuiTabs-flexContainer[role="tablist"]');
+        const tabsContainer = visibleTabsContainer();
         if (tabsContainer) {
             // Verify it's the marketplace tabs (has "Market Listings" tab)
             const hasMarketListings = Array.from(tabsContainer.children).some((btn) =>
@@ -913,7 +916,7 @@ async function handleReturnToAction() {
  * @param {Object|null} strategyInfo - Auto-calculated protection strategy info
  */
 function createMissingMaterialTabs(missingMaterials, strategyInfo = null) {
-    const tabsContainer = document.querySelector('.MuiTabs-flexContainer[role="tablist"]');
+    const tabsContainer = visibleTabsContainer();
 
     if (!tabsContainer) {
         console.error('[MissingMats] Tabs container not found');
@@ -1133,7 +1136,24 @@ function handleMarketplaceCleanup() {
     autofillManager.clearQuantity();
 }
 
+/**
+ * Open the marketplace on the materials an action is short of.
+ *
+ * The same thing the button in the action panel does, reachable from anywhere.
+ * Equipment Watch wants it for a craft it is saving towards, and that card is
+ * in another bundle — so this is the seam rather than a second implementation
+ * of the tab-building, which is where the two would drift apart.
+ *
+ * @param {string} actionHrid - The action whose inputs are wanted
+ * @param {number} [numActions] - How many of it
+ * @returns {Promise<void>}
+ */
+export async function openMissingMaterials(actionHrid, numActions = 1) {
+    await handleMissingMaterialsClick(actionHrid, numActions);
+}
+
 export default {
     initialize,
     cleanup,
+    openMissingMaterials,
 };

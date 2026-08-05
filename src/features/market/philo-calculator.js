@@ -8,16 +8,49 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import marketAPI from '../../api/marketplace.js';
-import storage from '../../core/storage.js';
+import alchemyProfitCalculator from './alchemy-profit-calculator.js';
 import { formatLargeNumber, formatPercentage, timeReadable } from '../../utils/formatters.js';
 import { getEnhancementMultiplier } from '../../utils/enhancement-multipliers.js';
-import { resolveItemPrice } from '../../utils/profit-helpers.js';
+import { calculateActionStats } from '../../utils/action-calculator.js';
+import { SECONDS_PER_HOUR } from '../../utils/profit-constants.js';
+import { getAlchemyCoinCost } from '../../utils/alchemy-fees.js';
+import {
+    calculateActionsPerHour,
+    calculatePriceAfterTax,
+    calculateTeaCostsPerHour,
+    resolveItemPrice,
+} from '../../utils/profit-helpers.js';
+import { readScoped, writeScoped } from '../../utils/character-key.js';
 
 const PHILO_HRID = '/items/philosophers_stone';
 const PRIME_CATALYST_HRID = '/items/prime_catalyst';
 const PRIME_CATALYST_ADDITIVE_BONUS = 0.25; // 25% additive boost
-const TRANSMUTE_ACTION_TIME_SECONDS = 20;
+const TRANSMUTE_ACTION_HRID = '/actions/alchemy/transmute';
+const CATALYTIC_TEA_HRID = '/items/catalytic_tea';
 const CATALYTIC_TEA_BUFF_TYPE = '/buff_types/alchemy_success';
+// Only used when actionDetailMap is unavailable (offline/no init data) — the
+// real time comes from actionDetails.baseTimeCost, scaled by speed/efficiency.
+const FALLBACK_ACTION_TIME_SECONDS = 20;
+// Under-level transmute penalty: perLevel × (alchemyLevel − itemLevel).
+// Matches alchemy-profit-calculator.js.
+const LEVEL_PENALTY_NUMERATOR = 0.9;
+
+/**
+ * Which side of the book each pricing mode buys and sells at.
+ * Mirrors the profitCalc_pricingMode options in settings-schema.js.
+ */
+const PRICING_MODES = {
+    conservative: { buy: 'ask', sell: 'bid', label: 'Instant buy / Instant sell' },
+    hybrid: { buy: 'ask', sell: 'ask', label: 'Instant buy / Patient sell' },
+    optimistic: { buy: 'bid', sell: 'ask', label: 'Patient buy / Patient sell' },
+    patientBuy: { buy: 'bid', sell: 'bid', label: 'Patient buy / Instant sell' },
+};
+
+// Philo gamba is a long-tail lottery: rows are only worth acting on if they
+// still pay when every stone is dumped into a standing bid, so this table
+// starts conservative even when the global profit setting is more generous.
+const DEFAULT_PRICING_MODE = 'conservative';
+const GLOBAL_PRICING_MODE = 'global';
 
 class PhiloCalculator {
     constructor() {
@@ -28,6 +61,8 @@ class PhiloCalculator {
 
         // User-editable inputs
         this.philoPrice = 0;
+        this.philoBid = 0;
+        this.philoAsk = 0;
         this.catalystPrice = 0;
         this.useCatalyst = true;
         this.useCatalyticTea = false;
@@ -35,12 +70,21 @@ class PhiloCalculator {
         this.drinkConcentrationLevel = null; // 0-20; null = not saved yet (auto-detect from gear)
         this.hideNegativeProfitItems = true;
         this.filterText = '';
+        this.pricingMode = DEFAULT_PRICING_MODE;
+        // Per-item manual cost basis, hrid → coins (the buy-side twin of the
+        // philo price input)
+        this.itemCostOverrides = {};
+        this._manualPhiloPrice = false;
+        this._manualCatalystPrice = false;
         this._escHandler = null;
 
         // Cached row data
         this.rows = [];
         // Lazy map of refined-item hrid → producing action (for craft-cost pricing)
         this._refineActionByOutput = null;
+        // Per-pass caches, cleared on every recalculation
+        this._actionStatsCache = new Map();
+        this._bonusRevenueCache = new Map();
     }
 
     /**
@@ -148,14 +192,60 @@ class PhiloCalculator {
     }
 
     /**
-     * Load default prices from market data
+     * Resolve the pricing mode this table is currently calculating with.
+     * 'global' defers to the shared profitCalc_pricingMode setting; anything
+     * unrecognised falls back to the conservative default.
+     * @returns {string} A key of PRICING_MODES
+     */
+    resolvePricingMode() {
+        if (this.pricingMode === GLOBAL_PRICING_MODE) {
+            const globalMode = config.getSettingValue('profitCalc_pricingMode', 'hybrid');
+            return PRICING_MODES[globalMode] ? globalMode : 'hybrid';
+        }
+        return PRICING_MODES[this.pricingMode] ? this.pricingMode : DEFAULT_PRICING_MODE;
+    }
+
+    /**
+     * Which book side ('ask' or 'bid') the active pricing mode uses
+     * @param {string} side - 'buy' or 'sell'
+     * @returns {string} 'ask' or 'bid'
+     */
+    getPriceType(side) {
+        return PRICING_MODES[this.resolvePricingMode()][side];
+    }
+
+    /**
+     * Philo sale price for a given book side. A manually entered price wins
+     * outright — the user has told us what they will actually get.
+     * @param {string} [sellType] - 'bid' or 'ask'; defaults to the active mode
+     * @returns {number} Price before market tax
+     */
+    getPhiloPrice(sellType) {
+        if (this._manualPhiloPrice) {
+            return this.philoPrice || 0;
+        }
+        const type = sellType || this.getPriceType('sell');
+        return (type === 'bid' ? this.philoBid : this.philoAsk) || 0;
+    }
+
+    /**
+     * Load default prices from market data (respecting the active pricing mode)
      */
     loadDefaultPrices() {
         const philoPriceData = marketAPI.getPrice(PHILO_HRID, 0);
-        this.philoPrice = philoPriceData?.bid || 0;
+        this.philoBid = philoPriceData?.bid > 0 ? philoPriceData.bid : 0;
+        this.philoAsk = philoPriceData?.ask > 0 ? philoPriceData.ask : 0;
+        if (!this._manualPhiloPrice) {
+            this.philoPrice = this.getPhiloPrice();
+        }
 
-        const catalystPriceData = marketAPI.getPrice(PRIME_CATALYST_HRID, 0);
-        this.catalystPrice = catalystPriceData?.ask || 0;
+        if (!this._manualCatalystPrice) {
+            const catalystPriceData = marketAPI.getPrice(PRIME_CATALYST_HRID, 0);
+            const buyType = this.getPriceType('buy');
+            const preferred = catalystPriceData?.[buyType];
+            const other = catalystPriceData?.[buyType === 'ask' ? 'bid' : 'ask'];
+            this.catalystPrice = preferred > 0 ? preferred : other > 0 ? other : 0;
+        }
     }
 
     /**
@@ -189,7 +279,9 @@ class PhiloCalculator {
      */
     async loadSettings() {
         try {
-            const saved = await storage.getJSON('philoCalculatorSettings', 'settings', null);
+            // Read every time the calculator is opened, so the key is the one
+            // belonging to whoever is logged in now
+            const saved = await readScoped('philoCalculatorSettings', 'settings', null, { migrate: 'adopt' });
             if (saved) {
                 this.useCatalyst = saved.useCatalyst !== false;
                 this.useCatalyticTea = saved.useCatalyticTea || false;
@@ -197,6 +289,13 @@ class PhiloCalculator {
                 this.drinkConcentrationLevel = saved.drinkConcentrationLevel ?? null;
                 this.hideNegativeProfitItems = saved.hideNegativeProfitItems !== false;
                 this.filterText = saved.filterText || '';
+                const savedMode = saved.pricingMode;
+                this.pricingMode =
+                    savedMode === GLOBAL_PRICING_MODE || PRICING_MODES[savedMode] ? savedMode : DEFAULT_PRICING_MODE;
+                this.itemCostOverrides =
+                    saved.itemCostOverrides && typeof saved.itemCostOverrides === 'object'
+                        ? { ...saved.itemCostOverrides }
+                        : {};
             }
         } catch (error) {
             console.error('[PhiloCalculator] Failed to load settings:', error);
@@ -208,7 +307,7 @@ class PhiloCalculator {
      */
     async saveSettings() {
         try {
-            await storage.setJSON(
+            await writeScoped(
                 'philoCalculatorSettings',
                 {
                     useCatalyst: this.useCatalyst,
@@ -216,6 +315,8 @@ class PhiloCalculator {
                     drinkConcentrationLevel: this.drinkConcentrationLevel,
                     hideNegativeProfitItems: this.hideNegativeProfitItems,
                     filterText: this.filterText,
+                    pricingMode: this.pricingMode,
+                    itemCostOverrides: this.itemCostOverrides,
                 },
                 'settings',
                 true
@@ -334,6 +435,182 @@ class PhiloCalculator {
     }
 
     /**
+     * Under-level transmute success penalty.
+     * perLevel = 0.9 / itemLevel, applied only when below the item's level.
+     * @param {number} itemLevel - Item level being transmuted
+     * @returns {number} Negative penalty term, or 0 when at/above level
+     */
+    getLevelPenalty(itemLevel) {
+        const level = itemLevel || 1;
+        const skills = dataManager.getSkills();
+        const alchemySkill = skills?.find((s) => s.skillHrid === '/skills/alchemy');
+        const alchemyLevel = alchemySkill?.level || 1;
+        return alchemyLevel < level ? (LEVEL_PENALTY_NUMERATOR / level) * (alchemyLevel - level) : 0;
+    }
+
+    /**
+     * Action time and efficiency for transmuting an item of a given level.
+     * Alchemy scales efficiency off the item's level rather than the action's
+     * own requirement, so results are cached per item level.
+     * @param {number} itemLevel - Item level being transmuted
+     * @returns {{actionTime: number, efficiency: number, estimated: boolean}} Action stats
+     */
+    getActionStats(itemLevel) {
+        const level = itemLevel || 1;
+        if (this._actionStatsCache.has(level)) {
+            return this._actionStatsCache.get(level);
+        }
+
+        let stats = { actionTime: FALLBACK_ACTION_TIME_SECONDS, efficiency: 0, estimated: true };
+        try {
+            const gameData = dataManager.getInitClientData();
+            const actionDetails = gameData?.actionDetailMap?.[TRANSMUTE_ACTION_HRID];
+            if (actionDetails?.baseTimeCost) {
+                const actionStats = calculateActionStats(actionDetails, {
+                    skills: dataManager.getSkills(),
+                    equipment: dataManager.getEquipment(),
+                    itemDetailMap: gameData.itemDetailMap,
+                    includeCommunityBuff: true,
+                    levelRequirementOverride: level,
+                });
+                if (actionStats?.actionTime > 0) {
+                    stats = {
+                        actionTime: actionStats.actionTime,
+                        efficiency: (actionStats.totalEfficiency || 0) / 100,
+                        estimated: false,
+                    };
+                }
+            }
+        } catch (error) {
+            console.error('[PhiloCalculator] Failed to calculate action stats:', error);
+        }
+
+        this._actionStatsCache.set(level, stats);
+        return stats;
+    }
+
+    /**
+     * Catalytic tea cost charged against a single action. Teas are consumed on
+     * a clock, not per action, so the hourly burn is divided by the action rate
+     * the same way calculateTeaCostsPerHour is consumed elsewhere.
+     * @param {number} actionsPerHour - Effective actions per hour (with efficiency)
+     * @returns {number} Coins per action
+     */
+    getTeaCostPerAction(actionsPerHour) {
+        if (!this.useCatalyticTea || !(actionsPerHour > 0)) {
+            return 0;
+        }
+
+        try {
+            const gameData = dataManager.getInitClientData();
+            const buyType = this.getPriceType('buy');
+            const teaCosts = calculateTeaCostsPerHour({
+                drinkSlots: [{ itemHrid: CATALYTIC_TEA_HRID }],
+                drinkConcentration: this.getDrinkConcentrationForLevel(this.drinkConcentrationLevel),
+                itemDetailMap: gameData?.itemDetailMap || {},
+                getItemPrice: (hrid) => {
+                    const resolved = resolveItemPrice(hrid, { side: 'buy', mode: buyType, context: 'profit' });
+                    return resolved.missing ? null : resolved.price;
+                },
+            });
+            return teaCosts.totalCostPerHour / actionsPerHour;
+        } catch (error) {
+            console.error('[PhiloCalculator] Failed to calculate tea cost:', error);
+            return 0;
+        }
+    }
+
+    /**
+     * Alchemy essence and rare (artisan's crate) revenue for one transmute
+     * attempt. The rates and prices come from the canonical alchemy calculator
+     * rather than being re-derived here; a row whose input has no market data
+     * there simply contributes no bonus revenue.
+     * @param {string} itemHrid - Item being transmuted
+     * @returns {number} Coins per action, after market tax
+     */
+    getBonusRevenuePerAction(itemHrid) {
+        if (this._bonusRevenueCache.has(itemHrid)) {
+            return this._bonusRevenueCache.get(itemHrid);
+        }
+
+        let total = 0;
+        try {
+            const transmute = alchemyProfitCalculator.calculateTransmuteProfit(itemHrid);
+            for (const drop of transmute?.dropRevenues || []) {
+                if (!drop?.isEssence && !drop?.isRare) continue;
+                // Taxed, unlike the canonical calculator: essences and crates
+                // are sold like any other drop, and this table taxes every
+                // sold drop uniformly.
+                total += calculatePriceAfterTax(drop.revenuePerAttempt || 0);
+            }
+        } catch (error) {
+            console.error('[PhiloCalculator] Failed to resolve bonus drop revenue:', error);
+            total = 0;
+        }
+
+        this._bonusRevenueCache.set(itemHrid, total);
+        return total;
+    }
+
+    /**
+     * Resolve what one input item costs to acquire, and what a returned copy of
+     * it is worth back.
+     *
+     * The book side follows the active pricing mode. Refined items compare the
+     * +0 quote against crafting (base item + refinement materials) and take the
+     * cheaper path; capes are often listed only at low enhancement levels, so
+     * those are scanned as a last resort — and a row priced that way is flagged,
+     * because a +3 listing is not a cost basis a +0 transmute can be run at.
+     * @param {string} itemHrid - Item HRID
+     * @returns {{itemCost: number, selfReturnUnitValue: number, source: string, fallbackLevel: number}|null}
+     */
+    resolveItemCost(itemHrid) {
+        const override = this.itemCostOverrides[itemHrid];
+        if (typeof override === 'number' && override > 0) {
+            return { itemCost: override, selfReturnUnitValue: override, source: 'override', fallbackLevel: 0 };
+        }
+
+        const buyType = this.getPriceType('buy');
+        const quoteAt = (level) => {
+            const priceData = marketAPI.getPrice(itemHrid, level);
+            return priceData?.[buyType] > 0 ? priceData[buyType] : null;
+        };
+
+        let itemCost = quoteAt(0);
+        let source = itemCost === null ? null : 'market';
+        let fallbackLevel = 0;
+
+        if (itemHrid.endsWith('_refined')) {
+            const craftCost = this.getRefinementCraftCost(itemHrid);
+            if (craftCost !== null && (itemCost === null || craftCost < itemCost)) {
+                itemCost = craftCost;
+                source = 'craft';
+            }
+            for (let level = 1; level <= 5 && itemCost === null; level++) {
+                const quote = quoteAt(level);
+                if (quote !== null) {
+                    itemCost = quote;
+                    source = 'enhanced';
+                    fallbackLevel = level;
+                }
+            }
+        }
+
+        if (itemCost === null || itemCost === undefined) return null;
+
+        // A self-return hands back a +0 item, never the enhanced listing the
+        // cost basis had to borrow from, so credit it at the base item's own
+        // quote (0 when the base has no market at all).
+        let selfReturnUnitValue = itemCost;
+        if (source === 'enhanced') {
+            const base = marketAPI.getPrice(itemHrid, 0);
+            selfReturnUnitValue = base?.bid > 0 ? base.bid : base?.ask > 0 ? base.ask : 0;
+        }
+
+        return { itemCost, selfReturnUnitValue, source, fallbackLevel };
+    }
+
+    /**
      * Calculate all columns for a single item
      * @param {string} itemHrid - Item HRID
      * @param {Object} itemDetails - Item detail object
@@ -343,8 +620,17 @@ class PhiloCalculator {
         const alchemy = itemDetails.alchemyDetail;
         const baseTransmuteRate = alchemy.transmuteSuccessRate;
 
-        // Calculate additive bonuses
-        let totalBonus = 0;
+        // Find philo drop rate
+        const philoDrop = alchemy.transmuteDropTable.find((d) => d.itemHrid === PHILO_HRID);
+        if (!philoDrop) return null;
+
+        const itemLevel = itemDetails.itemLevel || 1;
+
+        // Calculate additive bonuses. The under-level penalty is a negative
+        // term in the same sum, matching the game's success formula:
+        // min(1, base × (1 + catalyst + levelPenalty + tea))
+        const levelPenalty = this.getLevelPenalty(itemLevel);
+        let totalBonus = levelPenalty;
 
         // Catalytic tea bonus
         if (this.useCatalyticTea && this.catalyticTeaRatioBoost > 0) {
@@ -357,99 +643,96 @@ class PhiloCalculator {
             totalBonus += PRIME_CATALYST_ADDITIVE_BONUS;
         }
 
-        const successRate = Math.min(1.0, baseTransmuteRate * (1 + totalBonus));
+        const successRate = Math.max(0, Math.min(1.0, baseTransmuteRate * (1 + totalBonus)));
+        if (!(successRate > 0)) return null; // Under-levelled into never succeeding
         const bulkMultiplier = alchemy.bulkMultiplier || 1;
 
-        // Find philo drop rate
-        const philoDrop = alchemy.transmuteDropTable.find((d) => d.itemHrid === PHILO_HRID);
-        if (!philoDrop) return null;
-
         const philoDropRate = philoDrop.dropRate;
-        // Per-action chance drives the math; the displayed Philo % matches the
-        // game's output panel (conditional on a successful transmute)
-        const philoChancePerAction = successRate * philoDropRate;
+        const avgPhiloCount = (philoDrop.minCount + philoDrop.maxCount) / 2;
+        // Philos actually produced per action — bulk transmutes roll the whole
+        // drop table at bulk scale, the same scale the input cost is charged at
+        const philosPerAction = successRate * philoDropRate * avgPhiloCount * bulkMultiplier;
+        if (!(philosPerAction > 0)) return null;
 
-        // Acquisition cost. Only ask prices are actionable — a bid is what a
-        // buyer offers, not a price the item can be acquired at, and lowball
-        // bids made bid-priced rows absurdly profitable. Refined items compare
-        // the +0 ask against crafting (base item + refinement materials) and
-        // take the cheaper path; capes are often listed only at low
-        // enhancement levels, so those are scanned as a last resort.
-        const askAt = (level) => {
-            const priceData = marketAPI.getPrice(itemHrid, level);
-            return priceData?.ask > 0 ? priceData.ask : null;
-        };
-        let itemCost = askAt(0);
-        let costIsCraftEstimate = false;
-        if (itemHrid.endsWith('_refined')) {
-            const craftCost = this.getRefinementCraftCost(itemHrid);
-            if (craftCost !== null && (itemCost === null || craftCost < itemCost)) {
-                itemCost = craftCost;
-                costIsCraftEstimate = true;
-            }
-            for (let level = 1; level <= 5 && itemCost === null; level++) {
-                itemCost = askAt(level);
-            }
-        }
-        if (itemCost === null || itemCost === undefined) return null;
+        const costBasis = this.resolveItemCost(itemHrid);
+        if (!costBasis) return null;
+        const { itemCost, selfReturnUnitValue, source: costSource, fallbackLevel } = costBasis;
 
         // Catalyst cost per action (consumed only on success)
         const catalystCostPerAction = this.useCatalyst ? successRate * this.catalystPrice : 0;
 
-        // Transmute coin cost: max(50, sellPrice / 5) × bulkMultiplier per action
-        const sellPrice = itemDetails.sellPrice || 0;
-        const coinCost = Math.max(50, Math.floor(sellPrice / 5)) * bulkMultiplier;
+        // Transmute coin fee — see utils/alchemy-fees.js (bulkMultiplier already folded in)
+        const coinCost = getAlchemyCoinCost(itemDetails, 'transmute');
+
+        // Real action time and efficiency from game data
+        const { actionTime, efficiency, estimated } = this.getActionStats(itemLevel);
+        const actionsPerHour = calculateActionsPerHour(actionTime) * (1 + efficiency);
+        const teaCostPerAction = this.getTeaCostPerAction(actionsPerHour);
 
         // Total cost per transmute action
-        const totalCostPerAction = itemCost * bulkMultiplier + catalystCostPerAction + coinCost;
+        const totalCostPerAction = itemCost * bulkMultiplier + catalystCostPerAction + coinCost + teaCostPerAction;
 
-        // Calculate EV of all drops (including philo)
-        let evPerAction = 0;
-        for (const drop of alchemy.transmuteDropTable) {
-            let dropValue;
-            if (drop.itemHrid === PHILO_HRID) {
-                dropValue = this.philoPrice;
-            } else if (drop.itemHrid === itemHrid) {
-                // Self-return: value at the same resolved cost used on the cost
-                // side, so untradable inputs (refined capes) credit the return
-                dropValue = itemCost;
-            } else {
-                const dropPrice = marketAPI.getPrice(drop.itemHrid, 0);
-                dropValue = dropPrice?.bid;
-                if (dropValue === null || dropValue === undefined) continue;
+        const bonusRevenuePerAction = this.getBonusRevenuePerAction(itemHrid);
+
+        /**
+         * Expected revenue of one action when every sellable drop is liquidated
+         * on the given book side. Sold drops pay market tax; the self-return
+         * does not, because it goes straight back into the transmuter.
+         * @param {string} sellType - 'bid' (instant) or 'ask' (patient)
+         * @returns {number} Coins per action
+         */
+        const expectedValueFor = (sellType) => {
+            let ev = 0;
+            for (const drop of alchemy.transmuteDropTable) {
+                let dropValue;
+                if (drop.itemHrid === itemHrid) {
+                    dropValue = selfReturnUnitValue;
+                } else if (drop.itemHrid === PHILO_HRID) {
+                    dropValue = calculatePriceAfterTax(this.getPhiloPrice(sellType));
+                } else {
+                    const quote = marketAPI.getPrice(drop.itemHrid, 0)?.[sellType];
+                    if (!(quote > 0)) continue;
+                    dropValue = calculatePriceAfterTax(quote);
+                }
+
+                const avgCount = (drop.minCount + drop.maxCount) / 2;
+                ev += successRate * drop.dropRate * avgCount * bulkMultiplier * dropValue;
             }
+            return ev + bonusRevenuePerAction;
+        };
 
-            const avgCount = (drop.minCount + drop.maxCount) / 2;
-            evPerAction += successRate * drop.dropRate * avgCount * dropValue;
-        }
+        const evInstant = expectedValueFor('bid');
+        const evPatient = expectedValueFor('ask');
+        const evPerAction = this.getPriceType('sell') === 'bid' ? evInstant : evPatient;
 
         // Profit per action (EV now includes philo value)
         const profitPerAction = evPerAction - totalCostPerAction;
 
         // Actions and items needed per philo
-        const actionsPerPhilo = 1 / philoChancePerAction;
+        const actionsPerPhilo = 1 / philosPerAction;
 
-        // Net items consumed per action (input minus expected self-returns)
+        // Net items consumed per action (input minus expected self-returns),
+        // both sides at bulk scale
         const selfDrop = alchemy.transmuteDropTable.find((d) => d.itemHrid === itemHrid);
         const selfDropRate = selfDrop ? selfDrop.dropRate : 0;
         const avgSelfCount = selfDrop ? (selfDrop.minCount + selfDrop.maxCount) / 2 : 0;
         const returnChancePerAction = successRate * selfDropRate;
-        const itemsPerAction = bulkMultiplier - returnChancePerAction * avgSelfCount;
+        const itemsPerAction = bulkMultiplier * (1 - returnChancePerAction * avgSelfCount);
 
         // Items needed per philo (net items consumed × actions needed)
         const itemsPerPhilo = actionsPerPhilo * itemsPerAction;
 
-        // Profit per philo obtained
+        // Profit per philo obtained, at both liquidation speeds
         const profitPerPhilo = profitPerAction * actionsPerPhilo;
+        const profitPerPhiloInstant = (evInstant - totalCostPerAction) * actionsPerPhilo;
+        const profitPerPhiloPatient = (evPatient - totalCostPerAction) * actionsPerPhilo;
 
         // Profit margin
         const profitMargin = profitPerAction / totalCostPerAction;
 
-        // Time per philo
-        const timePerPhiloSeconds = actionsPerPhilo * TRANSMUTE_ACTION_TIME_SECONDS;
+        // Time per philo (efficiency buys extra actions, not shorter ones)
+        const timePerPhiloSeconds = actionsPerHour > 0 ? (actionsPerPhilo / actionsPerHour) * SECONDS_PER_HOUR : 0;
 
-        // Profit per hour
-        const actionsPerHour = 3600 / TRANSMUTE_ACTION_TIME_SECONDS;
         const profitPerHour = profitPerAction * actionsPerHour;
 
         // Revenue and cost per hour
@@ -458,24 +741,38 @@ class PhiloCalculator {
 
         return {
             itemHrid,
-            name: this.getItemName(itemHrid) + (costIsCraftEstimate ? ' ⚒' : ''),
+            name: this.getItemName(itemHrid),
             cost: itemCost,
+            costSource,
+            costFallbackLevel: fallbackLevel,
             // Displayed as the game shows them: conditional on a successful transmute
             philoChance: philoDropRate,
             returnChance: selfDropRate,
             transmuteChance: baseTransmuteRate,
             effectiveTransmuteChance: successRate,
+            levelPenalty,
             transmuteCost: totalCostPerAction,
+            teaCostPerAction,
+            bonusRevenuePerAction,
             ev: evPerAction,
+            evInstant,
+            evPatient,
             itemsPerAction,
             actionsPerPhilo,
             itemsPerPhilo,
             profitPerPhilo,
+            profitPerPhiloInstant,
+            profitPerPhiloPatient,
             profitMargin,
+            actionTime,
+            efficiency,
+            actionTimeEstimated: estimated,
+            actionsPerHour,
             timePerPhiloSeconds,
             profitPerHour,
             revenuePerHour,
             costPerHour,
+            pricingMode: this.resolvePricingMode(),
         };
     }
 
@@ -485,6 +782,9 @@ class PhiloCalculator {
     calculateAllRows() {
         const items = this.findPhiloTransmuteItems();
         this.rows = [];
+        // Gear, teas and prices can all have moved since the last pass
+        this._actionStatsCache.clear();
+        this._bonusRevenueCache.clear();
 
         for (const { itemHrid, itemDetails } of items) {
             const row = this.calculateRow(itemHrid, itemDetails);
@@ -672,6 +972,7 @@ class PhiloCalculator {
         philoLabel.textContent = 'Philo Price: ';
         const philoInput = document.createElement('input');
         philoInput.type = 'text';
+        philoInput.className = 'philo-calc-price-input';
         philoInput.value = this.philoPrice.toLocaleString();
         philoInput.style.cssText = `
             width: 130px;
@@ -682,10 +983,12 @@ class PhiloCalculator {
             border-radius: 4px;
             font-size: 13px;
         `;
+        philoInput.title = 'Sale price per Philosopher’s Stone. Overrides the market quote for every column.';
         philoInput.addEventListener('change', () => {
             const parsed = parseInt(philoInput.value.replaceAll(',', '').replaceAll('.', ''), 10);
             if (!isNaN(parsed)) {
                 this.philoPrice = parsed;
+                this._manualPhiloPrice = true;
                 this.recalculate();
             }
         });
@@ -697,6 +1000,7 @@ class PhiloCalculator {
         catLabel.textContent = 'Catalyst Price: ';
         const catInput = document.createElement('input');
         catInput.type = 'text';
+        catInput.className = 'philo-calc-price-input';
         catInput.value = this.catalystPrice.toLocaleString();
         catInput.style.cssText = `
             width: 130px;
@@ -711,6 +1015,7 @@ class PhiloCalculator {
             const parsed = parseInt(catInput.value.replaceAll(',', '').replaceAll('.', ''), 10);
             if (!isNaN(parsed)) {
                 this.catalystPrice = parsed;
+                this._manualCatalystPrice = true;
                 this.recalculate();
             }
         });
@@ -734,6 +1039,7 @@ class PhiloCalculator {
         container.appendChild(philoLabel);
         container.appendChild(catLabel);
         container.appendChild(checkLabel);
+        container.appendChild(this.createPricingModeControl());
 
         // Catalytic Tea checkbox
         const teaCheckLabel = document.createElement('label');
@@ -859,9 +1165,7 @@ class PhiloCalculator {
                 await marketAPI.fetch(true);
                 this.loadDefaultPrices();
                 // Update the price inputs to reflect new data
-                const inputs = container.querySelectorAll('input[type="text"]');
-                if (inputs[0]) inputs[0].value = this.philoPrice.toLocaleString();
-                if (inputs[1]) inputs[1].value = this.catalystPrice.toLocaleString();
+                this.syncPriceInputs();
                 this.recalculate();
             } catch (error) {
                 console.error('[PhiloCalculator] Failed to refresh prices:', error);
@@ -876,11 +1180,180 @@ class PhiloCalculator {
     }
 
     /**
+     * Pricing mode dropdown. Defaults to conservative rather than following the
+     * global profit setting, and says so in its tooltip.
+     * @returns {HTMLElement} Label wrapping the select
+     */
+    createPricingModeControl() {
+        const label = document.createElement('label');
+        label.style.cssText = 'display: flex; align-items: center; gap: 6px; font-size: 13px;';
+        label.textContent = 'Pricing: ';
+
+        const globalMode = config.getSettingValue('profitCalc_pricingMode', 'hybrid');
+        const globalLabel = PRICING_MODES[globalMode]?.label || globalMode;
+        label.title =
+            `Defaults to ${PRICING_MODES[DEFAULT_PRICING_MODE].label} regardless of the global profit ` +
+            `pricing mode (currently ${globalLabel}): a philo hunt only pays if it still pays when the ` +
+            'stones are sold into standing bids, so this table refuses to assume a patient sale. ' +
+            'Choose Global to follow the shared setting instead.';
+
+        const select = document.createElement('select');
+        select.style.cssText = `
+            padding: 4px 8px;
+            background: #1a1a1a;
+            color: #fff;
+            border: 1px solid #555;
+            border-radius: 4px;
+            font-size: 13px;
+        `;
+
+        const options = [
+            [GLOBAL_PRICING_MODE, `Global (${globalLabel})`],
+            ...Object.entries(PRICING_MODES).map(([value, mode]) => [value, mode.label]),
+        ];
+        for (const [value, text] of options) {
+            const option = document.createElement('option');
+            option.value = value;
+            option.textContent = text;
+            if (value === this.pricingMode) {
+                option.selected = true;
+            }
+            select.appendChild(option);
+        }
+
+        select.addEventListener('change', () => {
+            this.pricingMode = select.value;
+            // Un-pinned prices track whichever side of the book the new mode reads
+            this.loadDefaultPrices();
+            this.syncPriceInputs();
+            this.recalculate();
+            this.saveSettings();
+        });
+
+        label.appendChild(select);
+        return label;
+    }
+
+    /**
+     * Push the current philo/catalyst prices back into their inputs
+     */
+    syncPriceInputs() {
+        const inputs = this.modal?.querySelectorAll('.philo-calc-price-input');
+        if (!inputs) return;
+        if (inputs[0]) inputs[0].value = this.philoPrice.toLocaleString();
+        if (inputs[1]) inputs[1].value = this.catalystPrice.toLocaleString();
+    }
+
+    /**
      * Recalculate all rows and re-render
      */
     recalculate() {
         this.calculateAllRows();
         this.renderTable();
+    }
+
+    /**
+     * Draw the cost cell: the resolved cost basis, a marker explaining where it
+     * came from, and click-to-edit for a manual override.
+     * @param {HTMLElement} td - Cell to fill
+     * @param {Object} row - Row data
+     */
+    renderCostCell(td, row) {
+        const markers = {
+            craft: {
+                glyph: ' ⚒',
+                title: 'Cost is the refinement craft estimate (base item + materials), not a listing.',
+            },
+            enhanced: {
+                glyph: ` ⚠+${row.costFallbackLevel}`,
+                title:
+                    `No +0 listing — cost basis borrowed from the +${row.costFallbackLevel} ask, which is dearer ` +
+                    'than a +0 item and is not a price this transmute can actually be run at. Self-returns are ' +
+                    'credited at the base item price, so this row is a lower bound at best. Click to override.',
+            },
+            override: { glyph: ' ✎', title: 'Manual cost override. Click to change, clear the field to remove.' },
+        };
+
+        const marker = markers[row.costSource];
+        td.textContent = formatLargeNumber(Math.round(row.cost)) + (marker?.glyph || '');
+        td.title = marker?.title || 'Click to override this item’s cost basis.';
+        td.style.cursor = 'pointer';
+        if (row.costSource === 'enhanced') {
+            td.style.color = config.COLOR_WARNING;
+        }
+
+        td.addEventListener('click', () => this.editCostOverride(td, row));
+    }
+
+    /**
+     * Swap a cost cell for an input so the user can pin the item's cost basis,
+     * the same way the philo price input pins the sell side.
+     * @param {HTMLElement} td - Cost cell
+     * @param {Object} row - Row data
+     */
+    editCostOverride(td, row) {
+        if (td.querySelector('input')) return;
+
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.value = String(this.itemCostOverrides[row.itemHrid] ?? Math.round(row.cost));
+        input.style.cssText = `
+            width: 90px;
+            padding: 2px 4px;
+            background: #1a1a1a;
+            color: #fff;
+            border: 1px solid #4a90e2;
+            border-radius: 3px;
+            font-size: 12px;
+            text-align: right;
+        `;
+
+        const commit = () => {
+            const raw = input.value.replaceAll(',', '').replaceAll('.', '').trim();
+            const parsed = parseInt(raw, 10);
+            if (raw === '' || parsed <= 0 || isNaN(parsed)) {
+                delete this.itemCostOverrides[row.itemHrid];
+            } else {
+                this.itemCostOverrides[row.itemHrid] = parsed;
+            }
+            this.recalculate();
+            this.saveSettings();
+        };
+
+        input.addEventListener('keydown', (e) => {
+            e.stopPropagation(); // Escape belongs to the input, not the modal
+            if (e.key === 'Enter') input.blur();
+            if (e.key === 'Escape') this.renderTable();
+        });
+        input.addEventListener('blur', commit);
+
+        td.textContent = '';
+        td.appendChild(input);
+        input.focus();
+        input.select();
+    }
+
+    /**
+     * Draw the paired instant | patient profit cell
+     * @param {HTMLElement} td - Cell to fill
+     * @param {Object} row - Row data
+     */
+    renderPairedProfitCell(td, row) {
+        const part = (value) => {
+            const span = document.createElement('span');
+            span.textContent = formatLargeNumber(Math.round(value));
+            span.style.color = value >= 0 ? config.COLOR_PROFIT : config.COLOR_LOSS;
+            return span;
+        };
+
+        const separator = document.createElement('span');
+        separator.textContent = ' | ';
+        separator.style.color = '#888';
+
+        td.appendChild(part(row.profitPerPhiloInstant));
+        td.appendChild(separator);
+        td.appendChild(part(row.profitPerPhiloPatient));
+        td.title = 'Instant: stones sold into standing bids. Patient: stones listed at ask and waited out.';
     }
 
     /**
@@ -902,7 +1375,11 @@ class PhiloCalculator {
             { key: 'itemsPerAction', label: 'Items/Act' },
             { key: 'actionsPerPhilo', label: 'Acts/Philo' },
             { key: 'itemsPerPhilo', label: 'Items/Philo' },
-            { key: 'profitPerPhilo', label: 'Profit/Philo' },
+            {
+                key: 'profitPerPhiloInstant',
+                label: 'Profit/Philo (instant | patient)',
+                title: 'Left: stones sold into standing bids. Right: stones listed and waited out at ask. Sorts on instant.',
+            },
             { key: 'profitMargin', label: 'Margin' },
             { key: 'timePerPhiloSeconds', label: 'Time/Philo' },
             { key: 'profitPerHour', label: 'Profit/Hr' },
@@ -938,6 +1415,9 @@ class PhiloCalculator {
 
             const arrow = this.sortColumn === col.key ? (this.sortDirection === 'asc' ? ' \u25B2' : ' \u25BC') : '';
             th.textContent = col.label + arrow;
+            if (col.title) {
+                th.title = col.title;
+            }
 
             th.addEventListener('click', () => this.toggleSort(col.key));
             headerRow.appendChild(th);
@@ -981,6 +1461,12 @@ class PhiloCalculator {
                     case 'name':
                         td.textContent = value;
                         break;
+                    case 'cost':
+                        this.renderCostCell(td, row);
+                        break;
+                    case 'profitPerPhiloInstant':
+                        this.renderPairedProfitCell(td, row);
+                        break;
                     case 'philoChance':
                     case 'returnChance':
                     case 'transmuteChance':
@@ -994,7 +1480,6 @@ class PhiloCalculator {
                     case 'timePerPhiloSeconds':
                         td.textContent = timeReadable(value);
                         break;
-                    case 'profitPerPhilo':
                     case 'profitPerHour':
                         td.textContent = formatLargeNumber(Math.round(value));
                         td.style.color = value >= 0 ? config.COLOR_PROFIT : config.COLOR_LOSS;
@@ -1029,4 +1514,7 @@ class PhiloCalculator {
 }
 
 const philoCalculator = new PhiloCalculator();
+
+// Exported for tests, which need an instance whose settings no other test has touched
+export { PhiloCalculator, PRICING_MODES };
 export default philoCalculator;

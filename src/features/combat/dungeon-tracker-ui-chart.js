@@ -3,7 +3,8 @@
  * Handles Chart.js rendering for dungeon run statistics
  */
 
-import dungeonTrackerStorage from './dungeon-tracker-storage.js';
+import dungeonTrackerStorage, { filterRunsForCharacter, currentCharacter } from './dungeon-tracker-storage.js';
+import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
 
 class DungeonTrackerUIChart {
     constructor(state, formatTimeFunc) {
@@ -23,7 +24,9 @@ class DungeonTrackerUIChart {
 
         // Get filtered runs based on current filters
         const allRuns = await dungeonTrackerStorage.getAllRuns();
-        let filteredRuns = allRuns;
+        // Narrowed to the character the panel is speaking for before anything
+        // else, so the chart plots the same runs the list beneath it counts
+        let filteredRuns = filterRunsForCharacter(allRuns, this.state.filterCharacter, currentCharacter());
 
         if (this.state.filterDungeon !== 'all') {
             filteredRuns = filteredRuns.filter((r) => r.dungeonName === this.state.filterDungeon);
@@ -212,7 +215,7 @@ class DungeonTrackerUIChart {
             border: 2px solid #555;
             border-radius: 8px;
             padding: 20px;
-            z-index: 100000;
+            z-index: ${PANEL_Z_CAP};
             display: flex;
             flex-direction: column;
         `;
@@ -291,7 +294,9 @@ class DungeonTrackerUIChart {
     async renderModalChart(canvas) {
         // Get filtered runs (same as main chart)
         const allRuns = await dungeonTrackerStorage.getAllRuns();
-        let filteredRuns = allRuns;
+        // Narrowed to the character the panel is speaking for before anything
+        // else, so the chart plots the same runs the list beneath it counts
+        let filteredRuns = filterRunsForCharacter(allRuns, this.state.filterCharacter, currentCharacter());
 
         if (this.state.filterDungeon !== 'all') {
             filteredRuns = filteredRuns.filter((r) => r.dungeonName === this.state.filterDungeon);

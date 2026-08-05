@@ -18,28 +18,54 @@
  * alone deliberately. Once you are in the marketplace, knowing there is
  * something to collect is useful; it is only the sidebar nag that isn't.
  *
- * Implemented as a stylesheet toggled by listing data rather than by clearing
- * the badge's text. React owns that node and rewrites it on every update, so
- * anything written into it would be overwritten within the second; a rule the
- * game does not know about survives every re-render.
+ * Hiding is a stylesheet, because a rule the game does not know about survives
+ * every re-render. Showing a *different number* is not: the badge is the game's
+ * own element, and a count printed in a pseudo-element is a bare digit sitting
+ * where a styled badge should be. So the digits are rewritten in place and put
+ * back whenever React writes its own over them, which leaves the badge exactly
+ * the badge — same shape, same colour, same position.
  */
 
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
+import domObserver from '../../core/dom-observer.js';
+import notificationService from '../notifications/notification-service.js';
+import { listingsNewlyFinished } from '../notifications/notification-predicates.js';
 import { addStyles, removeStyles } from '../../utils/dom.js';
 
 const STYLE_ID = 'mwi-marketplace-badge-filter';
 
+/** The sidebar item, found by its own icon label rather than by position */
+const NAV = '[class*="NavigationBar_nav__"]:has(svg[aria-label="navigationBar.marketplace"])';
+
 /**
- * Hides only the sidebar's Marketplace badge. Scoped through the nav item's own
- * icon label rather than a position, so a reordered sidebar still matches, and
- * excluding the ocean variant the way the other badge features do.
+ * The badge itself.
+ *
+ * `NavigationBar_badge__` with the trailing double underscore, which is where
+ * the CSS-module hash begins — so this is the whole class name rather than a
+ * prefix of it. Without those two characters it also matched the sidebar's
+ * other badge-ish elements, and the count was written into both: the
+ * Marketplace badge read "2 2". The ocean variant is excluded the way the other
+ * badge features do.
  */
-const CSS = `
-    [class*="NavigationBar_nav__"]:has(svg[aria-label="navigationBar.marketplace"]) [class*="NavigationBar_badge"]:not([class*="NavigationBar_ocean"]) {
-        display: none !important;
-    }
-`;
+const BADGE = `${NAV} [class*="NavigationBar_badge__"]:not([class*="NavigationBar_ocean"])`;
+
+/**
+ * The element the number actually lives in.
+ *
+ * Usually the badge itself, but a badge that wraps its text in a span would put
+ * the digits one level down — and writing over the badge instead would throw
+ * that span away along with whatever styling it carries. Descends only through
+ * only-children, which is as far as "the same box, drawn deeper" goes.
+ *
+ * @param {HTMLElement} badge - The badge element
+ * @returns {HTMLElement} Where to write the count
+ */
+export function countHolder(badge) {
+    let node = badge;
+    while (node.childNodes.length === 1 && node.children.length === 1) node = node.children[0];
+    return node;
+}
 
 /**
  * Whether a listing is done and holding something for you.
@@ -69,7 +95,7 @@ export function isFinishedWithSpoils(listing) {
 
 /**
  * Whether any listing in the book warrants badging the sidebar.
- * @param {Object} listings - Keyed by listing id
+ * @param {Array<Object>|Object} listings - The character's market listings
  * @returns {boolean}
  */
 export function anyFinished(listings) {
@@ -78,58 +104,252 @@ export function anyFinished(listings) {
 
 class MarketplaceBadgeFilter {
     constructor() {
-        this.listings = {};
         this.hidden = false;
+        /** How many finished listings the badge is currently claiming */
+        this.showing = null;
         this.unregister = null;
+        /** The last non-empty listing array seen on the wire */
+        this.lastSeen = null;
+        /** Undoes the shared observer registration, when there is one */
+        this.unwatchAdded = null;
+        /** Watches the sidebar item's own text, since React rewrites it */
+        this.textWatcher = null;
+        this.watchedNav = null;
+        /**
+         * Finished count at the previous observation, for the notification.
+         *
+         * Separate from `showing`, which is what the badge is *displaying* and
+         * stays null while the filter itself is switched off — the notification
+         * has to work in that case too.
+         */
+        this.lastFinishedCount = null;
     }
 
     initialize() {
-        if (!config.getSetting('market_badgeOnlyWhenFinished')) return;
+        // Two features now read the same listings: this filter, and the "a
+        // listing finished" notification. Either being on is reason enough to
+        // listen, and each decides for itself what to do with the count
+        const wantsBadge = config.getSetting('market_badgeOnlyWhenFinished');
+        const wantsNotification = config.getSetting('notifications_marketListingFilled');
+        if (!wantsBadge && !wantsNotification) return;
 
-        const initHandler = (data) => this.ingest(data?.myMarketListings);
-        const updateHandler = (data) => this.ingest(data?.endMarketListings);
-
-        dataManager.on('character_initialized', initHandler);
+        // The payload is kept as well as read from the character's book, because
+        // the two have disagreed: whichever of them has listings is the one to
+        // believe. Trusting only the book meant that if it ever came back empty
+        // the badge was hidden with no way to tell from the outside why.
+        const updateHandler = (data) => {
+            const listings = data?.endMarketListings || data?.myMarketListings;
+            if (Array.isArray(listings) && listings.length) this.lastSeen = listings;
+            this.refresh();
+        };
+        dataManager.on('character_initialized', updateHandler);
         dataManager.on('market_listings_updated', updateHandler);
         this.unregister = () => {
-            dataManager.off('character_initialized', initHandler);
+            dataManager.off('character_initialized', updateHandler);
             dataManager.off('market_listings_updated', updateHandler);
         };
 
-        // Nothing is known until the first payload arrives. Hiding straight away
-        // rather than waiting means a stale badge from before the script loaded
-        // does not sit there unexplained; the first update corrects it either way.
-        this.apply(false);
+        // Read what is already known rather than waiting to be told.
+        //
+        // This is the whole of the bug it used to have. Features are initialized
+        // from *inside* the `character_initialized` handler, so by the time this
+        // runs that event has already fired and this listener will never see it.
+        // The old code hid the badge here and then waited for a payload that had
+        // already gone past — so a filled order sitting there through a reload
+        // stayed unbadged until some unrelated listing happened to change.
+        this.refresh();
     }
 
     /**
-     * @param {Array<Object>} listings - Listings from the server
+     * Re-decide from the listings as they currently stand.
+     *
+     * Read from the data manager rather than accumulated here. It already merges
+     * each `market_listings_updated` into the character's book, and a private
+     * copy could only drift from it — a listing that leaves the book would linger
+     * in the copy at whatever state it was last seen, badging the sidebar for an
+     * order that no longer exists.
      */
-    ingest(listings) {
-        if (!Array.isArray(listings)) return;
-        for (const listing of listings) {
-            if (!listing || listing.id == null) continue;
-            this.listings[listing.id] = listing;
+    refresh() {
+        // The count, not just the presence. The game badges every listing with
+        // anything collectable, so a filled order beside a buy order that has
+        // taken 130 of 719 reads "2" — and collecting the 130 does nothing but
+        // silence it. One of those is finished, so the badge should say one.
+        const finished = this.book().filter(isFinishedWithSpoils).length;
+
+        this.announce(finished);
+        if (config.getSetting('market_badgeOnlyWhenFinished')) this.apply(finished);
+    }
+
+    /**
+     * Say so when another listing has finished.
+     *
+     * Deliberately not "the badge is showing something": the badge also shows
+     * something the entire time you leave one uncollected, and a notification
+     * for a state rather than an event is a notification you learn to ignore.
+     * Only a rise counts.
+     *
+     * @param {number} finished - How many listings have finished now
+     */
+    announce(finished) {
+        if (!config.getSetting('notifications_marketListingFilled')) {
+            // Still tracked while switched off, so turning it on mid-session
+            // does not announce a backlog that was already sitting there
+            this.lastFinishedCount = finished;
+            return;
         }
-        this.apply(anyFinished(this.listings));
+
+        if (listingsNewlyFinished(this.lastFinishedCount, finished)) {
+            const noun = finished === 1 ? 'listing has' : 'listings have';
+            notificationService.notify('market-listing-filled', `${finished} market ${noun} finished.`);
+        }
+        this.lastFinishedCount = finished;
     }
 
     /**
-     * @param {boolean} show - Whether the badge is warranted
+     * The listings to judge, from whichever source has any.
+     *
+     * @returns {Array<Object>} Possibly empty
      */
-    apply(show) {
-        if (show === !this.hidden) return;
-        this.hidden = !show;
-        if (this.hidden) addStyles(CSS, STYLE_ID);
-        else removeStyles(STYLE_ID);
+    book() {
+        const held = dataManager.characterData?.myMarketListings;
+        if (Array.isArray(held) && held.length) return held;
+        return this.lastSeen || [];
+    }
+
+    /**
+     * Why the badge is or is not showing.
+     *
+     * The feature's only output is the absence of something, which is
+     * indistinguishable from it being switched off, from the game not badging,
+     * and from every listing genuinely still working. This says which.
+     *
+     * Console: `Toolasha.Debug.marketBadge()`
+     *
+     * @returns {Object} What it can see
+     */
+    describe() {
+        const listings = this.book();
+        const finished = listings.filter(isFinishedWithSpoils);
+
+        const report = {
+            settingOn: !!config.getSetting('market_badgeOnlyWhenFinished'),
+            listening: !!this.unregister,
+            fromCharacterData: Array.isArray(dataManager.characterData?.myMarketListings)
+                ? dataManager.characterData.myMarketListings.length
+                : 'absent',
+            fromLastMessage: this.lastSeen ? this.lastSeen.length : 'none seen',
+            finished: finished.length,
+            hidingBadge: this.hidden,
+            styleInDocument: !!document.getElementById(STYLE_ID),
+            badgeOnScreen: !!document.querySelector(BADGE),
+            badgeSays: document.querySelector(BADGE)?.textContent ?? 'no badge',
+        };
+
+        console.log('[Toolasha] Marketplace badge filter:', report);
+        if (listings.length) {
+            console.table(
+                listings.map((listing) => ({
+                    id: listing.id,
+                    status: String(listing.status || '')
+                        .split('/')
+                        .pop(),
+                    ordered: listing.orderQuantity,
+                    filled: listing.filledQuantity,
+                    unclaimedItems: listing.unclaimedItemCount,
+                    unclaimedCoins: listing.unclaimedCoinCount,
+                    countsAsFinished: isFinishedWithSpoils(listing),
+                }))
+            );
+        }
+        return report;
+    }
+
+    /**
+     * @param {number} finished - How many listings have finished
+     */
+    apply(finished) {
+        if (finished === this.showing) return;
+        this.showing = finished;
+        this.hidden = finished === 0;
+
+        // Removed first: `addStyles` appends a new element every call, so
+        // toggling without this leaves a stack of them and the oldest wins
+        removeStyles(STYLE_ID);
+
+        if (finished === 0) {
+            this._stopWatching();
+            addStyles(`${BADGE} { display: none !important; }`, STYLE_ID);
+            return;
+        }
+        this._watch();
+        this._paint();
+    }
+
+    /**
+     * Write our count into the game's badge.
+     *
+     * Only when it differs, which is what keeps the observer that calls this
+     * from feeding itself: our own write produces a mutation, that mutation
+     * calls this again, and the text already says what it should.
+     *
+     * @returns {boolean} Whether there was a badge to write into
+     */
+    _paint() {
+        const badge = document.querySelector(BADGE);
+        if (!badge || this.showing === null || this.showing === 0) return false;
+
+        const holder = countHolder(badge);
+        const text = String(this.showing);
+        if (holder.textContent !== text) holder.textContent = text;
+        return true;
+    }
+
+    /**
+     * Keep it written.
+     *
+     * Two different things undo it, so it takes two watchers. React rewrites the
+     * digits in place, which is a `characterData` change and invisible to the
+     * shared observer — that needs one scoped to the sidebar item. And the item
+     * itself is torn down and rebuilt, which the shared observer is exactly for.
+     */
+    _watch() {
+        if (!this.unwatchAdded) {
+            this.unwatchAdded = domObserver.register('MarketplaceBadge', () => this._attach(), { debounce: true });
+        }
+        this._attach();
+    }
+
+    /** Point the scoped observer at the sidebar item currently on screen */
+    _attach() {
+        const badge = document.querySelector(BADGE);
+        const nav = badge?.closest('[class*="NavigationBar_nav__"]');
+        if (!nav) return;
+
+        if (this.watchedNav !== nav) {
+            this.textWatcher?.disconnect();
+            this.textWatcher = new MutationObserver(() => this._paint());
+            this.textWatcher.observe(nav, { childList: true, subtree: true, characterData: true });
+            this.watchedNav = nav;
+        }
+        this._paint();
+    }
+
+    _stopWatching() {
+        this.unwatchAdded?.();
+        this.unwatchAdded = null;
+        this.textWatcher?.disconnect();
+        this.textWatcher = null;
+        this.watchedNav = null;
     }
 
     disable() {
         this.unregister?.();
         this.unregister = null;
+        this._stopWatching();
         removeStyles(STYLE_ID);
         this.hidden = false;
-        this.listings = {};
+        this.showing = null;
+        this.lastFinishedCount = null;
     }
 }
 

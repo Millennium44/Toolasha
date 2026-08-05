@@ -31,13 +31,71 @@ import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { formatKMB } from '../../utils/formatters.js';
 import { holdKey, collectHeldKeys } from './bulk-sell-holds.js';
+import { watchlistEntries } from '../inventory/watchlist.js';
+import loadoutSnapshot from '../combat/loadout-snapshot.js';
 
 const BUTTON_ID = 'mwi-bulk-sell-btn';
 const CHIP_ID = 'mwi-bulk-sell-chip';
 const PANEL_POSITION_KEY = 'bulkSellPanelPosition';
+/** The source that is not a tab: whatever the Watchlist is currently tracking */
+const WATCHLIST_SOURCE = 'watchlist';
+
+/**
+ * The rules the assistant decides by, editable from its own panel.
+ *
+ * They live in the settings the decision already reads rather than in a copy,
+ * so the panel and the settings page can never disagree. Here because the
+ * moment you want to change one of these is the moment you are watching it make
+ * the wrong call — not the moment you are reading the settings page.
+ */
+const TUNABLES = [
+    {
+        key: 'market_bulkSellMinListingValue',
+        fallback: 1500000,
+        label: 'Insta-sell stacks under',
+        suffix: 'coins',
+        title: 'Stacks worth less than this (count × ask) are insta-sold rather than using up a listing slot. 0 turns the rule off.',
+    },
+    {
+        key: 'market_bulkSellSupplyRatio',
+        fallback: 1,
+        label: 'Insta-sell when supply beats demand by',
+        suffix: '×',
+        title: 'Insta-sell when sell-order supply exceeds buy-order demand times this. 1 = whenever sellers outnumber buyers; 0 turns the rule off.',
+    },
+    {
+        key: 'market_bulkSellQueueDays',
+        fallback: 2,
+        label: 'Insta-sell when the front ask is older than',
+        suffix: 'days',
+        title: 'A sell queue whose front listing has waited this long is not moving, so joining it would not sell either. 0 turns the rule off.',
+    },
+];
 const MS_PER_DAY = 86400000;
 
 const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+
+/**
+ * Every piece of gear saved into a loadout, as hold keys.
+ *
+ * A loadout is a claim on an item: you are still using it, just not right now.
+ * Selling one is not merely a mistake, it is a mistake you find out about the
+ * next time you switch to that loadout and it is not there.
+ *
+ * Keyed by item and enhancement level, so a +10 in a loadout does not protect
+ * the +0 you keep for melting.
+ *
+ * @returns {Array<string>} Hold keys
+ */
+export function loadoutHoldKeys() {
+    const keys = [];
+    for (const snapshot of loadoutSnapshot.getAllSnapshots?.() || []) {
+        for (const piece of snapshot.equipment || []) {
+            if (piece?.itemHrid) keys.push(holdKey(piece.itemHrid, piece.enhancementLevel));
+        }
+    }
+    return keys;
+}
 
 class BulkSellAssistant {
     constructor() {
@@ -59,16 +117,62 @@ class BulkSellAssistant {
         this.panelPosition = null;
         /**
          * Other scripts' claims on inventory: name -> () => iterable of hold
-         * keys. Kept deliberately ignorant of why anything is held — a flip
+         * keys. Kept deliberately ignorant of why anything is held — stock
          * waiting to be relisted, a crafting reserve, a gift — so nothing about
          * the reason has to live in here.
          */
         this.holdProviders = new Map();
         this.heldCount = 0;
+        /** Enhanced gear the watchlist source declined to sweep up */
+        this.enhancedSkipped = 0;
         this._hasTabs = false;
         this._tabPrefLoaded = false;
         this.toggleBtn = null;
         this.panelVisible = false;
+        this.rulesOpen = false;
+    }
+
+    /**
+     * What was left out of the queue and why.
+     *
+     * Counted and said rather than silently dropped: an item missing from a sell
+     * run with no explanation is indistinguishable from a bug, and one of these
+     * reasons — gear that is in a loadout — is the difference between a tidy
+     * inventory and a loadout that stops working.
+     *
+     * @param {Object} [options] - `bare: true` for a sentence of its own
+     * @returns {string}
+     */
+    _skipNote({ bare = false } = {}) {
+        const parts = [];
+        if (this.heldCount > 0) parts.push(`${this.heldCount} held back (in a loadout, or claimed elsewhere)`);
+        if (this.enhancedSkipped > 0) {
+            parts.push(`${this.enhancedSkipped} enhanced item${this.enhancedSkipped === 1 ? '' : 's'} skipped`);
+        }
+        if (!parts.length) return '';
+        return bare ? parts.join(' · ') : ` (${parts.join(', ')})`;
+    }
+
+    /**
+     * What the Watchlist is tracking, as the same key set a tab produces.
+     *
+     * Plain hrids: the watchlist tracks an item rather than an item at an
+     * enhancement level, so every level of a tracked item is in scope — which
+     * is what "sell what I am watching" means.
+     *
+     * @returns {Set<string>} Hrids
+     */
+    _watchlistItems() {
+        try {
+            // `hrid`, which is what a watchlist entry calls it. Reading
+            // `itemHrid` — what an inventory item calls it — produced a set of
+            // undefined, an empty source, and "no tradable items" against a
+            // list of seventy.
+            return new Set(watchlistEntries().map((entry) => entry.hrid));
+        } catch (error) {
+            console.error('[BulkSellAssistant] Reading the watchlist failed:', error);
+            return new Set();
+        }
     }
 
     /** Character-scoped storage key for the remembered tab selection */
@@ -83,7 +187,7 @@ class BulkSellAssistant {
      * them away again when the claim ends.
      *
      *     const release = Toolasha.Market.bulkSellAssistant.addHoldProvider(
-     *         'flip-finder',
+     *         'my-script',
      *         () => ['/items/cheese', '/items/cheese_sword+3']
      *     );
      *
@@ -302,7 +406,11 @@ class BulkSellAssistant {
         }
 
         chip.style.cursor = 'move';
-        chip.addEventListener('mousedown', (e) => {
+        // Pointer events so a finger works too; mousedown never fires on a
+        // touchscreen, and touch-action:none stops the browser claiming the
+        // gesture for scrolling
+        chip.style.touchAction = 'none';
+        chip.addEventListener('pointerdown', (e) => {
             if (e.button !== 0) return;
             if (e.target.closest('button, select, input')) return;
             e.preventDefault();
@@ -313,15 +421,17 @@ class BulkSellAssistant {
 
             const onMove = (move) => applyPosition(move.clientX - grabX, move.clientY - grabY);
             const onUp = () => {
-                document.removeEventListener('mousemove', onMove);
-                document.removeEventListener('mouseup', onUp);
+                document.removeEventListener('pointermove', onMove);
+                document.removeEventListener('pointerup', onUp);
+                document.removeEventListener('pointercancel', onUp);
                 const final = chip.getBoundingClientRect();
                 this.panelPosition = { left: final.left, top: final.top };
                 storage.set(PANEL_POSITION_KEY, this.panelPosition, 'settings');
             };
 
-            document.addEventListener('mousemove', onMove);
-            document.addEventListener('mouseup', onUp);
+            document.addEventListener('pointermove', onMove);
+            document.addEventListener('pointerup', onUp);
+            document.addEventListener('pointercancel', onUp);
         });
     }
 
@@ -344,8 +454,9 @@ class BulkSellAssistant {
         const tabSel = document.createElement('select');
         tabSel.className = `${CHIP_ID}-tab`;
         tabSel.title =
-            'Only sell items assigned to this Toolasha inventory tab (a parent tab includes its child tabs). ' +
-            'Items also assigned to a tab above the selected one are kept, not sold.';
+            'What to sell. "Watchlist" is whatever the Watchlist is tracking, at every enhancement level. ' +
+            'A Toolasha inventory tab sells only the items assigned to it (a parent tab includes its child tabs), ' +
+            'and items also assigned to a tab above the selected one are kept rather than sold.';
         tabSel.style.cssText =
             'display:none; border:1px solid rgba(74,158,255,0.35); border-radius:5px; background:rgba(20,26,44,0.95); ' +
             'color:#cfd8ea; font-size:12px; padding:2px 4px; max-width:150px; cursor:pointer; font-family:inherit;';
@@ -395,17 +506,120 @@ class BulkSellAssistant {
         closeBtn.addEventListener('mouseenter', () => (closeBtn.style.color = '#e0e0e0'));
         closeBtn.addEventListener('mouseleave', () => (closeBtn.style.color = '#7d879c'));
 
-        chip.appendChild(status);
-        chip.appendChild(tabSel);
-        chip.appendChild(mainBtn);
-        chip.appendChild(stopBtn);
-        chip.appendChild(closeBtn);
+        // The rules it decides by, one click away rather than on the settings
+        // page. The moment you want to change one of these is the moment you
+        // are watching it make the wrong call.
+        const gear = document.createElement('button');
+        gear.className = `${CHIP_ID}-gear`;
+        gear.textContent = '\u2699';
+        gear.title = 'Show the rules this decides by';
+        gear.style.cssText =
+            'border:0; border-radius:5px; background:rgba(255,255,255,0.08); color:#cfd8ea; font-size:12px; ' +
+            'line-height:1; padding:3px 6px; cursor:pointer; font-family:inherit;';
+        gear.addEventListener('click', () => {
+            this.rulesOpen = !this.rulesOpen;
+            this._renderRules();
+        });
+
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex; align-items:center; gap:6px;';
+        row.append(status, tabSel, mainBtn, stopBtn, gear, closeBtn);
+
+        const rules = document.createElement('div');
+        rules.className = `${CHIP_ID}-rules`;
+        rules.style.cssText = 'display:none; flex-direction:column; gap:4px; padding-top:6px; margin-top:2px;';
+
+        // The chip is a row; with the rules under it, it is a column of two
+        chip.style.flexDirection = 'column';
+        chip.style.alignItems = 'stretch';
+        chip.appendChild(row);
+        chip.appendChild(rules);
 
         this._makeDraggable(chip);
         document.body.appendChild(chip);
         this.chip = chip;
         this._render();
+        this._renderRules();
         this._populateTabSelect();
+    }
+
+    /**
+     * The decision rules, as editable fields.
+     *
+     * Written straight into the settings the decision already reads, so this is
+     * the same switch as the settings page rather than a copy of it — there is
+     * no third place for the two to disagree in.
+     */
+    _renderRules() {
+        const rules = this.chip?.querySelector(`.${CHIP_ID}-rules`);
+        if (!rules) return;
+
+        rules.style.display = this.rulesOpen ? 'flex' : 'none';
+        if (!this.rulesOpen) return;
+
+        rules.textContent = '';
+        const border = document.createElement('div');
+        border.style.cssText = 'border-top:1px solid rgba(74,158,255,0.25); margin-bottom:2px;';
+        rules.appendChild(border);
+
+        const note = document.createElement('div');
+        note.textContent = 'Any one of these makes it insta-sell instead of listing. 0 turns a rule off.';
+        note.style.cssText = 'color:#7d879c; font-size:11px; max-width:340px; white-space:normal;';
+        rules.appendChild(note);
+
+        for (const tunable of TUNABLES) {
+            const line = document.createElement('label');
+            line.style.cssText =
+                'display:flex; align-items:center; gap:6px; font-size:11px; color:#cfd8ea; white-space:nowrap;';
+            line.title = tunable.title;
+
+            const text = document.createElement('span');
+            text.textContent = tunable.label;
+            text.style.cssText = 'flex:1;';
+
+            const input = document.createElement('input');
+            input.type = 'number';
+            input.min = '0';
+            input.value = String(config.getSettingValue(tunable.key, tunable.fallback));
+            input.style.cssText =
+                'width:90px; border:1px solid rgba(74,158,255,0.35); border-radius:4px; ' +
+                'background:rgba(20,26,44,0.95); color:#cfd8ea; font-size:11px; padding:2px 4px; font-family:inherit;';
+            // On change rather than on every keystroke: half a typed number is
+            // a rule, and one that would be applied the moment it was typed
+            input.addEventListener('change', () => {
+                const value = Number(input.value);
+                if (!Number.isFinite(value) || value < 0) {
+                    input.value = String(config.getSettingValue(tunable.key, tunable.fallback));
+                    return;
+                }
+                config.setSetting(tunable.key, value);
+            });
+            // The chip is dragged by its background; a field you cannot click
+            // into is not a field
+            input.addEventListener('mousedown', (event) => event.stopPropagation());
+
+            const suffix = document.createElement('span');
+            suffix.textContent = tunable.suffix;
+            suffix.style.cssText = 'color:#7d879c; width:38px;';
+
+            line.append(text, input, suffix);
+            rules.appendChild(line);
+        }
+
+        const vendor = document.createElement('label');
+        vendor.style.cssText = 'display:flex; align-items:center; gap:6px; font-size:11px; color:#cfd8ea;';
+        vendor.title =
+            'When the vendor pays at least what the market would net after tax, open the vendor sale instead. ' +
+            'Unenhanced items only.';
+        const box = document.createElement('input');
+        box.type = 'checkbox';
+        box.checked = Boolean(config.getSetting('market_bulkSellVendorCheck'));
+        box.addEventListener('mousedown', (event) => event.stopPropagation());
+        box.addEventListener('change', () => config.setSetting('market_bulkSellVendorCheck', box.checked));
+        const vendorText = document.createElement('span');
+        vendorText.textContent = 'Vendor when the market is no better';
+        vendor.append(box, vendorText);
+        rules.appendChild(vendor);
     }
 
     /**
@@ -431,7 +645,12 @@ class BulkSellAssistant {
             console.error('[BulkSellAssistant] Failed to load inventory tab config:', error);
         }
 
+        // The Watchlist is a list of items like a tab is, so it belongs in the
+        // same picker rather than as a second control beside it. Offered only
+        // when it has something in it — an empty source would build an empty
+        // queue and look like a broken button.
         const options = [{ value: 'all', label: 'All items' }];
+        if (this._watchlistItems().size) options.push({ value: WATCHLIST_SOURCE, label: 'Watchlist' });
         const walk = (nodes, depth) => {
             for (const node of nodes) {
                 options.push({ value: node.id, label: `${'\u00A0\u00A0'.repeat(depth)}${node.name}` });
@@ -440,7 +659,7 @@ class BulkSellAssistant {
         };
         walk(tabs, 0);
 
-        this._hasTabs = tabs.length > 0;
+        this._hasTabs = options.length > 1;
         const signature = JSON.stringify(options);
         if (sel.dataset.signature !== signature) {
             sel.dataset.signature = signature;
@@ -506,8 +725,18 @@ class BulkSellAssistant {
         // hrids for +0 items and "hrid+level" for enhanced ones
         let tabItems = null;
         let aboveItems = null;
+        let watchedHrids = null;
         let tabName = '';
-        if (this.selectedTabId && this.selectedTabId !== 'all') {
+        if (this.selectedTabId === WATCHLIST_SOURCE) {
+            watchedHrids = this._watchlistItems();
+            tabName = 'Watchlist';
+            if (!watchedHrids.size) {
+                this.statusNote = 'Nothing on the watchlist';
+                this.state = 'idle';
+                this._render();
+                return;
+            }
+        } else if (this.selectedTabId && this.selectedTabId !== 'all') {
             try {
                 const tabConfig = await loadTabConfig(dataManager.getCurrentCharacterId());
                 const found = findTab(tabConfig, this.selectedTabId);
@@ -533,10 +762,16 @@ class BulkSellAssistant {
         }
 
         const clientData = dataManager.getInitClientData();
-        const heldKeys = collectHeldKeys(this.holdProviders, (name, error) =>
+        // Gear saved into a loadout is gear you are still using — just not right
+        // now. Through the hold mechanism rather than a filter of its own, so it
+        // is counted and reported like every other claim on the inventory.
+        const providers = new Map(this.holdProviders);
+        providers.set('loadouts', () => loadoutHoldKeys());
+        const heldKeys = collectHeldKeys(providers, (name, error) =>
             console.error(`[BulkSellAssistant] Hold provider "${name}" failed; its items are not held:`, error)
         );
         let held = 0;
+        let enhanced = 0;
         const items = (dataManager.characterItems || []).filter((item) => {
             if (item.itemLocationHrid !== '/item_locations/inventory') return false;
             if ((item.count || 0) <= 0) return false;
@@ -554,9 +789,24 @@ class BulkSellAssistant {
                 if (!tabItems.has(key)) return false;
                 if (aboveItems.has(key)) return false;
             }
+            // Matched on the hrid rather than the key: the watchlist tracks an
+            // item, not an item at a level, so every level of a tracked item is
+            // in scope. A tab is the other way round and keeps its own keys.
+            if (watchedHrids) {
+                if (!watchedHrids.has(item.itemHrid)) return false;
+                // …which is exactly why enhanced gear is left out of it. The
+                // list tracks "Gobo Defender"; matching every level of that
+                // swept a +10 into the queue at six million coins. A tab names
+                // the level it means, so it is trusted to mean it.
+                if ((item.enhancementLevel || 0) > 0) {
+                    enhanced++;
+                    return false;
+                }
+            }
             return true;
         });
         this.heldCount = held;
+        this.enhancedSkipped = enhanced;
         // Most expensive stack first: cached market unit price (ask, else bid) × count
         this.queue = items
             .map((item) => {
@@ -578,9 +828,10 @@ class BulkSellAssistant {
             );
 
         if (!this.queue.length) {
-            this.statusNote = tabItems
-                ? `No tradable items in "${tabName}"${held > 0 ? ` (${held} held back)` : ''}`
-                : `No tradable items in inventory${held > 0 ? ` (${held} held back)` : ''}`;
+            const why = this._skipNote();
+            this.statusNote = tabName
+                ? `No tradable items in "${tabName}"${why}`
+                : `No tradable items in inventory${why}`;
             this.state = 'idle';
             this._render();
             return;
@@ -588,7 +839,7 @@ class BulkSellAssistant {
         this.index = 0;
         // Say so rather than letting the count quietly differ from what is in
         // the inventory
-        this.statusNote = held > 0 ? `${held} item${held === 1 ? '' : 's'} held back` : '';
+        this.statusNote = this._skipNote({ bare: true });
         this._prepareCurrent();
     }
 

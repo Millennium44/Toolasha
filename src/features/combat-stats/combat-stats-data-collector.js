@@ -4,8 +4,38 @@
  */
 
 import webSocketHook from '../../core/websocket.js';
-import storage from '../../core/storage.js';
 import dataManager from '../../core/data-manager.js';
+import { sessionKey, archiveSession } from './combat-session-history.js';
+import { readScoped, writeScoped } from '../../utils/character-key.js';
+
+/**
+ * How long a finished run stays on the overlay.
+ *
+ * Long enough to read what you just earned after combat stops, short enough that
+ * a rate dividing by a clock nobody stopped does not sit there looking like a
+ * measurement. Only ever consulted when the character is *not* in combat — a run
+ * still under way is never withheld, however old its snapshot.
+ */
+const STALE_AFTER_MS = 10 * 60 * 1000;
+
+/**
+ * Keys under the 'combatStats' store, scoped per character.
+ *
+ * All four describe one character's live run — what it drank, what its party
+ * drank, what it looted — so a shared key had the iron cow reading the market
+ * cow's consumption rates. Keys are resolved at each read and write, never
+ * cached, because the user switches characters without reloading.
+ *
+ * The pre-scoping global values are *discarded* rather than adopted: this is
+ * live session state measured against one character's gear and one party's
+ * roster, and starting empty is better than starting wrong.
+ */
+const CONSUMABLE_TRACKER_KEY = 'consumableTracker';
+const PARTY_TRACKERS_KEY = 'partyConsumableTrackers';
+const PARTY_SNAPSHOTS_KEY = 'partyConsumableSnapshots';
+const LATEST_RUN_KEY = 'latestCombatRun';
+const COMBAT_STORE = 'combatStats';
+const DISCARD_LEGACY = { migrate: 'discard' };
 
 class CombatStatsDataCollector {
     constructor() {
@@ -14,6 +44,8 @@ class CombatStatsDataCollector {
         this.consumableEventHandler = null;
         this.latestCombatData = null;
         this.currentBattleId = null;
+        /** Which run the snapshot belongs to; a change means the last one ended */
+        this.sessionKey = null;
 
         // Consumable tracking state for current player (persisted to storage like MCS)
         this.consumableTracker = {
@@ -29,6 +61,10 @@ class CombatStatsDataCollector {
         this.partyConsumableTrackers = {}; // { playerName: tracker }
         this.partyConsumableSnapshots = {}; // { playerName: { itemHrid: previousCount } }
         this.partyLastKnownConsumables = {}; // { playerName: { itemHrid: { itemHrid, lastSeenCount } } }
+
+        // Character switch listeners, registered once (see initialize)
+        this.switchingHandler = null;
+        this.switchedHandler = null;
     }
 
     /**
@@ -44,6 +80,17 @@ class CombatStatsDataCollector {
         // Load persisted tracking state from storage (MCS-style)
         await this.loadConsumableTracking();
 
+        // And the last run itself. Without this the overlay showed "No loot
+        // tracked yet" after every refresh until the next battle started — in a
+        // dungeon that is a whole wave of nothing — while the Combat Statistics
+        // popup showed the run perfectly, because the popup was the only caller
+        // of loadLatestData. The snapshot was written all along and never read
+        // back at start-up.
+        //
+        // Safe to restore unconditionally: the rows date it from
+        // `combatStartTime`, and the next `new_battle` overwrites it outright.
+        await this.loadLatestData();
+
         // Store handler references for cleanup
         this.newBattleHandler = (data) => this.onNewBattle(data);
         this.consumableEventHandler = (data) => this.onConsumableUsed(data);
@@ -53,6 +100,43 @@ class CombatStatsDataCollector {
 
         // Listen for battle_consumable_ability_updated (fires on each consumable use)
         webSocketHook.on('battle_consumable_ability_updated', this.consumableEventHandler);
+
+        // Everything above is one character's live run. Registered once and
+        // never removed, because the collector is not always disabled on a
+        // switch — and if it is not, whatever is in memory would be written
+        // straight back out under the arriving character's key.
+        if (!this.switchingHandler) {
+            this.switchingHandler = () => this.onCharacterSwitching();
+            this.switchedHandler = () => this.onCharacterSwitched();
+            dataManager.on('character_switching', this.switchingHandler);
+            dataManager.on('character_switched', this.switchedHandler);
+        }
+    }
+
+    /**
+     * Forget the departing character's run.
+     *
+     * The keys are per character and derived at each access, so nothing here
+     * needs re-keying — what needs doing is forgetting, since the in-memory
+     * copy is the one thing a scoped key cannot protect. Nothing is read or
+     * written: dataManager still reports the departing character at this point,
+     * so a read here would fetch the run we are trying to forget.
+     */
+    onCharacterSwitching() {
+        this._resetTrackersInMemory();
+        this.latestCombatData = null;
+        this.currentBattleId = null;
+        this.sessionKey = null;
+    }
+
+    /** Bring in the arriving character's own run, now that they are current. */
+    async onCharacterSwitched() {
+        try {
+            await this.loadConsumableTracking();
+            await this.loadLatestData();
+        } catch (error) {
+            console.error('[Combat Stats] Reloading after a character switch failed:', error);
+        }
     }
 
     /**
@@ -120,7 +204,7 @@ class CombatStatsDataCollector {
     async loadConsumableTracking() {
         try {
             // Load current player tracker
-            const saved = await storage.getJSON('consumableTracker', 'combatStats', null);
+            const saved = await readScoped(CONSUMABLE_TRACKER_KEY, COMBAT_STORE, null, DISCARD_LEGACY);
             if (saved) {
                 // Restore tracking state
                 this.consumableTracker.actualConsumed = saved.actualConsumed || {};
@@ -138,7 +222,7 @@ class CombatStatsDataCollector {
             }
 
             // Load party member trackers (MCS-style)
-            const savedPartyTrackers = await storage.getJSON('partyConsumableTrackers', 'combatStats', null);
+            const savedPartyTrackers = await readScoped(PARTY_TRACKERS_KEY, COMBAT_STORE, null, DISCARD_LEGACY);
             if (savedPartyTrackers) {
                 const now = Date.now();
                 this.partyConsumableTrackers = {};
@@ -162,7 +246,7 @@ class CombatStatsDataCollector {
             }
 
             // Load party snapshots
-            const savedSnapshots = await storage.getJSON('partyConsumableSnapshots', 'combatStats', null);
+            const savedSnapshots = await readScoped(PARTY_SNAPSHOTS_KEY, COMBAT_STORE, null, DISCARD_LEGACY);
             if (savedSnapshots) {
                 this.partyConsumableSnapshots = savedSnapshots;
             }
@@ -218,7 +302,7 @@ class CombatStatsDataCollector {
                 elapsedMs: cappedElapsed,
                 saveTimestamp: Date.now(),
             };
-            await storage.setJSON('consumableTracker', toSave, 'combatStats');
+            await writeScoped(CONSUMABLE_TRACKER_KEY, toSave, COMBAT_STORE);
 
             // Save party member trackers (MCS-style)
             const partyTrackersToSave = {};
@@ -246,10 +330,10 @@ class CombatStatsDataCollector {
                     };
                 }
             });
-            await storage.setJSON('partyConsumableTrackers', partyTrackersToSave, 'combatStats');
+            await writeScoped(PARTY_TRACKERS_KEY, partyTrackersToSave, COMBAT_STORE);
 
             // Save party snapshots
-            await storage.setJSON('partyConsumableSnapshots', this.partyConsumableSnapshots, 'combatStats');
+            await writeScoped(PARTY_SNAPSHOTS_KEY, this.partyConsumableSnapshots, COMBAT_STORE);
         } catch (error) {
             console.error('[Combat Stats] Error saving consumable tracking:', error);
         }
@@ -259,6 +343,23 @@ class CombatStatsDataCollector {
      * Reset consumable tracking (for new combat session)
      */
     async resetConsumableTracking() {
+        this._resetTrackersInMemory();
+        // Fire-and-forget: don't await debounced writes so callers aren't blocked
+        writeScoped(CONSUMABLE_TRACKER_KEY, null, COMBAT_STORE);
+        writeScoped(PARTY_TRACKERS_KEY, null, COMBAT_STORE);
+        writeScoped(PARTY_SNAPSHOTS_KEY, null, COMBAT_STORE);
+    }
+
+    /**
+     * Blank the in-memory trackers without touching storage.
+     *
+     * Split out of `resetConsumableTracking` for the character switch, which
+     * must not write: the departing character's counts have their own key and
+     * belong there, and clearing them under the arriving character's key would
+     * be writing one character's zeroes over another character's record.
+     * @private
+     */
+    _resetTrackersInMemory() {
         this.consumableTracker = {
             actualConsumed: {},
             defaultConsumed: {},
@@ -270,10 +371,6 @@ class CombatStatsDataCollector {
         this.partyConsumableTrackers = {};
         this.partyConsumableSnapshots = {};
         this.partyLastKnownConsumables = {};
-        // Fire-and-forget: don't await debounced writes so callers aren't blocked
-        storage.setJSON('consumableTracker', null, 'combatStats');
-        storage.setJSON('partyConsumableTrackers', null, 'combatStats');
-        storage.setJSON('partyConsumableSnapshots', null, 'combatStats');
     }
 
     /**
@@ -495,6 +592,11 @@ class CombatStatsDataCollector {
                 timestamp: Date.now(),
                 battleId: battleId,
                 combatStartTime: data.combatStartTime,
+                // Which zone this run was, so a restored snapshot can be told
+                // apart from the run the character is in now. Time alone cannot
+                // do it: a character left fighting overnight has an old snapshot
+                // of a run that is still going.
+                actionHrid: this.currentCombatAction(),
                 durationSeconds: durationSeconds,
                 players: data.players.map((player) => {
                     // Check if this player is the current user by matching character ID
@@ -605,11 +707,21 @@ class CombatStatsDataCollector {
                 }),
             };
 
+            // A different run means the one before it has ended, which is the
+            // first moment that is knowable — nothing on the wire announces it.
+            // Archived before the snapshot is replaced, so what goes into the
+            // history is that session's final state.
+            const key = sessionKey(combatData);
+            if (this.sessionKey && key && key !== this.sessionKey && this.latestCombatData) {
+                archiveSession(this.latestCombatData);
+            }
+            if (key) this.sessionKey = key;
+
             // Store in memory
             this.latestCombatData = combatData;
 
             // Store in IndexedDB
-            await storage.setJSON('latestCombatRun', combatData, 'combatStats');
+            await writeScoped(LATEST_RUN_KEY, combatData, COMBAT_STORE);
 
             // Also save tracking state periodically
             await this.saveConsumableTracking();
@@ -619,11 +731,80 @@ class CombatStatsDataCollector {
     }
 
     /**
+     * The combat zone the character is fighting in right now, if any.
+     *
+     * @returns {string|null} Action hrid, or null when not in combat or when the
+     *   character's actions have not loaded yet — which are different things and
+     *   the caller has to treat them differently
+     */
+    currentCombatAction() {
+        try {
+            const actions = dataManager.getCurrentActions?.();
+            if (!Array.isArray(actions)) return null;
+
+            const combat = actions.find(
+                (action) => action.actionHrid?.startsWith('/actions/combat/') && !action.isDone
+            );
+            return combat?.actionHrid || null;
+        } catch {
+            return null;
+        }
+    }
+
+    /**
+     * Whether a run restored from storage still describes what is happening.
+     *
+     * A restored snapshot is a photograph of the run as it stood when the tab was
+     * last open, and there are two quite different reasons it might be old:
+     *
+     * - **The run is still going.** The character kept fighting while the tab was
+     *   shut, so the snapshot understates a run that is very much alive. Showing
+     *   it is right: it is the correct run, a little behind, and the next battle
+     *   corrects it. Blanking here would reintroduce exactly the gap this was
+     *   meant to close.
+     * - **The run is over.** Combat stopped hours ago and the figures describe
+     *   something finished. Presenting them as live is the thing worth avoiding —
+     *   the per-day rates keep dividing by a clock that never stopped, so they
+     *   decay towards zero and read as a run going badly rather than as a run
+     *   that is not happening.
+     *
+     * Elapsed time cannot tell those apart, which is why the current action
+     * decides it and the clock is only the fallback for when there is nothing to
+     * ask. A different zone in progress means the snapshot is somebody else's
+     * run entirely.
+     *
+     * @returns {boolean}
+     */
+    isRestoredRunCurrent() {
+        const data = this.latestCombatData;
+        if (!data) return false;
+
+        const current = this.currentCombatAction();
+
+        // Fighting somewhere else: whatever this is, it is not that
+        if (current && data.actionHrid && current !== data.actionHrid) return false;
+        // The same run, still under way — age is irrelevant
+        if (current && (!data.actionHrid || current === data.actionHrid)) return true;
+
+        // Not in combat, or not yet able to tell. A short grace period so the run
+        // you have just finished is still on screen while you look at it, and
+        // then it belongs to the popup rather than to the overlay.
+        return Date.now() - (data.timestamp || 0) < STALE_AFTER_MS;
+    }
+
+    /**
      * Get the latest combat data
+     *
+     * Live data is returned as-is. A snapshot restored from storage is withheld
+     * once it stops describing what is happening — see `isRestoredRunCurrent`.
+     *
      * @returns {Object|null} Latest combat data
      */
     getLatestData() {
-        return this.latestCombatData;
+        if (!this.latestCombatData) return null;
+        if (!this.latestCombatData.restored) return this.latestCombatData;
+
+        return this.isRestoredRunCurrent() ? this.latestCombatData : null;
     }
 
     /**
@@ -631,11 +812,14 @@ class CombatStatsDataCollector {
      * @returns {Promise<Object|null>} Latest combat data
      */
     async loadLatestData() {
-        const data = await storage.getJSON('latestCombatRun', 'combatStats', null);
+        const data = await readScoped(LATEST_RUN_KEY, COMBAT_STORE, null, DISCARD_LEGACY);
         if (data) {
-            this.latestCombatData = data;
+            // Marked so `getLatestData` knows this came out of storage rather
+            // than off the wire, and can stop offering it once it stops being
+            // true. Live data is never withheld.
+            this.latestCombatData = { ...data, restored: true };
         }
-        return data;
+        return this.latestCombatData;
     }
 
     /**

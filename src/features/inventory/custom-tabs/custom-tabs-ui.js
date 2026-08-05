@@ -23,6 +23,7 @@ function getLoadoutSnapshot() {
     return window.Toolasha?.Combat?.loadoutSnapshot || loadoutSnapshotLocal;
 }
 import { formatKMB } from '../../../utils/formatters.js';
+import { PANEL_Z_CAP } from '../../../utils/panel-z-index.js';
 import {
     loadConfig,
     saveConfig,
@@ -171,6 +172,10 @@ const PANEL_CSS = `
     flex-shrink: 0;
 }
 .toolasha-ct-section-header:hover .toolasha-ct-section-actions { display: flex; }
+/* No hover on a touchscreen — actions hidden behind it would not exist there */
+@media (pointer: coarse) {
+    .toolasha-ct-section-actions { display: flex; }
+}
 .toolasha-ct-node-btn {
     background: none;
     border: none;
@@ -226,7 +231,7 @@ const PANEL_CSS = `
     position: fixed;
     inset: 0;
     background: rgba(0,0,0,0.6);
-    z-index: 9999;
+    z-index: ${PANEL_Z_CAP + 1};
     display: flex;
     align-items: center;
     justify-content: center;
@@ -236,7 +241,7 @@ const PANEL_CSS = `
     border: 1px solid #444;
     border-radius: 8px;
     padding: 16px;
-    width: 380px;
+    width: min(380px, 92vw);
     max-height: 80vh;
     display: flex;
     flex-direction: column;
@@ -3057,7 +3062,7 @@ export default class CustomTabsUI {
             top: calc(100% + 4px);
             left: 0;
             width: 100%;
-            z-index: 9999;
+            z-index: ${config.Z_POPUP};
             flex-direction: column;
             background: var(--color-surface, #1e1e2e);
             border: 1px solid rgba(255,255,255,0.15);

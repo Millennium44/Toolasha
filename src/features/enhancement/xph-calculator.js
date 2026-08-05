@@ -6,14 +6,13 @@
 import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
 import dataManager from '../../core/data-manager.js';
-import marketAPI from '../../api/marketplace.js';
 import { calculateEnhancement } from '../../utils/enhancement-calculator.js';
 import { calculateSuccessXP, calculateFailureXP } from './enhancement-xp.js';
-import { getEnhancingParams } from '../../utils/enhancement-config.js';
+import { getEnhancingParams, describeParamsSource } from '../../utils/enhancement-config.js';
 import { formatKMB, formatWithSeparator } from '../../utils/formatters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
-import { getCheapestProtectionPrice } from './tooltip-enhancement.js';
+import { getCheapestProtectionPrice, getEnhancementMaterialPrice } from './tooltip-enhancement.js';
 
 const PANEL_ID = 'mwi-xph-calc-panel';
 const BTN_CLASS = 'mwi-xph-calc-btn';
@@ -43,6 +42,7 @@ function calculateItemXPH(itemHrid, itemDetails, maxLevel, protectFrom, params) 
             protectFrom,
             blessedTea: params.teas.blessed,
             guzzlingBonus: params.guzzlingBonus,
+            blessedTeaBonus: params.blessedTeaBonus,
         });
     } catch {
         return null;
@@ -71,14 +71,11 @@ function calculateItemXPH(itemHrid, itemDetails, maxLevel, protectFrom, params) 
 
     if (itemDetails.enhancementCosts?.length) {
         for (const cost of itemDetails.enhancementCosts) {
-            if (cost.itemHrid === '/items/coin') {
-                materialCost += cost.count * calc.attempts;
-                allMissing = false;
-                continue;
-            }
-            const price = marketAPI.getPrice(cost.itemHrid);
-            if (price?.ask > 0) {
-                materialCost += cost.count * price.ask * calc.attempts;
+            // Shared pricing rules: coins at face value, untradeable trainee charms at their
+            // fixed price, and a one-sided market quote filled in from the side that exists.
+            const price = getEnhancementMaterialPrice(cost.itemHrid, 'ask');
+            if (price > 0) {
+                materialCost += cost.count * price * calc.attempts;
                 allMissing = false;
             } else {
                 costPartial = true;
@@ -300,7 +297,12 @@ class XPHCalculator {
     }
 
     _setupDrag(header) {
-        header.addEventListener('mousedown', (e) => {
+        // Pointer events so a finger works too; mousedown never fires on a
+        // touchscreen, and touch-action:none stops the browser claiming the
+        // gesture for scrolling
+        header.style.touchAction = 'none';
+
+        header.addEventListener('pointerdown', (e) => {
             if (e.target.id === 'mwi-xph-close') return;
             this.isDragging = true;
             header.style.cursor = 'grabbing';
@@ -317,11 +319,13 @@ class XPHCalculator {
             const onUp = () => {
                 this.isDragging = false;
                 header.style.cursor = 'grab';
-                document.removeEventListener('mousemove', onMove);
-                document.removeEventListener('mouseup', onUp);
+                document.removeEventListener('pointermove', onMove);
+                document.removeEventListener('pointerup', onUp);
+                document.removeEventListener('pointercancel', onUp);
             };
-            document.addEventListener('mousemove', onMove);
-            document.addEventListener('mouseup', onUp);
+            document.addEventListener('pointermove', onMove);
+            document.addEventListener('pointerup', onUp);
+            document.addEventListener('pointercancel', onUp);
         });
     }
 
@@ -372,7 +376,11 @@ class XPHCalculator {
 
         const withCost = results.filter((r) => r.costPerHour !== null).length;
         const partialNote = results.some((r) => r.costPartial) ? ' * = partial price data.' : '';
-        status.textContent = `${results.length} items · ${withCost} with cost data.${partialNote}`;
+        // Say so when the ranking was built on hand-entered stats instead of this character's
+        const sourceNote = describeParamsSource(params);
+        status.textContent =
+            `${results.length} items · ${withCost} with cost data.${partialNote}` +
+            (sourceNote ? ` · ${sourceNote}` : '');
     }
 
     _sort(col) {

@@ -1,8 +1,14 @@
 /**
  * Task Auto-Reroll Reminder
- * Highlights tasks that the user wants to reroll with a red/orange indicator.
- * Inverse of task reroll protection — instead of preventing rerolls,
- * it reminds the user to reroll unwanted tasks.
+ * Highlights tasks worth rerolling with a red indicator. Inverse of task reroll
+ * protection — instead of preventing rerolls, it points at the ones to spend on.
+ *
+ * Two independent triggers badge a card:
+ *  - the per-character blacklist the player curates by hand, and
+ *  - the task rating below the visible board's median by more than its next
+ *    reroll would cost. That second rule is what makes the badge a decision
+ *    rather than a bookmark: a task is only worth replacing when replacing it
+ *    with a typical task pays for the reroll.
  *
  * Per-character configuration stored in IndexedDB.
  */
@@ -12,18 +18,73 @@ import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import storage from '../../core/storage.js';
 import webSocketHook from '../../core/websocket.js';
+import { calculateTaskTokenValue } from './task-profit-calculator.js';
+import { readVisibleTaskRatings } from './task-profit-display.js';
+import { isCardInConfirmState, armConfirmSettleWatch, onConfirmFlowSettled } from './task-card-state.js';
+import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
 
 const STORAGE_KEY_PREFIX = 'taskAutoRerollHrids';
+const PROTECTED_KEY_PREFIX = 'taskProtectedHrids';
+
+// Coin reroll progression: 10K → 20K → … → 320K (hard cap)
+const REROLL_BASE_COIN_COST = 10000;
+const REROLL_MAX_COIN_COST = 320000;
 
 function getStorageKey() {
     const charId = dataManager.getCurrentCharacterId() || 'default';
     return `${STORAGE_KEY_PREFIX}_${charId}`;
 }
 
+function getProtectedStorageKey() {
+    const charId = dataManager.getCurrentCharacterId() || 'default';
+    return `${PROTECTED_KEY_PREFIX}_${charId}`;
+}
+
+/**
+ * Cost of a card's next reroll, expressed in the units the rating uses.
+ *
+ * @param {number} coinRerollCount - Coin rerolls already spent on the card
+ * @param {string} ratingMode - 'gold' or 'tokens'
+ * @param {number|null} tokenValue - Coins one task token is worth
+ * @returns {number|null} Cost in rating units, or null when inexpressible
+ */
+export function nextRerollCostInRatingUnits(coinRerollCount, ratingMode, tokenValue) {
+    const coinCost = Math.min(REROLL_BASE_COIN_COST * Math.pow(2, coinRerollCount || 0), REROLL_MAX_COIN_COST);
+    if (ratingMode !== 'tokens') {
+        return coinCost;
+    }
+    // A tokens/hr rating cannot be compared against coins, so the coin cost has
+    // to be restated in tokens at what a token is currently worth
+    if (!Number.isFinite(tokenValue) || tokenValue <= 0) {
+        return null;
+    }
+    return coinCost / tokenValue;
+}
+
+/**
+ * Is this task worth rerolling on its numbers alone?
+ *
+ * The reroll's cost is spread over the hours the task would occupy, so it is
+ * compared in the rating's own per-hour units: the task has to trail the board
+ * by more than the reroll costs before replacing it is worth doing.
+ *
+ * @param {{value: number, hours: number|null}|undefined} entry - The card's rating
+ * @param {number|null} boardMedian - Median rating across the visible board
+ * @param {number|null} rerollCost - Next reroll's cost in rating units
+ * @returns {boolean}
+ */
+export function ratesBelowBoard(entry, boardMedian, rerollCost) {
+    if (boardMedian === null || boardMedian === undefined) return false;
+    if (!entry || !entry.hours) return false;
+    if (rerollCost === null || rerollCost === undefined) return false;
+    return entry.value < boardMedian - rerollCost / entry.hours;
+}
+
 class TaskAutoReroll {
     constructor() {
         this.isInitialized = false;
         this.autoRerollHrids = new Set();
+        this.protectedHrids = new Set();
         this.unregisterHandlers = [];
     }
 
@@ -35,14 +96,20 @@ class TaskAutoReroll {
 
         const saved = await storage.getJSON(getStorageKey(), 'settings', []);
         this.autoRerollHrids = new Set(saved);
+        await this._loadProtectedHrids();
 
-        const unregister = domObserver.onClass('TaskAutoReroll', 'RandomTask_randomTask', (taskNode) => {
-            setTimeout(() => this._processTaskCard(taskNode), 150);
+        const unregister = domObserver.onClass('TaskAutoReroll', 'RandomTask_randomTask', () => {
+            // Always re-read the whole board: the rating rule is relative, so a
+            // card arriving moves the median every other card is judged against
+            setTimeout(() => this._processAllCards(), 150);
         });
         this.unregisterHandlers.push(unregister);
 
         const questHandler = () => {
-            setTimeout(() => this._processAllCards(), 300);
+            setTimeout(async () => {
+                await this._loadProtectedHrids();
+                this._processAllCards();
+            }, 300);
         };
         webSocketHook.on('quests_updated', questHandler);
         this.unregisterHandlers.push(() => webSocketHook.off('quests_updated', questHandler));
@@ -51,13 +118,65 @@ class TaskAutoReroll {
             this._injectConfigButton(panel);
         });
         this.unregisterHandlers.push(unregisterPanel);
+
+        // Closing a reroll chooser adds no card, so nothing above fires for it
+        this.unregisterHandlers.push(onConfirmFlowSettled(() => this._processAllCards()));
+    }
+
+    /**
+     * Reload the protected list the 🛡️ popup writes, so protection can be
+     * detected from the data rather than from paint that may be hidden.
+     * @private
+     */
+    async _loadProtectedHrids() {
+        try {
+            const saved = await storage.getJSON(getProtectedStorageKey(), 'settings', []);
+            this.protectedHrids = new Set(saved);
+        } catch (error) {
+            console.error('[TaskAutoReroll] Failed to load protected task list:', error);
+        }
     }
 
     _processAllCards() {
-        const cards = document.querySelectorAll('[class*="RandomTask_randomTask"]');
+        const cards = Array.from(document.querySelectorAll('[class*="RandomTask_randomTask"]'));
+        const board = readVisibleTaskRatings(cards);
         for (const card of cards) {
-            this._processTaskCard(card);
+            this._processTaskCard(card, board);
         }
+    }
+
+    /**
+     * Apply the rating rule to one card.
+     * @param {HTMLElement} card - Task card
+     * @param {Object|null} quest - Quest object
+     * @param {Object} board - Board summary from readVisibleTaskRatings
+     * @returns {boolean}
+     * @private
+     */
+    _ratesBelowBoard(card, quest, board) {
+        if (board.median === null) return false;
+        const tokenValue = board.ratingMode === 'tokens' ? calculateTaskTokenValue().tokenValue : null;
+        const cost = nextRerollCostInRatingUnits(quest?.coinRerollCount, board.ratingMode, tokenValue);
+        return ratesBelowBoard(board.entries.get(card), board.median, cost);
+    }
+
+    /**
+     * Is this card protected?
+     *
+     * Reads the protected list directly. Protection paints an inset box-shadow
+     * (and paints nothing at all when its highlight is hidden), so testing for
+     * an outline — or for any paint — misses protected cards.
+     *
+     * @param {HTMLElement} card - Task card
+     * @param {string} hrid - Task action/monster hrid
+     * @returns {boolean}
+     * @private
+     */
+    _isProtected(card, hrid) {
+        if (hrid && this.protectedHrids.has(hrid)) return true;
+        // Fallback for the moment before the list has loaded: protection's own
+        // green edge highlight, which it draws as a box-shadow
+        return card.style.boxShadow?.includes('76, 175, 80') || false;
     }
 
     _injectConfigButton(panel) {
@@ -80,34 +199,57 @@ class TaskAutoReroll {
         parent.appendChild(btn);
     }
 
-    _processTaskCard(taskCard) {
+    _processTaskCard(taskCard, board) {
+        // Mid-flow the card is waiting on the player's second click. Adding or
+        // pulling the badge — and with it the card's outline — while they are
+        // part-way through a reroll is the flicker they see and then blame on
+        // the click not registering. The badge is judged again when the chooser
+        // closes, so a "Reroll!" left over from the previous task does not
+        // outlive it.
+        if (isCardInConfirmState(taskCard)) {
+            armConfirmSettleWatch();
+            return;
+        }
+
         const quest = this._getQuestFromCard(taskCard);
         const hrid = quest?.actionHrid || quest?.monsterHrid || '';
-        const shouldReroll = hrid && this.autoRerollHrids.has(hrid);
 
-        // Don't show reroll reminder if task is also in protection list (green outline = protected)
-        const isProtected =
-            taskCard.dataset.mwiRerollProtection === '1' && taskCard.style.outline?.includes('76, 175, 80');
+        // Two independent triggers: the blacklist the player curates by hand,
+        // and the task simply not being worth its slot next to the others
+        const isBlacklisted = Boolean(hrid && this.autoRerollHrids.has(hrid));
+        const isBelowBoard = board ? this._ratesBelowBoard(taskCard, quest, board) : false;
+        const shouldReroll = isBlacklisted || isBelowBoard;
+
+        const isProtected = this._isProtected(taskCard, hrid);
 
         if (shouldReroll && !isProtected) {
             taskCard.style.setProperty('outline', '2px solid rgba(239, 68, 68, 0.7)', 'important');
             taskCard.style.setProperty('outline-offset', '-2px');
-            taskCard.style.setProperty('box-shadow', '0 0 8px 2px rgba(239, 68, 68, 0.3)', 'important');
-            this._showBadge(taskCard);
+            this._showBadge(taskCard, isBlacklisted, isBelowBoard, board);
         } else if (taskCard.querySelector('.mwi-autoreroll-badge')) {
             taskCard.style.removeProperty('outline');
             taskCard.style.removeProperty('outline-offset');
-            taskCard.style.removeProperty('box-shadow');
             this._clearBadge(taskCard);
         }
     }
 
-    _showBadge(taskCard) {
-        if (taskCard.querySelector('.mwi-autoreroll-badge')) return;
+    _showBadge(taskCard, isBlacklisted, isBelowBoard, board) {
+        const label = isBlacklisted ? 'Reroll!' : 'Below par';
+        const existing = taskCard.querySelector('.mwi-autoreroll-badge');
+        if (existing) {
+            if (existing.textContent !== label) existing.textContent = label;
+            return;
+        }
 
         const badge = document.createElement('div');
         badge.className = 'mwi-autoreroll-badge';
-        badge.textContent = 'Reroll!';
+        badge.textContent = label;
+        badge.title = isBlacklisted
+            ? 'On your auto-reroll list'
+            : `Rates below the board median (${Math.round(board?.median ?? 0)} ${board?.ratingMode === 'tokens' ? 'tokens' : 'gold'}/hr) by more than the next reroll costs`;
+        if (isBelowBoard && !isBlacklisted) {
+            badge.dataset.reason = 'rating';
+        }
         badge.style.cssText = `
             position: absolute;
             top: 4px;
@@ -251,7 +393,7 @@ class TaskAutoReroll {
             top: 50%;
             left: 50%;
             transform: translate(-50%, -50%);
-            z-index: 99999;
+            z-index: ${PANEL_Z_CAP + 2};
             background: rgba(10, 10, 20, 0.97);
             border: 2px solid rgba(239, 68, 68, 0.5);
             border-radius: 10px;
@@ -399,7 +541,7 @@ class TaskAutoReroll {
         });
 
         const backdrop = document.createElement('div');
-        backdrop.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; z-index:99998;';
+        backdrop.style.cssText = `position:fixed; top:0; left:0; right:0; bottom:0; z-index:${PANEL_Z_CAP + 1};`;
         backdrop.addEventListener('click', () => {
             popup.remove();
             backdrop.remove();
@@ -416,9 +558,9 @@ class TaskAutoReroll {
         const cards = document.querySelectorAll('[class*="RandomTask_randomTask"]');
         for (const card of cards) {
             if (card.querySelector('.mwi-autoreroll-badge')) {
+                // box-shadow is left alone — it belongs to reroll protection
                 card.style.removeProperty('outline');
                 card.style.removeProperty('outline-offset');
-                card.style.removeProperty('box-shadow');
                 this._clearBadge(card);
             }
         }

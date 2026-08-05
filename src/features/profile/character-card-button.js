@@ -156,7 +156,10 @@ export async function handleViewCardFromSnapshot(snapshotName) {
                 };
             }
         }
-        for (const equip of snapshot.equipment) {
+        // Resolved rather than stored: a loadout in "highest owned" mode wears
+        // the best copy owned now, and the card would otherwise show the level
+        // the loadout happened to be saved at
+        for (const equip of loadoutSnapshot.resolveEquipment(snapshot)) {
             wearableItemMap[equip.itemLocationHrid] = {
                 itemLocationHrid: equip.itemLocationHrid,
                 itemHrid: equip.itemHrid,

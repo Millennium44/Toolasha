@@ -4,12 +4,13 @@
  * Persisted per character to IndexedDB (settings store).
  *
  * Exclusion types:
- *   assetType  - entire section ('houses', 'abilities', 'abilityBooks', 'listings', 'equipped')
- *   category   - all items in an inventory category ('/item_categories/food', etc.)
- *   item       - all stacks of a specific item type ('/items/...')
- *   houseRoom  - one specific house room ('/house_rooms/...')
- *   ability    - one specific ability ('/abilities/...')
- *   loadout    - all equipment items in a named loadout snapshot
+ *   assetType   - entire section ('houses', 'abilities', 'abilityBooks', 'guildShrines', 'listings', 'equipped')
+ *   category    - all items in an inventory category ('/item_categories/food', etc.)
+ *   item        - all stacks of a specific item type ('/items/...')
+ *   houseRoom   - one specific house room ('/house_rooms/...')
+ *   ability     - one specific ability ('/abilities/...')
+ *   guildShrine - one specific guild shrine buff ('/guild_buffs/...')
+ *   loadout     - all equipment items in a named loadout snapshot
  */
 
 import storage from '../../core/storage.js';
@@ -58,7 +59,7 @@ export function getExclusions() {
 
 /**
  * Check whether a given type/value pair is currently excluded.
- * @param {string} type - 'assetType' | 'category' | 'item' | 'houseRoom' | 'ability' | 'loadout'
+ * @param {string} type - 'assetType' | 'category' | 'item' | 'houseRoom' | 'ability' | 'guildShrine' | 'loadout'
  * @param {string} value - HRID or loadout name
  * @returns {boolean}
  */

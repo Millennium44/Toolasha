@@ -10,6 +10,8 @@ import enhancementUI from './enhancement-ui.js';
 import config from '../../core/config.js';
 import marketAPI from '../../api/marketplace.js';
 import { calculateSuccessXP, calculateFailureXP, calculateAdjustedAttemptCount } from './enhancement-xp.js';
+import { getEnhancementMaterialPrice } from './tooltip-enhancement.js';
+import { parseItemHash } from '../../utils/item-hash.js';
 
 /**
  * Setup enhancement event handlers
@@ -102,50 +104,6 @@ function getProtectionItemHrid(action) {
 }
 
 /**
- * Parse item hash to extract HRID and level
- * Based on Ultimate Enhancement Tracker's parseItemHash function
- * @param {string} primaryItemHash - Item hash from action
- * @returns {Object} {itemHrid, level}
- */
-function parseItemHash(primaryItemHash) {
-    try {
-        // Handle different possible formats:
-        // 1. "/item_locations/inventory::/items/enhancers_bottoms::0" (level 0)
-        // 2. "161296::/item_locations/inventory::/items/enhancers_bottoms::5" (level 5)
-        // 3. Direct HRID like "/items/enhancers_bottoms" (no level)
-
-        let itemHrid = null;
-        let level = 0; // Default to 0 if not specified
-
-        // Split by :: to parse components
-        const parts = primaryItemHash.split('::');
-
-        // Find the part that starts with /items/
-        const itemPart = parts.find((part) => part.startsWith('/items/'));
-        if (itemPart) {
-            itemHrid = itemPart;
-        }
-        // If no /items/ found but it's a direct HRID
-        else if (primaryItemHash.startsWith('/items/')) {
-            itemHrid = primaryItemHash;
-        }
-
-        // Try to extract enhancement level (last part after ::)
-        const lastPart = parts[parts.length - 1];
-        if (lastPart && !lastPart.startsWith('/')) {
-            const parsedLevel = parseInt(lastPart, 10);
-            if (!isNaN(parsedLevel)) {
-                level = parsedLevel;
-            }
-        }
-
-        return { itemHrid, level };
-    } catch {
-        return { itemHrid: null, level: 0 };
-    }
-}
-
-/**
  * Get enhancement materials and costs for an item
  * Based on Ultimate Enhancement Tracker's getEnhancementMaterials function
  * @param {string} itemHrid - Item HRID
@@ -213,10 +171,8 @@ async function trackMaterialCosts(itemHrid) {
         } else {
             // Track material costs
             await enhancementTracker.trackMaterialCost(resourceHrid, count);
-            // Add to material cost total
-            const priceData = marketAPI.getPrice(resourceHrid, 0);
-            const unitCost = priceData ? priceData.ask || priceData.bid || 0 : 0;
-            materialCost += unitCost * count;
+            // Add to material cost total, using the same pricing rules the tracker just used
+            materialCost += getEnhancementMaterialPrice(resourceHrid, 'ask') * count;
         }
     }
 

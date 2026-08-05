@@ -15,9 +15,11 @@ import {
     buildEnhancementTooltipHTML,
     buildEnhancementMilestonesHTML,
     getProductionCost,
+    installEnhancementSourceToggle,
+    uninstallEnhancementSourceToggle,
 } from '../enhancement/tooltip-enhancement.js';
+import { getTooltipEnhancementParams } from '../enhancement/enhancement-params-source.js';
 import { calculateGatheringProfit } from '../actions/gathering-profit.js';
-import { getEnhancingParams, getAutoDetectedParams } from '../../utils/enhancement-config.js';
 import {
     numberFormatter,
     formatKMB,
@@ -30,7 +32,7 @@ import { resolveItemPrice, calculatePriceAfterTax } from '../../utils/profit-hel
 import { MARKET_TAX, COWBELL_BAG_HRID, COWBELL_BAG_TAX } from '../../utils/profit-constants.js';
 import dom from '../../utils/dom.js';
 import { parseItemCount } from '../../utils/number-parser.js';
-import { DUNGEON_CHEST_CHEST_KEYS } from '../combat-stats/combat-stats-calculator.js';
+import { DUNGEON_CHEST_CHEST_KEYS } from '../../utils/dungeon-keys.js';
 import { calculateArtisanBonus } from '../../utils/material-calculator.js';
 import { getActionHridFromName } from '../../utils/game-lookups.js';
 
@@ -96,6 +98,9 @@ class TooltipPrices {
 
         // Add CSS to prevent tooltip cutoff
         this.addTooltipStyles();
+
+        // Make the "Yours / Pro" chip on enhancement sections clickable (and P-pressable)
+        installEnhancementSourceToggle();
 
         // Register with centralized DOM observer
         this.setupObserver();
@@ -345,8 +350,9 @@ class TooltipPrices {
 
         // Show enhancement milestones for unenhanced equipment items
         if (enhancementLevel === 0 && config.getSetting('itemTooltip_enhancementMilestones')) {
-            const isTradeable = itemDetails.isTradable !== false;
-            const enhancementConfig = isTradeable ? getEnhancingParams() : getAutoDetectedParams();
+            // Whose stats these are — the character's, or the pro kit the chip lets you
+            // compare against — is decided in one place so tooltip and chip cannot disagree
+            const enhancementConfig = getTooltipEnhancementParams(itemHrid);
             if (enhancementConfig) {
                 const milestonesHTML = buildEnhancementMilestonesHTML(itemHrid, enhancementConfig);
                 if (milestonesHTML) {
@@ -366,9 +372,9 @@ class TooltipPrices {
 
         // Show enhancement path for enhanced items (1-20)
         if (enhancementLevel > 0 && config.getSetting('itemTooltip_enhancementPath')) {
-            // Use auto-detected stats for untradeable items (you're the one enhancing)
-            const isTradeable = itemDetails.isTradable !== false;
-            const enhancementConfig = isTradeable ? getEnhancingParams() : getAutoDetectedParams();
+            // Untradeable items are always quoted from your own stats; everything else follows
+            // the source chip on the section header
+            const enhancementConfig = getTooltipEnhancementParams(itemHrid);
             if (enhancementConfig) {
                 // Calculate optimal enhancement path
                 const enhancementData = calculateEnhancementPath(itemHrid, enhancementLevel, enhancementConfig);
@@ -1373,6 +1379,8 @@ class TooltipPrices {
             this.unregisterObserver();
             this.unregisterObserver = null;
         }
+
+        uninstallEnhancementSourceToggle();
 
         this.isActive = false;
         this.isInitialized = false;

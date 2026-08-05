@@ -49,7 +49,6 @@ class WebSocketHook {
         }
 
         this.wrapWebSocketConstructor();
-        this.wrapWebSocketPrototype();
 
         // Capture hook instance for closure
         const hookInstance = this;
@@ -86,65 +85,6 @@ class WebSocketHook {
         Object.defineProperty(pageMessageEvent.prototype, 'data', dataProperty);
 
         this.isHooked = true;
-    }
-
-    /**
-     * Wrap WebSocket prototype handlers to intercept message events
-     */
-    wrapWebSocketPrototype() {
-        const targetWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
-        if (typeof targetWindow === 'undefined' || !targetWindow.WebSocket || !targetWindow.WebSocket.prototype) {
-            return;
-        }
-
-        const hookInstance = this;
-        const proto = targetWindow.WebSocket.prototype;
-
-        if (!proto.__toolashaPatched) {
-            const originalAddEventListener = proto.addEventListener;
-            proto.addEventListener = function toolashaAddEventListener(type, listener, options) {
-                if (type === 'message' && typeof listener === 'function') {
-                    const wrappedListener = function toolashaMessageListener(event) {
-                        if (!hookInstance.isMessageEventProcessed(event) && typeof event?.data === 'string') {
-                            hookInstance.markMessageEventProcessed(event);
-                            hookInstance.processMessage(event.data);
-                        }
-                        return listener.call(this, event);
-                    };
-
-                    wrappedListener.__toolashaOriginal = listener;
-                    return originalAddEventListener.call(this, type, wrappedListener, options);
-                }
-
-                return originalAddEventListener.call(this, type, listener, options);
-            };
-
-            const originalOnMessage = Object.getOwnPropertyDescriptor(proto, 'onmessage');
-            if (originalOnMessage && originalOnMessage.set) {
-                Object.defineProperty(proto, 'onmessage', {
-                    configurable: true,
-                    get: originalOnMessage.get,
-                    set(handler) {
-                        if (typeof handler !== 'function') {
-                            return originalOnMessage.set.call(this, handler);
-                        }
-
-                        const wrappedHandler = function toolashaOnMessage(event) {
-                            if (!hookInstance.isMessageEventProcessed(event) && typeof event?.data === 'string') {
-                                hookInstance.markMessageEventProcessed(event);
-                                hookInstance.processMessage(event.data);
-                            }
-                            return handler.call(this, event);
-                        };
-
-                        wrappedHandler.__toolashaOriginal = handler;
-                        return originalOnMessage.set.call(this, wrappedHandler);
-                    },
-                });
-            }
-
-            proto.__toolashaPatched = true;
-        }
     }
 
     /**
@@ -186,8 +126,8 @@ class WebSocketHook {
 
             // Only subclass native WebSocket constructors. Third-party wrappers
             // (other userscripts replacing window.WebSocket) are passed through
-            // as-is — Toolasha still intercepts via MessageEvent.data hook and
-            // WebSocket.prototype patches.
+            // as-is — Toolasha still intercepts via the MessageEvent.data hook,
+            // which also attaches the per-socket listener on first read.
             const isNative = /\[native code\]/.test(Function.prototype.toString.call(OriginalWebSocket));
             if (!isNative) {
                 hookInstance.currentWebSocket = OriginalWebSocket;
@@ -302,6 +242,12 @@ class WebSocketHook {
             messageType === 'market_listings_updated' ||
             messageType === 'profile_shared' ||
             messageType === 'battle_consumable_ability_updated' ||
+            // Equipping and unequipping the same ability produce messages whose
+            // first 100 characters are identical — type, character id and the
+            // opening ability hrid fill the window, and the slotNumber that says
+            // which way it went sits past it. Hashing them would drop the second
+            // and leave the equipped kit stuck on the first.
+            messageType === 'abilities_updated' ||
             messageType === 'battle_unit_fetched' ||
             // Consecutive combat ticks can open with identical text — same type,
             // same battle, same unit ids — and differ only in hitpoints further
@@ -309,11 +255,22 @@ class WebSocketHook {
             messageType === 'battle_updated' ||
             messageType === 'action_type_consumable_slots_updated' ||
             messageType === 'consumable_buffs_updated' ||
+            // Two donations to the same buff in a row produce messages whose
+            // first 100 characters are identical — type, buff id and hrid fill
+            // the window, and the changed expireTime/level sit past it — so the
+            // content hash would drop the extension and expiry alerts would
+            // fire against a stale clock
+            messageType === 'community_buffs_updated' ||
             messageType === 'character_info_updated' ||
             messageType === 'labyrinth_updated' ||
             messageType === 'loadouts_updated' ||
             messageType === 'setting_updated' ||
             messageType === 'labyrinth_room_progress' ||
+            // Opening the same chest twice in a row produces two messages whose
+            // first 100 characters are identical — same type, same chest, same
+            // count — so the content hash would drop the second and the treasure
+            // ledger would undercount every repeat opening
+            messageType === 'loot_opened' ||
             messageType === 'leaderboard_updated';
 
         if (!skipDedup) {
@@ -331,14 +288,16 @@ class WebSocketHook {
             if (this.processedMessages.size > 100) {
                 this.cleanupProcessedMessages();
             }
-        } else if (messageType === 'action_completed') {
-            // action_completed bypasses the content-hash dedup (Gabriel's fix, commit 1007215)
-            // but the WebSocket prototype wrapper can fire two listeners for the same physical
-            // message object. The WeakSet guard catches same-object duplicates, but if two
-            // independent listeners each receive a distinct MessageEvent wrapping the same
-            // payload, both pass the WeakSet check and processMessage is called twice.
+        } else if (messageType === 'action_completed' || messageType === 'loot_opened') {
+            // action_completed and loot_opened bypass the content-hash dedup (Gabriel's fix,
+            // commit 1007215, and the treasure ledger respectively). The WeakSet guard catches
+            // the same MessageEvent object reaching both remaining interception paths, but two
+            // distinct MessageEvents wrapping the same payload (e.g. another userscript
+            // re-dispatching, or a game reconnect replay) would both pass the WeakSet check and
+            // call processMessage twice.
             // Use a short 50ms TTL keyed on full message content to collapse these duplicates.
-            // Two genuine consecutive action_completed messages are always seconds apart.
+            // Two genuine consecutive messages of either type are far enough apart that a
+            // byte-identical repeat inside 50ms is a duplicate rather than a second event.
             const now = Date.now();
             if (this.recentActionCompleted.has(message)) {
                 return; // Duplicate from second listener — skip
@@ -359,8 +318,10 @@ class WebSocketHook {
             // Save critical data to GM storage for Combat Sim export
             this.saveCombatSimData(parsedMessageType, message);
 
-            // Call registered handlers for this message type
-            const handlers = this.messageHandlers.get(parsedMessageType) || [];
+            // Call registered handlers for this message type. Snapshot the array:
+            // a handler that off()s itself mid-dispatch would otherwise shift the
+            // list under the loop and skip the next handler.
+            const handlers = [...(this.messageHandlers.get(parsedMessageType) || [])];
 
             for (const handler of handlers) {
                 try {
@@ -376,7 +337,7 @@ class WebSocketHook {
             }
 
             // Call wildcard handlers (receive all messages)
-            const wildcardHandlers = this.messageHandlers.get('*') || [];
+            const wildcardHandlers = [...(this.messageHandlers.get('*') || [])];
             for (const handler of wildcardHandlers) {
                 try {
                     const result = handler(data);
@@ -398,6 +359,15 @@ class WebSocketHook {
      * Save combat sim data for export (cross-domain via GM storage + IndexedDB).
      * Character/client/battle data is saved to GM storage so the Shykai sim page can read it.
      * Profile shares are saved to IndexedDB for cross-session persistence.
+     *
+     * Every GM-bridged payload written here is also stamped with an ownership marker —
+     * `{characterId, characterName, writtenAt}` — written to a namespaced *sibling* key
+     * (`${key}_meta`) rather than wrapped around the payload itself. That keeps the raw
+     * payload key byte-for-byte identical to what it always was, which matters because the
+     * external Shykai combat sim page reads these exact GM keys directly (see the
+     * cross-domain fallback comments on the keys below) — wrapping the payload would break
+     * it. See combat-sim-integration.js / combat-sim-export.js for the read-side guard that
+     * checks this stamp before trusting a GM-bridged value.
      * @param {string} messageType - Message type
      * @param {string} message - Raw message JSON string
      */
@@ -406,9 +376,23 @@ class WebSocketHook {
         try {
             // Save character/client/battle data to GM storage for cross-domain Shykai access
             if (hasGM && messageType === 'init_character_data') {
+                // The writer's own character id/name must be read from THIS message, not from
+                // dataManager: saveCombatSimData runs before dataManager's own init_character_data
+                // handler (see processMessage), so dataManager.getCurrentCharacterId() would still
+                // report the *previous* character during a character switch.
+                try {
+                    const parsedCharacter = JSON.parse(message);
+                    if (parsedCharacter.character?.id) {
+                        this.bridgeCharacterId = parsedCharacter.character.id;
+                        this.bridgeCharacterName = parsedCharacter.character.name || null;
+                    }
+                } catch {
+                    /* ignore — meta write below falls back to the last known bridge character */
+                }
                 setTimeout(() => {
                     try {
                         GM_setValue('toolasha_init_character_data', message);
+                        this.writeBridgeMeta('toolasha_init_character_data_meta');
                     } catch {
                         /* ignore */
                     }
@@ -417,6 +401,7 @@ class WebSocketHook {
                 setTimeout(() => {
                     try {
                         GM_setValue('toolasha_init_client_data', message);
+                        this.writeBridgeMeta('toolasha_init_client_data_meta');
                     } catch {
                         /* ignore */
                     }
@@ -425,6 +410,7 @@ class WebSocketHook {
                 setTimeout(() => {
                     try {
                         GM_setValue('toolasha_new_battle', message);
+                        this.writeBridgeMeta('toolasha_new_battle_meta');
                     } catch {
                         /* ignore */
                     }
@@ -471,6 +457,7 @@ class WebSocketHook {
                 if (hasGM) {
                     try {
                         GM_setValue('toolasha_profile_list', JSON.stringify(profileList));
+                        this.writeBridgeMeta('toolasha_profile_list_meta');
                     } catch {
                         /* ignore */
                     }
@@ -478,6 +465,31 @@ class WebSocketHook {
             }
         } catch (error) {
             console.error('[WebSocket] Failed to save Combat Sim data:', error);
+        }
+    }
+
+    /**
+     * Stamp a GM-bridged combat sim key with who wrote it and when, under a namespaced sibling
+     * meta key (e.g. 'toolasha_init_character_data_meta'). Kept separate from the payload key so
+     * the external Shykai sim page, which reads the raw payload key directly, is unaffected.
+     * Uses the character last seen via init_character_data on this tab (`this.bridgeCharacterId` /
+     * `this.bridgeCharacterName`) since that is the only writer identity reliably available
+     * synchronously at write time.
+     * @param {string} metaKey - Namespaced meta key to write, e.g. 'toolasha_init_character_data_meta'
+     */
+    writeBridgeMeta(metaKey) {
+        if (typeof GM_setValue === 'undefined') return;
+        try {
+            GM_setValue(
+                metaKey,
+                JSON.stringify({
+                    characterId: this.bridgeCharacterId || null,
+                    characterName: this.bridgeCharacterName || null,
+                    writtenAt: Date.now(),
+                })
+            );
+        } catch {
+            /* ignore */
         }
     }
 
@@ -612,7 +624,7 @@ class WebSocketHook {
     }
 
     emitSocketEvent(eventType, event, socket) {
-        const handlers = this.socketEventHandlers.get(eventType) || [];
+        const handlers = [...(this.socketEventHandlers.get(eventType) || [])];
         for (const handler of handlers) {
             try {
                 handler(event, socket);

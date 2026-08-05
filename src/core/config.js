@@ -540,6 +540,15 @@ class Config {
      * @param {*} defaultValue - Default value if key doesn't exist
      * @returns {*} Setting value
      */
+    /**
+     * The setting IDs the previous build saved — see settingsStorage.
+     * Exposed here because config already crosses the bundle boundary.
+     * @returns {Promise<Array<string>|null>}
+     */
+    async storedSettingIds() {
+        return settingsStorage.storedSettingIds();
+    }
+
     getSettingValue(key, defaultValue = null) {
         const setting = this.settingsMap[key];
         if (!setting) {

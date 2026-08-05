@@ -13,6 +13,9 @@
 export const ENHANCEMENT_MULTIPLIERS = {
     '/equipment_types/neck': 5,
     '/equipment_types/ring': 5,
+    // The game's equipment type is plural; the singular is kept as an alias so any older
+    // caller (or saved loadout) that still says "earring" keeps its 5× multiplier.
+    '/equipment_types/earrings': 5,
     '/equipment_types/earring': 5,
     '/equipment_types/back': 5,
     '/equipment_types/trinket': 5,

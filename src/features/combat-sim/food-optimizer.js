@@ -100,6 +100,62 @@ export function buildConsumablePools(gameData) {
 }
 
 /**
+ * Build the buff-drink pools, one per buff family, each ordered weakest first.
+ *
+ * The food search above is a *cost floor* problem: keep the character alive,
+ * pay as little as possible. Drinks are the opposite question — nothing about
+ * them keeps you alive, they buy damage or drops or experience, and the answer
+ * is a simulation rather than a survival threshold. So they do not belong in
+ * the descent search; they belong in the candidate list, where an upgrade is
+ * simulated and ranked against everything else you could change. This builds
+ * the raw material for that, and the advisor decides what is combat-relevant.
+ *
+ * Families are keyed by the buff's `uniqueHrid`, which is exactly the game's
+ * own rule for which drinks conflict: two coffees sharing a unique cannot both
+ * be up, so "Attack Coffee → Super Attack Coffee" is a tier walk within one
+ * family and never an extra slot.
+ *
+ * @param {Object} gameData - Game data payload (itemDetailMap)
+ * @returns {Map<string, Array<Object>>} buff uniqueHrid → entries, ascending by item level
+ */
+export function buildBuffDrinkPools(gameData) {
+    const pools = new Map();
+
+    for (const [hrid, item] of Object.entries(gameData?.itemDetailMap || {})) {
+        const detail = item?.consumableDetail;
+        if (!detail) continue;
+        const category = item.categoryHrid || '';
+        if (!category.includes('drink') && !hrid.includes('coffee')) continue;
+        // A drink with a restore is food wearing a drink's category; the food
+        // search owns those, and they carry no buff to rank anyway
+        if (Number(detail.hitpointRestore) > 0 || Number(detail.manapointRestore) > 0) continue;
+
+        const buffs = (detail.buffs || []).filter(Boolean);
+        if (buffs.length === 0) continue;
+        const family = buffs[0].uniqueHrid;
+        if (!family) continue;
+
+        const { price } = resolveItemPrice(hrid, { side: 'buy' });
+
+        if (!pools.has(family)) pools.set(family, []);
+        pools.get(family).push({
+            hrid,
+            name: item.name || hrid.split('/').pop().replace(/_/g, ' '),
+            family,
+            itemLevel: item.itemLevel || 0,
+            buffTypes: buffs.map((buff) => buff.typeHrid).filter(Boolean),
+            price: price > 0 ? price : null,
+            triggers: detail.defaultCombatTriggers || null,
+        });
+    }
+
+    for (const pool of pools.values()) {
+        pool.sort((a, b) => a.itemLevel - b.itemLevel || a.hrid.localeCompare(b.hrid));
+    }
+    return pools;
+}
+
+/**
  * Cheapest entry (per restore point) that restores at least as much as a
  * reference, on every stat the reference restores. More restore never hurts
  * survival, so a higher tier that costs less per point is still viable — this is
@@ -115,6 +171,131 @@ export function cheapestAtLeast(pool, reference) {
         if (entry.pricePerPoint < best.pricePerPoint) best = entry;
     }
     return best;
+}
+
+/**
+ * The strongest entry in a pool: most restored, ties to the cheaper per point.
+ *
+ * Ties are real — several foods restore the same amount at different prices —
+ * and since more restore is the only thing being asked for, the tie has to be
+ * broken by something. Cost is the same tiebreak the descent search ends on.
+ *
+ * @param {Array<Object>} pool - Same-signature pool from `buildConsumablePools`
+ * @returns {Object|null} The top entry, or null for an empty pool
+ */
+export function strongestInPool(pool) {
+    let best = null;
+    for (const entry of pool || []) {
+        if (!best) {
+            best = entry;
+            continue;
+        }
+        if (entry.totalRestore > best.totalRestore) best = entry;
+        else if (entry.totalRestore === best.totalRestore && entry.pricePerPoint < best.pricePerPoint) best = entry;
+    }
+    return best;
+}
+
+/**
+ * The same food you run, at the top of its tier.
+ *
+ * ## Why this exists
+ *
+ * Ranking every zone against the food you happen to be carrying does not answer
+ * "which zone is best for me" — it answers "which zone tolerates my cheese".
+ * A zone that would be excellent with proper food ranks badly because you died
+ * in it eleven times, and the ranking then reads as a fact about the zone. This
+ * substitutes the best food of each kind you already run, so the comparison is
+ * about the zones.
+ *
+ * ## What "max tier" means here
+ *
+ * Per slot, and only within the slot's own restore signature — an HP-instant
+ * slot gets the biggest HP-instant food, an MP slot the biggest MP food, and a
+ * buff-only food is not touched at all, because it has no tier to climb and
+ * swapping it would change what the loadout does rather than how strong it is.
+ * Empty slots stay empty: an empty slot is a decision, not a low tier.
+ *
+ * Candidates come from {@link buildConsumablePools}, which is priced-only, so
+ * the substitute is always something with a market — a food nobody sells would
+ * both be unbuyable and cost the run nothing, quietly inflating profit/hr.
+ *
+ * Drinks are deliberately untouched. In this game's data the restoring
+ * consumables — hitpoints and manapoints alike — are all `/item_categories/food`
+ * and ride in the food slots; drinks are buff coffees with no restore, so they
+ * have nothing to do with dying, which is the distortion being corrected. A
+ * "best drink" is a damage/drops question the Upgrade tab already ranks.
+ *
+ * ## Level requirements
+ *
+ * There are none to respect. Consumables in this game's item data carry no
+ * `levelRequirements` — that field lives on `equipmentDetail` and
+ * `abilityBookDetail` only — so any food can be eaten by any character and the
+ * substitute is never something the character could not actually use. Nothing
+ * is capped, and nothing needs to be.
+ *
+ * Never a downgrade: a slot already at the top of its pool is left alone.
+ * Triggers are the player's own where the slot had them, so only the tier
+ * changes and not when the character eats.
+ *
+ * @param {Array<Object|null>} originalFood - The player's configured food slots
+ * @param {Object} gameData - Game data payload (itemDetailMap)
+ * @returns {{food: Array<Object|null>, swaps: Array<Object>}} New slots and what changed
+ */
+export function maxTierFoodSlots(originalFood, gameData) {
+    const itemDetailMap = gameData?.itemDetailMap || {};
+    const pools = buildConsumablePools(gameData);
+    const food = Array.isArray(originalFood) ? [...originalFood] : [];
+    const swaps = [];
+
+    food.forEach((slot, index) => {
+        const detail = slot?.hrid ? itemDetailMap[slot.hrid]?.consumableDetail : null;
+        if (!detail) return; // empty slot, or an item this build knows nothing about
+        const signature = restoreSignature(detail);
+        if (!signature) return; // buff-only food: no tier to climb
+
+        const equippedRestore = (Number(detail.hitpointRestore) || 0) + (Number(detail.manapointRestore) || 0);
+        const best = strongestInPool(pools.get(signature));
+        if (!best || best.hrid === slot.hrid || best.totalRestore <= equippedRestore) return;
+
+        food[index] = { hrid: best.hrid, triggers: slot.triggers || best.triggers || null };
+        swaps.push({
+            index,
+            signature,
+            fromHrid: slot.hrid,
+            fromName: itemDetailMap[slot.hrid]?.name || slot.hrid.split('/').pop().replace(/_/g, ' '),
+            toHrid: best.hrid,
+            toName: best.name,
+        });
+    });
+
+    return { food, swaps };
+}
+
+/**
+ * {@link maxTierFoodSlots} across a whole party, without touching the input.
+ *
+ * The DTOs handed in are the ones the panel will keep using and may well be the
+ * editor's own objects, so players that change get a shallow copy with a new
+ * food array and players that do not are passed through untouched.
+ *
+ * @param {Array<Object>} playerDTOs - Player DTOs bound for a simulation
+ * @param {Object} gameData - Game data payload (itemDetailMap)
+ * @returns {{playerDTOs: Array<Object>, swaps: Array<Object>}} Substituted DTOs and what changed
+ */
+export function applyMaxTierFood(playerDTOs, gameData) {
+    const players = Array.isArray(playerDTOs) ? playerDTOs : [];
+    const swaps = [];
+
+    const substituted = players.map((dto) => {
+        if (!dto) return dto;
+        const { food, swaps: slotSwaps } = maxTierFoodSlots(dto.food, gameData);
+        if (!slotSwaps.length) return dto;
+        for (const swap of slotSwaps) swaps.push({ ...swap, playerHrid: dto.hrid || 'player1' });
+        return { ...dto, food };
+    });
+
+    return { playerDTOs: substituted, swaps };
 }
 
 /**

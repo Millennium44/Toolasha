@@ -8,10 +8,27 @@ import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
 import webSocketHook from '../../core/websocket.js';
 import dataManager from '../../core/data-manager.js';
-import storage from '../../core/storage.js';
+import { isCardInConfirmState, armConfirmSettleWatch, onConfirmFlowSettled } from './task-card-state.js';
 import { GAME, TOOLASHA } from '../../utils/selectors.js';
+import { readScoped, writeScoped } from '../../utils/character-key.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { addStyles } from '../../utils/dom.js';
+
+/**
+ * Retired tasks live alongside the live map in the same store.
+ *
+ * Both keys are scoped per character and resolved at each read and write, since
+ * the user switches characters without reloading. The pre-scoping global values
+ * are adopted by the main character: the live map is keyed by task id and the
+ * history is a flat list, so neither carries anything that could tell one
+ * character's rows from another's — a merged record cannot be partitioned after
+ * the fact, and giving the whole of it to the main character is the closest to
+ * true that is still available.
+ */
+const DATA_KEY = 'taskRerollData';
+const HISTORY_KEY = 'taskRerollHistory';
+const HISTORY_CAP = 500;
+const ADOPT_LEGACY = { migrate: 'adopt' };
 
 class TaskRerollTracker {
     constructor() {
@@ -39,7 +56,7 @@ class TaskRerollTracker {
 
         // Normalize task action area height so combat (1 compact row) and
         // non-combat (3 stat rows) cards stay the same overall height
-        addStyles('.RandomTask_action__3eC6o { min-height: 72px; }', 'mwi-task-action-min-height');
+        addStyles(`${GAME.TASK_ACTION} { min-height: 72px; }`, 'mwi-task-action-min-height');
 
         this.isInitialized = true;
     }
@@ -49,7 +66,7 @@ class TaskRerollTracker {
      */
     async loadFromStorage() {
         try {
-            const savedData = await storage.getJSON('taskRerollData', this.storeName, {});
+            const savedData = (await readScoped(DATA_KEY, this.storeName, {}, ADOPT_LEGACY)) || {};
 
             // Convert saved object back to Map
             for (const [taskId, data] of Object.entries(savedData)) {
@@ -71,7 +88,7 @@ class TaskRerollTracker {
                 dataToSave[taskId] = data;
             }
 
-            await storage.setJSON('taskRerollData', dataToSave, this.storeName, true);
+            await writeScoped(DATA_KEY, dataToSave, this.storeName, true);
         } catch (error) {
             console.error('[Task Reroll Tracker] Failed to save to storage:', error);
         }
@@ -84,6 +101,10 @@ class TaskRerollTracker {
         this.unregisterHandlers.forEach((unregister) => unregister());
         this.unregisterHandlers = [];
         this.timerRegistry.clearAll();
+        // The map is one character's tasks. Cleared so the re-initialize that
+        // follows a character switch loads the arriving character's rows rather
+        // than writing the departing character's out under their key.
+        this.taskRerollData.clear();
         document.getElementById('mwi-task-action-min-height')?.remove();
         this.isInitialized = false;
     }
@@ -93,8 +114,46 @@ class TaskRerollTracker {
     }
 
     /**
+     * Load the reroll history — the tasks that have already left the board.
+     * @returns {Promise<Array<Object>>} History entries, oldest first
+     */
+    async loadHistory() {
+        try {
+            const saved = await readScoped(HISTORY_KEY, this.storeName, [], ADOPT_LEGACY);
+            return Array.isArray(saved) ? saved : [];
+        } catch (error) {
+            console.error('[Task Reroll Tracker] Failed to load reroll history:', error);
+            return [];
+        }
+    }
+
+    /**
+     * Append retired tasks to the reroll history.
+     *
+     * A task that completes or is discarded is the only moment its reroll spend
+     * can ever be set against what it paid out, and the live map is about to
+     * drop it. The history is capped so it cannot grow without bound.
+     *
+     * @param {Array<Object>} entries - Retired task records
+     * @private
+     */
+    async appendToHistory(entries) {
+        if (!entries.length) return;
+
+        try {
+            const history = await this.loadHistory();
+            history.push(...entries);
+            const capped = history.length > HISTORY_CAP ? history.slice(history.length - HISTORY_CAP) : history;
+            await writeScoped(HISTORY_KEY, capped, this.storeName, true);
+        } catch (error) {
+            console.error('[Task Reroll Tracker] Failed to append reroll history:', error);
+        }
+    }
+
+    /**
      * Clean up old task data that's no longer active
-     * Keeps only tasks that are currently in characterQuests
+     * Keeps only tasks that are currently in characterQuests; everything it
+     * drops is written to the history first so the spend stays analysable.
      */
     cleanupOldTasks() {
         if (!dataManager.characterData || !dataManager.characterData.characterQuests) {
@@ -103,17 +162,29 @@ class TaskRerollTracker {
 
         const activeTaskIds = new Set(dataManager.characterData.characterQuests.map((quest) => quest.id));
 
-        let hasChanges = false;
+        const retired = [];
+        const retiredAt = Date.now();
 
         // Remove tasks that are no longer active
-        for (const taskId of this.taskRerollData.keys()) {
-            if (!activeTaskIds.has(taskId)) {
-                this.taskRerollData.delete(taskId);
-                hasChanges = true;
-            }
+        for (const [taskId, taskData] of this.taskRerollData.entries()) {
+            if (activeTaskIds.has(taskId)) continue;
+
+            retired.push({
+                taskId,
+                retiredAt,
+                coinRerollCount: taskData.coinRerollCount || 0,
+                cowbellRerollCount: taskData.cowbellRerollCount || 0,
+                goldSpent: this.calculateGoldSpent(taskData.coinRerollCount || 0),
+                cowbellsSpent: this.calculateCowbellSpent(taskData.cowbellRerollCount || 0),
+                monsterHrid: taskData.monsterHrid || '',
+                actionHrid: taskData.actionHrid || '',
+                goalCount: taskData.goalCount || 0,
+            });
+            this.taskRerollData.delete(taskId);
         }
 
-        if (hasChanges) {
+        if (retired.length > 0) {
+            this.appendToHistory(retired);
             this.saveToStorage();
         }
     }
@@ -250,6 +321,11 @@ class TaskRerollTracker {
             this.timerRegistry.registerTimeout(taskTimeout);
         });
         this.unregisterHandlers.push(unregisterTask);
+
+        // Closing a reroll chooser adds an action row, not a card, so no
+        // observer above ever fires for it — this is the only thing that runs
+        // the pass the mid-flow skip turned down
+        this.unregisterHandlers.push(onConfirmFlowSettled(() => this.updateAllTaskDisplays()));
     }
 
     /**
@@ -367,6 +443,16 @@ class TaskRerollTracker {
      * @param {Set<number>} [claimedIds] - Task IDs already matched to other DOM elements this pass
      */
     updateTaskDisplay(taskElement, claimedIds) {
+        // A card showing the reroll chooser or the discard confirmation is
+        // waiting on the player's second click; inserting the spend line into
+        // it now rebuilds the card under that click. The chooser outlives the
+        // reroll, so this pass has to be booked to run again — otherwise the
+        // spend line keeps the count from before the reroll indefinitely.
+        if (isCardInConfirmState(taskElement)) {
+            armConfirmSettleWatch();
+            return;
+        }
+
         // Always ensure placeholder element exists to reserve layout space,
         // regardless of whether this task has been rerolled yet
         let displayElement = taskElement.querySelector(TOOLASHA.REROLL_COST_DISPLAY);
@@ -374,7 +460,7 @@ class TaskRerollTracker {
             displayElement = document.createElement('div');
             displayElement.className = 'mwi-reroll-cost-display';
             displayElement.style.cssText = `
-                color: ${config.SCRIPT_COLOR_SECONDARY};
+                color: ${config.COLOR_TEXT_SECONDARY};
                 font-size: 0.75rem;
                 margin-top: 4px;
                 padding: 2px 4px;

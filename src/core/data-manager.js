@@ -9,6 +9,14 @@
 import webSocketHook from './websocket.js';
 import connectionState from './connection-state.js';
 import storage from './storage.js';
+import {
+    mergeOwnedAbilities,
+    reconcileEquippedAbilities,
+    applyAbilityProgress,
+    equippedAbilitiesFromBattle,
+    abilityKitsDiffer,
+} from './character-abilities.js';
+import { extractGuildShrineData, loadGuildShrineLevels, saveGuildShrineLevels, mapSize } from './guild-shrine-store.js';
 import { mergeMarketListings } from '../utils/market-listings.js';
 import { SCROLL_BUFF_VALUES } from '../utils/scroll-buff-values.js';
 
@@ -30,6 +38,10 @@ class DataManager {
         this.actionTypeDrinkSlotsMap = new Map(); // Action type HRID -> array of drink items
         this.characterGuildBuffMap = {}; // Guild buff HRID -> {guildBuffHrid, level}
         this.guildBuildingLevelMap = {}; // Building/shrine HRID -> level
+        this.guildShrineCapturedAt = null; // When the shrine levels above were read off the wire
+        this.guildShrineHydrated = false; // True while those levels come from storage rather than a live message
+        this.guildShrineHydration = null; // In-flight hydration, for callers that want to wait
+        this.guildShrineGuildId = null; // Guild the persisted shrine levels belong to
         this.monsterSortIndexMap = new Map(); // Monster HRID -> combat zone sortIndex
         this.bossMonsterHrids = new Set(); // Monster HRIDs that appear in bossSpawns
         this.battleData = null; // Current battle data (for Combat Sim export on Steam)
@@ -229,6 +241,10 @@ class DataManager {
                 this.personalActionTypeBuffsMap = {};
                 this.characterGuildBuffMap = {};
                 this.guildBuildingLevelMap = {};
+                this.guildShrineCapturedAt = null;
+                this.guildShrineHydrated = false;
+                this.guildShrineHydration = null;
+                this.guildShrineGuildId = null;
                 this.battleData = null;
 
                 // Reset switching flag (cleanup complete, ready for re-init)
@@ -270,6 +286,17 @@ class DataManager {
             // Load guild buff levels and shrine/building levels
             this.characterGuildBuffMap = data.characterGuildBuffMap || {};
             this.guildBuildingLevelMap = data.guildBuildingLevelMap || {};
+            if (mapSize(this.characterGuildBuffMap) > 0 || mapSize(this.guildBuildingLevelMap) > 0) {
+                this.guildShrineCapturedAt = Date.now();
+                this.guildShrineHydrated = false;
+            }
+
+            // Login usually carries no shrine levels at all — they ride on guild
+            // traffic that may never arrive this session. Fill the gap from the
+            // last reading so the upgrade advisor has something to answer with;
+            // a live message later overwrites it. Not awaited, so a slow
+            // IndexedDB cannot hold up feature initialization.
+            this.guildShrineHydration = this.hydrateGuildShrineLevels();
 
             // Clear switching flag
             this.isCharacterSwitching = false;
@@ -348,7 +375,36 @@ class DataManager {
                 }
             }
 
+            // Ability experience ticks during a fight. Progress only — the kit
+            // itself is never reshuffled from here (see character-abilities.js)
+            if (Array.isArray(data.endCharacterAbilities) && this.characterData) {
+                this.characterData.characterAbilities = mergeOwnedAbilities(
+                    this.characterData.characterAbilities,
+                    data.endCharacterAbilities
+                );
+                if (this.characterData.combatUnit) {
+                    this.characterData.combatUnit.combatAbilities = applyAbilityProgress(
+                        this.characterData.combatUnit.combatAbilities,
+                        data.endCharacterAbilities
+                    );
+                }
+            }
+
             this.emit('action_completed', data);
+        });
+
+        // Handle abilities_updated (equip, unequip, level up)
+        //
+        // Nothing applied these before, so `combatUnit.combatAbilities` was
+        // frozen at whatever login reported and every ability change since was
+        // invisible to the combat sim. That is most visible around the
+        // labyrinth, which equips a loadout per room and restores on exit:
+        // equipment tracked those swaps because items_updated was handled, and
+        // abilities did not because this message was not.
+        this.webSocketHook.on('abilities_updated', (data) => {
+            if (this.applyAbilityUpdates(data.endCharacterAbilities)) {
+                this.emit('abilities_updated', data);
+            }
         });
 
         // Handle items_updated (inventory/equipment changes)
@@ -424,6 +480,17 @@ class DataManager {
             this.emit('buffs_updated', data);
         });
 
+        // Handle community_buffs_updated (anyone donating changes levels and
+        // expiry). Without this, every community buff level reads as it was at
+        // login — the tea optimizer, efficiency and profit calculators all go
+        // quietly stale as the server buff moves.
+        this.webSocketHook.on('community_buffs_updated', (data) => {
+            if (this.characterData && Array.isArray(data.communityBuffs)) {
+                this.characterData.communityBuffs = data.communityBuffs;
+            }
+            this.emit('community_buffs_updated', data);
+        });
+
         // Handle personal_buffs_updated (seal buffs from Labyrinth)
         this.webSocketHook.on('personal_buffs_updated', (data) => {
             if (data.personalActionTypeBuffsMap) {
@@ -456,6 +523,31 @@ class DataManager {
         this.webSocketHook.on('new_battle', (data) => {
             // Store battle data (includes party consumables)
             this.battleData = data;
+
+            // The only message that carries the equipped kit whole rather than
+            // as a delta, so it is the backstop: whatever the labyrinth did to
+            // the loadout, the first battle after it settles the question.
+            const fromBattle = equippedAbilitiesFromBattle(data, {
+                characterId: this.currentCharacterId,
+                characterName: this.currentCharacterName,
+            });
+            if (fromBattle && fromBattle.length > 0) {
+                const previous = this.characterData?.combatUnit?.combatAbilities;
+                if (this.setEquippedAbilities(fromBattle) && abilityKitsDiffer(previous, fromBattle)) {
+                    this.emit('abilities_updated', {
+                        endCharacterAbilities: fromBattle,
+                        source: 'new_battle',
+                    });
+                }
+            }
+        });
+
+        // Guild shrine levels arrive on whichever message the server attaches
+        // them to, and usually only once the guild panel has been opened. They
+        // are matched by shape rather than by message type so a rename upstream
+        // cannot quietly stop the capture — the check is two property reads.
+        this.webSocketHook.on('*', (data) => {
+            this.captureGuildShrineData(data);
         });
 
         // Handle character_info_updated (task slot changes, cooldown timestamps, etc.)
@@ -538,6 +630,187 @@ class DataManager {
     }
 
     /**
+     * Apply an `endCharacterAbilities` delta to both ability views.
+     *
+     * The learned list (`characterAbilities`, which carries experience) and the
+     * equipped kit (`combatUnit.combatAbilities`) are updated from the same
+     * message, because a level-up and an equip arrive in the same shape and a
+     * reader of one must not see a state the other has moved past.
+     *
+     * @param {Array<Object>} updates - `endCharacterAbilities` from the message
+     * @returns {boolean} True when something was applied
+     */
+    applyAbilityUpdates(updates) {
+        if (!this.characterData || !Array.isArray(updates) || updates.length === 0) return false;
+
+        this.characterData.characterAbilities = mergeOwnedAbilities(this.characterData.characterAbilities, updates);
+
+        if (!this.characterData.combatUnit) {
+            this.characterData.combatUnit = {};
+        }
+        this.characterData.combatUnit.combatAbilities = reconcileEquippedAbilities(
+            this.characterData.combatUnit.combatAbilities,
+            updates
+        );
+
+        return true;
+    }
+
+    /**
+     * Replace the equipped kit outright with a list the server sent whole.
+     * @param {Array<Object>} abilities - Equipped abilities, in slot order
+     * @returns {boolean} True when the kit was replaced
+     */
+    setEquippedAbilities(abilities) {
+        if (!this.characterData || !Array.isArray(abilities)) return false;
+
+        if (!this.characterData.combatUnit) {
+            this.characterData.combatUnit = {};
+        }
+        this.characterData.combatUnit.combatAbilities = abilities.map((entry) => ({ ...entry }));
+        this.characterData.characterAbilities = mergeOwnedAbilities(this.characterData.characterAbilities, abilities);
+
+        return true;
+    }
+
+    /**
+     * The abilities currently equipped, in slot order.
+     *
+     * This is the authoritative read for anything that asks "what is this
+     * character fighting with" — it reflects every ability message applied since
+     * login, not just the state login reported.
+     *
+     * @returns {Array<Object>} Copies of the equipped ability entries
+     */
+    getEquippedAbilities() {
+        const equipped = this.characterData?.combatUnit?.combatAbilities;
+        return Array.isArray(equipped) ? equipped.map((entry) => ({ ...entry })) : [];
+    }
+
+    /**
+     * Every ability the character has learned, with level and experience.
+     * @returns {Array<Object>} Copies of the learned ability entries
+     */
+    getLearnedAbilities() {
+        const owned = this.characterData?.characterAbilities;
+        return Array.isArray(owned) ? owned.map((entry) => ({ ...entry })) : [];
+    }
+
+    /**
+     * Take guild shrine levels off any message that happens to carry them.
+     * @param {Object} data - Parsed WebSocket message
+     * @returns {boolean} True when live state changed
+     */
+    captureGuildShrineData(data) {
+        const captured = extractGuildShrineData(data);
+        if (!captured) return false;
+
+        let changed = false;
+        if (captured.characterGuildBuffMap !== undefined) {
+            this.characterGuildBuffMap = captured.characterGuildBuffMap;
+            changed = true;
+        }
+        if (captured.guildBuildingLevelMap !== undefined) {
+            this.guildBuildingLevelMap = captured.guildBuildingLevelMap;
+            changed = true;
+        }
+        if (!changed) return false;
+
+        this.guildShrineCapturedAt = Date.now();
+        this.guildShrineHydrated = false;
+        this.guildShrineGuildId = captured.guildId ?? this.guildShrineGuildId ?? null;
+        this.persistGuildShrineLevels();
+        this.emit('guild_shrine_levels_updated', {
+            capturedAt: this.guildShrineCapturedAt,
+            fromStorage: false,
+        });
+
+        return true;
+    }
+
+    /**
+     * Write the current shrine levels down so the next session starts with them.
+     * @returns {Promise<boolean>} True when a record was written
+     */
+    async persistGuildShrineLevels() {
+        return saveGuildShrineLevels(this.currentCharacterId, {
+            characterGuildBuffMap: this.characterGuildBuffMap,
+            guildBuildingLevelMap: this.guildBuildingLevelMap,
+            guildId: this.guildShrineGuildId ?? null,
+            capturedAt: this.guildShrineCapturedAt || Date.now(),
+        });
+    }
+
+    /**
+     * Fill empty shrine levels from the last persisted reading.
+     *
+     * Only the maps that are still empty are filled, and only if a live message
+     * has not landed while the read was in flight — a stale reading is worth
+     * having when there is nothing, and worth nothing when there is something.
+     *
+     * @returns {Promise<boolean>} True when anything was hydrated
+     */
+    async hydrateGuildShrineLevels() {
+        try {
+            if (mapSize(this.characterGuildBuffMap) > 0 && mapSize(this.guildBuildingLevelMap) > 0) {
+                return false;
+            }
+
+            const record = await loadGuildShrineLevels(this.currentCharacterId);
+            if (!record) return false;
+
+            let filled = false;
+            if (mapSize(this.characterGuildBuffMap) === 0 && mapSize(record.characterGuildBuffMap) > 0) {
+                this.characterGuildBuffMap = record.characterGuildBuffMap;
+                filled = true;
+            }
+            if (mapSize(this.guildBuildingLevelMap) === 0 && mapSize(record.guildBuildingLevelMap) > 0) {
+                this.guildBuildingLevelMap = record.guildBuildingLevelMap;
+                filled = true;
+            }
+            if (!filled) return false;
+
+            this.guildShrineCapturedAt = record.capturedAt || null;
+            this.guildShrineHydrated = true;
+            this.guildShrineGuildId = record.guildId ?? null;
+            this.emit('guild_shrine_levels_updated', {
+                capturedAt: this.guildShrineCapturedAt,
+                fromStorage: true,
+            });
+            return true;
+        } catch (error) {
+            console.error('[DataManager] Failed to hydrate guild shrine levels:', error);
+            return false;
+        }
+    }
+
+    /**
+     * When the guild shrine levels currently in memory were read off the wire.
+     * @returns {number|null} Epoch milliseconds, or null when none have ever been seen
+     */
+    getGuildShrineCapturedAt() {
+        return this.guildShrineCapturedAt;
+    }
+
+    /**
+     * Whether the shrine levels in memory came from storage rather than this session.
+     * @returns {boolean} True when hydrated from a persisted reading
+     */
+    isGuildShrineHydrated() {
+        return this.guildShrineHydrated;
+    }
+
+    /**
+     * Wait for the startup hydration of guild shrine levels, if one is running.
+     * @returns {Promise<void>} Resolves once hydration has settled
+     */
+    async whenGuildShrineLevelsReady() {
+        if (this.guildShrineHydration) {
+            await this.guildShrineHydration;
+        }
+    }
+
+    /**
      * Get static game data
      * @returns {Object} Init client data (items, actions, monsters, etc.)
      */
@@ -562,6 +835,7 @@ class DataManager {
             myMarketListings: this.characterData?.myMarketListings || [],
             characterHouseRoomMap: Object.fromEntries(this.characterHouseRooms),
             characterAbilities: this.characterData?.characterAbilities || [],
+            combatAbilities: this.getEquippedAbilities(),
             abilityCombatTriggersMap: this.characterData?.abilityCombatTriggersMap || {},
         };
     }
@@ -1081,7 +1355,11 @@ class DataManager {
      * @param {*} data - Event data
      */
     emit(event, data) {
-        const listeners = this.eventListeners.get(event) || [];
+        // Snapshot at emit time. Lifecycle listeners commonly unregister themselves
+        // during character_switching; iterating the live array would shift entries and
+        // deterministically skip the next cleanup handler. Deferred events must also not
+        // be delivered to listeners that subscribed after the event was emitted.
+        const listeners = [...(this.eventListeners.get(event) || [])];
 
         // Only character_switching must run immediately (cleanup phase)
         // character_switched can be deferred - it just schedules re-init anyway

@@ -13,10 +13,15 @@ import settingsCSS from './settings-styles.css?raw';
 import marketAPI from '../../api/marketplace.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
+import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
+import { detectedModeLabel } from '../../utils/mobile.js';
 import scrollSimulatorUI from '../combat/scroll-simulator-ui.js';
 import ironCowMode, { IRON_COW_SETTINGS } from './iron-cow-mode.js';
 import { getDetectedGearSettings, getEnhancingParams } from '../../utils/enhancement-config.js';
 import pformancePanel from '../dev/pformance-panel.js';
+import treasureTracker from '../inventory/treasure-tracker.js';
+import overlayPanel from '../ui/overlay-panel.js';
+import syncManager from '../sync/sync-manager.js';
 import {
     getCustomPriceOverrides,
     getCustomPriceOverridesAsync,
@@ -24,8 +29,64 @@ import {
     removeCustomPriceOverride,
     initCustomPriceOverrides,
 } from './custom-price-overrides.js';
+import {
+    MODE_PRESETS,
+    SETTING_PRESETS,
+    applyPreset,
+    presetTargetIds,
+    saveBulkSnapshot,
+    loadBulkSnapshot,
+    clearBulkSnapshot,
+    writeCheckboxValues,
+} from './setting-presets.js';
+import { isSettingChanged, refreshRequiredIds } from './settings-inspection.js';
+import {
+    characterLabel,
+    describeIronCowCopy,
+    getCharacterGameModes,
+    recordCurrentCharacterGameMode,
+    selectIronCowTargets,
+} from './character-modes.js';
+import { exportEverythingJSON, importEverything } from '../../utils/full-backup.js';
+import { downloadFile } from '../../utils/csv-export.js';
+import { askChoice } from '../../utils/choice-dialog.js';
 
 const COLLAPSED_GROUPS_KEY = 'toolasha_collapsedGroups';
+
+/** Game mode → the abbreviation the backup filename carries. */
+const BACKUP_MODE_ABBR = { standard: 'MC', ironcow: 'IC', legacy_ironcow: 'LC' };
+
+/**
+ * `-<charname>-<MC|IC|LC>` for backup filenames, or '' before login.
+ * @returns {string} Filename suffix identifying who the backup was taken from
+ */
+function backupCharacterSuffix() {
+    const name = (dataManager.getCurrentCharacterName?.() || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+    if (!name) return '';
+    const mode = BACKUP_MODE_ABBR[dataManager.getCurrentCharacterGameMode?.()] || '';
+    return `-${name}${mode ? `-${mode}` : ''}`;
+}
+
+/**
+ * An option's label, with anything only the running page can know added to it.
+ *
+ * One case so far: mobile mode's `auto`. The schema cannot say what detection
+ * currently decides — reading it there would close the circle
+ * mobile → config → settings-schema — and "Auto-detect" on its own gives the
+ * one person whose touchscreen laptop is detected wrong no way to tell a wrong
+ * detection from a wrong setting.
+ *
+ * @param {string} settingId - Which setting the option belongs to
+ * @param {string} optValue - The option's value
+ * @param {string} optLabel - The label the schema gave it
+ * @returns {string} What to show
+ */
+function liveOptionLabel(settingId, optValue, optLabel) {
+    if (settingId === 'mobileMode' && optValue === 'auto') {
+        return `${optLabel} (currently: ${detectedModeLabel()})`;
+    }
+    return optLabel;
+}
 
 class SettingsUI {
     constructor() {
@@ -39,6 +100,9 @@ class SettingsUI {
         this.settingsPanelCallbacks = []; // Callbacks to run when settings panel appears
         this.timerRegistry = createTimerRegistry();
         this.collapsedGroups = new Set();
+        this.searchQuery = '';
+        this.changedOnly = false;
+        this.restoreButton = null;
     }
 
     /**
@@ -60,12 +124,28 @@ class SettingsUI {
         const savedCollapsed = await storage.get(COLLAPSED_GROUPS_KEY, 'settings', []);
         this.collapsedGroups = new Set(Array.isArray(savedCollapsed) ? savedCollapsed : []);
 
+        // The one moment the game says which mode this character plays. Nothing
+        // else on the account can be asked, so it is written down when heard —
+        // "Copy Settings to IC Characters" has no other way to know
+        recordCurrentCharacterGameMode();
+
         // Set up handler for character switching (ONLY if not already registered)
         if (!this.characterSwitchHandler) {
             this.characterSwitchHandler = () => {
+                recordCurrentCharacterGameMode();
                 this.handleCharacterSwitch();
             };
             dataManager.on('character_initialized', this.characterSwitchHandler);
+        }
+
+        // Cross-device sync starts here rather than from the feature registry:
+        // its only entry points are the buttons in this panel and its own
+        // schedule, and the panel is guaranteed to have loaded settings by now.
+        // It no-ops unless sync_enabled and a token are both present.
+        try {
+            await syncManager.initialize();
+        } catch (error) {
+            console.error('[SettingsUI] Starting cross-device sync failed:', error);
         }
 
         // Wait for game's settings panel to load
@@ -332,13 +412,14 @@ class SettingsUI {
         // Add search box at the top
         this.addSearchBox(card);
 
-        // Add Iron Cow mode toggle banner
-        this.addIronCowToggle(card);
+        // Presets lead the page: somebody opening this panel for the first time
+        // wants "make it do the thing I play", not the first of four hundred
+        // switches. Iron Cow rides along as a mode chip in the same row
+        this.addPresetButtons(card);
 
         // Generate settings from config
         this.generateSettings(card);
 
-        // Add utility buttons
         this.addUtilityButtons(card);
 
         // Add refresh notice
@@ -411,6 +492,12 @@ class SettingsUI {
                 if (settingDef.hidden) continue;
                 const settingEl = this.createSettingElement(settingId, settingDef);
                 content.appendChild(settingEl);
+            }
+
+            // Push/pull are actions, not settings, and belong beside the
+            // switches that configure them rather than in the global button row
+            if (groupKey === 'sync') {
+                this.addSyncControls(content);
             }
 
             // Skip groups with no visible settings (all hidden or group is empty)
@@ -527,6 +614,20 @@ class SettingsUI {
 
         labelContainer.appendChild(label);
 
+        // A setting that only takes effect at startup says so on itself, rather
+        // than the panel warning that "some settings" might
+        if (settingDef.requiresRefresh) {
+            const tag = document.createElement('span');
+            tag.className = 'toolasha-refresh-tag';
+            tag.textContent = 'reload';
+            tag.title = 'This one only takes effect after you refresh the page';
+            tag.style.cssText =
+                'flex: 0 0 auto; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; ' +
+                'color: #ffa500; border: 1px solid rgba(255, 165, 0, 0.45); border-radius: 3px; ' +
+                'padding: 1px 5px; line-height: 1.4;';
+            labelContainer.appendChild(tag);
+        }
+
         // Create input
         const inputHTML = this.generateSettingInput(settingId, settingDef);
         const inputContainer = document.createElement('div');
@@ -606,6 +707,24 @@ class SettingsUI {
                 `;
             }
 
+            // A secret, not a preference: rendered masked so it is not readable
+            // over a shoulder or in a screenshot of the settings panel, which is
+            // the single most common way this script's settings get shared.
+            // `autocomplete="off"` keeps the browser's password manager from
+            // offering to remember a GitHub token against milkywayidle.com.
+            case 'password': {
+                const value = currentSetting?.value ?? settingDef.default ?? '';
+                return `
+                    <input type="password"
+                        id="${settingId}"
+                        class="toolasha-text-input"
+                        value="${String(value).replace(/"/g, '&quot;')}"
+                        autocomplete="off"
+                        spellcheck="false"
+                        placeholder="${settingDef.placeholder || ''}">
+                `;
+            }
+
             case 'template': {
                 const value = currentSetting?.value ?? settingDef.default ?? [];
                 // Store as JSON string
@@ -657,7 +776,11 @@ class SettingsUI {
                         const optValue = typeof option === 'object' ? option.value : option;
                         const optLabel = typeof option === 'object' ? option.label : option;
                         const selected = optValue === value ? 'selected' : '';
-                        return `<option value="${optValue}" ${selected}>${optLabel}</option>`;
+                        return `<option value="${optValue}" ${selected}>${liveOptionLabel(
+                            settingId,
+                            optValue,
+                            optLabel
+                        )}</option>`;
                     })
                     .join('');
 
@@ -799,6 +922,12 @@ class SettingsUI {
      * @param {HTMLElement} container - Container element
      */
     addSearchBox(container) {
+        // A freshly built panel starts unfiltered: the controls below are new
+        // elements, and leaving the old state on the instance would show an
+        // inactive button over a filtered list
+        this.searchQuery = '';
+        this.changedOnly = false;
+
         const searchContainer = document.createElement('div');
         searchContainer.className = 'toolasha-search-container';
         searchContainer.style.cssText = `
@@ -838,73 +967,483 @@ class SettingsUI {
         `;
         clearButton.style.display = 'none'; // Hidden by default
 
-        // Filter function
-        const filterSettings = (query) => {
-            const lowerQuery = query.toLowerCase().trim();
-
-            // If query is empty, show everything
-            if (!lowerQuery) {
-                // Show all settings
-                document.querySelectorAll('.toolasha-setting').forEach((setting) => {
-                    setting.style.display = 'flex';
-                });
-                // Show all groups
-                document.querySelectorAll('.toolasha-settings-group').forEach((group) => {
-                    group.style.display = 'block';
-                });
-                clearButton.style.display = 'none';
-                return;
-            }
-
-            clearButton.style.display = 'block';
-
-            // Filter settings
-            document.querySelectorAll('.toolasha-settings-group').forEach((group) => {
-                let visibleCount = 0;
-
-                group.querySelectorAll('.toolasha-setting').forEach((setting) => {
-                    const label = setting.querySelector('.toolasha-setting-label')?.textContent || '';
-                    const help = setting.querySelector('.toolasha-setting-help')?.textContent || '';
-                    const searchText = (label + ' ' + help).toLowerCase();
-
-                    if (searchText.includes(lowerQuery)) {
-                        setting.style.display = 'flex';
-                        visibleCount++;
-                    } else {
-                        setting.style.display = 'none';
-                    }
-                });
-
-                // Hide group if no visible settings
-                if (visibleCount === 0) {
-                    group.style.display = 'none';
-                } else {
-                    group.style.display = 'block';
-                }
-            });
-        };
+        // "Changed only" toggle. Several hundred switches is too many to scan
+        // for the four you touched, and the schema already knows what it ships
+        // with — so the difference is something the panel can simply show.
+        const changedButton = document.createElement('button');
+        changedButton.textContent = 'Changed only';
+        changedButton.className = 'toolasha-changed-only-toggle';
+        changedButton.title = 'Show only settings whose value differs from the default';
+        changedButton.setAttribute('aria-pressed', 'false');
+        changedButton.style.cssText = `
+            padding: 8px 16px;
+            background: #444;
+            color: white;
+            border: 1px solid #555;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            white-space: nowrap;
+        `;
+        this.changedOnlyButton = changedButton;
 
         // Input event listener
         searchInput.addEventListener('input', (e) => {
-            filterSettings(e.target.value);
+            this.searchQuery = e.target.value;
+            clearButton.style.display = this.searchQuery.trim() ? 'block' : 'none';
+            this.applySettingsFilter();
         });
 
         // Clear button event listener
         clearButton.addEventListener('click', () => {
             searchInput.value = '';
-            filterSettings('');
+            this.searchQuery = '';
+            clearButton.style.display = 'none';
+            this.applySettingsFilter();
             searchInput.focus();
         });
 
+        changedButton.addEventListener('click', () => {
+            this.changedOnly = !this.changedOnly;
+            this.updateChangedOnlyButton();
+            this.applySettingsFilter();
+        });
+
         searchContainer.appendChild(searchInput);
+        searchContainer.appendChild(changedButton);
         searchContainer.appendChild(clearButton);
         container.appendChild(searchContainer);
+    }
+
+    /**
+     * Reflect the changed-only state on its button.
+     */
+    updateChangedOnlyButton() {
+        const button = this.changedOnlyButton;
+        if (!button) return;
+        button.setAttribute('aria-pressed', String(this.changedOnly));
+        button.style.background = this.changedOnly ? '#2f5d8a' : '#444';
+        button.style.borderColor = this.changedOnly ? '#6b9fff' : '#555';
+    }
+
+    /**
+     * Show the settings that pass the search text and the changed-only toggle,
+     * hiding groups that end up empty.
+     *
+     * One function for both filters rather than one each: two independent
+     * passes over the same elements would fight, the second undoing whatever
+     * the first hid.
+     */
+    applySettingsFilter() {
+        const query = (this.searchQuery || '').toLowerCase().trim();
+        const changedOnly = this.changedOnly;
+
+        this._markMatchingModeChips(query);
+
+        if (!query && !changedOnly) {
+            document.querySelectorAll('.toolasha-setting').forEach((setting) => {
+                setting.style.display = 'flex';
+            });
+            document.querySelectorAll('.toolasha-settings-group').forEach((group) => {
+                group.style.display = 'block';
+            });
+            return;
+        }
+
+        document.querySelectorAll('.toolasha-settings-group').forEach((group) => {
+            let visibleCount = 0;
+
+            group.querySelectorAll('.toolasha-setting').forEach((setting) => {
+                let visible = true;
+
+                if (query) {
+                    const label = setting.querySelector('.toolasha-setting-label')?.textContent || '';
+                    const help = setting.querySelector('.toolasha-setting-help')?.textContent || '';
+                    visible = (label + ' ' + help).toLowerCase().includes(query);
+                }
+
+                if (visible && changedOnly) {
+                    const settingId = setting.dataset.settingId;
+                    visible = isSettingChanged(this.findSettingDef(settingId), this.config.settingsMap[settingId]);
+                }
+
+                setting.style.display = visible ? 'flex' : 'none';
+                if (visible) visibleCount++;
+            });
+
+            group.style.display = visibleCount === 0 ? 'none' : 'block';
+        });
+    }
+
+    /**
+     * Ring the mode chips a search names.
+     *
+     * A mode's schema entry is hidden — the chip is its control — so a search
+     * for "iron cow" would otherwise hide every row and point at nothing.
+     *
+     * @param {string} query - The lower-cased search text, empty to clear
+     */
+    _markMatchingModeChips(query) {
+        for (const mode of MODE_PRESETS) {
+            const chip = document.querySelector(`.toolasha-mode-chip[data-mode-id="${mode.id}"]`);
+            if (!chip) continue;
+            const matched = Boolean(query) && `${mode.label} ${mode.description}`.toLowerCase().includes(query);
+            chip.dataset.searchMatch = String(matched);
+            chip.style.outline = matched ? '2px solid #6b9fff' : '';
+            chip.style.outlineOffset = matched ? '2px' : '';
+        }
+    }
+
+    /**
+     * Add the preset bundles — a whole configuration in one button.
+     * @param {HTMLElement} container - Container element
+     */
+    addPresetButtons(container) {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'toolasha-preset-buttons';
+        wrapper.style.cssText = 'margin: 0 0 16px 0;';
+
+        const heading = document.createElement('div');
+        heading.textContent = 'Presets';
+        heading.style.cssText = 'font-size: 12px; color: #888; margin-bottom: 6px;';
+        wrapper.appendChild(heading);
+
+        const note = document.createElement('div');
+        note.textContent =
+            'A preset turns feature switches on and off in one go. Numbers, dropdowns and colours are left alone, ' +
+            'and Restore undoes the last one. A mode — the pressed-in chip — is not a one-off: it stays on ' +
+            'alongside whichever preset you pick.';
+        note.style.cssText = 'font-size: 11px; color: #666; margin-bottom: 8px; line-height: 1.4;';
+        wrapper.appendChild(note);
+
+        const row = document.createElement('div');
+        row.className = 'toolasha-utility-buttons';
+
+        for (const preset of SETTING_PRESETS) {
+            const button = document.createElement('button');
+            button.textContent = preset.label;
+            button.className = 'toolasha-utility-button toolasha-preset-chip';
+            button.title = preset.description;
+            button.dataset.presetId = preset.id;
+            // A one-shot is an action, never a state: it has no pressed look and
+            // says so, so the one chip that *is* a state reads as different
+            button.dataset.presetKind = 'oneShot';
+            button.addEventListener('click', () => this.handleApplyPreset(preset));
+            row.appendChild(button);
+        }
+
+        for (const mode of MODE_PRESETS) {
+            row.appendChild(this.createModeChip(mode));
+        }
+
+        wrapper.appendChild(row);
+        container.appendChild(wrapper);
+    }
+
+    /**
+     * A chip for a persistent mode — pressed in while the mode is on.
+     *
+     * Carries `data-setting-id` so the settings search and the command palette
+     * can find and jump to it exactly as they find an ordinary setting row: the
+     * mode's schema entry is hidden, so this chip *is* its control.
+     *
+     * @param {Object} mode - Entry from MODE_PRESETS
+     * @returns {HTMLButtonElement} The chip
+     */
+    createModeChip(mode) {
+        const chip = document.createElement('button');
+        chip.className = 'toolasha-utility-button toolasha-mode-chip';
+        chip.dataset.modeId = mode.id;
+        chip.dataset.presetKind = 'mode';
+        chip.dataset.settingId = mode.settingId;
+        chip.setAttribute('role', 'switch');
+        chip.title = mode.description;
+        chip.textContent = `${mode.icon} ${mode.label}`;
+
+        chip.addEventListener('click', () => this.handleToggleMode(mode, chip));
+        this._paintModeChip(chip, ironCowMode.isEnabled(), mode);
+        return chip;
+    }
+
+    /**
+     * Show whether a mode is currently on.
+     * @param {HTMLElement} chip - The mode's chip
+     * @param {boolean} enabled - Whether the mode is on
+     * @param {Object} mode - Entry from MODE_PRESETS
+     */
+    _paintModeChip(chip, enabled, mode) {
+        chip.setAttribute('aria-pressed', String(enabled));
+        chip.dataset.active = String(enabled);
+        chip.title = enabled ? `${mode.description} ${mode.activeNote}` : mode.description;
+        chip.style.cssText = enabled
+            ? 'background: linear-gradient(135deg, #7c5c20, #d4900a); border: 1px solid #ffc65c; ' +
+              'box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.45); color: #fff9e8; font-weight: 700;'
+            : 'background: linear-gradient(135deg, #2a2a2a, #3a3a3a); border: 1px dashed #7c5c20; color: #c0c0c0;';
+    }
+
+    /**
+     * Turn a mode on or off. Modes stack with presets, so nothing else is
+     * touched — the force-disable machinery the mode owns does its own work.
+     *
+     * @param {Object} mode - Entry from MODE_PRESETS
+     * @param {HTMLElement} chip - Its chip, repainted afterwards
+     */
+    async handleToggleMode(mode, chip) {
+        if (chip.dataset.busy === 'true') return;
+        chip.dataset.busy = 'true';
+
+        try {
+            const enabling = !ironCowMode.isEnabled();
+            config.setSetting(mode.settingId, enabling);
+            if (enabling) {
+                await ironCowMode.enable();
+            } else {
+                await ironCowMode.disable();
+            }
+            this._paintModeChip(chip, enabling, mode);
+            this._syncIronCowSettingInputs();
+            this.applyDisabledByState();
+        } catch (error) {
+            console.error('[SettingsUI] Toggling a mode failed:', error);
+        } finally {
+            delete chip.dataset.busy;
+        }
+    }
+
+    /**
+     * Repaint every mode chip from the mode's own state.
+     *
+     * Run after any bulk write: a preset must never move a mode, and the chip
+     * saying so is how somebody can see that it did not.
+     */
+    _refreshModeChips() {
+        for (const mode of MODE_PRESETS) {
+            const chip = document.querySelector(`.toolasha-mode-chip[data-mode-id="${mode.id}"]`);
+            if (chip) this._paintModeChip(chip, ironCowMode.isEnabled(), mode);
+        }
+    }
+
+    /**
+     * Apply a preset, after asking — it rewrites a few hundred switches.
+     * @param {Object} preset - Entry from SETTING_PRESETS
+     */
+    async handleApplyPreset(preset) {
+        const confirmed = confirm(
+            `Apply the "${preset.label}" preset?\n\n${preset.description}\n\n` +
+                'Every other feature switch is turned off. Numbers, dropdowns and colours are left alone, and ' +
+                'Restore puts your current switches back.'
+        );
+        if (!confirmed) return;
+
+        const applied = await applyPreset(preset.id);
+        if (!applied) {
+            alert('Applying the preset failed. See the console for details.');
+            return;
+        }
+
+        for (const [id, value] of Object.entries(applied)) {
+            if (this.currentSettings[id]) this.currentSettings[id].isTrue = value;
+        }
+
+        // A preset writes stored values even for settings the mode locks;
+        // re-force them so Iron Cow wins immediately, not on its next apply
+        this._reapplyModes();
+        this._syncAllCheckboxInputs();
+        // A preset is a one-shot and a mode is not: whichever modes were on
+        // before are still on, and the chips have to keep saying so
+        this._refreshModeChips();
+        this.applyDisabledByState();
+        this.applySettingsFilter();
+        if (this.restoreButton) this.restoreButton.style.display = '';
+    }
+
+    /**
+     * Re-force every active mode's managed settings after a bulk write.
+     */
+    _reapplyModes() {
+        try {
+            ironCowMode.reapply();
+            for (const id of Object.keys(this.currentSettings)) {
+                const entry = config.settingsMap[id];
+                if (entry && this.currentSettings[id]) this.currentSettings[id].isTrue = entry.isTrue;
+            }
+        } catch (error) {
+            console.error('[SettingsUI] Re-applying modes after a bulk write failed:', error);
+        }
     }
 
     /**
      * Add utility buttons (Reset, Export, Import, Fetch Prices)
      * @param {HTMLElement} container - Container element
      */
+    /**
+     * Export every IndexedDB store — settings and all tracked history — as one
+     * versioned JSON file. The filename carries which character and game mode
+     * the backup was taken from — the payload is account-wide either way, but
+     * a folder of dated backups is unreadable without it.
+     * @param {HTMLElement} button - The button, for inline status feedback
+     */
+    async handleFullBackup(button) {
+        const original = button.textContent;
+        try {
+            button.textContent = 'Exporting…';
+            // Serialized store by store: the object form of a large database
+            // plus its stringification is two copies of everything at once
+            const json = await exportEverythingJSON();
+            const stamp = new Date().toISOString().slice(0, 10);
+            downloadFile(
+                `toolasha-backup-${stamp}${backupCharacterSuffix()}.json`,
+                json,
+                'application/json;charset=utf-8;'
+            );
+            button.textContent = 'Saved ✓';
+        } catch (error) {
+            console.error('[SettingsUI] Full backup failed:', error);
+            button.textContent = 'Failed';
+        } finally {
+            setTimeout(() => {
+                button.textContent = original;
+            }, 2000);
+        }
+    }
+
+    /**
+     * Restore a full backup file after an explicit confirmation. Overwrites the
+     * stored keys the backup carries; a reload afterwards picks everything up.
+     */
+    async handleFullRestore() {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.json,application/json';
+        input.addEventListener('change', async () => {
+            const file = input.files?.[0];
+            if (!file) return;
+            try {
+                const payload = JSON.parse(await file.text());
+                const stores = Object.keys(payload?.stores || {});
+                if (!stores.length) {
+                    alert('That file does not look like a Toolasha backup.');
+                    return;
+                }
+                const when = payload.exportedAt ? new Date(payload.exportedAt).toLocaleString() : 'unknown date';
+                const confirmed = await askChoice({
+                    title: 'Restore backup',
+                    message:
+                        `Backup from ${when}, covering ${stores.length} data stores ` +
+                        `(${stores.slice(0, 5).join(', ')}${stores.length > 5 ? ', …' : ''}). ` +
+                        'Restoring overwrites the stored copies of everything it contains.',
+                    choices: [
+                        { value: 'restore', label: 'Restore', tone: 'danger' },
+                        { value: null, label: 'Cancel' },
+                    ],
+                });
+                if (confirmed !== 'restore') return;
+                const { restored } = await importEverything(payload);
+                const total = Object.values(restored).reduce((sum, n) => sum + n, 0);
+                alert(
+                    `Restored ${total} entries across ${Object.keys(restored).length} stores. Reload the page to pick everything up.`
+                );
+            } catch (error) {
+                console.error('[SettingsUI] Restoring backup failed:', error);
+                alert('Restoring the backup failed: ' + error.message);
+            }
+        });
+        input.click();
+    }
+
+    /**
+     * Push / Pull / Unlink, plus a line saying where this device stands.
+     *
+     * Kept inside the Sync group rather than in the utility row at the bottom of
+     * the panel: those buttons are all local operations, and a button that
+     * uploads a year of history to the internet should not sit unlabelled next
+     * to "Export Settings".
+     *
+     * @param {HTMLElement} container - The Sync group's content element
+     */
+    addSyncControls(container) {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'toolasha-sync-controls';
+        wrapper.style.cssText = 'display:flex; flex-direction:column; gap:8px; padding:8px 0 4px;';
+
+        const status = document.createElement('div');
+        status.id = 'toolasha-sync-status';
+        status.style.cssText = 'font-size:12px; color:#aaa; line-height:1.5;';
+        status.textContent = 'Checking sync status…';
+
+        const refreshStatus = async () => {
+            try {
+                status.textContent = await syncManager.describeStatus();
+            } catch (error) {
+                console.error('[SettingsUI] Reading sync status failed:', error);
+                status.textContent = 'Sync status unavailable.';
+            }
+        };
+        refreshStatus();
+
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex; flex-wrap:wrap; gap:8px;';
+
+        /**
+         * A button whose label reports what happened, then goes back to normal.
+         * @param {string} label - Resting label
+         * @param {string} busyLabel - Label while the work runs
+         * @param {Function} run - Returns the sync manager's outcome object
+         * @returns {HTMLButtonElement} The button
+         */
+        const makeButton = (label, busyLabel, run) => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.textContent = label;
+            button.className = 'toolasha-utility-button';
+            button.addEventListener('click', async () => {
+                if (button.disabled) return;
+                button.disabled = true;
+                button.textContent = busyLabel;
+                try {
+                    const result = await run();
+                    button.textContent = result?.ok ? 'Done ✓' : 'Failed';
+                } catch (error) {
+                    console.error('[SettingsUI] Sync action failed:', error);
+                    button.textContent = 'Failed';
+                } finally {
+                    await refreshStatus();
+                    this.timerRegistry.registerTimeout(
+                        setTimeout(() => {
+                            button.textContent = label;
+                            button.disabled = false;
+                        }, 2000)
+                    );
+                }
+            });
+            return button;
+        };
+
+        row.appendChild(makeButton('⬆ Push to GitHub', 'Pushing…', () => syncManager.push()));
+        row.appendChild(makeButton('⬇ Pull from GitHub', 'Pulling…', () => syncManager.pull()));
+        row.appendChild(
+            makeButton('Unlink gist', 'Unlinking…', async () => {
+                const answer = await askChoice({
+                    title: 'Unlink the sync gist',
+                    message:
+                        'This device forgets which gist it was using and what it last synced. The gist itself is ' +
+                        'left alone on GitHub — the next push finds it again or makes a new one.',
+                    choices: [
+                        { value: 'unlink', label: 'Unlink' },
+                        { value: null, label: 'Cancel' },
+                    ],
+                });
+                if (answer !== 'unlink') return { ok: false };
+                await syncManager.forgetGist();
+                return { ok: true };
+            })
+        );
+
+        wrapper.appendChild(row);
+        wrapper.appendChild(status);
+        container.appendChild(wrapper);
+    }
+
     addUtilityButtons(container) {
         const buttonsDiv = document.createElement('div');
         buttonsDiv.className = 'toolasha-utility-buttons';
@@ -914,6 +1453,14 @@ class SettingsUI {
         syncBtn.textContent = 'Copy Settings to All Characters';
         syncBtn.className = 'toolasha-utility-button toolasha-sync-button';
         syncBtn.addEventListener('click', () => this.handleSync());
+
+        // The same copy, aimed only at the characters with no marketplace —
+        // whose settings are a different configuration on purpose
+        const syncIronCowBtn = document.createElement('button');
+        syncIronCowBtn.textContent = 'Copy Settings to IC Characters';
+        syncIronCowBtn.className = 'toolasha-utility-button toolasha-sync-button toolasha-sync-ironcow-button';
+        syncIronCowBtn.title = 'Copy these settings to the characters Toolasha has seen running an iron cow game mode';
+        syncIronCowBtn.addEventListener('click', () => this.handleSyncIronCow());
 
         // Fetch Latest Prices button
         const fetchPricesBtn = document.createElement('button');
@@ -933,6 +1480,18 @@ class SettingsUI {
         exportBtn.className = 'toolasha-utility-button';
         exportBtn.addEventListener('click', () => this.handleExport());
 
+        // Full backup: settings are one store of ~17 — the tracked histories
+        // (dungeon runs, networth, loot logs, …) were unexportable before this
+        const backupBtn = document.createElement('button');
+        backupBtn.textContent = '💾 Back Up Everything';
+        backupBtn.className = 'toolasha-utility-button';
+        backupBtn.addEventListener('click', () => this.handleFullBackup(backupBtn));
+
+        const restoreBackupBtn = document.createElement('button');
+        restoreBackupBtn.textContent = '📥 Restore Backup';
+        restoreBackupBtn.className = 'toolasha-utility-button';
+        restoreBackupBtn.addEventListener('click', () => this.handleFullRestore());
+
         // Import button
         const importBtn = document.createElement('button');
         importBtn.textContent = 'Import Settings';
@@ -951,30 +1510,45 @@ class SettingsUI {
         restoreBtn.className = 'toolasha-utility-button';
         restoreBtn.style.display = 'none';
         restoreBtn.addEventListener('click', () => this.handleRestore(restoreBtn));
+        this.restoreButton = restoreBtn;
 
-        // Show restore immediately if a snapshot already exists from a prior All Off
+        // Show restore immediately if a snapshot already exists from a prior bulk write
         (async () => {
             try {
-                const key = await this._getAllOffSnapshotKey();
-                const snap = await storage.getJSON(key, 'settings', null);
+                const snap = await loadBulkSnapshot();
                 if (snap) restoreBtn.style.display = '';
             } catch (error) {
-                console.error('[SettingsUI] Failed to check All Off snapshot:', error);
+                console.error('[SettingsUI] Failed to check bulk-write snapshot:', error);
             }
         })();
 
         buttonsDiv.appendChild(syncBtn);
+        buttonsDiv.appendChild(syncIronCowBtn);
         buttonsDiv.appendChild(fetchPricesBtn);
         buttonsDiv.appendChild(allOffBtn);
         buttonsDiv.appendChild(restoreBtn);
         buttonsDiv.appendChild(resetBtn);
         buttonsDiv.appendChild(exportBtn);
         buttonsDiv.appendChild(importBtn);
+        buttonsDiv.appendChild(backupBtn);
+        buttonsDiv.appendChild(restoreBackupBtn);
+
+        const overlayBtn = document.createElement('button');
+        overlayBtn.textContent = 'Overlay';
+        overlayBtn.className = 'toolasha-utility-button';
+        overlayBtn.addEventListener('click', () => overlayPanel.toggle());
+        buttonsDiv.appendChild(overlayBtn);
+
+        const treasureBtn = document.createElement('button');
+        treasureBtn.textContent = 'Treasure';
+        treasureBtn.className = 'toolasha-utility-button';
+        treasureBtn.addEventListener('click', () => treasureTracker.toggle());
+        buttonsDiv.appendChild(treasureBtn);
 
         const pformanceBtn = document.createElement('button');
         pformanceBtn.textContent = 'PFormance';
         pformanceBtn.className = 'toolasha-utility-button';
-        pformanceBtn.addEventListener('click', () => pformancePanel.show());
+        pformanceBtn.addEventListener('click', () => pformancePanel.toggle());
         buttonsDiv.appendChild(pformanceBtn);
 
         container.appendChild(buttonsDiv);
@@ -987,7 +1561,17 @@ class SettingsUI {
     addRefreshNotice(container) {
         const notice = document.createElement('div');
         notice.className = 'toolasha-refresh-notice';
-        notice.textContent = 'Some settings require a page refresh to take effect';
+
+        // "Some settings require a refresh" was true of a handful and read as
+        // true of all of them, which taught people to reload after every click.
+        // The schema now marks the ones that mean it, so the notice can point
+        // at them and promise the rest are live.
+        const count = refreshRequiredIds().length;
+        notice.textContent = count
+            ? `Everything applies straight away except the ${count} settings tagged "reload" — those gate a feature ` +
+              'at startup and need a page refresh.'
+            : 'Every setting applies straight away — no refresh needed.';
+
         container.appendChild(notice);
     }
 
@@ -1279,31 +1863,102 @@ class SettingsUI {
     }
 
     /**
+     * The characters this one could copy settings to.
+     * @returns {Promise<Array<{id: string, name: string}>>}
+     */
+    async _otherKnownCharacters() {
+        const knownCharacters = await this.config.getKnownCharacters();
+        const currentId = this._currentCharacterId();
+        return knownCharacters.filter((c) => c.id !== currentId);
+    }
+
+    /**
+     * @returns {string} The character being played, as a string id
+     */
+    _currentCharacterId() {
+        return String(dataManager.getCurrentCharacterId() || '');
+    }
+
+    /**
      * Handle sync settings to all characters
      */
     async handleSync() {
-        const knownCharacters = await this.config.getKnownCharacters();
-        const currentId = String(dataManager.getCurrentCharacterId() || '');
-        const others = knownCharacters.filter((c) => c.id !== currentId);
+        const others = await this._otherKnownCharacters();
 
         if (others.length === 0) {
             alert('You only have one character. Settings are already saved for this character.');
             return;
         }
 
+        this._openCopySettingsDialog({
+            title: 'Copy Settings To',
+            characters: others,
+            describe: (count) => `Settings copied to ${count} character${count !== 1 ? 's' : ''}!`,
+        });
+    }
+
+    /**
+     * Copy this character's settings to the iron cows only.
+     *
+     * Same mechanics as the all-characters copy — same dialog, same per-character
+     * checkboxes, the same whole-settings-map write — narrowed to the ids whose
+     * *recorded* game mode says iron cow. A character whose mode was never
+     * recorded is skipped and named rather than guessed at, and copying onto an
+     * iron cow composes with Iron Cow Mode exactly as a manual edit does: the
+     * values land, and that character's own force-disable pass owns them from
+     * the next time its mode is applied.
+     */
+    async handleSyncIronCow() {
+        const others = await this._otherKnownCharacters();
+        const modes = await getCharacterGameModes();
+        const { targets, unknown } = selectIronCowTargets(others, modes, this._currentCharacterId());
+
+        if (targets.length === 0) {
+            const names = unknown.map(characterLabel).join(', ');
+            alert(
+                unknown.length
+                    ? 'No character is known to be an iron cow yet.\n\n' +
+                          `Toolasha records a character's game mode when you play it, and has not seen ${names}. ` +
+                          'Log in on each one once and try again.'
+                    : 'No iron cow characters on this account.'
+            );
+            return;
+        }
+
+        this._openCopySettingsDialog({
+            title: 'Copy Settings To Iron Cows',
+            characters: targets,
+            note: unknown.length
+                ? `Skipped, game mode not recorded yet: ${unknown.map(characterLabel).join(', ')}`
+                : '',
+            describe: (count) => describeIronCowCopy(count, unknown),
+        });
+    }
+
+    /**
+     * The pick-your-characters dialog both copy buttons share.
+     *
+     * @param {Object} options - What to draw
+     * @param {string} options.title - Dialog heading
+     * @param {Array<{id: string, name: string}>} options.characters - Offered as checkboxes, all pre-ticked
+     * @param {string} [options.note] - A line under the list, for what was left out
+     * @param {Function} options.describe - Given the copied count, the message to show
+     */
+    _openCopySettingsDialog({ title: titleText, characters, note = '', describe }) {
         // Build a small modal with checkboxes for each character
         const overlay = document.createElement('div');
-        overlay.style.cssText = `position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:99999;display:flex;align-items:center;justify-content:center;`;
+        overlay.style.cssText = `position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:${PANEL_Z_CAP + 1};display:flex;align-items:center;justify-content:center;`;
 
         const dialog = document.createElement('div');
+        dialog.className = 'toolasha-copy-settings-dialog';
         dialog.style.cssText = `background:#1a1a2e;border:1px solid rgba(74,158,255,0.5);border-radius:10px;padding:20px;min-width:280px;font-family:'Segoe UI',sans-serif;color:#e0e0e0;`;
 
         const title = document.createElement('div');
         title.style.cssText = `font-size:14px;font-weight:700;color:#4a9eff;margin-bottom:12px;`;
-        title.textContent = 'Copy Settings To';
+        title.textContent = titleText;
         dialog.appendChild(title);
 
-        const checkboxes = others.map((char) => {
+        const checkboxes = characters.map((char) => {
             const row = document.createElement('label');
             row.style.cssText = `display:flex;align-items:center;gap:8px;padding:6px 0;cursor:pointer;`;
             const cb = document.createElement('input');
@@ -1311,12 +1966,20 @@ class SettingsUI {
             cb.checked = true;
             cb.value = char.id;
             const nameSpan = document.createElement('span');
-            nameSpan.textContent = char.name !== char.id ? char.name : `Character ${char.id}`;
+            nameSpan.textContent = characterLabel(char);
             row.appendChild(cb);
             row.appendChild(nameSpan);
             dialog.appendChild(row);
             return cb;
         });
+
+        if (note) {
+            const noteEl = document.createElement('div');
+            noteEl.className = 'toolasha-copy-settings-note';
+            noteEl.style.cssText = 'font-size:11px;color:#aaa;margin-top:8px;line-height:1.4;max-width:320px;';
+            noteEl.textContent = note;
+            dialog.appendChild(noteEl);
+        }
 
         const btnRow = document.createElement('div');
         btnRow.style.cssText = `display:flex;gap:8px;margin-top:16px;justify-content:flex-end;`;
@@ -1350,11 +2013,13 @@ class SettingsUI {
             close();
             const result = await this.config.syncSettingsToAllCharacters(selected);
             if (result.success) {
-                alert(`Settings copied to ${result.count} character${result.count !== 1 ? 's' : ''}!`);
+                alert(describe(result.count));
             } else {
                 alert(`Failed to copy settings: ${result.error || 'Unknown error'}`);
             }
         });
+
+        return overlay;
     }
 
     /**
@@ -1487,85 +2152,61 @@ class SettingsUI {
     }
 
     /**
-     * Returns the per-character storage key for the All Off snapshot.
-     * @returns {Promise<string>}
-     */
-    async _getAllOffSnapshotKey() {
-        const cid = dataManager.getCurrentCharacterId?.();
-        return cid ? `toolasha_allOffSnapshot_${cid}` : 'toolasha_allOffSnapshot';
-    }
-
-    /**
      * Handle All Off — snapshots all checkbox values then sets them all to false.
-     * @param {HTMLElement} restoreBtn
+     * @param {HTMLElement} [restoreBtn]
      */
-    async handleAllOff(restoreBtn) {
-        const snapshot = {};
-        for (const group of Object.values(settingsGroups)) {
-            for (const [id, def] of Object.entries(group.settings)) {
-                const type = def.type || 'checkbox';
-                if (type !== 'checkbox' && type !== 'checkboxWithButton') continue;
-                if (id === 'ironCow_enabled') continue;
-                const entry = this.config.settingsMap[id];
-                if (!entry) continue;
-                snapshot[id] = entry.isTrue ?? false;
-            }
-        }
-        const key = await this._getAllOffSnapshotKey();
-        await storage.setJSON(key, snapshot, 'settings', true);
+    async handleAllOff(restoreBtn = this.restoreButton) {
+        const snapshot = await saveBulkSnapshot();
 
-        for (const id of Object.keys(snapshot)) {
-            this.config.setSetting(id, false);
-            if (this.currentSettings[id]) {
-                this.currentSettings[id].isTrue = false;
-            }
+        const off = {};
+        for (const id of Object.keys(snapshot)) off[id] = false;
+        writeCheckboxValues(off);
+        for (const id of Object.keys(off)) {
+            if (this.currentSettings[id]) this.currentSettings[id].isTrue = false;
         }
 
+        this._reapplyModes();
         this._syncAllCheckboxInputs();
+        this._refreshModeChips();
         this.applyDisabledByState();
-        restoreBtn.style.display = '';
+        this.applySettingsFilter();
+        if (restoreBtn) restoreBtn.style.display = '';
     }
 
     /**
-     * Handle Restore — restores checkbox values from the All Off snapshot.
-     * @param {HTMLElement} restoreBtn
+     * Handle Restore — puts back the values from before the last bulk write,
+     * whether that was All Off or a preset.
+     * @param {HTMLElement} [restoreBtn]
      */
-    async handleRestore(restoreBtn) {
-        const key = await this._getAllOffSnapshotKey();
-        const snapshot = await storage.getJSON(key, 'settings', null);
+    async handleRestore(restoreBtn = this.restoreButton) {
+        const snapshot = await loadBulkSnapshot();
         if (!snapshot) return;
 
+        writeCheckboxValues(snapshot);
         for (const [id, value] of Object.entries(snapshot)) {
-            const entry = this.config.settingsMap[id];
-            if (!entry) continue;
-            this.config.setSetting(id, value);
-            if (this.currentSettings[id]) {
-                this.currentSettings[id].isTrue = value;
-            }
+            if (this.currentSettings[id]) this.currentSettings[id].isTrue = value;
         }
-        await storage.delete(key, 'settings');
+        await clearBulkSnapshot();
 
+        this._reapplyModes();
         this._syncAllCheckboxInputs();
+        // Restore undoes the last bulk write, which never included a mode
+        this._refreshModeChips();
         this.applyDisabledByState();
-        restoreBtn.style.display = 'none';
+        this.applySettingsFilter();
+        if (restoreBtn) restoreBtn.style.display = 'none';
     }
 
     /**
      * Syncs all checkbox DOM inputs to match their current config values.
-     * Used after bulk changes (All Off / Restore).
+     * Used after bulk changes (presets / All Off / Restore).
      */
     _syncAllCheckboxInputs() {
-        for (const group of Object.values(settingsGroups)) {
-            for (const [id, def] of Object.entries(group.settings)) {
-                const type = def.type || 'checkbox';
-                if (type !== 'checkbox' && type !== 'checkboxWithButton') continue;
-                const entry = this.config.settingsMap[id];
-                if (!entry) continue;
-                const input = document.querySelector(
-                    `.toolasha-setting[data-setting-id="${id}"] input[type="checkbox"]`
-                );
-                if (input) input.checked = entry.isTrue ?? false;
-            }
+        for (const id of presetTargetIds()) {
+            const entry = this.config.settingsMap[id];
+            if (!entry) continue;
+            const input = document.querySelector(`.toolasha-setting[data-setting-id="${id}"] input[type="checkbox"]`);
+            if (input) input.checked = entry.isTrue ?? false;
         }
     }
 
@@ -1586,7 +2227,7 @@ class SettingsUI {
             top: 0; left: 0;
             width: 100%; height: 100%;
             background: rgba(0,0,0,0.8);
-            z-index: 100000;
+            z-index: ${PANEL_Z_CAP + 1};
             display: flex;
             align-items: center;
             justify-content: center;
@@ -1757,7 +2398,7 @@ class SettingsUI {
             width: 100%;
             height: 100%;
             background: rgba(0, 0, 0, 0.8);
-            z-index: 100000;
+            z-index: ${PANEL_Z_CAP + 1};
             display: flex;
             align-items: center;
             justify-content: center;
@@ -2054,7 +2695,7 @@ class SettingsUI {
             width: 100%;
             height: 100%;
             background: rgba(0, 0, 0, 0.8);
-            z-index: 100000;
+            z-index: ${PANEL_Z_CAP + 1};
             display: flex;
             align-items: center;
             justify-content: center;
@@ -2708,100 +3349,6 @@ class SettingsUI {
         itemEl.appendChild(deleteBtn);
 
         return itemEl;
-    }
-
-    /**
-     * Add Iron Cow mode toggle banner above settings groups.
-     * @param {HTMLElement} container - The card/panel container
-     */
-    addIronCowToggle(container) {
-        const enabled = ironCowMode.isEnabled();
-
-        const wrapper = document.createElement('div');
-        wrapper.id = 'toolasha-iron-cow-toggle';
-        wrapper.style.cssText = `
-            display: flex;
-            align-items: flex-start;
-            gap: 12px;
-            margin: 0 0 12px 0;
-            padding: 10px 14px;
-            border-radius: 6px;
-            border: 1px solid ${enabled ? '#7c5c20' : '#3a3a3a'};
-            background: ${enabled ? '#2a1e0a' : '#1e1e1e'};
-            cursor: default;
-        `;
-
-        const emoji = document.createElement('span');
-        emoji.textContent = '🐄';
-        emoji.style.cssText = 'font-size: 22px; line-height: 1; flex-shrink: 0; margin-top: 2px;';
-
-        const textBlock = document.createElement('div');
-        textBlock.style.cssText = 'flex: 1; min-width: 0;';
-
-        const title = document.createElement('div');
-        title.style.cssText = `font-weight: 700; font-size: 14px; color: ${enabled ? '#d4900a' : '#c0c0c0'};`;
-        title.textContent = 'Iron Cow Mode';
-
-        const desc = document.createElement('div');
-        desc.style.cssText = 'font-size: 12px; color: #888; margin-top: 2px;';
-        desc.innerHTML = enabled
-            ? 'Disable all market &amp; profit features. <span style="color:#d4900a;font-weight:600;">ACTIVE — market features locked.</span>'
-            : 'Disable all market &amp; profit features for a no-marketplace playthrough.';
-
-        textBlock.appendChild(title);
-        textBlock.appendChild(desc);
-
-        // Toggle switch
-        const label = document.createElement('label');
-        label.style.cssText =
-            'display: flex; align-items: center; gap: 0; cursor: pointer; flex-shrink: 0; margin-top: 2px;';
-
-        const checkbox = document.createElement('input');
-        checkbox.type = 'checkbox';
-        checkbox.checked = enabled;
-        checkbox.style.cssText = 'width: 36px; height: 20px; cursor: pointer;';
-
-        checkbox.addEventListener('change', async (e) => {
-            e.stopPropagation();
-            const enabling = e.target.checked;
-            config.setSetting('ironCow_enabled', enabling);
-            if (enabling) {
-                await ironCowMode.enable();
-            } else {
-                await ironCowMode.disable();
-            }
-            this._refreshIronCowToggleAppearance(wrapper, enabling);
-            this._syncIronCowSettingInputs();
-            this.applyDisabledByState();
-        });
-
-        label.appendChild(checkbox);
-
-        wrapper.appendChild(emoji);
-        wrapper.appendChild(textBlock);
-        wrapper.appendChild(label);
-
-        container.appendChild(wrapper);
-    }
-
-    /**
-     * Update the Iron Cow toggle banner appearance without re-creating it.
-     * @param {HTMLElement} wrapper - The banner wrapper element
-     * @param {boolean} enabled - Whether Iron Cow is now active
-     */
-    _refreshIronCowToggleAppearance(wrapper, enabled) {
-        wrapper.style.border = `1px solid ${enabled ? '#7c5c20' : '#3a3a3a'}`;
-        wrapper.style.background = enabled ? '#2a1e0a' : '#1e1e1e';
-
-        const title = wrapper.querySelector('div > div:first-child');
-        if (title) title.style.color = enabled ? '#d4900a' : '#c0c0c0';
-
-        const desc = wrapper.querySelector('div > div:last-child');
-        if (desc) {
-            desc.innerHTML = enabled
-                ? 'Disable all market &amp; profit features. <span style="color:#d4900a;font-weight:600;">ACTIVE — market features locked.</span>'
-                : 'Disable all market &amp; profit features for a no-marketplace playthrough.';
-        }
     }
 
     /**

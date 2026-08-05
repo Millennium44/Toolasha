@@ -10,6 +10,7 @@
 // The ?worker suffix is handled by rollup's workerBundlePlugin at build time
 import WORKER_SCRIPT from './combat-sim-worker-entry.js?worker';
 import config from '../../core/config.js';
+import { isMobileMode } from '../../utils/mobile.js';
 import { deriveSeed } from './engine/rng.js';
 
 let workerBlobURL = null;
@@ -23,10 +24,41 @@ const MAX_WORKERS = 4;
 /**
  * @returns {number} Max worker count from setting, or hardware concurrency if 0/unset
  */
-function getMaxWorkers() {
+export function getMaxWorkers() {
     const setting = config.getSetting('combatSim_maxThreads') || 0;
     const cores = typeof navigator !== 'undefined' ? navigator.hardwareConcurrency || 4 : 4;
-    return setting > 0 ? Math.min(setting, cores) : Math.min(MAX_WORKERS, cores);
+    // Normally the machine has the last word: more workers than cores is more
+    // memory and more contention for no more throughput. Someone who wants the
+    // number taken literally can say so.
+    if (config.getSetting('combatSim_uncapThreads') && setting > 0) return setting;
+    const cap = setting > 0 ? Math.min(setting, cores) : Math.min(MAX_WORKERS, cores);
+    // A phone reporting eight logical cores is not offering eight cores' worth
+    // of simulation: every worker holds its own clone of the game data, the
+    // thermal budget is a fraction of a desktop's, and the game itself is
+    // running in the same tab. Two is the honest ceiling there — overridable
+    // like everything else via the explicit thread setting + uncap.
+    return isMobileMode() ? Math.min(cap, MOBILE_MAX_WORKERS) : cap;
+}
+
+/** Worker ceiling under mobile mode — memory and thermals, not core count */
+const MOBILE_MAX_WORKERS = 2;
+
+/**
+ * How many workers one `runSimulation` will split itself across.
+ *
+ * A long run is chopped into chunks of hours and simulated in parallel; a short
+ * one is a single worker, because splitting an hour four ways costs more in
+ * startup than it saves. Callers that want to run several *simulations* at once
+ * need this to know how much of the machine each one is already using — four
+ * candidates at four workers apiece on a four-worker budget is sixteen workers
+ * fighting over four cores, which is slower than doing them in turn.
+ *
+ * @param {number} hours - Simulated hours for one run
+ * @returns {number} Workers that run will use
+ */
+export function plannedWorkerCount(hours) {
+    const maxWorkers = getMaxWorkers();
+    return hours >= MIN_HOURS_PER_WORKER * 2 ? Math.min(maxWorkers, Math.floor(hours / MIN_HOURS_PER_WORKER)) : 1;
 }
 
 /**
@@ -166,6 +198,10 @@ function mergeSimResults(results) {
         // Encounters
         merged.encounters += r.encounters;
 
+        // A maximum merges as a maximum — summing or keeping chunk 0's value
+        // would misreport the peak for any multi-worker run
+        merged.maxEnrageStack = Math.max(merged.maxEnrageStack || 0, r.maxEnrageStack || 0);
+
         // Deaths (per unit hrid)
         for (const [hrid, count] of Object.entries(r.deaths)) {
             merged.deaths[hrid] = (merged.deaths[hrid] || 0) + count;
@@ -272,6 +308,15 @@ function mergeSimResults(results) {
             }
         }
 
+        // Warnings — the union, not the sum: every chunk of the same fight meets
+        // the same unknown mechanic, and the reader wants it named once
+        if (r.warnings?.length) {
+            if (!merged.warnings) merged.warnings = [];
+            for (const warning of r.warnings) {
+                if (!merged.warnings.includes(warning)) merged.warnings.push(warning);
+            }
+        }
+
         // Wipe events — collect up to 20 across all chunks
         if (r.wipeEvents && r.wipeEvents.length > 0) {
             if (!merged.wipeEvents) merged.wipeEvents = [];
@@ -328,23 +373,34 @@ function mergeSimResults(results) {
  * @param {number} [params.seed] - RNG seed. Two runs sharing a seed draw the same
  *   random numbers, so comparing them measures the change instead of sampling
  *   noise. Omit for an independent random sample (the default).
+ * @param {boolean} [params.isTaskFight] - Set only when this run stands in for
+ *   fighting an active combat task's monster. It is what switches `taskDamage`
+ *   on in the engine; left off (the default) task gear measures as inert, which
+ *   is the truth for a generic zone sim.
  * @param {Function} [onProgress] - Called with (percent: 0-100)
  * @returns {Promise<Object>} Merged SimResult
  */
-export async function runSimulation(params, onProgress) {
-    const { gameData, playerDTOs, zoneHrid, difficultyTier, hours, communityBuffs, seed } = params;
+export async function runSimulation(params, onProgress, { preempt = true, workers = 0 } = {}) {
+    const { gameData, playerDTOs, zoneHrid, difficultyTier, hours, communityBuffs, seed, isTaskFight } = params;
 
-    const guildCombatBuffs = playerDTOs[0]?.guildCombatBuffs;
-    const extraBuffs = buildExtraBuffs(communityBuffs, guildCombatBuffs);
+    // Guild buffs are not folded in here: the worker reads each player DTO's
+    // own guildCombatBuffs, so party members keep their own guild's bonuses
+    const extraBuffs = buildExtraBuffs(communityBuffs);
     const ONE_HOUR_NS = 3600 * 1e9;
 
-    // Cancel any previous run
-    cancelSimulation();
+    // A new run started from the UI replaces whatever was running — that is what
+    // makes clicking Simulate twice do the obvious thing. An analysis running
+    // its own batch must opt out: preempting here would have each of its
+    // simulations kill the one before it, which is not a race so much as a
+    // guarantee of failure.
+    if (preempt) cancelSimulation();
 
-    // Determine worker count
-    const maxWorkers = getMaxWorkers();
-    const workerCount =
-        hours >= MIN_HOURS_PER_WORKER * 2 ? Math.min(maxWorkers, Math.floor(hours / MIN_HOURS_PER_WORKER)) : 1;
+    // Determine worker count. A caller running a batch of simulations pins this
+    // to one: splitting each run across the whole budget makes every candidate
+    // pay the worker startup and the game-data clone four times over, and
+    // measured against a queue of one-worker runs it is 1.1× to 3.3× slower —
+    // worst when the runs are short, never better at any length.
+    const workerCount = workers > 0 ? Math.max(1, Math.floor(workers)) : plannedWorkerCount(hours);
 
     // Split hours across workers
     const baseHours = Math.floor(hours / workerCount);
@@ -376,6 +432,7 @@ export async function runSimulation(params, onProgress) {
             difficultyTier,
             simulationTimeLimit: chunkHours * ONE_HOUR_NS,
             extraBuffs,
+            isTaskFight: Boolean(isTaskFight),
             // Each chunk needs its own stream or all four would replay the same
             // fights, but chunk N must match across compared runs — so the
             // per-chunk seed is derived from (seed, index), not randomized.
@@ -429,6 +486,9 @@ export function buildCrateBuffs(crateHrids, gameData) {
  * @param {Object} params.communityBuffs - { mooPass, comExp, comDrop }
  * @param {number} [params.seed] - RNG seed shared by runs being compared; omit for
  *   an independent random sample (the default).
+ * @param {boolean} [params.isTaskFight] - Whether taskDamage applies. Off by
+ *   default, and normally correct off here: a labyrinth monster is not a task
+ *   monster. Exposed so the lab panel can say otherwise.
  * @param {Function} [onProgress] - Called with (percent: 0-100)
  * @returns {Promise<Object>} SimResult with labyrinth fields
  */
@@ -446,10 +506,12 @@ export async function runLabyrinthSimulation(params, onProgress) {
         communityBuffs,
         labyrinthCombatBuffs,
         seed,
+        isTaskFight,
     } = params;
 
-    const guildCombatBuffs = playerDTOs[0]?.guildCombatBuffs;
-    const extraBuffs = [...buildExtraBuffs(communityBuffs, guildCombatBuffs), ...(labyrinthCombatBuffs || [])];
+    // Guild buffs are not folded in here: the worker reads each player DTO's
+    // own guildCombatBuffs, so party members keep their own guild's bonuses
+    const extraBuffs = [...buildExtraBuffs(communityBuffs), ...(labyrinthCombatBuffs || [])];
     const ONE_HOUR_NS = 3600 * 1e9;
 
     // Unlike runSimulation, labyrinth sims do NOT preempt other runs: each has
@@ -467,6 +529,7 @@ export async function runLabyrinthSimulation(params, onProgress) {
         difficultyTier: 0,
         simulationTimeLimit: hours * ONE_HOUR_NS,
         extraBuffs,
+        isTaskFight: Boolean(isTaskFight),
         labyrinth: {
             monsterHrid,
             roomLevel,

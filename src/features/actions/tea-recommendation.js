@@ -11,6 +11,7 @@ import alchemyProfit from '../alchemy/alchemy-profit.js';
 import { findOptimalTeas, getTeaBuffDescription, getRelevantTeas } from '../../utils/tea-optimizer.js';
 import { formatKMB } from '../../utils/formatters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
+import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
 
 /**
  * Get the currently selected location tab name
@@ -274,7 +275,7 @@ class TeaRecommendation {
         popup.className = 'mwi-tea-recommendation-popup';
         popup.style.cssText = `
             position: absolute;
-            z-index: 10000;
+            z-index: ${PANEL_Z_CAP};
             background: #1a1a1a;
             border: 1px solid ${config.COLOR_BORDER};
             border-radius: 8px;
@@ -896,7 +897,7 @@ class TeaRecommendation {
         popup.className = 'mwi-tea-recommendation-popup';
         popup.style.cssText = `
             position: absolute;
-            z-index: 10000;
+            z-index: ${PANEL_Z_CAP};
             background: #1a1a1a;
             border: 1px solid ${config.COLOR_BORDER};
             border-radius: 8px;
@@ -1057,7 +1058,7 @@ class TeaRecommendation {
         popup.className = 'mwi-tea-recommendation-popup';
         popup.style.cssText = `
             position: absolute;
-            z-index: 10000;
+            z-index: ${PANEL_Z_CAP};
             background: #1a1a1a;
             border: 1px solid ${config.COLOR_WARNING};
             border-radius: 8px;
@@ -1138,7 +1139,12 @@ class TeaRecommendation {
         let hasDragged = false;
         let startX, startY, initialX, initialY;
 
-        handle.addEventListener('mousedown', (e) => {
+        // Pointer events so a finger works too; mousedown never fires on a
+        // touchscreen, and touch-action:none stops the browser claiming the
+        // gesture for scrolling
+        handle.style.touchAction = 'none';
+
+        handle.addEventListener('pointerdown', (e) => {
             isDragging = true;
             hasDragged = false;
             startX = e.clientX;
@@ -1149,7 +1155,7 @@ class TeaRecommendation {
             e.preventDefault();
         });
 
-        const onMouseMove = (e) => {
+        const onPointerMove = (e) => {
             if (!isDragging) return;
 
             hasDragged = true;
@@ -1160,7 +1166,7 @@ class TeaRecommendation {
             element.style.top = `${initialY + dy}px`;
         };
 
-        const onMouseUp = () => {
+        const onPointerUp = () => {
             if (isDragging) {
                 isDragging = false;
                 handle.style.cursor = 'grab';
@@ -1175,12 +1181,14 @@ class TeaRecommendation {
             }
         };
 
-        document.addEventListener('mousemove', onMouseMove);
-        document.addEventListener('mouseup', onMouseUp);
+        document.addEventListener('pointermove', onPointerMove);
+        document.addEventListener('pointerup', onPointerUp);
+        document.addEventListener('pointercancel', onPointerUp);
 
         this.dragCleanup = () => {
-            document.removeEventListener('mousemove', onMouseMove);
-            document.removeEventListener('mouseup', onMouseUp);
+            document.removeEventListener('pointermove', onPointerMove);
+            document.removeEventListener('pointerup', onPointerUp);
+            document.removeEventListener('pointercancel', onPointerUp);
             this.dragCleanup = null;
         };
     }

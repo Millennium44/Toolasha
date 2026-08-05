@@ -1,0 +1,359 @@
+/**
+ * Record-per-chunk history storage.
+ *
+ * The point of this module is a claim about writes — that appending one entry
+ * costs one record rather than the whole history — so most of what is tested
+ * here is which keys IndexedDB was asked to touch, not what came back out of it.
+ * The rest is the migration, whose only interesting cases are the ones where it
+ * fails: a split that cannot be written must leave the legacy key exactly as it
+ * found it, because the disk being full is precisely when a half-migrated
+ * history would be unrecoverable.
+ */
+
+import { describe, test, expect, beforeEach, vi } from 'vitest';
+
+const storageMock = vi.hoisted(() => {
+    const store = new Map();
+    return {
+        store,
+        get: vi.fn(async (key, storeName, fallback) => (store.has(key) ? store.get(key) : fallback)),
+        set: vi.fn(async (key, value) => {
+            store.set(key, value);
+            return true;
+        }),
+        delete: vi.fn(async (key) => {
+            store.delete(key);
+            return true;
+        }),
+        getAllKeys: vi.fn(async () => [...store.keys()]),
+        putAll: vi.fn(async (storeName, entries) => {
+            for (const [key, value] of Object.entries(entries)) store.set(key, value);
+            return Object.keys(entries).length;
+        }),
+        isQuotaExceeded: vi.fn(() => false),
+    };
+});
+
+vi.mock('../core/storage.js', () => ({ default: storageMock }));
+
+const { createChunkedHistory, timeChunkId, idsFromRecordKeys, recordKeysFor } = await import('./chunked-history.js');
+
+/** A history keyed by the month each point falls in */
+const build = () =>
+    createChunkedHistory({
+        storeName: 'testStore',
+        prefix: 'rec',
+        legacyKey: (charId) => `legacy_${charId}`,
+        groupOf: (point) => timeChunkId(point?.t, 'month'),
+        compare: (a, b) => a.t - b.t,
+        label: 'Test',
+    });
+
+/** A point in the given UTC month */
+const at = (year, month, day = 1) => ({ t: Date.UTC(year, month - 1, day), v: `${year}-${month}-${day}` });
+
+/** The keys `set()` was asked to write, in order */
+const written = () => storageMock.set.mock.calls.map(([key]) => key);
+
+beforeEach(() => {
+    storageMock.store.clear();
+    for (const fn of Object.values(storageMock)) fn.mockClear?.();
+    // Implementations, not just calls: a test that makes a write fail must not
+    // leave the next one failing too
+    storageMock.isQuotaExceeded.mockImplementation(() => false);
+    storageMock.get.mockImplementation(async (key, storeName, fallback) =>
+        storageMock.store.has(key) ? storageMock.store.get(key) : fallback
+    );
+    storageMock.set.mockImplementation(async (key, value) => {
+        storageMock.store.set(key, value);
+        return true;
+    });
+    storageMock.delete.mockImplementation(async (key) => {
+        storageMock.store.delete(key);
+        return true;
+    });
+    storageMock.getAllKeys.mockImplementation(async () => [...storageMock.store.keys()]);
+    storageMock.putAll.mockImplementation(async (storeName, entries) => {
+        for (const [key, value] of Object.entries(entries)) storageMock.store.set(key, value);
+        return Object.keys(entries).length;
+    });
+});
+
+describe('timeChunkId', () => {
+    test('is sortable at every granularity, and in UTC', () => {
+        const t = Date.UTC(2026, 7, 4, 9, 30);
+        expect(timeChunkId(t, 'month')).toBe('2026-08');
+        expect(timeChunkId(t, 'day')).toBe('2026-08-04');
+        expect(timeChunkId(t, 'hour')).toBe('2026-08-04T09');
+    });
+
+    test('a missing timestamp is a bucket rather than a throw', () => {
+        expect(timeChunkId(undefined, 'month')).toBe('1970-01');
+        expect(timeChunkId(NaN, 'day')).toBe('1970-01-01');
+    });
+});
+
+describe('idsFromRecordKeys', () => {
+    test('names the character between the prefix and the chunk', () => {
+        const keys = ['rec_alice_2026-08', 'rec_alice_2026-09', 'rec_bob_2026-08', 'other_alice_2026-08'];
+        expect(idsFromRecordKeys(keys, 'rec_')).toEqual(['alice', 'bob']);
+    });
+
+    test('a key with no chunk suffix names nobody', () => {
+        // `networth_alice` must not be read as a character called `alice` by a
+        // scan for `networth_`-prefixed *records* — it is the legacy single key
+        expect(idsFromRecordKeys(['rec_alice'], 'rec_')).toEqual([]);
+    });
+
+    test('non-strings and non-matches are skipped rather than throwing', () => {
+        expect(idsFromRecordKeys([null, 7, 'nope', 'rec_a_1'], 'rec_')).toEqual(['a']);
+    });
+});
+
+describe('recordKeysFor', () => {
+    test('picks out one character and leaves the neighbours alone', () => {
+        const keys = ['rec_a_2026-09', 'rec_a_2026-08', 'rec_ab_2026-08', 'rec_b_2026-08'];
+        expect(recordKeysFor(keys, 'rec', 'a')).toEqual(['rec_a_2026-08', 'rec_a_2026-09']);
+    });
+});
+
+describe('appending writes only the tail chunk', () => {
+    test('a new entry in a new month writes that month and nothing else', async () => {
+        const history = build();
+        const points = [at(2026, 6), at(2026, 7)];
+        await history.save('c1', points);
+        storageMock.set.mockClear();
+
+        await history.save('c1', [...points, at(2026, 8)]);
+
+        expect(written()).toEqual(['rec_c1_2026-08']);
+    });
+
+    test('a new entry in the current month rewrites that month alone', async () => {
+        const history = build();
+        const points = [at(2026, 6), at(2026, 7, 1)];
+        await history.save('c1', points);
+        storageMock.set.mockClear();
+
+        await history.save('c1', [...points, at(2026, 7, 20)]);
+
+        expect(written()).toEqual(['rec_c1_2026-07']);
+        expect(storageMock.store.get('rec_c1_2026-07')).toHaveLength(2);
+    });
+
+    test('saving an unchanged history writes nothing at all', async () => {
+        const history = build();
+        const points = [at(2026, 6), at(2026, 7)];
+        await history.save('c1', points);
+        storageMock.set.mockClear();
+
+        await history.save('c1', points);
+
+        expect(storageMock.set).not.toHaveBeenCalled();
+    });
+
+    test('one character cannot write into another character keys', async () => {
+        const history = build();
+        await history.save('c1', [at(2026, 6)]);
+        history.forget();
+
+        await history.save('c2', [at(2026, 6)]);
+
+        expect(storageMock.store.has('rec_c1_2026-06')).toBe(true);
+        expect(storageMock.store.has('rec_c2_2026-06')).toBe(true);
+    });
+});
+
+describe('pruning deletes old chunks', () => {
+    test('a chunk whose last entry has gone loses its key', async () => {
+        const history = build();
+        await history.save('c1', [at(2026, 6), at(2026, 7), at(2026, 8)]);
+        storageMock.delete.mockClear();
+
+        // A rolling window dropping its oldest point
+        await history.save('c1', [at(2026, 7), at(2026, 8)]);
+
+        expect(storageMock.delete).toHaveBeenCalledWith('rec_c1_2026-06', 'testStore');
+        expect(storageMock.store.has('rec_c1_2026-06')).toBe(false);
+        expect(storageMock.store.has('rec_c1_2026-07')).toBe(true);
+    });
+
+    test('a chunk that merely shrinks is rewritten, not deleted', async () => {
+        const history = build();
+        await history.save('c1', [at(2026, 6, 1), at(2026, 6, 20)]);
+        storageMock.delete.mockClear();
+
+        await history.save('c1', [at(2026, 6, 20)]);
+
+        expect(storageMock.delete).not.toHaveBeenCalled();
+        expect(storageMock.store.get('rec_c1_2026-06')).toHaveLength(1);
+    });
+});
+
+describe('the one-time split of the legacy key', () => {
+    test('the array becomes records and the legacy key is removed', async () => {
+        storageMock.store.set('legacy_c1', [at(2026, 8), at(2026, 6), at(2026, 7)]);
+        const history = build();
+
+        const loaded = await history.load('c1');
+
+        expect(loaded.map((p) => p.v)).toEqual(['2026-6-1', '2026-7-1', '2026-8-1']);
+        expect([...storageMock.store.keys()].sort()).toEqual(['rec_c1_2026-06', 'rec_c1_2026-07', 'rec_c1_2026-08']);
+        expect(history.isLegacy()).toBe(false);
+    });
+
+    test('the read API returns the same array before and after the split', async () => {
+        const legacy = [at(2026, 6), at(2026, 7), at(2026, 8)];
+        storageMock.store.set('legacy_c1', legacy);
+
+        const first = build();
+        const before = await first.load('c1');
+
+        const second = build();
+        const after = await second.load('c1');
+
+        expect(after).toEqual(before);
+        expect(after).toEqual(legacy);
+    });
+
+    test('splitting again is a no-op rather than a duplication', async () => {
+        storageMock.store.set('legacy_c1', [at(2026, 6)]);
+        await build().load('c1');
+        storageMock.putAll.mockClear();
+
+        const again = await build().load('c1');
+
+        expect(storageMock.putAll).not.toHaveBeenCalled();
+        expect(again).toHaveLength(1);
+    });
+
+    test('records left by an interrupted earlier split do not survive the next one', async () => {
+        // What a half-finished migration looks like: a record beside the array
+        storageMock.store.set('rec_c1_1999-01', [{ t: Date.UTC(1999, 0, 1), v: 'stale' }]);
+        storageMock.store.set('legacy_c1', [at(2026, 6)]);
+
+        const loaded = await build().load('c1');
+
+        expect(loaded.map((p) => p.v)).toEqual(['2026-6-1']);
+        expect(storageMock.store.has('rec_c1_1999-01')).toBe(false);
+    });
+
+    test('an empty legacy array is removed rather than left as a permanent no-op', async () => {
+        storageMock.store.set('legacy_c1', []);
+
+        const loaded = await build().load('c1');
+
+        expect(loaded).toEqual([]);
+        expect(storageMock.store.has('legacy_c1')).toBe(false);
+    });
+});
+
+describe('a split that cannot be written', () => {
+    test('leaves the legacy key in place and keeps serving reads from it', async () => {
+        const legacy = [at(2026, 6), at(2026, 7)];
+        storageMock.store.set('legacy_c1', legacy);
+        storageMock.putAll.mockImplementation(async () => 0);
+        storageMock.isQuotaExceeded.mockImplementation(() => true);
+
+        const history = build();
+        const loaded = await history.load('c1');
+
+        expect(loaded).toEqual(legacy);
+        expect(storageMock.store.get('legacy_c1')).toEqual(legacy);
+        expect(history.isLegacy()).toBe(true);
+    });
+
+    test('a partly written split is refused rather than half-adopted', async () => {
+        storageMock.store.set('legacy_c1', [at(2026, 6), at(2026, 7)]);
+        // One of the two chunks lands — which is the state that would lose the other
+        storageMock.putAll.mockImplementation(async (storeName, entries) => {
+            const [key] = Object.keys(entries);
+            storageMock.store.set(key, entries[key]);
+            return 1;
+        });
+
+        const history = build();
+        await history.load('c1');
+
+        expect(history.isLegacy()).toBe(true);
+        expect(storageMock.store.has('legacy_c1')).toBe(true);
+    });
+
+    test('a legacy key that cannot be deleted keeps the history on it', async () => {
+        // The one state that loses data: records written, legacy still there, and
+        // the next load reading the legacy over the top of everything since
+        storageMock.store.set('legacy_c1', [at(2026, 6)]);
+        storageMock.delete.mockImplementation(async () => false);
+
+        const history = build();
+        await history.load('c1');
+
+        expect(history.isLegacy()).toBe(true);
+    });
+
+    test('writes go to the legacy key while the split is refused', async () => {
+        storageMock.store.set('legacy_c1', [at(2026, 6)]);
+        storageMock.putAll.mockImplementation(async () => 0);
+
+        const history = build();
+        const loaded = await history.load('c1');
+        await history.save('c1', [...loaded, at(2026, 7)]);
+
+        expect(written()).toEqual(['legacy_c1']);
+        expect(storageMock.store.get('legacy_c1')).toHaveLength(2);
+    });
+});
+
+describe('reading records back', () => {
+    test('chunks are assembled in the comparator order, whatever order the keys came in', async () => {
+        storageMock.store.set('rec_c1_2026-08', [at(2026, 8)]);
+        storageMock.store.set('rec_c1_2026-06', [at(2026, 6)]);
+        storageMock.store.set('rec_c1_2026-07', [at(2026, 7)]);
+        storageMock.store.set('rec_c2_2026-07', [at(2026, 7)]);
+        storageMock.store.set('somethingElse', { not: 'a chunk' });
+
+        const loaded = await build().load('c1');
+
+        expect(loaded.map((p) => p.v)).toEqual(['2026-6-1', '2026-7-1', '2026-8-1']);
+    });
+
+    test('the array handed out is a copy, so a caller sorting it cannot corrupt the diff', async () => {
+        const history = build();
+        await history.save('c1', [at(2026, 6), at(2026, 7)]);
+        history.forget();
+
+        const loaded = await history.load('c1');
+        loaded.reverse();
+        storageMock.set.mockClear();
+
+        await history.save('c1', await history.load('c1'));
+
+        expect(storageMock.set).not.toHaveBeenCalled();
+    });
+
+    test('a save before any read still diffs against what is stored', async () => {
+        storageMock.store.set('rec_c1_2026-06', [at(2026, 6)]);
+
+        const history = build();
+        await history.save('c1', [at(2026, 6), at(2026, 7)]);
+
+        expect(written()).toEqual(['rec_c1_2026-07']);
+        expect(storageMock.store.has('rec_c1_2026-06')).toBe(true);
+    });
+});
+
+describe('clearing', () => {
+    test('removes every record and the legacy key with them', async () => {
+        storageMock.store.set('legacy_c1', [at(2026, 5)]);
+        storageMock.store.set('rec_c1_2026-06', [at(2026, 6)]);
+        storageMock.store.set('rec_c2_2026-06', [at(2026, 6)]);
+
+        const history = build();
+        await history.clear('c1');
+
+        expect(storageMock.store.has('legacy_c1')).toBe(false);
+        expect(storageMock.store.has('rec_c1_2026-06')).toBe(false);
+        expect(storageMock.store.has('rec_c2_2026-06')).toBe(true);
+        expect(await history.load('c1')).toEqual([]);
+    });
+});
