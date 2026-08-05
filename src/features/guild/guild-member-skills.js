@@ -34,6 +34,7 @@
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
 import webSocketHook from '../../core/websocket.js';
+import guildLoadoutCapture from './guild-loadout-capture.js';
 import { guildXPTracker } from './guild-xp-tracker.js';
 
 /** Object store the captures live in — shared with the rest of the guild history */
@@ -55,6 +56,60 @@ export const STALE_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
  * member logged" with seven of eight actually captured.
  */
 export const REQUEST_TIMEOUT_MS = 20_000;
+
+/**
+ * A combat sheet captured longer ago than this is worth re-clicking mid-fight.
+ *
+ * The weekly staleness that suits skill levels is far too slow for a fight on
+ * screen right now — gear and abilities are what they are *today*, and the
+ * whole point of clicking during a trial is a sheet from this trial.
+ */
+export const UNIT_FRESH_MS = 15 * 60 * 1000;
+
+/**
+ * Player unit boxes in a spectated guild fight, matched to roster names.
+ *
+ * The fight view draws each participant as a small box: the member's name as
+ * its own text line with an `n/m` health reading nearby. Clicking the box opens
+ * the game's Battle Info popup, which is what makes the game send that member's
+ * stat sheet (`battle_unit_fetched`) — the only source a combat loadout has;
+ * `/profile` carries skills but no sheet. The boss is drawn the same way but is
+ * not a member, so only roster names are matched and it can never be offered.
+ *
+ * @param {Array} members - Roster, `{name}` each
+ * @param {Document|Element|null} [root] - Injectable for tests
+ * @returns {Array<{name: string, el: Element, dead: boolean}>} Clickable units
+ */
+export function findBattleUnits(members, root = typeof document === 'undefined' ? null : document) {
+    if (!root) return [];
+    const wanted = new Map();
+    for (const member of members || []) {
+        const name = String(member?.name || '').trim();
+        if (name) wanted.set(name.toLowerCase(), name);
+    }
+    if (!wanted.size) return [];
+
+    const units = [];
+    const taken = new Set();
+    for (const leaf of root.querySelectorAll('div, span')) {
+        if (leaf.childElementCount) continue;
+        const name = wanted.get((leaf.textContent || '').trim().toLowerCase());
+        if (!name || taken.has(name)) continue;
+
+        // The unit is the smallest ancestor that also shows a health reading —
+        // climbing further would grab the whole grid, whose click means nothing
+        let box = leaf;
+        for (let up = 0; up < 4 && box.parentElement; up += 1) {
+            box = box.parentElement;
+            const reading = (box.textContent || '').match(/(\d[\d,]*)\s*\/\s*\d[\d,]*/);
+            if (!reading) continue;
+            taken.add(name);
+            units.push({ name, el: box, dead: /^0+$/.test(reading[1].replace(/,/g, '')) });
+            break;
+        }
+    }
+    return units;
+}
 
 /**
  * Storage key for a guild's captures.
@@ -160,6 +215,8 @@ class GuildMemberSkills {
         this.onProfile = null;
         /** name → when their profile was asked for, so a click in flight is not a click done */
         this.requests = {};
+        /** name → when their battle unit was clicked; a sheet in flight is not a sheet held */
+        this.unitRequests = {};
         /** Captures taken at or before this are due again; see {@link redoAll} */
         this.dueBefore = 0;
     }
@@ -298,8 +355,75 @@ class GuildMemberSkills {
      *
      * @returns {{opened: string|null, how: string, logged: number, total: number}} What happened
      */
+    /**
+     * The next fight participant worth clicking, when a fight is on screen.
+     *
+     * Only the people in the battle matter here — their Battle Info popup is
+     * what carries a combat sheet, and a fight on screen is the only time it
+     * can be asked for. A dead unit's popup hides its abilities, so the dead
+     * are skipped and counted rather than half-captured.
+     *
+     * @param {number} [now] - Clock
+     * @param {Object} [capture] - The loadout store, injectable for tests
+     * @returns {{name: string|null, el: Element|null, deadSkipped: number}|null}
+     */
+    nextBattleUnit(now = Date.now(), capture = guildLoadoutCapture) {
+        const members = guildXPTracker.getMemberList?.() || [];
+        const units = findBattleUnits(members);
+        if (!units.length) return null;
+
+        const seen = new Map();
+        for (const entry of capture.seen?.() || []) {
+            seen.set(String(entry?.name || '').toLowerCase(), Number(entry?.at) || 0);
+        }
+
+        let deadSkipped = 0;
+        let pick = null;
+        for (const unit of units) {
+            const key = unit.name.toLowerCase();
+            const at = seen.get(key) || 0;
+            if (at > this.dueBefore && now - at < UNIT_FRESH_MS) continue;
+            if (now - (Number(this.unitRequests[key]) || 0) < REQUEST_TIMEOUT_MS) continue;
+            if (unit.dead) {
+                deadSkipped += 1;
+                continue;
+            }
+            pick = pick || unit;
+        }
+
+        if (pick) return { ...pick, deadSkipped };
+        return deadSkipped ? { name: null, el: null, deadSkipped } : null;
+    }
+
     openNext(now = Date.now()) {
         const state = this.progress(now);
+
+        // People in the fight first: a battle on screen is the only time a
+        // combat sheet can be asked for, and it matters more than the roster
+        const unit = this.nextBattleUnit(now);
+        if (unit?.el) {
+            this.unitRequests[unit.name.toLowerCase()] = now;
+            unit.el.click();
+            return {
+                opened: unit.name,
+                how: 'unit',
+                deadSkipped: unit.deadSkipped,
+                logged: state.logged,
+                total: state.total,
+            };
+        }
+        if (unit?.deadSkipped && !state.next) {
+            // Everyone left uncaptured in the fight is dead, and a dead unit's
+            // popup hides its abilities — worth saying instead of clicking one
+            return {
+                opened: null,
+                how: 'unit-dead',
+                deadSkipped: unit.deadSkipped,
+                logged: state.logged,
+                total: state.total,
+            };
+        }
+
         if (!state.next) return { opened: null, how: 'done', logged: state.logged, total: state.total };
 
         const name = state.next.name;
