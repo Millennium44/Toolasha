@@ -30,6 +30,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Housekeeping
 
+- **The WebSocket prototype wrapper is gone** (upstream port, 5824eca): it was a redundant third interception path that broke `removeEventListener` for message listeners on _every_ WebSocket on the page and made duplicate registrations fire twice. The two guarded paths that remain intercept everything they did; native listener semantics are restored and pinned by tests.
 - **The dungeon chest→key maps live in one place now** (`src/utils/dungeon-keys.js`): combat-stats and the combat-sim adapter each kept their own copy — with the two names swapped between them — and four more modules imported the constant through the stats calculator. Everyone now reads the same table under one pair of names. Pure extraction, no behavior change.
 - **The CI bundle ceiling moves 2.5 → 3 MiB** with the reasoning in the workflow: the ui bundle grew honestly to ~60KB under the old line; the guard exists to catch sudden duplication jumps, which still trip it.
 

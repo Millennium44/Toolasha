@@ -314,3 +314,54 @@ describe('isMessageEventProcessed / markMessageEventProcessed', () => {
         expect(() => webSocketHook.markMessageEventProcessed(null)).not.toThrow();
     });
 });
+
+describe('native WebSocket listener semantics (prototype wrapping removed)', () => {
+    // The prototype patch used to wrap every addEventListener('message', ...) in a fresh
+    // closure without patching removeEventListener, so callers could never remove a message
+    // listener by its original reference, and re-registering one bypassed native duplicate
+    // suppression. These pin the native semantics the removal restored (upstream 5824eca).
+    function makeFakeWebSocket(url = 'wss://api.milkywayidle.com/ws') {
+        const target = new EventTarget();
+        return {
+            url,
+            addEventListener: target.addEventListener.bind(target),
+            removeEventListener: target.removeEventListener.bind(target),
+            dispatchEvent: target.dispatchEvent.bind(target),
+        };
+    }
+
+    function makeMessageEvent(data) {
+        return Object.assign(new Event('message'), { data });
+    }
+
+    test('the prototype-wrapping method itself is gone', () => {
+        expect(webSocketHook.wrapWebSocketPrototype).toBeUndefined();
+    });
+
+    test('add then remove: listener does not fire after removal', () => {
+        const socket = makeFakeWebSocket();
+        const cb = vi.fn();
+        socket.addEventListener('message', cb);
+        socket.removeEventListener('message', cb);
+        socket.dispatchEvent(makeMessageEvent('{}'));
+        expect(cb).not.toHaveBeenCalled();
+    });
+
+    test('adding the same listener twice fires it only once', () => {
+        const socket = makeFakeWebSocket();
+        const cb = vi.fn();
+        socket.addEventListener('message', cb);
+        socket.addEventListener('message', cb);
+        socket.dispatchEvent(makeMessageEvent('{}'));
+        expect(cb).toHaveBeenCalledTimes(1);
+    });
+
+    test('non-MWI socket message does not reach processMessage', () => {
+        const socket = makeFakeWebSocket('wss://unrelated.example.com/ws');
+        const spy = vi.spyOn(webSocketHook, 'processMessage');
+        socket.addEventListener('message', () => {});
+        socket.dispatchEvent(makeMessageEvent('{"type":"test"}'));
+        expect(spy).not.toHaveBeenCalled();
+        spy.mockRestore();
+    });
+});
