@@ -170,8 +170,20 @@ export function createAutofillManager(observerId) {
         /**
          * Initialize buy modal observer
          * Sets up watching for buy modals to appear and auto-fills them
+         *
+         * Idempotent. Callers reach for this defensively — the shopping list ran
+         * `autofill.initialize?.()` on every open — and each call used to register
+         * a second observer while dropping the previous unregister on the floor,
+         * so the handler could never be taken away again. One live observer per
+         * manager is all this needs: the quantity it fills is read fresh from the
+         * closure every time, so a re-registered handler was not doing anything
+         * the first one was not already doing.
+         *
+         * @returns {Function} The unregister function for the live observer
          */
         initialize() {
+            if (observerUnregister) return observerUnregister;
+
             observerUnregister = domObserver.onClass(observerId, 'Modal_modalContainer', (modal) => {
                 handleBuyModal(modal, activeQuantity, pendingCalculation);
                 // Clear static quantity after use (one-shot) — pendingCalculation persists intentionally
@@ -179,6 +191,7 @@ export function createAutofillManager(observerId) {
                     activeQuantity = null;
                 }
             });
+            return observerUnregister;
         },
 
         /**

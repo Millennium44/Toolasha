@@ -199,6 +199,97 @@ describe('findProductionAction', () => {
         mocks.initData.actionDetailMap = { '/actions/milking/cow': { outputItems: [] } };
         expect(profitCalculator.findProductionAction('/items/nonexistent')).toBeNull();
     });
+
+    describe('when two recipes yield the same item', () => {
+        /**
+         * Two ways to make one cheese: a cheap one and an expensive one, in that
+         * order in the map so "the first action" is the wrong answer on purpose.
+         * @returns {void}
+         */
+        function twoRecipes() {
+            mocks.initData.actionDetailMap = {
+                '/actions/cheesesmithing/wasteful_cheese': {
+                    inputItems: [{ itemHrid: '/items/milk', count: 10 }],
+                    outputItems: [{ itemHrid: '/items/cheese', count: 1 }],
+                },
+                '/actions/cheesesmithing/thrifty_cheese': {
+                    inputItems: [{ itemHrid: '/items/milk', count: 2 }],
+                    outputItems: [{ itemHrid: '/items/cheese', count: 1 }],
+                },
+            };
+            mocks.resolvedPrices['/items/milk'] = 100;
+            mocks.resolvedPrices['/items/cheese'] = 2000;
+        }
+
+        test('a caller that names the recipe gets that one, not the first in the map', () => {
+            twoRecipes();
+            const action = profitCalculator.findProductionAction('/items/cheese', {
+                actionHrid: '/actions/cheesesmithing/wasteful_cheese',
+            });
+            expect(action.actionHrid).toBe('/actions/cheesesmithing/wasteful_cheese');
+        });
+
+        test('a caller that names no recipe gets the best margin, not the first in the map', () => {
+            twoRecipes();
+            // wasteful: 2000 - 10*100 = 1000. thrifty: 2000 - 2*100 = 1800.
+            const action = profitCalculator.findProductionAction('/items/cheese');
+            expect(action.actionHrid).toBe('/actions/cheesesmithing/thrifty_cheese');
+        });
+
+        test('the ranking follows the prices, so the winner flips when they do', () => {
+            twoRecipes();
+            // Milk gets dear enough that ten of it is still ten of it — the cheap
+            // recipe stays cheap, so this checks the reverse case honestly: make
+            // the thrifty recipe's input the expensive one instead
+            mocks.initData.actionDetailMap['/actions/cheesesmithing/thrifty_cheese'].inputItems = [
+                { itemHrid: '/items/truffle', count: 1 },
+            ];
+            mocks.resolvedPrices['/items/truffle'] = 1900;
+
+            const action = profitCalculator.findProductionAction('/items/cheese');
+            expect(action.actionHrid).toBe('/actions/cheesesmithing/wasteful_cheese');
+        });
+
+        test('both candidates are reported, so a caller can tell there was a choice', () => {
+            twoRecipes();
+            const action = profitCalculator.findProductionAction('/items/cheese');
+            expect(action.candidateActionHrids).toEqual([
+                '/actions/cheesesmithing/wasteful_cheese',
+                '/actions/cheesesmithing/thrifty_cheese',
+            ]);
+        });
+
+        test('a recipe whose input cannot be priced loses rather than looking free', () => {
+            twoRecipes();
+            // The thrifty recipe would win on margin, but its input has no listing
+            // and billing it at nothing is how a modest craft becomes a fortune
+            delete mocks.resolvedPrices['/items/milk'];
+            mocks.initData.actionDetailMap['/actions/cheesesmithing/wasteful_cheese'].inputItems = [
+                { itemHrid: '/items/curd', count: 10 },
+            ];
+            mocks.resolvedPrices['/items/curd'] = 100;
+
+            const action = profitCalculator.findProductionAction('/items/cheese');
+            expect(action.actionHrid).toBe('/actions/cheesesmithing/wasteful_cheese');
+        });
+
+        test('an action hrid that does not produce the item falls back to the ranking', () => {
+            twoRecipes();
+            const action = profitCalculator.findProductionAction('/items/cheese', {
+                actionHrid: '/actions/milking/cow',
+            });
+            expect(action.actionHrid).toBe('/actions/cheesesmithing/thrifty_cheese');
+        });
+
+        test('one recipe needs no ranking and still reports itself as the only candidate', () => {
+            mocks.initData.actionDetailMap = {
+                '/actions/milking/cow': { outputItems: [{ itemHrid: '/items/milk', count: 1 }] },
+            };
+            const action = profitCalculator.findProductionAction('/items/milk');
+            expect(action.actionHrid).toBe('/actions/milking/cow');
+            expect(action.candidateActionHrids).toEqual(['/actions/milking/cow']);
+        });
+    });
 });
 
 describe('calculateCraftingCostFallback', () => {

@@ -66,14 +66,27 @@ const shopping = vi.hoisted(() => ({ calls: [] }));
 vi.mock('../actions/missing-materials-button.js', () => ({
     openMissingMaterials: (actionHrid, numActions) => shopping.calls.push({ kind: 'action', actionHrid, numActions }),
 }));
-vi.mock('../ui/consumables-shopping-list.js', () => ({
-    openShoppingList: (items) => shopping.calls.push({ kind: 'list', items }),
+vi.mock('../../utils/shopping-list.js', () => ({
+    openShoppingList: (items, options) => shopping.calls.push({ kind: 'list', items, options }),
 }));
 
-const plannerContext = vi.hoisted(() => ({ value: null }));
+// The game's own navigation, which reaches the React root
+const navigation = vi.hoisted(() => ({ calls: [], answer: true }));
+vi.mock('../../utils/item-navigation.js', () => ({
+    navigateToAction: (actionHrid) => {
+        navigation.calls.push(actionHrid);
+        return navigation.answer;
+    },
+}));
+
+const plannerContext = vi.hoisted(() => ({ value: null, builds: 0 }));
 vi.mock('./goal-planner-context.js', () => ({
-    buildPlannerContext: async () => plannerContext.value,
+    buildPlannerContext: async () => {
+        plannerContext.builds += 1;
+        return plannerContext.value;
+    },
     withHouseCosts: async (context) => context,
+    coinsHeld: () => 50_000_000,
 }));
 
 const { goalPlannerPanel } = await import('./goal-planner-ui.js');
@@ -128,6 +141,24 @@ function fixtureContext() {
             protectFrom: 4,
             baseCost: 12_000_000,
             totalCost: 47_000_000,
+            materialBill: [
+                {
+                    itemHrid: '/items/mystical_charm',
+                    name: 'Mystical Charm',
+                    count: 41.3,
+                    unitPrice: 700_000,
+                    totalCost: 28_910_000,
+                    kind: 'material',
+                },
+                {
+                    itemHrid: '/items/mirror_of_protection',
+                    name: 'Mirror of Protection',
+                    count: 2.4,
+                    unitPrice: 2_000_000,
+                    totalCost: 4_800_000,
+                    kind: 'protection',
+                },
+            ],
         }),
         houseCost: () => ({
             coins: 20_000_000,
@@ -141,6 +172,9 @@ function fixtureContext() {
 
 beforeEach(() => {
     shopping.calls = [];
+    navigation.calls = [];
+    navigation.answer = true;
+    plannerContext.builds = 0;
     store.data = {
         goalPlannerGoals_char1: [
             { id: 'g-gold', type: 'gold', amount: 500_000_000 },
@@ -161,6 +195,8 @@ afterEach(() => {
     goalPlannerPanel.plans = [];
     goalPlannerPanel.pricedAt = null;
     goalPlannerPanel.loaded = null;
+    goalPlannerPanel.context = null;
+    goalPlannerPanel.notice = null;
 });
 
 describe('drawing a plan', () => {
@@ -237,7 +273,9 @@ describe('a step that says buy can go and buy', () => {
         await goalPlannerPanel.load();
         await goalPlannerPanel.refresh();
 
-        expect(press('Buy', 'material')).toBe(true);
+        // Named by the room rather than by the word "material": the enhance step
+        // says "in materials" too, and now has a Buy button of its own
+        expect(press('Buy', 'Observatory')).toBe(true);
         const list = shopping.calls.find((call) => call.kind === 'list');
         expect(list.items).toEqual([{ itemHrid: '/items/log', name: 'Log', count: 500 }]);
     });
@@ -275,6 +313,32 @@ describe('a step that says buy can go and buy', () => {
         });
     });
 
+    test('an enhance step offers its expected materials, rounded up and named as an estimate', async () => {
+        goalPlannerPanel.show();
+        await goalPlannerPanel.load();
+        await goalPlannerPanel.refresh();
+
+        expect(press('Buy', 'Enhance Sinister Cape')).toBe(true);
+        const list = shopping.calls.find((call) => call.kind === 'list');
+        expect(list.items).toEqual([
+            { itemHrid: '/items/mystical_charm', name: 'Mystical Charm', count: 42 },
+            { itemHrid: '/items/mirror_of_protection', name: 'Mirror of Protection', count: 3 },
+        ]);
+        // The marketplace is where somebody decides how many to actually buy, so
+        // the tab bar has to carry the caveat as well as the button's tooltip
+        expect(list.options.heading).toContain('expected materials — enhancing is random');
+    });
+
+    test('an enhance step with no bill offers no button rather than an empty marketplace', async () => {
+        const run = plannerContext.value.enhance();
+        plannerContext.value.enhance = () => ({ ...run, materialBill: [] });
+        goalPlannerPanel.show();
+        await goalPlannerPanel.load();
+        await goalPlannerPanel.refresh();
+
+        expect(press('Buy', 'Enhance Sinister Cape')).toBe(false);
+    });
+
     test('a step that is already satisfied offers no trip to the marketplace', async () => {
         plannerContext.value.owned = () => 10_000;
         plannerContext.value.ownedEnhancementLevel = () => 10;
@@ -296,6 +360,39 @@ describe('reading the plan', () => {
             (element) => element.style.textOverflow === 'ellipsis'
         );
         expect(clipped).toEqual([]);
+    });
+
+    test('a method an earlier goal already spent is named under the step that lost it', async () => {
+        // Two gold goals against one crossbow: the first takes it, and the second
+        // has to say why it is milking cows rather than appearing to change its mind
+        store.data.goalPlannerGoals_char1 = [
+            { id: 'g1', type: 'gold', amount: 800_000_000 },
+            { id: 'g2', type: 'gold', amount: 800_000_000 },
+        ];
+        plannerContext.value.goldRates = () => [
+            { label: 'Milk a Cow', kind: 'gathering', goldPerHour: 10_000_000 },
+            {
+                label: 'Decompose Sundering Crossbow ★',
+                kind: 'alchemy',
+                itemHrid: '/items/sundering_crossbow',
+                goldPerHour: 437_900_000_000,
+                sustainable: {
+                    gold: 800_000_000,
+                    goldPerUnit: 800_000_000,
+                    units: 1,
+                    unitLabel: 'Sundering Crossbow ★',
+                    verb: 'Decompose',
+                },
+            },
+        ];
+        plannerContext.value.gold = 0;
+
+        goalPlannerPanel.show();
+        await goalPlannerPanel.load();
+        await goalPlannerPanel.refresh();
+
+        expect(text()).not.toContain('could not be drawn');
+        expect(text()).toContain("Sundering Crossbow ★ already spent by 'Have 800.0M coins'");
     });
 
     test('the pricing note is said once for the panel, not once per goal', async () => {
@@ -335,6 +432,188 @@ describe('reading the plan', () => {
         expect(text()).toContain('Combat rates judged against');
         const picker = document.querySelector('#toolasha-goal-planner-panel select');
         expect(picker.value).toBe('Ranged');
+    });
+});
+
+describe('a step that names an activity can take you to it', () => {
+    /**
+     * Click the description of the first step whose text contains `within`.
+     * @param {string} within - Text the step's description must contain
+     * @returns {boolean} Whether one was found and it was clickable
+     */
+    function clickStep(within) {
+        const found = [...document.querySelectorAll('#toolasha-goal-planner-panel span')].find((element) =>
+            element.textContent.includes(within)
+        );
+        if (!found || found.style.cursor !== 'pointer') return false;
+        found.click();
+        return true;
+    }
+
+    test('a training step opens the action it was costed from', async () => {
+        plannerContext.value.xpRates = () => [
+            {
+                actionHrid: '/actions/cheesesmithing/griffin_bulwark',
+                label: 'Griffin Bulwark ★',
+                requiredLevel: 1,
+                xpPerHour: 500_000,
+                xpPerAction: 250,
+                actionTime: 10,
+                totalEfficiency: 0,
+                flatRate: true,
+                goldPerHour: 0,
+            },
+        ];
+        goalPlannerPanel.show();
+        await goalPlannerPanel.load();
+        await goalPlannerPanel.refresh();
+
+        expect(clickStep('Train Enhancing')).toBe(true);
+        expect(navigation.calls).toEqual(['/actions/cheesesmithing/griffin_bulwark']);
+    });
+
+    test('an earning step opens the action it would have you do', async () => {
+        goalPlannerPanel.show();
+        await goalPlannerPanel.load();
+        await goalPlannerPanel.refresh();
+
+        expect(clickStep('Earn 450.0M coins')).toBe(true);
+        expect(navigation.calls).toEqual(['/actions/milking/cow']);
+    });
+
+    test('an enhance step opens the enhancing screen', async () => {
+        goalPlannerPanel.show();
+        await goalPlannerPanel.load();
+        await goalPlannerPanel.refresh();
+
+        expect(clickStep('Enhance Sinister Cape')).toBe(true);
+        expect(navigation.calls).toEqual(['/actions/enhancing/enhance']);
+    });
+
+    test('a craft step opens the craft', async () => {
+        plannerContext.value.acquire = () => ({
+            strategy: 'craft',
+            totalCost: 9_000_000,
+            craftCost: 9_000_000,
+            buyPrice: 12_000_000,
+            actionHrid: '/actions/crafting/sinister_cape',
+            actionsNeeded: 3,
+            requires: [],
+        });
+        goalPlannerPanel.show();
+        await goalPlannerPanel.load();
+        await goalPlannerPanel.refresh();
+
+        expect(clickStep('Craft Sinister Cape')).toBe(true);
+        expect(navigation.calls).toEqual(['/actions/crafting/sinister_cape']);
+    });
+
+    test('a house upgrade has nowhere to go, and does not pretend to', async () => {
+        goalPlannerPanel.show();
+        await goalPlannerPanel.load();
+        await goalPlannerPanel.refresh();
+
+        expect(clickStep('Upgrade Observatory')).toBe(false);
+        expect(navigation.calls).toEqual([]);
+    });
+
+    test('a game that will not navigate says so on the panel rather than silently', async () => {
+        navigation.answer = false;
+        goalPlannerPanel.show();
+        await goalPlannerPanel.load();
+        await goalPlannerPanel.refresh();
+
+        clickStep('Enhance Sinister Cape');
+        expect(text()).toContain('would not navigate');
+    });
+});
+
+describe('adding and removing a goal', () => {
+    test('an added goal is planned and on screen without pressing Refresh', async () => {
+        goalPlannerPanel.show();
+        await goalPlannerPanel.load();
+        await goalPlannerPanel.refresh();
+        const pricedBuilds = plannerContext.builds;
+
+        await goalPlannerPanel.addGoal({ type: 'gold', amount: 900_000_000 });
+
+        expect(text()).toContain('Have 900.0M coins');
+        expect(text()).not.toContain('Not priced yet');
+        // and it did not go back to the market to do it
+        expect(plannerContext.builds).toBe(pricedBuilds);
+    });
+
+    test('a goal added before anything was priced prices once, rather than showing nothing', async () => {
+        store.data = {};
+        goalPlannerPanel.show();
+        await goalPlannerPanel.load();
+
+        await goalPlannerPanel.addGoal({ type: 'gold', amount: 900_000_000 });
+
+        expect(plannerContext.builds).toBe(1);
+        expect(text()).toContain('Have 900.0M coins');
+        expect(text()).not.toContain('Not priced yet');
+    });
+
+    test('removing a goal gives its windfall back to the goal below it', async () => {
+        // Two gold goals against one crossbow: the first has it, the second is
+        // milking cows and saying so. Remove the first and the second should
+        // claim it — which only happens if the ledger is run again.
+        store.data.goalPlannerGoals_char1 = [
+            { id: 'g1', type: 'gold', amount: 800_000_000 },
+            { id: 'g2', type: 'gold', amount: 800_000_000 },
+        ];
+        plannerContext.value.gold = 0;
+        plannerContext.value.goldRates = () => [
+            { label: 'Milk a Cow', kind: 'gathering', goldPerHour: 10_000_000, actionHrid: '/actions/milking/cow' },
+            {
+                label: 'Decompose Sundering Crossbow ★',
+                kind: 'alchemy',
+                itemHrid: '/items/sundering_crossbow',
+                goldPerHour: 437_900_000_000,
+                sustainable: {
+                    gold: 800_000_000,
+                    goldPerUnit: 800_000_000,
+                    units: 1,
+                    unitLabel: 'Sundering Crossbow ★',
+                    verb: 'Decompose',
+                },
+            },
+        ];
+
+        goalPlannerPanel.show();
+        await goalPlannerPanel.load();
+        await goalPlannerPanel.refresh();
+        expect(text()).toContain('already spent by');
+
+        await goalPlannerPanel.removeGoal('g1');
+
+        expect(text()).not.toContain('already spent by');
+        expect(text()).toContain('Decompose 1 Sundering Crossbow ★');
+        // Reallocating did not cost a trip to the market either
+        expect(plannerContext.builds).toBe(1);
+    });
+
+    test('a replan that fails says so, and the redraw does not wipe the message', async () => {
+        goalPlannerPanel.show();
+        await goalPlannerPanel.load();
+        plannerContext.value = null;
+        await goalPlannerPanel.refresh();
+
+        // The message used to be written to the header and then overwritten by
+        // the redraw in the same tick, so a failed refresh looked like a
+        // successful one that found nothing
+        expect(text()).toContain('Pricing failed');
+    });
+
+    test('removing before anything was priced says what to press rather than pricing', async () => {
+        goalPlannerPanel.show();
+        await goalPlannerPanel.load();
+
+        await goalPlannerPanel.removeGoal('g-obs');
+
+        expect(plannerContext.builds).toBe(0);
+        expect(text()).toContain('press Refresh');
     });
 });
 

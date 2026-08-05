@@ -68,6 +68,7 @@ import * as gameLookups from '../utils/game-lookups.js';
 import * as itemNavigation from '../utils/item-navigation.js';
 import * as marketplaceTabs from '../utils/marketplace-tabs.js';
 import * as marketplaceAutofill from '../utils/marketplace-autofill.js';
+import * as shoppingList from '../utils/shopping-list.js';
 import * as scrollBuffValues from '../utils/scroll-buff-values.js';
 import * as toast from '../utils/toast.js';
 
@@ -142,6 +143,7 @@ toolashaRoot.Utils = {
     itemNavigation,
     marketplaceTabs,
     marketplaceAutofill,
+    shoppingList,
     scrollBuffValues,
     toast,
 };

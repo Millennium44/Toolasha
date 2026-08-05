@@ -86,6 +86,10 @@ const utilsExternalGlobals = new Map([
     [normalize(join(__dirname, 'src/utils/item-navigation.js')), 'Toolasha.Utils.itemNavigation'],
     [normalize(join(__dirname, 'src/utils/marketplace-tabs.js')), 'Toolasha.Utils.marketplaceTabs'],
     [normalize(join(__dirname, 'src/utils/marketplace-autofill.js')), 'Toolasha.Utils.marketplaceAutofill'],
+    // One marketplace tab bar, so one list watching it. The consumables panel is
+    // in the ui bundle and the goal planner is in actions; a copy each meant two
+    // `watchTimer`s tearing down each other's tabs for six seconds after an open.
+    [normalize(join(__dirname, 'src/utils/shopping-list.js')), 'Toolasha.Utils.shoppingList'],
     [normalize(join(__dirname, 'src/utils/scroll-buff-values.js')), 'Toolasha.Utils.scrollBuffValues'],
     [normalize(join(__dirname, 'src/utils/overlay-rows.js')), 'Toolasha.Utils.overlayRows'],
     [normalize(join(__dirname, 'src/utils/overlay-layout.js')), 'Toolasha.Utils.overlayLayout'],

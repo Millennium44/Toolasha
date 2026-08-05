@@ -4,13 +4,15 @@
  */
 import { describe, test, expect, vi, beforeEach } from 'vitest';
 
-const observerState = vi.hoisted(() => ({ handlers: {} }));
+const observerState = vi.hoisted(() => ({ handlers: {}, registrations: 0, unregistrations: 0 }));
 
 vi.mock('../core/dom-observer.js', () => ({
     default: {
         onClass: vi.fn((name, _classNames, callback) => {
+            observerState.registrations += 1;
             observerState.handlers[name] = callback;
             return () => {
+                observerState.unregistrations += 1;
                 delete observerState.handlers[name];
             };
         }),
@@ -44,6 +46,8 @@ describe('createAutofillManager', () => {
     beforeEach(() => {
         document.body.innerHTML = '';
         observerState.handlers = {};
+        observerState.registrations = 0;
+        observerState.unregistrations = 0;
     });
 
     test('initialize() registers a domObserver handler under the given id', () => {
@@ -117,6 +121,38 @@ describe('createAutofillManager', () => {
         const inputs = modal.querySelectorAll('input');
         expect(inputs[0].value).toBe(''); // enhancement level untouched
         expect(inputs[1].value).toBe('7'); // quantity filled
+    });
+
+    test('initialize() twice registers one observer, not two', () => {
+        // The shopping list calls initialize() on every open. Each call used to
+        // register another handler and overwrite the unregister for the previous
+        // one, so every open leaked a DOM observer that nothing could remove.
+        const manager = createAutofillManager('Test-Observer');
+        manager.initialize();
+        manager.initialize();
+        manager.initialize();
+
+        expect(observerState.registrations).toBe(1);
+    });
+
+    test('a re-initialized manager can still be cleaned up completely', () => {
+        const manager = createAutofillManager('Test-Observer');
+        manager.initialize();
+        manager.initialize();
+        manager.cleanup();
+
+        expect(observerState.handlers['Test-Observer']).toBeUndefined();
+        expect(observerState.unregistrations).toBe(1);
+    });
+
+    test('initialize() after cleanup() registers again, so a manager can be restarted', () => {
+        const manager = createAutofillManager('Test-Observer');
+        manager.initialize();
+        manager.cleanup();
+        manager.initialize();
+
+        expect(observerState.registrations).toBe(2);
+        expect(observerState.handlers['Test-Observer']).toBeTypeOf('function');
     });
 
     test('cleanup() unregisters the observer and clears quantity', () => {

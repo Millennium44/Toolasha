@@ -47,8 +47,11 @@ export async function calculateProductionProfit(actionHrid) {
     // Get output item HRID
     const outputItemHrid = actionDetail.outputItems[0].itemHrid;
 
-    // Reuse existing profit calculator (does all the heavy lifting)
-    const profitData = await profitCalculator.calculateProfit(outputItemHrid);
+    // Reuse existing profit calculator (does all the heavy lifting).
+    // The action is named as well as the item: two recipes can yield the same output, and
+    // without the name the calculator answers about whichever it finds first — so a caller
+    // filing this margin against `actionHrid` could be filing the other recipe's number.
+    const profitData = await profitCalculator.calculateProfit(outputItemHrid, { actionHrid });
 
     if (!profitData) {
         return null;

@@ -18,6 +18,12 @@
  * priced at is printed next to the totals, and the last result is kept so the
  * panel has something to show the moment it opens.
  *
+ * *Planning* is not that expensive, though, and the two are now separate.
+ * Adding or removing a goal replans every goal immediately against the context
+ * already priced — which it has to, because the goals share one bagful of
+ * inputs and a removed goal's claims belong to the goals below it. Refresh
+ * remains the only thing that goes back to the market.
+ *
  * ## Steps that are already done stay on screen
  *
  * A plan re-costed after you bought the base item shows that step struck
@@ -27,24 +33,29 @@
  * ## A step that says "buy 40 materials" can go and buy them
  *
  * Toolasha already knows how to send a shopping list to the marketplace: the
- * missing-materials button does it for an action, the consumables panel does it
- * for a restock, and both are the same three pieces —
+ * missing-materials button does it for an action, `utils/shopping-list.js` does
+ * it for a restock, and both are the same three pieces —
  * `createMaterialTab`, `createAutofillManager`, `navigateToMarketplace`. A step
  * that names a purchase gets a button onto whichever of those already fits, so
  * the planner adds an entry point rather than a fourth implementation of
  * marketplace tabs.
+ *
+ * The list lives in `utils/` rather than beside the consumables panel because
+ * this panel is in a different bundle from that one, and a copy each meant two
+ * modules with their own tab state fighting over the one marketplace tab bar.
  */
 
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import { openMissingMaterials } from '../actions/missing-materials-button.js';
-import { openShoppingList } from '../ui/consumables-shopping-list.js';
+import { openShoppingList } from '../../utils/shopping-list.js';
+import { navigateToAction } from '../../utils/item-navigation.js';
 import { formatKMB, parseKMB, timeReadable } from '../../utils/formatters.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable, makeResizable } from '../../utils/floating-panel.js';
 import { restoreGeometry, saveGeometry, saveOpenState, reopenIfLeftOpen } from '../../utils/panel-geometry.js';
 import { planGoals, describeGoal, describeLeg, GOAL_TYPES } from './goal-planner.js';
-import { buildPlannerContext, withHouseCosts } from './goal-planner-context.js';
+import { buildPlannerContext, withHouseCosts, coinsHeld } from './goal-planner-context.js';
 import { loadGoals, addGoal, removeGoal, loadSnapshot, saveSnapshot, saveCombatGear } from './goal-planner-store.js';
 
 const PANEL_ID = 'toolasha-goal-planner-panel';
@@ -160,24 +171,46 @@ function input(attributes = {}) {
     return element;
 }
 
+/** What an enhancement bill is, said where somebody is about to spend money on it */
+const EXPECTED_MATERIALS_NOTE = 'expected materials — enhancing is random';
+
 /**
  * What a step would have you buy, and which existing machinery buys it.
  *
- * Three shapes, and each one already has a home:
+ * Four shapes, and each one already has a home:
  *
  * - a craft — the action's inputs, which is exactly what the missing-materials
  *   button computes and puts on the marketplace, so it is handed the action;
  * - a list of house materials — a shopping list, which is what the consumables
  *   restock built its tabs for;
  * - one item off the market — the degenerate shopping list of one, so it goes
- *   the same way and arrives with the quantity already filled in.
+ *   the same way and arrives with the quantity already filled in;
+ * - an enhancement run — the same list again, from the path optimiser's own
+ *   bill. It is the only one of the four whose counts are an *expectation*
+ *   rather than a requirement, so it says so on the button and again on the tab
+ *   bar it opens: the chain that produced 41.3 attempts will not produce 41.3.
  *
  * @param {Object} step - A plan step
  * @returns {{label: string, title: string, open: Function}|null} The button to draw, if any
  */
 export function shoppingFor(step) {
-    if (!step || step.done || step.kind !== 'acquire') return null;
+    if (!step || step.done) return null;
     const details = step.details || {};
+
+    if (step.kind === 'enhance') {
+        const wanted = (details.shoppingList || []).filter((item) => item?.itemHrid && item.count > 0);
+        if (!wanted.length) return null;
+        return {
+            label: 'Buy',
+            title:
+                `Open the marketplace with tabs for the ${wanted.length} thing` +
+                `${wanted.length === 1 ? '' : 's'} this run expects to consume. ` +
+                'Enhancing is random, so these counts are the average of a distribution, not a bill.',
+            open: () => openShoppingList(wanted, { heading: `Enhancing: ${EXPECTED_MATERIALS_NOTE}` }),
+        };
+    }
+
+    if (step.kind !== 'acquire') return null;
 
     const materials = (details.materials || [])
         .filter((material) => material?.itemHrid && material.missing > 0)
@@ -215,6 +248,45 @@ export function shoppingFor(step) {
     return null;
 }
 
+/** The one action enhancing has, and therefore the way to the enhancing screen */
+const ENHANCING_ACTION_HRID = '/actions/enhancing/enhance';
+
+/**
+ * Where in the game a step would have you go, if anywhere.
+ *
+ * Every step that names an activity already carries the action hrid it was
+ * costed from — the training rate, the earning rate, the craft — so this is a
+ * lookup rather than a search, and it goes through
+ * {@link navigateToAction}, the same `handleGoToAction` the alt-click
+ * navigation and the pinned-actions page use. Nothing new is built for it.
+ *
+ * A step with nowhere to go simply has nowhere to go: upgrading a house room
+ * happens on a screen the game does not navigate to by action hrid, and buying
+ * a base item already has a Buy button that opens the marketplace on it.
+ *
+ * @param {Object} step - A plan step
+ * @returns {{actionHrid: string, title: string}|null} The destination, if there is one
+ */
+export function navigationFor(step) {
+    if (!step || step.done) return null;
+    const details = step.details || {};
+
+    if (step.kind === 'enhance') {
+        return { actionHrid: ENHANCING_ACTION_HRID, title: 'Open the enhancing screen.' };
+    }
+
+    // Training and earning both rank actions and keep the winner; an earning
+    // step that ran out of its best method mid-plan keeps the legs instead, and
+    // the first leg is the one you would start with
+    const actionHrid =
+        details.rate?.actionHrid ||
+        details.legs?.find((leg) => leg?.rate?.actionHrid)?.rate?.actionHrid ||
+        (step.kind === 'acquire' && details.strategy === 'craft' ? details.actionHrid : null);
+
+    if (!actionHrid) return null;
+    return { actionHrid, title: 'Open this action in the game.' };
+}
+
 /**
  * @param {Array<{value: string, label: string}>} options - What can be chosen
  * @returns {HTMLSelectElement} A select
@@ -246,6 +318,13 @@ class GoalPlannerPanel {
         this.statusEl = null;
         this.goals = [];
         this.plans = [];
+        /**
+         * The last priced context, kept so adding or removing a goal can replan
+         * without going back to the market. Refresh is what re-prices it.
+         */
+        this.context = null;
+        /** A message the header should keep showing until the next replan clears it */
+        this.notice = null;
         /** What the rate providers want said — a missing or stale combat snapshot, say */
         this.rateNotes = [];
         /** Which combat loadout the rates were judged against, and the alternatives */
@@ -318,20 +397,56 @@ class GoalPlannerPanel {
      * @returns {Promise<void>}
      */
     async refresh() {
+        await this.replan({ reprice: true });
+    }
+
+    /**
+     * Plan every goal again, optionally without going back to the market.
+     *
+     * Two costs, and only one of them is large. Ranking every activity the
+     * character can do — `buildPlannerContext` — is a few hundred profit
+     * calculations and is what the Refresh button is for. Running the goals
+     * through the planner is microseconds, and it is *all* that adding or
+     * removing a goal needs: the prices have not changed since the last
+     * pricing, so re-fetching them to answer "what does this new goal cost"
+     * would be spending seconds to learn nothing.
+     *
+     * So the priced context is kept and reused, with the two things that do
+     * move between clicks refreshed cheaply off the game state: coins in hand,
+     * and the clock. Every goal is replanned rather than only the new one,
+     * because the goals share a bagful of inputs — removing a goal has to give
+     * its claims back to the goals below it, and that is the same loop.
+     *
+     * @param {Object} [options] - Options
+     * @param {boolean} [options.reprice=false] - Rebuild the context from the market first
+     * @returns {Promise<void>}
+     */
+    async replan({ reprice = false } = {}) {
         if (this.busy) return;
         this.busy = true;
-        this._status('Pricing…');
+        this.notice = null;
+        this._status(reprice ? 'Pricing…' : 'Planning…');
         try {
-            const context = await buildPlannerContext();
-            await withHouseCosts(context, this.goals);
-            this.plans = planGoals(this.goals, context);
-            this.rateNotes = context.rateNotes || [];
-            this.combatStatus = context.combatStatus || null;
-            this.pricedAt = Date.now();
+            if (reprice || !this.context) {
+                this.context = await buildPlannerContext();
+                this.pricedAt = Date.now();
+            } else {
+                // The memoised providers and the ranked rates ride along
+                // unchanged; only what a purchase can be measured against moves
+                this.context = { ...this.context, gold: coinsHeld(), now: Date.now() };
+            }
+
+            await withHouseCosts(this.context, this.goals);
+            this.plans = planGoals(this.goals, this.context);
+            this.rateNotes = this.context.rateNotes || [];
+            this.combatStatus = this.context.combatStatus || null;
             await saveSnapshot(this.plans);
         } catch (error) {
-            console.error('[GoalPlanner] Refreshing the plan failed:', error);
-            this._status('Pricing failed — see the console.');
+            console.error('[GoalPlanner] Planning failed:', error);
+            // On `notice` rather than straight to the status line: the redraw in
+            // `finally` rewrites that line, so a message put there directly is
+            // gone before anybody reads it
+            this.notice = reprice ? 'Pricing failed — see the console.' : 'Planning failed — see the console.';
         } finally {
             this.busy = false;
             this._render();
@@ -339,7 +454,7 @@ class GoalPlannerPanel {
     }
 
     /**
-     * Add a goal and immediately plan it.
+     * Add a goal and immediately plan it, against the prices already loaded.
      * @param {Object} raw - A goal from the creation form
      * @returns {Promise<void>}
      */
@@ -347,19 +462,33 @@ class GoalPlannerPanel {
         this.goals = await addGoal(raw);
         this.formType = null;
         this._render();
-        await this.refresh();
+        await this.replan();
     }
 
     /**
-     * Drop a goal and its plan.
+     * Drop a goal, and give what it had claimed back to the goals below it.
+     *
+     * Filtering the dead plan out is not enough now that the plans share a
+     * ledger: a goal that was planning around a stack the removed goal had taken
+     * is still planning around it until the allocation is run again.
+     *
      * @param {string} goalId - The goal's id
      * @returns {Promise<void>}
      */
     async removeGoal(goalId) {
         this.goals = await removeGoal(goalId);
         this.plans = this.plans.filter((plan) => plan.goalId !== goalId);
-        await saveSnapshot(this.plans);
-        this._render();
+
+        if (!this.context) {
+            // Nothing has been priced this session, so there is nothing to
+            // reallocate against; saying so beats a silent full market fetch
+            await saveSnapshot(this.plans);
+            this._render();
+            this._status('Removed — press Refresh to price the rest.');
+            return;
+        }
+
+        await this.replan();
     }
 
     // -------------------------------------------------------------------------
@@ -470,11 +599,12 @@ class GoalPlannerPanel {
         this.bodyEl.replaceChildren();
 
         this._status(
-            this.busy
-                ? 'Pricing…'
-                : this.pricedAt
-                  ? `priced ${new Date(this.pricedAt).toLocaleTimeString()}`
-                  : 'not priced yet'
+            this.notice ||
+                (this.busy
+                    ? 'Pricing…'
+                    : this.pricedAt
+                      ? `priced ${new Date(this.pricedAt).toLocaleTimeString()}`
+                      : 'not priced yet')
         );
 
         this.bodyEl.appendChild(this._addSection());
@@ -827,7 +957,24 @@ class GoalPlannerPanel {
             overflowWrap: 'anywhere',
             textDecoration: step.done ? 'line-through' : 'none',
         });
-        label.appendChild(span(step.description));
+
+        const description = span(step.description);
+        const destination = navigationFor(step);
+        if (destination) {
+            // A dotted underline rather than a link colour: the accent is already
+            // the goal title's, and a plan whose every other line is blue stops
+            // reading as a plan
+            Object.assign(description.style, {
+                cursor: 'pointer',
+                textDecorationLine: 'underline',
+                textDecorationStyle: 'dotted',
+                textUnderlineOffset: '2px',
+                textDecorationColor: COLORS.textDim,
+            });
+            description.title = destination.title;
+            description.addEventListener('click', () => this._goTo(destination));
+        }
+        label.appendChild(description);
 
         const shopping = shoppingFor(step);
         if (shopping) {
@@ -865,14 +1012,65 @@ class GoalPlannerPanel {
         );
 
         const legs = Array.isArray(step.details?.legs) ? step.details.legs : [];
-        if (step.done || legs.length < 2) return row;
+        const notes = Array.isArray(step.details?.ledgerNotes) ? step.details.ledgerNotes : [];
+        if (step.done || (legs.length < 2 && !notes.length)) return row;
 
         // More than one method means the first one runs out, and *that* is the
         // thing worth seeing — a single sentence would have to bury it
         const wrapper = document.createElement('div');
         wrapper.appendChild(row);
-        for (const leg of legs) wrapper.appendChild(this._legRow(leg));
+        if (legs.length >= 2) for (const leg of legs) wrapper.appendChild(this._legRow(leg));
+
+        // Why a method that would have won is not on offer. Without this the
+        // goal below simply shows a worse rate, which reads as the planner
+        // changing its mind rather than as the goal above having spent the stack.
+        for (const note of notes) wrapper.appendChild(this._noteRow(note));
         return wrapper;
+    }
+
+    /**
+     * Take the game to where a step points.
+     *
+     * The game's navigation is reached through the React root, which is not
+     * always there — a failure has to say so on the panel rather than in the
+     * console, because from the outside a click that did nothing is
+     * indistinguishable from a click that missed.
+     *
+     * @param {{actionHrid: string}} destination - From {@link navigationFor}
+     */
+    _goTo(destination) {
+        try {
+            if (!navigateToAction(destination.actionHrid)) {
+                this._status('The game would not navigate there.');
+            }
+        } catch (error) {
+            console.error('[GoalPlanner] Navigating to an action failed:', error);
+            this._status('The game would not navigate there — see the console.');
+        }
+    }
+
+    /**
+     * A line under a step explaining what an earlier goal already took.
+     * @param {string} note - From the planner's resource ledger
+     * @returns {HTMLElement} The row
+     */
+    _noteRow(note) {
+        const row = document.createElement('div');
+        Object.assign(row.style, {
+            display: 'grid',
+            gridTemplateColumns: '16px minmax(0, 1fr)',
+            gap: '6px',
+            alignItems: 'baseline',
+            color: COLORS.textDim,
+            fontSize: '11px',
+        });
+
+        row.appendChild(span(''));
+        const text = document.createElement('div');
+        Object.assign(text.style, { minWidth: '0', overflowWrap: 'anywhere', paddingLeft: '10px' });
+        text.appendChild(span(`↳ ${note}`));
+        row.appendChild(text);
+        return row;
     }
 
     /**

@@ -57,6 +57,25 @@
  * A leg that cannot last {@link RATE_HORIZON_HOURS} is not described as a rate
  * at all, because "per hour" is a claim about an hour. It is described as what
  * it is: a fixed number of units for a fixed number of coins.
+ *
+ * ## And you only own the crossbow once
+ *
+ * The cap above is per plan, and a player has several. Two goals planned
+ * independently will both decompose the same crossbow, both spend the same coins
+ * in hand, and between them promise 1.7B out of an 851M item. Each plan is right
+ * and the pair is nonsense.
+ *
+ * So {@link planGoals} runs the goals through a {@link createResourceLedger
+ * ledger}: goals are planned in the order they are shown, each one against what
+ * the ones above it have already claimed. The first goal takes the crossbow, the
+ * second sees a rate with nothing left and falls through to the next-best method
+ * — which is exactly what the sustainability cap already does when a stack runs
+ * out, so there is one fallback rule rather than two.
+ *
+ * A silent re-rank would be worse than the bug, though. "Milk a Cow" appearing
+ * where "Decompose Sundering Crossbow ★" was reads as the planner changing its
+ * mind. So the step that lost its inputs says who took them:
+ * *Sundering Crossbow ★ already spent by 'Cheesesmithing 108'*.
  */
 
 import { formatKMB } from '../../utils/formatters.js';
@@ -343,13 +362,206 @@ export function sustainableGold(rate) {
 }
 
 /**
+ * A key that means "the same method" across two goals' plans.
+ *
+ * Rates arrive from four providers and none of them carries an id. What makes
+ * two rates the same *resource* is the action and the item it eats — alchemy
+ * quotes many rates against one action hrid, so the item has to be in the key —
+ * and the label is a last resort for anything that has neither.
+ *
+ * @param {Object} rate - A gold rate
+ * @returns {string} A key, stable for as long as the rate is
+ */
+function rateKey(rate) {
+    if (!rate) return '';
+    return [rate.kind || '', rate.actionHrid || '', rate.itemHrid || '', rate.label || ''].join('|');
+}
+
+/**
+ * What one method has left, once the goals above have taken their share.
+ *
+ * The ledger is deliberately not clever. It allocates greedily down the goal
+ * list — the order the goals are displayed in, which is the order the player put
+ * them in — and each goal simply plans against the remainder. There is no
+ * attempt to find the allocation that minimises total time across goals: that is
+ * a different and much larger question, and an answer nobody can check by
+ * reading it is worse here than an answer that is obviously "the top goal wins".
+ *
+ * Two resources are contested:
+ *
+ * - **windfall inputs** — a rate with a finite `sustainable.gold` eats something
+ *   out of the bag, and there is only one bagful;
+ * - **coins in hand** — a plan that spends 30M of your 50M leaves 20M, not 50M,
+ *   for the plan below it. A *gold* goal claims what it is holding towards its
+ *   target for the same reason: you cannot both keep 500M and spend it.
+ *
+ * @param {number} startingGold - Coins in hand before any goal has claimed any
+ * @returns {{view: Function, record: Function}} A ledger
+ */
+export function createResourceLedger(startingGold = 0) {
+    /** @type {Map<string, Object>} rate key → what has been taken from it, and by whom */
+    const claims = new Map();
+    /** @type {Array<{title: string, gold: number}>} coins committed, and to what */
+    const goldClaims = [];
+    let goldClaimed = 0;
+
+    /**
+     * The same rate, with what earlier goals took already gone from its ceiling.
+     * @param {Object} rate - A gold rate
+     * @returns {Object} The rate, or a copy of it with a smaller cap
+     */
+    function afterClaims(rate) {
+        const cap = sustainableGold(rate);
+        // Nothing limits it, so nothing can be taken from it
+        if (!Number.isFinite(cap)) return rate;
+
+        const claim = claims.get(rateKey(rate));
+        if (!claim || !(claim.claimed > 0)) return rate;
+
+        const remaining = Math.max(0, cap - claim.claimed);
+        const goldPerUnit = num(rate.sustainable?.goldPerUnit);
+        return {
+            ...rate,
+            sustainable: {
+                ...rate.sustainable,
+                gold: remaining,
+                ...(goldPerUnit > 0 ? { units: remaining / goldPerUnit } : {}),
+            },
+        };
+    }
+
+    return {
+        /**
+         * The context the next goal plans against.
+         *
+         * The decorated rate list is built once per goal rather than once per
+         * call: `goldRates` is asked twice or three times inside one plan, and
+         * re-deriving it each time would turn the ledger into a cost that scales
+         * with how many providers happen to ask.
+         *
+         * @param {Object} context - The planning context
+         * @returns {Object} A context with the remainder in it
+         */
+        view(context) {
+            let decorated = null;
+            return {
+                ...context,
+                gold: Math.max(0, startingGold - goldClaimed),
+                goldRates: () => {
+                    if (!decorated) decorated = (ask(context, 'goldRates', [], []) || []).map(afterClaims);
+                    return decorated;
+                },
+                // What the planner needs to say *why* a rate it would have used is
+                // not on offer. Read only by the steps that do the earning.
+                rateClaims: () =>
+                    [...claims.values()].map((claim) => ({
+                        label: claim.label,
+                        goldPerHour: claim.goldPerHour,
+                        claimed: claim.claimed,
+                        remaining: Math.max(0, claim.cap - claim.claimed),
+                        goals: [...claim.goals],
+                    })),
+                goldClaims: () => goldClaims.map((claim) => ({ ...claim })),
+            };
+        },
+
+        /**
+         * Take what a finished plan spends out of the pot.
+         *
+         * Read off the plan rather than returned by the planners, because the
+         * legs are already the record of what was consumed and a second channel
+         * for the same fact is a second thing to keep in step.
+         *
+         * @param {Object} plan - A plan from {@link planGoal}
+         */
+        record(plan) {
+            if (!plan) return;
+
+            for (const step of plan.steps || []) {
+                if (step.done) continue;
+                for (const leg of step.details?.legs || []) {
+                    const cap = sustainableGold(leg?.rate);
+                    if (!Number.isFinite(cap) || !(num(leg.gold) > 0)) continue;
+
+                    const key = rateKey(leg.rate);
+                    const claim = claims.get(key) || {
+                        // The cap as the *first* goal to reach it saw it, which is the
+                        // whole cap: later goals see a decorated copy, so reading the
+                        // cap off them would ratchet it down twice
+                        cap,
+                        label: leg.rate.sustainable?.unitLabel || leg.rate.itemName || leg.rate.label || 'that method',
+                        goldPerHour: num(leg.rate.goldPerHour),
+                        claimed: 0,
+                        goals: [],
+                    };
+                    claim.claimed += num(leg.gold);
+                    if (!claim.goals.includes(plan.title)) claim.goals.push(plan.title);
+                    claims.set(key, claim);
+                }
+            }
+
+            const available = Math.max(0, startingGold - goldClaimed);
+            // A gold goal holds coins rather than spending them, and holding is
+            // just as exclusive: the same 50M cannot be both kept and spent
+            const wanted = plan.type === 'gold' ? num(plan.goal?.amount) : num(plan.totals?.goldSpend);
+            const used = Math.min(available, wanted);
+            if (used > 0) {
+                goldClaimed += used;
+                goldClaims.push({ title: plan.title, gold: used });
+            }
+        },
+    };
+}
+
+/**
+ * What an earning step should say about the goals above it.
+ *
+ * Only about methods that would otherwise have won. A crossbow already spent by
+ * the goal above is worth a line on a step that is now milking cows; a spent
+ * stack that was never going to beat the method actually chosen is noise.
+ *
+ * @param {Object} context - The planning context, as decorated by the ledger
+ * @param {Object|null} best - The rate this step is actually using
+ * @returns {Array<string>} Notes, in claim order
+ */
+function ledgerNotes(context, best) {
+    const notes = [];
+    const floor = num(best?.goldPerHour);
+
+    for (const claim of ask(context, 'rateClaims', [], []) || []) {
+        // `>=` rather than `>`: a stack that is only *partly* spent is still the
+        // rate this step is using, and "500M of it left here" is the whole point
+        if (!(num(claim.goldPerHour) >= floor)) continue;
+        const who = claim.goals.map((title) => `'${title}'`).join(' and ');
+        notes.push(
+            claim.remaining > 0
+                ? `${claim.label} partly spent by ${who} — ${coins(claim.remaining)} of it left here`
+                : `${claim.label} already spent by ${who}`
+        );
+    }
+
+    const committed = (ask(context, 'goldClaims', [], []) || []).filter((claim) => num(claim.gold) > 0);
+    if (committed.length) {
+        const total = committed.reduce((sum, claim) => sum + num(claim.gold), 0);
+        const who = committed.map((claim) => `'${claim.title}'`).join(' and ');
+        notes.push(`${coins(total)} of your coins is already committed to ${who}`);
+    }
+
+    return notes;
+}
+
+/**
  * How one leg of an earning plan says itself.
  *
- * Two sentences, and which one is used is the whole point. A leg that outlasts
- * {@link RATE_HORIZON_HOURS} is an income and is quoted per hour. A leg that
- * does not is a windfall and is quoted as the thing you actually do — "Decompose
- * 1 Sundering Crossbow ★ (+851.2M one-off)" — because there is no hour in which
- * you earn 437.9B, and printing that number is worse than printing nothing.
+ * Two sentences, and which one is used is the whole point. A method that can be
+ * run for {@link RATE_HORIZON_HOURS} is an income and is quoted per hour. One
+ * that cannot is a windfall and is quoted as the thing you actually do —
+ * "Decompose 1 Sundering Crossbow ★ (+851.2M one-off)" — because there is no
+ * hour in which you earn 437.9B, and printing that number is worse than
+ * printing nothing.
+ *
+ * The test is on the *method*, not on this leg: a windfall reads as a windfall
+ * whether it is the only leg or the first of three.
  *
  * @param {Object} leg - From {@link planEarnings}
  * @returns {string} A phrase
@@ -404,15 +616,27 @@ export function planEarnings(rates, amount) {
         const goldPerUnit = num(rate.sustainable?.goldPerUnit);
         const exhausts = Number.isFinite(cap) && gold >= cap;
 
+        // How long the method could be run for if you wanted the whole of it.
+        //
+        // *This* is what decides whether "per hour" is a fair way to say it, and
+        // it used to be `exhausts && legHours < horizon` — which only fired when
+        // the leg drained the stack. A goal that needed 877.9M of a charm stack
+        // worth 900M did not drain it, so the one-off rule never applied and the
+        // step read "Master Tailoring Charm at 134.3B/hr" beside a duration of
+        // 24 seconds. Whether a fallback leg happens to follow says nothing
+        // about whether the first leg is an income.
+        const capHours = Number.isFinite(cap) && perHour > 0 ? cap / perHour : Number.POSITIVE_INFINITY;
+
         legs.push({
             rate,
             gold,
             hours: legHours,
             units: goldPerUnit > 0 ? gold / goldPerUnit : null,
             exhausts,
-            // Under the horizon a leg cannot honestly be called a rate, and a
-            // leg that never runs out is an income however short this slice is
-            oneOff: exhausts && legHours < RATE_HORIZON_HOURS,
+            // A method whose entire remaining stock is gone inside an hour is a
+            // windfall however much of it this leg draws; a method that never
+            // runs out is an income however short this slice of it is
+            oneOff: capHours < RATE_HORIZON_HOURS,
         });
 
         remaining -= gold;
@@ -491,6 +715,7 @@ function fundingStep(context, spend, spenderIds) {
             covered: earning.covered,
             alternatives: rates.slice(0, 5),
             spenders: spenderIds,
+            ledgerNotes: ledgerNotes(context, best),
         },
         progress: { current: have, target: spend, ratio: spend > 0 ? Math.min(1, have / spend) : 1 },
     });
@@ -554,12 +779,49 @@ function planGoldGoal(goal, context) {
             legs: satisfied ? [] : earning.legs,
             covered: earning.covered,
             alternatives: rates.slice(0, 5),
+            ledgerNotes: satisfied ? [] : ledgerNotes(context, best),
         },
         done: satisfied,
         progress: { current: Math.min(have, target), target, ratio: target > 0 ? Math.min(1, have / target) : 1 },
     });
 
     return { steps: [step], warnings, satisfied };
+}
+
+/** Coins cannot be bought off the marketplace, so they never belong on a shopping list */
+const COIN_HRID = '/items/coin';
+
+/**
+ * What an enhancement run would have you buy, as a list somebody can shop from.
+ *
+ * The path optimiser's bill is an *expectation*: the counts come out of the same
+ * Markov chain the cost does, so they are the mean of a distribution rather than
+ * a number of trips to the marketplace. Rounded up here because you cannot buy
+ * 41.3 charms, and labelled as an estimate wherever it is offered.
+ *
+ * One base copy is dropped, because the plan already has a step that buys or
+ * already holds it. That matters for a mirrored path, whose bill names several
+ * copies — the plan really does need all of them, and the enhance step is where
+ * the extras belong.
+ *
+ * @param {Object|null} run - An enhancement run from the `enhance` provider
+ * @returns {Array<{itemHrid: string, name: string, count: number}>} What to buy, or an empty list
+ */
+function enhancementShoppingList(run) {
+    const bill = Array.isArray(run?.materialBill) ? run.materialBill : [];
+
+    const list = [];
+    for (const line of bill) {
+        if (!line?.itemHrid || line.itemHrid === COIN_HRID) continue;
+        const count = line.kind === 'base' ? num(line.count) - 1 : num(line.count);
+        if (!(count > 0)) continue;
+        list.push({
+            itemHrid: line.itemHrid,
+            name: line.name || line.itemHrid.split('/').pop(),
+            count: Math.ceil(count),
+        });
+    }
+    return list;
 }
 
 /**
@@ -687,6 +949,7 @@ function planEquipmentGoal(goal, context) {
         // this plan buys that separately, so counting it here would charge for
         // it twice.
         const runCost = Math.max(0, num(run?.totalCost) - num(run?.baseCost));
+        const bill = enhancementShoppingList(run);
         steps.push(
             makeStep({
                 id: 'enhance',
@@ -698,7 +961,7 @@ function planEquipmentGoal(goal, context) {
                 goldDelta: -runCost,
                 timeHours: run ? num(run.totalTimeSeconds) / 3600 : null,
                 prerequisites: ['base'],
-                details: { itemHrid, startLevel, targetLevel: target, ...(run || {}) },
+                details: { itemHrid, startLevel, targetLevel: target, ...(run || {}), shoppingList: bill },
             })
         );
     }
@@ -1018,13 +1281,39 @@ export function planGoal(rawGoal, context = {}) {
 }
 
 /**
- * Plan a list of goals.
- * @param {Array<Object>} goals - Goals, normalised or not
+ * Plan a list of goals, sharing one bagful of inputs and one pile of coins between them.
+ *
+ * ## What this costs
+ *
+ * Nothing that shows. The expensive half of a refresh is
+ * `buildPlannerContext` — a few hundred profit calculations to rank every
+ * activity — and that still happens exactly once, before this is called. What
+ * the ledger adds is one pass over the rate list per goal (to subtract what has
+ * been claimed) plus a walk of each finished plan's steps, so replanning N goals
+ * is O(N × rates) on top of the O(N) planning that was already happening. With
+ * the rate list capped in the low hundreds and goal lists in the low tens, that
+ * is microseconds against a refresh measured in seconds.
+ *
+ * Which is why every goal is replanned whenever any goal changes rather than
+ * patched: the plans are no longer independent, and the memoised providers on
+ * the context mean the second pass over the same goals costs almost nothing.
+ *
+ * @param {Array<Object>} goals - Goals, normalised or not, in the order they are displayed
  * @param {Object} context - The planning context
  * @returns {Array<Object>} One plan per goal that could be planned
  */
 export function planGoals(goals, context = {}) {
-    return (Array.isArray(goals) ? goals : []).map((goal) => planGoal(goal, context)).filter(Boolean);
+    const list = Array.isArray(goals) ? goals : [];
+    const ledger = createResourceLedger(num(context?.gold));
+
+    const plans = [];
+    for (const goal of list) {
+        const plan = planGoal(goal, ledger.view(context));
+        if (!plan) continue;
+        ledger.record(plan);
+        plans.push(plan);
+    }
+    return plans;
 }
 
 export default {
@@ -1037,6 +1326,7 @@ export default {
     planEarnings,
     describeLeg,
     sustainableGold,
+    createResourceLedger,
     orderSteps,
     summarize,
 };

@@ -83,6 +83,34 @@ export function openItemDictionary(itemHrid) {
 }
 
 /**
+ * Open the game on an action.
+ *
+ * The same `handleGoToAction` {@link navigateToItem} already reaches for, exposed
+ * on its own for callers that know the action rather than the item — a plan step
+ * that says "Train Cheesesmithing 105 → 108 — Griffin Bulwark ★" knows exactly
+ * which action it means, and re-deriving it from an item would be a guess.
+ *
+ * Enhancing has one action (`/actions/enhancing/enhance`), so the enhancing
+ * screen is reached the same way rather than through a handler of its own.
+ *
+ * @param {string} actionHrid - Action HRID, e.g. `/actions/cheesesmithing/griffin_bulwark`
+ * @returns {boolean} True if the game was navigated, false if it could not be
+ */
+export function navigateToAction(actionHrid) {
+    if (typeof actionHrid !== 'string' || !actionHrid.startsWith('/actions/')) {
+        return false;
+    }
+
+    const game = getGameObject();
+    if (!game?.handleGoToAction) {
+        return false;
+    }
+
+    game.handleGoToAction(actionHrid);
+    return true;
+}
+
+/**
  * Navigate to the action page for an item, or item dictionary if no action found
  * @param {string} itemHrid - Item HRID to navigate to
  * @returns {boolean} True if navigation was attempted, false if game API unavailable

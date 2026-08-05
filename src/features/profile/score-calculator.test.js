@@ -13,7 +13,9 @@ import { describe, test, expect, vi, beforeEach } from 'vitest';
 
 const mocks = vi.hoisted(() => ({ clientData: null }));
 
-vi.mock('../../utils/ability-cost-calculator.js', () => ({ calculateAbilityCost: () => 0 }));
+vi.mock('../../utils/ability-cost-calculator.js', () => ({
+    explainAbilityCost: () => ({ books: 0, bookPrice: null, total: null }),
+}));
 vi.mock('../../utils/house-cost-calculator.js', () => ({
     calculateBattleHousesCost: () => ({ totalCost: 0, breakdown: [] }),
 }));
