@@ -312,8 +312,10 @@ class WebSocketHook {
             // Save critical data to GM storage for Combat Sim export
             this.saveCombatSimData(parsedMessageType, message);
 
-            // Call registered handlers for this message type
-            const handlers = this.messageHandlers.get(parsedMessageType) || [];
+            // Call registered handlers for this message type. Snapshot the array:
+            // a handler that off()s itself mid-dispatch would otherwise shift the
+            // list under the loop and skip the next handler.
+            const handlers = [...(this.messageHandlers.get(parsedMessageType) || [])];
 
             for (const handler of handlers) {
                 try {
@@ -329,7 +331,7 @@ class WebSocketHook {
             }
 
             // Call wildcard handlers (receive all messages)
-            const wildcardHandlers = this.messageHandlers.get('*') || [];
+            const wildcardHandlers = [...(this.messageHandlers.get('*') || [])];
             for (const handler of wildcardHandlers) {
                 try {
                     const result = handler(data);
@@ -616,7 +618,7 @@ class WebSocketHook {
     }
 
     emitSocketEvent(eventType, event, socket) {
-        const handlers = this.socketEventHandlers.get(eventType) || [];
+        const handlers = [...(this.socketEventHandlers.get(eventType) || [])];
         for (const handler of handlers) {
             try {
                 handler(event, socket);

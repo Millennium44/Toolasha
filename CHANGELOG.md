@@ -17,6 +17,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - **The Task Tokens tile earns its rate line**: `tokens/hr this week` beneath the board value, on wall-clock time between your first and last claim (the tooltip names the sample and the basis; under two claims shows no rate rather than a fake one).
 - **Task statistics gains "Claimed Tasks (last 7 days)"**: tasks, tokens, coins, both hourly rates, the measured span — and reroll spend over the same window tied in for a **Net Task Income** figure, plus your last five completions.
 
+### Console-dump fixes
+
+- **The Shrine Upgrade Planner stays in its box**: the exchange modal doesn't grow for injected content, so the expanded planner now scrolls within a bounded area (like the ranking table above it) instead of rendering past the modal's bottom edge.
+- **Self-removing listeners no longer skip their neighbours** (upstream port, 03204a5): a cleanup handler that unregistered itself during character-switch dispatch shifted the listener array under the loop and deterministically dropped the next handler — ten feature modules do exactly that. Dispatch now iterates a snapshot; pinned by tests in both data-manager and websocket.
+- **The combat profit view remembers itself again**: its saved mode was read at module scope before the database opened, so every load got the default back (the `[Storage] Database not available… combatProfitView` warning). The read now waits for storage to be ready.
+
 ### The token knows its own price
 
 - **Guild token value now uses real exchange rates**: read from client data when the game exposes them, otherwise captured automatically from the exchange dialog as you open it (per credit colour, ratio-based so batch amounts don't distort it), with the manual setting demoted to last resort — and marked "assumed" when it's all we have. The valuation picks the credit colour worth the most gold per token, not just the biggest credit multiplier.
