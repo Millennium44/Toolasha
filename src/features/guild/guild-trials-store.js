@@ -40,7 +40,7 @@
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
 import config from '../../core/config.js';
-import { trialWeekStart } from './guild-trials-math.js';
+import { BUILDING_BONUS_PER_LEVEL, GUILD_BUILDING_MAX_LEVEL, trialWeekStart } from './guild-trials-math.js';
 
 /** Object store the records live in — shared with the guild XP history */
 const STORE_NAME = 'guildHistory';
@@ -293,7 +293,7 @@ export async function saveTrialRecord(guildName, record) {
  * extrapolated past, so {@link readBuildingBonus} clamps to it rather than
  * trusting the raw number.
  */
-export const GUILD_BUILDING_MAX_LEVEL = 20;
+export { GUILD_BUILDING_MAX_LEVEL };
 
 /** The buildings whose levels change a payout, and how their hrids are spelled */
 export const BUILDING_PATTERNS = {
@@ -363,9 +363,12 @@ export function buildingBonusFromDetail(detail, level) {
 /**
  * Bonus a payout building grants per level.
  *
- * Confirmed against the in-game Build dialog: "Level 10 → Level 11, Guild
- * Points: +20% → +22%", so the bonus is level × 0.02 and not a per-level step on
- * top of a base. The Treasury follows the same 2%-per-level pattern.
+ * Confirmed against both in-game upgrade popups — "Level 10 → Level 11, Guild
+ * Points: +20% → +22%" on the Builder's Hall and "Level 5 → Level 6, Guild Token
+ * Rewards: +10% → +12%" on the Treasury — so the bonus is level × 0.02 on both,
+ * and not a per-level step on top of a base. Pinned in `guild-trials-math.js`
+ * beside the payout arithmetic that uses it, and re-exported here because this
+ * is the file that resolves a building's level.
  *
  * This is the game's own rule rather than a guess, so it beats reporting the
  * bonus as unknown: a guild whose Builders Hall level reached the client is not
@@ -373,7 +376,7 @@ export function buildingBonusFromDetail(detail, level) {
  * unknowable is the *level* — that only arrives on guild traffic — and that is
  * what the unknown case is now reserved for.
  */
-export const BUILDING_BONUS_PER_LEVEL = 0.02;
+export { BUILDING_BONUS_PER_LEVEL };
 
 /**
  * Everything known about one payout-relevant building.

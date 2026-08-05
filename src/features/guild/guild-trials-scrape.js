@@ -624,10 +624,21 @@ function readTileName(tile, summary, lines) {
 /**
  * Which reading on a tile is the boss health and which is the shared pool.
  *
- * Decided from movement, not position: over two or more samples the boss bar's
- * `current` falls and the pool bar's rises. Before there is movement to read,
- * a single reading is called by its trial kind and a pair is left unclassified
- * rather than guessed at.
+ * ## A combat card is health then mana, and that is confirmed
+ *
+ * The two readings on the In Progress combat card are the boss's **health** and
+ * the boss's **mana**, in that order — checked against a live client. Neither is
+ * a pool, and the second one is not a rate of anything the party is doing.
+ *
+ * They used to be told apart by which of them *fell* over successive samples,
+ * which was the cautious rule when the card had only been seen in a screenshot.
+ * It cannot work, and the recording of a real trial says why: a combat trial is
+ * a ladder of bosses, so between two readings the health bar can rise (a fresh,
+ * larger boss) while the mana bar rises too. Nothing fell, so nothing was
+ * classified, so a combat card never produced a rate at all — for the entire
+ * hour of a live trial. Position is the reliable fact here and movement is not.
+ *
+ * A skilling card carries one pool, and is still read by movement.
  *
  * @param {Array<Array<{current: number, max: number}>>} history - Readings per sample, oldest first
  * @param {'combat'|'skilling'} kind - What the trial is
@@ -637,6 +648,10 @@ export function classifyReadings(history, kind) {
     const samples = (history || []).filter(Array.isArray);
     const width = samples.reduce((max, sample) => Math.max(max, sample.length), 0);
     if (width === 0) return { bossIndex: null, poolIndex: null };
+
+    // The boss's health is the first bar and the second is its mana, which is
+    // not a pool and is not sampled for anything
+    if (kind === 'combat') return { bossIndex: 0, poolIndex: null };
 
     let bossIndex = null;
     let poolIndex = null;
