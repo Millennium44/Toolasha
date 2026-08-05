@@ -132,6 +132,7 @@ import {
     classifyReadings,
     findTrialClockMs,
     findTrialsRoot,
+    inFloatingDialog,
     matchTrialHrid,
     onTrialTab,
     parseClockMs,
@@ -160,6 +161,16 @@ const SAMPLE_MS = 5000;
 
 /** Every trial starts here, which is what makes the first tier knowable */
 const FIRST_TIER = 1;
+
+/**
+ * How stale a spectated pool reading may be before it stops standing in.
+ *
+ * The stream ticks several times a second while the fight view is open and stops
+ * dead when it closes. Ten seconds is long enough to bridge a redraw and short
+ * enough that a closed view stops feeding the card a health that is no longer
+ * moving — which would read as a rate of zero on a trial that is running fine.
+ */
+const SPECTATED_POOL_FRESH_MS = 10_000;
 
 const ACCENT = '#8fd3ff';
 const DIM = '#9ca3af';
@@ -907,12 +918,11 @@ export function renderTrialBlock(
 /**
  * Who in the party is producing the DPS the card is already showing.
  *
- * Drawn only under a combat card. In practice it never has anything to draw: a
- * combat trial is simulated by the game from the signed-up members' builds, so
- * no client fights it and none can split it — see `guild-trial-damage.js`. The
- * line that stands in for it says that mechanic rather than "no trial fight seen
- * here", which reads as a fight that could have been seen and was not, and was
- * twice reported as a bug on that basis.
+ * Drawn only under a combat card, and fed by the spectator stream: opening the
+ * In Progress fight view subscribes this client to the trial's own battle ticks
+ * (`guild-trial-damage.js`). So the empty state is an instruction rather than an
+ * apology — "open the fight view", not "no trial fight seen here", which reads as
+ * a fight that could have been seen and was not and was twice reported as a bug.
  *
  * @param {Object} breakdown - From `guildTrialDamage.breakdown()`
  * @returns {string[]} Rows of HTML, empty when there is nothing worth a row
@@ -921,23 +931,36 @@ export function renderTrialPlayers(breakdown) {
     if (!breakdown) return [];
 
     if (!breakdown.measured) {
+        // Three different nothings, and a player can act on two of them
+        const watched = breakdown.source === 'spectated';
+        const value = breakdown.stale
+            ? 'last trial, not this one'
+            : watched
+              ? 'watched, but unsplittable'
+              : 'open the fight view';
+
         // A line rather than silence: an empty space under a combat card is
         // indistinguishable from the split having failed
         return [
             line(
                 'Per player',
-                breakdown.stale ? 'last trial, not this one' : 'simulated, not fought',
+                value,
                 DIM,
-                `${breakdown.reason}.\nThe scoreboard's Damage tab estimates the split from the members' ` +
-                    'captured builds instead, and says so. The party rate on this card is the measured one — ' +
-                    'it comes off the pool bar, which covers everybody.'
+                watched
+                    ? 'The trial fight was streamed, but its ticks carried no attack counters for the ' +
+                          'players, so the damage cannot be split between them. Damage taken, healing and mana ' +
+                          'came through and are on the scoreboard.'
+                    : `${breakdown.reason}.\nOpen the In Progress fight view and this fills from the trial's ` +
+                          'own battle ticks. Until then the scoreboard estimates the split from the members\u2019 ' +
+                          'captured builds, and says so.'
             ),
         ];
     }
 
     const rows = [
         `<div style="margin-top:4px; color:${ACCENT}; font-weight:600;">` +
-            `Per player · ${breakdown.fights} fight${breakdown.fights === 1 ? '' : 's'}</div>`,
+            `Per player · ${breakdown.fights} fight${breakdown.fights === 1 ? '' : 's'}` +
+            `${breakdown.source === 'spectated' ? ' · watched' : ''}</div>`,
     ];
 
     for (const player of breakdown.players) {
@@ -1032,9 +1055,16 @@ export function withScrollKept(node, change) {
  * @param {Element} card - The card being described
  * @param {Element} block - The block to place
  * @param {string} [name] - The trial's name, for when the block lands away from its card
- * @returns {string} How it was placed: `spanned`, `after-card` or `after-container`
+ * @returns {string} How it was placed: `spanned`, `after-card`, `after-container`, or `refused`
  */
 export function placeTrialBlock(root, card, block, name = '') {
+    // Belt and braces over the anchor filter in `readTrialTiles`. The reported
+    // failure drew this whole block inside the boss's stat popup, which is
+    // headed with a trial name over a level and so reads as a card to every
+    // filter that looks at the card. Placement is the last point at which "this
+    // is not the guild panel" can still be said
+    if (inFloatingDialog(card)) return 'refused';
+
     const container = card?.parentElement;
     if (!container || !root?.contains?.(container)) {
         card?.appendChild?.(block);
@@ -1443,8 +1473,12 @@ class GuildTrials {
             // is the live one — the only card that can have produced them
             const personal = readPersonalStats(root);
             const live = tiles.find((tile) => tile.readings.length > 0) || null;
+            // The spectator stream's own reading of the pool, when somebody has
+            // the fight view open. Same number as the DOM bar, to the unit, but
+            // per tick and with the tier stated rather than inferred
+            const watched = this._spectatedPool(now);
             for (const tile of tiles) {
-                const withPersonal = tile === live ? { ...tile, personal } : tile;
+                const withPersonal = this._withSpectatedPool(tile === live ? { ...tile, personal } : tile, watched);
                 // A running trial whose cards state nothing is on its first
                 // tier, so its readings belong to T1 rather than to no tier at
                 // all — which is what the growth fit needs them filed under
@@ -1456,7 +1490,11 @@ class GuildTrials {
                 // no badge yet, a running trial is on its first tier.
                 let readingTier = null;
                 if (this._phaseFor(status, withPersonal, held) === 'live' && withPersonal.readings.length) {
-                    if (Number.isFinite(badge)) readingTier = badge + 1;
+                    // The stream states the tier outright. Nothing else does —
+                    // the badge counts tiers *finished*, so every other route to
+                    // this number is the badge plus one and an assumption
+                    if (Number.isFinite(withPersonal.spectatedTier)) readingTier = withPersonal.spectatedTier;
+                    else if (Number.isFinite(badge)) readingTier = badge + 1;
                     else if (!(withPersonal.points > 0) && !Object.keys(held?.pointsByTier || {}).length) {
                         readingTier = FIRST_TIER;
                     }
@@ -1486,6 +1524,11 @@ class GuildTrials {
             if (live && livePhase !== 'scheduled' && livePhase !== 'completed') {
                 guildTrialRecorder.noteActivity('tab-reading', now);
             }
+            // A fresh tick off the spectator stream is the strongest evidence a
+            // trial is running that this feature has ever had — the fight itself
+            // is on the wire — and it arrives on the tab where the game draws no
+            // bar for the tab-reading rule to find
+            if (watched) guildTrialRecorder.noteActivity('trial-stream', now);
 
             this._noteLifecycle(status, tiles, now);
 
@@ -2160,6 +2203,51 @@ class GuildTrials {
             downloadTrialExport(bundle);
         });
         on('scoreboard', () => guildTrialScoreboard.toggle());
+    }
+
+    /**
+     * The pool reading the spectator stream is carrying, if it is fresh.
+     *
+     * A guild trial's boss health is the pool, and `guild_battle_updated` states
+     * it to the unit on every tick while the In Progress fight view is open —
+     * which is a better source than the DOM bar in three ways: it does not wait
+     * for a redraw, it survives the card scrolling out of view, and it comes with
+     * the tier attached instead of inferred from a badge.
+     *
+     * Only used while it is *fresh*. A stale pool would keep injecting the last
+     * health the fight view showed as though it were still moving, which is a
+     * rate of zero on a trial that is running fine.
+     *
+     * @param {number} now - Clock
+     * @returns {Object|null} `{current, max, tier}` or null
+     */
+    _spectatedPool(now) {
+        const pool = guildTrialDamage.breakdown?.()?.pool;
+        if (!pool || !Number.isFinite(pool.current) || !Number.isFinite(pool.max)) return null;
+        if (!Number.isFinite(pool.at) || now - pool.at > SPECTATED_POOL_FRESH_MS) return null;
+        return pool;
+    }
+
+    /**
+     * Put the watched pool on the combat card that has no reading of its own.
+     *
+     * Additive only: a card the game is already drawing a bar on keeps its own
+     * numbers, so the two sources can never disagree on screen. What this covers
+     * is the Trials tab, where the combat card carries a level and no bar at all
+     * and every projection therefore said "measuring…" for the whole hour.
+     *
+     * @param {Object} tile - A card from `readTrialTiles`
+     * @param {Object|null} pool - From {@link _spectatedPool}
+     * @returns {Object} The card, with the reading attached when it had none
+     */
+    _withSpectatedPool(tile, pool) {
+        if (!pool || tile.kind !== 'combat' || tile.readings?.length) return tile;
+
+        return {
+            ...tile,
+            readings: [{ current: pool.current, max: pool.max }],
+            spectatedTier: Number.isFinite(pool.tier) ? pool.tier : null,
+        };
     }
 
     /**

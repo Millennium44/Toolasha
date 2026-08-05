@@ -6,6 +6,15 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Spectating measures: the trial fight is on the wire after all
+
+- **Per-player trial measurement is real** — the user's wire capture proved the fight view streams `guild_battle_updated`: the same tick shape as ordinary battles plus `battleId` and the tier stated outright. The trial damage machinery now consumes it: damage taken, healing, mana, and deaths fill from every tick; the damage split fills when the stream carries attack counters (the first capture carried none for players — the scoreboard says "watched, but the stream carried no attack counters" instead of guessing, and the export's `spectator.playerActionTicks` answers it from the next watch). The message joins the dedup skip-list — byte-identical consecutive ticks would otherwise collapse an entire trial to one.
+- **The solo-attribution fallback is off for spectated streams**: "only one character is known, so it was them" is sound in your own fights (the party was stated) and a trap here (one unit having appeared means one unit _moved_) — the capture contained the exact tick where the tank would have been credited the boss's whole health bar.
+- **Units get names three ways**: fight-view portraits in slot order, then max-HP/MP signature against captured sheets (2,612/2,180 names ICMeow uniquely), then an honest "Player N". Ambiguity resolves to nobody; placeholders don't survive the view opening.
+- **The spectated pool feeds cards with no bar of their own** (the Trials tab measured nothing all hour; now a fresh spectated reading stands in, never overriding a bar the game itself draws), the payload's tier replaces badge-inference while watching, and a fresh tick arms the recorder.
+- **The boss is a boss everywhere**: clicking it no longer stores it as a member loadout (monster units refused and purged; it would have joined the damage-split estimate), its stats popup no longer gets our info block injected into it (cards are not allowed inside dialogs — no card-shape filter could catch a popup literally titled like a card), and its per-tier sheet is filed as `bossSheets[tier]` — two tiers side by side settle whether accuracy and damage scale the way health does.
+- The wrong "simulated, not fought" note is replaced: the fight is real and server-run, and watching it is measuring it.
+
 ### The cycler clicks the people fighting beside you
 
 - **A fight on screen outranks the roster walk**: the profile button now finds your guildmates' unit boxes in the spectated trial fight and clicks those first — that's the Battle Info popup, the only source of a combat stat sheet (`/profile` carries skills but no sheet). The boss can never be offered (only roster names match), a sheet older than 15 minutes is worth re-clicking mid-fight, and ⟲ Redo covers battle sheets too.

@@ -118,9 +118,15 @@ export function noteActions(state, players) {
  *
  * @param {Object} pMap - This tick's players
  * @param {Object} state - From `newAttributionState`, mutated
+ * @param {Object} [options] - `{soloFallback}`; see below
+ * @param {boolean} [options.soloFallback] - Whether "only one character is known, so it was them"
+ *   may be used. True for this client's own fights, where the party is genuinely known from
+ *   `new_battle`. **False for a spectated guild trial**, where `pMap` is the only roster there is
+ *   and a delta that has so far shown one person means one person has *moved*, not that one person
+ *   is there — crediting them would hand the whole boss's health to whoever was being hit
  * @returns {string|null} The player index, or null when nobody can be identified
  */
-export function findCaster(pMap, state) {
+export function findCaster(pMap, state, { soloFallback = true } = {}) {
     const indices = Object.keys(pMap || {});
     const swung = [];
     const spent = [];
@@ -157,10 +163,13 @@ export function findCaster(pMap, state) {
     if (spent.length) return spent[spent.length - 1];
 
     // Nobody else it could have been. This is the rung that carries a solo run
-    // on a payload with no attack counter at all.
-    const party = Object.keys(state.party);
-    if (party.length === 1) return party[0];
-    if (!party.length && indices.length === 1) return indices[0];
+    // on a payload with no attack counter at all — and the one rung a spectated
+    // trial must not use, because there the party is not known.
+    if (soloFallback) {
+        const party = Object.keys(state.party);
+        if (party.length === 1) return party[0];
+        if (!party.length && indices.length === 1) return indices[0];
+    }
 
     // The last character to swing. A swing and the damage it does are not always
     // in the same tick — see the note above — and the person the tick *is* about
@@ -173,14 +182,15 @@ export function findCaster(pMap, state) {
  *
  * @param {Object} tick - A `battle_updated` payload
  * @param {Object} state - From `newAttributionState`, mutated
+ * @param {Object} [options] - Passed to {@link findCaster}; `{soloFallback}`
  * @returns {Array<Object>} Hits as
  *   `{playerIndex, monsterIndex, amount, isCrit, isMiss, isHeal, action}`, and
  *   deaths as `{monsterIndex, isKill}` — the two are separate events because a
  *   bleed can land the killing blow on a tick where no counter moved
  */
-export function attributeTick(tick, state) {
+export function attributeTick(tick, state, options) {
     const { mMap, pMap } = tick || {};
-    const caster = findCaster(pMap, state);
+    const caster = findCaster(pMap, state, options);
     const events = [];
 
     for (const [index, monster] of Object.entries(mMap || {})) {

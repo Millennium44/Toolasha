@@ -253,6 +253,13 @@ class WebSocketHook {
             // same battle, same unit ids — and differ only in hitpoints further
             // in, so the 100-char hash would drop the update that matters
             messageType === 'battle_updated' ||
+            // The guild trial's spectator stream, and the worst hash collision
+            // of the lot: every tick opens `{"type":"guild_battle_updated",
+            // "battleId":1,"tier":2,"pMap":{"1":{"cHP":…` — type, battle and
+            // tier fill the window on their own, so consecutive ticks are
+            // identical for far more than a hundred characters and only the
+            // health past it differs. Hashed, a whole trial collapses to one tick
+            messageType === 'guild_battle_updated' ||
             messageType === 'action_type_consumable_slots_updated' ||
             messageType === 'consumable_buffs_updated' ||
             // Two donations to the same buff in a row produce messages whose

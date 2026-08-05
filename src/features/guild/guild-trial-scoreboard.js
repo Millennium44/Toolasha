@@ -7,25 +7,27 @@
  * a tier fails, which wants ranks, shares, bars, and the healing beside the
  * damage. So the same numbers get a panel.
  *
- * ## Two tabs, and both are honest about what they are
+ * ## Two tabs, three sources, and every figure says which one it is
  *
- * **Damage** is an *estimate*, and that is the headline of the tab rather than a
- * caveat under it. A guild combat trial is simulated by the game from the
- * signed-up members' builds — no client fights it, so no client can measure it,
- * and the attribution machinery in `guild-trial-damage.js` has never armed and
- * should not. What can be said is what each member's own captured sheet is worth
- * per second, summed and shared out, which is what this draws. Members whose
- * build has never been captured are named as unestimated rather than dropped.
+ * A trial fight is real and server-run, and opening the In Progress **fight
+ * view** streams it here as `guild_battle_updated` — so these tabs can be
+ * measured after all, for the stretch somebody was watching. Three things can
+ * therefore be on screen, and they are never mixed:
  *
- * **Healing** cannot even be estimated: a sheet says nothing about how much
- * healing a fight will call for. That tab says the mechanic and stops. The
- * attribution it would use (`guild-trial-support.js` — a heal cast on a tick with
- * exactly one healer is theirs, anything else stays unattributed) is still here
- * for the day the game puts a trial battle on the wire.
+ * 1. **Measured** — folded from spectated ticks. Preferred whenever it exists.
+ * 2. **Estimated** — each member's captured build worth per second, shared out.
+ *    The fallback when nothing has been watched, labelled at the top rather than
+ *    footnoted. Members with no captured build are named, not dropped.
+ * 3. **Nothing** — with a reason that says what to do about it, which is now
+ *    "open the fight view" rather than an apology.
  *
- * The one measured, party-wide truth lives on the trial card: the pool bar's own
- * rate, read by `guild-trials.js` and labelled measured. This panel never
- * competes with it.
+ * **Healing** has no estimate to fall back on: a build says nothing about how
+ * much healing a fight will call for. Watched, it fills from the same ticks the
+ * damage does — health rising, attributed to a lone healer on the tick and kept
+ * unattributed otherwise (`guild-trial-support.js`).
+ *
+ * The party-wide rate on the trial card stays where it is and stays measured;
+ * this panel never competes with it.
  *
  * ## Colour
  *
@@ -39,7 +41,7 @@
 
 import { formatKMB, formatWithSeparator } from '../../utils/formatters.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
-import guildTrialDamage, { estimateDamageSplit, SIMULATED_TRIAL_NOTE } from './guild-trial-damage.js';
+import guildTrialDamage, { estimateDamageSplit, SPECTATED_TRIAL_NOTE } from './guild-trial-damage.js';
 import { guildLoadoutCapture } from './guild-loadout-capture.js';
 import { guildTrialRecorder } from './guild-trial-recorder.js';
 import { buildGuildReport } from './guild-trial-report.js';
@@ -153,7 +155,7 @@ export function scoreboardText(breakdown, tab = 'damage', estimate = null) {
         return [head, ...lines].join('\n');
     }
 
-    if (!rows.length) return `Trial ${label}: nothing measured — ${breakdown?.reason || SIMULATED_TRIAL_NOTE}`;
+    if (!rows.length) return `Trial ${label}: nothing measured — ${breakdown?.reason || SPECTATED_TRIAL_NOTE}`;
 
     const header =
         `Trial ${label} — ${formatWithSeparator(Math.round(total))} total` +
@@ -359,6 +361,27 @@ class GuildTrialScoreboard {
     }
 
     /**
+     * How the units in a watched fight were identified, when it is worth saying.
+     *
+     * A spectated tick names its units by index only, so a row headed "Player 3"
+     * has to be legible as a placeholder rather than as somebody's name.
+     *
+     * @param {Object} breakdown - From `guildTrialDamage.breakdown()`
+     * @returns {string} A sentence, or an empty string
+     */
+    _namingNote(breakdown) {
+        const coverage = breakdown?.nameCoverage;
+        if (!coverage?.of) return '';
+        if (!coverage.placeholders.length) return '';
+
+        const listed = coverage.placeholders.slice(0, 4).join(', ');
+        return (
+            ` ${coverage.named} of ${coverage.of} units could be named from the fight view or a captured ` +
+            `build; ${listed} ${coverage.placeholders.length === 1 ? 'is a placeholder' : 'are placeholders'}.`
+        );
+    }
+
+    /**
      * The per-player split as the builds predict it.
      *
      * Rebuilt on every draw rather than cached: a build captured mid-trial has to
@@ -429,18 +452,27 @@ class GuildTrialScoreboard {
             `</div>`;
 
         // The headline of the section, not a caveat under it: a reader who takes
-        // these for the game's own figures has been misled by the panel
+        // an estimate for the game's own figures has been misled by the panel,
+        // and one who takes a measurement for a guess distrusts a real number
+        const spectated = breakdown?.source === 'spectated';
         const disclaimer = estimated
             ? `<div style="color:${WARN}; font-size:11px; font-weight:600; line-height:1.5;">` +
-              'Estimated from builds — the game does not expose real per-player trial figures.</div>' +
+              'Estimated from builds — nothing has been watched yet.</div>' +
               `<div style="color:${DIM}; font-size:10px; line-height:1.5; margin-bottom:6px;">` +
-              'The trial is simulated server-side from the signed-up members’ builds, so no client fights it ' +
-              'and none can measure it. This is each captured sheet’s auto-attack worth per second, shared ' +
-              'out — abilities are not modelled, and a build is only as current as the last time it was seen.' +
-              '</div>'
-            : `<div style="color:${DIM}; font-size:10px; line-height:1.5; margin-bottom:6px;">` +
-              'Attributed off the battle feed — the game publishes no per-player figure. Only fights this ' +
-              'character took part in are counted.</div>';
+              'A trial fight runs on the game’s own server and streams here only while the In Progress ' +
+              'fight view is open — open it and these become measured. Until then this is each captured ' +
+              'sheet’s auto-attack worth per second, shared out: abilities are not modelled, and a build is ' +
+              'only as current as the last time it was seen.</div>'
+            : spectated
+              ? `<div style="color:${GOOD}; font-size:11px; font-weight:600; line-height:1.5;">` +
+                `Measured from the trial fight — ${Math.round(breakdown?.seconds || 0)}s watched.</div>` +
+                `<div style="color:${DIM}; font-size:10px; line-height:1.5; margin-bottom:6px;">` +
+                'Folded from the stream the In Progress fight view subscribes to. Only the stretch the view ' +
+                'was open for is counted, so closing it pauses these rather than ending them.' +
+                this._namingNote(breakdown) +
+                '</div>'
+              : `<div style="color:${DIM}; font-size:10px; line-height:1.5; margin-bottom:6px;">` +
+                'Attributed off this client’s own battle feed.</div>';
 
         const unestimated =
             estimated && estimate.unestimated.length
@@ -449,13 +481,28 @@ class GuildTrialScoreboard {
                   `${estimate.unestimated.length > 8 ? `, +${estimate.unestimated.length - 8} more` : ''}.</div>`
                 : '';
 
+        // A watched fight whose players' attack counters never arrived: the boss's
+        // lost health is party damage and is real, but naming who dealt it is
+        // not something the stream said, and this refuses to invent it
+        const unsplit =
+            !rows.length && !estimated && spectated && breakdown?.splitFromCounters === false
+                ? `<div style="color:${DIM}; padding:6px 0; line-height:1.5;">` +
+                  'Watched, but the stream carried no attack counters for the players, so the party’s damage ' +
+                  'cannot be split between them. The tank-and-healer figures on the Healing tab come from the ' +
+                  'same ticks and are unaffected.</div>'
+                : '';
+
         const nothing =
             `<div style="color:${DIM}; padding:6px 0; line-height:1.5;">` +
             (healing
-                ? `Healing cannot be measured or estimated for a trial — ${SIMULATED_TRIAL_NOTE}. ` +
-                  'A build says nothing about how much healing a fight will call for, so there is nothing ' +
-                  'honest to put here.'
-                : `Nothing to show yet — ${breakdown?.reason || SIMULATED_TRIAL_NOTE}. ` +
+                ? spectated
+                    ? 'Watched, but no heal could be attributed: a rise in health is only credited when exactly ' +
+                      'one player cast a heal on that tick. Anything else is kept as unattributed rather than ' +
+                      'assigned to whoever looked likely.'
+                    : `No healing has been watched — ${SPECTATED_TRIAL_NOTE}. ` +
+                      'Open it during a trial and this fills from the same ticks the damage does; a build ' +
+                      'cannot be used to guess healing, so there is no estimate to show meanwhile.'
+                : `Nothing to show yet — ${breakdown?.reason || SPECTATED_TRIAL_NOTE}. ` +
                   'No member builds have been captured either, so there is nothing to estimate from.') +
             '</div>';
 
@@ -473,7 +520,7 @@ class GuildTrialScoreboard {
                         })
                     )
                     .join('') + unestimated
-              : nothing;
+              : unsplit || nothing;
 
         const unattributed = breakdown?.support?.unattributedHealing || 0;
         const footnote =

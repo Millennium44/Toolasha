@@ -138,6 +138,31 @@ describe('content-hash deduplication', () => {
         expect(handler).toHaveBeenCalledTimes(2);
     });
 
+    test('guild_battle_updated survives the hash, which its first 100 chars would not', () => {
+        // The trial spectator stream is the worst collision of the lot: every
+        // tick opens with the same type, battle and tier, and only the health
+        // past the hash window differs. Hashed, a whole trial is one tick
+        const handler = vi.fn();
+        webSocketHook.on('guild_battle_updated', handler);
+
+        const tick = (hp) =>
+            JSON.stringify({
+                type: 'guild_battle_updated',
+                battleId: 1,
+                tier: 2,
+                pMap: { 1: { cHP: 2612, mHP: 2612, cMP: 2180, mMP: 2180, isActive: true, leftCombat: false } },
+                mMap: { 0: { cHP: hp, mHP: 618_000 } },
+            });
+
+        // The two differ, and they differ only well past the window
+        expect(tick(454_807).slice(0, 100)).toBe(tick(453_402).slice(0, 100));
+
+        webSocketHook.processMessage(tick(454_807));
+        webSocketHook.processMessage(tick(453_402));
+
+        expect(handler).toHaveBeenCalledTimes(2);
+    });
+
     test('action_completed uses a 50ms TTL dedup instead of the content hash', () => {
         const handler = vi.fn();
         webSocketHook.on('action_completed', handler);
