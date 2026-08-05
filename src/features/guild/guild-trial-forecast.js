@@ -170,22 +170,35 @@ export function estimatePartyDamage(loadouts) {
     let members = 0;
 
     for (const loadout of loadouts || []) {
-        const stats = loadout?.stats;
-        if (!stats) continue;
-
-        // `attackInterval` is nanoseconds on the wire, as the recorded sheets show
-        const intervalMs = Number(stats.attackInterval) / 1e6;
-        const damage = Number(stats.autoAttackDamage);
-        if (!Number.isFinite(intervalMs) || intervalMs <= 0 || !Number.isFinite(damage) || damage <= 0) continue;
-
-        // The sheet's auto-attack figure is a multiplier on the weapon's own
-        // damage, which is not on it — so this is a shape, not a number, and the
-        // caller says so
-        dps += (damage * 1000) / intervalMs;
+        const own = autoAttackDps(loadout?.stats);
+        if (own === null) continue;
+        dps += own;
         members += 1;
     }
 
     return { dps: members ? dps : null, members };
+}
+
+/**
+ * One member's auto-attack damage per second, from their captured sheet.
+ *
+ * Exported so the per-player estimate and the party estimate are the same
+ * arithmetic rather than two that can drift apart. The sheet's auto-attack
+ * figure is a multiplier on the weapon's own damage, which is not on it, so this
+ * is a shape rather than a number — every caller must say so.
+ *
+ * @param {Object} stats - A loadout's `stats`
+ * @returns {number|null} Damage a second, or null when the sheet cannot say
+ */
+export function autoAttackDps(stats) {
+    if (!stats) return null;
+
+    // `attackInterval` is nanoseconds on the wire, as the recorded sheets show
+    const intervalMs = Number(stats.attackInterval) / 1e6;
+    const damage = Number(stats.autoAttackDamage);
+    if (!Number.isFinite(intervalMs) || intervalMs <= 0 || !Number.isFinite(damage) || damage <= 0) return null;
+
+    return (damage * 1000) / intervalMs;
 }
 
 /**
@@ -503,10 +516,12 @@ export function forecastTrial({
         // The tiers already banked are part of where this trial ends up
         const banked = Number.isFinite(analysis.tiersClearedSoFar) ? analysis.tiersClearedSoFar : 0;
         const decline = successDecline(analysis.personalByTier);
+        const total = banked + walk.tiersCleared;
         return {
             ...walk,
-            tier: walk.finalTier ?? (banked > 0 ? banked : null),
-            tiersCleared: banked + walk.tiersCleared,
+            // The tier reached and the count of tiers banked are one number
+            tier: total > 0 ? total : null,
+            tiersCleared: total,
             source: 'measured',
             coverage: null,
             reason: null,
@@ -535,10 +550,12 @@ export function forecastTrial({
     if (!walk) return nothing('nothing to project from');
 
     const banked = Number.isFinite(analysis.tiersClearedSoFar) ? analysis.tiersClearedSoFar : 0;
+    const total = banked + walk.tiersCleared;
     return {
         ...walk,
-        tier: walk.finalTier ?? (banked > 0 ? banked : null),
-        tiersCleared: banked + walk.tiersCleared,
+        // The tier reached and the count of tiers banked are one number
+        tier: total > 0 ? total : null,
+        tiersCleared: total,
         source: measured === null ? 'estimated' : 'measured',
         coverage: estimate ? { known: estimate.members, of: Math.max(estimate.members, participants) } : null,
         reason: null,

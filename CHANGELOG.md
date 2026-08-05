@@ -12,6 +12,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - **The count is a per-floor override again**: a number chosen because one map was worth four beacons no longer follows you onto every floor after it. Each new floor starts back on the automatic minimum.
 - **A ⟲ button beside the count** puts it back to the fewest that cover a path, without spinning the field down a step at a time.
 
+### The arrow points at the count, completed means completed, and estimates say so
+
+- **"On pace for 4 tiers → T5" is impossible output now**: the count and the arrow's target were computed from different numbers (tiers finished vs tier being fought); both now derive from one figure, and a tier the walk enters but can't finish moves neither.
+- **A Completed card is completed everywhere**: the game's own badge overrides the kind-level phase, so skilling blocks stop showing "On pace for" (or "scheduled") after their trial ends while combat runs — final rate and banked, nothing live.
+- **Per-player trial damage is presented as what it currently is — an estimate from builds**: headlined "Estimated from builds" in the scoreboard, the report ("ESTIMATED FROM BUILDS" as line two where a chat skimmer reads it), and the card line ("simulated, not fought"), with per-member auto-attack shares, build coverage ("2/3 builds"), and unestimated members named. The pool-bar party rate stays labelled measured. (A spectator battle feed was discovered moments after this shipped — real measurement lands next.)
+
 ### Neither ladder has a wall, and a click is not a capture
 
 - **The profile cycler counts replies, not clicks**: a hidden chat box could mark members as logged without any profile ever opening — now a click is a timestamped request, re-offered after 20 seconds if no capture lands, the progress count derives from actual captures (wrong states self-correct), a member in flight shows as "Waiting for…", and a missing/hidden chat input says "Open the chat panel first" instead of silently doing nothing. Inert skilling units on the In Progress tab are never clicked — the chat route is the only one that works there. **⟲ Redo all** marks everyone due again without discarding stored levels; one click still equals one profile.

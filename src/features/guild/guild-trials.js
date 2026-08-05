@@ -424,6 +424,37 @@ export function ownParticipation(trialName, { tracker = guildXPTracker, characte
 }
 
 /**
+ * Who signed up for a trial, by name.
+ *
+ * The estimated per-player split needs a roster to cover, and a member with no
+ * captured build must be *named* as unestimated rather than dropped — a
+ * leaderboard that silently omits three people reads as three people who did
+ * nothing. The count of these is what `participantCounts` already returns; this
+ * is the same walk keeping the names.
+ *
+ * @param {string} trialName - The card's trial name
+ * @param {Object} [tracker] - The XP tracker, injectable for tests
+ * @returns {string[]} Member names, in roster order
+ */
+export function signedUpMembers(trialName, tracker = guildXPTracker) {
+    const currentWeek = tracker?.getCurrentWeekStartAt?.() || null;
+    const names = [];
+
+    for (const member of tracker?.getMemberList?.() || []) {
+        const meta = tracker?.getMemberMeta?.(member.characterID) || member;
+        if (currentWeek && meta?.signupWeekStartAt !== currentWeek) continue;
+
+        const hrids = [meta?.signedUpSkillingTrialHrid, meta?.signedUpCombatTrialHrid].filter(Boolean);
+        if (!hrids.length || !matchTrialHrid(trialName, hrids)) continue;
+
+        const name = meta?.name || member?.name || null;
+        if (name && !names.includes(name)) names.push(name);
+    }
+
+    return names;
+}
+
+/**
  * A number, or a dash.
  * @param {number|null} value - The number
  * @returns {string} Formatted
@@ -776,13 +807,22 @@ export function renderTrialBlock(
     // rows that each say what they assume — and the second being lower is then
     // the point rather than a contradiction.
     const slowdown = Number.isFinite(forecast?.decline?.perTier) ? forecast.decline : null;
+    // The count and the target are the same fact stated twice, so they are
+    // derived from one number. They used to be computed separately — the count
+    // from the tiers banked plus those the walk completed, the target from the
+    // walk's last clear *or, when it completed none, the tier being fought* —
+    // and at a tier boundary that reads "on pace for 4 tiers → T5", which is
+    // two different claims in one sentence. A tier the walk enters and cannot
+    // finish is not a tier, and must not move the target.
     const paceCaption = () => {
         const projected = analysis.pace.tiersCleared;
-        const finalTier = analysis.pace.finalTier ?? analysis.tier;
-        const level = levelFromTier(finalTier);
-        return analysis.pace.limitedBy === 'unknown-next-tier'
-            ? `${projected} tier${projected === 1 ? '' : 's'} (next tier's size unknown)`
-            : `${projected} tier${projected === 1 ? '' : 's'} → T${finalTier}${level ? ` (Lv.${level})` : ''}`;
+        const level = levelFromTier(projected);
+        const tiers = `${projected} tier${projected === 1 ? '' : 's'}`;
+
+        if (analysis.pace.limitedBy === 'unknown-next-tier') return `${tiers} (next tier's size unknown)`;
+        // Nothing finished is nothing to point at
+        if (!projected) return tiers;
+        return `${tiers} → T${projected}${level ? ` (Lv.${level})` : ''}`;
     };
 
     if (analysis.pace && (!forecast || forecast.tier === null || slowdown)) {
@@ -809,8 +849,8 @@ export function renderTrialBlock(
             line(
                 slowdown ? 'Expected (slowing)' : 'On pace for',
                 slowdown
-                    ? `~T${forecast.tier}${margin}`
-                    : `${cleared} tier${cleared === 1 ? '' : 's'} → T${forecast.tier}${margin}`,
+                    ? `~T${cleared}${margin}`
+                    : `${cleared} tier${cleared === 1 ? '' : 's'}${cleared ? ` → T${cleared}` : ''}${margin}`,
                 forecast.source === 'measured' ? GOOD : WARN,
                 forecast.source === 'measured'
                     ? 'Walked from the work or health each tier actually needs — derived from the game\u2019s own ' +
@@ -867,9 +907,12 @@ export function renderTrialBlock(
 /**
  * Who in the party is producing the DPS the card is already showing.
  *
- * Drawn only under a combat card, and only from fights this client was actually
- * in — see `guild-trial-damage.js` for how a trial fight is told from any other,
- * and why measuring nothing is the right answer when it cannot be.
+ * Drawn only under a combat card. In practice it never has anything to draw: a
+ * combat trial is simulated by the game from the signed-up members' builds, so
+ * no client fights it and none can split it — see `guild-trial-damage.js`. The
+ * line that stands in for it says that mechanic rather than "no trial fight seen
+ * here", which reads as a fight that could have been seen and was not, and was
+ * twice reported as a bug on that basis.
  *
  * @param {Object} breakdown - From `guildTrialDamage.breakdown()`
  * @returns {string[]} Rows of HTML, empty when there is nothing worth a row
@@ -879,15 +922,15 @@ export function renderTrialPlayers(breakdown) {
 
     if (!breakdown.measured) {
         // A line rather than silence: an empty space under a combat card is
-        // indistinguishable from the split having failed, and the reason is
-        // usually actionable ("you are not in this fight")
+        // indistinguishable from the split having failed
         return [
             line(
                 'Per player',
-                breakdown.stale ? 'last trial, not this one' : 'no trial fight seen here',
+                breakdown.stale ? 'last trial, not this one' : 'simulated, not fought',
                 DIM,
-                `${breakdown.reason}.\nOnly fights this client takes part in can be split — ` +
-                    'a trial you did not sign up for sends no battle traffic to you.'
+                `${breakdown.reason}.\nThe scoreboard's Damage tab estimates the split from the members' ` +
+                    'captured builds instead, and says so. The party rate on this card is the measured one — ' +
+                    'it comes off the pool bar, which covers everybody.'
             ),
         ];
     }
@@ -1391,7 +1434,9 @@ class GuildTrials {
             const status = readTrialStatus(root);
             this._healStaleRecord(status, tiles, now);
             // Any card actually running counts, whichever kind the header names
-            const anyLive = tiles.some((tile) => this._phaseFor(status, tile) === 'live');
+            const anyLive = tiles.some(
+                (tile) => this._phaseFor(status, tile, this.record?.tiles?.[tileKey(tile)]) === 'live'
+            );
             guildTrialRecorder.noteLifecycle?.(anyLive ? 'live' : status.phase, now);
             // The player's own action stats live in the tab's footer rather than
             // on a card, so they are read once and attached to whichever trial
@@ -1410,7 +1455,7 @@ class GuildTrials {
                 // *finished*, so the pool on screen is the next one along; with
                 // no badge yet, a running trial is on its first tier.
                 let readingTier = null;
-                if (this._phaseFor(status, withPersonal) === 'live' && withPersonal.readings.length) {
+                if (this._phaseFor(status, withPersonal, held) === 'live' && withPersonal.readings.length) {
                     if (Number.isFinite(badge)) readingTier = badge + 1;
                     else if (!(withPersonal.points > 0) && !Object.keys(held?.pointsByTier || {}).length) {
                         readingTier = FIRST_TIER;
@@ -1437,7 +1482,8 @@ class GuildTrials {
             // XP bar read as a trial card on the Overview tab — is closed twice
             // over now, by `isTrialName` matching a card's whole name and by
             // `onTrialTab` refusing a tab that is legibly something else.
-            if (live && this._phaseFor(status, live) !== 'scheduled' && this._phaseFor(status, live) !== 'completed') {
+            const livePhase = live ? this._phaseFor(status, live, this.record?.tiles?.[tileKey(live)]) : null;
+            if (live && livePhase !== 'scheduled' && livePhase !== 'completed') {
                 guildTrialRecorder.noteActivity('tab-reading', now);
             }
 
@@ -1479,7 +1525,7 @@ class GuildTrials {
                 // and it needs no name-to-hrid match to be believed
                 const hrid = matchTrialHrid(tile.name, Object.keys(counts));
                 const participants = record.signups?.signed ?? (hrid ? counts[hrid] : 0);
-                const tilePhase = this._phaseFor(status, tile);
+                const tilePhase = this._phaseFor(status, tile, record);
                 const analysis = analyseTrial(record, {
                     participants,
                     timeLeftMs,
@@ -1587,16 +1633,24 @@ class GuildTrials {
      * @param {Object} tile - The card
      * @returns {string|null} The phase this card is in
      */
-    _phaseFor(status, tile) {
+    _phaseFor(status, tile, record = null) {
+        // The card's own "Completed" badge outranks everything. It is the game
+        // stating the outcome of *this* trial, where the header is about
+        // whichever one is running now — so after the skilling hour a finished
+        // Foraging card kept rendering "Fill rate 52 work/s / Tier clears in
+        // 3m" under a header reading "Combat Trial - In Progress". A finished
+        // trial shows results, and neither a live set nor a waiting one.
+        if (tile?.completed || record?.completed) return 'completed';
+
         const phase = status?.phase || null;
         if (!phase) return null;
         // A header that does not name a kind is the old, single-trial case
         if (!status.kind || status.kind === tile.kind) return phase;
 
-        // The other kind. Its own readings are the only thing that can say it
-        // is running while the header is about its sibling
+        // The other kind, not yet finished. Its own readings are the only thing
+        // that can say it is running while the header is about its sibling
         if (tile.readings?.length) return 'live';
-        return phase === 'completed' ? 'scheduled' : 'scheduled';
+        return 'scheduled';
     }
 
     /**
@@ -1637,6 +1691,9 @@ class GuildTrials {
                     trialName: tile.name,
                     tier: analysis.tier,
                     tiersCleared: analysis.tiersClearedSoFar,
+                    // Who the estimated split has to account for. Nobody is
+                    // dropped for having no captured build; they are listed
+                    members: signedUpMembers(tile.name),
                     shortfall: {
                         remaining: analysis.remaining,
                         total: analysis.total,

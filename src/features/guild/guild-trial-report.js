@@ -123,6 +123,7 @@ export function playerLine(player, support, rank) {
  * @param {number|null} [input.tier] - The tier in progress when it ended
  * @param {Object} input.breakdown - From `guildTrialDamage.breakdown()`
  * @param {Object} [input.shortfall] - `{remaining, total, unit}` for the tier in progress
+ * @param {Object} [input.estimate] - From `estimateDamageSplit`, used when nothing was measured
  * @returns {string} The report
  */
 export function buildGuildReport({
@@ -131,6 +132,7 @@ export function buildGuildReport({
     tier = null,
     breakdown,
     shortfall,
+    estimate = null,
 } = {}) {
     const players = breakdown?.players || [];
     const support = breakdown?.support?.players || [];
@@ -141,7 +143,43 @@ export function buildGuildReport({
         : trialName;
 
     if (!players.length) {
-        return `${headline}\nNothing was measured here — ${breakdown?.reason || 'no trial fight seen'}.`;
+        const close = describeShortfall({ tier, ...(shortfall || {}) });
+        // A trial is simulated by the game from the members' builds, so there is
+        // never a measurement to paste — but there is an estimate, and a guild
+        // arguing about who to sign up wants it. Labelled at the top, where
+        // somebody skimming a chat message will actually read it
+        if (estimate?.players?.length) {
+            const lines = [
+                headline,
+                'Per-player figures below are ESTIMATED FROM BUILDS — the game does not expose real ' +
+                    'per-player trial figures.',
+                `Est. party · ~${whole(estimate.total)}/s from ${estimate.covered} of ${estimate.of} builds`,
+            ];
+
+            estimate.players
+                .slice(0, MAX_REPORT_PLAYERS)
+                .forEach((player, index) =>
+                    lines.push(
+                        `${index + 1}. ${player.name} · ~${whole(player.dps)}/s` +
+                            (Number.isFinite(player.share) ? ` · ${player.share.toFixed(0)}%` : '')
+                    )
+                );
+            if (estimate.players.length > MAX_REPORT_PLAYERS) {
+                lines.push(`…and ${estimate.players.length - MAX_REPORT_PLAYERS} more`);
+            }
+            if (estimate.unestimated.length) {
+                lines.push(`No build captured, so not estimated · ${estimate.unestimated.join(', ')}`);
+            }
+            if (close) lines.push(close);
+            return lines.join('\n');
+        }
+
+        // Not "no trial fight seen", which promises a fight that could arrive:
+        // the trial is simulated by the game and no client is in it
+        const why =
+            breakdown?.reason ||
+            'the trial is simulated by the game from the signed-up members’ builds, so no client fights it';
+        return [headline, `Nothing was measured here — ${why}.`, ...(close ? [close] : [])].join('\n');
     }
 
     const lines = [headline];

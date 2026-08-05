@@ -9,19 +9,23 @@
  *
  * ## Two tabs, and both are honest about what they are
  *
- * **Damage** is attributed off the battle feed — the attack counter identifies
- * the attacker, a hit is the damage counter rising. **Healing** is the same
- * discipline applied to health *rising*: a heal cast on a tick with exactly one
- * healer is theirs, and anything else is kept as unattributed rather than
- * assigned to whoever looked likely (`guild-trial-support.js`). Both tabs say
- * where their numbers came from, because neither is the game's own figure:
+ * **Damage** is an *estimate*, and that is the headline of the tab rather than a
+ * caveat under it. A guild combat trial is simulated by the game from the
+ * signed-up members' builds — no client fights it, so no client can measure it,
+ * and the attribution machinery in `guild-trial-damage.js` has never armed and
+ * should not. What can be said is what each member's own captured sheet is worth
+ * per second, summed and shared out, which is what this draws. Members whose
+ * build has never been captured are named as unestimated rather than dropped.
  *
- * - Only fights **this client took part in** are counted. A trial somebody else
- *   is running sends no battle traffic here at all.
- * - The party DPS on the trial card is measured off the boss's health bar and
- *   covers everybody; this panel's total covers the fights it saw. They are two
- *   measurements of overlapping things and the panel says so rather than
- *   quietly showing the smaller one.
+ * **Healing** cannot even be estimated: a sheet says nothing about how much
+ * healing a fight will call for. That tab says the mechanic and stops. The
+ * attribution it would use (`guild-trial-support.js` — a heal cast on a tick with
+ * exactly one healer is theirs, anything else stays unattributed) is still here
+ * for the day the game puts a trial battle on the wire.
+ *
+ * The one measured, party-wide truth lives on the trial card: the pool bar's own
+ * rate, read by `guild-trials.js` and labelled measured. This panel never
+ * competes with it.
  *
  * ## Colour
  *
@@ -35,7 +39,7 @@
 
 import { formatKMB, formatWithSeparator } from '../../utils/formatters.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
-import guildTrialDamage from './guild-trial-damage.js';
+import guildTrialDamage, { estimateDamageSplit, SIMULATED_TRIAL_NOTE } from './guild-trial-damage.js';
 import { guildLoadoutCapture } from './guild-loadout-capture.js';
 import { guildTrialRecorder } from './guild-trial-recorder.js';
 import { buildGuildReport } from './guild-trial-report.js';
@@ -130,10 +134,26 @@ export function scoreboardRows(breakdown, tab = 'damage') {
  * @param {'damage'|'healing'} tab - Which figures
  * @returns {string} One line per player
  */
-export function scoreboardText(breakdown, tab = 'damage') {
+export function scoreboardText(breakdown, tab = 'damage', estimate = null) {
     const { rows, total, perSecond } = scoreboardRows(breakdown, tab);
     const label = tab === 'healing' ? 'healing' : 'damage';
-    if (!rows.length) return `Trial ${label}: nothing measured — ${breakdown?.reason || 'no trial fight seen'}`;
+
+    if (!rows.length && tab === 'damage' && estimate?.players?.length) {
+        const head =
+            `Trial damage, ESTIMATED FROM BUILDS — the game does not expose real per-player trial figures. ` +
+            `${estimate.covered} of ${estimate.of} builds captured.`;
+        const lines = estimate.players.map(
+            (row, position) =>
+                `${position + 1}. ${row.name} — ~${formatWithSeparator(Math.round(row.dps))}/s` +
+                (row.share === null ? '' : ` (${row.share.toFixed(1)}%)`)
+        );
+        if (estimate.unestimated.length) {
+            lines.push(`Unestimated (no build captured): ${estimate.unestimated.join(', ')}`);
+        }
+        return [head, ...lines].join('\n');
+    }
+
+    if (!rows.length) return `Trial ${label}: nothing measured — ${breakdown?.reason || SIMULATED_TRIAL_NOTE}`;
 
     const header =
         `Trial ${label} — ${formatWithSeparator(Math.round(total))} total` +
@@ -305,7 +325,7 @@ class GuildTrialScoreboard {
             });
         });
         body.querySelector('[data-action="copy"]')?.addEventListener('click', () => {
-            this._copy(scoreboardText(breakdown, this.tab));
+            this._copy(scoreboardText(breakdown, this.tab, this._estimate()));
         });
         body.querySelector('[data-action="report"]')?.addEventListener('click', () => {
             this._copy(this.reportText(breakdown));
@@ -335,7 +355,22 @@ class GuildTrialScoreboard {
      * @returns {string} The report
      */
     reportText(breakdown = guildTrialDamage.breakdown?.()) {
-        return buildGuildReport({ ...(this.context || {}), breakdown });
+        return buildGuildReport({ ...(this.context || {}), breakdown, estimate: this._estimate() });
+    }
+
+    /**
+     * The per-player split as the builds predict it.
+     *
+     * Rebuilt on every draw rather than cached: a build captured mid-trial has to
+     * appear without the panel being closed and reopened.
+     *
+     * @returns {Object} From `estimateDamageSplit`
+     */
+    _estimate() {
+        return estimateDamageSplit({
+            loadouts: guildLoadoutCapture.seen?.() || [],
+            members: this.context?.members || [],
+        });
     }
 
     /**
@@ -356,13 +391,26 @@ class GuildTrialScoreboard {
         const healing = this.tab === 'healing';
         const unit = healing ? 'hps' : 'dps';
 
-        const head =
-            `<div style="display:flex; align-items:baseline; gap:10px; margin-bottom:2px;">` +
-            `<span style="font-size:20px; font-weight:700; color:${ACCENT};">` +
-            `${perSecond === null ? '—' : formatKMB(Math.round(perSecond))}</span>` +
-            `<span style="color:${DIM};">party ${unit}</span>` +
-            `<span style="margin-left:auto; color:${GOOD}; font-weight:600;">${formatKMB(Math.round(total))}</span>` +
-            `</div>`;
+        // Measurement is impossible for a trial (see the module note), so the
+        // damage tab falls through to the estimate rather than to an apology
+        const estimate = !rows.length && !healing ? this._estimate() : null;
+        const estimated = Boolean(estimate?.players?.length);
+
+        const head = estimated
+            ? `<div style="display:flex; align-items:baseline; gap:10px; margin-bottom:2px;">` +
+              `<span style="font-size:20px; font-weight:700; color:${WARN};">` +
+              `~${formatKMB(Math.round(estimate.total))}</span>` +
+              `<span style="color:${DIM};">est. party dps</span>` +
+              `<span style="margin-left:auto; color:${DIM}; font-weight:600;">` +
+              `${estimate.covered}/${estimate.of} builds</span>` +
+              `</div>`
+            : `<div style="display:flex; align-items:baseline; gap:10px; margin-bottom:2px;">` +
+              `<span style="font-size:20px; font-weight:700; color:${ACCENT};">` +
+              `${perSecond === null ? '—' : formatKMB(Math.round(perSecond))}</span>` +
+              `<span style="color:${DIM};">party ${unit}</span>` +
+              `<span style="margin-left:auto; color:${GOOD}; font-weight:600;">` +
+              `${formatKMB(Math.round(total))}</span>` +
+              `</div>`;
 
         const tabs =
             `<div style="display:flex; gap:6px; margin:6px 0;">` +
@@ -380,15 +428,52 @@ class GuildTrialScoreboard {
                 .join('') +
             `</div>`;
 
-        const disclaimer =
-            `<div style="color:${DIM}; font-size:10px; line-height:1.5; margin-bottom:6px;">` +
-            'Estimated from the battle feed — the game publishes no per-player figure. Only fights this ' +
-            'character took part in are counted, so a trial you are not in shows nothing.</div>';
+        // The headline of the section, not a caveat under it: a reader who takes
+        // these for the game's own figures has been misled by the panel
+        const disclaimer = estimated
+            ? `<div style="color:${WARN}; font-size:11px; font-weight:600; line-height:1.5;">` +
+              'Estimated from builds — the game does not expose real per-player trial figures.</div>' +
+              `<div style="color:${DIM}; font-size:10px; line-height:1.5; margin-bottom:6px;">` +
+              'The trial is simulated server-side from the signed-up members’ builds, so no client fights it ' +
+              'and none can measure it. This is each captured sheet’s auto-attack worth per second, shared ' +
+              'out — abilities are not modelled, and a build is only as current as the last time it was seen.' +
+              '</div>'
+            : `<div style="color:${DIM}; font-size:10px; line-height:1.5; margin-bottom:6px;">` +
+              'Attributed off the battle feed — the game publishes no per-player figure. Only fights this ' +
+              'character took part in are counted.</div>';
+
+        const unestimated =
+            estimated && estimate.unestimated.length
+                ? `<div style="color:${DIM}; font-size:10px; margin-top:4px;">No build captured, so not ` +
+                  `estimated: ${estimate.unestimated.slice(0, 8).join(', ')}` +
+                  `${estimate.unestimated.length > 8 ? `, +${estimate.unestimated.length - 8} more` : ''}.</div>`
+                : '';
+
+        const nothing =
+            `<div style="color:${DIM}; padding:6px 0; line-height:1.5;">` +
+            (healing
+                ? `Healing cannot be measured or estimated for a trial — ${SIMULATED_TRIAL_NOTE}. ` +
+                  'A build says nothing about how much healing a fight will call for, so there is nothing ' +
+                  'honest to put here.'
+                : `Nothing to show yet — ${breakdown?.reason || SIMULATED_TRIAL_NOTE}. ` +
+                  'No member builds have been captured either, so there is nothing to estimate from.') +
+            '</div>';
 
         const list = rows.length
             ? rows.map((row) => this._rowHTML(row)).join('')
-            : `<div style="color:${DIM}; padding:6px 0;">Nothing measured yet — ` +
-              `${breakdown?.reason || 'no trial fight seen'}.</div>`;
+            : estimated
+              ? estimate.players
+                    .map((row, position) =>
+                        this._rowHTML({
+                            name: row.name,
+                            rank: position + 1,
+                            value: null,
+                            perSecond: row.dps,
+                            share: row.share,
+                        })
+                    )
+                    .join('') + unestimated
+              : nothing;
 
         const unattributed = breakdown?.support?.unattributedHealing || 0;
         const footnote =
@@ -442,7 +527,13 @@ class GuildTrialScoreboard {
         const type = damageTypeOf(row.name);
         const color = type ? TYPE_COLORS[type] : ACCENT;
         const width = Math.max(2, Math.min(100, row.share ?? 0));
-        const rate = row.perSecond === null ? '—' : `${formatKMB(Math.round(row.perSecond))}/s`;
+        const rate = row.perSecond === null || row.perSecond === undefined ? '—' : formatKMB(Math.round(row.perSecond));
+
+        // An estimated row has no total to show, because there is no elapsed
+        // fight to have accumulated one — the rate is the whole figure, and it
+        // carries a tilde so it cannot be read as a measurement
+        const estimated = row.value === null || row.value === undefined;
+        const figure = estimated ? `~${rate}/s` : formatKMB(Math.round(row.value));
 
         return (
             `<div style="position:relative; margin:3px 0; padding:3px 6px; border-radius:3px;` +
@@ -450,10 +541,10 @@ class GuildTrialScoreboard {
             `<div style="display:flex; gap:6px; align-items:baseline;">` +
             `<span style="color:${DIM}; width:14px;">${row.rank}</span>` +
             `<span style="font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${row.name}</span>` +
-            `<span style="margin-left:auto; color:${color}; font-weight:600;">${formatKMB(Math.round(row.value))}</span>` +
+            `<span style="margin-left:auto; color:${color}; font-weight:600;">${figure}</span>` +
             `</div>` +
             `<div style="display:flex; gap:6px; color:${DIM}; font-size:10px;">` +
-            `<span>${rate}</span>` +
+            `<span>${estimated ? 'estimated' : `${rate}/s`}</span>` +
             `<span style="margin-left:auto;">${row.share === null ? '—' : `${row.share.toFixed(1)}%`}</span>` +
             `</div></div>`
         );
