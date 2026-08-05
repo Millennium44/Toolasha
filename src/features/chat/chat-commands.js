@@ -13,6 +13,11 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
+import {
+    collectTokenExchangeDebug,
+    formatTokenExchangeReport,
+    tokenExchangeSummaryLine,
+} from '../guild/guild-token-value.js';
 import { moveScopedData, claimLegacyData } from '../../utils/scoped-data-repair.js';
 import { resetAdoptionDecision, requestAdoptionConsent } from '../../utils/adoption-consent.js';
 
@@ -94,7 +99,25 @@ export function formatShrineReport(report) {
         lines.push(`  ${building.hrid} — Lv${building.level}`);
     }
 
+    // Shrine levels cost tokens as well as credits, so what a token is worth
+    // belongs in the same report. One line; the whole table is a command away.
+    lines.push(tokenLine());
+
     return lines.join('\n');
+}
+
+/**
+ * The token valuation as one line, or as an admission that it could not be
+ * built. The shrine report must survive a broken valuation.
+ * @returns {string} A single line
+ */
+function tokenLine() {
+    try {
+        return tokenExchangeSummaryLine();
+    } catch (error) {
+        console.error('[Chat Commands] Could not summarise the token exchange:', error);
+        return 'Guild token ≈ unpriced — the valuation could not be built';
+    }
 }
 
 /**
@@ -104,6 +127,11 @@ export function formatShrineReport(report) {
  * Additive and guarded: an existing `Toolasha.debug` namespace keeps everything
  * it already has, and a page where the global is missing entirely (a test, an
  * unbundled import) is left alone rather than having one invented for it.
+ *
+ * `Toolasha.debug.tokenExchange()` joins it here rather than getting a chat
+ * command of its own: the shrine report already carries the one-line answer, and
+ * what this prints is a table of every credit colour with the arithmetic beside
+ * it — a console shape, not a chat shape.
  *
  * @returns {boolean} True when the helper was attached
  */
@@ -116,6 +144,11 @@ export function exposeShrineDebug() {
         target.Toolasha.debug.shrines = () => {
             const report = collectShrineDebug();
             console.log(formatShrineReport(report));
+            return report;
+        };
+        target.Toolasha.debug.tokenExchange = (pricingMode = 'ask') => {
+            const report = collectTokenExchangeDebug(pricingMode);
+            console.log(formatTokenExchangeReport(report));
             return report;
         };
         target.Toolasha.debug.moveScopedData = (fromId, toId, options) =>

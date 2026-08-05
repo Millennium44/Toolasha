@@ -17,6 +17,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - **The Task Tokens tile earns its rate line**: `tokens/hr this week` beneath the board value, on wall-clock time between your first and last claim (the tooltip names the sample and the basis; under two claims shows no rate rather than a fake one).
 - **Task statistics gains "Claimed Tasks (last 7 days)"**: tasks, tokens, coins, both hourly rates, the measured span — and reroll spend over the same window tied in for a **Net Task Income** figure, plus your last five completions.
 
+### The token knows its own price
+
+- **Guild token value now uses real exchange rates**: read from client data when the game exposes them, otherwise captured automatically from the exchange dialog as you open it (per credit colour, ratio-based so batch amounts don't distort it), with the manual setting demoted to last resort — and marked "assumed" when it's all we have. The valuation picks the credit colour worth the most gold per token, not just the biggest credit multiplier.
+- **`Toolasha.debug.tokenExchange()`** dumps the full table — every known colour, its rate, its source, and which conversion won — so a rate the capture hasn't seen yet is visible at a glance. Takes `'bid'`/`'average'` for the pricing side.
+- **`/shrines` ends with the token's worth** (`Guild token ≈ 1.0Kg via Green Guild Credit`), including how many exchange rates are known.
+
 ### Housekeeping
 
 - **The dungeon chest→key maps live in one place now** (`src/utils/dungeon-keys.js`): combat-stats and the combat-sim adapter each kept their own copy — with the two names swapped between them — and four more modules imported the constant through the stats calculator. Everyone now reads the same table under one pair of names. Pure extraction, no behavior change.
