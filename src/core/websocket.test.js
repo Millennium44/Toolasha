@@ -365,3 +365,35 @@ describe('native WebSocket listener semantics (prototype wrapping removed)', () 
         spy.mockRestore();
     });
 });
+
+describe('handler dispatch snapshots (upstream 03204a5)', () => {
+    test('a message handler that off()s itself does not make the next handler get skipped', () => {
+        const calls = [];
+        const first = () => {
+            calls.push('first');
+            webSocketHook.off('snap_type', first);
+        };
+        const second = () => calls.push('second');
+
+        webSocketHook.on('snap_type', first);
+        webSocketHook.on('snap_type', second);
+        webSocketHook.processMessage(msg('snap_type'));
+
+        expect(calls).toEqual(['first', 'second']);
+    });
+
+    test('a socket event handler that offSocketEvent()s itself does not skip the next one', () => {
+        const calls = [];
+        const first = () => {
+            calls.push('first');
+            webSocketHook.offSocketEvent('open', first);
+        };
+        const second = () => calls.push('second');
+
+        webSocketHook.onSocketEvent('open', first);
+        webSocketHook.onSocketEvent('open', second);
+        webSocketHook.emitSocketEvent('open', {}, {});
+
+        expect(calls).toEqual(['first', 'second']);
+    });
+});

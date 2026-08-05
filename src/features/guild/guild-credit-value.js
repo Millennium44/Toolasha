@@ -400,7 +400,10 @@ class GuildCreditValue {
         wrapper.appendChild(header);
 
         const body = document.createElement('div');
-        body.style.display = 'none';
+        // Bounded like the ranking table above: the game's exchange modal does not grow
+        // for injected content, so an unbounded planner body renders past the modal's
+        // bottom edge instead of scrolling within it
+        body.style.cssText = 'display:none; max-height:260px; overflow-y:auto;';
         wrapper.appendChild(body);
 
         header.addEventListener('click', () => {

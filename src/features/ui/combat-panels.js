@@ -1420,12 +1420,19 @@ const PROFIT_SETTINGS_KEY = 'combatProfitView';
 
 const profitView = { mode: 'mid', costsOn: true, taxOn: false };
 
-storage
-    .getJSON(PROFIT_SETTINGS_KEY, 'settings', null)
-    .then((saved) => {
+// This runs at module scope, long before the database opens — reading without
+// waiting on storage.ready returned the default every load and the remembered
+// view never came back.
+async function loadProfitView() {
+    try {
+        await storage.ready;
+        const saved = await storage.getJSON(PROFIT_SETTINGS_KEY, 'settings', null);
         if (saved) Object.assign(profitView, saved);
-    })
-    .catch((error) => console.error('[CombatPanels] Reading the profit view failed:', error));
+    } catch (error) {
+        console.error('[CombatPanels] Reading the profit view failed:', error);
+    }
+}
+loadProfitView();
 
 /**
  * Remember how profit is being read, and redraw what follows it.
