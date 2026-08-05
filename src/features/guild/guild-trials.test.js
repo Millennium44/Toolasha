@@ -89,7 +89,7 @@ vi.mock('./guild-xp-tracker.js', () => ({
     },
 }));
 
-const { analyseTrial, participantCounts, renderTrialBlock, tokenPayoutLine, guildTrials } =
+const { analyseTrial, participantCounts, renderTrialBlock, renderTrialPlayers, tokenPayoutLine, guildTrials } =
     await import('./guild-trials.js');
 const trialsFeature = (await import('./guild-trials.js')).default;
 
@@ -795,5 +795,232 @@ describe('the two trial tabs, as the game draws them', () => {
         expect(participantCounts()).toEqual({});
         expect(guildTrials.record.tiles['skilling::alchemy'].signups.signed).toBe(2);
         expect(document.body.textContent).toContain('Trial payout');
+    });
+});
+
+describe('zero is a claim, and usually the wrong one', () => {
+    /**
+     * A record from the In Progress tab alone: a reading, and no tier anywhere.
+     * @returns {Object} A tile record
+     */
+    const inProgressOnly = () => ({
+        name: 'Alchemy',
+        kind: 'skilling',
+        level: null,
+        tier: null,
+        samples: [
+            { t: now, readings: [{ current: 18_850, max: 65_280 }] },
+            { t: now + 10_000, readings: [{ current: 28_850, max: 65_280 }] },
+        ],
+        tiers: [],
+    });
+
+    test('a tier that was never on screen is unknown, not nought banked', () => {
+        const analysis = analyseTrial(inProgressOnly(), { timeLeftMs: 20 * 60_000 });
+
+        expect(analysis.tierKnown).toBe(false);
+        expect(analysis.tiersClearedSoFar).toBe(0);
+
+        const html = renderTrialBlock(analysis, 0, { measured: false, reason: 'nothing' });
+        expect(html).toContain('tier not seen yet');
+        expect(html).not.toContain('0 tiers');
+    });
+
+    test('the first tier in progress says so rather than reading as a failure', () => {
+        const analysis = analyseTrial(
+            {
+                name: 'Alchemy',
+                kind: 'skilling',
+                tier: 1,
+                samples: [{ t: now, readings: [{ current: 10, max: 100 }] }],
+                tiers: [],
+            },
+            { timeLeftMs: 60_000 }
+        );
+
+        expect(renderTrialBlock(analysis, 0)).toContain('nothing yet');
+    });
+
+    test('a pace that cannot be projected says which of the four things is missing', () => {
+        // No clock
+        expect(renderTrialBlock(analyseTrial(inProgressOnly(), {}), 0)).toContain('no clock visible');
+
+        // A clock, but no tier to walk the ladder from
+        expect(renderTrialBlock(analyseTrial(inProgressOnly(), { timeLeftMs: 60_000 }), 0)).toContain(
+            'tier not known yet'
+        );
+
+        // A clock and a tier, and one reading
+        const oneSample = analyseTrial(
+            { name: 'Alchemy', kind: 'skilling', tier: 3, samples: [{ t: now, readings: [{ current: 1, max: 10 }] }] },
+            { timeLeftMs: 60_000 }
+        );
+        expect(renderTrialBlock(oneSample, 0)).toContain('measuring');
+    });
+});
+
+describe('renderTrialPlayers', () => {
+    const breakdown = {
+        measured: true,
+        fights: 3,
+        players: [
+            {
+                name: 'Tib',
+                damage: 750_000,
+                dps: 5000,
+                share: 75,
+                hits: 120,
+                crits: 12,
+                misses: 5,
+                accuracy: 0.96,
+                critRate: 0.1,
+                deaths: 0,
+            },
+            {
+                name: 'Moo',
+                damage: 250_000,
+                dps: 1600,
+                share: 25,
+                hits: 60,
+                crits: 0,
+                misses: 40,
+                accuracy: 0.6,
+                critRate: 0,
+                deaths: 2,
+            },
+        ],
+    };
+
+    test('a line per player, with the share and the deaths', () => {
+        const html = renderTrialPlayers(breakdown).join('');
+
+        expect(html).toContain('Tib');
+        expect(html).toContain('75%');
+        expect(html).toContain('Moo');
+        expect(html).toContain('2✝');
+        expect(html).toContain('3 fights');
+    });
+
+    test('nothing measured is a reason, not a blank', () => {
+        const html = renderTrialPlayers({ measured: false, reason: 'the monsters are not this week’s trial' }).join('');
+
+        expect(html).toContain('Per player');
+        expect(html).toContain('no trial fight seen here');
+    });
+
+    test('a stale trial says it is the last one', () => {
+        const html = renderTrialPlayers({ measured: false, stale: true, reason: 'old' }).join('');
+        expect(html).toContain('last trial, not this one');
+    });
+
+    test('no breakdown at all draws nothing rather than throwing', () => {
+        expect(renderTrialPlayers(null)).toEqual([]);
+    });
+
+    test('a combat block carries the split and a skilling one does not', () => {
+        const combat = analyseTrial(record({ samples: [{ t: now, readings: [{ current: 1, max: 2 }] }] }), {});
+        expect(renderTrialBlock(combat, 0, breakdown)).toContain('Per player');
+
+        const skilling = analyseTrial(
+            record({ kind: 'skilling', samples: [{ t: now, readings: [{ current: 1, max: 2 }] }] }),
+            {}
+        );
+        expect(renderTrialBlock(skilling, 0, breakdown)).not.toContain('Per player');
+    });
+});
+
+describe('the payout block, audited', () => {
+    /**
+     * The Trials tab, whose cards carry a tier, a points line and sign-ups and
+     * no progress bar at all.
+     * @param {Object} card - `{name, level, points, signups}`
+     * @returns {Element} The tab
+     */
+    function buildTrialsTab(card) {
+        document.body.innerHTML = '';
+        const root = document.createElement('div');
+        root.className = 'GuildPanel_trialsContent__a';
+
+        const tile = document.createElement('div');
+        tile.className = 'GuildPanel_tile__c';
+        tile.innerHTML =
+            `<div class="GuildPanel_tileName__d">${card.name}</div>` +
+            `<div class="GuildPanel_tileSummary__e">Lv.${card.level}</div>` +
+            `<div class="Card_points__g">${card.points} pts</div>` +
+            `<div class="Card_signups__h">${card.signups} signed up</div>` +
+            '<div class="Card_clock__i">20m 53s</div>';
+        root.appendChild(tile);
+
+        document.body.appendChild(root);
+        return root;
+    }
+
+    const fire = () => game.observers['GuildPanel_']();
+    const text = () => document.body.textContent;
+
+    beforeEach(async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(now);
+        game.settings = { guildTrialsInfo: true };
+        game.settingValues = {};
+        game.clientData = {};
+        game.prices = {};
+        game.buildingLevels = {};
+        game.store = {};
+        game.members = [];
+        await trialsFeature.initialize();
+    });
+
+    afterEach(() => {
+        trialsFeature.cleanup();
+        vi.useRealTimers();
+        document.body.innerHTML = '';
+    });
+
+    test('an In Progress card alone says the banked figure is unknown, not zero', () => {
+        // The reported screenshot: joined the alchemy trial midway, opened only
+        // the In Progress tab, and every payout line read 0
+        document.body.innerHTML = '';
+        const root = document.createElement('div');
+        root.className = 'GuildPanel_trialsContent__a';
+        const tile = document.createElement('div');
+        tile.className = 'GuildPanel_tile__c';
+        tile.innerHTML =
+            '<div class="GuildPanel_tileName__d">Alchemy</div>' +
+            '<div class="ProgressBar_text__f">18,850 / 65,280</div>';
+        root.appendChild(tile);
+        document.body.appendChild(root);
+
+        fire();
+
+        expect(text()).toContain('not known yet');
+        // The remedy is in the tooltip, where a caption this long belongs
+        expect(document.body.innerHTML).toContain('Open the Trials tab');
+    });
+
+    test('the game’s own points figure is preferred over the tier ladder', () => {
+        // A combat trial on tier 5 has banked four, and the ladder makes that
+        // 400 + 200×3 = 1,000. The tier-5 card quotes 1,200, which is the
+        // ladder's running total and so identifies the card as cumulative; the
+        // tier-4 card quotes 1,111, which the ladder does not agree with. The
+        // card is the game talking about this trial, so 1,111 is what is banked.
+        buildTrialsTab({ name: 'Trial Chameleon', level: 130, points: 1111, signups: '3/56' });
+        fire();
+
+        buildTrialsTab({ name: 'Trial Chameleon', level: 140, points: 1200, signups: '3/56' });
+        vi.setSystemTime(now + 5000);
+        fire();
+
+        const tile = guildTrials.record.tiles['combat::trial chameleon'];
+        expect(tile.pointsByTier).toEqual({ 4: 1111, 5: 1200 });
+        expect(text()).toContain('Guild Points banked');
+        expect(text()).toContain('1.1K');
+    });
+
+    test('a card whose points match neither reading is reported rather than averaged', () => {
+        buildTrialsTab({ name: 'Trial Chameleon', level: 140, points: 1337, signups: '3/56' });
+        fire();
+
+        expect(text()).toContain('matches neither');
     });
 });

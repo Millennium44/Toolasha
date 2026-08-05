@@ -178,6 +178,142 @@ export function totalBasePoints(trials) {
 }
 
 /**
+ * What clearing one particular tier is worth on its own.
+ * @param {'skilling'|'combat'} type - Trial type
+ * @param {number} tier - 1-based tier
+ * @returns {number|null} Base points for that tier alone, or null for an unusable tier
+ */
+export function tierMarginalPoints(type, tier) {
+    const first = FIRST_TIER_POINTS[type];
+    const extra = EXTRA_TIER_POINTS[type];
+    if (first === undefined || !Number.isFinite(tier) || tier < 1) return null;
+    return tier === 1 ? first : extra;
+}
+
+/**
+ * What the game's own "600 pts" on a trial card is counting.
+ *
+ * The ladder above is derived from the in-game guide's wording, and the card
+ * states a number outright. Where the two disagree the card is right — it is the
+ * game talking about this trial rather than a rule reconstructed from prose — so
+ * the point of this is to work out *which question* the card is answering before
+ * anything is believed:
+ *
+ * - **Cumulative**: what the trial has been worth in total by the time this tier
+ *   is cleared. Matches `trialBasePoints(type, tier)`.
+ * - **Marginal**: what this one tier adds. Matches {@link tierMarginalPoints}.
+ *
+ * At tier 1 the two are the same number, so the reading is reported as
+ * `ambiguous` rather than pretending one of them was confirmed. A card that
+ * matches neither is `disagrees`, which is the interesting outcome: it means the
+ * ladder in this file is wrong somewhere and the caller should say so rather
+ * than quietly average them.
+ *
+ * @param {Object} input - Inputs
+ * @param {'skilling'|'combat'} input.type - Trial type
+ * @param {number} input.tier - The tier the card is showing
+ * @param {number} input.statedPoints - The card's own figure
+ * @returns {{interpretation: string, ambiguous: boolean, statedPoints: number,
+ *   ladderCumulative: number, ladderMarginal: number|null}|null} The reading, or null on unusable input
+ */
+export function interpretCardPoints({ type, tier, statedPoints } = {}) {
+    if (!Number.isFinite(statedPoints) || !Number.isFinite(tier) || tier < 1) return null;
+    if (FIRST_TIER_POINTS[type] === undefined) return null;
+
+    const ladderCumulative = trialBasePoints(type, tier);
+    const ladderMarginal = tierMarginalPoints(type, tier);
+    const ambiguous = ladderCumulative === ladderMarginal;
+
+    let interpretation = 'disagrees';
+    if (statedPoints === ladderCumulative) interpretation = 'cumulative';
+    else if (statedPoints === ladderMarginal) interpretation = 'marginal';
+
+    return { interpretation, ambiguous, statedPoints, ladderCumulative, ladderMarginal };
+}
+
+/**
+ * The base points a trial has actually banked, preferring the game's own figures.
+ *
+ * `pointsByTier` is what the Trials tab said each tier was worth, collected as
+ * the trial climbed. Given a reading of what those figures *mean*
+ * ({@link interpretCardPoints}), the banked total is either one of them read off
+ * directly (cumulative) or the banked ones added up (marginal), and where a tier
+ * was never seen the ladder fills the gap — which is reported as `mixed` rather
+ * than presented as the game's own number.
+ *
+ * A card that matches neither reading is still believed where it covers the tier
+ * that was banked: it is the game stating what this trial is worth, and the
+ * ladder is a rule reconstructed from prose. It is read as a running total,
+ * which is the plainer meaning of a number on a card, and the disagreement is
+ * handed back so the caller can say the ladder needs correcting rather than
+ * hiding a figure it does not understand.
+ *
+ * @param {Object} input - Inputs
+ * @param {'skilling'|'combat'} input.type - Trial type
+ * @param {number} input.bankedTiers - Tiers this trial has cleared
+ * @param {Object<string|number, number>} [input.pointsByTier] - Tier → the card's stated points
+ * @returns {{basePoints: number, source: 'ladder'|'game'|'mixed', interpretation: string|null,
+ *   stated: number|null, ladder: number, quoted: {tier: number, statedPoints: number}|null}}
+ *   What was banked and where the figure came from
+ */
+export function trialBankedBasePoints({ type, bankedTiers, pointsByTier = {} } = {}) {
+    const banked = Math.max(0, Math.floor(Number(bankedTiers) || 0));
+    const ladder = trialBasePoints(type, banked);
+    const stated = (tier) => {
+        const value = Number(pointsByTier?.[tier]);
+        return Number.isFinite(value) ? value : null;
+    };
+
+    // The reading is taken from the highest tier the game has quoted, because
+    // that is the one most likely to be unambiguous — tier 1 cannot tell the two
+    // interpretations apart at all
+    const quoted = Object.keys(pointsByTier || {})
+        .map(Number)
+        .filter((tier) => Number.isFinite(tier) && stated(tier) !== null)
+        .sort((a, b) => b - a);
+
+    const reading = quoted.length
+        ? interpretCardPoints({ type, tier: quoted[0], statedPoints: stated(quoted[0]) })
+        : null;
+    const interpretation = reading?.interpretation ?? null;
+    const quotedAt = reading ? { tier: quoted[0], statedPoints: reading.statedPoints } : null;
+    const nothing = { basePoints: ladder, source: 'ladder', interpretation, stated: null, ladder, quoted: quotedAt };
+
+    if (banked <= 0 || !reading) return nothing;
+
+    if (interpretation === 'cumulative' || interpretation === 'disagrees') {
+        const exact = stated(banked);
+        if (exact === null) return nothing;
+        return { basePoints: exact, source: 'game', interpretation, stated: exact, ladder, quoted: quotedAt };
+    }
+
+    // Marginal: add up what each banked tier was quoted at, falling back to the
+    // ladder for tiers whose card was never seen
+    let total = 0;
+    let sawGame = false;
+    let sawLadder = false;
+    for (let tier = 1; tier <= banked; tier += 1) {
+        const value = stated(tier);
+        if (value === null) {
+            total += tierMarginalPoints(type, tier) ?? 0;
+            sawLadder = true;
+        } else {
+            total += value;
+            sawGame = true;
+        }
+    }
+
+    return {
+        basePoints: total,
+        source: sawGame && sawLadder ? 'mixed' : sawGame ? 'game' : 'ladder',
+        interpretation,
+        stated: sawGame ? total : null,
+        ladder,
+        quoted: quotedAt,
+    };
+}
+
+/**
  * Guild Points from base points.
  * @param {number} basePoints - Base points
  * @param {number} [buildersHallBonus] - Builders Hall bonus as a fraction (0.15 for +15%)
@@ -209,8 +345,14 @@ export function eligibleMemberTokens(basePoints, treasuryBonus = 0) {
  * once. The figures are still returned — they are simply the un-bonused ones,
  * and the caller is expected to say so.
  *
+ * `basePointsOverride` on a trial is the game's own figure for what it has
+ * banked, from the Trials tab's "600 pts" rather than from the ladder above. It
+ * wins where it is present, because the card is the game talking about this
+ * trial and the ladder is a rule reconstructed from the guide's prose.
+ *
  * @param {Object} input - Inputs
- * @param {Array<{type: string, tiersCleared: number, name?: string}>} input.trials - The week's trials
+ * @param {Array<{type: string, tiersCleared: number, name?: string, basePointsOverride?: number}>}
+ *   input.trials - The week's trials
  * @param {number|null} [input.buildersHallBonus] - Builders Hall bonus fraction, null when unknown
  * @param {number|null} [input.treasuryBonus] - Treasury bonus fraction, null when unknown
  * @returns {{basePoints: number, guildPoints: number, eligibleTokens: number, participantBonusTokens: number,
@@ -223,12 +365,14 @@ export function payoutProjection({ trials = [], buildersHallBonus = null, treasu
     const treasury = treasuryKnown ? treasuryBonus : 0;
 
     const perTrial = trials.map((trial) => {
-        const base = trialBasePoints(trial?.type, trial?.tiersCleared);
+        const override = Number(trial?.basePointsOverride);
+        const base = Number.isFinite(override) ? override : trialBasePoints(trial?.type, trial?.tiersCleared);
         return {
             name: trial?.name ?? null,
             type: trial?.type ?? null,
             tiersCleared: Math.max(0, Math.floor(Number(trial?.tiersCleared) || 0)),
             basePoints: base,
+            basePointsSource: Number.isFinite(override) ? 'game' : 'ladder',
             guildPoints: guildPoints(base, hall),
         };
     });

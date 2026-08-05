@@ -135,6 +135,19 @@ export function recordTileSample(record, tile, at) {
         }
     }
 
+    // What the game itself says clearing this tier is worth, kept per tier as the
+    // trial climbs. The ladder in `guild-trials-math.js` derives the same figure
+    // from the guide's prose, and where the two disagree this one is right — but
+    // only a card that carried *both* a tier and a points line can be filed, so
+    // the tier here is the tile's own rather than the record's carried-over one.
+    // Attaching the In Progress tab's reading to a stale tier is tolerable for a
+    // total that is checked against movement; attaching a points figure to the
+    // wrong tier would silently corrupt the payout.
+    const pointsByTier = { ...(existing.pointsByTier || {}) };
+    if (Number.isFinite(tile?.tier) && Number.isFinite(tile?.points)) {
+        pointsByTier[tile.tier] = tile.points;
+    }
+
     tiles[key] = {
         name: tile?.name || existing.name,
         kind: tile?.kind || existing.kind,
@@ -145,6 +158,7 @@ export function recordTileSample(record, tile, at) {
         // already said
         points: Number.isFinite(tile?.points) ? tile.points : existing.points,
         signups: tile?.signups || existing.signups || null,
+        pointsByTier,
         samples: samples.slice(-MAX_SAMPLES),
         tiers,
     };
@@ -208,11 +222,22 @@ export function mergeTrialRecords(base, incoming) {
         // describing the trial as it is now
         const newest = (record) => record.samples?.[record.samples.length - 1]?.t ?? 0;
         const fresher = newest(tile) >= newest(existing) ? tile : existing;
+        const staler = fresher === tile ? existing : tile;
+
         tiles[key] = {
             name: fresher.name || existing.name,
             kind: fresher.kind || existing.kind,
             level: Number.isFinite(fresher.level) ? fresher.level : existing.level,
             tier: Number.isFinite(fresher.tier) ? fresher.tier : existing.tier,
+            // Carried across rather than dropped. Both come off the Trials tab
+            // and only ever off the Trials tab, and the merge that runs when the
+            // guild's name arrives happens on a record built from whichever tab
+            // was open — so dropping them here erased the sign-up count and the
+            // game's stated points on the first render of every session, which
+            // is exactly the data the payout block was found showing as zero.
+            points: Number.isFinite(fresher.points) ? fresher.points : staler.points,
+            signups: fresher.signups || staler.signups || null,
+            pointsByTier: { ...(staler.pointsByTier || {}), ...(fresher.pointsByTier || {}) },
             samples,
             tiers,
         };

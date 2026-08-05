@@ -36,6 +36,11 @@ import { row, blank, ROW_COLORS } from '../../utils/overlay-format.js';
 import { createPanel, panelCard, panelLine, panelNote } from '../../utils/simple-panel.js';
 import { registerRow } from '../../utils/overlay-rows.js';
 import { guildXPTracker } from './guild-xp-tracker.js';
+import guildLoadoutCapture from './guild-loadout-capture.js';
+import { describeLoadoutAge } from './guild-loadouts.js';
+
+/** How many stat rows of a snapshot the roster panel shows before it stops */
+export const LOADOUT_PREVIEW_ROWS = 6;
 
 const HOUR = 60 * 60 * 1000;
 const DAY = 24 * HOUR;
@@ -207,6 +212,54 @@ function xp(value) {
     return Number.isFinite(value) ? formatKMB(Math.round(value)) : '—';
 }
 
+/**
+ * The stat sheets that have been seen, with the date on every one of them.
+ *
+ * The only place a guild member's build is visible is the unit popup, and it is
+ * gone when the popup closes — so what this shows is a history of glances, not a
+ * roster. Every line therefore leads with when it was taken: a build seen last
+ * month is not what that member is wearing now, and the numbers being correct is
+ * exactly what makes an undated sheet misleading.
+ *
+ * @param {HTMLElement} body - The panel body
+ * @param {Array<Object>} [seen] - Snapshots, newest first; the capture's own by default
+ * @param {number} [now] - Clock
+ */
+export function drawSeenLoadouts(body, seen = guildLoadoutCapture.seen(), now = Date.now()) {
+    const card = panelCard(body, `Seen loadouts (${seen.length})`, ACCENT);
+
+    if (!seen.length) {
+        card.appendChild(panelNote('No stat sheets seen yet.'));
+        card.appendChild(
+            panelNote('Click a member’s icon in the guild In Progress view, or fight a trial beside them.')
+        );
+        return;
+    }
+
+    for (const player of seen) {
+        const headline = player.rows
+            .slice(0, LOADOUT_PREVIEW_ROWS)
+            .map((entry) => `${entry.label} ${entry.value}`)
+            .join(' · ');
+
+        const abilities = player.abilities?.length
+            ? `\nAbilities: ${player.abilities
+                  .map((ability) => `${ability.label}${ability.level ? ` ${ability.level}` : ''}`)
+                  .join(', ')}`
+            : '\nAbilities: not carried by this reading.';
+
+        card.appendChild(
+            panelLine(
+                `${player.name}${player.level ? ` Lv.${player.level}` : ''}`,
+                describeLoadoutAge(player.at, now),
+                ROW_COLORS.gold,
+                `${headline || 'No stat rows in this reading.'}${abilities}\n` +
+                    `A snapshot from when it was read (${player.source}) — not a live figure.`
+            )
+        );
+    }
+}
+
 export const guildRosterPanel = createPanel({
     id: 'guildRoster',
     title: 'Guild Roster',
@@ -262,6 +315,8 @@ export const guildRosterPanel = createPanel({
             }
         }
 
+        drawSeenLoadouts(body);
+
         const contributing = rows.filter((member) => Number.isFinite(member.delta7d) && member.delta7d > 0);
         const card = panelCard(body, `Contribution (${contributing.length} of ${rows.length} measured)`, ACCENT);
         if (!contributing.length) {
@@ -313,9 +368,12 @@ export function registerGuildRosterRow() {
 
 export default {
     name: 'Guild Roster',
-    initialize: () => {
+    initialize: async () => {
         if (!config.getSetting('guildRoster', true)) return;
         registerGuildRosterRow();
+        // Idempotent, and the trials feature starts it too: either being on is
+        // reason enough to be writing down what goes past
+        await guildLoadoutCapture.initialize();
     },
     cleanup: () => guildRosterPanel.hide({ remember: false }),
 };

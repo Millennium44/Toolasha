@@ -42,6 +42,7 @@ vi.mock('./guild-xp-tracker.js', () => ({
 tracker.rows = [];
 
 const {
+    drawSeenLoadouts,
     seriesDelta,
     ratePerHour,
     isGoneQuiet,
@@ -257,5 +258,55 @@ describe('the panel and tile', () => {
         expect(container.textContent).toContain('Bob');
         expect(container.textContent).toContain('1 quiet');
         expect(typeof tile.onOpen).toBe('function');
+    });
+});
+
+describe('seen loadouts', () => {
+    afterEach(() => {
+        document.body.innerHTML = '';
+    });
+
+    /** @returns {HTMLElement} A panel body to draw into */
+    const body = () => {
+        const el = document.createElement('div');
+        document.body.appendChild(el);
+        return el;
+    };
+
+    test('every line leads with when the sheet was seen', () => {
+        const host = body();
+        drawSeenLoadouts(
+            host,
+            [
+                {
+                    name: 'Tib',
+                    level: 150,
+                    at: now - 2 * HOUR,
+                    source: 'battle_unit_fetched',
+                    rows: [{ label: 'Armor', value: '62' }],
+                    abilities: [{ label: 'Fireball', level: 40 }],
+                },
+            ],
+            now
+        );
+
+        expect(host.textContent).toContain('Tib Lv.150');
+        expect(host.textContent).toMatch(/seen /);
+        expect(host.textContent).not.toContain('could not be drawn');
+    });
+
+    test('nothing seen names the gesture that would produce something', () => {
+        const host = body();
+        drawSeenLoadouts(host, [], now);
+
+        expect(host.textContent).toContain('No stat sheets seen yet');
+        expect(host.textContent).toContain('In Progress');
+    });
+
+    test('a reading with no abilities in it says so rather than implying none are equipped', () => {
+        const host = body();
+        drawSeenLoadouts(host, [{ name: 'Moo', at: now, source: 'popup', rows: [], abilities: [] }], now);
+
+        expect(host.querySelector('[title]').title).toContain('not carried by this reading');
     });
 });
