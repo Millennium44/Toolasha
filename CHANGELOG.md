@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The bulk reroller now closes the door behind itself, and takes the free reroll on faith
+
+- **Protected tasks get their green outline back after a bulk reroll**: the reroller left the game's chooser standing open on the card it had just rerolled, which kept that card permanently "mid-flow" — and every decoration pass (protection outline, profit rows, reroll-spend line, icons) rightly refuses to touch a mid-flow card, so nothing ever repainted. The reroller now settles every card it touches: reads the chooser, presses Back, and arms the repaint watch unconditionally instead of hoping another feature does.
+- **The first click takes the MooPass free reroll even when nobody knew it was there**: the old flow read the chooser once after a fixed 300 ms — long enough for an already-open chooser, too short for the MooPass row on one it had just opened, so the unknown case paid coins. It now polls, takes a free row the instant it appears, grants the MooPass row a short grace only while a free offer is still plausible, and remembers the chooser's answer for a minute so the button label stops downgrading "FREE" to "10.0K\*" when the menu closes.
+
 ### The trial recorder grew hands, eyes, and a scoreboard
 
 - **Auto-record**: trials record themselves — starting when the damage gate arms or a live In Progress reading appears, stopping after the trial's hour or ten minutes of silence (and saying which), snapshotting every 15 seconds to IndexedDB so a reload loses nothing. Opt-out via the new Guild Trial Auto Record setting.

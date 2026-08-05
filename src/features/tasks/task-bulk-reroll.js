@@ -12,6 +12,12 @@
  * protected target, tasks rating at or above the visible board's median, and
  * completed tasks (Claim Reward showing) are all left alone.
  *
+ * Each click also puts the card it touched back to rest afterwards (see
+ * `_settleCard`). The game leaves the reroll chooser standing open, and a card
+ * mid-flow is one every Toolasha pass declines to redraw — so a chooser this
+ * reroller opened and never closed is a card whose highlights, profit rows and
+ * reroll-spend line never come back.
+ *
  * Limit semantics match cap protection: a category's rerolls are spent while
  * the next reroll's cost is below the configured threshold, so the minimum
  * threshold (10K coins / 1 cowbell) means zero rerolls in that category, and a
@@ -23,6 +29,7 @@ import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import storage from '../../core/storage.js';
 import webSocketHook from '../../core/websocket.js';
+import { armConfirmSettleWatch } from './task-card-state.js';
 import { readVisibleTaskRatings } from './task-profit-display.js';
 import { findRerollOptions, formatBulkRerollLabel, hasMooPass, readFreeRerollOffer } from './task-reroll-options.js';
 
@@ -46,6 +53,39 @@ const MAX_COWBELL_COST = 32;
  */
 const FREE_REROLL_STALL_MS = 10 * 60 * 1000;
 
+/** How often the reroller looks again at a chooser it has just opened */
+const CHOOSER_POLL_MS = 100;
+
+/** How long it waits for a chooser it opened to draw anything at all */
+const CHOOSER_WAIT_MS = 1200;
+
+/**
+ * The extra beat a freshly opened chooser gets to produce its MooPass row.
+ *
+ * This is the difference the player reported between the first click and every
+ * click after it. A chooser that is already open has long since finished
+ * drawing, so the free reroll is sitting there and gets pressed. A chooser this
+ * click has just opened draws its paid options first, and a pass that read the
+ * card one fixed beat later saw coins and cowbells and nothing else — so the
+ * one click where the free reroll's availability was unknown was also the one
+ * click that paid for it.
+ *
+ * The wait is only taken while a free reroll is still plausible (see
+ * `_mayStillOfferFree`), so a character without a MooPass, or one whose pass is
+ * known to be spent, rerolls at the old speed.
+ */
+const FREE_ROW_GRACE_MS = 400;
+
+/**
+ * How long a free-reroll offer read off an open chooser is trusted for.
+ *
+ * The chooser is the only honest source, and the reroller closes it when it is
+ * done (so the board settles and every decorator repaints). Remembering what it
+ * last saw is what keeps the button label from falling back to a starred guess
+ * one moment after it had the answer in front of it.
+ */
+const FREE_OFFER_MEMORY_MS = 60 * 1000;
+
 /** What the header button explains about itself on hover */
 const BTN_TITLE =
     'Each click performs one action on the first task that needs one: reroll a non-protected task (the MooPass free reroll first, then coins, then cowbells) until it lands on a protected task or hits the per-character reroll limits from the 🛡️ popup, then discard it once a limit is hit. Tasks rating at or above the board median, and completed tasks, are never touched.';
@@ -58,7 +98,7 @@ const BTN_TITLE =
  * out to cost 10K.
  */
 const MAYBE_FREE_NOTE =
-    '\n\n* Your MooPass may make the first reroll free — Toolasha can only see the free option once a task’s Reroll menu is open.';
+    '\n\n* Your MooPass may make the first reroll free — Toolasha can only see the free option once a task’s Reroll menu is open. Clicking anyway opens that menu and takes the free reroll if it is there.';
 
 /**
  * Is a card at the reroll cap?
@@ -121,6 +161,11 @@ export class TaskBulkReroll {
         this.freeRerollStalledUntil = 0;
         this.lastClickWasFree = false;
         this.silentFreeClicks = 0;
+        // What an open chooser last proved about the free reroll, and when. The
+        // chooser is shut again as soon as the action is done, so without this
+        // the answer is thrown away the instant it is learned.
+        this.lastFreeOffer = null;
+        this.lastFreeOfferAt = 0;
     }
 
     /**
@@ -198,7 +243,7 @@ export class TaskBulkReroll {
             const protectedHrids = await this._loadProtectedHrids();
             const pending = this._collectPending(protectedHrids, limits);
             const next = pending[0] || null;
-            const free = readFreeRerollOffer(document);
+            const free = this._readFreeOffer();
             const mooPass = hasMooPass();
             this.button.textContent = formatBulkRerollLabel({
                 pendingCount: next ? pending.length : 0,
@@ -250,6 +295,10 @@ export class TaskBulkReroll {
                         findRerollOptions(next.card).map((option) => `${option.text} [${option.kind}]`)
                     );
                 }
+                // However that went, the chooser this click opened is still
+                // open, and a card mid-flow is a card every Toolasha pass
+                // refuses to touch
+                await this._settleCard(next.card);
             }
         } catch (error) {
             console.error('[TaskBulkReroll] Action failed:', error);
@@ -340,13 +389,7 @@ export class TaskBulkReroll {
 
         let options = findRerollOptions(card);
         if (!options.length) {
-            const expandBtn = Array.from(card.querySelectorAll('button')).find(
-                (b) => b.textContent.trim().toLowerCase() === 'reroll'
-            );
-            if (!expandBtn) return false;
-            expandBtn.click();
-            await sleep(300);
-            options = findRerollOptions(card);
+            options = await this._openChooser(card);
         }
         if (!options.length) return false;
 
@@ -370,6 +413,160 @@ export class TaskBulkReroll {
         if (!target) return false;
         target.button.click();
         return true;
+    }
+
+    /**
+     * Open a card's reroll chooser and wait for it to finish drawing.
+     *
+     * The waiting is the point. The reroller used to press Reroll, sleep for a
+     * fixed 300 ms and read whatever was there, which is why the click that had
+     * to open the chooser behaved differently from every click that found one
+     * already open: the paid options are drawn first, and a card read a beat too
+     * early offers coins and cowbells and no MooPass row at all. So this polls,
+     * stops the moment a free reroll appears, and — only while a free reroll is
+     * still plausible — gives the row a short grace period to turn up before
+     * settling for a paid option.
+     *
+     * @param {HTMLElement} card - The card to open
+     * @returns {Promise<Array<Object>>} The options on offer, or [] if none appeared
+     * @private
+     */
+    async _openChooser(card) {
+        const expandBtn = Array.from(card.querySelectorAll('button')).find(
+            (b) => b.textContent.trim().toLowerCase() === 'reroll'
+        );
+        if (!expandBtn) return [];
+        expandBtn.click();
+
+        const wantFree = this._mayStillOfferFree();
+        const optionsDeadline = Date.now() + CHOOSER_WAIT_MS;
+        let freeDeadline = null;
+        let options = [];
+
+        for (;;) {
+            await sleep(CHOOSER_POLL_MS);
+            options = findRerollOptions(card);
+
+            if (options.some((option) => option.kind === 'free')) break;
+            if (!options.length) {
+                if (Date.now() >= optionsDeadline) break;
+                continue;
+            }
+            if (!wantFree) break;
+
+            // Paid options are drawn; the MooPass row can be a beat behind them
+            if (freeDeadline === null) freeDeadline = Date.now() + FREE_ROW_GRACE_MS;
+            if (Date.now() >= freeDeadline) break;
+        }
+
+        return options;
+    }
+
+    /**
+     * Is it still worth waiting to see whether this reroll could be free?
+     *
+     * Unknown counts as yes — that is the whole of the request behind this: a
+     * player whose label says "10.0K*" is a player Toolasha has not looked for a
+     * free reroll for yet, and the click that opens the chooser is exactly the
+     * moment to look. What it will not do is wait for a row it has already
+     * watched fail to appear, so the answer converges after one reroll.
+     *
+     * @returns {boolean}
+     * @private
+     */
+    _mayStillOfferFree() {
+        if (this.freeRerollStalled) return false;
+        const remembered = this._rememberedFreeOffer();
+        if (remembered) return remembered.available;
+        return hasMooPass();
+    }
+
+    /**
+     * What an open chooser last proved about the free reroll, while it lasts.
+     *
+     * @returns {{known: boolean, available: boolean, remaining: number|null}|null}
+     * @private
+     */
+    _rememberedFreeOffer() {
+        if (!this.lastFreeOffer?.known) return null;
+        if (Date.now() - this.lastFreeOfferAt >= FREE_OFFER_MEMORY_MS) return null;
+        return this.lastFreeOffer;
+    }
+
+    /**
+     * What the button label should say about the free reroll.
+     *
+     * An open chooser anywhere on the board is the honest answer and always
+     * wins. Otherwise the most recent one this reroller saw stands in, so that
+     * closing a chooser does not immediately downgrade "Reroll FREE" back to a
+     * starred guess.
+     *
+     * @returns {{known: boolean, available: boolean, remaining: number|null}}
+     * @private
+     */
+    _readFreeOffer() {
+        const live = readFreeRerollOffer(document);
+        if (live.known) return live;
+        return this._rememberedFreeOffer() || live;
+    }
+
+    /**
+     * Note what an open chooser is currently offering, for the label to reuse.
+     *
+     * @param {ParentNode} [root=document] - Where the board is
+     * @private
+     */
+    _noteFreeOffer(root = document) {
+        const offer = readFreeRerollOffer(root);
+        if (!offer.known) return;
+        this.lastFreeOffer = offer;
+        this.lastFreeOfferAt = Date.now();
+    }
+
+    /**
+     * Put a card back to rest once this reroller is done with it.
+     *
+     * The game leaves the reroll chooser open after a reroll, and every Toolasha
+     * pass refuses to touch a card that is mid-flow — that rule is what stops an
+     * injector rebuilding a card underneath the player's pending click. A player
+     * rerolling by hand presses Back afterwards and the board settles; this
+     * reroller never did, so the card it last acted on stayed mid-flow
+     * indefinitely and its decorations were never drawn. The reported symptom is
+     * the protected task whose green outline is missing after a bulk reroll and
+     * only after a bulk reroll.
+     *
+     * So the chooser this reroller opened is the chooser this reroller closes,
+     * and the settle watch is armed either way — the repaint must not depend on
+     * some other feature's pass having happened to skip a card first.
+     *
+     * @param {HTMLElement} card - The card last acted on
+     * @private
+     */
+    async _settleCard(card) {
+        try {
+            // Read before closing: the chooser is the only place the free
+            // reroll's availability is visible, and it is about to be gone
+            this._noteFreeOffer(document);
+
+            // Back out of the chooser, Cancel out of a discard confirmation
+            // this reroller opened and then could not finish
+            const escapeBtn =
+                card && typeof card.querySelectorAll === 'function'
+                    ? Array.from(card.querySelectorAll('button')).find((b) =>
+                          /^(back|cancel)$/i.test(b.textContent.trim())
+                      )
+                    : null;
+            if (escapeBtn) {
+                escapeBtn.click();
+                await sleep(300);
+            }
+        } catch (error) {
+            console.error('[TaskBulkReroll] Failed to settle the card after acting on it:', error);
+        }
+        // Armed even when nothing was closed: the watch polls until the board
+        // is clear, so arming it is safe whatever state the board is in, and it
+        // is the only thing that makes every decorator run its pass again
+        armConfirmSettleWatch();
     }
 
     /**
@@ -556,6 +753,8 @@ export class TaskBulkReroll {
         this.freeRerollStalled = false;
         this.lastClickWasFree = false;
         this.silentFreeClicks = 0;
+        this.lastFreeOffer = null;
+        this.lastFreeOfferAt = 0;
         this.isInitialized = false;
     }
 }
