@@ -14,7 +14,7 @@ import {
     getCommunityBuffs,
     getLabyrinthMonsters,
 } from './combat-sim-adapter.js';
-import { runLabyrinthSimulation, cancelSimulation } from './combat-sim-runner.js';
+import { runLabyrinthSimulation, cancelSimulation, getMaxWorkers } from './combat-sim-runner.js';
 import { wilsonInterval } from './engine/wilson.js';
 import { findMaxLabyrinthLevel, defaultThreshold } from './labyrinth-level-finder.js';
 import {
@@ -26,7 +26,12 @@ import {
     planWithinBudget,
     runLabyrinthCombinationCheck,
     generateCandidates,
+    generateHouseCandidates,
+    describeHouseScan,
+    calculateUpgradeCost,
+    explainUpgradeCost,
 } from './upgrade-advisor.js';
+import { randomSeed } from './engine/rng.js';
 import {
     LabComparisonStore,
     makeLabRunEntry,
@@ -143,6 +148,62 @@ const LAB_MODE_OPTIONS = {
             <button id="mwi-labsim-combat-targets-toggle" title="Set a desired target level per skill instead of a uniform boost" style="${CHIP_BUTTON_STYLE}">Targets</button>
         </span>`,
 };
+
+/**
+ * Extra simulated time a house-room run may take to reach the baseline's fight
+ * count. A room that adds armor kills no faster and can need longer; a run cut
+ * short by the clock is no longer paired with the baseline it is measured
+ * against. The same figure the shared analyses use for the same reason.
+ */
+const HOUSE_PAIRED_TIME_HEADROOM = 3;
+
+/** Ceiling on house-room simulations in flight at once */
+const HOUSE_MAX_CONCURRENCY = 4;
+
+/**
+ * How many house-room sims to run at a time.
+ *
+ * Each is its own worker against its own copy of the game data, so the budget is
+ * the machine's rather than the panel's.
+ * @returns {number}
+ */
+function houseSimConcurrency() {
+    return Math.max(1, Math.min(getMaxWorkers(), HOUSE_MAX_CONCURRENCY));
+}
+
+/**
+ * Run an async job over every item, a few at a time, keeping input order.
+ *
+ * A lane that throws stops the others being handed more work rather than leaving
+ * them spawning simulations for a result already thrown away.
+ *
+ * @param {Array} items - What to run
+ * @param {Function} run - `(item, index) => Promise`
+ * @param {number} limit - How many at once
+ * @returns {Promise<Array>} Results, in input order
+ */
+async function mapWithLimit(items, run, limit) {
+    const results = new Array(items.length);
+    const width = Math.max(1, Math.min(limit, items.length));
+    let next = 0;
+    let failure = null;
+
+    const lane = async () => {
+        while (failure === null) {
+            const index = next++;
+            if (index >= items.length) return;
+            try {
+                results[index] = await run(items[index], index);
+            } catch (error) {
+                failure = error;
+            }
+        }
+    };
+
+    await Promise.all(Array.from({ length: width }, lane));
+    if (failure) throw failure;
+    return results;
+}
 
 /**
  * @param {number} seconds
@@ -430,11 +491,6 @@ class LabSimUI {
             <input id="mwi-labsim-level" type="number" min="20" max="300" value="100" style="${inputStyle}">
             <label style="color:#888; font-size:12px;">Hours</label>
             <input id="mwi-labsim-hours" type="number" min="1" max="10000" value="${config.getSettingValue('labyrinthRecommendSimHours', 3)}" style="${inputStyle}">
-            <label style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;"
-                   title="Apply taskDamage from trinkets and task badges to this run. Off by default, and normally right off: a labyrinth monster is not your combat task, so the stat pays nothing here.">
-                <input type="checkbox" id="mwi-labsim-taskfight" style="margin:0; cursor:pointer;">
-                Task Fight
-            </label>
         `;
 
         const crateRow = document.createElement('div');
@@ -1643,7 +1699,11 @@ class LabSimUI {
                         },
                         communityBuffs,
                         labyrinthCombatBuffs,
-                        isTaskFight: Boolean(this.panel.querySelector('#mwi-labsim-taskfight')?.checked),
+                        // Never a task fight. A labyrinth monster is not your
+                        // combat task, so taskDamage pays nothing here — the
+                        // panel used to offer a checkbox for it, which could
+                        // only ever be ticked to get a wrong answer.
+                        isTaskFight: false,
                     },
                     (percent) => {
                         const { text: remaining } = eta.update(percent / 100);
@@ -1743,7 +1803,6 @@ class LabSimUI {
                     monsterName: getLabyrinthMonsters().find((m) => m.hrid === monsterHrid)?.name,
                     roomLevel,
                     hours,
-                    taskFight: Boolean(this.panel?.querySelector('#mwi-labsim-taskfight')?.checked),
                     crates,
                     gearLabel: this._editor?.generateSimLabel?.() || '',
                     attempts: simResult.labyAttemptCount || 0,
@@ -2071,6 +2130,33 @@ class LabSimUI {
                 { abortSignal: () => this._upgradeAborted }
             );
 
+            // House rooms are weighed after it rather than inside it — see
+            // `_runHouseUpgradePass` for why they cannot ride along — and their
+            // rows join the same table, ranked on the same Gold/1%
+            if (plan.standaloneModes?.includes('house') && !this._upgradeAborted) {
+                const house = await this._runHouseUpgradePass({
+                    playerDTO: playerDTOs[playerIndex],
+                    gameData,
+                    monsterHrid,
+                    roomLevel,
+                    crates,
+                    hours,
+                    communityBuffs,
+                    labyrinthCombatBuffs,
+                    onProgress: ({ current, total, description }) => {
+                        if (this._upgradeAborted) return;
+                        const fill = this.panel.querySelector('#mwi-labsim-upgrade-progress-fill');
+                        const text = this.panel.querySelector('#mwi-labsim-upgrade-progress-text');
+                        if (fill) fill.style.width = `${Math.round((current / total) * 100)}%`;
+                        if (text) text.textContent = `House rooms ${current} / ${total}: ${description}`;
+                    },
+                });
+                analysisResult.results.push(...house.results);
+                this._houseScanNote = house.note;
+            } else {
+                this._houseScanNote = '';
+            }
+
             this._renderUpgradeResults(analysisResult, resultsEl);
         } catch (error) {
             if (error.message !== 'Cancelled' && error.message !== 'Aborted') {
@@ -2120,6 +2206,170 @@ class LabSimUI {
         } catch (error) {
             console.error('[LabSimUI] Failed to generate candidates for', modes, error);
             return [];
+        }
+    }
+
+    /**
+     * Weigh one more level on each combat-relevant house room.
+     *
+     * ## Why this is a pass of its own
+     *
+     * Every other candidate set rides along inside `runLabyrinthUpgradeAnalysis`
+     * as an extra candidate. A house room cannot, because the shared
+     * `applyCandidateToDTO` — which that analysis uses to build the modified
+     * character for each candidate — installs equipment, abilities, skill
+     * levels, shrine levels and drinks, and has no branch for a room level. A
+     * house candidate handed to it falls through to the equipment branch and
+     * writes a junk slot, so the simulation runs the *unchanged* character and
+     * the row comes back a confident +0.00%. A wrong row that looks measured is
+     * worse than no row, so the levels are applied here instead, straight onto
+     * the DTO the way the game holds them.
+     *
+     * ## Which rooms
+     *
+     * Whatever `houseRoomAffectsCombat` admits: a room the game itself tags as
+     * usable in combat, or one whose buffs are stats the combat engine reads —
+     * damage, armor, accuracy, evasion, the amplifies and resistances, crit rate
+     * and damage, attack and cast speed, tenacity, threat, life steal, thorns,
+     * HP and MP regen, healing amplify, wisdom, rare find and the combat drop
+     * rates. A room that only feeds a skilling action never appears. Rooms
+     * already at level 8 are skipped, having nothing to buy.
+     *
+     * ## What it costs
+     *
+     * `calculateUpgradeCost` on the room candidate: the build cost of that one
+     * level — coins at face value plus the materials at their buy price — which
+     * is what the Gold/1% column then divides by the win-rate gain.
+     *
+     * The pass runs its own baseline. It has to: the analysis's baseline was
+     * simulated on a seed this file never sees, and a delta read off two
+     * independently sampled numbers is noise. Its own baseline, its own seed and
+     * the same paired trial count give each room row an honest delta — the
+     * absolute win rate beside it may differ by a fraction of a percent from the
+     * table's other rows, which is the price of the pairing.
+     *
+     * @param {Object} params
+     * @param {Object} params.playerDTO - The character being analyzed
+     * @param {Object} params.gameData - From `buildGameDataPayload`
+     * @param {string} params.monsterHrid - Labyrinth monster
+     * @param {number} params.roomLevel - Room level to fight at
+     * @param {string[]} params.crates - Crate hrids in force
+     * @param {number} params.hours - Hour budget per simulation
+     * @param {Object} params.communityBuffs - Community buffs
+     * @param {Array} params.labyrinthCombatBuffs - Labyrinth upgrade buffs
+     * @param {Function} [params.onProgress] - `({ current, total, description })`
+     * @returns {Promise<{results: Array<Object>, note: string}>} Rows shaped like
+     *   the analysis's own gold rows, plus a line for the status bar
+     * @private
+     */
+    async _runHouseUpgradePass({
+        playerDTO,
+        gameData,
+        monsterHrid,
+        roomLevel,
+        crates,
+        hours,
+        communityBuffs,
+        labyrinthCombatBuffs,
+        onProgress,
+    }) {
+        const empty = { results: [], note: '' };
+        try {
+            if (!playerDTO || !gameData || !monsterHrid) return empty;
+
+            const candidates = generateHouseCandidates(playerDTO, gameData);
+            if (!candidates.length) {
+                // An empty list explains itself rather than reading as "no
+                // upgrades": every combat room at level 8 is a different answer
+                // from a scan that found no combat rooms at all
+                const scan = describeHouseScan(playerDTO, gameData);
+                return {
+                    results: [],
+                    note: scan.combatRelevant
+                        ? `all ${scan.combatRelevant} combat house rooms are already maxed`
+                        : 'no combat-relevant house rooms found',
+                };
+            }
+
+            const zoneHrid = getCombatZones()[0]?.hrid || '/actions/combat/fly';
+            const seed = config.getSettingValue('combatSim_sharedSeed', true) ? randomSeed() : undefined;
+            const total = candidates.length + 1;
+
+            onProgress?.({ current: 0, total, description: 'baseline' });
+            const baselineRun = await runLabyrinthSimulation({
+                gameData,
+                playerDTOs: [playerDTO],
+                zoneHrid,
+                monsterHrid,
+                roomLevel,
+                crates,
+                hours,
+                communityBuffs,
+                labyrinthCombatBuffs,
+                seed,
+            });
+            if (this._upgradeAborted) return empty;
+
+            const baselineAttempts = Math.max(1, baselineRun.labyAttemptCount || 1);
+            const baselineWinRate = (baselineRun.encounters || 0) / baselineAttempts;
+            // Every room plays exactly the baseline's fight count, on the same
+            // seed, so the shared draws cancel out of the difference
+            const paired = { minTrials: baselineAttempts, maxTrials: baselineAttempts };
+
+            const done = { count: 1 };
+            const runOne = async (candidate) => {
+                if (this._upgradeAborted) return null;
+                const dto = JSON.parse(JSON.stringify(playerDTO));
+                // A room sitting at level 0 is not in the map at all yet
+                if (!dto.houseRooms) dto.houseRooms = {};
+                dto.houseRooms[candidate.roomHrid] = candidate.upgradeLevel;
+
+                const run = await runLabyrinthSimulation({
+                    gameData,
+                    playerDTOs: [dto],
+                    zoneHrid,
+                    monsterHrid,
+                    roomLevel,
+                    crates,
+                    // Headroom, because a defensive room can need longer than
+                    // the baseline did to reach the same number of fights
+                    hours: hours * HOUSE_PAIRED_TIME_HEADROOM,
+                    precision: paired,
+                    communityBuffs,
+                    labyrinthCombatBuffs,
+                    seed,
+                });
+                if (this._upgradeAborted) return null;
+
+                done.count++;
+                onProgress?.({ current: done.count, total, description: candidate.description });
+
+                const attempts = Math.max(1, run.labyAttemptCount || 1);
+                const winRate = (run.encounters || 0) / attempts;
+                const cost = calculateUpgradeCost(candidate, gameData);
+                const winRateDelta = winRate - baselineWinRate;
+                return {
+                    candidate: { ...candidate, cost },
+                    costDetail: explainUpgradeCost(candidate, gameData),
+                    costType: 'gold',
+                    cost,
+                    winRate,
+                    winRateDelta,
+                    goldPerWinRate: winRateDelta > 0 && cost != null ? cost / (winRateDelta * 100) : Infinity,
+                    metricType: 'winRate',
+                };
+            };
+
+            const rows = (await mapWithLimit(candidates, runOne, houseSimConcurrency())).filter(Boolean);
+            return {
+                results: rows,
+                note: rows.length ? `${rows.length} house rooms weighed` : '',
+            };
+        } catch (error) {
+            if (error?.message !== 'Cancelled' && error?.message !== 'Aborted') {
+                console.error('[LabSimUI] House room pass failed:', error);
+            }
+            return empty;
         }
     }
 
@@ -2534,6 +2784,11 @@ class LabSimUI {
             'padding:4px 6px; text-align:left; border-bottom:1px solid #333; color:#888; font-weight:600; ' +
             'white-space:nowrap; position:sticky; top:-10px; z-index:2; background:#12121f;';
         const tdStyle = 'padding:4px 6px; border-bottom:1px solid #1a1a2e; white-space:nowrap;';
+        // Only the Upgrade name reflows; a two-piece swap label is long enough
+        // to push every measured column off the panel if it is kept to one line
+        const tdNameStyle =
+            'padding:4px 6px; border-bottom:1px solid #1a1a2e; white-space:normal; ' +
+            'overflow-wrap:anywhere; line-height:1.4;';
         const bestDelta = Math.min(...results.map((r) => r.attemptsDelta));
 
         // What each column sorts by, and which way round is "good" — clicking
@@ -2608,7 +2863,7 @@ class LabSimUI {
             const noise =
                 r.attemptsDeltaNoise > 0 ? ` <span style="color:#555;">±${r.attemptsDeltaNoise.toFixed(1)}</span>` : '';
             html += `<tr style="cursor:pointer; color:#e0e0e0;" data-allfights-row="${i}">
-                <td style="${tdStyle}${measured ? '' : ' opacity:0.55;'}">${r.candidate.description}</td>
+                <td style="${tdNameStyle}${measured ? '' : ' opacity:0.55;'}">${r.candidate.description}${combatSimUI.upgradeRowActionsHtml(r)}</td>
                 <td style="${tdStyle} color:#aaa;">${cost}</td>
                 <td style="${tdStyle} color:${measured && r.attemptsSavedPerMillion > 0 ? '#4caf50' : '#888'}; font-weight:600;">${perGold}</td>
                 <td style="${tdStyle} ${attemptsStyle}">${fmtAttempts(r.expectedAttempts)}</td>
@@ -2763,7 +3018,14 @@ class LabSimUI {
             'text-align:right; padding:4px; color:#888; border-bottom:1px solid #333; cursor:pointer; user-select:none;';
         const thLeftStyle =
             'text-align:left; padding:4px; color:#888; border-bottom:1px solid #333; cursor:pointer; user-select:none;';
-        const tdStyle = 'padding:3px 4px; text-align:right;';
+        // Numbers right-align and never wrap; only the Upgrade name reflows —
+        // the same division the combat sim's table makes, and what stops a
+        // two-piece swap label ("Royal Nature Robe Top +7 + Royal Nature Robe
+        // Bottoms +7 → …") from running off the edge of the panel on one line
+        const tdStyle = 'padding:3px 4px; text-align:right; white-space:nowrap;';
+        const tdNameStyle =
+            'padding:3px 4px; color:#e0e0e0; text-align:left; white-space:normal; ' +
+            'overflow-wrap:anywhere; line-height:1.4;';
 
         // Pre-compute row data for sorting
         const tokenRows = tokenResults.map((r) => {
@@ -2788,6 +3050,10 @@ class LabSimUI {
 
             return {
                 desc: r.candidate?.description || '',
+                // Whatever handoff buttons the shared builder emits for this
+                // row — never a hand-picked subset of them, so a button added
+                // to the combat sim's rows turns up here without being asked for
+                actions: combatSimUI.upgradeRowActionsHtml(r),
                 tokenCost,
                 rateVal,
                 rateStr,
@@ -2808,6 +3074,7 @@ class LabSimUI {
 
             return {
                 desc: r.candidate?.description || '',
+                actions: combatSimUI.upgradeRowActionsHtml(r),
                 cost,
                 costStr: cost ? formatWithSeparator(cost) : '\u2014',
                 winRate,
@@ -2855,7 +3122,7 @@ class LabSimUI {
 
             for (const row of tokenRows) {
                 html += `<tr style="border-bottom:1px solid #1a1a1a;">
-                    <td style="padding:3px 4px; color:#e0e0e0;">${row.desc}</td>
+                    <td style="${tdNameStyle}">${row.desc}${row.actions}</td>
                     <td style="${tdStyle} color:#ccc;">${row.tokenCost || '\u2014'}</td>
                     <td style="${tdStyle} color:#ccc;">${row.rateStr}</td>
                     <td style="${tdStyle} color:${row.deltaColor}; font-weight:600;">${row.deltaStr}</td>
@@ -2886,7 +3153,7 @@ class LabSimUI {
 
             goldRows.forEach((row, i) => {
                 html += `<tr data-gold-row="${i}" style="border-bottom:1px solid #1a1a1a; cursor:pointer;" title="Click for the cost breakdown">
-                    <td style="padding:3px 4px; color:#e0e0e0;">${row.desc}</td>
+                    <td style="${tdNameStyle}">${row.desc}${row.actions}</td>
                     <td style="${tdStyle} color:#ccc;">${row.costStr}</td>
                     <td style="${tdStyle} color:#ccc;">${row.winRateStr}</td>
                     <td style="${tdStyle} color:${row.deltaColor}; font-weight:600;">${row.deltaStr}</td>
@@ -2909,6 +3176,9 @@ class LabSimUI {
             if (tokenResults.length > 0) html += renderTokenTable();
             if (goldResults.length > 0) html += renderGoldTable();
             container.innerHTML = html;
+            // Re-wired on every render: a sort rebuilds the table, and buttons
+            // wired to the elements it threw away do nothing at all
+            combatSimUI.wireUpgradeRowActions(container, 'LabSimUI');
         };
 
         renderAll();
@@ -2969,7 +3239,10 @@ class LabSimUI {
         };
         container.addEventListener('click', this._upgradeSortHandler);
 
-        this._setStatus(`${results.length} upgrade candidates analyzed.`);
+        this._setStatus(
+            `${results.length} upgrade candidates analyzed.` +
+                (this._houseScanNote ? ` House rooms: ${this._houseScanNote}.` : '')
+        );
     }
 
     /**
@@ -2997,6 +3270,25 @@ class LabSimUI {
                 '#ccc'
             )
         );
+
+        // A room level is not a listing, so the breakdown says what it is: a
+        // build cost, and a number measured against a baseline of its own
+        if (result.candidate?.type === 'house') {
+            parts.push(
+                line(
+                    `House room level ${result.candidate.currentLevel} → ${result.candidate.upgradeLevel}. ` +
+                        'Cost is the build cost of that one level — coins at face value plus the materials at ' +
+                        'their buy price.'
+                )
+            );
+            parts.push(
+                line(
+                    'Weighed in a pass of its own, against its own baseline at its own seed, so the delta is ' +
+                        'paired. The absolute win rate can sit a fraction of a percent off the rows above it.',
+                    '#888'
+                )
+            );
+        }
 
         if (!detail) {
             parts.push(line('No cost breakdown available for this candidate.', '#666'));

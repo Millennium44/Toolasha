@@ -394,6 +394,44 @@ function isAlreadyEquipped(assignment, playerDTO) {
 }
 
 /**
+ * One item as it should read in a swap label: its name, and its own enhancement
+ * level when it has one. A +0 piece is written plain, the way the game writes it.
+ * @param {string} name - Item name
+ * @param {number} [level] - Enhancement level
+ * @returns {string}
+ */
+export function labelItemWithLevel(name, level = 0) {
+    const enhancement = Math.max(0, Math.floor(Number(level) || 0));
+    return enhancement > 0 ? `${name} +${enhancement}` : name;
+}
+
+/**
+ * The "what you wear now → what this buys" line for one swap.
+ *
+ * Every item on both sides carries its own enhancement level. The old shape put
+ * a single `(+7)` at the end, which said nothing at all about the gear coming
+ * *off* — and on a two-piece swap it read as one level for the whole change,
+ * with a `(+7/+10)` fallback whose slash notation nobody could map back onto the
+ * pieces it belonged to. "Royal Nature Robe Top +7 + Royal Nature Robe Bottoms
+ * +7 → Royal Fire Robe Top +7 + Royal Fire Robe Bottoms +7" needs no key.
+ *
+ * @param {string[]} slots - Slots the swap touches, in display order
+ * @param {Object} assignment - slot → { name, enhancementLevel }
+ * @param {Object} playerDTO - The loadout being changed
+ * @param {Object} gameData - Game data payload, for the worn pieces' names
+ * @returns {string} Description
+ */
+export function describeSwap(slots, assignment, playerDTO, gameData) {
+    const fromNames = slots.map((slot) => {
+        const worn = playerDTO?.equipment?.[slot];
+        const name = gameData?.itemDetailMap?.[worn?.hrid]?.name;
+        return name ? labelItemWithLevel(name, worn.enhancementLevel) : 'empty';
+    });
+    const toNames = slots.map((slot) => labelItemWithLevel(assignment[slot].name, assignment[slot].enhancementLevel));
+    return `${fromNames.join(' + ')} → ${toNames.join(' + ')}`;
+}
+
+/**
  * Build the forced candidates: each set's body and legs alone, each set as a pair,
  * the cross-set pairs, and — when the spells use an element the weapon does not —
  * that element's weapon, alone and with its matching robes.
@@ -539,17 +577,7 @@ export function generateLabArmorCandidates(playerDTO, gameData, inventory) {
         const primary = assignment[primarySlot];
         const currentPrimary = playerDTO.equipment?.[primarySlot];
 
-        // Same "current → replacement (+level)" shape as every other row, so a
-        // two-piece swap reads as one change instead of its own notation
-        const fromNames = slots.map(
-            (slot) => gameData.itemDetailMap[playerDTO.equipment?.[slot]?.hrid]?.name || 'empty'
-        );
-        const toNames = slots.map((slot) => assignment[slot].name);
-        const levels = slots.map((slot) => assignment[slot].enhancementLevel);
-        const levelPart = levels.every((level) => level === levels[0])
-            ? `(+${levels[0]})`
-            : `(${levels.map((level) => `+${level}`).join('/')})`;
-        const description = `${fromNames.join(' + ')} → ${toNames.join(' + ')} ${levelPart}`;
+        const description = describeSwap(slots, assignment, playerDTO, gameData);
 
         candidates.push({
             type: 'cross_slot',

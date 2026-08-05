@@ -54,6 +54,17 @@ export const LAB_UPGRADE_DIMENSIONS = [
             'says how many simulations it comes to before it starts.',
     },
     {
+        key: 'house',
+        label: 'House Rooms',
+        defaultOn: false,
+        title:
+            'One more level on each house room the combat engine actually reads — the rooms whose buffs are ' +
+            'combat stats (damage, armor, accuracy, evasion, resistances, crit, tenacity, life steal and the ' +
+            'rest), plus any room the game itself tags as usable in combat.\n\n' +
+            'Cost is the build cost of that one level: the coins at face value plus the materials at their ' +
+            'buy price. Ranked on the same win rate and Gold/1% as every other row.',
+    },
+    {
         key: 'combat_level',
         label: 'Combat Lv',
         defaultOn: false,
@@ -72,6 +83,19 @@ export const LAB_UPGRADE_DIMENSIONS = [
 
 /** Every dimension key, for validating what came back from storage. */
 export const LAB_UPGRADE_DIMENSION_KEYS = LAB_UPGRADE_DIMENSIONS.map((d) => d.key);
+
+/**
+ * Dimensions the shared analysis cannot generate for itself, and which the panel
+ * therefore measures in a pass of its own.
+ *
+ * House rooms are the only one. A room level lives on the character rather than
+ * in a loadout, and the candidate applier the labyrinth analyses share installs
+ * equipment, abilities, skill levels, shrines and drinks — but not a room level,
+ * so a house candidate handed to it would be simulated as no change at all and
+ * come back at a confident +0.00%. Keeping them out of the mode lists here is
+ * what stops that row from ever being drawn.
+ */
+export const LAB_STANDALONE_DIMENSIONS = new Set(['house']);
 
 /**
  * How many fights an analysis is about.
@@ -205,17 +229,29 @@ export function labScopeTargetCount(scopeMode, allCount, chosenCount) {
  * budget per fight shrinks on a big run, and `estimateLabUpgradeSims` puts the
  * count in front of the player before anything starts. Fights are never sampled.
  *
- * Kept as a function, and kept called, because the shape is the right place for
- * the next rule that is genuinely impossible rather than merely large.
+ * House rooms are the one entry that still has a rule, and it is a genuine
+ * limit rather than a size worry: the whole-run analysis installs each candidate
+ * into each fight's own loadout, and a room level is not something a loadout
+ * carries — so across several fights there is nowhere for it to land.
  *
- * @param {string} _scopeMode - `current` | `all` | `selected`
+ * Keyed on the scope rather than on how many fights it came to: a subset of one
+ * is still the whole-run analysis, so "one fight" is not the question — "is this
+ * the Configure fight" is.
+ *
+ * @param {string} scopeMode - `current` | `all` | `selected`
  * @param {number} _targetCount - From `labScopeTargetCount`
  * @returns {Object<string, {enabled: boolean, reason: string}>} Keyed by dimension
  */
-export function labDimensionAvailability(_scopeMode, _targetCount) {
+export function labDimensionAvailability(scopeMode, _targetCount) {
     const availability = {};
     for (const dimension of LAB_UPGRADE_DIMENSIONS) {
         availability[dimension.key] = { enabled: true, reason: '' };
+    }
+    if (scopeMode !== 'current') {
+        availability.house = {
+            enabled: false,
+            reason: 'House rooms are weighed for the Configure fight only — the whole-run analysis installs each candidate into a fight’s loadout, and a room level is not part of a loadout.',
+        };
     }
     return availability;
 }
@@ -247,6 +283,8 @@ export const LAB_DIMENSION_SIMS_PER_FIGHT = {
     // One per combat skill, and a combat level is every fight
     combat_level: 6,
     guild_shrine: 6,
+    // One per combat-relevant room, plus the pass's own baseline
+    house: 12,
 };
 
 /** Sims above which a run is worth warning about before it starts */
@@ -311,7 +349,11 @@ export function labAbilityLevelTypeAvailability(scopeMode, targetCount) {
  */
 export function planLabSingleTargetModes(dimensions) {
     const dims = [...new Set((dimensions || []).filter((key) => LAB_UPGRADE_DIMENSION_KEYS.includes(key)))];
-    if (!dims.length) return { upgradeMode: 'equipment', extraModes: [] };
+    // Nothing for the analysis to generate — which happens when the only thing
+    // checked is measured in a pass of its own. `none` matches no branch in the
+    // generator, so it produces an empty candidate list rather than quietly
+    // falling back to equipment and ranking gear nobody asked about.
+    if (!dims.length) return { upgradeMode: 'none', extraModes: [] };
 
     if (dims.includes('equipment') && dims.includes('ability_level')) {
         return {
@@ -362,6 +404,11 @@ export function planLabUpgradeRun({
         };
     }
 
+    // What the shared analysis generates, and what the panel has to measure for
+    // itself alongside it
+    const standaloneModes = kept.filter((key) => LAB_STANDALONE_DIMENSIONS.has(key));
+    const analysisModes = kept.filter((key) => !LAB_STANDALONE_DIMENSIONS.has(key));
+
     if (scopeMode === 'current') {
         if (!configureMonsterHrid) {
             return { kind: 'none', dropped, error: 'Select a monster in the Configure tab first.' };
@@ -370,7 +417,8 @@ export function planLabUpgradeRun({
             kind: 'single',
             dropped,
             monsterHrids: [configureMonsterHrid],
-            ...planLabSingleTargetModes(kept),
+            standaloneModes,
+            ...planLabSingleTargetModes(analysisModes),
         };
     }
 
@@ -390,5 +438,5 @@ export function planLabUpgradeRun({
         };
     }
 
-    return { kind: 'allFights', dropped, monsterHrids, modes: kept };
+    return { kind: 'allFights', dropped, monsterHrids, modes: analysisModes, standaloneModes: [] };
 }

@@ -17,6 +17,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - **The Task Tokens tile earns its rate line**: `tokens/hr this week` beneath the board value, on wall-clock time between your first and last claim (the tooltip names the sample and the basis; under two claims shows no rate rather than a fake one).
 - **Task statistics gains "Claimed Tasks (last 7 days)"**: tasks, tokens, coins, both hourly rates, the measured span — and reroll spend over the same window tied in for a **Net Task Income** figure, plus your last five completions.
 
+### The lab sim grows up
+
+- **Task Fight is gone from the lab sim** — lab targets can never be tasks; the sim now passes a hard "no" and runs recorded with the old flag still say so in their labels rather than passing as ordinary runs.
+- **Lab upgrade rows read like combat sim rows**: names wrap instead of running one line, and every row carries the same handoff buttons — "Save for this" (Equipment Savings), "Watch" (watchlist), and the shared builder's newer buttons ride along automatically.
+- **Multi-item swaps name every piece's level**: "Royal Nature Robe Top +7 + Royal Nature Robe Bottoms +7 → Royal Fire Robe Top +7 + Royal Fire Robe Bottoms +7" — no more trailing "(+7)" covering the set.
+- **House Rooms join the lab sim's Upgrade tab**: one-level-up candidates for every combat-relevant room, costed at build cost (coins + materials at buy price), ranked on the same Win Rate / Gold-per-1% as everything else. Configure-fight scope for now — the analysis says why when unavailable.
+
 ### eWatch learns abilities
 
 - **Ability levels are savings goals now**: an "Ability Levels" card in Equipment Savings tracks "Fierce Aura Lv46"-style targets — book cost at market (unpriced stays unpriced, never free), progress bar and ETA from your gold, green "Reached" when you get there, ✕ to remove. Add them by hand from Edit mode (learned abilities first, next level pre-filled), or hand them over from the sims. Ability goals join the headline candidates, the overlay tile's "what's next", and the Everything total.

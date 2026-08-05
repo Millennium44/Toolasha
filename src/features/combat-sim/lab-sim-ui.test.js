@@ -22,7 +22,10 @@ const game = vi.hoisted(() => ({
     monsters: [],
     /** Monster hrid → room level the skip thresholds resolve to */
     skipLevels: {},
+    players: [],
 }));
+const sim = vi.hoisted(() => ({ calls: [] }));
+const rowActions = vi.hoisted(() => ({ wired: [] }));
 
 vi.mock('../../core/config.js', () => ({
     default: {
@@ -87,15 +90,19 @@ vi.mock('../../utils/panel-geometry.js', () => ({
 
 vi.mock('./combat-sim-adapter.js', () => ({
     buildGameDataPayload: () => ({ itemDetailMap: {} }),
-    buildAllPlayerDTOs: async () => ({ players: [] }),
+    buildAllPlayerDTOs: async () => ({ players: game.players, selfHrid: game.players[0]?.hrid }),
     getCombatZones: () => [],
     getCommunityBuffs: () => ({}),
     getLabyrinthMonsters: () => game.monsters,
 }));
 
 vi.mock('./combat-sim-runner.js', () => ({
-    runLabyrinthSimulation: async () => ({}),
+    runLabyrinthSimulation: async (params) => {
+        sim.calls.push(params);
+        return { labyAttemptCount: 100, encounters: 70, deaths: {}, simulatedTime: 3 * 3600 * 1e9 };
+    },
     cancelSimulation: () => {},
+    getMaxWorkers: () => 2,
 }));
 
 vi.mock('./sim-editor.js', () => ({
@@ -116,12 +123,20 @@ vi.mock('./sim-editor.js', () => ({
 
 // The upgrade-row handoff buttons come from the combat sim panel, which brings
 // two module-scope inventory panels with it. This file is about where the lab
-// panel opens, so it borrows the vocabulary and none of the furniture
+// panel opens, so it borrows the vocabulary and none of the furniture.
+//
+// The stand-in emits a marker button per row rather than nothing, because what
+// is worth asserting is that the lab table renders *whatever the shared builder
+// hands it* — a button added over there (Save for this, Watch, Market) has to
+// turn up here without this file being told about it.
 vi.mock('./combat-sim-ui.js', () => ({
     default: {
         upgradeRowPurchase: () => null,
-        upgradeRowActionsHtml: () => '',
-        wireUpgradeRowActions: () => {},
+        upgradeRowActionsHtml: (result) =>
+            `<button data-shared-action="${result?.candidate?.description || ''}">buttons</button>`,
+        wireUpgradeRowActions: (container) => {
+            rowActions.wired.push(container);
+        },
     },
 }));
 
@@ -304,6 +319,7 @@ describe('the Upgrade tab asks two questions instead of one', () => {
             'equipment',
             'ability_level',
             'ability_swap',
+            'house',
             'combat_level',
             'guild_shrine',
         ]);
@@ -599,5 +615,145 @@ describe('a single-target result can be read against the last one', () => {
 
         expect(ui._comparison.runs).toHaveLength(2);
         expect(ui.panel.querySelector('#mwi-labsim-comparison')).toBeNull();
+    });
+});
+
+describe('a labyrinth fight is never a task fight', () => {
+    beforeEach(async () => {
+        geometry.saved = null;
+        geometry.wasOpen = false;
+        game.monsters = [{ hrid: '/monsters/mimic', name: 'Mimic' }];
+        game.skipLevels = {};
+        game.players = [{ hrid: 'p1', equipment: {}, abilities: [], houseRooms: {} }];
+        sim.calls = [];
+        ui.buildPanel();
+        await settle();
+    });
+
+    afterEach(() => {
+        ui.destroy();
+        game.players = [];
+    });
+
+    test('the Task Fight option is gone from the Configure tab', () => {
+        // A labyrinth monster is not your combat task, so the taskDamage the box
+        // applied pays nothing — the only thing ticking it could do was produce
+        // a wrong number
+        expect(ui.panel.querySelector('#mwi-labsim-taskfight')).toBeNull();
+        expect(ui.panel.textContent).not.toContain('Task Fight');
+    });
+
+    test('and the simulation is told so outright rather than by an absent box', async () => {
+        ui.panel.querySelector('#mwi-labsim-monster').value = '/monsters/mimic';
+        await ui._onSimulate();
+
+        expect(sim.calls).toHaveLength(1);
+        expect(sim.calls[0].isTaskFight).toBe(false);
+    });
+
+    test('nothing recorded from the panel carries the flag either', async () => {
+        ui.panel.querySelector('#mwi-labsim-monster').value = '/monsters/mimic';
+        await ui._onSimulate();
+
+        expect(ui._comparison.runs).toHaveLength(1);
+        expect(ui._comparison.runs[0].settings).not.toHaveProperty('taskFight');
+    });
+});
+
+describe('the upgrade table reads like the combat sim’s', () => {
+    /** One gold row and one token row, the shape `_renderUpgradeResults` takes. */
+    const analysis = () => ({
+        baseline: { winRate: 0.4962 },
+        results: [
+            {
+                candidate: {
+                    type: 'cross_slot',
+                    description:
+                        'Royal Nature Robe Top +7 + Royal Nature Robe Bottoms +7 → ' +
+                        'Royal Fire Robe Top +7 + Royal Fire Robe Bottoms +7',
+                },
+                costType: 'gold',
+                cost: 8879530,
+                winRate: 0.5136,
+                winRateDelta: 0.0174,
+                metricType: 'winRate',
+                costDetail: null,
+            },
+            {
+                candidate: { type: 'labyrinth_buff', description: 'Fireball Lv48 → Lv53' },
+                costType: 'token',
+                tokenCost: 120,
+                winRate: 0.52,
+                winRateDelta: 0.02,
+                metricType: 'winRate',
+            },
+        ],
+    });
+
+    let host;
+    let container;
+
+    beforeEach(async () => {
+        geometry.saved = null;
+        geometry.wasOpen = false;
+        game.monsters = [];
+        game.skipLevels = {};
+        rowActions.wired = [];
+        ui.buildPanel();
+        await settle();
+
+        host = document.createElement('div');
+        container = document.createElement('div');
+        host.appendChild(container);
+        document.body.appendChild(host);
+    });
+
+    afterEach(() => {
+        host.remove();
+        ui.destroy();
+    });
+
+    test('every row carries whatever the shared builder emits, in both tables', () => {
+        ui._renderUpgradeResults(analysis(), container);
+
+        const emitted = [...container.querySelectorAll('[data-shared-action]')].map((b) =>
+            b.getAttribute('data-shared-action')
+        );
+        expect(emitted).toContain('Fireball Lv48 → Lv53');
+        expect(emitted.some((d) => d.startsWith('Royal Nature Robe Top +7'))).toBe(true);
+    });
+
+    test('and they are given their behaviour once the strings are in the document', () => {
+        ui._renderUpgradeResults(analysis(), container);
+
+        expect(rowActions.wired).toContain(container);
+    });
+
+    test('re-sorting rebuilds the rows, so it wires them again', () => {
+        ui._renderUpgradeResults(analysis(), container);
+        const before = rowActions.wired.length;
+
+        container.querySelector('th[data-sort-key="cost"]').dispatchEvent(new window.Event('click', { bubbles: true }));
+
+        expect(rowActions.wired.length).toBeGreaterThan(before);
+    });
+
+    test('a long upgrade name wraps instead of running off the panel on one line', () => {
+        ui._renderUpgradeResults(analysis(), container);
+
+        const nameCells = [...container.querySelectorAll('td')].filter((td) =>
+            td.textContent.includes('Royal Fire Robe Top')
+        );
+        expect(nameCells.length).toBeGreaterThan(0);
+        for (const cell of nameCells) {
+            expect(cell.getAttribute('style')).toContain('white-space:normal');
+        }
+    });
+
+    test('the measured columns still never wrap — only the name does', () => {
+        ui._renderUpgradeResults(analysis(), container);
+
+        const costCell = container.querySelector('tr[data-gold-row="0"] td:nth-child(2)');
+        expect(costCell.getAttribute('style')).toContain('white-space:nowrap');
     });
 });

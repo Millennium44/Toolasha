@@ -113,6 +113,13 @@ function escapeHtml(text) {
 
 /**
  * The one-line name a recorded run goes by in the baseline picker and the table.
+ *
+ * `taskFight` is no longer recorded — the panel's Task Fight checkbox is gone,
+ * because a labyrinth monster is never your combat task and the stat it applied
+ * pays nothing there. Runs already in the store were simulated with it on,
+ * though, and a saved run that reads as if it were an ordinary one is a saved
+ * run you would compare against by mistake. So the flag is still *read*, and
+ * still said, for as long as an old entry carries it.
  * @param {Object} settings - From `makeLabRunEntry`
  * @returns {string}
  */
@@ -167,7 +174,6 @@ export function describeLabRun(entry) {
  * @param {string} [input.monsterName] - Display name; derived from the hrid when absent
  * @param {number} input.roomLevel - Room level simulated
  * @param {number} input.hours - Hour budget the run was given
- * @param {boolean} [input.taskFight] - Whether taskDamage was applied
  * @param {string[]} [input.crates] - Crate hrids in force
  * @param {string} [input.gearLabel] - What the loadout was, from the editor
  * @param {number} [input.attempts] - Labyrinth attempts simulated
@@ -182,7 +188,6 @@ export function makeLabRunEntry({
     monsterName,
     roomLevel,
     hours,
-    taskFight = false,
     crates = [],
     gearLabel = '',
     attempts = 0,
@@ -201,7 +206,6 @@ export function makeLabRunEntry({
         monsterName: monsterName || labMonsterName(monsterHrid),
         roomLevel: Math.round(Number(roomLevel) || 0),
         hours: Math.round(Number(hours) || 0),
-        taskFight: Boolean(taskFight),
         crates: [...crates],
         gearLabel: gearLabel || '',
     };

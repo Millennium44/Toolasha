@@ -106,7 +106,20 @@ describe('what a finished run is recorded as', () => {
         // "Current Gear" is what every unedited run says, so it distinguishes
         // nothing and is left out
         expect(labRunLabel({ monsterName: 'Mimic', roomLevel: 140, gearLabel: 'Current Gear' })).toBe('Mimic L140');
+    });
+
+    test('a run recorded before the Task Fight checkbox was removed still says so', () => {
+        // The checkbox is gone — a labyrinth monster is never your combat task —
+        // but entries already in the store were simulated with taskDamage on,
+        // and one of those reading as an ordinary run is one you would compare
+        // against by mistake
         expect(labRunLabel({ monsterName: 'Mimic', roomLevel: 140, taskFight: true })).toBe('Mimic L140 · task fight');
+    });
+
+    test('and nothing recorded from here on carries the flag at all', () => {
+        expect(run().settings).not.toHaveProperty('taskFight');
+        // Passing it is not an error, it simply has nowhere to land now
+        expect(run({ taskFight: true }).label).toBe('Gobo Chief L120');
     });
 
     test('the settings the label had to drop are on the tooltip', () => {

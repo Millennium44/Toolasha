@@ -76,12 +76,12 @@ describe('reading a saved selection back', () => {
     });
 
     test('keys this version does not have are dropped, and duplicates collapse', () => {
-        const restored = sanitizeLabUpgradeSelection(['equipment', 'equipment', 'house', 'drink'], null);
+        const restored = sanitizeLabUpgradeSelection(['equipment', 'equipment', 'moon_phase', 'drink'], null);
         expect(restored.dimensions).toEqual(['equipment']);
     });
 
     test('an all-unknown selection falls back rather than leaving nothing checked', () => {
-        expect(sanitizeLabUpgradeSelection(['house'], null).dimensions).toEqual(['equipment']);
+        expect(sanitizeLabUpgradeSelection(['moon_phase'], null).dimensions).toEqual(['equipment']);
     });
 
     test('junk in the scope slot is not a scope', () => {
@@ -115,16 +115,27 @@ describe('what a scope can be asked', () => {
         }
     });
 
-    test('and every set is offered across a whole labyrinth too', () => {
+    test('and every set but house rooms is offered across a whole labyrinth too', () => {
         // Ability Swaps used to be refused here on size — thousands of sims —
         // which put the refusal on the one scope where "which ability should I
         // change" is most worth asking. Size is handled by shortening the sims
         // and saying the count, not by declining the question.
         const availability = labDimensionAvailability('all', 8);
         for (const key of LAB_UPGRADE_DIMENSION_KEYS) {
+            if (key === 'house') continue;
             expect(availability[key].enabled).toBe(true);
             expect(availability[key].reason).toBe('');
         }
+    });
+
+    test('house rooms are the Configure fight only, and say why', () => {
+        // A room level is one number the character carries; the whole-run
+        // analysis installs each candidate into a *loadout*, which has nowhere
+        // to put it
+        expect(labDimensionAvailability('all', 8).house.enabled).toBe(false);
+        expect(labDimensionAvailability('all', 8).house.reason).toMatch(/Configure fight only/);
+        // A subset of one is still the whole-run analysis, so it is refused too
+        expect(labDimensionAvailability('selected', 1).house.enabled).toBe(false);
     });
 
     test('the per-ability target level is only meaningful for one loadout', () => {
@@ -191,7 +202,13 @@ describe('a multi-set selection through the single-fight analysis', () => {
     test('everything checked keeps every set', () => {
         const plan = planLabSingleTargetModes(LAB_UPGRADE_DIMENSION_KEYS);
         expect(plan.upgradeMode).toBe('combined');
-        expect(plan.extraModes.sort()).toEqual(['ability_swap', 'combat_level', 'guild_shrine']);
+        expect(plan.extraModes.sort()).toEqual(['ability_swap', 'combat_level', 'guild_shrine', 'house']);
+    });
+
+    test('nothing left for the analysis to generate is not a quiet fallback to equipment', () => {
+        // Reached when the only thing checked is measured in a pass of its own.
+        // `equipment` here used to rank a table of gear nobody asked about.
+        expect(planLabSingleTargetModes([])).toEqual({ upgradeMode: 'none', extraModes: [] });
     });
 
     test('without equipment the first checked set leads', () => {
@@ -279,6 +296,43 @@ describe('a selection, resolved into the analysis to run', () => {
     test('and a selection of nothing but swaps is a run, not a refusal', () => {
         const plan = planLabUpgradeRun({ dimensions: ['ability_swap'], scopeMode: 'all', allMonsters: ALL });
         expect(plan).toMatchObject({ kind: 'allFights', modes: ['ability_swap'], monsterHrids: ALL });
+    });
+
+    test('house rooms are kept out of the mode lists and asked for separately', () => {
+        // Handing a house candidate to the shared applier would install it as a
+        // piece of equipment in a slot called `house|/house_rooms/…`, which
+        // changes nothing — so the row would read a confident +0.00%
+        const plan = planLabUpgradeRun({
+            dimensions: ['equipment', 'house'],
+            scopeMode: 'current',
+            configureMonsterHrid: '/monsters/b',
+            allMonsters: ALL,
+        });
+        expect(plan).toMatchObject({
+            kind: 'single',
+            upgradeMode: 'equipment',
+            extraModes: [],
+            standaloneModes: ['house'],
+        });
+    });
+
+    test('house rooms on their own are a run, with nothing for the analysis to generate', () => {
+        const plan = planLabUpgradeRun({
+            dimensions: ['house'],
+            scopeMode: 'current',
+            configureMonsterHrid: '/monsters/b',
+            allMonsters: ALL,
+        });
+        expect(plan).toMatchObject({ kind: 'single', upgradeMode: 'none', standaloneModes: ['house'] });
+    });
+
+    test('and across several fights they are reported as dropped rather than silently skipped', () => {
+        const plan = planLabUpgradeRun({
+            dimensions: ['equipment', 'house'],
+            scopeMode: 'all',
+            allMonsters: ALL,
+        });
+        expect(plan).toMatchObject({ kind: 'allFights', modes: ['equipment'], dropped: ['house'] });
     });
 
     test('all targets with no fights resolving explains itself', () => {
