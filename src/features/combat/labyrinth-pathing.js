@@ -178,8 +178,76 @@ export function computeLabyrinthPath(tiles, cols) {
 }
 
 /**
+ * The walk from where you are standing to where the plan starts.
+ *
+ * A route only ever names the rooms that cost something — the ones still to be
+ * fought, shrouded or looted. Once the first few rooms of a floor have been
+ * cleared, that means the plan starts somewhere out at the frontier, with the
+ * cleared rooms leading up to it drawn as nothing at all, and no way to read
+ * off the map which way round to walk. This is those rooms: the shortest walk
+ * over already-cleared ground from where you are to the first planned room.
+ *
+ * Free, by construction — every room on it has been cleared already — so it is
+ * never part of the route's torch or shroud bill.
+ *
+ * @param {Array<Object|null>} tiles - Flat grid, as `computeLabyrinthPath` takes
+ * @param {number} cols - Grid width
+ * @param {Set<number>|Iterable<number>} route - The planned rooms
+ * @param {number} [startIdx] - Where you are standing; the entrance by default
+ * @returns {number[]} Rooms to walk through in order, excluding where you are
+ *   standing and excluding the planned rooms themselves. Empty when the plan
+ *   already starts next to you, and when no cleared ground connects the two.
+ */
+export function computeApproachPath(tiles, cols, route, startIdx = LABYRINTH_ENTRANCE) {
+    const planned = route instanceof Set ? route : new Set(route || []);
+    const n = Array.isArray(tiles) ? tiles.length : 0;
+    if (!planned.size || !n || !cols) return [];
+    if (!Number.isInteger(startIdx) || startIdx < 0 || startIdx >= n) return [];
+
+    const neighbors = (idx) => {
+        const x = idx % cols;
+        const out = [];
+        if (x > 0) out.push(idx - 1);
+        if (x < cols - 1) out.push(idx + 1);
+        if (idx - cols >= 0) out.push(idx - cols);
+        if (idx + cols < n) out.push(idx + cols);
+        return out;
+    };
+
+    // Standing in the plan, or next to it, is no walk at all
+    const touchesPlan = (idx) => planned.has(idx) || neighbors(idx).some((nb) => planned.has(nb));
+    if (touchesPlan(startIdx)) return [];
+
+    // Only cleared ground counts: an uncleared room between here and the plan
+    // is a room the plan should have costed, not one to be walked through
+    const walkable = (idx) => {
+        const tile = tiles[idx];
+        return !!tile && !planned.has(idx) && (tile.cleared || tile.isEntrance);
+    };
+
+    const prev = new Array(n).fill(-1);
+    const seen = new Array(n).fill(false);
+    seen[startIdx] = true;
+    const queue = [startIdx];
+    while (queue.length) {
+        const cur = queue.shift();
+        for (const nb of neighbors(cur)) {
+            if (seen[nb] || !walkable(nb)) continue;
+            seen[nb] = true;
+            prev[nb] = cur;
+            if (touchesPlan(nb)) {
+                const walk = [];
+                for (let at = nb; at >= 0 && at !== startIdx; at = prev[at]) walk.push(at);
+                return walk.reverse();
+            }
+            queue.push(nb);
+        }
+    }
+    return [];
+}
+
+/**
  * Count vertex-disjoint entrance→exit routes through passable cells — the
- * number of independent paths that share no interior room (max-flow with
  * unit vertex capacities; entrance and exit are uncapped endpoints). Two or
  * more routes means no single blocked room can sever the way to the exit.
  * @param {boolean[]} passable - Flat grid of walkable cells (entrance/exit
