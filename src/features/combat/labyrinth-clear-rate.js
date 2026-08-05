@@ -2733,6 +2733,83 @@ class LabyrinthClearRate {
         return this.shortfallRestockNote(supplies, kind, nextRun.short);
     }
 
+    /**
+     * Classify a floor's rooms for the route planner.
+     *
+     * Position is the reliable structural signal: the grid always starts
+     * top-left and exits bottom-right, and unrevealed rooms carry an empty
+     * roomType — the exit/treasure types only appear once a room is revealed.
+     * Every cell is a room (the labyrinth has no walls), so an unrevealed room
+     * is a passable unknown, never an obstacle.
+     *
+     * Rooms nothing can yet be said about — unrevealed, or revealed but not
+     * judged because no clear chance has been worked out for them — all take
+     * the same `?` posture, so a room does not become free merely by being
+     * looked at before the sims caught up with it.
+     *
+     * Pure with respect to the board: hand it a grid and it answers about that
+     * grid, which is what lets the planner classify twice — once to find the
+     * fights worth simulating, once against the board as it stands when the
+     * plan is actually drawn.
+     *
+     * @param {Array<Object|null>} flat - Flat room grid
+     * @param {Object} options
+     * @param {number} options.threshold - Clear chance below which a room costs a shroud
+     * @param {string} options.unknownMode - 'clearable' | 'shroud' | 'avoid'
+     * @param {Function} options.chanceOf - (room, roomLevel) => clear chance, or
+     *   null when the room has not been judged
+     * @returns {{tiles: Array<Object|null>, unjudged: Array<Object>}}
+     */
+    buildPathTiles(flat, { threshold, unknownMode, chanceOf }) {
+        const tiles = new Array(flat.length).fill(null);
+        const unjudged = [];
+
+        for (let i = 0; i < flat.length; i++) {
+            const room = flat[i];
+            const type = String(room?.roomType || '');
+            const tile = {
+                index: i,
+                room,
+                cleared: !!room?.isCleared,
+                isEntrance: i === 0 || /\/(entrance|start)$/.test(type),
+                isTreasure: type.endsWith('/treasure'),
+                isExit: i === flat.length - 1 || /\/(descend|exit|finish|flag|victory)$/.test(type),
+                isUnknown: !room || (!type && !room.skillHrid && !room.monsterHrid && !room.isCleared),
+                unjudged: false,
+                clearChance: 1,
+                needsShroud: false,
+            };
+            tiles[i] = tile;
+            if (tile.cleared || tile.isEntrance || tile.isTreasure || tile.isExit || tile.isUnknown) continue;
+
+            const roomLevel = Math.max(0, Math.floor(Number(room.recommendedLevel) || 0));
+            const chance = chanceOf(room, roomLevel);
+            if (chance === null || chance === undefined) {
+                tile.unjudged = true;
+                unjudged.push({ index: i, room, roomLevel });
+                continue;
+            }
+            tile.clearChance = chance;
+            tile.needsShroud = chance < threshold;
+        }
+
+        // Unrevealed-room posture: optimistic (clearable, default), pessimistic
+        // (each costs a shroud), or avoid (impassable — route through revealed
+        // rooms only; entrance/exit always stay passable)
+        for (let i = 0; i < tiles.length; i++) {
+            const tile = tiles[i];
+            if (!tile || tile.cleared || tile.isEntrance || tile.isExit) continue;
+            if (!tile.isUnknown && !tile.unjudged) continue;
+            if (unknownMode === 'shroud') {
+                tile.needsShroud = true;
+            } else if (unknownMode === 'avoid') {
+                tiles[i] = null;
+            }
+        }
+
+        return { tiles, unjudged };
+    }
+
     async runPathCalculation() {
         if (this.pathCalcRunning) return;
         if (!this.roomData) {
@@ -2745,8 +2822,9 @@ class LabyrinthClearRate {
         // The live grid's own width is authoritative; the official
         // MIN(3 + Floor, 8) covers roomData arriving already flattened
         const cols = Array.isArray(rows[0]) ? rows[0].length : labyrinthGridSize(this.currentFloor);
-        const cells = this.findRoomGridCells(flat.length);
-        if (!cols || cells.length !== flat.length) {
+        // Looked up again after the sims, against whatever grid is on screen by
+        // then; this is only to refuse the press when there is nothing to draw on
+        if (!cols || this.findRoomGridCells(flat.length).length !== flat.length) {
             this.setTileStatus('Grid not found');
             return;
         }
@@ -2768,71 +2846,68 @@ class LabyrinthClearRate {
         this.setPathButtonRunning(true);
 
         try {
-            // Classify every room and gather clear chances (treasure, the exit,
-            // and the entrance are freely enterable; combat needs sims, cached
-            // when possible). Position is the reliable structural signal: the
-            // grid always starts top-left and exits bottom-right, and
-            // unrevealed rooms carry an empty roomType — the exit/treasure
-            // types only appear once a room is revealed.
-            // Every cell is a room — the labyrinth has no walls. Unrevealed
-            // rooms appear as null entries (or empty-typed rooms) in roomData
-            // because the server hides their contents, so they are passable
-            // unknowns, never obstacles.
-            const tiles = new Array(flat.length).fill(null);
-            const combatToSim = [];
-            for (let i = 0; i < flat.length; i++) {
-                const room = flat[i];
-                const type = String(room?.roomType || '');
-                const tile = {
-                    index: i,
-                    room,
-                    cleared: !!room?.isCleared,
-                    isEntrance: i === 0 || /\/(entrance|start)$/.test(type),
-                    isTreasure: type.endsWith('/treasure'),
-                    isExit: i === flat.length - 1 || /\/(descend|exit|finish|flag|victory)$/.test(type),
-                    isUnknown: !room || (!type && !room.skillHrid && !room.monsterHrid && !room.isCleared),
-                    clearChance: 1,
-                    needsShroud: false,
-                };
-                tiles[i] = tile;
-                if (tile.cleared || tile.isEntrance || tile.isTreasure || tile.isExit || tile.isUnknown) continue;
-
-                const roomLevel = Math.max(0, Math.floor(Number(room.recommendedLevel) || 0));
+            // Clear chances, worked out once and keyed by what they are about
+            // rather than by where the room sat: a chance belongs to a monster
+            // at a level, so it survives the board moving underneath it.
+            // Treasure rooms, the exit and the entrance are freely enterable
+            // and are never asked about.
+            const chances = new Map();
+            const chanceOf = (room, roomLevel) => {
                 if (room.skillHrid && roomLevel > 0) {
-                    const result =
-                        room.skillHrid === '/skills/enhancing'
-                            ? this.computeEnhancingClear(roomLevel)
-                            : this.computeSkillingClear(room.skillHrid, roomLevel);
-                    tile.clearChance = result ? result.clearChance : 1;
-                } else if (room.monsterHrid && roomLevel > 0) {
-                    combatToSim.push({ tile, roomLevel });
+                    const key = `${room.skillHrid}:${roomLevel}`;
+                    if (!chances.has(key)) {
+                        const result =
+                            room.skillHrid === '/skills/enhancing'
+                                ? this.computeEnhancingClear(roomLevel)
+                                : this.computeSkillingClear(room.skillHrid, roomLevel);
+                        chances.set(key, result ? result.clearChance : 1);
+                    }
+                    return chances.get(key);
                 }
-            }
+                if (room.monsterHrid && roomLevel > 0) {
+                    const key = `${room.monsterHrid}:${roomLevel}`;
+                    return chances.has(key) ? chances.get(key) : null;
+                }
+                // Nothing to fight and nothing to skill: freely enterable
+                return 1;
+            };
 
+            // First pass, against the board as it was when the button went
+            // down, only to find the fights worth simulating
+            const scouted = this.buildPathTiles(flat, { threshold, unknownMode, chanceOf });
+            const combatToSim = [];
+            const queued = new Set();
+            for (const { room, roomLevel } of scouted.unjudged) {
+                const key = `${room.monsterHrid}:${roomLevel}`;
+                if (queued.has(key)) continue;
+                queued.add(key);
+                combatToSim.push({ monsterHrid: room.monsterHrid, roomLevel, key });
+            }
             for (let i = 0; i < combatToSim.length; i++) {
-                const { tile, roomLevel } = combatToSim[i];
+                const { monsterHrid, roomLevel, key } = combatToSim[i];
                 this.setTileStatus(`Pathing: fight sims ${i + 1}/${combatToSim.length}`);
-                const result = await this.computeCombatClear(tile.room.monsterHrid, roomLevel);
-                tile.clearChance = result && !result.failed ? result.clearChance : 0;
-            }
-            for (const tile of tiles) {
-                if (tile && !tile.cleared && !tile.isEntrance && !tile.isTreasure && !tile.isExit && !tile.isUnknown) {
-                    tile.needsShroud = tile.clearChance < threshold;
-                }
+                const result = await this.computeCombatClear(monsterHrid, roomLevel);
+                chances.set(key, result && !result.failed ? result.clearChance : 0);
             }
 
-            // Unrevealed-room posture: optimistic (clearable, default),
-            // pessimistic (each costs a shroud), or avoid (impassable — route
-            // through revealed rooms only; entrance/exit always stay passable)
-            for (let i = 0; i < tiles.length; i++) {
-                const tile = tiles[i];
-                if (!tile?.isUnknown || tile.cleared || tile.isEntrance || tile.isExit) continue;
-                if (unknownMode === 'shroud') {
-                    tile.needsShroud = true;
-                } else if (unknownMode === 'avoid') {
-                    tiles[i] = null;
-                }
+            // Second pass, against the board as it stands now. The sims take
+            // their time and the run does not stop while they run: a shroud
+            // clears its room outright, and rooms cleared since the button was
+            // pressed must not come back marked "Shroud" — that is a plan for a
+            // floor that no longer exists. Re-reading here is also what makes a
+            // second press on an unchanged board give the same answer as the
+            // first, and one on a board you have since shrouded give a new one.
+            const fresh = Array.isArray(this.roomData) ? this.roomData.flat() : [];
+            if (fresh.length !== flat.length) {
+                this.setTileStatus('The floor changed while the sims ran — press Path again');
+                return;
             }
+            const cells = this.findRoomGridCells(fresh.length);
+            if (cells.length !== fresh.length) {
+                this.setTileStatus('Grid not found');
+                return;
+            }
+            const { tiles } = this.buildPathTiles(fresh, { threshold, unknownMode, chanceOf });
 
             const path = computeLabyrinthPath(tiles, cols);
             if (!path) {
@@ -2854,7 +2929,7 @@ class LabyrinthClearRate {
             let confirmedShrouds = 0;
             for (const idx of path.route) {
                 const tile = tiles[idx];
-                if (tile?.needsShroud && !tile.isUnknown && !tile.cleared) confirmedShrouds++;
+                if (tile?.needsShroud && !tile.isUnknown && !tile.unjudged && !tile.cleared) confirmedShrouds++;
             }
             for (const idx of path.route) {
                 const tile = tiles[idx];
@@ -2869,9 +2944,9 @@ class LabyrinthClearRate {
                     color = '#ffd54f';
                 } else if (tile.needsShroud) {
                     color = '#ff5252';
-                    label = tile.isUnknown ? 'Shroud?' : 'Shroud';
-                } else if (tile.isUnknown) {
-                    // Unrevealed room — routed as clearable; reveal to verify
+                    label = tile.isUnknown || tile.unjudged ? 'Shroud?' : 'Shroud';
+                } else if (tile.isUnknown || tile.unjudged) {
+                    // Nothing known about it — routed as clearable; reveal to verify
                     color = '#8fb4d8';
                     label = '?';
                 } else {
