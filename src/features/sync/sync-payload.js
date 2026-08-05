@@ -33,9 +33,12 @@ const SETTINGS_STORE = 'settings';
  *
  * The token is a credential for the transport itself; uploading it would put a
  * gist-scoped GitHub credential inside a gist, and pulling would silently plant
- * it on another machine.
+ * it on another machine. The passphrase is the key to the payload's own
+ * encryption; uploading it — even inside the ciphertext it unlocks — would be
+ * circular, and pulling must never overwrite the one thing that made the pull
+ * readable.
  */
-export const REDACTED_SETTING_IDS = ['sync_token'];
+export const REDACTED_SETTING_IDS = ['sync_token', 'sync_passphrase'];
 
 /**
  * Storage keys removed from every payload.
