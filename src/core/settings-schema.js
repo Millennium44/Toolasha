@@ -2667,11 +2667,14 @@ export const settingsGroups = {
                 min: 0,
                 help:
                     'Guild tokens are never listed on the market, so they are priced through the Guild Shop ' +
-                    'exchange instead: credits per token × the gold value of a credit. Only used when the game ' +
-                    'does not publish the exchange itself — when it does, the live rate always wins. The default ' +
-                    'of 1 credit per token is an assumption, and every figure derived from it is labelled ' +
-                    '“assumed rate”; check the Guild Shop and set your game’s actual rate. Set to 0 to leave ' +
-                    'tokens unpriced, as they were before.',
+                    'exchange instead: credits per token × the gold value of a credit, taking whichever credit ' +
+                    'colour yields the most gold. This number is now the last resort. Opening a Guild Shop ' +
+                    'exchange dialog with a Guild Token selected reads that colour’s real rate off the screen ' +
+                    'and remembers it, and client data wins over even that — so in normal play the live rate is ' +
+                    'what gets used and this setting is never consulted. It only stands in before any dialog ' +
+                    'has been opened, and every figure derived from it is labelled “assumed rate”. Run ' +
+                    'Toolasha.debug.tokenExchange() in the console to see every colour’s rate and which one was ' +
+                    'picked. Set to 0 to leave tokens unpriced, as they were before.',
             },
             guildCreditValue: {
                 id: 'guildCreditValue',

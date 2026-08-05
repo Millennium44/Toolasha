@@ -25,6 +25,7 @@ import { createAutofillManager } from '../../utils/marketplace-autofill.js';
 import { tierFromLevel } from './guild-trials-math.js';
 import { GUILD_BUILDING_MAX_LEVEL } from './guild-trials-store.js';
 import { describeGuildTokenGold } from './guild-token-value.js';
+import { captureTokenExchangeFromModal, hydrateCapturedTokenExchanges } from './guild-token-exchange-capture.js';
 
 const CSS_CLASS = 'mwi-guild-credit-value';
 
@@ -108,9 +109,17 @@ class GuildCreditValue {
 
         this.autofillManager.initialize();
 
-        const unregister = domObserver.onClass('GuildCreditValue', 'GuildPanel_exchangeModalContent', (el) =>
-            this._render(el)
-        );
+        // The stored token exchange, read once so the synchronous valuation can
+        // see it. Nothing waits on it: until it lands, tokens are priced the way
+        // they were before.
+        hydrateCapturedTokenExchanges();
+
+        const unregister = domObserver.onClass('GuildCreditValue', 'GuildPanel_exchangeModalContent', (el) => {
+            // Before the table is drawn, because the reading is of the game's
+            // own markup and this script is about to add markup of its own
+            this._captureTokenExchange(el);
+            this._render(el);
+        });
         this.unregisterObservers.push(unregister);
 
         const unregisterShrine = domObserver.onClass('GuildCreditValue-Shrine', 'GuildPanel_guildModalContent', (el) =>
@@ -131,6 +140,45 @@ class GuildCreditValue {
         this.unregisterObservers.push(unregisterTileSummary);
 
         this.initialized = true;
+    }
+
+    /**
+     * Read the token→credit rate off an open exchange dialog.
+     *
+     * The Guild Shop states this rate and nothing in the client data has been
+     * found that does, so this dialog is where it comes from. Runs regardless of
+     * the `guildCreditValue` setting: that setting governs a table this script
+     * draws, and reading a number off the game's own markup is not drawing
+     * anything. Failures are swallowed inside the capture module — a dialog that
+     * does not parse must never stop the table below it from rendering.
+     *
+     * @param {Element} modalEl - The exchange modal
+     * @returns {void}
+     */
+    _captureTokenExchange(modalEl) {
+        const gameData = dataManager.getInitClientData();
+        const itemDetailMap = gameData?.itemDetailMap;
+        if (!itemDetailMap) return;
+
+        const titleText = modalEl.querySelector('[class*="GuildPanel_header"]')?.textContent?.trim() || '';
+        if (!titleText) return;
+
+        const creditHrid = Object.keys(itemDetailMap).find(
+            (hrid) => hrid.includes('guild_credit') && itemDetailMap[hrid].name === titleText
+        );
+        if (!creditHrid) return;
+
+        const tokenHrid = Object.keys(itemDetailMap).find((hrid) => hrid.includes('guild_token'));
+        const selectorContainer = modalEl.querySelector('[class*="ItemSelector_itemContainer"]');
+        const selectedItemName =
+            selectorContainer?.querySelector('svg[aria-label]')?.getAttribute('aria-label') || null;
+
+        captureTokenExchangeFromModal(modalEl, {
+            creditItemHrid: creditHrid,
+            creditName: titleText,
+            selectedItemName,
+            tokenName: (tokenHrid && itemDetailMap[tokenHrid]?.name) || 'Guild Token',
+        });
     }
 
     _render(modalEl) {

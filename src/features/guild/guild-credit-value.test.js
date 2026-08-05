@@ -18,6 +18,7 @@ const game = vi.hoisted(() => ({
     prices: {},
     observers: {},
     buildingLevels: {},
+    captures: [],
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -53,6 +54,11 @@ vi.mock('../../utils/marketplace-tabs.js', () => ({
 }));
 vi.mock('../../utils/marketplace-autofill.js', () => ({
     createAutofillManager: () => ({ initialize: () => {}, setPendingCalculation: () => {} }),
+}));
+vi.mock('./guild-token-exchange-capture.js', () => ({
+    captureTokenExchangeFromModal: (...args) => game.captures.push(args),
+    hydrateCapturedTokenExchanges: async () => ({}),
+    capturedTokenExchanges: () => [],
 }));
 
 const guildCreditValue = (await import('./guild-credit-value.js')).default;
@@ -332,5 +338,58 @@ describe('guild credit value — shrine upgrade planner building cap', () => {
 
         const input = modal.querySelector('.mwi-shrine-planner input[type="number"]');
         expect(Number(input.max)).toBe(20);
+    });
+});
+
+describe('reading the token exchange off the dialog', () => {
+    beforeEach(() => {
+        game.settings = { guildCreditValue: true, guildCreditExchangeAdvisor: false, guildShrineUpgradePlanner: false };
+        game.observers = {};
+        game.captures = [];
+        game.prices = {};
+        game.clientData = {
+            itemDetailMap: {
+                '/items/guild_credit_1': { name: 'Trade Credit', guildCreditConversions: [] },
+                '/items/guild_token': { name: 'Guild Token' },
+            },
+        };
+        guildCreditValue.cleanup();
+        guildCreditValue.initialize();
+    });
+
+    test('an open exchange dialog is handed to the capture, credit and selection named', () => {
+        const modal = buildExchangeModal('Trade Credit');
+        const selector = document.createElement('div');
+        selector.className = 'ItemSelector_itemContainer_x';
+        selector.innerHTML = '<svg aria-label="Guild Token"></svg>';
+        modal.appendChild(selector);
+
+        game.observers['GuildPanel_exchangeModalContent'](modal);
+
+        expect(game.captures).toHaveLength(1);
+        expect(game.captures[0][1]).toEqual({
+            creditItemHrid: '/items/guild_credit_1',
+            creditName: 'Trade Credit',
+            selectedItemName: 'Guild Token',
+            tokenName: 'Guild Token',
+        });
+    });
+
+    test('a dialog whose header names no credit is not offered to the capture', () => {
+        const modal = buildExchangeModal('Some Other Modal');
+
+        game.observers['GuildPanel_exchangeModalContent'](modal);
+
+        expect(game.captures).toEqual([]);
+    });
+
+    test('the capture runs even with the credit table switched off', () => {
+        game.settings.guildCreditValue = false;
+        const modal = buildExchangeModal('Trade Credit');
+
+        game.observers['GuildPanel_exchangeModalContent'](modal);
+
+        expect(game.captures).toHaveLength(1);
+        expect(modal.querySelector('.mwi-guild-credit-value')).toBeNull();
     });
 });

@@ -15,6 +15,8 @@ const game = vi.hoisted(() => ({
     guildBuildingLevelMap: {},
     shrineCapturedAt: null,
     shrineHydrated: false,
+    prices: {},
+    capturedExchanges: [],
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -43,10 +45,33 @@ vi.mock('../../core/dom-observer.js', () => ({
 vi.mock('../../utils/timer-registry.js', () => ({
     createTimerRegistry: () => ({ registerTimeout: () => {}, clearAll: () => {} }),
 }));
+// The token valuation the /shrines report now carries a line of. Mocked at its
+// two data sources rather than wholesale, so the line is the real arithmetic.
+vi.mock('../../utils/market-data.js', () => ({
+    getItemPrice: (itemHrid, { mode } = {}) => game.prices[itemHrid]?.[mode] ?? 0,
+}));
+vi.mock('../guild/guild-token-exchange-capture.js', () => ({
+    capturedTokenExchanges: () => game.capturedExchanges,
+}));
 
 const chatCommandsModule = await import('./chat-commands.js');
 const chatCommandsFeature = chatCommandsModule.default;
 const { collectShrineDebug, exposeShrineDebug, formatShrineReport } = chatCommandsModule;
+
+/** An item map in which a token buys ten green credits, each worth 100 gold */
+function tokenBuysTenGreen() {
+    return {
+        '/items/bronze_bar': {
+            name: 'Bronze Bar',
+            guildCreditConversions: [{ creditItemHrid: '/items/green_guild_credit', itemCount: 1, creditCount: 1 }],
+        },
+        '/items/green_guild_credit': { name: 'Green Guild Credit' },
+        '/items/guild_token': {
+            name: 'Guild Token',
+            guildCreditConversions: [{ creditItemHrid: '/items/green_guild_credit', itemCount: 1, creditCount: 10 }],
+        },
+    };
+}
 
 async function makeInstance() {
     document.body.innerHTML = '';
@@ -248,6 +273,8 @@ describe('/shrines', () => {
         game.guildBuildingLevelMap = {};
         game.shrineCapturedAt = null;
         game.shrineHydrated = false;
+        game.prices = {};
+        game.capturedExchanges = [];
         cmd = await makeInstance();
     });
 
@@ -336,6 +363,83 @@ describe('/shrines', () => {
 
         expect(exposeShrineDebug()).toBe(false);
         expect(window.Toolasha).toBeUndefined();
+    });
+
+    test('the report carries what a guild token is worth, since shrine levels cost tokens', () => {
+        game.itemDetailMap = tokenBuysTenGreen();
+        game.prices = { '/items/bronze_bar': { ask: 100 } };
+        game.characterGuildBuffMap = { '/guild_buffs/force_combat': { level: 1 } };
+        buildChatHistory();
+
+        cmd.executeCommand({ type: 'shrines' });
+
+        // 10 credits a token at 100 gold each
+        expect(echoed()).toContain('Guild token ≈ 1.0Kg via Green Guild Credit');
+    });
+
+    test('a token nothing can price is reported as unpriced, not as zero', () => {
+        game.characterGuildBuffMap = { '/guild_buffs/force_combat': { level: 1 } };
+        buildChatHistory();
+
+        cmd.executeCommand({ type: 'shrines' });
+
+        expect(echoed()).toContain('Guild token ≈ unpriced');
+    });
+});
+
+describe('Toolasha.debug.tokenExchange', () => {
+    beforeEach(async () => {
+        game.setting = true;
+        game.itemDetailMap = tokenBuysTenGreen();
+        game.prices = { '/items/bronze_bar': { ask: 100 } };
+        game.capturedExchanges = [];
+        await makeInstance();
+    });
+
+    test('the helper is on the debug namespace and dumps every credit type', () => {
+        window.Toolasha = {};
+        expect(exposeShrineDebug()).toBe(true);
+
+        const report = window.Toolasha.debug.tokenExchange();
+
+        expect(report.source).toBe('client');
+        expect(report.rows).toEqual([
+            expect.objectContaining({
+                creditItemHrid: '/items/green_guild_credit',
+                name: 'Green Guild Credit',
+                creditsPerToken: 10,
+                goldPerCredit: 100,
+                gold: 1000,
+                picked: true,
+            }),
+        ]);
+        expect(report.goldPerToken).toBe(1000);
+
+        delete window.Toolasha;
+    });
+
+    test('the pricing side can be asked for', () => {
+        window.Toolasha = {};
+        game.prices = { '/items/bronze_bar': { ask: 100, bid: 90 } };
+        exposeShrineDebug();
+
+        expect(window.Toolasha.debug.tokenExchange('bid').goldPerToken).toBe(900);
+
+        delete window.Toolasha;
+    });
+
+    test('the helper logs the printable report as well as returning it', () => {
+        window.Toolasha = {};
+        exposeShrineDebug();
+        const logged = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+        window.Toolasha.debug.tokenExchange();
+
+        expect(logged.mock.calls[0][0]).toContain('Toolasha token exchange');
+        expect(logged.mock.calls[0][0]).toContain('Picked Green Guild Credit');
+
+        logged.mockRestore();
+        delete window.Toolasha;
     });
 });
 
