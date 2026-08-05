@@ -19,6 +19,12 @@ const mocks = vi.hoisted(() => ({
     abilityGoals: [],
     /** Marketplace navigations a row asked for */
     marketOpened: [],
+    /** What the buy-modal autofill manager was told, in order */
+    autofill: [],
+    /** Observer ids the panel registered autofill managers under */
+    autofillObservers: [],
+    /** The armed quantity function, as a buy modal opening would resolve it */
+    autofillPending: null,
     store: new Map(),
     /** Whether the page was left with the panel up, and what it recorded since */
     wasOpen: false,
@@ -95,6 +101,34 @@ vi.mock('../../utils/equipment-savings.js', () => ({
 
 vi.mock('../../utils/marketplace-tabs.js', () => ({
     navigateToMarketplace: (itemHrid, enhancementLevel) => mocks.marketOpened.push({ itemHrid, enhancementLevel }),
+}));
+
+// The autofill manager watches the document for buy modals, which this file has
+// none of. What matters is what the row arms it with, so the stub records that
+// and answers `armedQuantity()` the way the real modal handler would.
+vi.mock('../../utils/marketplace-autofill.js', () => ({
+    createAutofillManager: (observerId) => {
+        mocks.autofillObservers.push(observerId);
+        return {
+            initialize: () => mocks.autofill.push({ event: 'initialize' }),
+            cleanup: () => {
+                mocks.autofill.push({ event: 'cleanup' });
+                mocks.autofillPending = null;
+            },
+            setQuantity: (quantity) => {
+                mocks.autofill.push({ event: 'setQuantity', quantity });
+                mocks.autofillPending = () => quantity;
+            },
+            setPendingCalculation: (fn) => {
+                mocks.autofill.push({ event: 'setPendingCalculation' });
+                mocks.autofillPending = fn;
+            },
+            clearQuantity: () => {
+                mocks.autofill.push({ event: 'clearQuantity' });
+                mocks.autofillPending = null;
+            },
+        };
+    },
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
@@ -234,6 +268,15 @@ const {
     costSourceTagHtml,
     upgradeNoiseFor,
     upgradeRowNotesHtml,
+    abilityBookCount,
+    cleanupUpgradeMarketAutofill,
+    scoreDepthPlaces,
+    scoreDepthLabel,
+    scoreGradientColor,
+    scorePlaces,
+    SCORE_DEPTHS,
+    DEFAULT_SCORE_DEPTH,
+    SCORE_GRADIENT_PLACES,
     visibleAllZonesSkillColumns,
     scoreAllZoneRows,
     bestAllZoneRows,
@@ -252,6 +295,47 @@ function row(description, { slot = '/equipment_types/body', cost = 100, profitGa
 }
 
 const BASELINE = { dps: 100, xpPerHour: 1000, profitPerHour: 1000, deathsPerHour: 0, encountersPerHour: 10 };
+
+/**
+ * A row shaped like the one the budget planner used to throw away.
+ *
+ * Taken from a real Upgrade tab: "Berserk Lv65 → Lv70", 140.6M of books, a
+ * profit delta of four-tenths of a percent that the per-encounter error model
+ * cannot possibly call significant. Everything about it is affordable, priced
+ * and positive — and the plan for a 500M budget came back empty.
+ *
+ * @param {string} name - Ability name
+ * @param {Object} over - `{ hrid, cost, profitGain, books, level }`
+ * @returns {Object} A result row
+ */
+function abilityRow(name, { hrid, cost = 140_600_000, profitGain = 3_000_000, books = 40, level = 70 } = {}) {
+    return {
+        candidate: {
+            description: `${name} Lv65 → Lv${level}`,
+            type: 'ability_level',
+            slot: 'ability_2',
+            upgradeHrid: hrid,
+            upgradeLevel: level,
+        },
+        cost,
+        costSource: 'books',
+        costDetail: { books: { books, bookName: name } },
+        metrics: {
+            dps: 100.4,
+            xpPerHour: 1001,
+            profitPerHour: 1000 + profitGain,
+            deathsPerHour: 0,
+            encountersPerHour: 10,
+        },
+        deltas: { dps: 0.4, xp: 0.1, profit: 0.41, deaths: 0, encounters: 0 },
+        goldPer: { dps: cost, xp: Infinity, profit: 3_400_000, deaths: Infinity, encounters: Infinity },
+        economics: { profitGainPerHour: profitGain, paybackHours: 47, repayHours: 47, roiAnnualPct: 180 },
+        noise: { dps: 2.2, xp: 2.2, profit: 2.2, deaths: 40, encounters: 2.2 },
+        // Nothing on a run this size clears 1.96 × 2.2%, which is the whole point
+        significantBy: { dps: false, xp: false, profit: false, deaths: false, encounters: false },
+        significant: false,
+    };
+}
 
 function text() {
     return ui.panel?.textContent || '';
@@ -331,6 +415,72 @@ describe('planUpgradeBudget', () => {
     test('an unreadable budget plans nothing rather than throwing', () => {
         const plan = planUpgradeBudget([row('Ring')], NaN, { baseline: BASELINE });
         expect(plan.picks).toHaveLength(0);
+    });
+
+    test('an affordable ability upgrade is bought even though its profit gain is inside the noise', () => {
+        // The bug this reproduces: 500M of budget, a 140.6M ability row with a
+        // positive profit delta sitting right there in the table, and a planner
+        // answering "nothing in the list both fits 500.0M and improves Profit/hr"
+        const plan = planUpgradeBudget([abilityRow('Berserk', { hrid: '/abilities/berserk' })], 500_000_000, {
+            baseline: BASELINE,
+            metricKey: 'profit',
+        });
+
+        expect(plan.picks.map((p) => p.candidate.description)).toEqual(['Berserk Lv65 → Lv70']);
+        expect(plan.totalCost).toBe(140_600_000);
+        // ...and it says so, rather than passing an estimate off as a measurement
+        expect(plan.provisional).toBe(true);
+    });
+
+    test('two different abilities are two purchases, and both fit', () => {
+        const plan = planUpgradeBudget(
+            [
+                abilityRow('Berserk', { hrid: '/abilities/berserk', profitGain: 3_000_000 }),
+                abilityRow('Penetrating Strike', {
+                    hrid: '/abilities/penetrating_strike',
+                    cost: 200_000_000,
+                    profitGain: 2_000_000,
+                }),
+            ],
+            500_000_000,
+            { baseline: BASELINE, metricKey: 'profit' }
+        );
+
+        expect(plan.picks).toHaveLength(2);
+        expect(plan.totalCost).toBe(340_600_000);
+    });
+
+    test('but two targets for one ability are the same purchase twice, so only the better goes in', () => {
+        const plan = planUpgradeBudget(
+            [
+                abilityRow('Berserk', { hrid: '/abilities/berserk', level: 70, cost: 140_600_000 }),
+                abilityRow('Berserk', {
+                    hrid: '/abilities/berserk',
+                    level: 75,
+                    cost: 300_000_000,
+                    profitGain: 3_100_000,
+                }),
+            ],
+            500_000_000,
+            { baseline: BASELINE, metricKey: 'profit' }
+        );
+
+        expect(plan.picks).toHaveLength(1);
+        expect(plan.totalCost).toBe(140_600_000);
+    });
+
+    test('and a row that genuinely does not fit still buys nothing', () => {
+        const plan = planUpgradeBudget(
+            [abilityRow('Berserk', { hrid: '/abilities/berserk', cost: 900_000_000 })],
+            5e8,
+            {
+                baseline: BASELINE,
+                metricKey: 'profit',
+            }
+        );
+
+        expect(plan.picks).toHaveLength(0);
+        expect(plan.provisional).toBe(false);
     });
 
     test('every offered axis knows how to read a gain and say it', () => {
@@ -1061,6 +1211,12 @@ describe('upgrade row handoff', () => {
         mocks.watched.length = 0;
         mocks.abilityGoals.length = 0;
         mocks.marketOpened.length = 0;
+        // Torn down before the log is cleared, so the teardown's own entries do
+        // not land in the run the test is about
+        cleanupUpgradeMarketAutofill();
+        mocks.autofill.length = 0;
+        mocks.autofillObservers.length = 0;
+        mocks.autofillPending = null;
     });
 
     test('an equipment row buys the upgrade at its enhancement level', () => {
@@ -1201,6 +1357,77 @@ describe('upgrade row handoff', () => {
         expect(upgradeRowActionsHtml(candidate({ type: 'community_buff', buffKey: 'comExp' }))).toBe('');
     });
 
+    test('the books an ability row needs are read off the price it was costed at', () => {
+        expect(abilityBookCount({ costDetail: { books: { books: 39.2, bookName: 'Berserk' } } })).toBe(40);
+        // A whole number stays whole rather than being rounded up past itself
+        expect(abilityBookCount({ costDetail: { books: { books: 12 } } })).toBe(12);
+        // Nothing to read, and a book you cannot count is still one book
+        expect(abilityBookCount({})).toBe(1);
+        expect(abilityBookCount({ costDetail: { books: { books: 0 } } })).toBe(1);
+    });
+
+    test('Market on an ability row arms the buy box with the books the upgrade needs', () => {
+        const container = document.createElement('div');
+        container.innerHTML = upgradeRowActionsHtml({
+            candidate: {
+                description: 'Berserk Lv65 → Lv70',
+                upgradeHrid: '/abilities/berserk',
+                upgradeLevel: 70,
+                type: 'ability_level',
+            },
+            cost: 140_600_000,
+            costDetail: { books: { books: 39.2, bookName: 'Berserk' } },
+        });
+        const button = container.querySelector('[data-buy-action="market"]');
+        expect(button.getAttribute('data-buy-quantity')).toBe('40');
+
+        wireUpgradeRowActions(container);
+        button.click();
+
+        expect(mocks.marketOpened).toEqual([{ itemHrid: '/items/berserk', enhancementLevel: 0 }]);
+        // The modal has not opened yet, so what was handed over is a recipe for
+        // the quantity rather than the quantity itself
+        expect(mocks.autofill.map((c) => c.event)).toEqual(['initialize', 'setPendingCalculation']);
+        expect(mocks.autofillPending()).toBe(40);
+    });
+
+    test('and Market on a gear row arms nothing, so a sword never inherits a book count', () => {
+        const books = document.createElement('div');
+        books.innerHTML = upgradeRowActionsHtml({
+            candidate: { upgradeHrid: '/abilities/berserk', upgradeLevel: 70, type: 'ability_level' },
+            costDetail: { books: { books: 39.2 } },
+        });
+        wireUpgradeRowActions(books);
+        books.querySelector('[data-buy-action="market"]').click();
+
+        const gear = document.createElement('div');
+        gear.innerHTML = upgradeRowActionsHtml(
+            candidate({ upgradeHrid: '/items/plate', upgradeLevel: 7, type: 'tier' })
+        );
+        expect(gear.querySelector('[data-buy-action="market"]').getAttribute('data-buy-quantity')).toBe('1');
+
+        wireUpgradeRowActions(gear);
+        gear.querySelector('[data-buy-action="market"]').click();
+
+        expect(mocks.autofill.at(-1).event).toBe('clearQuantity');
+        expect(mocks.autofillPending).toBeNull();
+    });
+
+    test('one observer for the whole panel, however many rows are handed off', () => {
+        const html = upgradeRowActionsHtml({
+            candidate: { upgradeHrid: '/abilities/berserk', upgradeLevel: 70, type: 'ability_level' },
+            costDetail: { books: { books: 39.2 } },
+        });
+        for (const _ of [0, 1, 2]) {
+            const container = document.createElement('div');
+            container.innerHTML = html;
+            wireUpgradeRowActions(container);
+            container.querySelector('[data-buy-action="market"]').click();
+        }
+
+        expect(mocks.autofillObservers).toEqual(['CombatSimUpgrade-Market']);
+    });
+
     test('Market does not also unfold the row it sits in', () => {
         const row = document.createElement('div');
         let rowClicks = 0;
@@ -1310,14 +1537,32 @@ describe('which metric the budget planner has to believe', () => {
         significant: true,
     });
 
-    test('shopping for profit skips a row whose profit gain is noise', () => {
+    test('shopping for profit passes over a row whose profit gain is noise while a measured one fits', () => {
+        const plan = planUpgradeBudget(
+            [
+                mixed('Noisy ring', { slot: '/equipment_types/ring', cost: 100, profitGain: 90 }),
+                row('Measured neck', { slot: '/equipment_types/neck', cost: 100, profitGain: 50 }),
+            ],
+            100,
+            { baseline: BASELINE, metricKey: 'profit' }
+        );
+
+        // The bigger gain loses, because it is the one that was not measured
+        expect(plan.picks.map((p) => p.candidate.description)).toEqual(['Measured neck']);
+        expect(plan.provisional).toBe(false);
+        expect(plan.skipped.some((s) => s.reason.includes('noise'))).toBe(true);
+    });
+
+    test('but when nothing on the axis clears the noise it plans on the estimates rather than planning nothing', () => {
+        // "Not proven" is not "worth zero" — an empty plan in front of a table
+        // full of affordable positive rows is the wrong answer, not a cautious one
         const plan = planUpgradeBudget([mixed('Ring', { profitGain: 50 })], 1000, {
             baseline: BASELINE,
             metricKey: 'profit',
         });
 
-        expect(plan.picks).toHaveLength(0);
-        expect(plan.skipped[0].reason).toContain('noise');
+        expect(plan.picks.map((p) => p.candidate.description)).toEqual(['Ring']);
+        expect(plan.provisional).toBe(true);
     });
 
     test('while shopping for DPS buys the same row, because that axis cleared', () => {
@@ -1597,6 +1842,184 @@ describe('the ⚙ Columns popover', () => {
 
         expect(ui._upgradeColumnMenuOpen).toBe(false);
         expect(menu().style.display).toBe('none');
+    });
+});
+
+describe('the budget box', () => {
+    beforeEach(() => {
+        mocks.upgradeResult = { baseline: null, results: [], food: null };
+        ui.buildPanel();
+        ui._upgradeBudget = 500_000_000;
+        ui._upgradePlanMetric = 'profit';
+    });
+
+    afterEach(() => {
+        ui._upgradeBudget = 0;
+        ui.destroy();
+    });
+
+    test('a plan made of unproven gains says so on its face', () => {
+        const html = ui._renderUpgradeBudget([abilityRow('Berserk', { hrid: '/abilities/berserk' })], BASELINE);
+
+        expect(html).toContain('Berserk Lv65 → Lv70');
+        expect(html).toContain('Ranked on estimates');
+        expect(html).not.toContain('Nothing in the list both fits');
+    });
+
+    test('a plan made of measured gains does not', () => {
+        const measured = row('Ring', { slot: '/equipment_types/ring', cost: 100, profitGain: 50 });
+        const html = ui._renderUpgradeBudget([measured], BASELINE);
+
+        expect(html).toContain('Ring');
+        expect(html).not.toContain('Ranked on estimates');
+    });
+
+    test('and nothing affordable is still nothing affordable', () => {
+        const html = ui._renderUpgradeBudget(
+            [abilityRow('Berserk', { hrid: '/abilities/berserk', cost: 900_000_000 })],
+            BASELINE
+        );
+
+        expect(html).toContain('Nothing in the list both fits');
+    });
+});
+
+describe('how deep the Score pays out', () => {
+    /**
+     * Rows that differ on every scored ladder, so a placing is a placing rather
+     * than a tie shared by the whole table.
+     * @param {number} n - How many
+     * @returns {Array<Object>} Result rows, best first
+     */
+    const scoreRows = (n) =>
+        Array.from({ length: n }, (_, i) => {
+            const r = row(`Row ${i}`, { slot: `/equipment_types/s${i}`, cost: (i + 1) * 100 });
+            r.economics = { ...r.economics, repayHours: i + 1, roiAnnualPct: 100 - i };
+            return r;
+        });
+
+    test('five by default, which is the behaviour that predates the option', () => {
+        expect(DEFAULT_SCORE_DEPTH).toBe('5');
+        expect(scoreDepthPlaces(DEFAULT_SCORE_DEPTH, 140)).toBe(5);
+        expect(scoreDepthLabel(DEFAULT_SCORE_DEPTH)).toBe('Top 5');
+    });
+
+    test('"all" is as deep as there are rows, so nothing scored is left on zero', () => {
+        expect(scoreDepthPlaces('all', 140)).toBe(140);
+        // A depth key from some other build is not trusted to mean anything
+        expect(scoreDepthPlaces('nonsense', 140)).toBe(5);
+    });
+
+    test('every depth on offer is a real number of places', () => {
+        for (const depth of SCORE_DEPTHS) {
+            expect(scoreDepthPlaces(depth.key, 20)).toBeGreaterThan(0);
+            expect(typeof scoreDepthLabel(depth.key)).toBe('string');
+        }
+    });
+
+    test('a row outside the top five scores nothing at five and something at ten', () => {
+        const rows = scoreRows(12);
+        ui._upgradeResultsData = { results: rows };
+
+        ui._upgradeScoreDepth = '5';
+        ui._rescoreUpgrades();
+        expect(rows[7].score).toBe(0);
+
+        ui._upgradeScoreDepth = '10';
+        ui._rescoreUpgrades();
+        expect(rows[7].score).toBeGreaterThan(0);
+        // Still ordered: eighth place cannot outscore first
+        expect(rows[7].score).toBeLessThan(rows[0].score);
+
+        ui._upgradeScoreDepth = DEFAULT_SCORE_DEPTH;
+        ui._upgradeResultsData = null;
+    });
+
+    test('the gradient runs green through amber to red across nine places, and stops', () => {
+        expect(scoreGradientColor(1)).toBe('rgb(76, 175, 80)');
+        expect(scoreGradientColor(5)).toBe('rgb(255, 152, 0)');
+        expect(scoreGradientColor(SCORE_GRADIENT_PLACES)).toBe('rgb(244, 67, 54)');
+        expect(scoreGradientColor(SCORE_GRADIENT_PLACES + 1)).toBeNull();
+        expect(scoreGradientColor(undefined)).toBeNull();
+    });
+
+    test('places come off the scores, ties share, and an unscored row never places', () => {
+        const rows = [{ score: 15 }, { score: 15 }, { score: 9 }, { score: 0 }];
+        const places = scorePlaces(rows);
+
+        expect(places.get(rows[0])).toBe(1);
+        expect(places.get(rows[1])).toBe(1);
+        expect(places.get(rows[2])).toBe(2);
+        expect(places.has(rows[3])).toBe(false);
+    });
+});
+
+describe('the Score column in the table', () => {
+    const results = () => ({
+        baseline: BASELINE,
+        results: Array.from({ length: 3 }, (_, i) => {
+            const r = row(`Row ${i}`, { slot: `/equipment_types/s${i}`, cost: (i + 1) * 100 });
+            r.economics = { ...r.economics, repayHours: i + 1, roiAnnualPct: 100 - i };
+            return r;
+        }),
+        food: null,
+    });
+
+    beforeEach(() => {
+        mocks.upgradeResult = { baseline: null, results: [], food: null };
+        ui.buildPanel();
+    });
+
+    afterEach(() => {
+        ui._upgradeScoreDepth = DEFAULT_SCORE_DEPTH;
+        ui._upgradeScoreGradient = false;
+        ui._setUpgradeColumnMenuOpen(false);
+        ui.destroy();
+    });
+
+    const html = () => ui.panel.querySelector('#mwi-csim-upgrade-results').innerHTML;
+
+    test('the header says which depth is in use', () => {
+        ui._upgradeScoreDepth = '15';
+        ui._renderUpgradeResults(results());
+
+        expect(html()).toContain('Top 15');
+    });
+
+    test('no colour on the Score unless it was asked for', () => {
+        ui._renderUpgradeResults(results());
+
+        expect(html()).not.toContain('rgb(76, 175, 80)');
+    });
+
+    test('and with it on, the best Score is the greenest', () => {
+        ui._upgradeScoreGradient = true;
+        ui._renderUpgradeResults(results());
+
+        expect(html()).toContain('rgb(76, 175, 80)');
+    });
+
+    test('the popover carries both settings and they survive a round trip through storage', async () => {
+        ui._renderUpgradeResults(results());
+        ui.panel.querySelector('#mwi-csim-upgrade-cols-btn').click();
+
+        const depth = ui.panel.querySelector('#mwi-csim-score-depth');
+        depth.value = 'all';
+        depth.dispatchEvent(new Event('change', { bubbles: true }));
+
+        const gradient = ui.panel.querySelector('#mwi-csim-score-gradient');
+        gradient.checked = true;
+        gradient.dispatchEvent(new Event('change', { bubbles: true }));
+
+        expect(ui._upgradeScoreDepth).toBe('all');
+        expect(ui._upgradeScoreGradient).toBe(true);
+
+        ui._upgradeScoreDepth = DEFAULT_SCORE_DEPTH;
+        ui._upgradeScoreGradient = false;
+        await ui._loadUpgradeColumnPrefs();
+
+        expect(ui._upgradeScoreDepth).toBe('all');
+        expect(ui._upgradeScoreGradient).toBe(true);
     });
 });
 
