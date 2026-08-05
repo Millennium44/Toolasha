@@ -1163,35 +1163,35 @@ function registerFeatures() {
             key: 'guildXPTracker',
             name: 'Guild XP Tracker',
             category: 'Guild',
-            module: UI.guildXPTracker,
+            module: Combat.guildXPTracker,
             async: false,
         },
         {
             key: 'guildXPDisplay',
             name: 'Guild XP Display',
             category: 'Guild',
-            module: UI.guildXPDisplay,
+            module: Combat.guildXPDisplay,
             async: false,
         },
         {
             key: 'guildCreditValue',
             name: 'Guild Credit Value',
             category: 'Guild',
-            module: UI.guildCreditValue,
+            module: Combat.guildCreditValue,
             async: false,
         },
         {
             key: 'guildRoster',
             name: 'Guild Roster',
             category: 'Guild',
-            module: UI.guildRosterView,
+            module: Combat.guildRosterView,
             async: false,
         },
         {
             key: 'guildTrialsInfo',
             name: 'Guild Trials',
             category: 'Guild',
-            module: UI.guildTrials,
+            module: Combat.guildTrials,
             async: true,
         },
         {
@@ -1534,13 +1534,13 @@ if (isCombatSimulatorPage()) {
 
     // Guild XP data management
     targetWindow.Toolasha.guild = {
-        resetMemberXP: () => UI.guildXPTracker.resetMemberData(),
-        memberSample: (name) => UI.guildXPTracker.getRawMemberSample(name),
+        resetMemberXP: () => Combat.guildXPTracker.resetMemberData(),
+        memberSample: (name) => Combat.guildXPTracker.getRawMemberSample(name),
     };
 
     // The per-player trial panel, so the command palette can reach it the way it
     // reaches every other panel — through the page rather than through an import
-    targetWindow.Toolasha.guildTrialScoreboard = UI.guildTrialScoreboard;
+    targetWindow.Toolasha.guildTrialScoreboard = Combat.guildTrialScoreboard;
 
     // Debug utilities (for diagnosing issues via console)
     targetWindow.Toolasha.debug = {

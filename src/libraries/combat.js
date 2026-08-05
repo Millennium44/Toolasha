@@ -57,6 +57,16 @@ import abilityDictionaryButton from '../features/abilities/ability-dictionary-bu
 import combatScore from '../features/profile/combat-score.js';
 import characterCardButton from '../features/profile/character-card-button.js';
 
+// Guild
+import guildXPTracker from '../features/guild/guild-xp-tracker.js';
+import guildXPDisplay from '../features/guild/guild-xp-display.js';
+import guildCreditValue from '../features/guild/guild-credit-value.js';
+import guildRosterView from '../features/guild/guild-roster-view.js';
+import guildTrials from '../features/guild/guild-trials.js';
+import guildTrialScoreboard from '../features/guild/guild-trial-scoreboard.js';
+// Side-effect import: registers the Guild Trials overlay row
+import '../features/guild/guild-trials-row.js';
+
 // Export to global namespace
 const toolashaRoot = window.Toolasha || {};
 window.Toolasha = toolashaRoot;
@@ -104,6 +114,12 @@ toolashaRoot.Combat = {
     characterCardButton,
     combatSim,
     labSim,
+    guildXPTracker,
+    guildXPDisplay,
+    guildCreditValue,
+    guildRosterView,
+    guildTrials,
+    guildTrialScoreboard,
 };
 
 // Console-driven debug tools, kept out of the feature namespaces because
@@ -113,6 +129,7 @@ toolashaRoot.Debug = {
     ...labyrinthCapture,
     labAccuracy: () => labyrinthClearRate.labAccuracy(),
     labRooms: () => labyrinthClearRate.labRooms(),
+    guildXp: () => guildXPTracker.debugState(),
 };
 
 console.log('[Toolasha] Combat library loaded');
