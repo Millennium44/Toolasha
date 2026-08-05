@@ -145,6 +145,26 @@ const VIEWPORT_MARGIN = 8;
 /** Below this it has stopped being a panel, whatever the window says */
 const MIN_PANEL = { width: 200, height: 120 };
 
+/** Between the settings popover and the panel it is anchored to */
+const PICKER_GAP = 6;
+/** Between the settings popover and the edge of the window */
+const PICKER_EDGE = 4;
+/**
+ * The least the popover may be squeezed to.
+ *
+ * Below this it is a scrollbar rather than a control. It is allowed to overrun
+ * the bottom of the window to keep it — what must never be given up is the top
+ * edge, which is what keeps the panel's header clickable.
+ */
+const MIN_PICKER_HEIGHT = 120;
+/**
+ * What the header is assumed to be worth before it has been laid out.
+ *
+ * Only reached when the panel measures nothing, which a real one does not — but
+ * a zero here would place the popover exactly over the ✕ it must stay clear of.
+ */
+const MIN_HEADER_HEIGHT = 28;
+
 /**
  * The width below which the canvas holds one column of tiles and no more.
  *
@@ -346,6 +366,14 @@ class OverlayPanel {
         this.flowing = false;
         this.canvasEl = null;
         this.pickerEl = null;
+        /** The header band, which the popover is never allowed to cover */
+        this.headerEl = null;
+        /** Dismisses the popover on a press anywhere that is not it or the panel */
+        this.onPickerDismiss = null;
+        /** Dismisses the popover on Escape */
+        this.onPickerKey = null;
+        /** Whether the tiles were flowed at the last draw, so a change can redraw the popover */
+        this.wasFlowing = false;
         this.timerRegistry = createTimerRegistry();
         this.detachDrag = null;
         this.detachResize = null;
@@ -509,6 +537,7 @@ class OverlayPanel {
 
         this.pickerEl = this._createPicker();
         document.body.appendChild(this.pickerEl);
+        this._watchForDismissal();
 
         if (host) this._placeDocked(host);
         else this._placeFloating();
@@ -861,11 +890,15 @@ class OverlayPanel {
      * and a good deal to get wrong.
      */
     toggleDock() {
+        // The rebuild takes the popover with it, and docking is a thing you do
+        // *from* the popover — so it is put back rather than silently dropped
+        const wasPicking = this.isPickerOpen;
         this.settings.docked = !this.settings.docked;
         this._save();
         if (!this.panel) return;
         this._removePanel();
         this._createPanel();
+        if (wasPicking) this.openPicker();
     }
 
     /**
@@ -904,22 +937,15 @@ class OverlayPanel {
             this._refreshLockButton();
             this._refreshStacking();
             this._renderBody();
+            // The popover says which of dragging and unlocking is the next
+            // gesture, and it is now saying the wrong one
+            this._refreshPicker();
         });
         this._refreshLockButton();
 
         const gearBtn = this._iconButton('⚙', 'Choose rows and arrange the layout', () => {
-            const opening = !this.isPickerOpen;
-            this.pickerEl.style.display = opening ? '' : 'none';
-            if (opening) {
-                this._renderPicker();
-                this._placePicker();
-                // Storage is not synchronous and the popover is; the layout bar
-                // draws from the last reading and corrects itself when this lands
-                this._refreshLayoutNames().catch((error) => {
-                    console.error('[OverlayPanel] Reading the saved layouts failed:', error);
-                });
-            }
-            this._refreshStacking();
+            if (this.isPickerOpen) this.closePicker();
+            else this.openPicker();
         });
         const dockBtn = this._iconButton(
             docked ? '⇱' : '⇲',
@@ -943,6 +969,7 @@ class OverlayPanel {
                 this._placePicker();
             });
         }
+        this.headerEl = header;
         return header;
     }
 
@@ -1005,7 +1032,8 @@ class OverlayPanel {
             boxShadow: '0 8px 32px rgba(0, 0, 0, 0.6)',
             color: COLORS.text,
             fontSize: '12px',
-            maxHeight: '50vh',
+            // How tall it may be is decided by where it lands — see `_placePicker`
+            maxHeight: `${MIN_PICKER_HEIGHT}px`,
             overflow: 'auto',
         });
         return picker;
@@ -1013,7 +1041,99 @@ class OverlayPanel {
 
     /** Whether the settings popover is up */
     get isPickerOpen() {
-        return this.pickerEl && this.pickerEl.style.display !== 'none';
+        return Boolean(this.pickerEl) && this.pickerEl.style.display !== 'none';
+    }
+
+    /**
+     * Put the popover up, drawn and placed.
+     *
+     * A method rather than three lines in the gear's handler, because docking
+     * rebuilds the panel and has to put the popover back — and a second copy of
+     * "show it, draw it, place it, then read the layout names" is a second place
+     * for one of those four to be forgotten.
+     */
+    openPicker() {
+        if (!this.pickerEl) return;
+        this.pickerEl.style.display = '';
+        this._renderPicker();
+        this._placePicker();
+        this._refreshStacking();
+        // Storage is not synchronous and the popover is; the layout bar draws
+        // from the last reading and corrects itself when this lands
+        this._refreshLayoutNames().catch((error) => {
+            console.error('[OverlayPanel] Reading the saved layouts failed:', error);
+        });
+    }
+
+    /**
+     * Take the popover down.
+     *
+     * Every way out goes through here — the gear, Escape, a press outside it —
+     * so the panel drops back to its resting z-index however it was dismissed.
+     */
+    closePicker() {
+        if (!this.pickerEl) return;
+        this.pickerEl.style.display = 'none';
+        this._refreshStacking();
+    }
+
+    /**
+     * The two gestures that end a popover anywhere else.
+     *
+     * Belt and braces beside the placement rules, and worth having on their own:
+     * the popover is a floating thing at popup z-index, and the only way out of
+     * it used to be the one button it was drawn on top of. Escape and a press
+     * outside are what everybody already tries.
+     *
+     * The press listener captures, so a game element that swallows `pointerdown`
+     * cannot trap the popover. The key listener does not — the layout-name input
+     * inside the popover stops its own keys, and Escape there means "cancel the
+     * name I am typing", not "shut the whole thing".
+     *
+     * A press on the panel is not outside: the popover exists to arrange those
+     * tiles, and dragging one must not dismiss the controls you are dragging by.
+     */
+    _watchForDismissal() {
+        this.onPickerDismiss = (event) => {
+            if (!this.isPickerOpen) return;
+            if (this.pickerEl.contains(event.target) || this.panel?.contains(event.target)) return;
+            this.closePicker();
+        };
+        document.addEventListener('pointerdown', this.onPickerDismiss, true);
+
+        this.onPickerKey = (event) => {
+            if (event.key !== 'Escape' || !this.isPickerOpen) return;
+            this.closePicker();
+        };
+        document.addEventListener('keydown', this.onPickerKey);
+    }
+
+    /**
+     * Redraw the popover, if it is up, wherever it now belongs.
+     *
+     * The popover is live: the layout it lists is changed by the lock, by the
+     * window narrowing, and by auto-switching ticking over underneath it. Every
+     * one of those has to call this, or the popover goes on describing a layout
+     * that is no longer on screen.
+     */
+    _refreshPicker() {
+        if (!this.isPickerOpen) return;
+        this._renderPicker();
+        this._placePicker();
+    }
+
+    /**
+     * How tall the header band is.
+     *
+     * Measured rather than assumed, because it holds whatever glyphs the buttons
+     * came out as — but a panel that has not been laid out measures nothing, and
+     * a zero here would let the popover sit exactly over the ✕.
+     *
+     * @returns {number} Pixels
+     */
+    _headerHeight() {
+        const measured = this.headerEl?.getBoundingClientRect?.().height || 0;
+        return measured > 0 ? measured : MIN_HEADER_HEIGHT;
     }
 
     /**
@@ -1041,6 +1161,23 @@ class OverlayPanel {
      * Measured after it is drawn, because its height depends on how many rows
      * are registered — and the whole point of it being above is that it does not
      * cover the layout you are arranging.
+     *
+     * ## Why the header is sacred
+     *
+     * This used to place the popover at whichever of two positions was less
+     * wrong, and then clamp it into the window. On a tall panel — a phone, or a
+     * desktop panel dragged low — neither position fitted, and the clamp slid
+     * the popover *up over its own anchor* until it was sitting on the header.
+     * The header is the ⚙ that closes the popover and the ✕ that closes the
+     * overlay, the popover is at popup z-index above both, and there was no
+     * Escape and no outside-click. That is the whole of "it blocks the ability
+     * to hide it again": the only two controls that end it were underneath it.
+     *
+     * So the popover is fitted to the room rather than shoved into it. It takes
+     * whichever side it fits on; failing that, the roomier side with its height
+     * capped so it scrolls; and failing even that — a panel taller than the
+     * window — it stands over the panel's own tiles, starting *below* the
+     * header. There is no arrangement in which it covers the header.
      */
     _placePicker() {
         if (!this.isPickerOpen || !this.panel) return;
@@ -1050,14 +1187,46 @@ class OverlayPanel {
         // is drawn on — a popover hanging off a phone loses its right-hand column
         // of controls, and there is nothing to scroll it back into view
         const room = Math.max(MIN_PANEL.width, window.innerWidth - VIEWPORT_MARGIN * 2);
-        this.pickerEl.style.width = `${Math.min(room, Math.max(320, anchor.width))}px`;
+        const width = Math.min(room, Math.max(320, anchor.width));
+        this.pickerEl.style.width = `${width}px`;
 
-        const self = this.pickerEl.getBoundingClientRect();
-        const above = anchor.top - self.height - 6;
+        // Uncapped first, so what comes back is the height it wants rather than
+        // the height it was last allowed
+        this.pickerEl.style.maxHeight = '';
+        const wanted = this.pickerEl.getBoundingClientRect().height;
 
-        this.pickerEl.style.left = `${Math.max(4, Math.min(anchor.left, window.innerWidth - self.width - 4))}px`;
-        this.pickerEl.style.top =
-            above >= 4 ? `${above}px` : `${Math.min(anchor.bottom + 6, window.innerHeight - self.height - 4)}px`;
+        const above = anchor.top - PICKER_GAP - PICKER_EDGE;
+        const below = window.innerHeight - anchor.bottom - PICKER_GAP - PICKER_EDGE;
+        // The last resort, and the one rule that has no exception: never higher
+        // than the bottom of the header
+        const acrossFrom = anchor.top + this._headerHeight() + PICKER_GAP;
+        const across = window.innerHeight - acrossFrom - PICKER_EDGE;
+
+        let top;
+        let cap;
+        if (wanted <= above) {
+            top = anchor.top - wanted - PICKER_GAP;
+            cap = above;
+        } else if (wanted <= below) {
+            top = anchor.bottom + PICKER_GAP;
+            cap = below;
+        } else if (above >= MIN_PICKER_HEIGHT && above >= below && above >= across) {
+            // Only while the room above is worth having: squeezed below the
+            // minimum it would be floored back up to it, and a floored popover
+            // starting at the top of a window is one that reaches the header
+            top = PICKER_EDGE;
+            cap = above;
+        } else if (below >= across) {
+            top = anchor.bottom + PICKER_GAP;
+            cap = below;
+        } else {
+            top = acrossFrom;
+            cap = across;
+        }
+
+        this.pickerEl.style.maxHeight = `${Math.round(Math.max(MIN_PICKER_HEIGHT, cap))}px`;
+        this.pickerEl.style.top = `${Math.round(Math.max(PICKER_EDGE, top))}px`;
+        this.pickerEl.style.left = `${Math.round(Math.max(PICKER_EDGE, Math.min(anchor.left, window.innerWidth - width - PICKER_EDGE)))}px`;
     }
 
     _renderPicker() {
@@ -1358,11 +1527,21 @@ class OverlayPanel {
 
     /**
      * Confirm and forget the layout the dropdown is showing, or the only one.
+     *
+     * The popover stands down for the question. It sits at popup z-index, above
+     * the dialog's own backdrop, so left up it draws over the very buttons it
+     * asked you to press — and a press aimed past it dismisses it rather than
+     * answering. It comes back once there is an answer, redrawn around whatever
+     * is left.
+     *
      * @param {HTMLSelectElement} select - The layout dropdown
      */
     async _promptDeleteLayout(select) {
         const names = this.savedLayouts || [];
         if (!names.length) return;
+
+        const wasPicking = this.isPickerOpen;
+        if (wasPicking) this.closePicker();
 
         const answer = await askChoice({
             title: 'Delete a saved layout',
@@ -1372,14 +1551,14 @@ class OverlayPanel {
                 { value: null, label: 'Cancel' },
             ],
         });
-        if (!answer) return;
 
-        select.value = '';
-        this.savedLayouts = layoutNames(await deleteLayout(answer));
-        if (this.isPickerOpen) {
-            this._renderPicker();
-            this._placePicker();
+        if (answer) {
+            select.value = '';
+            this.savedLayouts = layoutNames(await deleteLayout(answer));
         }
+        // Drawn from the names as they now stand, which is what makes a deleted
+        // layout stop being on offer
+        if (wasPicking) this.openPicker();
     }
 
     /**
@@ -2178,6 +2357,28 @@ class OverlayPanel {
      * stops reporting, which is exactly the moment you are looking at it.
      */
     _renderBody() {
+        this._drawBody();
+        this._noteFlowChange();
+    }
+
+    /**
+     * Tell the popover when the tiles start or stop being flowed.
+     *
+     * Flowing is decided at draw time from the width there is, and it is the one
+     * thing the popover reports that the popover itself cannot cause — a window
+     * dragged narrower with the gear open left it saying "unlock to drag tiles"
+     * about tiles that can no longer be dragged. Only on the change, because
+     * this runs on every tick and rebuilding the popover every second would take
+     * the control out from under whoever is using it.
+     */
+    _noteFlowChange() {
+        if (this.flowing === this.wasFlowing) return;
+        this.wasFlowing = this.flowing;
+        this._refreshPicker();
+    }
+
+    /** The drawing itself — see {@link _renderBody}, which is how it is reached */
+    _drawBody() {
         if (!this.canvasEl) return;
         // A refresh rewrites every tile's position and size from the saved
         // layout, which mid-drag means the tile snapping back under the pointer
@@ -2827,8 +3028,17 @@ class OverlayPanel {
         this.detachResize = null;
         this.tiles.clear();
 
+        if (this.onPickerDismiss) {
+            document.removeEventListener('pointerdown', this.onPickerDismiss, true);
+            this.onPickerDismiss = null;
+        }
+        if (this.onPickerKey) {
+            document.removeEventListener('keydown', this.onPickerKey);
+            this.onPickerKey = null;
+        }
         this.pickerEl?.remove();
         this.pickerEl = null;
+        this.headerEl = null;
 
         if (this.onWindowResize) {
             window.removeEventListener('resize', this.onWindowResize);
@@ -2840,6 +3050,7 @@ class OverlayPanel {
         // Decided from the width at every draw; a stale true would leave the
         // next panel unable to be unlocked
         this.flowing = false;
+        this.wasFlowing = false;
 
         // Left behind, the column keeps a flex layout and a measured height with
         // nothing to fill them
