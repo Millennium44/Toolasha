@@ -53,9 +53,7 @@ describe('house cost calculator', () => {
         const cost = await houseCostCalculator.calculateLevelCost('/house_rooms/brewery', 4);
 
         expect(cost.coins).toBe(1000);
-        expect(cost.materials).toEqual([
-            { itemHrid: '/items/plank', count: 20, marketPrice: 10, totalValue: 200 },
-        ]);
+        expect(cost.materials).toEqual([{ itemHrid: '/items/plank', count: 20, marketPrice: 10, totalValue: 200 }]);
         expect(cost.totalValue).toBe(1200);
     });
 
@@ -83,9 +81,7 @@ describe('house cost calculator', () => {
         const cost = await houseCostCalculator.calculateCumulativeCost('/house_rooms/brewery', 3, 5);
 
         expect(cost.coins).toBe(3000);
-        expect(cost.materials).toEqual([
-            { itemHrid: '/items/plank', count: 60, marketPrice: 10, totalValue: 600 },
-        ]);
+        expect(cost.materials).toEqual([{ itemHrid: '/items/plank', count: 60, marketPrice: 10, totalValue: 600 }]);
         expect(cost.totalValue).toBe(3600);
     });
 

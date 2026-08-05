@@ -92,7 +92,9 @@ describe('parseEquipmentEfficiencyBonuses', () => {
 
 describe('parseEssenceFindBonus', () => {
     test('scales essence find with the accessory 5x slot multiplier', () => {
-        const equipment = new Map([['/item_locations/ring', { itemHrid: '/items/essence_ring', enhancementLevel: 10 }]]);
+        const equipment = new Map([
+            ['/item_locations/ring', { itemHrid: '/items/essence_ring', enhancementLevel: 10 }],
+        ]);
         // 0.15 * (1 + 0.29*5) = 0.3675 -> 36.75%
         expect(parseEssenceFindBonus(equipment, itemDetailMap)).toBeCloseTo(36.75, 6);
     });

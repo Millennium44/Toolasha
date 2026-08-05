@@ -102,7 +102,8 @@ describe('makeColumnSortable', () => {
         ]);
         makeColumnSortable(th2, {
             sortId: 'value',
-            valueGetter: (tr) => (tr.children[1].textContent === 'Infinity' ? Infinity : parseFloat(tr.children[1].textContent)),
+            valueGetter: (tr) =>
+                tr.children[1].textContent === 'Infinity' ? Infinity : parseFloat(tr.children[1].textContent),
         });
 
         th2.click();
@@ -163,7 +164,10 @@ describe('addColumn', () => {
     });
 
     test('renders empty string for null/undefined/NaN values', () => {
-        const { table } = buildTable([{ name: 'a', value: 5 }, { name: 'b', value: 6 }]);
+        const { table } = buildTable([
+            { name: 'a', value: 5 },
+            { name: 'b', value: 6 },
+        ]);
         addColumn(table, 'mwi-col', { name: 'Sparse', data: [null, NaN] });
         const cells = table.querySelectorAll('tbody tr td:last-child');
         expect(cells[0].textContent).toBe('');

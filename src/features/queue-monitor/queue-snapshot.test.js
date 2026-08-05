@@ -131,7 +131,9 @@ describe('queue snapshot', () => {
     });
 
     test('an action with no resolvable details is skipped rather than crashing', async () => {
-        game.actions = [{ actionHrid: '/actions/unknown/x', isDone: false, hasMaxCount: true, maxCount: 1, currentCount: 0 }];
+        game.actions = [
+            { actionHrid: '/actions/unknown/x', isDone: false, hasMaxCount: true, maxCount: 1, currentCount: 0 },
+        ];
         queueSnapshot.initialize();
         await Promise.resolve();
 
@@ -153,9 +155,7 @@ describe('queue snapshot', () => {
         queueSnapshot.initialize();
         await Promise.resolve();
 
-        expect(() =>
-            game.dmHandlers.character_switching({ oldId: 'char1', oldName: 'Someone' })
-        ).not.toThrow();
+        expect(() => game.dmHandlers.character_switching({ oldId: 'char1', oldName: 'Someone' })).not.toThrow();
         expect(queueSnapshot.getSnapshot('char1')).toBeNull();
     });
 
@@ -187,8 +187,18 @@ describe('queue snapshot', () => {
     });
 
     test('loadSnapshots keeps the newer of two snapshots for the same character', async () => {
-        game.stored['queueSnapshot_char1_old'] = { characterId: 'char1', timestamp: 100, actions: [], totalQueueSeconds: 1 };
-        game.stored['queueSnapshot_char1_new'] = { characterId: 'char1', timestamp: 200, actions: [], totalQueueSeconds: 2 };
+        game.stored['queueSnapshot_char1_old'] = {
+            characterId: 'char1',
+            timestamp: 100,
+            actions: [],
+            totalQueueSeconds: 1,
+        };
+        game.stored['queueSnapshot_char1_new'] = {
+            characterId: 'char1',
+            timestamp: 200,
+            actions: [],
+            totalQueueSeconds: 2,
+        };
         game.storedKeys = ['queueSnapshot_char1_old', 'queueSnapshot_char1_new'];
 
         await queueSnapshot._loadSnapshots();
@@ -204,9 +214,7 @@ describe('queue snapshot', () => {
 
         game.actionDetails['/actions/milking/basic'] = { name: 'Basic Milking' };
         game.actions = [];
-        expect(() =>
-            game.dmHandlers.character_switching({ oldId: 'char1', oldName: 'One' })
-        ).not.toThrow();
+        expect(() => game.dmHandlers.character_switching({ oldId: 'char1', oldName: 'One' })).not.toThrow();
         expect(queueSnapshot.getSnapshot('char1')).not.toBeNull();
     });
 
