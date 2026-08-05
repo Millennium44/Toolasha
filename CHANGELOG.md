@@ -17,6 +17,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - **The Task Tokens tile earns its rate line**: `tokens/hr this week` beneath the board value, on wall-clock time between your first and last claim (the tooltip names the sample and the basis; under two claims shows no rate rather than a fake one).
 - **Task statistics gains "Claimed Tasks (last 7 days)"**: tasks, tokens, coins, both hourly rates, the measured span — and reroll spend over the same window tied in for a **Net Task Income** figure, plus your last five completions.
 
+### Sync works from a phone, and can't eat itself
+
+- **`@connect gist.githubusercontent.com` added to the userscript header**: reading a truncated gist file refetches it from GitHub's raw host, which mobile userscript managers silently block when undeclared — the phone's "Could not reach GitHub" pull failure. Reinstall the userscript to pick the header up.
+- **A device that has never synced now confirms before Push overwrites an existing gist** — a fresh phone pushing before its first Pull would have replaced the account's whole gist with an empty database. The dialog says to Pull first; automatic pushes on a never-synced device simply decline.
+
 ### The manifest error says what it means
 
 - **"Manifest is corrupt" now tells the truth**: a manifest file that was replaced by hand (e.g. a backup pasted over `toolasha-sync.json`) is called that, with the gist id in the message; a network failure while reading the manifest keeps its own classification instead of masquerading as corruption. Either way the remedy is unchanged and real: pushing from a good device rewrites the manifest and repairs the gist.
