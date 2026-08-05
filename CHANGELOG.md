@@ -12,6 +12,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - **The count is a per-floor override again**: a number chosen because one map was worth four beacons no longer follows you onto every floor after it. Each new floor starts back on the automatic minimum.
 - **A ⟲ button beside the count** puts it back to the fewest that cover a path, without spinning the field down a step at a time.
 
+### Release plumbing
+
+- **Guild features moved from the ui library to the combat library**: the trials suite had pushed `toolasha-ui.js` past the 3MB bundle ceiling; the guild modules already lean on combat machinery (damage attribution, battle payloads), so they now ship in `toolasha-combat.js` (2.3MB) and `toolasha-ui.js` is back under the limit. No behavior change — the entrypoint wires the same features from their new home.
+- Repo-wide prettier drift (11 test files and one doc that slipped past the staged-files hook) formatted; the storage-estimate test suite provides its own `navigator` so it runs on CI's Node 20.
+
 ### A trial report your guild can actually read
 
 - **Copy guild report**: one click produces a Discord-pasteable summary — trial name and tiers cleared, party damage and rate, ranked player lines that only mention what happened (no zero-fields reading as failures), attributed and unattributed healing, and the line nothing has ever shown: **how close the party came** — "Stopped 83% into T4 — 112,000 of 669,500 HP left" states it both ways because a guild asks both "was it close?" and "how much more DPS did we need?". No markup, no padded columns (Discord renders proportionally), every line under 120 characters.

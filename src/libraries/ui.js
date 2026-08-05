@@ -88,16 +88,6 @@ import enhancementFeature from '../features/enhancement/enhancement-feature.js';
 import '../features/enhancement/enhancement-session-row.js';
 import xphCalculator from '../features/enhancement/xph-calculator.js';
 
-// Guild
-import guildXPTracker from '../features/guild/guild-xp-tracker.js';
-import guildXPDisplay from '../features/guild/guild-xp-display.js';
-import guildCreditValue from '../features/guild/guild-credit-value.js';
-import guildRosterView from '../features/guild/guild-roster-view.js';
-import guildTrials from '../features/guild/guild-trials.js';
-import guildTrialScoreboard from '../features/guild/guild-trial-scoreboard.js';
-// Side-effect import: registers the Guild Trials overlay row
-import '../features/guild/guild-trials-row.js';
-
 // Insights
 import predictionCalibration from '../features/insights/index.js';
 
@@ -142,7 +132,6 @@ const toolashaRoot = window.Toolasha || {};
 // Shared console-only debug namespace; nothing schedules these
 toolashaRoot.Debug = {
     ...(toolashaRoot.Debug || {}),
-    guildXp: () => guildXPTracker.debugState(),
     // Why the Houses overlay row is or is not showing anything
     houses: () => describeHouses(),
 };
@@ -203,12 +192,6 @@ toolashaRoot.UI = {
     alchemyActionProtection,
     enhancementFeature,
     xphCalculator,
-    guildXPTracker,
-    guildXPDisplay,
-    guildCreditValue,
-    guildRosterView,
-    guildTrials,
-    guildTrialScoreboard,
     predictionCalibration,
     leaderboardXPTracker,
     leaderboardXPDisplay,
