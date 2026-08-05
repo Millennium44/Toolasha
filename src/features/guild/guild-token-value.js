@@ -65,7 +65,7 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import { capturedTokenExchanges } from './guild-token-exchange-capture.js';
 import { buildGoldPerCredit } from '../../utils/guild-credit-pricing.js';
-import { formatKMB } from '../../utils/formatters.js';
+import { formatKMB, formatWithSeparator } from '../../utils/formatters.js';
 
 /** How an hrid spells a guild token */
 const TOKEN_PATTERN = /guild_token/;
@@ -410,9 +410,16 @@ function formatRate(rate) {
  * Returns null rather than a zero when nothing can be priced, so a caller can
  * fall back to the bare token count it showed before instead of printing "≈ 0".
  *
+ * `options.exact` prints the gold in full, with thousands separators, instead of
+ * abbreviating it. A tile that has room for "≈2.0M" wants the abbreviation; the
+ * trial payout block does not — the whole point of that block is that its
+ * arithmetic reproduces the guild's announcement to the token, and rounding the
+ * answer to two significant figures on the way to the screen throws that away.
+ *
  * @param {number} tokenCount - Tokens
  * @param {string} [pricingMode='ask'] - Pricing side for the credit half
  * @param {Object} [options] - Overrides, as {@link explainGuildTokenValue} takes them
+ * @param {boolean} [options.exact] - Print the gold in full rather than abbreviated
  * @returns {{gold: number, text: string, title: string, valuation: Object}|null} Value and captions
  */
 export function describeGuildTokenGold(tokenCount, pricingMode = 'ask', options = {}) {
@@ -424,10 +431,11 @@ export function describeGuildTokenGold(tokenCount, pricingMode = 'ask', options 
 
     const gold = tokens * valuation.gold;
     const rateText = `${formatRate(valuation.creditsPerToken)} credit${valuation.creditsPerToken === 1 ? '' : 's'} per token`;
+    const figure = options.exact ? formatWithSeparator(Math.round(gold)) : formatKMB(gold);
 
     return {
         gold,
-        text: `≈${formatKMB(gold)}g ${VIA_EXCHANGE}${valuation.assumed ? ' (assumed rate)' : ''}`,
+        text: `≈${figure}g ${VIA_EXCHANGE}${valuation.assumed ? ' (assumed rate)' : ''}`,
         title:
             `${formatKMB(gold)} gold: ${formatKMB(tokens)} tokens at ${rateText}, ` +
             `each credit worth ${formatKMB(valuation.goldPerCredit)} gold. ` +

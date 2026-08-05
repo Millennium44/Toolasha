@@ -58,6 +58,7 @@ const {
     mergeTrialRecords,
     probeBuildingDetailMap,
     readBuildingBonus,
+    readBuildingRules,
     readPayoutBonuses,
     recordTileSample,
     saveTrialRecord,
@@ -288,6 +289,73 @@ describe('the detail map probe', () => {
     });
 });
 
+describe('the game’s own building rules', () => {
+    // Read out of `initClientData` by the player: the Builder's Hall entry
+    // carries `guildPointsBonusPerLevel: 0.02` and the Treasury
+    // `guildTokenBonusPerLevel: 0.02`, both with `maxLevel: 20` — the same
+    // numbers the upgrade popups quote, now available at runtime instead of
+    // only as a rule this file hardcodes.
+    const detailMap = {
+        '/guild_buildings/builders_hall': { name: "Builder's Hall", guildPointsBonusPerLevel: 0.02, maxLevel: 20 },
+        '/guild_buildings/treasury': { name: 'Treasury', guildTokenBonusPerLevel: 0.02, maxLevel: 20 },
+    };
+
+    test('the per-level bonus comes off the entry, not the constant', () => {
+        expect(readBuildingRules(BUILDING_PATTERNS.buildersHall, { detailMap })).toEqual({
+            bonusPerLevel: 0.02,
+            maxLevel: 20,
+            source: 'client',
+        });
+        expect(readBuildingRules(BUILDING_PATTERNS.treasury, { detailMap })).toMatchObject({
+            bonusPerLevel: 0.02,
+            source: 'client',
+        });
+    });
+
+    test('a rebalance moves the panel with it', () => {
+        const rebalanced = {
+            '/guild_buildings/builders_hall': { guildPointsBonusPerLevel: 0.03, maxLevel: 25 },
+        };
+        expect(readBuildingRules(BUILDING_PATTERNS.buildersHall, { detailMap: rebalanced })).toMatchObject({
+            bonusPerLevel: 0.03,
+            maxLevel: 25,
+        });
+
+        const bonus = readBuildingBonus({
+            pattern: BUILDING_PATTERNS.buildersHall,
+            levelMap: { '/guild_buildings/builders_hall': 24 },
+            detailMap: rebalanced,
+        });
+        // Twenty-four levels is within the rebalanced cap, at the rebalanced rate
+        expect(bonus.level).toBe(24);
+        expect(bonus.bonus).toBeCloseTo(0.72, 10);
+    });
+
+    test('with no client data the confirmed constants stand in', () => {
+        expect(readBuildingRules(BUILDING_PATTERNS.treasury, { detailMap: {} })).toEqual({
+            bonusPerLevel: 0.02,
+            maxLevel: 20,
+            source: 'constant',
+        });
+    });
+
+    test('the detail map is found by what it contains when its name is not known', () => {
+        game.clientData = { someRenamedGuildBuildings: detailMap };
+        expect(probeBuildingDetailMap()).toEqual(detailMap);
+    });
+
+    test('the payout bonus is read straight off the entry', () => {
+        const bonus = readBuildingBonus({
+            pattern: BUILDING_PATTERNS.buildersHall,
+            levelMap: { '/guild_buildings/builders_hall': 10 },
+            detailMap,
+        });
+        // The guild the panel was calibrated against: level 10, +20%
+        expect(bonus).toMatchObject({ level: 10, source: 'client' });
+        expect(bonus.bonus).toBeCloseTo(0.2, 10);
+    });
+});
+
 describe('payout bonuses', () => {
     test('resolved from client data when the game describes the building', () => {
         const bonus = readBuildingBonus({
@@ -298,7 +366,12 @@ describe('payout bonuses', () => {
             },
         });
 
-        expect(bonus).toEqual({ hrid: '/guild_buildings/builders_hall', level: 3, bonus: 0.2, source: 'client' });
+        expect(bonus).toMatchObject({
+            hrid: '/guild_buildings/builders_hall',
+            level: 3,
+            bonus: 0.2,
+            source: 'client',
+        });
     });
 
     test('a level with nothing describing it falls back to the confirmed 2% per level', () => {
@@ -330,7 +403,7 @@ describe('payout bonuses', () => {
     });
 
     test('unknown when nothing is known at all', () => {
-        expect(readBuildingBonus({ pattern: BUILDING_PATTERNS.treasury, levelMap: {}, detailMap: {} })).toEqual({
+        expect(readBuildingBonus({ pattern: BUILDING_PATTERNS.treasury, levelMap: {}, detailMap: {} })).toMatchObject({
             hrid: null,
             level: 0,
             bonus: null,

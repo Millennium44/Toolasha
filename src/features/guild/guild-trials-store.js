@@ -157,6 +157,9 @@ export function recordTileSample(record, tile, at) {
         // so a card that does not carry them must not erase what the other tab
         // already said
         points: Number.isFinite(tile?.points) ? tile.points : existing.points,
+        // Sticky: a finished trial does not become unfinished, and the In
+        // Progress card that carries the reading does not carry the word
+        completed: Boolean(tile?.completed) || Boolean(existing.completed),
         signups: tile?.signups || existing.signups || null,
         pointsByTier,
         samples: samples.slice(-MAX_SAMPLES),
@@ -227,6 +230,7 @@ export function mergeTrialRecords(base, incoming) {
         tiles[key] = {
             name: fresher.name || existing.name,
             kind: fresher.kind || existing.kind,
+            completed: Boolean(existing.completed) || Boolean(tile.completed),
             level: Number.isFinite(fresher.level) ? fresher.level : existing.level,
             tier: Number.isFinite(fresher.tier) ? fresher.tier : existing.tier,
             // Carried across rather than dropped. Both come off the Trials tab
@@ -307,6 +311,23 @@ export const BUILDING_PATTERNS = {
 const DETAIL_MAP_KEYS = ['guildBuildingDetailMap', 'guildBuildingDetailDict', 'guildShrineDetailMap'];
 
 /**
+ * The per-level fields the game's own building entries carry.
+ *
+ * Read out of `initClientData` by the player and confirmed against the two
+ * upgrade popups this file already quotes: the Builder's Hall entry carries
+ * `guildPointsBonusPerLevel: 0.02` and the Treasury `guildTokenBonusPerLevel:
+ * 0.02`. Each entry carries only its own, so "whichever of these is present" is
+ * unambiguous and no caller has to say which building it is holding.
+ *
+ * Reading them beats the constant: it is the same number today, and it is
+ * whatever the number becomes after a rebalance.
+ */
+const PER_LEVEL_FIELDS = ['guildPointsBonusPerLevel', 'guildTokenBonusPerLevel'];
+
+/** Remembered once found: `initClientData` is large and its shape does not change mid-session */
+let detailMapKey = null;
+
+/**
  * An hrid reduced to its comparable letters.
  * @param {string} hrid - An hrid
  * @returns {string} Lowercase letters only
@@ -344,6 +365,12 @@ export function findBuildingHrid(levelMap, pattern) {
  */
 export function buildingBonusFromDetail(detail, level) {
     if (!detail || !Number.isFinite(level) || level <= 0) return null;
+
+    // The game's own per-level figure first, where the entry carries one
+    for (const field of PER_LEVEL_FIELDS) {
+        const perLevel = Number(detail[field]);
+        if (Number.isFinite(perLevel)) return perLevel * level;
+    }
 
     const buffs = Array.isArray(detail.buffs) ? detail.buffs : [];
     for (const buff of buffs) {
@@ -393,29 +420,31 @@ export { BUILDING_BONUS_PER_LEVEL };
  * @param {number|null} input.override - Manual bonus as a percentage, or null
  * @param {Object} [input.levelMap] - `guildBuildingLevelMap`; read from the data manager when omitted
  * @param {Object} [input.detailMap] - Building detail map; probed from client data when omitted
- * @returns {{hrid: string|null, level: number, bonus: number|null, source: string}} What is known
+ * @returns {{hrid: string|null, level: number, bonus: number|null, source: string,
+ *   rules: {bonusPerLevel: number, maxLevel: number, source: string}}} What is known
  */
 export function readBuildingBonus({ pattern, override = null, levelMap, detailMap }) {
     const levels = levelMap || dataManager.guildBuildingLevelMap || {};
     const details = detailMap || probeBuildingDetailMap();
 
+    const rules = readBuildingRules(pattern, { levelMap: levels, detailMap: details });
     const hrid = findBuildingHrid(levels, pattern);
-    // Clamped to GUILD_BUILDING_MAX_LEVEL: buildings cap at 20 in-game, so
-    // anything higher on the wire is bad data, not a level to trust or to
-    // extrapolate the 2%-per-level formula past.
-    const level = hrid ? Math.min(Number(levels[hrid]) || 0, GUILD_BUILDING_MAX_LEVEL) : 0;
+    // Clamped to the building's own cap — 20 in the game's data — so anything
+    // higher on the wire is bad data, not a level to trust or to extrapolate the
+    // per-level rule past.
+    const level = hrid ? Math.min(Number(levels[hrid]) || 0, rules.maxLevel) : 0;
 
     if (Number.isFinite(override) && override > 0) {
-        return { hrid, level, bonus: override / 100, source: 'manual' };
+        return { hrid, level, bonus: override / 100, source: 'manual', rules };
     }
 
     const bonus = hrid ? buildingBonusFromDetail(details?.[hrid], level) : null;
-    if (Number.isFinite(bonus)) return { hrid, level, bonus, source: 'client' };
+    if (Number.isFinite(bonus)) return { hrid, level, bonus, source: 'client', rules };
 
     // The level is the hard part; once it is in hand the multiplier is arithmetic
-    if (level > 0) return { hrid, level, bonus: level * BUILDING_BONUS_PER_LEVEL, source: 'formula' };
+    if (level > 0) return { hrid, level, bonus: level * rules.bonusPerLevel, source: 'formula', rules };
 
-    return { hrid, level, bonus: null, source: 'unknown' };
+    return { hrid, level, bonus: null, source: 'unknown', rules };
 }
 
 /**
@@ -424,11 +453,79 @@ export function readBuildingBonus({ pattern, override = null, levelMap, detailMa
  */
 export function probeBuildingDetailMap() {
     const clientData = dataManager.getInitClientData?.() || {};
+
+    if (detailMapKey && isBuildingDetailMap(clientData[detailMapKey])) return clientData[detailMapKey];
+
     for (const key of DETAIL_MAP_KEYS) {
         const candidate = clientData[key];
-        if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) return candidate;
+        if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
+            detailMapKey = key;
+            return candidate;
+        }
     }
+
+    // Named guesses exhausted. Rather than give up on a map that is provably
+    // there — the player read it out of `initClientData` — find it by what it
+    // contains: entries keyed `/guild_buildings/<name>` carrying the per-level
+    // fields above. A renamed map then costs nothing.
+    for (const [key, value] of Object.entries(clientData)) {
+        if (!isBuildingDetailMap(value)) continue;
+        detailMapKey = key;
+        return value;
+    }
+
     return {};
+}
+
+/**
+ * Whether a client-data value looks like the guild building detail map.
+ * @param {*} value - A candidate
+ * @returns {boolean} True when it is one
+ */
+function isBuildingDetailMap(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+
+    for (const [hrid, entry] of Object.entries(value)) {
+        if (!entry || typeof entry !== 'object') continue;
+        if (PER_LEVEL_FIELDS.some((field) => Number.isFinite(Number(entry[field])))) return true;
+        if (/^\/guild_buildings?\//.test(hrid) && Number.isFinite(Number(entry.maxLevel))) return true;
+    }
+    return false;
+}
+
+/**
+ * The rules a building runs on, from the game's own data where it has them.
+ *
+ * Both figures are confirmed twice over — `guildPointsBonusPerLevel: 0.02` and
+ * `maxLevel: 20` in client data, and the upgrade popups that quote the same
+ * numbers back — so this is not a probe for something unverified. It exists so
+ * that a rebalance changes the panel rather than making it quietly wrong, and it
+ * falls back to the constants when there is no client data to read, which is the
+ * state every test and every pre-login moment is in.
+ *
+ * @param {RegExp} pattern - One of {@link BUILDING_PATTERNS}
+ * @param {Object} [options] - Overrides, for tests
+ * @param {Object} [options.levelMap] - `guildBuildingLevelMap`
+ * @param {Object} [options.detailMap] - Building detail map
+ * @returns {{bonusPerLevel: number, maxLevel: number, source: 'client'|'constant'}} The rules
+ */
+export function readBuildingRules(pattern, { levelMap, detailMap } = {}) {
+    const levels = levelMap || dataManager.guildBuildingLevelMap || {};
+    const details = detailMap || probeBuildingDetailMap();
+
+    // By level map first, because that is the spelling this guild's own data
+    // uses; by the detail map's own keys when the guild has never built one
+    const hrid = findBuildingHrid(levels, pattern) || findBuildingHrid(details, pattern) || null;
+    const entry = hrid ? details?.[hrid] : null;
+
+    const perLevel = PER_LEVEL_FIELDS.map((field) => Number(entry?.[field])).find((value) => Number.isFinite(value));
+    const maxLevel = Number(entry?.maxLevel);
+
+    return {
+        bonusPerLevel: Number.isFinite(perLevel) ? perLevel : BUILDING_BONUS_PER_LEVEL,
+        maxLevel: Number.isFinite(maxLevel) && maxLevel > 0 ? maxLevel : GUILD_BUILDING_MAX_LEVEL,
+        source: Number.isFinite(perLevel) ? 'client' : 'constant',
+    };
 }
 
 /**

@@ -29,6 +29,7 @@ const game = vi.hoisted(() => ({
     guildName: 'Milky Way',
     currentWeek: '2026-07-31T00:00:00Z',
     members: [],
+    characterId: null,
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -64,6 +65,7 @@ vi.mock('../../core/data-manager.js', () => ({
             return game.buildingLevels;
         },
         getInitClientData: () => game.clientData,
+        getCurrentCharacterId: () => game.characterId,
     },
 }));
 vi.mock('../../core/storage.js', () => ({
@@ -89,8 +91,16 @@ vi.mock('./guild-xp-tracker.js', () => ({
     },
 }));
 
-const { analyseTrial, participantCounts, renderTrialBlock, renderTrialPlayers, tokenPayoutLine, guildTrials } =
-    await import('./guild-trials.js');
+const {
+    analyseTrial,
+    guildTrials,
+    ownParticipation,
+    participantCounts,
+    placeTrialBlock,
+    renderTrialBlock,
+    renderTrialPlayers,
+    tokenPayoutLine,
+} = await import('./guild-trials.js');
 const trialsFeature = (await import('./guild-trials.js')).default;
 
 const now = Date.parse('2026-08-04T12:00:00Z');
@@ -349,9 +359,153 @@ describe('tokenPayoutLine', () => {
 
         const row = tokenPayoutLine(500, 'Half the base points.');
 
-        expect(row.value).toContain('≈1.0M');
+        // Both halves in full: 500 tokens, and the gold they convert to
+        expect(row.value).toContain('500 (');
+        expect(row.value).toContain('≈1,000,000g');
         expect(row.value).toContain('via credit exchange');
         expect(row.title).toContain('Half the base points.');
+    });
+});
+
+describe('ownParticipation', () => {
+    // Confirmed by the user: the In Progress tab only ever shows the trials this
+    // character signed up for, so a card for anybody else's trial can never
+    // receive a reading. Knowing which is which is what lets the block say that
+    // instead of promising a measurement that cannot arrive.
+    const tracker = (meta) => ({
+        getMemberMeta: (id) => (String(id) === '30404' ? meta : null),
+        getCurrentWeekStartAt: () => '2026-07-31T00:00:00Z',
+    });
+
+    test('signed up for this trial, this week', () => {
+        const meta = {
+            signedUpCombatTrialHrid: '/guild_trials/trial_chameleon',
+            signedUpSkillingTrialHrid: '',
+            signupWeekStartAt: '2026-07-31T00:00:00Z',
+        };
+        expect(ownParticipation('Trial Chameleon', { tracker: tracker(meta), characterId: 30404 })).toBe(true);
+        expect(ownParticipation('Alchemy', { tracker: tracker(meta), characterId: 30404 })).toBe(false);
+    });
+
+    test('an id that arrived as a number and is asked for as a string is the same member', () => {
+        const meta = {
+            signedUpSkillingTrialHrid: '/guild_trials/alchemy',
+            signupWeekStartAt: '2026-07-31T00:00:00Z',
+        };
+        expect(ownParticipation('Alchemy', { tracker: tracker(meta), characterId: '30404' })).toBe(true);
+    });
+
+    test('last week’s sign-up is not this week’s', () => {
+        const meta = {
+            signedUpSkillingTrialHrid: '/guild_trials/alchemy',
+            signupWeekStartAt: '2026-07-24T00:00:00Z',
+        };
+        expect(ownParticipation('Alchemy', { tracker: tracker(meta), characterId: 30404 })).toBe(false);
+    });
+
+    test('signed up for nothing is not in it', () => {
+        const meta = { signedUpSkillingTrialHrid: '', signedUpCombatTrialHrid: '' };
+        expect(ownParticipation('Alchemy', { tracker: tracker(meta), characterId: 30404 })).toBe(false);
+    });
+
+    test('no sign-up sheet at all is unknown, not an accusation', () => {
+        expect(ownParticipation('Alchemy', { tracker: tracker(null), characterId: 30404 })).toBeNull();
+        expect(ownParticipation('Alchemy', { tracker: tracker({}), characterId: null })).toBeNull();
+    });
+});
+
+describe('placeTrialBlock', () => {
+    // Devtools, from the tab the user actually has: our block measured 126 ×
+    // 152.8 as a *Grid Item* — one cell of a four-column grid, not the full-width
+    // row `grid-column: 1 / -1` was supposed to give it — while the "Combat
+    // Trial" section label beside it is a 525.6-wide *Flex Item* of an outer box.
+    // Two different layouts in one panel, which is why this measures rather than
+    // assumes.
+    /**
+     * A container holding two cards.
+     * @param {string} css - Inline style for the container
+     * @returns {{root: Element, container: Element, card: Element}} The pieces
+     */
+    function layout(css) {
+        document.body.innerHTML =
+            `<div class="GuildPanel_guildPanel__r"><div id="grid" style="${css}">` +
+            '<div id="card" class="GuildPanel_tile__a">Trial Chameleon</div>' +
+            '<div class="GuildPanel_tile__b">Alchemy</div></div>' +
+            '<div class="GuildPanel_sectionLabel__s">Combat Trial</div></div>';
+        return {
+            root: document.querySelector('[class*="GuildPanel_guildPanel"]'),
+            container: document.getElementById('grid'),
+            card: document.getElementById('card'),
+        };
+    }
+
+    /** @returns {Element} A fresh block */
+    const newBlock = () => {
+        const block = document.createElement('div');
+        block.className = 'mwi-trial-info';
+        block.innerHTML = '<div>Banked 3 tiers</div>';
+        return block;
+    };
+
+    test('a grid with a real column template is spanned, all of it', () => {
+        const { root, card } = layout('display:grid; grid-template-columns:126px 126px 126px 126px');
+        const block = newBlock();
+
+        expect(placeTrialBlock(root, card, block, 'Trial Chameleon')).toBe('spanned');
+        // `span N`, never `1 / -1`: the latter counts explicit tracks only
+        expect(block.style.gridColumn).toBe('1 / span 4');
+        expect(block.previousElementSibling).toBe(card);
+    });
+
+    test('a grid that declares no columns is left alone and the block goes after it', () => {
+        // This is the reported case. `-1` resolves against the explicit grid, so
+        // on a container with implicit columns `1 / -1` is a single cell — 126px
+        // wide, exactly as devtools measured it.
+        const { root, container, card } = layout('display:grid');
+        const block = newBlock();
+
+        expect(placeTrialBlock(root, card, block, 'Trial Chameleon')).toBe('after-container');
+        expect(container.contains(block)).toBe(false);
+        expect(block.previousElementSibling).toBe(container);
+        // Away from its card, so it says which card it is
+        expect(block.textContent).toContain('Trial Chameleon');
+        // And before the next section's label, which it used to collide with
+        expect(block.nextElementSibling.className).toContain('GuildPanel_sectionLabel');
+    });
+
+    test('a wrapping flex row gives it a line of its own', () => {
+        const { root, card } = layout('display:flex; flex-wrap:wrap');
+        const block = newBlock();
+
+        expect(placeTrialBlock(root, card, block, 'Trial Chameleon')).toBe('after-card');
+        expect(block.style.flexBasis).toBe('100%');
+        expect(block.previousElementSibling).toBe(card);
+    });
+
+    test('a flex row that does not wrap would squash the cards, so it goes after', () => {
+        const { root, container, card } = layout('display:flex');
+        const block = newBlock();
+
+        expect(placeTrialBlock(root, card, block, 'Trial Chameleon')).toBe('after-container');
+        expect(container.contains(block)).toBe(false);
+    });
+
+    test('ordinary flow needs nothing but being a block', () => {
+        const { root, card } = layout('');
+        const block = newBlock();
+
+        expect(placeTrialBlock(root, card, block)).toBe('after-card');
+        expect(block.previousElementSibling).toBe(card);
+        expect(block.style.gridColumn).toBe('');
+    });
+
+    test('a card with nothing around it keeps the block inside itself', () => {
+        document.body.innerHTML = '<div id="lone" class="GuildPanel_tile__a">Alchemy</div>';
+        const card = document.getElementById('lone');
+        const block = newBlock();
+
+        expect(placeTrialBlock(card, card, block)).toBe('after-card');
+        expect(card.contains(block)).toBe(true);
     });
 });
 
@@ -400,6 +554,7 @@ describe('the panel, end to end', () => {
         game.buildingLevels = {};
         game.store = {};
         game.members = [];
+        game.characterId = null;
         await trialsFeature.initialize();
     });
 
@@ -515,7 +670,9 @@ describe('the panel, end to end', () => {
 
         // A combat trial on tier 5 has banked four: 400 + 200 × 3 = 1,000 base
         // points → 500 tokens for every eligible member, 750 for a participant
-        expect(text()).toContain('Guild Points banked1.0K');
+        // In full, with separators: this is the figure a player checks against
+        // the guild's own announcement, and "1.0K" cannot be checked
+        expect(text()).toContain('Guild Points banked1,000');
         expect(text()).toContain('Tokens, every eligible member500');
         expect(text()).toContain('Tokens, if you took part750');
     });
@@ -541,7 +698,7 @@ describe('the panel, end to end', () => {
 
         fire(buildTab([{ name: 'Trial Chameleon', level: 140, bar: '618,000 / 618,000' }]));
 
-        expect(text()).toContain('Tokens, every eligible member500 (≈1.0M');
+        expect(text()).toContain('Tokens, every eligible member500 (≈1,000,000g');
         expect(text()).toContain('via credit exchange');
     });
 
@@ -792,6 +949,7 @@ describe('the two trial tabs, as the game draws them', () => {
         game.buildingLevels = {};
         game.store = {};
         game.members = [];
+        game.characterId = null;
         guildTrials.record = null;
         guildTrials.guildName = null;
         await trialsFeature.initialize();
@@ -1076,6 +1234,66 @@ describe('renderTrialPlayers', () => {
         expect(renderTrialBlock(combat, 0, { measured: false, reason: 'none' })).not.toContain('Split disagrees');
     });
 
+    test('a trial this character is not in says so, instead of measuring forever', () => {
+        // Reported: cards for other people's trials sat on "measuring…" and
+        // "tier not known yet" all week. No reading can ever arrive for them —
+        // the In Progress tab shows only this character's own trials.
+        const analysis = analyseTrial(record({ tier: 6, samples: [] }), {});
+        const html = renderTrialBlock(analysis, 3, { measured: false, reason: 'none' }, { participating: false });
+
+        expect(html).toContain('no data — only trials you join can be measured');
+        expect(html).not.toContain('measuring…');
+        expect(html).not.toContain('On pace for');
+        // What the Trials tab does say about it is still shown
+        expect(html).toContain('Banked');
+    });
+
+    test('not knowing whether they are in it keeps the older wording', () => {
+        const analysis = analyseTrial(record({ tier: 6, samples: [] }), {});
+        const unknown = renderTrialBlock(analysis, 3, { measured: false, reason: 'none' }, { participating: null });
+
+        expect(unknown).toContain('measuring…');
+        expect(unknown).not.toContain('only trials you join');
+    });
+
+    test('a trial they are in that has a reading is measured as ever', () => {
+        const analysis = analyseTrial(
+            record({
+                samples: [
+                    { t: now, readings: [{ current: 618_000, max: 618_000 }] },
+                    { t: now + 10_000, readings: [{ current: 518_000, max: 618_000 }] },
+                ],
+            }),
+            {}
+        );
+        const html = renderTrialBlock(analysis, 3, { measured: false, reason: 'none' }, { participating: true });
+
+        expect(html).toContain('Party DPS');
+        expect(html).not.toContain('only trials you join');
+    });
+
+    test('the completed card makes the banked count exact', () => {
+        // The settled question. Trial Chameleon finished reading "Lv.120, 960
+        // pts, T3", and 960 is the ladder's three-tier total at +20% — so on a
+        // finished card the badge is the tiers earned, and "Banked 2 tiers"
+        // beside it was one short.
+        const finished = analyseTrial(
+            record({ kind: 'combat', level: 120, tier: 3, completed: true, pointsByTier: { 3: 960 } }),
+            { buildersHallBonus: 0.2 }
+        );
+
+        expect(finished.tiersClearedSoFar).toBe(3);
+        expect(finished.points.guildPoints).toBe(960);
+        expect(finished.points.basePoints).toBeCloseTo(800, 6);
+        expect(renderTrialBlock(finished, 3, { measured: false, reason: 'none' })).toContain('3 tiers · finished');
+
+        // Still an inference while the trial runs, and it does not claim the
+        // tier the party is currently fighting
+        const running = analyseTrial(record({ kind: 'combat', level: 120, tier: 3, completed: false }), {});
+        expect(running.tiersClearedSoFar).toBe(2);
+        expect(renderTrialBlock(running, 3, { measured: false, reason: 'none' })).not.toContain('finished');
+    });
+
     test('a combat block carries the split and a skilling one does not', () => {
         const combat = analyseTrial(record({ samples: [{ t: now, readings: [{ current: 1, max: 2 }] }] }), {});
         expect(renderTrialBlock(combat, 0, breakdown)).toContain('Per player');
@@ -1108,6 +1326,7 @@ describe('the payout block, audited', () => {
                 `<div class="GuildPanel_tileSummary__e">Lv.${card.level}</div>` +
                 `<div class="Card_points__g">${card.points} pts</div>` +
                 `<div class="Card_signups__h">${card.signups} signed up</div>` +
+                (card.completed ? '<div class="Card_state__j">Completed</div>' : '') +
                 '<div class="Card_clock__i">20m 53s</div>';
             root.appendChild(tile);
         }
@@ -1129,6 +1348,7 @@ describe('the payout block, audited', () => {
         game.buildingLevels = {};
         game.store = {};
         game.members = [];
+        game.characterId = null;
         await trialsFeature.initialize();
     });
 
@@ -1179,10 +1399,32 @@ describe('the payout block, audited', () => {
 
         // 1,080 + 960 = 2,040 Guild Points banked; base 1,700 at the Builder's
         // Hall's +20%, and half of that at the Treasury's +10% is 935 tokens
-        expect(text()).toContain('Guild Points banked');
-        expect(text()).toContain('2.0K');
+        expect(text()).toContain('Guild Points banked2,040');
         expect(text()).toContain('Tokens, every eligible member935');
+        expect(text()).toContain('Tokens, if you took part1,403');
         expect(text()).not.toContain('needs checking');
+    });
+
+    test('a finished card banks the tier it names, and the block says so', () => {
+        // End to end on the settled question: the completed Trial Chameleon
+        // read "Lv.120, 960 pts, T3, Completed", and 960 is exactly the
+        // ladder's three-tier total once the Builder's Hall +20% is off it
+        game.buildingLevels = { '/guild_buildings/builders_hall': 10, '/guild_buildings/treasury': 5 };
+
+        buildTrialsTab({
+            name: 'Trial Chameleon',
+            level: 120,
+            points: 960,
+            signups: '3/56',
+            completed: true,
+        });
+        fire();
+
+        expect(guildTrials.record.tiles['combat::trial chameleon'].completed).toBe(true);
+        expect(text()).toContain('3 tiers · finished');
+        expect(text()).toContain('Guild Points banked960');
+        // 800 of base, half of it at the Treasury's +10%
+        expect(text()).toContain('Tokens, every eligible member440');
     });
 
     test('a card the ladder cannot explain even after the bonus is reported', () => {

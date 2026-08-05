@@ -6,6 +6,15 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Trials round three: exact digits, honest captions, and a block that finally sits still
+
+- **Payout figures in full digits**: the payout block now says "2,880" and "1,320 (≈14,652,000g via credit exchange)" instead of "2.9K" and "1.3K (≈14.9Mg)" — the whole point of exact math is the exact digits. Tiles elsewhere keep abbreviating.
+- **The sign-up roster renders only on the Trials tab**: it had been migrating onto the In Progress tab after a tier advanced, because both tabs answer to the same panel finder and a stale block was never removed across the switch. The setup tab is now recognised by what its cards carry (sign-ups without progress bars), and stale blocks are removed document-wide on redraw.
+- **The injected block takes a real full row**: `grid-column: 1/-1` collapses to a single cell on a grid with no explicit column template — the 126px-wide overlap in the devtools shot. Placement now measures the actual container (grid with/without template, wrapping/non-wrapping flex, plain flow) and picks a spanning technique that works there, labelling the block with its trial's name when it can't sit beside its card.
+- **Trials you're not in say so**: progress and damage only exist for trials your character joins, so other cards now say "no data — only trials you join can be measured" instead of "measuring…" forever. Tier, points, and sign-ups still show for every trial — those are visible to everyone.
+- **The tier badge is settled**: on a completed card the badge counts tiers earned (960 pts at T3 is the three-tier ladder total), so "Banked" now says "3 tiers · finished" instead of stopping one short; a running card keeps the cautious tier − 1 and its tooltip says it's an inference.
+- **Building bonuses read from the game's own data**: Builder's Hall and Treasury per-level rates and level caps now come from the client's building detail map (user-extracted, `guildPointsBonusPerLevel`/`guildTokenBonusPerLevel` both 0.02) with the constants as fallback — a game rebalance moves the panel's math automatically.
+
 ### The trial payout math is now exact, verified against four real payouts
 
 - **Combat trial cards finally produce a rate**: the two bars are the boss's HP and mana (user-confirmed), so the first is always the boss and mana is excluded from rate math — the old "whichever bar falls" rule could never classify a pair of samples straddling a tier clear, which is why the card measured nothing all hour. Damage now accumulates across tier boundaries (remaining HP of the old boss + damage into the new one), captions itself as a lower bound when the gap could span more than one tier, and a "Split disagrees" row appears when the bar-derived rate and the per-player damage split diverge past 1.4× — they measure different windows and the row says so.

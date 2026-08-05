@@ -182,13 +182,30 @@ export function analyseTrial(record, { participants = 0, timeLeftMs = null, buil
     // reporting it as "0 banked" is what made a live trial's payout read as
     // nothing at all.
     const tierKnown = Number.isFinite(tier);
-    const tiersClearedSoFar = tierKnown ? Math.max(0, tier - 1) : 0;
+
+    // How many tiers the badge on the card stands for, which is not the same
+    // question in the two states a card can be in:
+    //
+    // - **Finished.** The completed Trial Chameleon card read "Lv.120, 960 pts,
+    //   T3", and 960 is the ladder's *three*-tier total with the Builder's Hall
+    //   bonus on it. So on a finished card the badge is the tiers earned, and
+    //   this is exact rather than inferred — the arithmetic checks itself.
+    // - **Running.** The badge is the tier being fought, and the tiers earned
+    //   are one fewer. That is still an inference: a trial starts at tier 1 and
+    //   climbs one at a time, so a card showing T7 has banked six. Nothing has
+    //   confirmed it mid-trial, and the block says "in progress" beside it.
+    //
+    // Guessing the finished rule for a running card would claim a tier the party
+    // is still fighting, which is the direction that overstates a payout.
+    const completed = Boolean(record?.completed);
+    const tiersClearedSoFar = tierKnown ? Math.max(0, completed ? tier : tier - 1) : 0;
     const pointsByTier = record?.pointsByTier && typeof record.pointsByTier === 'object' ? record.pointsByTier : {};
 
     const base = {
         kind,
         tier,
         tierKnown,
+        completed,
         // The card's own "840 pts", where it has been seen. It is Guild Points
         // rather than base points — see `trialBankedBasePoints` — so the Builders
         // Hall bonus is needed to divide it back down for the token arithmetic
@@ -300,12 +317,76 @@ export function participantCounts(tracker = guildXPTracker) {
 }
 
 /**
+ * Whether this character is in a given trial, as far as anything can tell.
+ *
+ * Three answers, and the third is why this exists. A trial's progress can only
+ * ever be measured for a trial the player is *in*: the In Progress tab shows
+ * their own trials and nothing else, so no reading will ever arrive for the
+ * others. A card for somebody else's trial that says "measuring…" is promising
+ * a number that cannot come, and it said so for the whole week.
+ *
+ * `null` means the sign-up sheet has not been seen — the XP tracker is where
+ * that comes from and it can be switched off — and a caller must keep the older,
+ * vaguer wording rather than accusing the player of not joining.
+ *
+ * @param {string} trialName - The card's trial name
+ * @param {Object} [options] - Injectables, for tests
+ * @param {Object} [options.tracker] - The XP tracker
+ * @param {string|number|null} [options.characterId] - This character's id
+ * @returns {boolean|null} In it, not in it, or not knowable
+ */
+export function ownParticipation(trialName, { tracker = guildXPTracker, characterId } = {}) {
+    const id = characterId ?? dataManager.getCurrentCharacterId?.() ?? null;
+    if (id === null || id === undefined) return null;
+
+    // The map is keyed by whatever the socket used; an id that arrived as a
+    // number and is asked for as a string is the same member
+    const meta =
+        tracker?.getMemberMeta?.(id) || tracker?.getMemberMeta?.(String(id)) || tracker?.getMemberMeta?.(Number(id));
+    if (!meta) return null;
+
+    const currentWeek = tracker?.getCurrentWeekStartAt?.() || null;
+    if (currentWeek && meta.signupWeekStartAt && meta.signupWeekStartAt !== currentWeek) return false;
+
+    const hrids = [meta.signedUpSkillingTrialHrid, meta.signedUpCombatTrialHrid].filter(Boolean);
+    if (!hrids.length) return false;
+
+    return Boolean(matchTrialHrid(trialName, hrids));
+}
+
+/**
  * A number, or a dash.
  * @param {number|null} value - The number
  * @returns {string} Formatted
  */
 function num(value) {
     return Number.isFinite(value) ? formatKMB(Math.round(value)) : '—';
+}
+
+/**
+ * A fraction as a percentage, without trailing noise.
+ * @param {number|null} value - A fraction, e.g. 0.02
+ * @returns {string} e.g. `2%`
+ */
+function formatPercent(value) {
+    if (!Number.isFinite(value)) return '2%';
+    const percent = value * 100;
+    return `${Number.isInteger(percent) ? percent : Number(percent.toFixed(2))}%`;
+}
+
+/**
+ * A number in full, with thousands separators, or a dash.
+ *
+ * The payout block uses this and not {@link num}. Everywhere else an
+ * abbreviation is the right call — a rate of 5.0K dmg/s is easier to read than
+ * 4,981 — but a payout is a figure the player checks against what the guild
+ * announces, and "1.3K" cannot be checked against anything.
+ *
+ * @param {number|null} value - The number
+ * @returns {string} Formatted
+ */
+function exact(value) {
+    return Number.isFinite(value) ? formatWithSeparator(Math.round(value)) : '—';
 }
 
 /**
@@ -340,9 +421,13 @@ function line(label, value, color = '#e8ecf5', title = '') {
  * @returns {{value: string, title: string}} Row value and tooltip
  */
 export function tokenPayoutLine(tokens, baseTitle) {
-    const gold = describeGuildTokenGold(tokens, 'ask');
+    // Exact, on both halves. This block's arithmetic reproduces the guild's own
+    // announcement to the token — "1,320 tokens each" — and printing it as
+    // "1.3K" throws away the only thing that makes it worth checking.
+    const gold = describeGuildTokenGold(tokens, 'ask', { exact: true });
+    const count = exact(tokens);
     return {
-        value: gold ? `${num(tokens)} (${gold.text})` : num(tokens),
+        value: gold ? `${count} (${gold.text})` : count,
         title: gold ? `${baseTitle} ${gold.title}` : baseTitle,
     };
 }
@@ -352,13 +437,38 @@ export function tokenPayoutLine(tokens, baseTitle) {
  * @param {Object} analysis - From {@link analyseTrial}
  * @param {number} participants - Signed-up participants
  * @param {Object} [breakdown] - Per-player damage, from `guildTrialDamage.breakdown()`
+ * @param {Object} [options] - Context
+ * @param {boolean|null} [options.participating] - Whether this character is in this trial
  * @returns {string} HTML
  */
-export function renderTrialBlock(analysis, participants, breakdown = guildTrialDamage.breakdown()) {
+export function renderTrialBlock(
+    analysis,
+    participants,
+    breakdown = guildTrialDamage.breakdown(),
+    { participating = null } = {}
+) {
     const unit = analysis.kind === 'combat' ? 'dmg' : 'work';
     const rows = [];
 
-    if (!Number.isFinite(analysis.rate)) {
+    // A trial this character did not join sends nothing: the In Progress tab
+    // carries only their own trials, so no reading for this card will ever
+    // arrive. Saying "measuring…" there promises a number that cannot come.
+    const notMine = participating === false && !Number.isFinite(analysis.rate);
+
+    if (notMine) {
+        rows.push(
+            line(
+                'Rate',
+                'no data — only trials you join can be measured',
+                DIM,
+                'Every figure here is read off the guild panel, and the In Progress tab only ever shows the ' +
+                    'trials this character signed up for. Nothing arrives for the others — not from the ' +
+                    'socket, not from the screen — so this is a limit rather than a measurement in progress.\n' +
+                    'What the Trials tab states about this card — its tier, its points, its sign-ups — is ' +
+                    'still read and still shown below.'
+            )
+        );
+    } else if (!Number.isFinite(analysis.rate)) {
         rows.push(line('Rate', analysis.samples < 2 ? 'measuring…' : 'no movement yet', DIM));
     } else {
         const perSecond = analysis.rate * 1000;
@@ -408,7 +518,7 @@ export function renderTrialBlock(analysis, participants, breakdown = guildTrialD
         );
     }
 
-    if (!analysis.pace) {
+    if (!analysis.pace && !notMine) {
         // Silently omitting the row was indistinguishable from the feature not
         // having this idea at all — and the no-clock case was the only one that
         // said so. A pace needs four things and going quiet about the other
@@ -498,10 +608,16 @@ export function renderTrialBlock(analysis, participants, breakdown = guildTrialD
         rows.push(
             line(
                 'Banked',
-                `${analysis.tiersClearedSoFar} tier${analysis.tiersClearedSoFar === 1 ? '' : 's'}`,
+                `${analysis.tiersClearedSoFar} tier${analysis.tiersClearedSoFar === 1 ? '' : 's'}` +
+                    (analysis.completed ? ' · finished' : ''),
                 DIM,
-                'A trial starts at tier 1 and climbs one at a time, so the tier on screen names what is ' +
-                    'already cleared.'
+                analysis.completed
+                    ? 'This trial is over, so the tier on the card is the tier it reached — and the points ' +
+                          'it states are the ladder’s total for exactly that many tiers, which is what makes ' +
+                          'this figure exact rather than inferred.'
+                    : 'While a trial runs, the tier on screen is the one being fought, so what is banked is ' +
+                          'one fewer. That is an inference — it holds as long as a trial starts at tier 1 and ' +
+                          'climbs one at a time — and it settles when the card says the trial is complete.'
             )
         );
     }
@@ -564,6 +680,100 @@ export function renderTrialPlayers(breakdown) {
     }
 
     return rows;
+}
+
+/**
+ * Put a card's block somewhere it takes a row of its own.
+ *
+ * Third attempt, and the first two are why this is a function rather than a
+ * style string. Appended *into* the card, it sat under the card's own footer,
+ * because a card places its last rows against its bottom edge rather than after
+ * whatever it contains. Inserted after the card with `grid-column: 1 / -1`, it
+ * stayed one cell wide — 126px against a 525px section — and pushed into the
+ * next section's heading. The devtools screenshots say why: the cards are grid
+ * items, the section labels ("Combat Trial") are *flex* items of an outer box,
+ * and `-1` resolves against the **explicit** grid, so on a container whose
+ * columns are implicit `1 / -1` is a single cell.
+ *
+ * So the container is measured rather than assumed:
+ *
+ * - **A grid with a real column template.** Span every track it declares —
+ *   `1 / span N` rather than `1 / -1`, because that works on implicit tracks too.
+ * - **A grid with no template.** There is no row to span; the block goes after
+ *   the whole grid, where it is a sibling of the next section label instead of
+ *   a cell squeezed between cards.
+ * - **A flex container.** `flex-basis: 100%` on a wrapping row is a line of its
+ *   own; on a non-wrapping one it would squash the cards, so that goes after the
+ *   container too.
+ * - **Anything else** is ordinary flow, where a block-level div is already a row.
+ *
+ * When the block ends up away from its card it is given the trial's name, since
+ * "Banked 3 tiers" under a stack of cards has to say which one.
+ *
+ * @param {Element} root - The trials root; nothing is placed outside it
+ * @param {Element} card - The card being described
+ * @param {Element} block - The block to place
+ * @param {string} [name] - The trial's name, for when the block lands away from its card
+ * @returns {string} How it was placed: `spanned`, `after-card` or `after-container`
+ */
+export function placeTrialBlock(root, card, block, name = '') {
+    const container = card?.parentElement;
+    if (!container || !root?.contains?.(container)) {
+        card?.appendChild?.(block);
+        return 'after-card';
+    }
+
+    const style = typeof getComputedStyle === 'function' ? getComputedStyle(container) : null;
+    const display = style?.display || '';
+
+    const afterContainer = () => {
+        const outer = container.parentElement;
+        if (!outer || !root.contains(outer)) {
+            card.insertAdjacentElement('afterend', block);
+            return 'after-card';
+        }
+        block.style.width = '100%';
+        block.style.flexBasis = '100%';
+        if (name) block.insertAdjacentHTML('afterbegin', trialBlockHeading(name));
+        container.insertAdjacentElement('afterend', block);
+        return 'after-container';
+    };
+
+    if (display.includes('grid')) {
+        const tracks = style?.gridTemplateColumns || '';
+        const columns = tracks && tracks !== 'none' ? tracks.trim().split(/\s+/).length : 0;
+        if (columns > 1) {
+            // `span N` rather than `1 / -1`: the latter counts explicit tracks
+            // only, and collapses to one cell when the game declares none
+            block.style.gridColumn = `1 / span ${columns}`;
+            block.style.width = '100%';
+            card.insertAdjacentElement('afterend', block);
+            return 'spanned';
+        }
+        return afterContainer();
+    }
+
+    if (display.includes('flex')) {
+        const wraps = (style?.flexWrap || '').includes('wrap');
+        if (!wraps) return afterContainer();
+        block.style.flexBasis = '100%';
+        block.style.width = '100%';
+        card.insertAdjacentElement('afterend', block);
+        return 'after-card';
+    }
+
+    block.style.width = '100%';
+    card.insertAdjacentElement('afterend', block);
+    return 'after-card';
+}
+
+/**
+ * A heading naming the trial a detached block belongs to.
+ * @param {string} name - Trial name
+ * @returns {string} HTML
+ */
+function trialBlockHeading(name) {
+    return `<div style="color:${ACCENT}; font-weight:600; margin-bottom:2px;">${name}</div>`;
 }
 
 class GuildTrials {
@@ -824,27 +1034,14 @@ class GuildTrials {
 
                 const block = document.createElement('div');
                 block.className = CSS_CLASS;
-                // Its own block, in normal flow, and never inside the card.
-                //
-                // Appended *into* the card it described the game's own footer —
-                // "Completed", "1/28 signed up" — sat on top of these lines, because
-                // a card is a fixed-height box whose last rows are placed against
-                // its bottom edge rather than stacked after whatever it contains.
-                // Nothing this script can set on a child fixes that. Placed after
-                // the card instead, it cannot overlap anything: `flex-basis` and
-                // `grid-column` make it take a whole row of its own in the two
-                // layouts a card list is ever built out of.
                 block.style.cssText =
-                    'position:static; display:block; width:100%; box-sizing:border-box; clear:both;' +
-                    'flex-basis:100%; grid-column:1 / -1;' +
+                    'position:static; display:block; box-sizing:border-box; clear:both;' +
                     'margin:6px 0 8px; padding:6px 10px; background:rgba(0,0,0,0.25);' +
                     'border-radius:6px; font-size:11px; line-height:1.6;';
-                block.innerHTML = renderTrialBlock(analysis, participants);
-                // Inside the root either way: the redraw clears its own output by
-                // querying the root, so a block placed outside it would stack
-                const parent = tile.element.parentElement;
-                if (parent && root.contains(parent)) tile.element.insertAdjacentElement('afterend', block);
-                else tile.element.appendChild(block);
+                block.innerHTML = renderTrialBlock(analysis, participants, undefined, {
+                    participating: ownParticipation(tile.name),
+                });
+                placeTrialBlock(root, tile.element, block, tile.name);
             }
 
             this._renderPayout(root, trialsForPayout, tiles[0]?.element || null, bonuses);
@@ -899,7 +1096,10 @@ class GuildTrials {
             Object.values(this.record?.tiles || {}).map((tile) => ({
                 type: tile?.kind === 'combat' ? 'combat' : 'skilling',
                 pointsByTier: tile?.pointsByTier,
-            }))
+            })),
+            // The building's own step and ceiling, from the game's data where it
+            // is loaded, so a rebalance moves this with it
+            bonuses.buildersHall.rules
         );
         if (!inferred) return bonuses;
 
@@ -1006,12 +1206,12 @@ class GuildTrials {
                     DIM,
                     'A trial pays for tiers it has finished. This appears after the first tier completes.'
                 )
-              : line('Guild Points banked', num(banked.guildPoints), GOOD, this._pointsProvenance(trials));
+              : line('Guild Points banked', exact(banked.guildPoints), GOOD, this._pointsProvenance(trials));
 
         const rows = [
             `<div style="color:${ACCENT}; font-weight:700; margin-bottom:2px;">Trial payout</div>`,
             bankedRow,
-            line('Guild Points on pace', num(projected.guildPoints), ACCENT),
+            line('Guild Points on pace', exact(projected.guildPoints), ACCENT),
             line('Tokens, every eligible member', eligible.value, ACCENT, eligible.title),
             line('Tokens, if you took part', participant.value, GOOD, participant.title),
         ];
@@ -1042,7 +1242,8 @@ class GuildTrials {
             rows.push(
                 `<div style="color:${WARN}; margin-top:4px;">` +
                     `No ${missing.join(' or ')} level seen, so the token figures leave ` +
-                    `${missing.length === 1 ? 'that bonus' : 'those bonuses'} out — each level adds 2%. ` +
+                    `${missing.length === 1 ? 'that bonus' : 'those bonuses'} out — each level adds ` +
+                    `${formatPercent(bonuses.treasury.rules?.bonusPerLevel)}. ` +
                     'Open the guild Buildings tab once and it will be picked up, or set it in Toolasha settings.' +
                     (Number.isFinite(buildersHallBonus)
                         ? ''

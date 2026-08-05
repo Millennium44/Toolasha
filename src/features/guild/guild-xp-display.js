@@ -10,7 +10,7 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import { markAsProfileLink } from '../chat/chat-profile-link.js';
 import { guildXPTracker } from './guild-xp-tracker.js';
-import { findTrialsRoot } from './guild-trials-scrape.js';
+import { findTrialsRoot, isTrialsSetupTab } from './guild-trials-scrape.js';
 import { formatDateTime } from '../../utils/formatters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { fNum, rankBadge, addColumn, makeColumnSortable } from '../../utils/table-columns.js';
@@ -759,8 +759,16 @@ class GuildXPDisplay {
     _renderTrialSignups(trialsContentEl) {
         if (!config.getSetting('guildTrialSignupDisplay', true)) return;
 
-        // Remove previous injection
-        trialsContentEl.querySelectorAll('.mwi-trial-signups').forEach((el) => el.remove());
+        // Remove previous injection — everywhere it may have landed, not only
+        // under the root being drawn into now, or the copy left on the tab this
+        // is no longer allowed to draw on would stay there
+        document.querySelectorAll('.mwi-trial-signups').forEach((el) => el.remove());
+
+        // Who has not signed up is a question about the *setup* tab. The root
+        // finder answers for either tab, so this drew the roster over the In
+        // Progress tab as well — reported after a trial advanced a tier, which
+        // is when that tab redraws and the observer fires again.
+        if (!isTrialsSetupTab(trialsContentEl)) return;
 
         const memberList = guildXPTracker.getMemberList();
         if (!memberList.length) return;
