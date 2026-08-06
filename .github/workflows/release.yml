@@ -53,6 +53,17 @@ jobs:
                   git config user.name "github-actions[bot]"
                   git config user.email "github-actions[bot]@users.noreply.github.com"
 
+                  # Pull this version's release notes out of the changelog now,
+                  # before the releases checkout swaps the working tree away.
+                  # GreasyFork renders the message of the commit that touches the
+                  # userscript as the version's public changelog, so it must carry
+                  # the actual changes, not a release stamp.
+                  notes=$(awk -v ver="${{ steps.release.outputs.version }}" '
+                      /^## \[/ { grab = index($0, "[" ver "]") > 0; next }
+                      grab { print }
+                  ' CHANGELOG.md)
+                  [ -n "$notes" ] || notes="See CHANGELOG.md for details."
+
                   # Save the built files
                   cp dist/Toolasha.user.js /tmp/Toolasha.user.js
                   cp -R dist/libraries /tmp/libraries
@@ -61,23 +72,25 @@ jobs:
                   git fetch origin releases:releases 2>/dev/null || git checkout --orphan releases
                   git checkout releases 2>/dev/null || git checkout --orphan releases
 
-                  # Clean the branch and add only the built files
-                  git rm -rf . 2>/dev/null || true
-                  mkdir -p dist
+                  # Commit the libraries on their own, leaving the userscript
+                  # untouched so this commit stays out of GreasyFork's changelog.
+                  git rm -rf -q dist/libraries 2>/dev/null || true
                   mkdir -p dist/libraries
-                  cp /tmp/Toolasha.user.js dist/Toolasha.user.js
                   cp -R /tmp/libraries/* dist/libraries/
-                  git add dist/Toolasha.user.js dist/libraries/*.js
-
-                  # Commit libraries
-                  git commit -m "chore(main): release ${{ steps.release.outputs.version }}"
+                  git add dist/libraries
+                  git commit --allow-empty -m "chore: release libraries ${{ steps.release.outputs.version }}"
 
                   # Pin entrypoint @require URLs to the library commit SHA
                   lib_sha=$(git rev-parse HEAD)
+                  mkdir -p dist
+                  cp /tmp/Toolasha.user.js dist/Toolasha.user.js
                   LIB_SHA="$lib_sha" node -e "const fs=require('fs');const path='dist/Toolasha.user.js';const base='https://cdn.jsdelivr.net/gh/${{ github.repository }}@'+process.env.LIB_SHA+'/dist/libraries/';const content=fs.readFileSync(path,'utf8');const updated=content.split('https://UPDATE-THIS-URL/').join(base);fs.writeFileSync(path,updated);"
 
+                  # The userscript commit — the one GreasyFork reads. Title is the
+                  # version, body is the release notes. No attribution trailers:
+                  # this message is public-facing release copy.
                   git add dist/Toolasha.user.js
-                  git commit -m "chore(main): pin library requires ${{ steps.release.outputs.version }}"
+                  git commit -m "Toolasha ${{ steps.release.outputs.version }}" -m "$notes"
 
                   # Push releases branch
                   git push origin releases
