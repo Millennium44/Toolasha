@@ -38,8 +38,6 @@ biggest changes since forking, in rough order of how much they change the game:
   attribution from the fight you're watching, tier read off the bar as it fills),
   pace/ETA/payout math, shrine levels everywhere they matter (scores, net worth,
   sims), and guild token valuation from the game's real credit exchange rates.
-- **Iron Cow mode** — one-click Iron Cow settings management: presets,
-  copy-to-IC-characters, and instant re-force.
 - **Overlay redesign** — curated tile defaults, bundled presets, activity
   auto-switching, tiles that open their panels, and full mobile support: a
   floating launcher on every screen and layouts that re-flow to the width they're
