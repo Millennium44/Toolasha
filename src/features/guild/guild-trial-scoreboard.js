@@ -424,7 +424,7 @@ class GuildTrialScoreboard {
 
     /**
      * Take the trial's own context from the trials feature.
-     * @param {Object} context - `{trialName, tier, tiersCleared, shortfall}`
+     * @param {Object} context - `{trialName, tier, tiersCleared, shortfall, pastWeeks}`
      */
     noteContext(context) {
         this.context = context || null;

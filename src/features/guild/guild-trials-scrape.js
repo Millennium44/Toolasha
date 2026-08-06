@@ -76,6 +76,19 @@
  */
 
 import { COMBAT_ENCOUNTERS, TRIAL_MAX_TIER, isTrialName, tierFromLevel } from './guild-trials-math.js';
+import {
+    TRIAL_SIGNED_UP_RE,
+    TRIAL_CARD_COMPLETED_RE,
+    TRIAL_STATUS_SCHEDULED_RE,
+    TRIAL_STATUS_COMPLETED_RE,
+    TRIAL_STATUS_IN_PROGRESS_RE,
+    TRIAL_KIND_SKILLING_RE,
+    TRIAL_KIND_COMBAT_RE,
+    TRIAL_LEVEL_RE,
+    TRIAL_POINTS_RE,
+    TRIAL_TIER_RE,
+    TRIAL_CLOCK_LABEL_RE,
+} from '../../utils/game-text.js';
 
 /** Suffix multipliers on abbreviated numbers the game renders in bars */
 const SUFFIXES = { k: 1e3, m: 1e6, b: 1e9, t: 1e12 };
@@ -156,7 +169,7 @@ export function isPlausibleReading(current, max) {
 }
 
 /** A line saying how many members have signed up, either way round */
-const SIGNUP_PATTERN = /signed\s*up/i;
+const SIGNUP_PATTERN = TRIAL_SIGNED_UP_RE;
 
 /**
  * A card that says the trial is over.
@@ -168,7 +181,7 @@ const SIGNUP_PATTERN = /signed\s*up/i;
  * and 960 is the ladder's three-tier total with the Builder's Hall bonus on it.
  * So "Completed" is what makes the banked count exact rather than inferred.
  */
-const COMPLETED_PATTERN = /\bcomplet(?:e|ed)\b/i;
+const COMPLETED_PATTERN = TRIAL_CARD_COMPLETED_RE;
 
 /**
  * How many members have signed up for a trial, from its card.
@@ -202,7 +215,7 @@ export function parseSignups(text) {
  * @returns {number|null} Points, or null when the line does not carry any
  */
 export function parsePoints(text) {
-    const match = typeof text === 'string' ? text.match(/(\d[\d,]*)\s*(?:pts?|points?)\b/i) : null;
+    const match = typeof text === 'string' ? text.match(TRIAL_POINTS_RE) : null;
     if (!match) return null;
     const points = Number(match[1].replace(/,/g, ''));
     return Number.isFinite(points) ? points : null;
@@ -214,7 +227,7 @@ export function parsePoints(text) {
  * @returns {number|null} Level, or null when the tile does not carry one
  */
 export function parseTrialLevel(text) {
-    const match = typeof text === 'string' ? text.match(/Lv\.?\s*(\d+)/i) : null;
+    const match = typeof text === 'string' ? text.match(TRIAL_LEVEL_RE) : null;
     if (!match) return null;
     const level = Number(match[1]);
     return Number.isFinite(level) ? level : null;
@@ -239,7 +252,7 @@ export function parseTrialLevel(text) {
  * @returns {number|null} The tier, or null when the line does not state one
  */
 export function parseTrialTier(text) {
-    const match = typeof text === 'string' ? text.match(/\b(?:tier\s*|T)(\d{1,2})\b/i) : null;
+    const match = typeof text === 'string' ? text.match(TRIAL_TIER_RE) : null;
     if (!match) return null;
     const tier = Number(match[1]);
     return Number.isFinite(tier) && tier >= 1 && tier <= TRIAL_MAX_TIER ? tier : null;
@@ -333,7 +346,7 @@ export function findTrialClockMs(root, maxMs) {
     if (!root || typeof root.querySelectorAll !== 'function') return null;
 
     const plausible = (value) => Number.isFinite(value) && value > 0 && value <= maxMs;
-    const labelled = /remain|left|ends?\b|until|time/i;
+    const labelled = TRIAL_CLOCK_LABEL_RE;
     const notAClock = /\d+\.\d|%|\b(?:am|pm)\b|\b(?:mon|tue|wed|thu|fri|sat|sun)/i;
 
     // [labelled units, bare units, labelled colon, bare colon]
@@ -566,11 +579,11 @@ export function readTrialStatus(root) {
     for (const line of candidates) {
         if (line.length > STATUS_MAX_CHARS) continue;
 
-        const phase = /\bscheduled\b/i.test(line)
+        const phase = TRIAL_STATUS_SCHEDULED_RE.test(line)
             ? 'scheduled'
-            : /\bcompleted?\b/i.test(line)
+            : TRIAL_STATUS_COMPLETED_RE.test(line)
               ? 'completed'
-              : /\bin\s*progress\b/i.test(line)
+              : TRIAL_STATUS_IN_PROGRESS_RE.test(line)
                 ? 'live'
                 : null;
         if (!phase) continue;
@@ -580,7 +593,7 @@ export function readTrialStatus(root) {
         // Progress" — and a cycle runs the two kinds one after the other, so a
         // status without its kind attached says the combat trial is under way
         // during the skilling hour. Which is what it did.
-        const kind = /\bskilling\b/i.test(line) ? 'skilling' : /\bcombat\b/i.test(line) ? 'combat' : null;
+        const kind = TRIAL_KIND_SKILLING_RE.test(line) ? 'skilling' : TRIAL_KIND_COMBAT_RE.test(line) ? 'combat' : null;
         return { phase, kind, text: line, startsInMs: Number.isFinite(startsInMs) ? startsInMs : null };
     }
 
@@ -925,7 +938,10 @@ function readTileName(tile, summary, lines) {
     const named = tile.querySelector?.('[class*="GuildPanel_tileName"], [class*="GuildPanel_name"]');
     if (named?.textContent?.trim()) return named.textContent.trim();
 
-    const levelMarker = /Lv\.?\s*\d+/i;
+    // `TRIAL_LEVEL_RE` carries a capture group, which `split` would interleave
+    // into its output; only the [0] "before the marker" piece is read, which is
+    // the same either way
+    const levelMarker = TRIAL_LEVEL_RE;
     for (const line of lines) {
         if (!levelMarker.test(line)) continue;
         const beforeLevel = line.split(levelMarker)[0].trim();

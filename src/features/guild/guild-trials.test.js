@@ -196,6 +196,7 @@ const {
 const trialsFeature = (await import('./guild-trials.js')).default;
 
 const { NOTICE_BOARD_NAME } = await import('./guild-notice-board.fixture.js');
+const { trialWeekStart } = await import('./guild-trials-math.js');
 
 const now = Date.parse('2026-08-04T12:00:00Z');
 
@@ -1455,6 +1456,104 @@ describe('the panel, end to end', () => {
 
         expect(guildTrials.record.tiles['skilling::alchemy'].samples.length).toBeGreaterThan(1);
         expect(guildTrials.record.history || []).toHaveLength(0);
+    });
+
+    /**
+     * An archived cycle, as `archiveCycle` leaves one in `record.history`.
+     * @param {Object} overrides - Fields to override
+     * @returns {Object} The cycle
+     */
+    const archivedWeek = (overrides = {}) => ({
+        archivedAt: now - 5 * 24 * 60 * 60 * 1000,
+        reason: 'a new cycle is scheduled',
+        weekStart: trialWeekStart(now) - 7 * 24 * 60 * 60 * 1000,
+        tiles: {
+            'combat::trial chameleon': {
+                name: 'Trial Chameleon',
+                kind: 'combat',
+                tier: 5,
+                points: 960,
+                pointsByTier: { 5: 960 },
+                completed: true,
+                samples: [],
+                tiers: [],
+            },
+            'skilling::milking': {
+                name: 'Milking',
+                kind: 'skilling',
+                tier: 6,
+                points: 840,
+                pointsByTier: { 6: 840 },
+                completed: true,
+                samples: [],
+                tiers: [],
+            },
+        },
+        ...overrides,
+    });
+
+    test('archived cycles come back as one “Past weeks” line each, newest first', () => {
+        const root = buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]);
+        guildTrials.record = {
+            ...guildTrials.record,
+            history: [
+                archivedWeek({
+                    weekStart: trialWeekStart(now) - 14 * 24 * 60 * 60 * 1000,
+                    tiles: {
+                        'combat::trial hedgehog': {
+                            name: 'Trial Hedgehog',
+                            kind: 'combat',
+                            points: 0,
+                            completed: true,
+                            pointsByTier: {},
+                            samples: [],
+                            tiers: [],
+                        },
+                    },
+                }),
+                archivedWeek(),
+            ],
+        };
+        fire(root);
+
+        expect(text()).toContain('Past weeks');
+        // No building level has been seen, so the token figure is a dash — the
+        // stated points are repeated exactly as the cards said them
+        expect(text()).toContain('Last week · combat T5 · skilling T6 · 1,800 pts · — tokens each');
+        // A failed week is a real outcome and prints its zeros, and the half
+        // that never stated anything is a dash rather than one of them
+        expect(text()).toContain('2 weeks ago · combat T0 · skilling — · 0 pts · — tokens each');
+        // Newest first
+        expect(text().indexOf('Last week')).toBeLessThan(text().indexOf('2 weeks ago'));
+    });
+
+    test('a past week’s tokens are derived once the buildings are known, and marked as derived', () => {
+        game.buildingLevels = { '/guild_buildings/builders_hall': 10, '/guild_buildings/treasury': 5 };
+        const root = buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]);
+        guildTrials.record = { ...guildTrials.record, history: [archivedWeek()] };
+        fire(root);
+
+        // 1,800 stated ÷ 1.2 is 1,500 base; half of it at +10% Treasury is 825
+        expect(text()).toContain('~825 tokens each');
+    });
+
+    test('a week archived off another guild’s record is labelled, not mixed in', () => {
+        game.buildingLevels = { '/guild_buildings/builders_hall': 10, '/guild_buildings/treasury': 5 };
+        const root = buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]);
+        guildTrials.record = {
+            ...guildTrials.record,
+            history: [archivedWeek({ reason: 'belongs to another guild' })],
+        };
+        fire(root);
+
+        expect(text()).toContain('another guild’s week');
+        // …and this guild's buildings are never applied to it
+        expect(text()).not.toContain('~825');
+    });
+
+    test('no history renders no “Past weeks” header at all', () => {
+        fire(buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]));
+        expect(text()).not.toContain('Past weeks');
     });
 
     test('a finished cycle stops projecting a future', () => {

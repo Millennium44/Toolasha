@@ -123,6 +123,52 @@ export function labyrinthRunState(labyrinth) {
 }
 
 /**
+ * Whether a market listing of yours has just stopped being competitive.
+ *
+ * The same one-bit state machine as `thresholdCrossing`, because the shape is
+ * the same: the price is re-read constantly and your listing is beaten on every
+ * one of those reads until you act, but the *event* is the first read that says
+ * so. `armed` means the last usable reading showed your price competitive, so a
+ * beaten reading counts as news; a reading that shows you competitive again —
+ * the undercutter sold out, or you repriced — re-arms it. The initial state is
+ * armed on purpose: a listing that is already beaten when first observed is
+ * worth one message, and the service's cooldown keeps it at one.
+ *
+ * Two readings say nothing in either direction and leave the state exactly as
+ * it was: a missing best price (an item nobody has cached is unknown, and
+ * unknown is not undercut) and a best price older than the cache that produced
+ * it is allowed to be — a figure from this morning proves nothing about now,
+ * in either direction.
+ *
+ * Matching the best price exactly is not being beaten. A sell listing tied
+ * with the best ask still sells; only a strictly better price on the wrong
+ * side of yours counts — below your ask, above your bid.
+ *
+ * @param {Object} input - Current observation
+ * @param {boolean} input.armed - Whether a beaten reading would count as news
+ * @param {boolean} input.isSell - Sell listing (against best ask) rather than buy order (against best bid)
+ * @param {number} input.listingPrice - What your listing asks or bids
+ * @param {number|null} input.bestPrice - Best ask (sell) or best bid (buy) from the market cache
+ * @param {number|null} input.priceAgeMs - How old that figure is
+ * @param {number} input.maxPriceAgeMs - How old it may be and still count as evidence
+ * @returns {{fire: boolean, armed: boolean}} Whether to say something, and the next state
+ */
+export function listingBeaten({ armed, isSell, listingPrice, bestPrice, priceAgeMs, maxPriceAgeMs }) {
+    if (!Number.isFinite(listingPrice) || !Number.isFinite(bestPrice)) {
+        return { fire: false, armed };
+    }
+    if (!Number.isFinite(priceAgeMs) || !(maxPriceAgeMs > 0) || priceAgeMs > maxPriceAgeMs) {
+        return { fire: false, armed };
+    }
+
+    const beaten = isSell ? bestPrice < listingPrice : bestPrice > listingPrice;
+    if (!beaten) {
+        return { fire: false, armed: true };
+    }
+    return { fire: armed === true, armed: false };
+}
+
+/**
  * How many deaths have happened since the last look.
  *
  * The server's `deathCount` is a running total for the combat session, so the

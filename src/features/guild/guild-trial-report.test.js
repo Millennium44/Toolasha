@@ -188,4 +188,44 @@ describe('buildGuildReport', () => {
     test('one tier cleared is singular', () => {
         expect(buildGuildReport({ tiersCleared: 1, breakdown: breakdown() })).toContain('cleared 1 tier\n');
     });
+
+    test('past weeks are a short tail at the bottom, and only when there are any', () => {
+        const report = buildGuildReport({
+            trialName: 'Trial Chameleon',
+            tiersCleared: 3,
+            breakdown: breakdown(),
+            pastWeeks: [
+                { when: 'last week', combatTier: 5, skillingTier: 6, points: 1800, tokens: 825 },
+                {
+                    when: '2 weeks ago',
+                    combatTier: null,
+                    skillingTier: null,
+                    points: null,
+                    tokens: null,
+                    foreign: true,
+                },
+            ],
+        });
+
+        const lines = report.split('\n');
+        expect(lines[lines.length - 3]).toBe('Past weeks:');
+        expect(report).toContain('Last week · combat T5 · skilling T6 · 1,800 pts · ~825 tokens each');
+        // A cycle archived off another guild's record is labelled, not mixed in
+        expect(report).toContain('2 weeks ago · combat — · skilling — · — pts · — tokens each · another guild’s week');
+
+        // No history, no header about it
+        expect(buildGuildReport({ breakdown: breakdown() })).not.toContain('Past weeks:');
+    });
+
+    test('the tail rides on a report nobody measured, too', () => {
+        const report = buildGuildReport({
+            breakdown: { players: [], reason: 'you were not in this fight' },
+            pastWeeks: [{ when: 'last week', combatTier: 0, skillingTier: null, points: 0, tokens: null }],
+        });
+
+        expect(report).toContain('Nothing was measured here');
+        expect(report).toContain('Past weeks:');
+        // A failed week is a result and prints its zeros
+        expect(report).toContain('Last week · combat T0 · skilling — · 0 pts · — tokens each');
+    });
 });
