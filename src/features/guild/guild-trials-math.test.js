@@ -755,7 +755,11 @@ describe('the points ladder, across three guilds', () => {
         expect(reading.interpretation).toBe('disagrees');
     });
 
-    test('and a stated figure is used as stated either way', () => {
+    test('the card still states the Guild Points, but the base comes off the ladder', () => {
+        // Dividing by today's bonus recovers the base exactly only when one
+        // bonus applied throughout. Across an upgrade it lands under the truth,
+        // and tokens are paid on base — so 1,222 ÷ 1.12 = 1,091 would quietly
+        // short every member by nine points' worth
         const banked = trialBankedBasePoints({
             type: 'skilling',
             bankedTiers: 10,
@@ -764,7 +768,36 @@ describe('the points ladder, across three guilds', () => {
         });
 
         expect(banked.guildPoints).toBe(1222);
+        expect(banked.basePoints).toBe(1100);
+        expect(banked.basePoints).not.toBeCloseTo(1222 / 1.12, 2);
+        // The base is the ladder's and the Guild Points are the card's
+        expect(banked.source).toBe('mixed');
+    });
+
+    test('a cleanly-dividing card is untouched, because the two already agree', () => {
+        const banked = trialBankedBasePoints({
+            type: 'combat',
+            bankedTiers: 12,
+            pointsByTier: { 12: 2912 },
+            buildersHallBonus: 0.12,
+        });
+
+        expect(banked.guildPoints).toBe(2912);
+        expect(banked.basePoints).toBeCloseTo(2600, 6);
         expect(banked.source).toBe('game');
+    });
+
+    test('the token sum uses the ladder base, not the divided one', () => {
+        const projection = payoutProjection({
+            trials: [{ type: 'skilling', tiersCleared: 10, basePointsOverride: 1100, guildPointsOverride: 1222 }],
+            buildersHallBonus: 0.12,
+            treasuryBonus: 0.1,
+        });
+
+        expect(projection.basePoints).toBe(1100);
+        expect(projection.guildPoints).toBe(1222);
+        // Half the base at the Treasury's +10%, paid once at the end
+        expect(projection.eligibleTokens).toBeCloseTo(0.5 * 1100 * 1.1, 6);
     });
 });
 

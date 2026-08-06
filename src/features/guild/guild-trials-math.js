@@ -527,10 +527,23 @@ export function trialBankedBasePoints({ type, bankedTiers, pointsByTier = {}, bu
     // Cumulative, or a figure the ladder cannot explain: either way it is the
     // game stating what this trial has earned, and the announcements say the sum
     // of exactly these figures is what the guild is paid
+    //
+    // The base half is the one exception. Dividing a card by *today's* bonus
+    // recovers the base exactly when one bonus applied throughout — which is
+    // what `cumulative` means, so those are unchanged by definition — but a
+    // total banked across a Builder's Hall upgrade is a mixture of two, and the
+    // division then lands under the truth: 1,222 ÷ 1.12 is 1,091 where the tier
+    // actually banked 1,100. That 9-point shortfall is real money, because
+    // tokens are paid on base. The ladder is exact at every tier and is used
+    // instead; the card still supplies the Guild Points, which are what the
+    // guild's own announcement will state.
+    const midTrialUpgrade = interpretation === 'mid-trial-upgrade';
     return {
-        basePoints: reading.basePoints,
+        basePoints: midTrialUpgrade ? reading.ladderCumulative : reading.basePoints,
         guildPoints: reading.statedPoints,
-        source: 'game',
+        // The base came from the ladder in the upgrade case, and a caption that
+        // says "from the cards" would be overstating it
+        source: midTrialUpgrade ? 'mixed' : 'game',
         interpretation,
         bonusKnown,
         needsBuildersHall: false,
@@ -704,6 +717,26 @@ export function eligibleMemberTokens(basePoints, treasuryBonus = 0) {
  * this guild's +20% Builders Hall and +10% Treasury. The apparent "×1.1 on top
  * of half the base" is the Treasury bonus — it is already in the model, and
  * nothing needed inventing to fit it.
+ *
+ * ## Why the Treasury needs no mixture handling, and the one way that could be
+ * wrong
+ *
+ * The Builder's Hall does need it: Guild Points bank **live**, tier by tier, so a
+ * Hall levelled mid-trial pays the early tiers at the old bonus and the late ones
+ * at the new, and a card's total is a mixture of two (see
+ * {@link MAX_MID_TRIAL_UPGRADE_LEVELS}). Tokens are not like that. They are paid
+ * **once, at the end of the round**, against the summed base of the whole week —
+ * so there is one moment at which the Treasury bonus applies and one level to
+ * apply, which is the level now. A single multiplication is the whole of it.
+ *
+ * That rests on the game reading the Treasury at *payout* rather than
+ * snapshotting it when the round begins. If it snapshots at the start instead, a
+ * guild that levelled its Treasury mid-round would see this figure come out
+ * slightly high — by 2% a level — against the payout the game actually
+ * announces. Only a live payout following a mid-round Treasury upgrade can
+ * settle it, and none has been observed. It is written down here rather than
+ * guarded against, because guarding against it would mean picking one of the two
+ * behaviours on no evidence.
  *
  * @param {Object} input - Inputs
  * @param {Array<{type: string, tiersCleared: number, name?: string, basePointsOverride?: number,

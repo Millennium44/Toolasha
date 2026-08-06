@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Mixed-bonus cards contribute their true base to the token sum
+
+- A card banked across a Builder's Hall upgrade divides cleanly by neither bonus, so its base points now come from the exact ladder (1,100 at T10) instead of the slightly-low division (1,091) — the token estimate gains the difference, the card's own Guild Points figure stays authoritative, and the sourcing note names the second cause. Treasury needs no such handling — tokens pay once at the round's end against the summed base, one moment, one level — with the one untestable assumption (payout-time vs round-start snapshot) documented rather than guessed at.
+
 ### The notice board is not a trial, and the ladders are theorems now
 
 - **A guild notice board can no longer become a trial tile**: an older build had stored one guild's entire welcome notice — braille art, Discord links and all — as a "skilling trial", with the Discord channel IDs read as pool bars and the Overview stats attached as personal figures. Names now must be one short line before any matching, readings must be plausible (a nineteen-digit channel ID is not a progress bar; an 8.4M boss bar is), personal stats and the recorder only consume real tiles, and stored records self-heal on load — history included, since an archived notice board is a payout error a week later. The exact 987-character string is a fixture.

@@ -2143,12 +2143,6 @@ class GuildTrials {
             line('Tokens, if you took part', participant.value, GOOD, participant.title),
         ];
 
-        // A genuine mismatch, which is now a much rarer thing to be. The warning
-        // this replaces fired on every card of every week and blamed the ladder,
-        // when what was actually happening is that a card states *Guild Points*
-        // — the ladder's base figure with the Builders Hall bonus already on it.
-        // With that understood the two agree exactly, and a disagreement left
-        // over is worth reporting again.
         // Not a mismatch at all: a total banked across a Builder's Hall upgrade.
         // Points bank live, tier by tier, at the bonus in force when each tier
         // clears — so a guild that levels its Hall mid-trial has a card that is a
@@ -2170,6 +2164,12 @@ class GuildTrials {
             );
         }
 
+        // A genuine mismatch, which is now a much rarer thing to be. The warning
+        // this replaces fired on every card of every week and blamed the ladder,
+        // when what was actually happening is that a card states *Guild Points*
+        // — the ladder's base figure with the Builders Hall bonus already on it.
+        // With that understood the two agree exactly, and a disagreement left
+        // over is worth reporting again.
         const disagreement = trials.find((trial) => trial.points?.interpretation === 'disagrees');
         if (disagreement?.points?.quoted) {
             const { tier, statedPoints } = disagreement.points.quoted;
@@ -2391,9 +2391,19 @@ class GuildTrials {
 
         if (sources.has('game') && sources.size === 1) return cards;
         if (sources.has('game') || sources.has('mixed')) {
+            // Two things put a trial in `mixed`, and both are worth a sentence:
+            // a card that was never on screen, and a card whose Guild Points are
+            // exact but whose *base* had to come off the ladder because the
+            // total was banked across a Builder's Hall upgrade
+            const upgraded = trials.some((trial) => trial.points?.interpretation === 'mid-trial-upgrade');
             return (
-                `${cards} Part of this total is derived from the tier ladder instead, for trials whose card ` +
-                'was never on screen.'
+                `${cards} Part of this total is derived from the tier ladder instead — for trials whose card ` +
+                'was never on screen' +
+                (upgraded
+                    ? ', and for the base points behind a card banked across a Builder’s Hall upgrade, which ' +
+                      'divides cleanly by neither bonus'
+                    : '') +
+                '.'
             );
         }
         return (
