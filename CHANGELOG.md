@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The portrait meters stop jostling the party
+
+- **Every player's DPS meter is two lines, always** — the current-fight line is reserved and reads "— cur" until that player acts, instead of appearing when they do. Five portraits used to sit at three different heights and re-shuffle at every fight boundary; now the frames hold still.
+
 ### Every player name opens a profile, and the dungeon knows its worth
 
 - **Player names are clickable wherever a dungeon shows them**: the key-counts chat line, the party system messages ("has joined", "has left", "is ready", "is not ready" — end-anchored, so the phrase mid-sentence never matches), the run history's team headers (a name click doesn't toggle the group), and the overlay DPS rows (double-click still opens the panel). One click fills `/profile <name>` in chat, ready to send — the same trick the guild cycler uses, now a shared util.

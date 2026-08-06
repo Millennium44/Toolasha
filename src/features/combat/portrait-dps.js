@@ -119,8 +119,12 @@ export function meterText(player, current = null) {
     // This fight above the run, as DPs has it. The order is the point: the fight
     // in front of you is the one you can still change, and the run is the
     // context you read it against.
-    const lines = [];
-    if (current) lines.push(line(current.dps, current.damage, 'cur'));
+    //
+    // The cur line is always there, dashed when there is nothing to say yet.
+    // It used to render only once a player had acted this fight, which gave
+    // that player's tile a taller meter than their neighbours' — five portraits
+    // at three different heights, shifting again at every fight boundary.
+    const lines = [current ? line(current.dps, current.damage, 'cur') : '— cur'];
     lines.push(line(player.dps, player.damage, 'total'));
 
     return {
