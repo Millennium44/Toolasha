@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The combat profit panel leads with the live rate again
+
+- **The sim's forecast moves out of the headline**: the top card is back to the live measured profit rate alone; the last all-zones sim's figure for the zone ("sim said here — …/day · simulated") now sits in its own dim card at the foot of the panel, present for the comparison but no longer competing with the number the panel is for.
+
 ### The combat sim's Guild Shrine gets per-shrine targets
 
 - **A "Targets" grid on the Combat Simulator's Guild Shrine upgrade, matching the Lab Sim's**: instead of one uniform level for every combat shrine, you can now set a target level per shrine — each priced from its current level up to its target and capped at its own max, shrines already maxed shown disabled. It reuses the analyzer's existing per-shrine input (the uniform level still governs when the grid is closed), and mirrors the sim's own House-targets control so it behaves identically.

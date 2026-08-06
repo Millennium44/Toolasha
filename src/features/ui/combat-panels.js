@@ -260,9 +260,14 @@ function drawSoloComparison(card_, party, mode, tax) {
  * Nothing is drawn unless the snapshot holds exactly this zone and tier — a
  * neighbouring tier's figure would be a comparison of nothing.
  *
- * @param {HTMLElement} card_ - The summary card, appended to
+ * It sits at the foot of the panel, in its own dim card, not in the headline:
+ * the number the panel is *for* is the live measured rate, and a simulated
+ * figure from another day should not compete with it for the eye.
+ *
+ * @param {HTMLElement} body - The panel body; a small card is added only when
+ *   there is a forecast to show
  */
-function drawSimHere(card_) {
+function drawSimHere(body) {
     const action = dataManager
         .getCurrentActions?.()
         ?.find((entry) => entry.actionHrid?.startsWith('/actions/combat/') && !entry.isDone);
@@ -271,6 +276,7 @@ function drawSimHere(card_) {
     const row = zoneFromSnapshot(cachedSnapshot(), action.actionHrid, action.difficultyTier || 0);
     if (!row) return;
 
+    const card_ = card(body);
     const perDay = row.profitPerHour * 24;
     const dated = row.savedAt ? new Date(row.savedAt).toLocaleDateString() : null;
     const ageDays = row.savedAt ? Math.max(0, Math.round((Date.now() - row.savedAt) / 86_400_000)) : null;
@@ -1846,9 +1852,6 @@ export const profitPanel = new CombatPanel({
         equation.appendChild(piece(`${formatKMB(total)}/day`, ROW_COLORS.gold));
         summary.append(equation, note(`${headline.title} · ${formatKMB(total / 24)}/hr`));
 
-        // The forecast for this very zone, when the last all-zones sim ran it
-        drawSimHere(summary);
-
         // Before the four cases, since "who is being paid" is a coarser question
         // than "which price to sell at" and answering it changes what you do next
         drawPartyProfit(body, profitView.mode, tax);
@@ -1869,6 +1872,10 @@ export const profitPanel = new CombatPanel({
         );
 
         body.appendChild(taxCard(stats));
+
+        // The last all-zones sim's forecast for this zone, kept to the foot of
+        // the panel so it never competes with the live rate at the top
+        drawSimHere(body);
     },
 });
 

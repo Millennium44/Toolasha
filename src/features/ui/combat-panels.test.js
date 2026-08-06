@@ -800,8 +800,10 @@ describe('the sim forecast beside the measured revenue', () => {
         expect(text).toContain('24.0M/day');
         expect(text).toContain('simulated');
 
-        const row = [...profitPanel.panel.querySelectorAll('div')].find((el) =>
-            el.textContent.startsWith('sim said here')
+        // The tooltip lives on the line itself, now wrapped in its own card at
+        // the foot of the panel — find the element that carries the title
+        const row = [...profitPanel.panel.querySelectorAll('div')].find(
+            (el) => el.textContent.startsWith('sim said here') && el.title
         );
         expect(row.title).toContain('knows nothing about this run');
         expect(row.title).toContain('Rats');
