@@ -24,11 +24,7 @@ vi.mock('../../utils/timer-registry.js', () => ({
     createTimerRegistry: () => ({ registerTimeout: () => {}, clearAll: () => {} }),
 }));
 
-const {
-    default: combatDropLuck,
-    formatOrdinal,
-    describeLuck,
-} = await import('./combat-drop-luck.js');
+const { default: combatDropLuck, formatOrdinal, describeLuck } = await import('./combat-drop-luck.js');
 
 describe('formatOrdinal', () => {
     test('gets the ordinary suffixes right', () => {
