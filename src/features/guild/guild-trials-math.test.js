@@ -43,6 +43,7 @@ import {
     trailingRun,
     trialBankedBasePoints,
     trialBasePoints,
+    trialFromHrid,
     withinMidTrialUpgrade,
     trialTimeLeftMs,
     trialWeekEnd,
@@ -798,6 +799,32 @@ describe('the points ladder, across three guilds', () => {
         expect(projection.guildPoints).toBe(1222);
         // Half the base at the Treasury's +10%, paid once at the end
         expect(projection.eligibleTokens).toBeCloseTo(0.5 * 1100 * 1.1, 6);
+    });
+});
+
+describe('trialFromHrid', () => {
+    // The socket names a trial by hrid where every other source names it in
+    // prose off a card, and both halves of the feature have to agree
+    test('the two families the game uses', () => {
+        expect(trialFromHrid('/guild_combat/badger')).toEqual({ kind: 'combat', key: 'badger', name: 'Trial Badger' });
+        expect(trialFromHrid('/guild_skilling/crafting')).toEqual({
+            kind: 'skilling',
+            key: 'crafting',
+            name: 'Crafting',
+        });
+    });
+
+    test('the name it produces is the name a card carries', () => {
+        // Which is what the record is keyed by
+        expect(isTrialName(trialFromHrid('/guild_combat/badger').name)).toBe(true);
+        expect(isTrialName(trialFromHrid('/guild_skilling/crafting').name)).toBe(true);
+    });
+
+    test('an hrid it does not recognise is not a trial', () => {
+        expect(trialFromHrid('/guild_skilling/knitting')).toBeNull();
+        expect(trialFromHrid('/monsters/chimerical_beast')).toBeNull();
+        expect(trialFromHrid('')).toBeNull();
+        expect(trialFromHrid(null)).toBeNull();
     });
 });
 

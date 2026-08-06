@@ -121,6 +121,7 @@ import {
     trialWeekStart,
 } from './guild-trials-math.js';
 import guildTrialDamage, { encounterOf } from './guild-trial-damage.js';
+import guildTrialSkilling from './guild-trial-skilling.js';
 import guildLoadoutCapture from './guild-loadout-capture.js';
 import guildTrialRecorder, { buildTrialExport, downloadTrialExport } from './guild-trial-recorder.js';
 import guildTrialScoreboard from './guild-trial-scoreboard.js';
@@ -421,11 +422,21 @@ export function participantCounts(tracker = guildXPTracker) {
  * @param {Object} [options] - Injectables, for tests
  * @param {Object} [options.tracker] - The XP tracker
  * @param {string|number|null} [options.characterId] - This character's id
+ * @param {Object} [options.skilling] - The socket's own participant list
  * @returns {boolean|null} In it, not in it, or not knowable
  */
-export function ownParticipation(trialName, { tracker = guildXPTracker, characterId } = {}) {
+export function ownParticipation(
+    trialName,
+    { tracker = guildXPTracker, characterId, skilling = guildTrialSkilling } = {}
+) {
     const id = characterId ?? dataManager.getCurrentCharacterId?.() ?? null;
     if (id === null || id === undefined) return null;
+
+    // The game's own answer, when it has given one. `guild_skilling_updated`
+    // carries `participantIds` — character ids of everyone in the trial — which
+    // settles this without a sign-up sheet that may never have been on screen
+    const stated = skilling?.participating?.(trialName, id);
+    if (stated !== null && stated !== undefined) return stated;
 
     // The map is keyed by whatever the socket used; an id that arrived as a
     // number and is asked for as a string is the same member
@@ -1274,6 +1285,7 @@ class GuildTrials {
         // arms the damage gate from last session's record, so a fight is
         // recognised without the tab having been opened this session.
         guildTrialDamage.initialize();
+        guildTrialSkilling.initialize();
         guildTrialAlerts.initialize?.();
         guildTrialRecorder.initialize(this.guildName);
         guildMemberSkills.initialize(this.guildName).catch(() => {});
@@ -1522,7 +1534,12 @@ class GuildTrials {
             const anyLive = tiles.some(
                 (tile) => this._phaseFor(status, tile, this.record?.tiles?.[tileKey(tile)]) === 'live'
             );
-            guildTrialRecorder.noteLifecycle?.(anyLive ? 'live' : status.phase, now);
+            // The game stating that a trial has ended outranks a card that has not
+            // been redrawn yet. `end_guild_battle` and `end_guild_skilling` are
+            // the only signals this feature has ever had that are *certain*;
+            // everything else is a phase inferred from a header or a badge
+            const declaredOver = this._declaredOver(tiles);
+            guildTrialRecorder.noteLifecycle?.(declaredOver ? 'completed' : anyLive ? 'live' : status.phase, now);
             // The player's own action stats live in the tab's footer rather than
             // on a card, so they are read once and attached to whichever trial
             // is the live one — the only card that can have produced them
@@ -1543,7 +1560,10 @@ class GuildTrials {
             this.watchedPool = watched;
             this.contextRank = 0;
             for (const tile of tiles) {
-                const withPersonal = this._withSpectatedPool(tile === owner ? { ...tile, personal } : tile, watched);
+                const withPersonal = this._withSocketSkilling(
+                    this._withSpectatedPool(tile === owner ? { ...tile, personal } : tile, watched),
+                    now
+                );
                 // A running trial whose cards state nothing is on its first
                 // tier, so its readings belong to T1 rather than to no tier at
                 // all — which is what the growth fit needs them filed under
@@ -1559,7 +1579,8 @@ class GuildTrials {
                     // The stream states the tier outright. Nothing else does —
                     // the badge counts tiers *finished*, so every other route to
                     // this number is the badge plus one and an assumption
-                    if (Number.isFinite(withPersonal.spectatedTier)) readingTier = withPersonal.spectatedTier;
+                    if (Number.isFinite(withPersonal.socketTier)) readingTier = withPersonal.socketTier;
+                    else if (Number.isFinite(withPersonal.spectatedTier)) readingTier = withPersonal.spectatedTier;
                     else if (Number.isFinite(badge)) readingTier = badge + 1;
                     else if (!(withPersonal.points > 0) && !Object.keys(held?.pointsByTier || {}).length) {
                         readingTier = FIRST_TIER;
@@ -1577,7 +1598,12 @@ class GuildTrials {
                 // read after it clears, or on a completed card, belongs to the
                 // tier the card has just banked.
                 const personalTier =
-                    readingTier ?? (Number.isFinite(badge) ? Math.max(FIRST_TIER, badge) : null) ?? held?.tier ?? null;
+                    // The socket states the tier its own figures describe
+                    (Number.isFinite(withPersonal.socketTier) ? withPersonal.socketTier : null) ??
+                    readingTier ??
+                    (Number.isFinite(badge) ? Math.max(FIRST_TIER, badge) : null) ??
+                    held?.tier ??
+                    null;
 
                 const sampled = { ...withPersonal };
                 if (readingTier !== null) sampled.readingTier = readingTier;
@@ -2331,6 +2357,83 @@ class GuildTrials {
     }
 
     /**
+     * Whether the game has said, outright, that the trials on screen are over.
+     *
+     * `end_guild_battle` and `end_guild_skilling` are the only certain lifecycle
+     * signals this feature has. Everything else is a phase inferred from a
+     * header that may name the other kind, or from a badge that may not have
+     * been redrawn — and a session left running past the end of a trial is a
+     * recording full of an hour of nothing.
+     *
+     * Every trial on screen has to be over, not merely one of them: a guild runs
+     * the two kinds one after the other, and the skilling half ending is not the
+     * hour ending.
+     *
+     * @param {Array<Object>} tiles - This pass's cards
+     * @returns {boolean} True when nothing on screen is still running
+     */
+    _declaredOver(tiles) {
+        if (!tiles?.length) return false;
+
+        const combatOver = Boolean(guildTrialDamage.breakdown?.()?.endedAt);
+        return tiles.every((tile) =>
+            tile.kind === 'combat' ? combatOver : Boolean(guildTrialSkilling.endedFor?.(tile.name))
+        );
+    }
+
+    /**
+     * Put the socket's own reading of a skilling trial on its card.
+     *
+     * `guild_skilling_updated` states the pool, the tier, the participants and
+     * the player's own action figures — every one of which this feature has
+     * otherwise been scraping off a tab that has to be open, and every one of
+     * which has had its own bug. Where it has spoken it is preferred: it is the
+     * game's own statement, it carries the tier rather than requiring a badge
+     * plus an assumption, and its personal figures arrive already attached to
+     * the tier they describe.
+     *
+     * The DOM stays underneath all of it. Whether these messages reach a client
+     * that is not looking at the trial is not something the capture can answer,
+     * so this is a bonus signal and never a replacement: no socket update, and
+     * the card is exactly as well served as it was.
+     *
+     * @param {Object} tile - A card from `readTrialTiles`
+     * @param {number} now - Clock
+     * @returns {Object} The card, with whatever the socket could add
+     */
+    _withSocketSkilling(tile, now) {
+        if (tile.kind !== 'skilling') return tile;
+
+        const ended = guildTrialSkilling.endedFor?.(tile.name) || null;
+        const update = guildTrialSkilling.forTrial?.(tile.name, now) || null;
+        if (!update && !ended) return tile;
+
+        const next = { ...tile };
+
+        // The game says it is over, and says what it banked. `end_guild_skilling`
+        // arrived with tier 9 while tier 10 was in progress, which is the game's
+        // own confirmation that a stated tier counts what is finished
+        if (ended) {
+            next.completed = true;
+            if (Number.isFinite(ended.tier)) next.tier = ended.tier;
+        }
+
+        if (!update) return next;
+
+        // The pool, to the unit. A card the game is already drawing a bar on
+        // keeps its own numbers, so the two sources cannot disagree on screen
+        if (update.reading && !tile.readings?.length) next.readings = [{ ...update.reading }];
+        if (Number.isFinite(update.tier)) next.socketTier = update.tier;
+
+        // The per-tier personal figures, which is what the DOM footer was read
+        // for — and these come with their tier attached rather than inferred
+        if (Object.keys(update.personal || {}).length) {
+            next.personal = { ...(tile.personal || {}), ...update.personal };
+        }
+        return next;
+    }
+
+    /**
      * Whether a card is the one the watched figures belong to.
      *
      * Ranked rather than decided, because the guild-report context is pushed
@@ -2427,6 +2530,7 @@ class GuildTrials {
         this.samplerId = null;
         this.lastTickAt = 0;
         guildTrialDamage.cleanup();
+        guildTrialSkilling.cleanup();
         guildTrialRecorder.cleanup();
         guildTrialScoreboard.close();
         guildLoadoutCapture.cleanup();

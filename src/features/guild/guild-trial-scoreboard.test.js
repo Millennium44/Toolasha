@@ -257,6 +257,29 @@ describe('the panel', () => {
         expect(text()).not.toContain('Estimated from builds');
     });
 
+    test('only your own row is measured, and the panel says whose', () => {
+        // The game streams action counters for one unit — the viewer's own
+        // character — so a watched trial has one attributable row and the rest
+        // are folded in beside it. Saying "measured" over the table would be
+        // claiming the other twenty-nine
+        game.breakdown = breakdown({
+            source: 'spectated',
+            seconds: 60,
+            countedNames: ['TakoTsubo'],
+            players: [
+                { index: '19', name: 'TakoTsubo', damage: 600_000, deaths: 0, measured: true },
+                { index: '4', name: 'Duskey', damage: 400_000, deaths: 0, measured: false },
+            ],
+        });
+        guildTrialScoreboard.open();
+
+        expect(text()).toContain('only streams action counters for your own character');
+        expect(text()).toContain('TakoTsubo');
+        expect(text()).toContain('is measured and the rest of the party is not');
+        // And the row that is not measured is marked on its own line
+        expect(text()).toContain('partial');
+    });
+
     test('a placeholder name is flagged as one', () => {
         game.breakdown = breakdown({
             source: 'spectated',

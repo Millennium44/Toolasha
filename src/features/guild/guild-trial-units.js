@@ -37,13 +37,17 @@
  * `Player 2`, and the caller says the name is a placeholder. Never a guess from
  * whoever happens to be online, or the roster in alphabetical order.
  *
- * ## A better source, when one appears
+ * ## 0. The roster, once one arrives
  *
- * The capture that found this stream never caught the message that opens a
- * spectated fight — a `guild_battle` with a roster on it very likely exists, and
- * would name every slot outright. {@link resolveUnitNames} takes its sources as
- * an argument list precisely so that one becomes a fourth entry at the top
- * rather than a rewrite.
+ * That better source turned up, exactly where this predicted: **`new_guild_battle`**
+ * fires at every tier and carries `players[]` in slot order with
+ * `character.id` and `character.name` on each entry, and a tick's `pMap` keys
+ * are indexes into that array — entry 19 is TakoTsubo, verified against a raw
+ * recording. So the roster now sits at the top of the list and the three sources
+ * below it are what a viewer who joined mid-tier still has.
+ *
+ * It slotted in as an argument rather than a rewrite, which is what the list
+ * shape was for.
  */
 
 /** A party tile in the fight view; the class names carry a build hash */
@@ -98,6 +102,35 @@ export function fightViewBossNames(root = typeof document === 'undefined' ? null
     return [...area.querySelectorAll(UNIT)]
         .map((unit) => unit.querySelector(UNIT_NAME)?.textContent?.trim() || '')
         .filter(Boolean);
+}
+
+/**
+ * The roster a `new_guild_battle` states, by slot.
+ *
+ * `players` is an array and the tick's `pMap` keys are indexes into it, so the
+ * join is positional and exact — no matching, no ambiguity, and a character id
+ * beside every name for anything that wants to know whether a unit is *you*.
+ *
+ * Defensive about the shape, because this is read from the wire: a payload whose
+ * `players` is missing, is not an array, or holds entries without a name gives
+ * back the slots it could read and nothing for the rest.
+ *
+ * @param {Object} data - A `new_guild_battle` payload
+ * @returns {Object<string, {name: string, characterId: number|null}>} Slot → who
+ */
+export function rosterFromBattle(data) {
+    const players = Array.isArray(data?.players) ? data.players : [];
+    const roster = {};
+
+    players.forEach((player, index) => {
+        const name = String(player?.character?.name || player?.name || '').trim();
+        if (!name) return;
+
+        const id = Number(player?.character?.id);
+        roster[index] = { name, characterId: Number.isFinite(id) && id > 0 ? id : null };
+    });
+
+    return roster;
 }
 
 /**
@@ -173,15 +206,25 @@ export function matchByVitals(unit, loadouts) {
  *
  * @param {Object} input - Inputs
  * @param {Object} input.pMap - The tick's players
+ * @param {Object} [input.roster] - From {@link rosterFromBattle}; the game's own answer
  * @param {string[]} [input.portraits] - From {@link fightViewNames}
  * @param {Array<Object>} [input.loadouts] - Snapshots from `guild-loadout-capture.js`
  * @param {Object} [input.known] - Names already resolved, index → `{name, source}`
- * @returns {Object<string, {name: string, source: 'portrait'|'vitals'|'placeholder'}>} Per index
+ * @returns {Object<string, {name: string, source: 'roster'|'portrait'|'vitals'|'placeholder',
+ *   characterId?: number|null}>} Per index
  */
-export function resolveUnitNames({ pMap = {}, portraits = [], loadouts = [], known = {} } = {}) {
+export function resolveUnitNames({ pMap = {}, roster = {}, portraits = [], loadouts = [], known = {} } = {}) {
     const resolved = {};
 
     for (const [index, unit] of Object.entries(pMap || {})) {
+        // The roster is positional and stated by the game, so it outranks
+        // everything including a name already held — a new battle restates it
+        const listed = roster?.[index];
+        if (listed?.name) {
+            resolved[index] = { name: listed.name, source: 'roster', characterId: listed.characterId ?? null };
+            continue;
+        }
+
         // A name already read off a portrait is not re-derived every tick; the
         // fight view closes and the identification must not close with it
         const held = known[index];

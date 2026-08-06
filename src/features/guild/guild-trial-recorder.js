@@ -42,6 +42,7 @@ import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import guildTrialDamage from './guild-trial-damage.js';
+import guildTrialSkilling from './guild-trial-skilling.js';
 import { loadLoadouts } from './guild-loadouts.js';
 import { supportCoverage } from './guild-trial-support.js';
 import guildMemberSkills from './guild-member-skills.js';
@@ -453,6 +454,10 @@ export async function buildTrialExport({ guildName = null } = {}) {
         session,
         coverage: supportCoverage(),
         memberSkills: guildMemberSkills.all?.() ?? {},
+        // What the socket said about the skilling half — the pool, the tier, the
+        // participants and the per-tier personal figures, none of which needed a
+        // tab to be open
+        trialSkilling: guildTrialSkilling.snapshot?.() ?? null,
     };
 }
 

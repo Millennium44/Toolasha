@@ -152,6 +152,37 @@ export function isTrialName(name) {
 }
 
 /**
+ * The trial a `trialHrid` names.
+ *
+ * The socket identifies a trial by hrid — `/guild_combat/badger`,
+ * `/guild_skilling/crafting` — where every other source this feature has names
+ * it in prose off a card. One function, so the join is made in one place and the
+ * two halves of the feature agree about what a trial is called.
+ *
+ * The last segment is the whole of it, and it is checked against the same closed
+ * lists a card's name is: an hrid this does not recognise returns null rather
+ * than a trial nobody has heard of.
+ *
+ * @param {string} hrid - e.g. `/guild_combat/badger`
+ * @returns {{kind: 'combat'|'skilling', key: string, name: string}|null} The trial
+ */
+export function trialFromHrid(hrid) {
+    const key = String(hrid || '')
+        .toLowerCase()
+        .split('/')
+        .filter(Boolean)
+        .pop();
+    if (!key) return null;
+
+    const kind = COMBAT_ENCOUNTERS.includes(key) ? 'combat' : TRIAL_SKILLS.includes(key) ? 'skilling' : null;
+    if (!kind) return null;
+
+    // The name as a card writes it, which is what the record is keyed by
+    const titled = key[0].toUpperCase() + key.slice(1);
+    return { kind, key, name: kind === 'combat' ? `Trial ${titled}` : titled };
+}
+
+/**
  * Which tier a trial level belongs to.
  * @param {number} level - Trial level, e.g. 140
  * @returns {number|null} 1-based tier, or null below the first tier
