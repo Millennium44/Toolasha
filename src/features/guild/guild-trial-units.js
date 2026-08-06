@@ -48,6 +48,28 @@
  *
  * It slotted in as an argument rather than a rewrite, which is what the list
  * shape was for.
+ *
+ * ## The portraits are not slot-ordered in the spectate view, and that mislabelled damage
+ *
+ * Reported live, after a page refresh dropped the roster: the leaderboard
+ * showed the watcher's own name **twice** — "MillenniumTest 161/s" and
+ * "MillenniumTest 113/s" — while a real member vanished from it entirely. The
+ * spectate fight view draws only the *watcher's own* unit as a full
+ * `CombatUnit`; the rest of the party are `MiniUnit` lines. So the portrait
+ * list was one name long — the watcher's — and reading it positionally handed
+ * that name to whichever slot happened to be index 0, while the watcher's real
+ * slot earned the same name from their own captured build. Two rules close it:
+ *
+ * - **Positional portraits only when they cover the party.** A portrait list
+ *   shorter than the party is not in slot order for anybody.
+ * - **One name, one unit.** The watcher's own name may only bind to the slot
+ *   their own attack counters confirm, and any resolution pass ends by
+ *   enforcing injectivity outright — a duplicate name demotes the weaker claim
+ *   to a placeholder rather than letting two rows wear it.
+ *
+ * The mini-unit names still earn their keep as a *set*: they say who is in the
+ * party without saying where, and when exactly one unit is unnamed and exactly
+ * one on-screen name unclaimed, the pairing is forced rather than guessed.
  */
 
 /** A party tile in the fight view; the class names carry a build hash */
@@ -55,6 +77,9 @@ const UNIT = '[class*="CombatUnit_combatUnit"]';
 
 /** The name inside one */
 const UNIT_NAME = '[class*="CombatUnit_name"]';
+
+/** A party member drawn small — everyone but the watcher, in the spectate view */
+const MINI_UNIT_NAME = '[class*="MiniUnit_name"]';
 
 /** Where the party's tiles live, as opposed to the monsters' */
 const PLAYERS_AREA = '[class*="BattlePanel_playersArea"]';
@@ -78,6 +103,33 @@ export function fightViewNames(root = typeof document === 'undefined' ? null : d
     if (!area) return [];
 
     return [...area.querySelectorAll(UNIT)].map((unit) => unit.querySelector(UNIT_NAME)?.textContent?.trim() || '');
+}
+
+/**
+ * Everyone the fight view names in the party, as a set with no positions.
+ *
+ * The spectate view draws the watcher's own unit as a full `CombatUnit` and
+ * the rest of the party as `MiniUnit` lines, and the two lists cannot be
+ * interleaved back into slot order — which is exactly the mistake the
+ * positional portrait rung made. What the combined list *can* say is who is in
+ * the party: {@link resolveUnitNames} uses it for the forced last pairing, and
+ * for nothing positional.
+ *
+ * @param {Document|Element} [root] - Where to look; the document by default
+ * @returns {string[]} Distinct names, in no particular order
+ */
+export function fightViewPartyNames(root = typeof document === 'undefined' ? null : document) {
+    if (!root || typeof root.querySelector !== 'function') return [];
+
+    const area = root.querySelector(PLAYERS_AREA);
+    if (!area) return [];
+
+    const names = [];
+    for (const el of area.querySelectorAll(`${UNIT_NAME}, ${MINI_UNIT_NAME}`)) {
+        const name = el.textContent?.trim();
+        if (name && !names.includes(name)) names.push(name);
+    }
+    return names;
 }
 
 /**
@@ -201,20 +253,82 @@ export function matchByVitals(unit, loadouts) {
     return hits.length === 1 ? hits[0] : null;
 }
 
+/** How much each naming source is worth, when two of them claim one name */
+const SOURCE_RANK = { placeholder: 0, elimination: 1, vitals: 2, portrait: 3, own: 4, roster: 5 };
+
+/**
+ * A placeholder entry for a slot.
+ * @param {string} index - The slot
+ * @returns {{name: string, source: 'placeholder'}} The entry
+ */
+function placeholderFor(index) {
+    const slot = Number(index);
+    return { name: `Player ${Number.isInteger(slot) ? slot + 1 : index}`, source: 'placeholder' };
+}
+
 /**
  * Name every unit in a tick, and say how each name was arrived at.
+ *
+ * Beyond the source ladder, two invariants hold whatever the sources say — both
+ * earned by the duplicate-name incident in the module note:
+ *
+ * - **The watcher's own name binds only to the watcher's own slot.** `own` is
+ *   the slot their attack counters confirm (the stream carries counters for
+ *   exactly one unit — theirs); a portrait, a build or a held name claiming
+ *   that name anywhere else is structurally the spectate view's own-unit tile
+ *   read positionally, and is refused. The roster is exempt: it is the game
+ *   stating the slot outright.
+ * - **One name, one unit.** After resolution, a name held by two slots keeps
+ *   its highest-ranked claim and the rest fall back to placeholders — a row
+ *   with a placeholder is recoverable; damage filed under the wrong member is
+ *   not.
+ *
+ * `partyNames` — the fight view's un-positioned name set — closes the last
+ * gap: when it covers the party exactly and precisely one slot is unnamed and
+ * one name unclaimed, the pairing is forced by injectivity rather than
+ * guessed.
  *
  * @param {Object} input - Inputs
  * @param {Object} input.pMap - The tick's players
  * @param {Object} [input.roster] - From {@link rosterFromBattle}; the game's own answer
- * @param {string[]} [input.portraits] - From {@link fightViewNames}
+ * @param {string[]} [input.portraits] - From {@link fightViewNames}; positional, so only
+ *   believed when the list covers the whole party
+ * @param {string[]} [input.partyNames] - From {@link fightViewPartyNames}; a set, never positional
  * @param {Array<Object>} [input.loadouts] - Snapshots from `guild-loadout-capture.js`
  * @param {Object} [input.known] - Names already resolved, index → `{name, source}`
- * @returns {Object<string, {name: string, source: 'roster'|'portrait'|'vitals'|'placeholder',
- *   characterId?: number|null}>} Per index
+ * @param {{slot: string|number|null, name: string|null, characterId?: number|null}|null} [input.own] -
+ *   The watcher: the slot their own counters confirm, and their character's name
+ * @returns {Object<string, {name: string, source: 'roster'|'own'|'portrait'|'vitals'|'elimination'|'placeholder',
+ *   characterId?: number|null}>} Per index; may also carry corrections for slots outside this
+ *   tick whose held name lost an injectivity contest
  */
-export function resolveUnitNames({ pMap = {}, roster = {}, portraits = [], loadouts = [], known = {} } = {}) {
+export function resolveUnitNames({
+    pMap = {},
+    roster = {},
+    portraits = [],
+    partyNames = [],
+    loadouts = [],
+    known = {},
+    own = null,
+} = {}) {
     const resolved = {};
+    const indexes = new Set([...Object.keys(known || {}), ...Object.keys(pMap || {})]);
+    const ownName = String(own?.name || '').trim();
+    const ownSlot = own?.slot === undefined || own?.slot === null ? null : String(own.slot);
+
+    // Positional reading is only sound when the portraits cover the party: the
+    // spectate view draws one CombatUnit — the watcher — and a one-name list
+    // read positionally is how their name landed on somebody else's slot
+    const positional = (portraits || []).length >= indexes.size ? portraits : [];
+
+    // Whether a source may put this name on this slot. The watcher's own name
+    // is the poisoned one — the spectate view draws their tile whatever slot
+    // they hold — so it binds only where their own counters say they are.
+    const allowed = (index, name, source) => {
+        if (!ownName || String(name || '').toLowerCase() !== ownName.toLowerCase()) return true;
+        if (source === 'roster') return true;
+        return ownSlot !== null && String(index) === ownSlot;
+    };
 
     for (const [index, unit] of Object.entries(pMap || {})) {
         // The roster is positional and stated by the game, so it outranks
@@ -225,28 +339,79 @@ export function resolveUnitNames({ pMap = {}, roster = {}, portraits = [], loado
             continue;
         }
 
+        // The watcher's own slot, confirmed by their own attack counters
+        if (ownName && ownSlot !== null && String(index) === ownSlot) {
+            resolved[index] = { name: ownName, source: 'own', characterId: own?.characterId ?? null };
+            continue;
+        }
+
         // A name already read off a portrait is not re-derived every tick; the
-        // fight view closes and the identification must not close with it
+        // fight view closes and the identification must not close with it. A
+        // held claim of the watcher's name on the wrong slot is the incident
+        // this file now exists to prevent, and is dropped rather than kept.
         const held = known[index];
-        if (held && held.source !== 'placeholder') {
+        if (held && held.source !== 'placeholder' && allowed(index, held.name, held.source)) {
             resolved[index] = held;
             continue;
         }
 
         const slot = Number(index);
-        const portrait = Number.isInteger(slot) && slot >= 0 && slot < portraits.length ? portraits[slot] : '';
-        if (portrait) {
+        const portrait = Number.isInteger(slot) && slot >= 0 && slot < positional.length ? positional[slot] : '';
+        if (portrait && allowed(index, portrait, 'portrait')) {
             resolved[index] = { name: portrait, source: 'portrait' };
             continue;
         }
 
         const matched = matchByVitals(unit, loadouts);
-        if (matched) {
+        if (matched && allowed(index, matched.name, 'vitals')) {
             resolved[index] = { name: matched.name, source: 'vitals' };
             continue;
         }
 
-        resolved[index] = { name: `Player ${Number.isInteger(slot) ? slot + 1 : index}`, source: 'placeholder' };
+        resolved[index] = placeholderFor(index);
+    }
+
+    // ── One name, one unit ──────────────────────────────────────────────────
+    // Across everything now believed — this tick's answers over the stored
+    // ones — a duplicated name keeps its best-ranked claim and the rest are
+    // demoted. A demoted *stored* slot is included in the output so the caller
+    // overwrites the stale mislabel rather than keeping it.
+    const combined = { ...(known || {}), ...resolved };
+    const byName = new Map();
+    for (const [index, entry] of Object.entries(combined)) {
+        if (!entry?.name || entry.source === 'placeholder') continue;
+        const key = entry.name.toLowerCase();
+        if (!byName.has(key)) byName.set(key, []);
+        byName.get(key).push(index);
+    }
+    for (const holders of byName.values()) {
+        if (holders.length < 2) continue;
+        holders.sort(
+            (a, b) =>
+                (SOURCE_RANK[combined[b].source] ?? 0) - (SOURCE_RANK[combined[a].source] ?? 0) || Number(a) - Number(b)
+        );
+        for (const loser of holders.slice(1)) {
+            resolved[loser] = placeholderFor(loser);
+            combined[loser] = resolved[loser];
+        }
+    }
+
+    // ── The forced last pairing ─────────────────────────────────────────────
+    // The fight view's name set covers the party exactly, one slot is unnamed
+    // and one name unclaimed: injectivity leaves a single arrangement, which
+    // is an identification rather than a guess.
+    const pool = [...new Set((partyNames || []).map((name) => String(name || '').trim()).filter(Boolean))];
+    if (pool.length && pool.length === indexes.size) {
+        const claimed = new Set(
+            Object.values(combined)
+                .filter((entry) => entry?.name && entry.source !== 'placeholder')
+                .map((entry) => entry.name.toLowerCase())
+        );
+        const unclaimed = pool.filter((name) => !claimed.has(name.toLowerCase()));
+        const unresolved = [...indexes].filter((index) => !combined[index] || combined[index].source === 'placeholder');
+        if (unclaimed.length === 1 && unresolved.length === 1) {
+            resolved[unresolved[0]] = { name: unclaimed[0], source: 'elimination' };
+        }
     }
 
     return resolved;

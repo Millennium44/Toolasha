@@ -56,6 +56,35 @@
  * containing "heal" — with a small name fallback for a client that has not
  * loaded. Buff abilities are found the same way, from effects that carry
  * `buffs`.
+ *
+ * ## Regeneration is not a failure to attribute, and it stopped being reported as one
+ *
+ * A watched trial with the party near full health showed "0 party hps" over
+ * "22.7K unattributed" for the whole fight — a bucket that reads like the
+ * attribution failing, when most of it was the trial's own flat regeneration
+ * (the guide replaces food and drinks with it) plus on-cast heal procs like
+ * Blooming Trident's Bloom, which no healing-ability stream will ever label.
+ * Two refinements, each with the same no-guessing discipline:
+ *
+ * - **Regeneration identifies itself by its shape.** A regen tick heals every
+ *   below-full unit by the same *fraction of its own maximum* — no cast heal
+ *   scales per-recipient-max — so a multi-unit rise at one uniform small
+ *   fraction, across units with different maxima, is regeneration and teaches
+ *   the fraction ({@link splitRegenRises}). Once learned, a lone rise of that
+ *   exact size (or a smaller one that tops its unit to full) is regeneration
+ *   too. Units sharing one maximum cannot distinguish a flat party heal from
+ *   regen, so nothing is learned from them.
+ * - **A lone caster owns the rises their tick carries.** The server groups
+ *   each tick by actor — the fact the damage side's presence rung is built on
+ *   — so when exactly one player cast an *ability* on a tick and the
+ *   non-regeneration rises land beside it, they are that cast's effect: a
+ *   heal, a leech, or an on-cast proc. Auto-attacks do not qualify (procs
+ *   like Bloom fire "on ability cast"), and several casters on one tick still
+ *   separate nothing.
+ *
+ * What remains after both is genuinely unattributed and is labelled with what
+ * it most likely is: overlapping heals, or a proc from a caster whose
+ * counters this stream does not carry.
  */
 
 import dataManager from '../../core/data-manager.js';
@@ -102,9 +131,23 @@ export function classifyAbility(hrid, detailMap) {
 }
 
 /**
+ * The largest fraction of a unit's maximum health a regen tick may be.
+ *
+ * The trial's stated regeneration is a few percent; a tenth is generous
+ * headroom, and anything above it is a heal whatever its shape — a cap so a
+ * party-wide burst heal that happens to land uniform can never teach itself in
+ * as "regeneration".
+ */
+export const REGEN_FRACTION_CAP = 0.1;
+
+/** How far off the exact fraction a rise may round and still be regen, in HP */
+const REGEN_ROUNDING_HP = 1;
+
+/**
  * A fresh support state.
  * @returns {{players: Object, lastHP: Object, lastMP: Object, lastAtk: Object, emptySince: Object,
- *   unattributedHealing: number, abilityKindsKnown: boolean}} State
+ *   unattributedHealing: number, regenHealing: number, regenFraction: number|null,
+ *   abilityKindsKnown: boolean}} State
  */
 export function newSupportState() {
     return {
@@ -114,6 +157,8 @@ export function newSupportState() {
         lastAtk: {},
         emptySince: {},
         unattributedHealing: 0,
+        regenHealing: 0,
+        regenFraction: null,
         abilityKindsKnown: true,
     };
 }
@@ -166,6 +211,7 @@ export function foldSupportTick(state, pMap, actions = {}, detailMap, at = null)
     if (!entries.length) return;
 
     const healers = [];
+    const casters = [];
     const risesThisTick = [];
 
     for (const [index, player] of entries) {
@@ -173,19 +219,22 @@ export function foldSupportTick(state, pMap, actions = {}, detailMap, at = null)
 
         const health = Number(player?.cHP);
         if (Number.isFinite(health)) {
+            const max = Number(player?.mHP);
             const before = state.lastHP[index];
             if (before !== undefined) {
                 const change = health - before;
                 if (change > 0) {
                     row.healingReceived += change;
-                    risesThisTick.push({ index, amount: change });
+                    // Health and maximum ride along so the regen classifier can
+                    // ask "is this the same fraction of *this* unit's maximum,
+                    // or a top-up to full"
+                    risesThisTick.push({ index, amount: change, health, max: Number.isFinite(max) ? max : null });
                 } else if (change < 0) {
                     row.damageTaken += -change;
                 }
             }
             state.lastHP[index] = health;
 
-            const max = Number(player?.mHP);
             if (Number.isFinite(max) && max > 0) {
                 const fraction = Math.max(0, health) / max;
                 row.lowestHealthFraction =
@@ -235,6 +284,9 @@ export function foldSupportTick(state, pMap, actions = {}, detailMap, at = null)
                 row.casts += 1;
                 if (action && action !== 'idle' && action !== 'auto') {
                     row.castsByAbility[action] = (row.castsByAbility[action] || 0) + 1;
+                    // A real ability, whatever it does — the on-cast proc rung
+                    // below wants the actor, and procs fire "on ability cast"
+                    casters.push(index);
                 }
                 if (kind.heals) {
                     row.healCasts += 1;
@@ -255,9 +307,87 @@ export function foldSupportTick(state, pMap, actions = {}, detailMap, at = null)
     if (healers.length === 1) {
         const row = (state.players[healers[0]] ||= emptyRow());
         row.healingDone += restored;
-    } else {
-        state.unattributedHealing += restored;
+        return;
     }
+
+    // No lone healer. Take the regeneration out first — it identifies itself
+    // by its shape — and give what is left to a lone ability caster whose tick
+    // this is, before anything lands in the unattributed bucket.
+    const { regen, rest } = splitRegenRises(state, risesThisTick);
+    state.regenHealing += regen.reduce((sum, rise) => sum + rise.amount, 0);
+
+    const remainder = rest.reduce((sum, rise) => sum + rise.amount, 0);
+    if (remainder <= 0) return;
+
+    if (casters.length === 1) {
+        // The server groups a tick by actor, so a lone cast beside these rises
+        // is what caused them — a heal, a leech, or an on-cast proc like
+        // Blooming Trident's Bloom, which lands on the lowest-health ally and
+        // never labels itself as a healing ability
+        const row = (state.players[casters[0]] ||= emptyRow());
+        row.healingDone += remainder;
+    } else {
+        state.unattributedHealing += remainder;
+    }
+}
+
+/**
+ * Which of a tick's health rises are the trial's own regeneration.
+ *
+ * Regeneration is the one heal with a *shape*: every below-full unit rises by
+ * the same fraction of its own maximum, on one tick. No cast heal does that —
+ * heals are flat amounts from the caster's power — so a uniform-fraction wave
+ * across units with **different** maxima both classifies itself and teaches
+ * the fraction, which then classifies lone rises (a unit alone below full is a
+ * one-riser regen tick) and clamped ones (a rise that tops the unit to full
+ * with less than a full regen tick missing).
+ *
+ * The discipline is the file's usual one, twice over: units sharing one
+ * maximum could equally be a flat party heal, so nothing is learned from
+ * them; and a fraction above {@link REGEN_FRACTION_CAP} is a heal whatever its
+ * uniformity, so a big burst can never teach itself in.
+ *
+ * Mutates `state.regenFraction` when a wave teaches it; classification uses
+ * the learned fraction thereafter.
+ *
+ * @param {Object} state - From {@link newSupportState}
+ * @param {Array<{index: string, amount: number, health: number, max: number|null}>} rises - This tick's rises
+ * @returns {{regen: Array<Object>, rest: Array<Object>}} The split
+ */
+export function splitRegenRises(state, rises) {
+    const usable = (rises || []).filter((rise) => Number.isFinite(rise?.max) && rise.max > 0 && rise.amount > 0);
+    const rest = (rises || []).filter((rise) => !usable.includes(rise));
+
+    if (!usable.length) return { regen: [], rest: [...(rises || [])] };
+
+    const fits = (rise, fraction) => {
+        const full = fraction * rise.max;
+        // The exact per-max size, give or take the game's rounding…
+        if (Math.abs(rise.amount - full) <= REGEN_ROUNDING_HP) return true;
+        // …or a smaller rise that tops the unit to full, when less than one
+        // regen tick was missing
+        return rise.health === rise.max && rise.amount <= full + REGEN_ROUNDING_HP;
+    };
+
+    // A wave teaches the fraction: two or more unclamped risers, different
+    // maxima, one fraction between them
+    const unclamped = usable.filter((rise) => rise.health < rise.max);
+    if (unclamped.length >= 2 && new Set(unclamped.map((rise) => rise.max)).size >= 2) {
+        const fraction = unclamped[0].amount / unclamped[0].max;
+        const uniform =
+            fraction > 0 && fraction <= REGEN_FRACTION_CAP && unclamped.every((rise) => fits(rise, fraction));
+        if (uniform) state.regenFraction = fraction;
+    }
+
+    const fraction = state.regenFraction;
+    if (!Number.isFinite(fraction) || fraction <= 0) return { regen: [], rest: [...(rises || [])] };
+
+    const regen = [];
+    for (const rise of usable) {
+        if (fits(rise, fraction)) regen.push(rise);
+        else rest.push(rise);
+    }
+    return { regen, rest };
 }
 
 /**
@@ -293,6 +423,11 @@ export function summariseSupport(state, names = {}, deaths = {}) {
             manaOuts: sum('manaOuts'),
         },
         unattributedHealing: state?.unattributedHealing || 0,
+        // The trial's own flat regeneration, identified by its shape — kept
+        // apart from `unattributedHealing` because "the game healed everyone"
+        // and "somebody's heal could not be credited" are different claims
+        regenHealing: state?.regenHealing || 0,
+        regenFraction: Number.isFinite(state?.regenFraction) ? state.regenFraction : null,
         abilityKindsKnown: state?.abilityKindsKnown !== false,
     };
 }
@@ -310,7 +445,14 @@ export function supportCoverage() {
     return {
         damageTaken: 'measured — health falling, per player, per tick',
         healingReceived: 'measured — health rising, per player, per tick',
-        healingDone: 'attributed only when exactly one player cast a heal on the tick; the rest is unattributed',
+        healingDone:
+            'attributed when exactly one player cast a heal on the tick, or when a lone ability cast ' +
+            'sits beside rises that are not regeneration-shaped (the tick is grouped by actor, so those ' +
+            'are that cast’s effect — a heal, a leech, or an on-cast proc); anything else is unattributed',
+        regenHealing:
+            'classified by shape — every below-full unit rising by one uniform fraction of its own ' +
+            'maximum on one tick is the trial’s flat regeneration, and the learned fraction then ' +
+            'classifies lone and clamped-to-full rises too. Never attributed to a player',
         manaSpent: 'measured — mana falling, per player, per tick',
         casts: 'measured — the attack counter rising, labelled with the ability being prepared',
         manaOuts:

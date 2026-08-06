@@ -99,11 +99,13 @@ import { foldSupportTick, newSupportState, summariseSupport, supportCoverage } f
 import {
     fightViewBossNames,
     fightViewNames,
+    fightViewPartyNames,
     nameCoverage,
     resolveUnitNames,
     rosterFromBattle,
 } from './guild-trial-units.js';
 import { COMBAT_ENCOUNTERS, TRIAL_ACTIVE_MS, tierFromLevel, trialFromHrid } from './guild-trials-math.js';
+import { loadTrialRoster, saveTrialRoster } from './guild-trials-store.js';
 
 /** Below this the per-player rates are one exchange's luck rather than a rate */
 export const MIN_SECONDS = 5;
@@ -372,6 +374,12 @@ class GuildTrialDamage {
         this.onBattleUpdated = null;
         /** Names of this week's combat trial cards, pushed in by the trials feature */
         this.trialNames = [];
+        /**
+         * The persisted `{battleId, roster, at}` a refreshed session reads
+         * back. Survives {@link reset} on purpose: the battle id is what says
+         * whether it may be used, not this module's lifecycle.
+         */
+        this.storedRoster = null;
         this.reset();
     }
 
@@ -475,6 +483,10 @@ class GuildTrialDamage {
         if (this.initialized) return;
         this.initialized = true;
 
+        // Read back the roster a previous page-load wrote down, so a refresh
+        // mid-tier does not lose every name until the next tier restates them
+        this._restoreStoredRoster();
+
         this.onNewBattle = (data) => this._onNewBattle(data);
         this.onBattleUpdated = (data) => this._onBattleUpdated(data);
         this.onGuildBattle = (data) => this._onGuildBattleTick(data);
@@ -559,6 +571,14 @@ class GuildTrialDamage {
                 for (const [index, entry] of Object.entries(roster)) {
                     this.unitNames[index] = { name: entry.name, source: 'roster', characterId: entry.characterId };
                     this.names[index] = entry.name;
+                }
+                // …and written down with the battle it belongs to. This message
+                // fires once per tier and never again, so a page refresh
+                // mid-tier used to lose every name — "Player 2" on a
+                // leaderboard whose roster had been on the wire minutes before
+                if (battleId) {
+                    this.storedRoster = { battleId, roster, at: now };
+                    saveTrialRoster(this.storedRoster).catch(() => {});
                 }
             }
 
@@ -680,6 +700,9 @@ class GuildTrialDamage {
             const mMap = data.mMap || {};
 
             this._identifyEncounter();
+            // A session that missed the tier's opening message — a refresh —
+            // reads the persisted roster back, gated on the battle id matching
+            if (!Object.keys(this.roster).length) this._adoptStoredRoster(battleId);
             this._nameUnits(pMap);
             this._readPool(mMap, tier, now);
 
@@ -866,16 +889,67 @@ class GuildTrialDamage {
     }
 
     /**
+     * Read the persisted roster back at startup.
+     *
+     * Fire-and-forget from {@link initialize}; nothing waits on it, and a tick
+     * that beats the read simply resolves names without it and better on the
+     * next one.
+     */
+    async _restoreStoredRoster() {
+        try {
+            const held = await loadTrialRoster();
+            if (held) this.storedRoster = held;
+        } catch (error) {
+            console.error('[GuildTrialDamage] Restoring the trial roster failed:', error);
+        }
+    }
+
+    /**
+     * Adopt the persisted roster, when it is provably this fight's.
+     *
+     * The battle id is the whole gate: `new_guild_battle` and every spectated
+     * tick carry the same id across a trial's tiers, so an id match says the
+     * stored roster names exactly these slots — and anything else, including a
+     * roster with no id at all, stays unused. The age bound is belt and
+     * braces: a trial runs an hour, so an older entry is another trial's even
+     * if an id were ever reused.
+     *
+     * @param {*} battleId - The battle the current stream belongs to
+     */
+    _adoptStoredRoster(battleId) {
+        const held = this.storedRoster;
+        if (!held || !battleId || String(held.battleId) !== String(battleId)) return;
+        if (Number.isFinite(held.at) && Date.now() - held.at > TRIAL_ACTIVE_MS) return;
+
+        const roster = held.roster && typeof held.roster === 'object' ? held.roster : {};
+        if (!Object.keys(roster).length) return;
+
+        this.roster = { ...roster };
+        for (const [index, entry] of Object.entries(this.roster)) {
+            if (!entry?.name) continue;
+            this.unitNames[index] = { name: entry.name, source: 'roster', characterId: entry.characterId ?? null };
+            this.names[index] = entry.name;
+        }
+        if (!this.participants) this.participants = Object.keys(this.roster).length;
+    }
+
+    /**
      * Put names to the tick's unit indexes.
      * @param {Object} pMap - The tick's players
      */
     _nameUnits(pMap) {
+        // The one slot the stream carries attack counters for is the watcher's
+        // own unit — the only slot their own name may bind to
+        const ownSlot = this.countedSlots.size === 1 ? [...this.countedSlots][0] : null;
+
         const resolved = resolveUnitNames({
             pMap,
             roster: this.roster,
             portraits: fightViewNames(),
+            partyNames: fightViewPartyNames(),
             loadouts: guildLoadoutCapture.seen?.() || [],
             known: this.unitNames,
+            own: { slot: ownSlot, name: dataManager.getCurrentCharacterName?.() || null },
         });
 
         for (const [index, entry] of Object.entries(resolved)) {

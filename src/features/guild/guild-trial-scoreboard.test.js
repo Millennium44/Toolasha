@@ -193,6 +193,26 @@ describe('the panel', () => {
         expect(text()).toContain('unattributed');
     });
 
+    test('regeneration is its own line, not part of the unattributed bucket', () => {
+        // The live complaint: 333 seconds of "0 party hps" over "22.7K
+        // unattributed — regeneration, or two healers on one tick", when most
+        // of it was the trial's own flat regen. The two are different claims.
+        game.breakdown = breakdown({
+            support: {
+                players: [{ index: '2', name: 'Ada', healingDone: 150_000, damageTaken: 0 }],
+                unattributedHealing: 2_000,
+                regenHealing: 20_700,
+            },
+        });
+        guildTrialScoreboard.open();
+        document.querySelector('[data-tab="healing"]').click();
+
+        expect(text()).toContain('20.7K regeneration');
+        expect(text()).toContain('2.0K unattributed');
+        // The old lump that read as a failure is gone
+        expect(text()).not.toContain('two healers on one tick');
+    });
+
     test('it says why it is empty rather than drawing zeroes', () => {
         game.breakdown = {
             measured: false,

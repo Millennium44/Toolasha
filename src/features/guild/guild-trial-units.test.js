@@ -15,6 +15,7 @@ import { describe, test, expect, afterEach } from 'vitest';
 import {
     fightViewBossNames,
     fightViewNames,
+    fightViewPartyNames,
     loadoutVitals,
     matchByVitals,
     nameCoverage,
@@ -165,6 +166,89 @@ describe('resolveUnitNames', () => {
         // Index 4 with two tiles on screen is not tile 0 wrapped around
         const names = resolveUnitNames({ pMap: { 4: icmeow }, portraits: ['Tib', 'Moo'] });
         expect(names['4'].source).toBe('placeholder');
+    });
+});
+
+describe('one name, one unit', () => {
+    test('the watcher’s lone portrait cannot hand their name to another slot', () => {
+        // The live regression, from the user's own export: after a refresh
+        // dropped the roster, `names` read {0: MillenniumTest (portrait),
+        // 2: MillenniumTest (vitals)} — the spectate view draws only the
+        // watcher as a CombatUnit, the one-name portrait list was read
+        // positionally onto slot 0, and the leaderboard showed the user twice
+        // with SarinTest missing entirely.
+        const names = resolveUnitNames({
+            pMap: { 0: { mHP: 3100, mMP: 900 }, 1: icmeow, 2: { mHP: 5 }, 3: { mHP: 9 } },
+            portraits: ['MillenniumTest'],
+            loadouts: [sheet('ICMeow', 2612, 2180)],
+            own: { slot: '2', name: 'MillenniumTest' },
+        });
+
+        expect(names['2']).toMatchObject({ name: 'MillenniumTest', source: 'own' });
+        expect(names['1']).toMatchObject({ name: 'ICMeow', source: 'vitals' });
+        expect(names['0'].source).toBe('placeholder');
+        expect(names['3'].source).toBe('placeholder');
+        const wearingIt = Object.values(names).filter((entry) => entry.name === 'MillenniumTest');
+        expect(wearingIt).toHaveLength(1);
+    });
+
+    test('a stored mislabel of the watcher’s name is dropped, not kept', () => {
+        const names = resolveUnitNames({
+            pMap: { 0: {}, 2: {} },
+            known: { 0: { name: 'MillenniumTest', source: 'portrait' } },
+            own: { slot: '2', name: 'MillenniumTest' },
+        });
+
+        expect(names['2']).toMatchObject({ name: 'MillenniumTest', source: 'own' });
+        expect(names['0'].source).toBe('placeholder');
+    });
+
+    test('a duplicate across mixed sources keeps the stronger claim, correcting slots outside the tick', () => {
+        // The roster states slot 0; a stale vitals match had put the same name
+        // on slot 1 in an earlier tick. The correction is emitted even though
+        // slot 1 is not in this tick's pMap, so the stored mislabel heals.
+        const names = resolveUnitNames({
+            pMap: { 0: {} },
+            roster: { 0: { name: 'Tib', characterId: 7 } },
+            known: { 1: { name: 'Tib', source: 'vitals' } },
+        });
+
+        expect(names['0']).toMatchObject({ name: 'Tib', source: 'roster' });
+        expect(names['1']).toMatchObject({ source: 'placeholder' });
+    });
+
+    test('the on-screen name set forces the last pairing, and only the last', () => {
+        // The players area names everyone — the watcher as a CombatUnit, the
+        // rest as MiniUnit lines — without saying where. Set equality plus
+        // injectivity forces a single remaining pairing; two remaining are a
+        // guess and stay placeholders.
+        const forced = resolveUnitNames({
+            pMap: { 0: {}, 1: {} },
+            roster: { 0: { name: 'Tib' } },
+            partyNames: ['Moo', 'Tib'],
+        });
+        expect(forced['1']).toEqual({ name: 'Moo', source: 'elimination' });
+
+        const ambiguous = resolveUnitNames({
+            pMap: { 0: {}, 1: {}, 2: {} },
+            roster: { 0: { name: 'Tib' } },
+            partyNames: ['Moo', 'Tib', 'Zed'],
+        });
+        expect(ambiguous['1'].source).toBe('placeholder');
+        expect(ambiguous['2'].source).toBe('placeholder');
+    });
+
+    test('the party name set reads CombatUnit and MiniUnit lines alike, as a set', () => {
+        document.body.innerHTML =
+            '<div class="BattlePanel_playersArea__x">' +
+            '<div class="CombatUnit_combatUnit__a"><div class="CombatUnit_name__b">MillenniumTest</div></div>' +
+            '<div class="MiniUnit_miniUnit__c"><div class="MiniUnit_name__d">SarinTest</div></div>' +
+            '<div class="MiniUnit_miniUnit__c"><div class="MiniUnit_name__d">Orven</div></div>' +
+            '</div>';
+
+        expect(fightViewPartyNames(document)).toEqual(['MillenniumTest', 'SarinTest', 'Orven']);
+        document.body.innerHTML = '';
+        expect(fightViewPartyNames(document)).toEqual([]);
     });
 });
 

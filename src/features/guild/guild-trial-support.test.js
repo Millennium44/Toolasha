@@ -17,7 +17,7 @@ vi.mock('../../core/data-manager.js', () => ({
     },
 }));
 
-const { classifyAbility, foldSupportTick, newSupportState, summariseSupport, supportCoverage } =
+const { classifyAbility, foldSupportTick, newSupportState, splitRegenRises, summariseSupport, supportCoverage } =
     await import('./guild-trial-support.js');
 
 /** The game's own ability data, in the shape `upgrade-advisor.js` already reads */
@@ -127,7 +127,9 @@ describe('foldSupportTick', () => {
         expect(state.players[1].healingDone).toBe(0);
     });
 
-    test('regeneration with nobody casting is unattributed, not invented healing', () => {
+    test('regeneration whose shape has not been learned yet stays unattributed, not invented healing', () => {
+        // A lone riser before any wave has taught the fraction: nothing can
+        // say whether it is regen or somebody's heal, so nobody is credited
         const state = newSupportState();
         foldSupportTick(state, { 0: unit({ cHP: 900 }) }, {}, detailMap);
         foldSupportTick(state, { 0: unit({ cHP: 950 }) }, {}, detailMap);
@@ -158,6 +160,138 @@ describe('foldSupportTick', () => {
         foldSupportTick(state, {}, {}, detailMap);
         foldSupportTick(state, null, {}, detailMap);
         expect(summariseSupport(state).players).toEqual([]);
+    });
+});
+
+describe('regeneration and on-cast procs', () => {
+    // The live evidence this exists for: 333 seconds of a watched Trial
+    // Chameleon showed "0 party hps" over "22.7K unattributed" with the party
+    // near full health throughout — a bucket that read as attribution failing,
+    // when most of it was the trial's own flat regeneration plus Blooming
+    // Trident's Bloom ("on ability cast, 38% chance to heal lowest HP% ally"),
+    // which no healing-ability stream will ever label.
+
+    test('a uniform-fraction wave across different maxima is regeneration, and teaches the fraction', () => {
+        const state = newSupportState();
+        foldSupportTick(state, { 1: unit({ cHP: 1900, mHP: 2000 }), 2: unit({ cHP: 2800, mHP: 3000 }) }, {}, detailMap);
+        // Both rise by 3% of their own maximum on one tick — no cast heal
+        // scales per-recipient-max
+        foldSupportTick(state, { 1: unit({ cHP: 1960, mHP: 2000 }), 2: unit({ cHP: 2890, mHP: 3000 }) }, {}, detailMap);
+
+        expect(state.regenHealing).toBe(150);
+        expect(state.unattributedHealing).toBe(0);
+        expect(state.regenFraction).toBeCloseTo(0.03, 9);
+        // Still counted as received by each unit — what changed is the label
+        expect(state.players[1].healingReceived).toBe(60);
+    });
+
+    test('the learned fraction then classifies lone and clamped-to-full rises', () => {
+        const state = newSupportState();
+        foldSupportTick(state, { 1: unit({ cHP: 1900, mHP: 2000 }), 2: unit({ cHP: 2800, mHP: 3000 }) }, {}, detailMap);
+        foldSupportTick(state, { 1: unit({ cHP: 1960, mHP: 2000 }), 2: unit({ cHP: 2890, mHP: 3000 }) }, {}, detailMap);
+
+        // A lone riser of exactly one regen tick
+        foldSupportTick(state, { 2: unit({ cHP: 2980, mHP: 3000 }) }, {}, detailMap);
+        expect(state.regenHealing).toBe(240);
+
+        // A smaller rise that tops its unit to full — less than one regen tick
+        // was missing
+        foldSupportTick(state, { 2: unit({ cHP: 3000, mHP: 3000 }) }, {}, detailMap);
+        expect(state.regenHealing).toBe(260);
+        expect(state.unattributedHealing).toBe(0);
+    });
+
+    test('units sharing one maximum cannot teach the fraction — a flat party heal looks the same', () => {
+        const state = newSupportState();
+        foldSupportTick(state, { 1: unit({ cHP: 2800, mHP: 3000 }), 2: unit({ cHP: 2700, mHP: 3000 }) }, {}, detailMap);
+        foldSupportTick(state, { 1: unit({ cHP: 2890, mHP: 3000 }), 2: unit({ cHP: 2790, mHP: 3000 }) }, {}, detailMap);
+
+        expect(state.regenFraction).toBeNull();
+        expect(state.regenHealing).toBe(0);
+        expect(state.unattributedHealing).toBe(180);
+    });
+
+    test('a big burst heal cannot teach itself in as regeneration', () => {
+        const state = newSupportState();
+        const { regen, rest } = splitRegenRises(state, [
+            { index: '1', amount: 400, health: 1900, max: 2000 },
+            { index: '2', amount: 600, health: 2500, max: 3000 },
+        ]);
+
+        expect(regen).toEqual([]);
+        expect(rest).toHaveLength(2);
+        expect(state.regenFraction).toBeNull();
+    });
+
+    test('a lone ability cast owns the rises its tick carries — the Bloom proc case', () => {
+        // The tick is grouped by actor, so the lone cast beside the rise is
+        // what caused it: a heal, a leech, or an on-cast proc
+        const state = newSupportState();
+        foldSupportTick(state, { 0: unit({ atkCounter: 1 }), 2: unit({ cHP: 2600, mHP: 3000 }) }, {}, detailMap);
+        foldSupportTick(
+            state,
+            { 0: unit({ atkCounter: 2 }), 2: unit({ cHP: 2737, mHP: 3000 }) },
+            { 0: '/abilities/entangle' },
+            detailMap
+        );
+
+        expect(state.players[0].healingDone).toBe(137);
+        expect(state.unattributedHealing).toBe(0);
+    });
+
+    test('an auto-attack claims nothing — procs fire on ability casts', () => {
+        const state = newSupportState();
+        foldSupportTick(state, { 0: unit({ atkCounter: 1 }), 2: unit({ cHP: 2600, mHP: 3000 }) }, {}, detailMap);
+        foldSupportTick(
+            state,
+            { 0: unit({ atkCounter: 2 }), 2: unit({ cHP: 2737, mHP: 3000 }) },
+            { 0: 'auto' },
+            detailMap
+        );
+
+        expect(state.players[0].healingDone).toBe(0);
+        expect(state.unattributedHealing).toBe(137);
+    });
+
+    test('a lone caster is not handed the regeneration that shares their tick', () => {
+        const state = newSupportState();
+        foldSupportTick(
+            state,
+            { 0: unit({ atkCounter: 1 }), 1: unit({ cHP: 1900, mHP: 2000 }), 2: unit({ cHP: 2800, mHP: 3000 }) },
+            {},
+            detailMap
+        );
+        foldSupportTick(
+            state,
+            { 0: unit({ atkCounter: 1 }), 1: unit({ cHP: 1960, mHP: 2000 }), 2: unit({ cHP: 2890, mHP: 3000 }) },
+            {},
+            detailMap
+        );
+
+        // One regen tick lands beside a lone cast: the cast gets nothing, and
+        // the regen stays the game's
+        foldSupportTick(
+            state,
+            { 0: unit({ atkCounter: 2 }), 2: unit({ cHP: 2980, mHP: 3000 }) },
+            { 0: '/abilities/entangle' },
+            detailMap
+        );
+
+        expect(state.players[0].casts).toBe(1);
+        expect(state.regenHealing).toBe(240);
+        expect(state.players[0].healingDone).toBe(0);
+    });
+
+    test('the summary carries regeneration apart from unattributed', () => {
+        const state = newSupportState();
+        state.regenHealing = 150;
+        state.unattributedHealing = 40;
+        state.regenFraction = 0.03;
+
+        const summary = summariseSupport(state);
+        expect(summary.regenHealing).toBe(150);
+        expect(summary.unattributedHealing).toBe(40);
+        expect(summary.regenFraction).toBeCloseTo(0.03, 9);
     });
 });
 

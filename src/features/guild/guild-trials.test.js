@@ -2351,6 +2351,33 @@ describe('the two trial tabs, as the game draws them', () => {
         expect(document.body.textContent).toContain('6 tiers');
     });
 
+    test('a seeded base serves a completely cold store — the second character’s first look', async () => {
+        // A second account in a second browser profile shares no IndexedDB
+        // with the first, so nothing learned ever reaches it. The seeded
+        // crafting base plus the joint (tier, participants) solve make the In
+        // Progress tab knowable with an empty store, no sign-up sheet and no
+        // Trials-tab visit — the exact live state that read "tier not known
+        // yet" over a bar only T3-with-7 produces.
+        trialsFeature.cleanup();
+        game.store = {};
+        game.members = [];
+        await trialsFeature.initialize();
+
+        document.body.innerHTML = '';
+        const panel = document.createElement('div');
+        panel.className = 'GuildPanel_guildPanel__root';
+        panel.innerHTML =
+            '<div class="GuildPanel_card__a"><div class="GuildPanel_cardName__n">Crafting</div>' +
+            '<div class="ProgressBar_text__t">8,276 / 51,360</div></div>' +
+            '<div class="GuildPanel_footer__f"><div>Time: 20m 37s</div></div>';
+        document.body.appendChild(panel);
+        fire();
+
+        expect(guildTrials.record.tiles['skilling::crafting'].tiers).toContainEqual({ tier: 3, total: 51_360 });
+        expect(document.body.textContent).not.toContain('tier not seen yet');
+        expect(document.body.textContent).toContain('2 tiers');
+    });
+
     test('the In Progress tab stays correct on its own as tiers clear under it', async () => {
         // The user's requirement, verbatim: correct continuously, with no
         // Trials-tab visit — including after a tier clears while the tab sits
@@ -2627,6 +2654,33 @@ describe('the tier from the bar alone', () => {
 
         expect(analysis.tier).toBe(1);
         expect(analysis.tierSource).toBe('first-tier-rule');
+    });
+
+    test('an unknown party size is solved jointly — the second character’s mid-join', () => {
+        // MillenniumTestIC, a different guild, In Progress only: the tab
+        // states no sign-up count, and the bar read 8,276/51,360 — which is
+        // 40,000 × 1.2 × 1.07, tier 3 with 7 signed up, and no other (t, p)
+        // produces it. "tier not known yet" was the panel's answer.
+        const analysis = analyseTrial(
+            midJoin(51_360, [
+                { t: now, readings: [{ current: 4_066, max: 51_360 }] },
+                { t: now + 10_000, readings: [{ current: 8_276, max: 51_360 }] },
+            ]),
+            { participants: 0, phase: 'live', workBase: 40_000 }
+        );
+
+        expect(analysis.tier).toBe(3);
+        expect(analysis.tierSource).toBe('work-ladder');
+        expect(analysis.tiersClearedSoFar).toBe(2);
+    });
+
+    test('a target that factors two ways stays unknown even with the base in hand', () => {
+        // 65,280 with no count is T7 with 2 signed *and* T3 with 36 — the
+        // joint search refuses to pick, and the panel stays honest
+        const analysis = analyseTrial(midJoin(65_280), { participants: 0, phase: 'live', workBase: 40_000 });
+
+        expect(analysis.tier).toBeNull();
+        expect(analysis.tierKnown).toBe(false);
     });
 
     test('a socket-stated tier reaches the analysis, and outranks the derived rung', () => {

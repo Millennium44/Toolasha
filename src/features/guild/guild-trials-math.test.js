@@ -33,6 +33,7 @@ import {
     projectPace,
     projectTierTotal,
     ratePerMs,
+    solveWorkLadder,
     rescaleForParticipants,
     inferBuildersHallBonus,
     baseWorkFromObservations,
@@ -415,9 +416,26 @@ describe('the tier a work target identifies', () => {
 
     test('a target that fits no whole tier is null, never the nearest guess', () => {
         expect(tierFromWorkTarget({ target: 51_000, baseWork: 40_000, participants: 4 })).toBeNull();
-        // A missing participant count moves the arithmetic well off a whole
-        // tier, which is the rejection doing its job
-        expect(tierFromWorkTarget({ target: 49_920, baseWork: 40_000, participants: 0 })).toBeNull();
+        expect(tierFromWorkTarget({ target: 51_000, baseWork: 40_000, participants: 0 })).toBeNull();
+    });
+
+    test('an unknown party size is solved jointly when the target factors uniquely', () => {
+        // The live case: the In Progress tab states no sign-up count, and the
+        // second character's bar read 8,276/51,360 — 40,000 × 1.2 × 1.07, tier
+        // 3 with 7 signed up, and no other (t, p) on the ladder produces it
+        expect(solveWorkLadder({ target: 51_360, baseWork: 40_000 })).toEqual({ tier: 3, participants: 7 });
+        expect(tierFromWorkTarget({ target: 51_360, baseWork: 40_000, participants: 0 })).toBe(3);
+        // A *stale* stated count self-heals through the same search
+        expect(tierFromWorkTarget({ target: 51_360, baseWork: 40_000, participants: 4 })).toBe(3);
+        // And the first guild's own target solves with its count missing too
+        expect(tierFromWorkTarget({ target: 49_920, baseWork: 40_000, participants: 0 })).toBe(3);
+    });
+
+    test('a target that factors more than one way stays honestly unknown', () => {
+        // 52,800 is 40,000 × 1.32: T1 with 32 signed, T2 with 20, and T3 with
+        // 10 all produce it exactly, and nothing may pick between them
+        expect(solveWorkLadder({ target: 52_800, baseWork: 40_000 })).toBeNull();
+        expect(tierFromWorkTarget({ target: 52_800, baseWork: 40_000, participants: 0 })).toBeNull();
     });
 
     test('the combat ladder identifies the tier from the boss health maximum', () => {
@@ -449,8 +467,16 @@ describe('the tier a work target identifies', () => {
     });
 
     test('a tier off the ladder is refused even when the arithmetic is whole', () => {
-        // base × (1 + 0.1 × 21) is "tier 22", which does not exist
-        expect(tierFromWorkTarget({ target: 40_000 * 3.1, baseWork: 40_000, participants: 0 })).toBeNull();
+        // base × (1 + 0.1 × 21) is "tier 22", which does not exist. The joint
+        // search may still find a legitimate in-ladder reading of the same
+        // figure — 40,000 × 3.1 is also 40,000 × 2.5 × 1.24, T16 with 24
+        // signed — but nothing ever answers past the ladder's top.
+        const solved = solveWorkLadder({ target: 40_000 * 3.1, baseWork: 40_000 });
+        expect(solved === null || solved.tier <= TRIAL_MAX_TIER).toBe(true);
+        // The combat ladder has no joint fallback, so the refusal is plain there
+        expect(
+            tierFromWorkTarget({ target: 550_000 * ((100 + 10 * 22) / 110), baseWork: 550_000, kind: 'combat' })
+        ).toBeNull();
     });
 });
 
