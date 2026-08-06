@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The panels compare, lint, and remember
+
+- **The profit panel quotes the sim on the zone you're in**: "sim said here — 24.0M/day · simulated Aug 5" beside the measured figure, only when the last all-zones run holds this zone at this tier, tooltip carrying the snapshot's age and that the sim knows nothing about this run.
+- **Party lint went live**: the duplicate-aura warning now fires on the party you're actually fighting in (every player's equipped abilities arrive on `new_battle`), rendered amber at the top of the DPS panel. The gear check covers only your own character — the wire carries nobody else's wearables, and the block says so instead of linting stale profile snapshots. Default-on setting.
+- **The Combat Statistics popup opens archived sessions**: a picker ("Aug 5 · 6h 12m · Chimerical Den · party of 5") renders any archived run through the same arithmetic as the live view, clearly bannered as an archived session at today's prices, with Live one click away.
+
 ### A ledger for flips, luck for foragers, and spreadsheets for everyone
 
 - **A trading ledger measures what flipping actually earns**: every fill on your own listings is recorded (detected as filled-quantity deltas against observed baselines — a first sighting never invents a fill, a cancel after a partial fill still counts, offline fills surface on login), sell proceeds net of the 2% tax, and a "Ledger" tab beside Market History shows realized profit per item and per week on an average-cost basis — a sale with no recorded purchase shows revenue with cost "—", never a fake 100% margin. CSV export included; recording is a default-on setting.

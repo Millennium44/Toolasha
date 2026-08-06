@@ -277,7 +277,23 @@ class CombatStatsUI {
     }
 
     /**
+     * One archived run's picker line, with the zone named from game data.
+     * @param {Object} session - A snapshot from the archive
+     * @returns {string}
+     */
+    describeArchivedSession(session) {
+        return archivedSessionLabel(session, {
+            zoneNameOf: (actionHrid) => (actionHrid ? dataManager.getActionDetails?.(actionHrid)?.name || null : null),
+        });
+    }
+
+    /**
      * Show statistics popup
+     *
+     * Live by default; an archived session when one is picked. The archive is
+     * read-only here — choosing a run renders its final snapshot through the
+     * same calculator the live view uses, with the archived duration, and
+     * switching back to Live restores the run in progress.
      */
     async showPopup() {
         // Ensure market data is loaded
@@ -290,45 +306,77 @@ class CombatStatsUI {
             }
         }
 
-        // Get latest combat data (live = from a new_battle WS message this page session)
-        let combatData = combatStatsDataCollector.getLatestData();
-        const isLive = !!combatData;
-
-        if (!combatData) {
-            // Try to load from storage (may be from a previous combat session)
-            combatData = await combatStatsDataCollector.loadLatestData();
+        // The archive, for the picker. Fresh on every open — a run archives
+        // itself the moment the next one starts, and a stale list would hide it.
+        try {
+            this.sessions = await loadSessions();
+        } catch (error) {
+            console.error('[Combat Stats] Reading the session archive failed:', error);
+            this.sessions = [];
         }
 
-        if (!combatData || !combatData.players || combatData.players.length === 0) {
-            alert('No combat data available. Start a combat run first.');
-            return;
+        // A remembered session that has since fallen off the end of the list
+        // must not leave the popup claiming to show it
+        if (this.viewing !== 'live' && !this.sessions.some((session) => session.key === this.viewing)) {
+            this.viewing = 'live';
         }
 
-        // Calculate duration:
-        // - Live data: recalculate from combatStartTime (real-time, always correct)
-        // - Stored fallback: use snapshot durationSeconds (avoids inflated duration when
-        //   stored combatStartTime is from a previous combat session)
+        const archived = this.viewing !== 'live' ? this.sessions.find((session) => session.key === this.viewing) : null;
+
+        let combatData;
         let durationSeconds = null;
-        if (isLive && combatData.combatStartTime) {
-            const combatStartTime = new Date(combatData.combatStartTime).getTime() / 1000;
-            const currentTime = Date.now() / 1000;
-            durationSeconds = currentTime - combatStartTime;
-        } else if (combatData.durationSeconds) {
-            durationSeconds = combatData.durationSeconds;
+
+        if (archived) {
+            // The stored snapshot is the session's final state, and its stored
+            // duration is the run's whole length — never recomputed from a
+            // start time that is no longer ticking
+            combatData = archived;
+            durationSeconds = archived.durationSeconds || null;
+        } else {
+            // Get latest combat data (live = from a new_battle WS message this page session)
+            combatData = combatStatsDataCollector.getLatestData();
+            const isLive = !!combatData;
+
+            if (!combatData) {
+                // Try to load from storage (may be from a previous combat session)
+                combatData = await combatStatsDataCollector.loadLatestData();
+            }
+
+            if (!combatData || !combatData.players || combatData.players.length === 0) {
+                // With archived runs on file there is still something to show
+                if (this.sessions.length === 0) {
+                    alert('No combat data available. Start a combat run first.');
+                    return;
+                }
+                combatData = null;
+            }
+
+            // Calculate duration:
+            // - Live data: recalculate from combatStartTime (real-time, always correct)
+            // - Stored fallback: use snapshot durationSeconds (avoids inflated duration when
+            //   stored combatStartTime is from a previous combat session)
+            if (isLive && combatData?.combatStartTime) {
+                const combatStartTime = new Date(combatData.combatStartTime).getTime() / 1000;
+                const currentTime = Date.now() / 1000;
+                durationSeconds = currentTime - combatStartTime;
+            } else if (combatData?.durationSeconds) {
+                durationSeconds = combatData.durationSeconds;
+            }
         }
 
-        // Calculate statistics
-        const playerStats = calculateAllPlayerStats(combatData, durationSeconds);
+        // Calculate statistics — archived runs go through the same pathway
+        const playerStats = combatData ? calculateAllPlayerStats(combatData, durationSeconds) : [];
 
         // Create and show popup
-        this.createPopup(playerStats);
+        this.createPopup(playerStats, { archived });
     }
 
     /**
      * Create and display the statistics popup
      * @param {Array} playerStats - Array of player statistics
+     * @param {Object} [context] - `{archived}`: the archived session on show, or null for Live
      */
-    createPopup(playerStats) {
+    createPopup(playerStats, { archived = null } = {}) {
         // Remove existing popup if any
         if (this.popup) {
             this.closePopup();
@@ -379,7 +427,7 @@ class CombatStatsUI {
         `;
 
         const title = document.createElement('h2');
-        title.textContent = 'Combat Statistics';
+        title.textContent = archived ? 'Combat Statistics — Archived Session' : 'Combat Statistics';
         title.style.cssText = `
             margin: 0;
             color: ${textColor};
@@ -393,6 +441,39 @@ class CombatStatsUI {
             align-items: center;
             gap: 15px;
         `;
+
+        // Which run: Live, or one from the archive. Only offered when there is
+        // an archive to pick from — a picker with one option is furniture.
+        if (this.sessions.length > 0) {
+            const picker = document.createElement('select');
+            picker.className = 'toolasha-combat-stats-session-picker';
+            picker.style.cssText = `
+                background: #2a2a2a;
+                color: ${textColor};
+                border: 1px solid #4a4a4a;
+                border-radius: 4px;
+                padding: 5px 8px;
+                font-size: 12px;
+                max-width: 260px;
+            `;
+
+            const option = (value, label) => {
+                const element = document.createElement('option');
+                element.value = value;
+                element.textContent = label;
+                element.selected = this.viewing === value;
+                picker.appendChild(element);
+            };
+
+            option('live', 'Live session');
+            for (const session of this.sessions) option(session.key, this.describeArchivedSession(session));
+
+            picker.onchange = async () => {
+                this.viewing = picker.value;
+                await this.showPopup();
+            };
+            buttonContainer.appendChild(picker);
+        }
 
         const resetButton = document.createElement('button');
         resetButton.textContent = 'Reset Consumable Tracking';
@@ -451,7 +532,9 @@ class CombatStatsUI {
         `;
         closeButton.onclick = () => this.closePopup();
 
-        buttonContainer.appendChild(resetButton);
+        // Consumable tracking is a live measurement; resetting it from a view
+        // of last night's run would read as editing the archive
+        if (!archived) buttonContainer.appendChild(resetButton);
         buttonContainer.appendChild(closeButton);
 
         header.appendChild(title);
@@ -472,8 +555,34 @@ class CombatStatsUI {
             cardsContainer.appendChild(card);
         }
 
+        if (playerStats.length === 0) {
+            const empty = document.createElement('div');
+            empty.textContent = 'No live run measured yet — pick an archived session above.';
+            empty.style.cssText = 'color: #888; padding: 20px; text-align: center;';
+            cardsContainer.appendChild(empty);
+        }
+
         // Assemble popup
         popup.appendChild(header);
+        if (archived) {
+            // Headed as what it is, so an old run's figures are never mistaken
+            // for the one in progress
+            const banner = document.createElement('div');
+            banner.className = 'toolasha-combat-stats-archived-banner';
+            banner.textContent =
+                `Archived session — ${this.describeArchivedSession(archived)}. ` +
+                'Figures are this run’s final state, at today’s prices. Pick "Live session" to return.';
+            banner.style.cssText = `
+                margin-bottom: 15px;
+                padding: 8px 12px;
+                border: 1px solid #6b5a1f;
+                border-radius: 4px;
+                background: rgba(255, 200, 60, 0.08);
+                color: #e8c66c;
+                font-size: 13px;
+            `;
+            popup.appendChild(banner);
+        }
         popup.appendChild(cardsContainer);
         overlay.appendChild(popup);
 

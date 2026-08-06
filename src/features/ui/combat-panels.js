@@ -283,7 +283,9 @@ function drawSimHere(card_) {
             `The last all-zones sim's figure for ${row.zoneName}` +
                 (row.difficultyTier ? ` at tier ${row.difficultyTier}` : '') +
                 (dated ? `, from a run saved ${dated}` : ', from an undated run') +
-                (ageDays !== null ? ` — ${ageDays === 0 ? 'today' : `${ageDays} day${ageDays === 1 ? '' : 's'} ago`}` : '') +
+                (ageDays !== null
+                    ? ` — ${ageDays === 0 ? 'today' : `${ageDays} day${ageDays === 1 ? '' : 's'} ago`}`
+                    : '') +
                 '. A simulated figure beside a measured one: the sim knows nothing about this run, its party or ' +
                 'its luck, and a snapshot from older gear or prices does not describe today.'
         )
