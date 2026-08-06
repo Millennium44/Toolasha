@@ -18,7 +18,7 @@
  * - buy versus craft — `crafting-plan-calculator.js`
  * - an enhancement run — `tooltip-enhancement.js`'s path optimiser, over the
  *   Markov chain in `utils/enhancement-calculator.js`
- * - house upgrades — `features/house/house-cost-calculator.js`
+ * - house upgrades — `utils/house-cost-calculator.js`
  *
  * A planner that re-derived any of them would be a second opinion, and two
  * numbers for the same question is worse than one. The only arithmetic written
@@ -53,7 +53,7 @@ import {
 } from '../enhancement/tooltip-enhancement.js';
 import { calculateSuccessXP, calculateFailureXP } from '../enhancement/enhancement-xp.js';
 import { getTooltipEnhancementParams, describeEnhancementSource } from '../enhancement/enhancement-params-source.js';
-import houseCostCalculator from '../house/house-cost-calculator.js';
+import * as houseCostCalculator from '../../utils/house-cost-calculator.js';
 import { calculateEnhancement } from '../../utils/enhancement-calculator.js';
 import { calculateExpPerHour } from '../../utils/experience-calculator.js';
 import { GATHERING_TYPES, PRODUCTION_TYPES } from '../../utils/profit-constants.js';

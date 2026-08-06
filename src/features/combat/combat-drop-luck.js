@@ -56,6 +56,7 @@ import {
 } from '../../utils/dungeon-chest-luck.js';
 import { newKeyLedger, noteItems, sample, keyFlow, entryKeyFor } from '../../utils/key-ledger.js';
 import { partyLevelGaps, isLevelGapped } from '../../utils/dungeon-level-gap.js';
+import { partyLuckPanel } from '../../utils/bundle-bridge.js';
 
 const DISPLAY_ID = 'mwi-drop-luck';
 const EXP_SECTION_SELECTOR = '[class*="BattlePanel_gainedExp"]';
@@ -836,7 +837,7 @@ registerRow({
     defaultSize: { width: 240, height: 40 },
     // Luck behind the tile that carries its headline: a percentile cannot say
     // which drop is the reason, and that is the question a long run raises
-    onOpen: () => window.Toolasha?.Combat?.partyLuckPanel?.toggle(),
+    onOpen: () => partyLuckPanel()?.toggle(),
     render: (container) => {
         // Either tile's options narrow the merged one, so somebody who set them
         // on the Expected half keeps what they set rather than silently losing it

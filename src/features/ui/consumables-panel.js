@@ -59,6 +59,7 @@ import { estimateFillSeconds } from '../../utils/order-book.js';
 import { openShoppingList } from './consumables-shopping-list.js';
 import combatStatsDataCollector from '../combat-stats/combat-stats-data-collector.js';
 import { calculatePlayerStats } from '../combat-stats/combat-stats-calculator.js';
+import { queueLengthEstimator } from '../../utils/bundle-bridge.js';
 
 const PANEL_ID = 'toolasha-consumables-panel';
 const GEOMETRY_KEY = 'consumablesPanel';
@@ -250,7 +251,7 @@ class ConsumablesPanel {
      */
     _fillSeconds(itemHrid, count) {
         try {
-            const cached = window.Toolasha?.Market?.queueLengthEstimator?.orderBooksCache?.[itemHrid];
+            const cached = queueLengthEstimator()?.orderBooksCache?.[itemHrid];
             // A buy order joins the bid side, so that is the queue it waits in
             const bids = (cached?.data || cached)?.orderBooks?.[0]?.bids;
             return estimateFillSeconds(bids, count);

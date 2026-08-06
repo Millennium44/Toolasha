@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The silent failure modes get their alarms, and two calculators become one
+
+- **The bundle-sharing rule is now executable**: the production build walks the real import graph and fails loudly on any shared util silently duplicated across bundles — the works-in-dev, broken-in-production bug class, made a build error. Its first run found 30 violations, among them live bugs: consent and character caches existing once per bundle in six bundles, duplicated savings state, and a performance monitor whose cross-bundle calls had been landing on undefined in production builds. All fixed or allowlisted with written justification; bundles came out smaller.
+- **One house-cost calculator instead of two disagreeing ones**: the survivors' pricing chain (override/ask → bid → vendor floor) settles both disputes — a live bid beats the vendor floor, and a material with no book counts at the vendor floor instead of being dropped. Net worth, score, affordability, the Houses panel, and the goal planner now quote the same number for the same room; figures can shift slightly where materials had no listings, which is the point.
+- **Every cross-bundle reach-through now goes through one bridge**: ~36 `window.Toolasha` sites collected behind 32 named, null-safe, documented accessors — greppable, testable (a dynamic test proves every accessor survives the namespace being absent), and enumerable instead of scattered.
+
 ### Thin markets stop lying in the rankings
 
 - **The liquidity cap the goal planner already obeyed now governs every profit surface**: alchemy rankings, the action-bar and pinned-page profit lines, and the combat sim's all-zones table (its Score and best-profit badge included) all cap a method's gold rate by what the market has actually absorbed — marked "limited by market volume (~1/week)" with the limiting item named, never silently. Unknown history stays unbounded (a dead price server must not zero everything); measured-zero bounds to zero. Underlying calculators, the planner, net worth, EV, and the calibration loop keep raw figures — the cap is a truth about display and ranking, switchable off with one setting.

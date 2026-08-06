@@ -4,9 +4,9 @@
  */
 
 import domObserver from '../../core/dom-observer.js';
-import houseCostCalculator from './house-cost-calculator.js';
-import houseCostDisplay from './house-cost-display.js';
 import dataManager from '../../core/data-manager.js';
+import houseCostDisplay from './house-cost-display.js';
+import * as houseCostCalculator from '../../utils/house-cost-calculator.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { createCleanupRegistry } from '../../utils/cleanup-registry.js';
 

@@ -21,6 +21,8 @@
  * where every arrangement works.
  */
 
+import { overlayPanel } from './bundle-bridge.js';
+
 /**
  * Rows, in registration order.
  *
@@ -415,6 +417,5 @@ export function moveRow(order, key, delta) {
  * @returns {boolean} False when the panel is not up, which is the quiet default
  */
 export function rowOption(key) {
-    if (typeof window === 'undefined') return false;
-    return Boolean(window.Toolasha?.UI?.overlayPanel?.settings?.[key]);
+    return Boolean(overlayPanel()?.settings?.[key]);
 }

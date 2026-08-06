@@ -41,14 +41,14 @@
 
 import combatRecorder from './combat-recorder.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
+import { combatRecorder as sharedCombatRecorder } from '../../utils/bundle-bridge.js';
 
 /**
  * The recorder everything else is using.
  * @returns {Object|null} The shared recorder, or null when there is none
  */
 export function recorder() {
-    const shared = typeof window !== 'undefined' ? window.Toolasha?.Combat?.combatRecorder : null;
-    return shared || combatRecorder || null;
+    return sharedCombatRecorder() || combatRecorder || null;
 }
 
 /**

@@ -36,6 +36,14 @@ import { forecastAll, costPerDaySides, partyOutlook, drinkRatePerDay } from '../
 import { currentTarget, loadTarget } from '../../utils/consumable-target.js';
 import combatStatsDataCollector from './combat-stats-data-collector.js';
 import { calculatePlayerStats, describeLuckAdjustment } from './combat-stats-calculator.js';
+import {
+    combatProfitView,
+    profitPanel,
+    combatLevelPanel,
+    deathsPanel,
+    partyLootPanel,
+    consumablesPanel,
+} from '../../utils/bundle-bridge.js';
 
 /** Long enough that a busy loot map is not repriced every tick */
 const CACHE_MS = 4000;
@@ -123,7 +131,7 @@ registerRow({
         // somebody reading Patient there is not thinking in bid revenue, and a
         // tile that disagrees with the panel behind it is a tile nobody trusts.
         // The panel lives in the UI bundle, so it is reached through the global.
-        const view = window.Toolasha?.UI?.combatProfitView?.(stats) || {
+        const view = combatProfitView()?.(stats) || {
             revenue: stats.dailyIncome.bid,
             cost: stats.dailyConsumableCosts + stats.dailyKeyCosts,
             tax: 0,
@@ -176,7 +184,7 @@ registerRow({
             (view.tax ? '\nThe middle figure is the weekly MooPass, per day.' : '') +
             (luckNotes.length ? `\n${luckNotes.join('\n')}` : '');
     },
-    onOpen: () => window.Toolasha?.UI?.profitPanel?.toggle(),
+    onOpen: () => profitPanel()?.toggle(),
 });
 
 registerRow({
@@ -198,7 +206,7 @@ registerRow({
     // The panel lives in the UI bundle, so it is reached through the global
     // rather than imported — a direct import here would put a second copy of it
     // in this bundle, with its own session clock
-    onOpen: () => window.Toolasha?.UI?.combatLevelPanel?.toggle(),
+    onOpen: () => combatLevelPanel()?.toggle(),
 });
 
 registerRow({
@@ -219,7 +227,7 @@ registerRow({
             },
         ]);
     },
-    onOpen: () => window.Toolasha?.UI?.deathsPanel?.toggle(),
+    onOpen: () => deathsPanel()?.toggle(),
 });
 
 /**
@@ -255,7 +263,7 @@ registerRow({
     },
     // The session's own loot list, and the picker for earlier sessions — the
     // question a session timer raises is what the session produced
-    onOpen: () => window.Toolasha?.UI?.partyLootPanel?.toggle(),
+    onOpen: () => partyLootPanel()?.toggle(),
 });
 
 /**
@@ -318,7 +326,7 @@ registerRow({
     // character, and the question it raises is *what* each of them picked up.
     // The Profit panel answers a different one — which pricing, and what the
     // costs were — and is still behind Combat Revenue.
-    onOpen: () => window.Toolasha?.UI?.partyLootPanel?.toggle(),
+    onOpen: () => partyLootPanel()?.toggle(),
 });
 
 /**
@@ -426,7 +434,7 @@ registerRow({
     },
     // Looked up at click time, not imported: the panel lives in the UI bundle,
     // which loads after this one
-    onOpen: () => window.Toolasha?.UI?.consumablesPanel?.toggle(),
+    onOpen: () => consumablesPanel()?.toggle(),
 });
 
 /**
