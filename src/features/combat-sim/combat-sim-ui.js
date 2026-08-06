@@ -15,7 +15,13 @@ import { createAutofillManager } from '../../utils/marketplace-autofill.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable } from '../../utils/floating-panel.js';
 import { restoreGeometry, saveGeometry, saveOpenState, reopenIfLeftOpen } from '../../utils/panel-geometry.js';
-import { characterKey, readScoped, writeScoped } from '../../utils/character-key.js';
+import { readScoped, writeScoped } from '../../utils/character-key.js';
+import {
+    ALL_ZONES_SNAPSHOT_KEY,
+    ALL_ZONES_SNAPSHOT_STORE,
+    saveAllZonesSnapshot,
+    loadAllZonesSnapshot,
+} from '../../utils/all-zones-snapshot.js';
 import { formatWithSeparator, formatKMB, parseKMB, timeReadable } from '../../utils/formatters.js';
 import { createEtaTracker } from '../../utils/progress-eta.js';
 import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
@@ -566,17 +572,10 @@ export function upgradeRowNotesHtml(result) {
     return notes.join('');
 }
 
-/** Where a finished all-zones run is kept, for anything that ranks zones later */
-export const ALL_ZONES_SNAPSHOT_KEY = 'allZonesSnapshot';
-
-/**
- * The store it goes in.
- *
- * `combatExport` rather than a new store: it already holds what the combat sim
- * produces for other features to read, and adding an object store means a
- * database version bump every consumer pays for.
- */
-export const ALL_ZONES_SNAPSHOT_STORE = 'combatExport';
+// The snapshot's home moved to `utils/all-zones-snapshot.js` so read-only
+// consumers need not import this whole module; re-exported here because this
+// is where every existing consumer looks for it
+export { ALL_ZONES_SNAPSHOT_KEY, ALL_ZONES_SNAPSHOT_STORE };
 
 /** Candidate types paid for in ability books rather than at the equipment market */
 const ABILITY_CANDIDATE_TYPES = new Set(['ability_level', 'ability_swap']);
@@ -810,39 +809,7 @@ export function bestAllZoneRows(rows) {
     return { xp: bestBy('totalXP'), profit: bestBy('profitDay') };
 }
 
-/**
- * Write a snapshot out, immediately.
- *
- * Immediate rather than debounced: a run people wait ten minutes for is exactly
- * the thing a reload three seconds later must not lose.
- *
- * @param {Object} snapshot - From `buildAllZonesSnapshot`
- * @returns {Promise<boolean>} Whether it was stored
- */
-export async function saveAllZonesSnapshot(snapshot) {
-    try {
-        return await storage.setJSON(characterKey(ALL_ZONES_SNAPSHOT_KEY), snapshot, ALL_ZONES_SNAPSHOT_STORE, true);
-    } catch (error) {
-        console.error('[CombatSimUI] Saving the all-zones snapshot failed:', error);
-        return false;
-    }
-}
-
-/**
- * The last all-zones run, if there is one.
- * @returns {Promise<Object|null>} Snapshot, or null when nothing usable is stored
- */
-export async function loadAllZonesSnapshot() {
-    try {
-        // Discard any legacy global snapshot: a sim run against another
-        // character's gear is actively misleading, so no adoption.
-        const saved = await readScoped(ALL_ZONES_SNAPSHOT_KEY, ALL_ZONES_SNAPSHOT_STORE, null, { migrate: 'discard' });
-        return saved && Array.isArray(saved.zones) ? saved : null;
-    } catch (error) {
-        console.error('[CombatSimUI] Reading the all-zones snapshot failed:', error);
-        return null;
-    }
-}
+export { saveAllZonesSnapshot, loadAllZonesSnapshot };
 
 /**
  * What an upgrade row would have you buy, if anything.

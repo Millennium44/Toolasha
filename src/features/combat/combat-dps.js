@@ -33,6 +33,7 @@ import { damageBreakdown } from './damage-tracker.js';
 import { registerRow } from '../../utils/overlay-rows.js';
 import { formatLargeNumber } from '../../utils/formatters.js';
 import { rows, blank, ROW_COLORS } from '../../utils/overlay-format.js';
+import { fillProfileCommand, VALID_PLAYER_NAME_RE } from '../../utils/profile-command.js';
 
 /** Accuracy in its own colour, so it does not read as part of the damage figure */
 const ACCURACY_COLOR = '#ff9800';
@@ -189,11 +190,13 @@ function dpsFigure(value) {
 
 function drawPerPlayer(container, breakdown) {
     const lines = [];
+    const names = [];
     let total = 0;
 
     for (const player of breakdown.players) {
         if (player.dps === null) continue;
         total += player.dps;
+        names.push(player.name);
 
         lines.push([
             { text: player.name, color: ROW_COLORS.gold, ellipsis: true },
@@ -215,6 +218,32 @@ function drawPerPlayer(container, breakdown) {
     // total sitting a few pixels off the figure above it makes a reader check
     // whether it is even the same kind of number
     rows(container, lines, { align: true });
+
+    // The name cell opens the player's profile: a click fills "/profile <name>"
+    // into chat, ready to send. Indexed into the grid the aligned rows just
+    // drew — three cells per line, players first, the total last — with the
+    // cell's text double-checked so a layout change can never wire a click to
+    // the wrong player. Layout untouched: only cursor, underline and a handler.
+    names.forEach((name, index) => {
+        const nameCell = container.children[index * 3];
+        if (!nameCell || nameCell.textContent !== name) return;
+        if (!VALID_PLAYER_NAME_RE.test(name)) return;
+
+        Object.assign(nameCell.style, {
+            cursor: 'pointer',
+            textDecoration: 'underline dotted',
+            textUnderlineOffset: '2px',
+        });
+        nameCell.title = `Fill "/profile ${name}" into chat`;
+        nameCell.addEventListener('click', (event) => {
+            event.stopPropagation();
+            fillProfileCommand(name);
+        });
+        // Stopped too, or two quick clicks on a name would also toggle the
+        // panel the tile opens on double-click
+        nameCell.addEventListener('dblclick', (event) => event.stopPropagation());
+    });
+
     container.title =
         'Damage per second and hit rate, per player, from attributed hits.\n' +
         'The caster is whoever’s mana fell on the tick, since the game attributes nothing.\n' +

@@ -46,6 +46,7 @@ import { restoreGeometry, saveGeometry, saveOpenState, reopenIfLeftOpen } from '
 import { ROW_COLORS } from '../../utils/overlay-format.js';
 import { getItemPrices } from '../../utils/market-data.js';
 import { expectedKills, killComparison } from '../../utils/expected-kills.js';
+import { loadAllZonesSnapshot, bestSoloZone } from '../../utils/all-zones-snapshot.js';
 
 const REFRESH_MS = 2000;
 
@@ -179,6 +180,66 @@ function drawPartyProfit(body, mode, tax) {
                 : 'Loot is rolled per character against their own drop gear, so a party does not split a zone evenly.'
         )
     );
+
+    if (dungeon) drawSoloComparison(card_, party, mode, tax);
+}
+
+/**
+ * The last all-zones sim, cached for the panel's synchronous redraws.
+ *
+ * `undefined` means never asked, `null` means asked and nothing stored. The
+ * load is kicked off on first draw and the line appears on the next refresh —
+ * the panel redraws every couple of seconds, so nobody waits on it.
+ */
+let soloSnapshot;
+
+/**
+ * What the same hours would earn solo, next to what the dungeon is measuring.
+ *
+ * The opportunity-cost line: your best solo zone's simulated profit against
+ * your own measured share of the dungeon. Simulated against measured is an
+ * honest comparison only when it says so, so the line names the zone, marks
+ * the figure as simulated, and dates the run it came from — a snapshot from
+ * last week's gear is context, not a verdict.
+ *
+ * @param {HTMLElement} card_ - The per-player card, appended to
+ * @param {Array<Object>} party - From `partyStats`
+ * @param {string} mode - The profit scenario key in force
+ * @param {number} tax - The MooPass share subtracted from each profit figure
+ */
+function drawSoloComparison(card_, party, mode, tax) {
+    if (soloSnapshot === undefined) {
+        soloSnapshot = null;
+        loadAllZonesSnapshot()
+            .then((snapshot) => {
+                soloSnapshot = snapshot;
+            })
+            .catch(() => {});
+    }
+
+    const isDungeonZone = (zoneHrid) => dataManager.getActionDetails?.(zoneHrid)?.combatZoneInfo?.isDungeon === true;
+    const best = bestSoloZone(soloSnapshot, { isDungeonZone });
+    if (!best) return;
+
+    const you = party.find((player) => player.isCurrentPlayer);
+    if (!you) return;
+    const cases = profitCases(you);
+    const scenario = cases.find((entry) => entry.key === mode) || cases[1];
+    const yours = scenario.revenue - (profitView.costsOn ? scenario.cost : 0) - tax;
+
+    const soloPerDay = best.profitPerHour * 24;
+    const ahead = yours >= soloPerDay;
+    const aged = best.savedAt ? ` on ${new Date(best.savedAt).toLocaleDateString()}` : '';
+
+    const line_ = line(
+        'vs best solo (sim)',
+        `${best.zoneName} · ${formatKMB(soloPerDay)}/day`,
+        ahead ? COLORS.textDim : ROW_COLORS.bad,
+        `Your best solo zone in the last all-zones sim, simulated${aged} — against your measured ` +
+            `${formatKMB(yours)}/day here. A simulated figure beside a measured one: the sim knows nothing ` +
+            'about this run, and a snapshot from older gear understates what solo would earn now.'
+    );
+    card_.appendChild(line_);
 }
 
 /**

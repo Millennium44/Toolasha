@@ -6,6 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Every player name opens a profile, and the dungeon knows its worth
+
+- **Player names are clickable wherever a dungeon shows them**: the key-counts chat line, the party system messages ("has joined", "has left", "is ready", "is not ready" — end-anchored, so the phrase mid-sentence never matches), the run history's team headers (a name click doesn't toggle the group), and the overlay DPS rows (double-click still opens the panel). One click fills `/profile <name>` in chat, ready to send — the same trick the guild cycler uses, now a shared util.
+- **Your measured chest luck can price your chests** (default off): with the new setting on, dungeon profit estimates adjust the regular chest's expected value by your own measured deviation — never silently (every adjusted figure carries a `*` and names the adjustment: "Chimerical Chest EV adjusted by your measured −7.4% (5,490 chests)"), never on thin evidence (under 300 chests the estimate stays unadjusted), and never beyond scope (refinement chests, net worth, and tooltips keep the table value).
+- **A dungeon run's first minutes stop screaming red**: until the first chest drops, the profit tile dims instead of alarming and says "no chest yet" — keys are charged when chests drop and revenue arrives the same way, so the early loss is consumable burn, not a verdict.
+- **The profit panel compares the dungeon to your best solo zone**: a "vs best solo (sim)" line under the per-player card, from the last all-zones sim run — named, dated, and marked simulated, so a measured number never stands beside an unmarked guess.
+
 ### A canceled battle start is not a run
 
 - **The dungeon tracker no longer records phantom runs from failed ready-checks.** The game posts "Key counts" and then "Battle ended" a second apart when a start is canceled; the tracker heard the first and not the second, so the canceled start stayed armed as a run's beginning and the next key count — minutes of party-forming later — read as its completion (one recorded "15:47 run" was two canceled starts with a member swap in between). A Battle-ended message now disarms any run with zero waves completed; fights with waves banked stay with the action feed, which already tells an early exit from a completion.

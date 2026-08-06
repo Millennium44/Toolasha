@@ -41,6 +41,18 @@ vi.mock('./dungeon-tracker.js', () => ({
     default: { getCurrentRun: () => game.currentRun },
 }));
 
+// The real markAsProfileLink lives in chat-profile-link.js with its own tests;
+// here a stand-in that decorates the way it does (class + data attribute) shows
+// the key-count names are run through it without dragging the chat feature in.
+const markAsProfileLinkMock = vi.hoisted(() =>
+    vi.fn((el, name) => {
+        el.classList.add('mwi-chat-profile-name');
+        el.dataset.mwiProfileName = name;
+        return true;
+    })
+);
+vi.mock('../chat/chat-profile-link.js', () => ({ markAsProfileLink: markAsProfileLinkMock }));
+
 vi.mock('./dungeon-tracker-storage.js', () => ({
     default: {
         scrubOutlierRuns: async () => 0,
@@ -119,6 +131,7 @@ beforeEach(() => {
     annotations.enabled = true;
     annotations.initComplete = true;
     annotations.timerRegistry.clearAll();
+    markAsProfileLinkMock.mockClear();
 });
 
 describe('reading a timestamp off a message', () => {
@@ -226,6 +239,65 @@ describe('sorting chat into events', () => {
     test('ordinary chatter is not an event', () => {
         message('[08/04 10:00:00 AM]', 'nice run everyone');
         expect(annotations.extractChatEvents()).toEqual([]);
+    });
+});
+
+describe('clickable names on a key counts line', () => {
+    test('each bracketed name becomes a profile link, and the text reads unchanged', () => {
+        const node = message('[08/04 10:00:00 AM]', 'Key counts: [Zoe - 3], [Alice - 12], [Bob - 1,234]');
+        const before = node.textContent;
+
+        annotations.extractChatEvents();
+
+        const links = [...node.querySelectorAll('a.mwi-chat-profile-name')];
+        expect(links.map((a) => a.textContent)).toEqual(['Zoe', 'Alice', 'Bob']);
+        expect(links.map((a) => a.dataset.mwiProfileName)).toEqual(['Zoe', 'Alice', 'Bob']);
+        expect(node.textContent).toBe(before);
+    });
+
+    test('the team reads the same before and after decoration', () => {
+        const node = message('[08/04 10:00:00 AM]', 'Key counts: [Zoe - 3], [Alice - 12]');
+        annotations.extractChatEvents();
+        expect(annotations.getTeamFromMessage(node)).toEqual(['Alice', 'Zoe']);
+    });
+
+    test('running the pass again does not wrap a name twice', () => {
+        const node = message('[08/04 10:00:00 AM]', 'Key counts: [Alice - 12]');
+
+        annotations.extractChatEvents();
+        annotations.extractChatEvents();
+
+        expect(node.querySelectorAll('a.mwi-chat-profile-name')).toHaveLength(1);
+    });
+
+    test('a name the decorator declines stays plain text', () => {
+        // What markAsProfileLink does with the setting off, or a bad name
+        markAsProfileLinkMock.mockReturnValue(false);
+        const node = message('[08/04 10:00:00 AM]', 'Key counts: [Alice - 12]');
+        const before = node.textContent;
+
+        annotations.extractChatEvents();
+
+        expect(node.querySelector('a')).toBeNull();
+        expect(node.textContent).toBe(before);
+        markAsProfileLinkMock.mockImplementation((el, name) => {
+            el.classList.add('mwi-chat-profile-name');
+            el.dataset.mwiProfileName = name;
+            return true;
+        });
+    });
+
+    test('the timer annotation still lands beside a decorated message', async () => {
+        // The names are wrapped in <a> elements, not spans, precisely so
+        // insertAnnotation's "second span is the body" addressing holds
+        message('[08/04 10:00:00 AM]', 'Battle started: Chimerical Den');
+        const first = message('[08/04 10:00:00 AM]', 'Key counts: [Alice - 12]');
+        message('[08/04 10:04:32 AM]', 'Key counts: [Alice - 11]');
+
+        await annotations.annotateAllMessages();
+
+        expect(labelOn(first)).toBe('[Run #1: 4m 32s]');
+        expect(first.querySelectorAll('a.mwi-chat-profile-name')).toHaveLength(1);
     });
 });
 

@@ -24,7 +24,13 @@ vi.mock('../../utils/timer-registry.js', () => ({
     createTimerRegistry: () => ({ registerTimeout: () => {}, clearAll: () => {} }),
 }));
 
-const { default: combatDropLuck, formatOrdinal, describeLuck } = await import('./combat-drop-luck.js');
+const {
+    default: combatDropLuck,
+    formatOrdinal,
+    describeLuck,
+    measuredChestLuck,
+    MIN_CHESTS_FOR_PROFIT_ADJUST,
+} = await import('./combat-drop-luck.js');
 
 describe('formatOrdinal', () => {
     test('gets the ordinary suffixes right', () => {
@@ -283,5 +289,68 @@ describe('watching a dungeon pay out', () => {
         const [mine] = combatDropLuck.dungeonChestLuck().players;
         expect(mine.chests).toBe(65);
         expect(mine.luck.completions).toBe(1);
+    });
+});
+
+describe('measuredChestLuck, the ratio a profit estimate may scale a chest by', () => {
+    const battle = (battleId, counts) => ({
+        battleId,
+        players: counts.map((count, index) => ({
+            character: { id: index === 0 ? 'me' : 'them', name: index === 0 ? 'Mine' : 'Theirs' },
+            combatDetails: { combatLevel: 100, combatStats: { combatDropQuantity: 0.5 } },
+            totalLootMap: { 1: { itemHrid: '/items/chimerical_chest', count } },
+        })),
+    });
+
+    /** Enough completions at four chests each to clear the sample floor */
+    const runEnoughCompletions = () => {
+        const completions = Math.ceil(MIN_CHESTS_FOR_PROFIT_ADJUST / 4);
+        combatDropLuck._rememberContext(battle(1, [0, 0]));
+        for (let i = 1; i <= completions; i++) combatDropLuck._rememberContext(battle(i + 1, [4 * i, 3 * i]));
+        return completions;
+    };
+
+    beforeEach(() => {
+        game.actions = [{ actionHrid: '/actions/combat/chimerical_den', difficultyTier: 0 }];
+        game.actionDetail = {
+            combatZoneInfo: {
+                isDungeon: true,
+                dungeonInfo: { rewardDropTable: [{ itemHrid: '/items/chimerical_chest', dropRate: 1 }] },
+            },
+        };
+        combatDropLuck.chests = null;
+        combatDropLuck.context = null;
+        combatDropLuck.keys = { counts: {}, spent: {}, gained: {}, samples: {} };
+        game.runs = [];
+        combatDropLuck.liveAt = Date.now();
+    });
+
+    test('an adequate sample yields the measured-over-expected ratio and its size', () => {
+        const completions = runEnoughCompletions();
+
+        // Four chests every completion against a modelled mean of 3.75:
+        // two players at +50% quantity splitting five is 3.75 each
+        const measured = measuredChestLuck('/items/chimerical_chest');
+        expect(measured.chests).toBe(4 * completions);
+        expect(measured.ratio).toBeCloseTo(4 / 3.75, 6);
+    });
+
+    test('a sample under the floor is withheld even though the luck display has it', () => {
+        combatDropLuck._rememberContext(battle(1, [0, 0]));
+        combatDropLuck._rememberContext(battle(2, [4, 3]));
+
+        // The overlay can show two completions; a profit multiplier cannot rest on them
+        expect(combatDropLuck.dungeonChestLuck().players[0].luck).not.toBeNull();
+        expect(measuredChestLuck('/items/chimerical_chest')).toBeNull();
+    });
+
+    test('only the chest kind the watched dungeon pays', () => {
+        runEnoughCompletions();
+
+        expect(measuredChestLuck('/items/pirate_chest')).toBeNull();
+    });
+
+    test('nothing watched means nothing to adjust with', () => {
+        expect(measuredChestLuck('/items/chimerical_chest')).toBeNull();
     });
 });

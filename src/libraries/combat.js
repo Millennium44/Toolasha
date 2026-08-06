@@ -17,7 +17,11 @@ import dungeonTrackerUI from '../features/combat/dungeon-tracker-ui.js';
 import dungeonTrackerChatAnnotations from '../features/combat/dungeon-tracker-chat-annotations.js';
 import combatSummary from '../features/combat/combat-summary.js';
 import combatBattleCounter from '../features/combat/combat-battle-counter.js';
-import combatDropLuck from '../features/combat/combat-drop-luck.js';
+// A namespace rather than the default export: the module is in rollup's
+// externals map, and `combat-stats-calculator.js` — which the UI bundle also
+// carries — imports `{ measuredChestLuck }` from it, which compiles to
+// `Toolasha.Combat.combatDropLuck.measuredChestLuck`
+import * as combatDropLuck from '../features/combat/combat-drop-luck.js';
 import { partyLuckPanel } from '../features/combat/party-luck-panel.js';
 import combatDPS from '../features/combat/combat-dps.js';
 import portraitDps from '../features/combat/portrait-dps.js';

@@ -1916,6 +1916,13 @@ export const settingsGroups = {
                 default: true,
                 help: "Puts the session's drop value in the distribution of everything those battles could have paid, as a percentile. Skips dungeons, which pay from a reward table rather than per monster",
             },
+            dropLuck_profitAdjust: {
+                id: 'dropLuck_profitAdjust',
+                label: 'Dungeon profit: adjust chest value by my measured luck',
+                type: 'checkbox',
+                default: false,
+                help: "Scales a dungeon chest's expected value in profit estimates by your measured chest yield against what the drop table owed — useful when a level gap keeps your yield persistently off expectation. Only applies once a few hundred chests back the measurement, and every adjusted figure is marked (*) with the measurement in its tooltip",
+            },
             combatDps: {
                 id: 'combatDps',
                 label: 'Combat DPS: Measure damage per second during a run',

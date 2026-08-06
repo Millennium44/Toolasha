@@ -756,7 +756,9 @@ function registerFeatures() {
             key: 'combatDropLuck',
             name: 'Combat Drop Luck',
             category: 'Combat',
-            module: Combat.combatDropLuck,
+            // `.default` because the global is the module namespace — see
+            // the note in libraries/combat.js
+            module: Combat.combatDropLuck.default,
             async: false,
         },
         {

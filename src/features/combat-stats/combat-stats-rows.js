@@ -35,7 +35,7 @@ import { getItemPrices } from '../../utils/market-data.js';
 import { forecastAll, costPerDaySides, partyOutlook, drinkRatePerDay } from '../../utils/consumable-forecast.js';
 import { currentTarget, loadTarget } from '../../utils/consumable-target.js';
 import combatStatsDataCollector from './combat-stats-data-collector.js';
-import { calculatePlayerStats } from './combat-stats-calculator.js';
+import { calculatePlayerStats, describeLuckAdjustment } from './combat-stats-calculator.js';
 
 /** Long enough that a busy loot map is not repriced every tick */
 const CACHE_MS = 4000;
@@ -90,6 +90,22 @@ function currentStats() {
     return partyStats().find((player) => player.isCurrentPlayer) || null;
 }
 
+/**
+ * Whether a dungeon run has yet to pay anything out.
+ *
+ * Keys are charged when a chest drops and the revenue arrives the same way, so
+ * until the first chest a dungeon is pure consumable burn — a real cost, but
+ * not a verdict, and painting it red for the first minutes of every run taught
+ * people to distrust the figure. `keyBreakdown` filling is the same signal the
+ * key costs bill by, so the two cannot disagree about what "no chest yet" means.
+ *
+ * @param {Object} stats - From `calculatePlayerStats`
+ * @returns {boolean}
+ */
+export function warmingUp(stats) {
+    return Boolean(stats?.isDungeonRun) && !(stats?.keyBreakdown || []).length;
+}
+
 registerRow({
     key: 'combatRevenue',
     empty: 'No loot tracked yet',
@@ -135,19 +151,30 @@ registerRow({
                 { text: formatLargeNumber(Math.round(view.cost), 1), color: ROW_COLORS.bad }
             );
         }
+        // A dungeon that has not paid out yet is dimmed rather than damned:
+        // the burn is real, the verdict is not in until a chest drops
+        const warming = warmingUp(stats);
         segments.push(
             { text: '=', color: ROW_COLORS.dim },
             {
                 text: `${formatLargeNumber(Math.round(view.profit), 1)}/day`,
-                color: view.profit >= 0 ? ROW_COLORS.gold : ROW_COLORS.bad,
+                color: view.profit >= 0 ? ROW_COLORS.gold : warming ? ROW_COLORS.dim : ROW_COLORS.bad,
                 bold: true,
             }
         );
+        if (warming) segments.push({ text: '· no chest yet', color: ROW_COLORS.dim });
 
         row(container, segments);
+        // An adjusted chest EV inside the revenue is marked, never silent
+        const luckNotes = (stats.chestLuckAdjustments || []).map(describeLuckAdjustment);
         container.title =
+            (warming
+                ? 'Warming up — no chest has dropped yet. Keys are charged when chests drop and the revenue ' +
+                  'arrives the same way, so a dungeon run reads as a loss until it pays out.\n'
+                : '') +
             `${view.title}.\nDouble-click for the other readings, costs and the MooPass tax.` +
-            (view.tax ? '\nThe middle figure is the weekly MooPass, per day.' : '');
+            (view.tax ? '\nThe middle figure is the weekly MooPass, per day.' : '') +
+            (luckNotes.length ? `\n${luckNotes.join('\n')}` : '');
     },
     onOpen: () => window.Toolasha?.UI?.profitPanel?.toggle(),
 });
@@ -279,6 +306,13 @@ registerRow({
                 ];
             })
         );
+
+        // The banked figures above price unopened chests at EV; when that EV is
+        // scaled by measured luck the tile says so rather than staying silent
+        const luckNotes = [
+            ...new Set(party.flatMap((stats) => (stats.chestLuckAdjustments || []).map(describeLuckAdjustment))),
+        ];
+        container.title = luckNotes.join('\n');
     },
     // Party Loot rather than the Profit panel: this tile is a coin figure per
     // character, and the question it raises is *what* each of them picked up.
