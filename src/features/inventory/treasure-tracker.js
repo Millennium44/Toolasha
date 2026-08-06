@@ -456,6 +456,33 @@ class TreasureTracker {
     }
 
     /**
+     * Your measured return on one chest kind, for the profit adjustment.
+     *
+     * Actual value out against the drop table's expectation, both priced at
+     * today's prices through the panel's own price source — so the ratio says
+     * "my openings run this far off the table", never "prices moved". This is
+     * the treasure rate the dungeon profit option applies.
+     *
+     * @param {string} chestHrid - The chest item
+     * @returns {{ratio: number, opened: number}|null} Null before anything has
+     *   been opened, without a drop table, or when nothing could be priced
+     */
+    measuredReturn(chestHrid) {
+        try {
+            const entry = this.tally?.[chestHrid];
+            const dropTable = dataManager.getInitClientData()?.openableLootDropMap?.[chestHrid];
+            if (!entry?.opened || !dropTable) return null;
+
+            const lifetime = chestPerformance(entry, dropTable, this._priceOf());
+            if (!(lifetime.expectedValue > 0) || !Number.isFinite(lifetime.ratio)) return null;
+            return { ratio: lifetime.ratio, opened: lifetime.opened };
+        } catch (error) {
+            console.error('[TreasureTracker] Measuring a chest return failed:', error);
+            return null;
+        }
+    }
+
+    /**
      * The rows to draw, and their totals.
      * @returns {{rows: Array<Object>, totals: Object}}
      */

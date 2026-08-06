@@ -52,9 +52,10 @@ vi.mock('../../core/config.js', () => ({
     default: { getSetting: (id) => (id === 'dropLuck_profitAdjust' ? luck.enabled : false) },
 }));
 
-vi.mock('../combat/combat-drop-luck.js', () => ({
-    measuredChestLuck: () => luck.measured,
-}));
+// The calculator reaches the treasure tracker through the global, so the test
+// provides one — {ratio, opened} as `measuredReturn` answers
+globalThis.window = globalThis.window || {};
+globalThis.window.Toolasha = { Market: { treasureTracker: { measuredReturn: () => luck.measured } } };
 
 const { calculateKeyCosts, calculatePlayerStats, calculateIncome, calculateIncomeBreakdown, describeLuckAdjustment } =
     await import('./combat-stats-calculator.js');
@@ -196,7 +197,7 @@ describe('measured-luck adjustment of a dungeon chest EV', () => {
 
     beforeEach(() => {
         ev.value = 100000;
-        luck.measured = { ratio: 0.926, chests: 5490 };
+        luck.measured = { ratio: 0.926, opened: 5490 };
     });
 
     test('the setting gates the adjustment: off means drop-table EV even with data', () => {
@@ -218,6 +219,14 @@ describe('measured-luck adjustment of a dungeon chest EV', () => {
         expect(row.evPerChest).toBeCloseTo(92600, 6);
         expect(row.totalValue).toBeCloseTo(185200, 6);
         expect(row.luckAdjustment).toEqual({ ratio: 0.926, chests: 5490 });
+    });
+
+    test('a reading under the opening floor is withheld, however confident it looks', () => {
+        luck.enabled = true;
+        luck.measured = { ratio: 0.5, opened: 299 };
+
+        expect(calculateIncome(lootOf()).ask).toBe(200000);
+        expect(calculateIncomeBreakdown(lootOf()).breakdown[0].luckAdjustment).toBeNull();
     });
 
     test('no measurement means no adjustment, even with the setting on', () => {
@@ -248,7 +257,7 @@ describe('measured-luck adjustment of a dungeon chest EV', () => {
 
     test('describeLuckAdjustment words the adjustment for wherever it is shown', () => {
         expect(describeLuckAdjustment({ itemName: 'Chimerical Chest', ratio: 0.926, chests: 5490 })).toBe(
-            'Chimerical Chest EV adjusted by your measured -7.4% (5,490 chests)'
+            'Chimerical Chest EV adjusted by your measured -7.4% return (5,490 opened)'
         );
     });
 });

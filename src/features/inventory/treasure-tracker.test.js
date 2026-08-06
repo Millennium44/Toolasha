@@ -10,10 +10,12 @@ vi.mock('../../core/config.js', () => ({
 }));
 vi.mock('../../core/storage.js', () => ({ default: { getJSON: async () => ({}), setJSON: async () => {} } }));
 vi.mock('../../core/websocket.js', () => ({ default: { on: () => {}, off: () => {} } }));
+const dm = vi.hoisted(() => ({ dropTables: {} }));
+
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getItemDetails: (hrid) => (hrid === '/items/known' ? { name: 'Known Thing' } : null),
-        getInitClientData: () => ({ openableLootDropMap: {} }),
+        getInitClientData: () => ({ openableLootDropMap: dm.dropTables }),
         getCurrentCharacterId: () => 'char-1',
         getCurrentCharacterGameMode: () => 'standard',
         on: () => {},
@@ -338,5 +340,33 @@ describe('which side of the book the figures are', () => {
         // profit pricing mode, so the same chest can be worth two different
         // numbers and neither of them is wrong
         expect(pricingBasis()).toBe('bid');
+    });
+});
+
+describe('measuredReturn, the treasure rate a profit estimate may use', async () => {
+    const { default: treasureTracker } = await import('./treasure-tracker.js');
+    const CHEST = '/items/chimerical_chest';
+
+    afterEach(() => {
+        treasureTracker.tally = {};
+        dm.dropTables = {};
+    });
+
+    test('actual over expected, at one price source, with the sample it rests on', () => {
+        // One coin owed per open at price 1; 400 opens returned 500 coins
+        dm.dropTables[CHEST] = [{ itemHrid: '/items/coin', dropRate: 1, minCount: 1, maxCount: 1 }];
+        treasureTracker.tally = { [CHEST]: { opened: 400, loot: { '/items/coin': 500 } } };
+
+        expect(treasureTracker.measuredReturn(CHEST)).toEqual({ ratio: 1.25, opened: 400 });
+    });
+
+    test('nothing opened is nothing measured', () => {
+        dm.dropTables[CHEST] = [{ itemHrid: '/items/coin', dropRate: 1, minCount: 1, maxCount: 1 }];
+        expect(treasureTracker.measuredReturn(CHEST)).toBeNull();
+    });
+
+    test('a chest without a drop table cannot be compared to one', () => {
+        treasureTracker.tally = { [CHEST]: { opened: 400, loot: { '/items/coin': 500 } } };
+        expect(treasureTracker.measuredReturn(CHEST)).toBeNull();
     });
 });
