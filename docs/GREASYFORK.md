@@ -8,8 +8,21 @@ get their visible recognition, per their licences and plain courtesy.
 
 ## What this fork adds
 
-This is the **Millennium44 fork of Toolasha** (itself a rewrite of MWITools). The
-biggest changes since forking, in rough order of how much they change the game:
+This is the **Millennium44 fork of Toolasha** (itself a rewrite of MWITools).
+
+**Everything talks to everything now.** The Combat Suite maths and the combat
+simulator no longer sit off to the side: your recorded fights calibrate the sim,
+the sim's all-zones forecast feeds the goal planner, the combat profit panel and
+eWatch's savings goals, and drop-luck judges gathering and production runs too,
+not just combat. And the market price API the market-history viewer is built on
+now prices almost everything the script computes — upgrade-advisor candidates,
+net worth, drop-luck income, guild token value, and the profit on every action
+and pinned page — capped by what the market has actually absorbed, so a figure
+comes from a real listing wherever the game will give one instead of from a
+guess.
+
+The biggest changes since forking, in rough order of how much they change the
+game:
 
 - **Combat Recorder & Sim Accuracy** — record your real fights (loadout snapshots,
   XP, drops, fight boundaries that survive refresh), replay them against the
