@@ -28,7 +28,7 @@ vi.mock('../../core/data-manager.js', () => ({
 vi.mock('../../utils/market-data.js', () => ({ getItemPrices: () => ({}) }));
 vi.mock('../../utils/marketplace-tabs.js', () => ({ navigateToMarketplace: () => {} }));
 vi.mock('./combat-stats-data-collector.js', () => ({ default: { getLatestData: () => null } }));
-vi.mock('./combat-stats-calculator.js', () => ({ calculatePlayerStats: () => ({}) }));
+vi.mock('./combat-stats-calculator.js', () => ({ calculatePlayerStats: () => ({}), describeLuckAdjustment: () => '' }));
 vi.mock('../../utils/consumable-forecast.js', () => ({
     forecastAll: () => [],
     drinkRatePerDay: () => 0,
@@ -37,7 +37,7 @@ vi.mock('../../utils/consumable-forecast.js', () => ({
 }));
 
 const { registeredRows } = await import('../../utils/overlay-rows.js');
-await import('./combat-stats-rows.js');
+const { warmingUp } = await import('./combat-stats-rows.js');
 
 const tile = () => registeredRows().find((row) => row.key === 'consumables');
 
@@ -84,5 +84,22 @@ describe('the tile', () => {
     test('nothing slotted draws nothing rather than failing', () => {
         game.outlook = { you: null, party: null, partyName: null };
         expect(() => draw()).not.toThrow();
+    });
+});
+
+describe('warming up', () => {
+    test('a dungeon with no chest dropped yet is warming up', () => {
+        expect(warmingUp({ isDungeonRun: true, keyBreakdown: [] })).toBe(true);
+    });
+
+    test('the first chest ends it', () => {
+        expect(warmingUp({ isDungeonRun: true, keyBreakdown: [{ itemHrid: '/items/chimerical_entry_key' }] })).toBe(
+            false
+        );
+    });
+
+    test('a zone is never warming up — its loot flows from the first kill', () => {
+        expect(warmingUp({ isDungeonRun: false, keyBreakdown: [] })).toBe(false);
+        expect(warmingUp(null)).toBe(false);
     });
 });

@@ -6,7 +6,7 @@
 import config from '../../core/config.js';
 import marketAPI from '../../api/marketplace.js';
 import combatStatsDataCollector from './combat-stats-data-collector.js';
-import { calculateAllPlayerStats } from './combat-stats-calculator.js';
+import { calculateAllPlayerStats, describeLuckAdjustment } from './combat-stats-calculator.js';
 import {
     formatWithSeparator,
     coinFormatter,
@@ -540,17 +540,24 @@ class CombatStatsUI {
 
         const priceKey = config.getSettingValue('profitCalc_keyPricingMode') || 'ask';
 
+        // Chest EVs scaled by the player's own measured luck must say so on
+        // every figure that carries them — income, and the profit built on it
+        const luckNote = stats.chestLuckAdjustments?.length
+            ? stats.chestLuckAdjustments.map(describeLuckAdjustment).join('\n')
+            : null;
+
         const statsRows = [
             { label: 'Duration', value: stats.durationFormatted || '0s' },
             { label: 'Encounters/Hour', value: formatNum(stats.encountersPerHour) },
             {
                 label: 'Income',
                 value: formatNum(stats.income[priceKey]),
+                note: luckNote,
                 ...(stats.isDungeonRun && stats.incomeBreakdown?.length > 0
                     ? { expandable: true, incomeBreakdown: stats.incomeBreakdown }
                     : {}),
             },
-            { label: 'Daily Income', value: `${formatNum(stats.dailyIncome[priceKey])}/d` },
+            { label: 'Daily Income', value: `${formatNum(stats.dailyIncome[priceKey])}/d`, note: luckNote },
             {
                 label: 'Consumable Costs',
                 value: formatNumDecimals(stats.consumableCosts),
@@ -593,6 +600,7 @@ class CombatStatsUI {
                 label: 'Daily Profit',
                 value: `${formatNum(stats.dailyProfit[priceKey])}/d`,
                 color: stats.dailyProfit[priceKey] >= 0 ? '#51cf66' : '#ff6b6b',
+                note: luckNote,
             },
             { label: 'Total EXP', value: formatNum(stats.totalExp) },
             { label: 'EXP/hour', value: `${formatNum(stats.expPerHour)}/h` },
@@ -619,6 +627,12 @@ class CombatStatsUI {
             const value = document.createElement('span');
             value.textContent = row.value;
             value.style.color = row.color || textColor;
+
+            // A figure adjusted by measured luck is marked, never silent
+            if (row.note) {
+                value.textContent += ' *';
+                rowDiv.title = row.note;
+            }
 
             // Add expandable indicator if applicable
             if (row.expandable) {
@@ -705,6 +719,16 @@ class CombatStatsUI {
                                 totalCell.style.textAlign = 'right';
                                 totalCell.textContent = formatNum(chest.totalValue);
 
+                                // Marked, never silent: this EV is the drop
+                                // table's scaled by the player's measured luck
+                                if (chest.luckAdjustment) {
+                                    evCell.textContent += '*';
+                                    chestRow.title = describeLuckAdjustment({
+                                        itemName: chest.itemName,
+                                        ...chest.luckAdjustment,
+                                    });
+                                }
+
                                 chestRow.appendChild(nameCell);
                                 chestRow.appendChild(countCell);
                                 chestRow.appendChild(evCell);
@@ -771,12 +795,14 @@ class CombatStatsUI {
                                             grid-template-columns: 2fr 1fr 1fr 1fr 1fr;
                                             gap: 8px;
                                         `;
+                                        // The drop rows above sum to the drop-table EV; the total is
+                                        // that sum scaled by the measured ratio, and says so
                                         evTotalRow.innerHTML = `
-                                            <span>Total</span>
+                                            <span>Total${chest.luckAdjustment ? ' (luck-adjusted)' : ''}</span>
                                             <span></span>
                                             <span></span>
                                             <span></span>
-                                            <span style="text-align: right;">${formatNum(chest.evPerChest)}</span>
+                                            <span style="text-align: right;">${formatNum(chest.evPerChest)}${chest.luckAdjustment ? '*' : ''}</span>
                                         `;
                                         chestBreakdownDiv.appendChild(evTotalRow);
                                         chestRow.after(chestBreakdownDiv);

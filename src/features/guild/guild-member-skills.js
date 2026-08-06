@@ -36,6 +36,7 @@ import storage from '../../core/storage.js';
 import webSocketHook from '../../core/websocket.js';
 import guildLoadoutCapture from './guild-loadout-capture.js';
 import { guildXPTracker } from './guild-xp-tracker.js';
+import { fillProfileCommand, findChatInput } from '../../utils/profile-command.js';
 
 /** Object store the captures live in — shared with the rest of the guild history */
 const STORE_NAME = 'guildHistory';
@@ -483,38 +484,21 @@ class GuildMemberSkills {
 
     /**
      * The chat input, if there is one the player can actually use.
+     * Delegates to the shared helper in `utils/profile-command.js`.
      * @returns {Element|null} The input
      */
     _chatInput() {
-        if (typeof document === 'undefined') return null;
-        const input = document.querySelector('[class*="Chat_chatInputContainer"] input');
-        if (!input) return null;
-
-        // Hidden chat is why this matters: the fill goes into an input nobody
-        // can see, nothing opens, and the click looked like it worked
-        const visible = input.offsetParent !== null || (input.getClientRects?.().length ?? 0) > 0;
-        return visible ? input : null;
+        return findChatInput();
     }
 
     /**
      * Put `/profile <name>` in the chat box, ready to send.
+     * Delegates to the shared helper, keeping this module's log prefix.
      * @param {string} name - Member name
      * @returns {boolean} True when the box was filled
      */
     _fillProfileCommand(name, chatInput = null) {
-        try {
-            const input = chatInput || this._chatInput();
-            if (!input) return false;
-
-            const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
-            setter?.call(input, `/profile ${name}`);
-            input.dispatchEvent(new Event('input', { bubbles: true }));
-            input.focus();
-            return true;
-        } catch (error) {
-            console.error('[GuildMemberSkills] Could not fill the profile command:', error);
-            return false;
-        }
+        return fillProfileCommand(name, chatInput, 'GuildMemberSkills');
     }
 
     /**

@@ -3,11 +3,48 @@
  * Calculates income, profit, consumable costs, and other statistics
  */
 
-import marketAPI from '../../api/marketplace.js';
+import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
+import marketAPI from '../../api/marketplace.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
+import { measuredChestLuck } from '../combat/combat-drop-luck.js';
 import { DUNGEON_CHEST_ENTRY_KEYS, DUNGEON_CHEST_CHEST_KEYS } from '../../utils/dungeon-keys.js';
 import { describeKeyCost, getKeyPricingMode } from '../../utils/key-cost.js';
+
+/**
+ * How the player's own measured chest luck should scale one dungeon chest's EV.
+ *
+ * Only when the `dropLuck_profitAdjust` setting is on, only for the regular
+ * dungeon chests a completion pays (never other openables), and only when the
+ * measurement rests on a sample worth trusting — `measuredChestLuck` returns
+ * null otherwise, and the estimate stays at the drop-table expectation.
+ *
+ * @param {string} itemHrid - The loot item
+ * @returns {{ratio: number, chests: number}|null} Null when no adjustment applies
+ */
+function chestLuckAdjustment(itemHrid) {
+    if (!DUNGEON_CHEST_ENTRY_KEYS[itemHrid]) return null;
+    if (!config.getSetting('dropLuck_profitAdjust')) return null;
+    return measuredChestLuck(itemHrid);
+}
+
+/**
+ * The adjustment in words, for wherever an adjusted figure is shown.
+ *
+ * The adjustment must never be silent: a profit estimate scaled by a personal
+ * measurement has to say so, or it reads as the drop-table expectation it no
+ * longer is.
+ *
+ * @param {{itemName: string, ratio: number, chests: number}} adjustment - One
+ *   entry from `chestLuckAdjustments`
+ * @returns {string} e.g. "Chimerical Chest EV adjusted by your measured -7.4% (5,490 chests)"
+ */
+export function describeLuckAdjustment(adjustment) {
+    const percent = (adjustment.ratio - 1) * 100;
+    const signed = `${percent >= 0 ? '+' : ''}${percent.toFixed(1)}%`;
+    const chests = Math.round(adjustment.chests).toLocaleString('en-US');
+    return `${adjustment.itemName} EV adjusted by your measured ${signed} (${chests} chests)`;
+}
 
 /**
  * Calculate total income from loot
@@ -37,8 +74,13 @@ export function calculateIncome(lootMap) {
                     expectedValueCalculator.getCachedValue(loot.itemHrid) ||
                     expectedValueCalculator.calculateSingleContainer(loot.itemHrid);
                 if (ev !== null && ev > 0) {
-                    totalAsk += ev * itemCount;
-                    totalBid += ev * itemCount;
+                    // A dungeon chest may be worth what *this player* measures
+                    // it at rather than what the table promises — see
+                    // `chestLuckAdjustment`; null means no adjustment
+                    const adjustment = chestLuckAdjustment(loot.itemHrid);
+                    const adjustedEv = adjustment ? ev * adjustment.ratio : ev;
+                    totalAsk += adjustedEv * itemCount;
+                    totalBid += adjustedEv * itemCount;
                 }
             } else {
                 // Other items: get market price
@@ -81,7 +123,11 @@ export function calculateIncomeBreakdown(lootMap) {
         const evData = expectedValueCalculator.isInitialized
             ? expectedValueCalculator.calculateExpectedValue(loot.itemHrid)
             : null;
-        const evPerChest = evData?.expectedValue ?? 0;
+        const baseEv = evData?.expectedValue ?? 0;
+        // Carried on the row rather than applied silently, so the display can
+        // mark the figure and say what moved it
+        const luckAdjustment = baseEv > 0 ? chestLuckAdjustment(loot.itemHrid) : null;
+        const evPerChest = luckAdjustment ? baseEv * luckAdjustment.ratio : baseEv;
         const totalValue = evPerChest * loot.count;
 
         breakdown.push({
@@ -90,6 +136,7 @@ export function calculateIncomeBreakdown(lootMap) {
             count: loot.count,
             evPerChest,
             totalValue,
+            luckAdjustment,
             drops: evData?.drops ?? [],
         });
     }
@@ -323,6 +370,12 @@ export function calculatePlayerStats(playerData, durationSeconds = null) {
     const income = calculateIncome(playerData.loot);
     const incomeBreakdownData = calculateIncomeBreakdown(playerData.loot);
 
+    // Every chest whose EV was scaled by the player's measured luck, so each
+    // display of income or profit can label the adjustment
+    const chestLuckAdjustments = incomeBreakdownData.breakdown
+        .filter((row) => row.luckAdjustment)
+        .map((row) => ({ itemName: row.itemName, ...row.luckAdjustment }));
+
     // Use provided duration or default to 0 (will show 0 for rates if no duration)
     const duration = durationSeconds || 0;
 
@@ -392,6 +445,7 @@ export function calculatePlayerStats(playerData, durationSeconds = null) {
         lootList,
         incomeBreakdown: incomeBreakdownData.breakdown,
         isDungeonRun: incomeBreakdownData.isDungeonRun,
+        chestLuckAdjustments,
         duration,
     };
 }

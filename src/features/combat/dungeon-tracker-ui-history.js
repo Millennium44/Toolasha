@@ -6,6 +6,7 @@
 import dungeonTrackerStorage, { filterRunsForCharacter, currentCharacter } from './dungeon-tracker-storage.js';
 import storage from '../../core/storage.js';
 import { formatDateTime } from '../../utils/formatters.js';
+import { fillProfileCommand, VALID_PLAYER_NAME_RE } from '../../utils/profile-command.js';
 
 class DungeonTrackerUIHistory {
     constructor(state, formatTimeFunc) {
@@ -213,6 +214,38 @@ class DungeonTrackerUIHistory {
     }
 
     /**
+     * A group header label, with team-member names individually clickable.
+     *
+     * Only the team grouping's headers are player lists ("Aster,Player11,cove");
+     * dungeon headers and the Solo bucket come back escaped but unwrapped. The
+     * wrap keeps the label's exact text, with each valid player name in its own
+     * span that fills "/profile <name>" into chat when clicked.
+     *
+     * @param {Object} group - A group from groupByTeam/groupByDungeon
+     * @returns {string} HTML for the header label
+     */
+    renderGroupLabel(group) {
+        if (this.state.groupBy !== 'team' || group.key === 'Solo') {
+            return this.escapeHtml(group.label);
+        }
+
+        return String(group.label)
+            .split(',')
+            .map((name) => {
+                // A malformed name gets no click handler — plain text, never a
+                // broken /profile command
+                if (!VALID_PLAYER_NAME_RE.test(name)) return this.escapeHtml(name);
+                const escaped = this.escapeHtml(name);
+                return (
+                    `<span class="mwi-dt-player-name" data-player-name="${escaped}" style="cursor: pointer; ` +
+                    `text-decoration: underline dotted; text-underline-offset: 2px;" ` +
+                    `title="Fill &quot;/profile ${escaped}&quot; into chat">${escaped}</span>`
+                );
+            })
+            .join(',');
+    }
+
+    /**
      * Render grouped runs
      * @param {HTMLElement} runList - Run list container
      * @param {Array} groups - Grouped runs with stats
@@ -246,7 +279,7 @@ class DungeonTrackerUIHistory {
                     " class="mwi-dt-group-header" data-group-label="${this.escapeHtml(group.label)}">
                         <div style="flex: 1;">
                             <div style="font-weight: bold; color: #4a9eff; margin-bottom: 2px;">
-                                ${this.escapeHtml(group.label)}
+                                ${this.renderGroupLabel(group)}
                             </div>
                             <div style="font-size: 10px; color: #aaa;">
                                 Runs: ${group.stats.totalRuns} | Avg: ${avgTime} | Best: ${bestTime} | Worst: ${worstTime}
@@ -284,6 +317,15 @@ class DungeonTrackerUIHistory {
                     toggle.textContent = '▼';
                     this.state.expandedGroups.delete(groupLabel);
                 }
+            });
+        });
+
+        // Player-name clicks fill "/profile <name>" into chat. Stopped, so the
+        // click does not also toggle the group open or shut underneath it.
+        runList.querySelectorAll('.mwi-dt-player-name').forEach((el) => {
+            el.addEventListener('click', (event) => {
+                event.stopPropagation();
+                fillProfileCommand(el.dataset.playerName);
             });
         });
 

@@ -660,6 +660,55 @@ class CombatDropLuck {
 const combatDropLuck = new CombatDropLuck();
 
 /**
+ * The sample below which a measured ratio is not allowed to move a profit figure.
+ *
+ * A few hundred chests, because the adjustment is a multiplier on real money: at
+ * one-and-a-bit chests per completion this is a couple of hundred completions,
+ * where the binomial spread on the yield is down to a few percent — smaller than
+ * the persistent effects the adjustment exists to capture, such as the level-gap
+ * debuff. Below it, an unlucky evening would masquerade as a personal drop rate.
+ */
+export const MIN_CHESTS_FOR_PROFIT_ADJUST = 300;
+
+/**
+ * The player's measured chest yield against the drop-table expectation, for one
+ * chest kind — the ratio a profit estimate can scale that chest's EV by.
+ *
+ * Reads the same per-session watching `dungeonChestLuck` reads, for the current
+ * player only: measured chests over expected chests, where the expectation
+ * already carries the party split, the drop-quantity bonus and the level-gap
+ * debuff. A ratio under 1 means the player's chests persistently run under what
+ * the table owes.
+ *
+ * @param {string} itemHrid - A dungeon chest item, e.g. `/items/chimerical_chest`
+ * @returns {{ratio: number, chests: number}|null} Measured over expected and the
+ *   sample it rests on, or null when this chest kind is not being watched, the
+ *   expectation is empty, or fewer than `MIN_CHESTS_FOR_PROFIT_ADJUST` chests
+ *   back the reading
+ */
+export function measuredChestLuck(itemHrid) {
+    try {
+        const tracked = combatDropLuck.chests;
+        if (!tracked || !itemHrid) return null;
+
+        // Only the chest kind the watched dungeon actually pays: a chimerical
+        // reading says nothing about a pirate chest
+        const actionDetail = dataManager.getActionDetails(tracked.actionHrid);
+        const difficultyTier = combatDropLuck.context?.difficultyTier || 0;
+        if (!dungeonChestItems(actionDetail, difficultyTier).has(itemHrid)) return null;
+
+        const me = combatDropLuck.dungeonChestLuck()?.players.find((player) => player.isCurrentPlayer);
+        if (!me?.luck || !(me.luck.expected > 0)) return null;
+        if (me.luck.chests < MIN_CHESTS_FOR_PROFIT_ADJUST) return null;
+
+        return { ratio: me.luck.chests / me.luck.expected, chests: me.luck.chests };
+    } catch (error) {
+        console.error('[CombatDropLuck] Measuring chest luck for profit failed:', error);
+        return null;
+    }
+}
+
+/**
  * A dungeon run in words, for a tooltip.
  *
  * @param {Object} player - One entry from `dungeonChestLuck().players`
