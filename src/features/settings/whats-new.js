@@ -37,6 +37,7 @@ import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } fro
 import { askChoice } from '../../utils/choice-dialog.js';
 import { toolashaRoot } from '../../utils/bundle-bridge.js';
 import forkChangelog from 'virtual:fork-changelog';
+import forkOverview from 'virtual:fork-overview';
 
 const STATE_KEY_PREFIX = 'whatsNew_state';
 
@@ -47,6 +48,105 @@ const COLORS = {
     text: '#e0e0e0',
     dim: '#888',
 };
+
+/**
+ * Decode the handful of HTML entities the changelog carries. The source is
+ * markdown that occasionally escapes angle brackets and quotes (e.g. the
+ * "&lt;name&gt; has …" announcement shape), and this popup shows it as plain
+ * text, so the escapes have to come back to the characters they stand for.
+ * `&amp;` is decoded last so an escaped entity like `&amp;lt;` does not become
+ * `<`.
+ * @param {string} text
+ * @returns {string}
+ */
+function decodeEntities(text) {
+    return String(text)
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&#34;/g, '"')
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
+        .replace(/&amp;/g, '&');
+}
+
+/**
+ * Append one line's worth of inline-formatted content to a parent node, built
+ * as real DOM nodes rather than injected HTML. `**bold**` becomes a bold span,
+ * `` `code` `` is shown as its inner text with the backticks stripped, and HTML
+ * entities are decoded. The changelog is build-embedded and therefore trusted,
+ * but nodes are constructed anyway so no markdown is ever parsed as HTML.
+ * @param {Node} parent
+ * @param {string} text
+ * @private
+ */
+function appendInline(parent, text) {
+    const pattern = /\*\*([^*]+?)\*\*|`([^`]+?)`/g;
+    let lastIndex = 0;
+    let match;
+    while ((match = pattern.exec(text)) !== null) {
+        if (match.index > lastIndex) {
+            parent.appendChild(document.createTextNode(decodeEntities(text.slice(lastIndex, match.index))));
+        }
+        if (match[1] !== undefined) {
+            const strong = document.createElement('span');
+            strong.style.fontWeight = '700';
+            strong.textContent = decodeEntities(match[1]);
+            parent.appendChild(strong);
+        } else {
+            parent.appendChild(document.createTextNode(decodeEntities(match[2])));
+        }
+        lastIndex = pattern.lastIndex;
+    }
+    if (lastIndex < text.length) {
+        parent.appendChild(document.createTextNode(decodeEntities(text.slice(lastIndex))));
+    }
+}
+
+/**
+ * Render a slice of the embedded fork markdown into `root` as readable DOM.
+ *
+ * A tiny, dependency-free markdown-to-DOM pass: `##` section headings are
+ * skipped (the "Unreleased — branch …" line is not for the reader), `###`
+ * becomes an accented heading, `-` becomes a bullet, anything else non-blank is
+ * a paragraph, and every text run is inline-formatted through `appendInline`.
+ * Shared by the changelog and the newcomer overview.
+ * @param {Node} root - Container to append rendered nodes to
+ * @param {string} markdown - The embedded markdown to render
+ */
+function renderForkMarkdown(root, markdown) {
+    const lines = String(markdown).split('\n');
+    for (const raw of lines) {
+        const line = raw.replace(/\s+$/, '');
+        if (!line.trim()) continue; // spacing comes from element margins
+        if (/^##\s/.test(line)) continue; // the "Unreleased — branch …" heading is not shown
+        const heading = line.match(/^###\s+(.+)/);
+        if (heading) {
+            const el = document.createElement('div');
+            Object.assign(el.style, {
+                fontWeight: '700',
+                color: COLORS.accent,
+                margin: '10px 0 4px',
+                fontSize: '12.5px',
+            });
+            appendInline(el, heading[1]);
+            root.appendChild(el);
+            continue;
+        }
+        const bullet = line.match(/^-\s+(.+)/);
+        if (bullet) {
+            const el = document.createElement('div');
+            Object.assign(el.style, { margin: '2px 0', color: '#bbb', lineHeight: '1.4' });
+            el.appendChild(document.createTextNode('• '));
+            appendInline(el, bullet[1]);
+            root.appendChild(el);
+            continue;
+        }
+        const paragraph = document.createElement('div');
+        Object.assign(paragraph.style, { margin: '4px 0', color: '#bbb', lineHeight: '1.4' });
+        appendInline(paragraph, line);
+        root.appendChild(paragraph);
+    }
+}
 
 class WhatsNew {
     constructor() {
@@ -115,6 +215,7 @@ class WhatsNew {
                 forkChanged: Boolean(stored.fork && stored.fork !== current.fork),
                 newIds: fresh,
                 turnedOff: new Set(turnedOff),
+                isNewcomer: false,
             };
 
             // Recorded now rather than after the popup, so a closed tab cannot
@@ -187,6 +288,7 @@ class WhatsNew {
                 forkChanged: true,
                 newIds: [],
                 turnedOff: new Set(),
+                isNewcomer: true,
             };
             return;
         }
@@ -205,6 +307,7 @@ class WhatsNew {
             forkChanged: true,
             newIds: inherited,
             turnedOff: new Set(conservative),
+            isNewcomer: true,
         };
     }
 
@@ -251,6 +354,7 @@ class WhatsNew {
                 forkChanged: false,
                 newIds: [],
                 turnedOff: new Set(),
+                isNewcomer: true,
             };
         } catch (error) {
             console.error('[WhatsNew] Offering the first-run preset failed:', error);
@@ -275,7 +379,7 @@ class WhatsNew {
     }
 
     /** @private */
-    _buildPanel({ headline, forkChanged, newIds, turnedOff }) {
+    _buildPanel({ headline, forkChanged, newIds, turnedOff, isNewcomer }) {
         this.close();
 
         const panel = document.createElement('div');
@@ -347,23 +451,57 @@ class WhatsNew {
             body.appendChild(section);
         }
 
+        // A fresh install, or someone arriving from another build (upstream
+        // Toolasha included), gets the at-a-glance tour before the changelog —
+        // the changelog answers "what changed", which means nothing to someone
+        // who has not seen the thing it changed.
+        if ((isNewcomer || forkChanged) && forkOverview?.trim()) {
+            const overview = document.createElement('div');
+            const heading = document.createElement('div');
+            Object.assign(heading.style, {
+                fontWeight: '700',
+                color: COLORS.accent,
+                margin: '4px 0 6px',
+                fontSize: '14px',
+            });
+            heading.textContent = 'Toolasha — at a glance';
+            overview.appendChild(heading);
+            const box = document.createElement('div');
+            Object.assign(box.style, {
+                fontSize: '12px',
+                background: 'rgba(255,255,255,0.03)',
+                border: '1px solid #222',
+                borderRadius: '6px',
+                padding: '8px 10px',
+                marginBottom: '12px',
+            });
+            renderForkMarkdown(box, forkOverview.trim());
+            overview.appendChild(box);
+            body.appendChild(overview);
+        }
+
         if (forkChangelog?.trim()) {
             const log = document.createElement('div');
-            log.innerHTML = `<div style="font-weight:700; color:${COLORS.accent}; margin:10px 0 6px;">Changelog</div>`;
-            const text = document.createElement('pre');
-            text.textContent = forkChangelog.trim();
-            Object.assign(text.style, {
-                whiteSpace: 'pre-wrap',
-                fontFamily: 'inherit',
+            const heading = document.createElement('div');
+            Object.assign(heading.style, {
+                fontWeight: '700',
+                color: COLORS.accent,
+                margin: '10px 0 6px',
+                fontSize: '14px',
+            });
+            heading.textContent = 'Changelog';
+            log.appendChild(heading);
+            const box = document.createElement('div');
+            Object.assign(box.style, {
                 fontSize: '12px',
                 color: '#bbb',
                 background: 'rgba(255,255,255,0.03)',
                 border: '1px solid #222',
                 borderRadius: '6px',
                 padding: '8px 10px',
-                margin: '0',
             });
-            log.appendChild(text);
+            renderForkMarkdown(box, forkChangelog.trim());
+            log.appendChild(box);
             body.appendChild(log);
         }
 
@@ -509,3 +647,4 @@ class WhatsNew {
 
 const whatsNew = new WhatsNew();
 export default whatsNew;
+export { renderForkMarkdown };

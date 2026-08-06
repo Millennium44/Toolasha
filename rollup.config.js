@@ -281,6 +281,34 @@ function changelogPlugin() {
     };
 }
 
+/**
+ * Embed the whole newcomer overview as a virtual module.
+ *
+ * The what's-new popup greets a fresh install — and someone arriving from
+ * upstream Toolasha — with an at-a-glance tour of what this fork adds. That copy
+ * lives in OVERVIEW.md so it can be edited as prose rather than buried in code;
+ * the whole file ships, capped so it cannot balloon the bundle.
+ */
+function overviewPlugin() {
+    const id = 'virtual:fork-overview';
+    return {
+        name: 'fork-overview',
+        resolveId(source) {
+            return source === id ? `\0${id}` : null;
+        },
+        load(moduleId) {
+            if (moduleId !== `\0${id}`) return null;
+            let text = '';
+            try {
+                text = readFileSync('OVERVIEW.md', 'utf-8');
+            } catch {
+                text = '';
+            }
+            return `export default ${JSON.stringify(text.slice(0, 20000))};`;
+        },
+    };
+}
+
 function cssRawPlugin() {
     const suffix = '?raw';
     return {
@@ -387,6 +415,7 @@ const devConfig = {
     plugins: [
         cssRawPlugin(),
         changelogPlugin(),
+        overviewPlugin(),
         workerBundlePlugin(),
         resolve({
             browser: true,
@@ -528,6 +557,7 @@ const prodConfig = [
             plugins: [
                 cssRawPlugin(),
                 changelogPlugin(),
+                overviewPlugin(),
                 workerBundlePlugin(),
                 resolve({
                     browser: true,

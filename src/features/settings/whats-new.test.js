@@ -14,6 +14,16 @@
  */
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
+import { Window } from 'happy-dom';
+
+// The popup-rendering tests need a DOM. A file-level `@vitest-environment
+// happy-dom` directive would put the whole file in a browser-like environment,
+// where Vitest's virtual-module mocks (fork-changelog / fork-overview) fail to
+// resolve — so the DOM is registered as globals here instead, keeping the file
+// in the node environment the first-run tests rely on.
+const domWindow = new Window();
+globalThis.window = domWindow;
+globalThis.document = domWindow.document;
 
 const mocks = vi.hoisted(() => ({
     answer: null,
@@ -77,11 +87,26 @@ vi.mock('./setting-presets.js', async (importOriginal) => {
     };
 });
 
-// The fork changelog is a build-time virtual module; nothing in these tests
-// renders the popup, so an empty string is enough to let the import resolve.
+// The fork changelog is a build-time virtual module; the first-run tests never
+// render the popup, so an empty string is enough to let the import resolve. The
+// renderer tests pass their own markdown in directly.
 vi.mock('virtual:fork-changelog', () => ({ default: '' }));
 
-const { default: whatsNew } = await import('./whats-new.js');
+// The newcomer overview is the other build-time virtual module. A distinctive
+// marker lets the popup tests tell "the overview is on screen" from "it isn't".
+vi.mock('virtual:fork-overview', () => ({
+    default: '### Combat & simulators\n\n- Live DPS overview-marker-text read off your own fights.\n',
+}));
+
+// The floating-panel registry reaches into a shared z-index store; the popup
+// tests only care that the panel's content is right, so it is stubbed away.
+vi.mock('../../utils/panel-z-index.js', () => ({
+    registerFloatingPanel: () => {},
+    unregisterFloatingPanel: () => {},
+    bringPanelToFront: () => {},
+}));
+
+const { default: whatsNew, renderForkMarkdown } = await import('./whats-new.js');
 const { SETTING_PRESETS, DEFAULT_PRESET_ID } = await import('./setting-presets.js');
 const { conservativeOverrides } = await import('./whats-new-core.js');
 
@@ -173,6 +198,60 @@ describe('the returning-user picker', () => {
         expect(choices.filter((choice) => choice.tone === 'primary').map((choice) => choice.value)).toEqual([
             'keepCurrent',
         ]);
+    });
+});
+
+describe('the markdown renderer', () => {
+    function render(markdown) {
+        const root = document.createElement('div');
+        renderForkMarkdown(root, markdown);
+        return root;
+    }
+
+    test('strips markup and decodes entities, leaving no literal ## ** or backticks', () => {
+        const root = render(
+            '## Unreleased — branch `x`\n' +
+                '### Heading &lt;tag&gt;\n' +
+                '- A **bold** bullet with `code` and &lt;name&gt;\n'
+        );
+        const text = root.textContent;
+        expect(text).not.toContain('##');
+        expect(text).not.toContain('**');
+        expect(text).not.toContain('`');
+        // &lt; became a real '<', and no escaped entity survived
+        expect(text).toContain('<tag>');
+        expect(text).toContain('<name>');
+        expect(text).not.toContain('&lt;');
+        // The "## Unreleased" section heading is skipped entirely
+        expect(text).not.toContain('Unreleased');
+    });
+
+    test('renders ### headings and - bullets as readable text', () => {
+        const root = render('### Combat\n\n- First thing\n- Second thing\n');
+        const text = root.textContent;
+        expect(text).toContain('Combat');
+        expect(text).toContain('First thing');
+        expect(text).toContain('Second thing');
+        // Bullets are prefixed with a real bullet glyph, not a hyphen
+        expect(text).toContain('• First thing');
+    });
+});
+
+describe('the popup shows the overview only to newcomers', () => {
+    const base = { headline: 'x', forkChanged: false, newIds: [], turnedOff: new Set() };
+
+    test('a newcomer popup includes the overview', () => {
+        whatsNew._buildPanel({ ...base, isNewcomer: true });
+        expect(whatsNew.panel.textContent).toContain('overview-marker-text');
+        expect(whatsNew.panel.textContent).toContain('Toolasha — at a glance');
+        whatsNew.close();
+    });
+
+    test('a plain version update does not include the overview', () => {
+        whatsNew._buildPanel({ ...base, isNewcomer: false });
+        expect(whatsNew.panel.textContent).not.toContain('overview-marker-text');
+        expect(whatsNew.panel.textContent).not.toContain('Toolasha — at a glance');
+        whatsNew.close();
     });
 });
 
