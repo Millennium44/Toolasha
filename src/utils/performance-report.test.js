@@ -72,6 +72,22 @@ describe('the feature timeline', () => {
 
         expect(background.map((row) => row.name)).toEqual(['bg:networth']);
     });
+
+    test('an :own snapshot annotates its parent instead of counting as a feature', () => {
+        // A sync feature that merely parked in `await` while a heavy read
+        // resolved should show its true self-time, not the read's cost, and
+        // the `:own` half must never appear as a feature of its own
+        const withOwn = new Map([
+            ['init:autoAllButton', { duration: 1244, startedAt: 2993 }],
+            ['init:autoAllButton:own', { duration: 1, startedAt: 2993 }],
+        ]);
+        const rows = initTimeline(withOwn);
+
+        expect(rows.map((row) => row.name)).toEqual(['init:autoAllButton']);
+        expect(rows[0].ownMs).toBe(1);
+        // The blocking total is the wall-clock span, counted once
+        expect(initSummary(rows).blocking).toBe(1244);
+    });
 });
 
 describe('what the summary adds up', () => {
@@ -130,6 +146,19 @@ describe('the report itself', () => {
 
     test('and shows the gap nothing was being timed in', () => {
         expect(build()).toContain('storage:open → character:data');
+    });
+
+    test('a feature that only parked in await is shown as waiting, not blamed', () => {
+        const report = formatReport({
+            marks: MARKS,
+            snapshots: new Map([
+                ['init:autoAllButton', { duration: 1244, startedAt: 2993 }],
+                ['init:autoAllButton:own', { duration: 1, startedAt: 2993 }],
+            ]),
+            environment: { cores: 8 },
+        });
+
+        expect(report).toContain('waiting on other work');
     });
 
     test('an empty monitor still produces a report rather than throwing', () => {
