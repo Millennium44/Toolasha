@@ -17,7 +17,8 @@ import {
 
 describe('computeLabyrinthPath', () => {
     // ASCII grids: S = cleared start, E = entrance, . = clearable,
-    // X = unclearable (shroud), # = wall, T = treasure, F = floor exit
+    // X = unclearable (shroud), # = wall, T = treasure, F = floor exit,
+    // ? = unrevealed/unknown (clearable, but its type is not yet seen)
     function grid(rows) {
         const cols = rows[0].length;
         const tiles = [];
@@ -33,6 +34,7 @@ describe('computeLabyrinthPath', () => {
                     needsShroud: ch === 'X',
                     isTreasure: ch === 'T',
                     isExit: ch === 'F',
+                    isUnknown: ch === '?',
                 });
             }
         }
@@ -87,6 +89,28 @@ describe('computeLabyrinthPath', () => {
         const path = computeLabyrinthPath(tiles, cols);
         expect(path.shrouds).toBe(0);
         expect(path.torches).toBe(2);
+    });
+
+    test('breaks a tie toward the route that reveals more unknown rooms', () => {
+        // Two equal 4-torch, 0-shroud detours around a walled centre: the left
+        // column threads an unknown room, the right reveals nothing. The reveal
+        // tie-break must take the left one instead of an arbitrary wall-hug.
+        const { tiles, cols } = grid(['.S.', '?#.', '.F.']);
+        const path = computeLabyrinthPath(tiles, cols);
+        expect(path.shrouds).toBe(0);
+        expect(path.torches).toBe(4);
+        expect(path.route.has(3)).toBe(true); // left column, past the unknown
+        expect(path.route.has(5)).toBe(false); // right column, revealing nothing
+    });
+
+    test('never lengthens the route just to reveal more', () => {
+        // The direct 2-torch path reveals nothing; a 4-torch detour would pass
+        // an unknown. Reveals are only a tie-break, never worth an extra torch,
+        // so the short route must win.
+        const { tiles, cols } = grid(['S.F', '.?.']);
+        const path = computeLabyrinthPath(tiles, cols);
+        expect(path.torches).toBe(2);
+        expect(path.route.has(4)).toBe(false); // the unknown, only on the long way
     });
 
     test('returns null when no start or exit exists', () => {

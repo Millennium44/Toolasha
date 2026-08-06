@@ -55,9 +55,15 @@ const PATH_SHROUD_WEIGHT = 1e6;
  * greedily whenever they can be reached without an extra shroud — a chest is
  * always worth extra torches, never an extra shroud.
  *
+ * Finally, among routes that tie on all of the above, the one that uncovers the
+ * most unknown rooms wins, via a bounded sub-torch bonus (below) — so it only
+ * ever separates otherwise-equal routes and never trades a torch or a shroud
+ * for a reveal. This replaces Dijkstra's arbitrary wall-hugging pick between
+ * equal-length paths with one that opens up more of the floor.
+ *
  * Pure function so the routing logic is testable without DOM or sims.
  * @param {Array<Object|null>} tiles - Flat grid, null = wall; entries carry
- *   { cleared, isEntrance, needsShroud, isTreasure, isExit }
+ *   { cleared, isEntrance, needsShroud, isTreasure, isExit, isUnknown }
  * @param {number} cols - Grid width
  * @returns {Object|null} { route: Set<number>, chests: Set<number>, shrouds,
  *   torches, target } or null when there is no start/exit/route
@@ -83,14 +89,32 @@ export function computeLabyrinthPath(tiles, cols) {
         return out;
     };
 
-    // Entering a tile costs shrouds*W + 1 torch when uncleared; cleared
-    // tiles, the entrance, and tiles already on the route are free. Walls
-    // are impassable.
+    // Reveal tie-break: among routes tying on shrouds and torches, prefer the
+    // one that uncovers the most unknown rooms rather than Dijkstra's arbitrary
+    // wall-hugging pick. Entering a room reveals the unknown rooms next to it
+    // (and the room itself when it is the unknown one), so each earns a bonus
+    // scaled below a single torch: the most a whole route can earn is
+    // (5 tiles) × epsilon < 1, so the bonus never overturns a torch or shroud
+    // and only decides between otherwise-equal routes. The per-tile sum can
+    // count an unknown adjacent to two route tiles more than once — harmless
+    // for a tie-break.
+    const revealEpsilon = 1 / (5 * tiles.length + 1);
+    const revealScore = (idx) => {
+        let score = tiles[idx]?.isUnknown ? 1 : 0;
+        for (const nb of neighbors(idx)) {
+            if (tiles[nb]?.isUnknown) score++;
+        }
+        return score;
+    };
+
+    // Entering a tile costs shrouds*W + 1 torch when uncleared, less the reveal
+    // tie-break bonus; cleared tiles, the entrance, and tiles already on the
+    // route are free. Walls are impassable.
     const enterCost = (idx, routeSet) => {
         const t = tiles[idx];
         if (!t) return null;
         if (t.cleared || t.isEntrance || routeSet.has(idx)) return 0;
-        return (t.needsShroud ? PATH_SHROUD_WEIGHT : 0) + 1;
+        return (t.needsShroud ? PATH_SHROUD_WEIGHT : 0) + 1 - revealEpsilon * revealScore(idx);
     };
 
     const dijkstra = (sourceIndices, routeSet) => {
