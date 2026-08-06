@@ -223,6 +223,38 @@ vi.mock('./all-zones-runner.js', () => ({
     cancelAllZonesSimulation: () => {},
 }));
 
+/**
+ * The market-volume cap, as a per-item throttle map. Its arithmetic is
+ * utils/liquidity-cap.js's tested business; this file proves the wiring — the
+ * zones table ranks and scores the *capped* Profit/day, draws the marker, and
+ * the snapshot keeps the raw claim.
+ */
+const liquidity = vi.hoisted(() => ({ throttleByItem: {} }));
+
+vi.mock('../../utils/liquidity-cap.js', () => ({
+    capProfitRate: async ({ goldPerHour, sells }) => {
+        for (const sold of sells || []) {
+            const throttle = liquidity.throttleByItem[sold.itemHrid];
+            if (throttle !== undefined && throttle < 1) {
+                return {
+                    goldPerHour: goldPerHour * throttle,
+                    capped: true,
+                    limit: {
+                        kind: 'volume',
+                        note: 'limited by market volume (~1/week)',
+                        detail: `${sold.name || sold.itemHrid} trades ~1/week, and you are not the only seller.`,
+                        itemHrid: sold.itemHrid,
+                        throttle,
+                    },
+                };
+            }
+        }
+        return { goldPerHour, capped: false, limit: null };
+    },
+    liquidityMarkerHtml: (limit, { compact = false } = {}) =>
+        limit ? `<span title="${limit.note} — ${limit.detail}">${compact ? 'vol-capped' : limit.note}</span>` : '',
+}));
+
 vi.mock('./sim-editor.js', () => ({
     SimEditor: class {
         getEditedDTOs() {
@@ -893,6 +925,25 @@ describe('all-zones snapshot', () => {
         expect(snapshot.zones).toHaveLength(1);
         expect(snapshot).toMatchObject({ version: 1, hours: 4, fingerprint: null });
     });
+
+    test('stores the sim’s raw profit claim plus what was sold — the cap is applied by readers, not here', () => {
+        // The calibration loop compares the sim's claim against measured runs,
+        // so a market-volume cap baked in here would corrupt the comparison.
+        liquidity.throttleByItem['/items/rare_charm'] = 0.01;
+
+        const fly = zoneResult('Fly', { profit: 10_000 });
+        fly.revenue.dropEntries = [
+            { itemHrid: '/items/rare_charm', name: 'Rare Charm', countPerHour: 20, unitValue: 500, totalValue: 10_000 },
+            { itemHrid: '/items/no_value', name: 'Worthless', countPerHour: 0 },
+        ];
+
+        const snapshot = buildAllZonesSnapshot([fly], { hours: 2 });
+
+        expect(snapshot.zones[0].profitPerHour).toBe(10_000);
+        expect(snapshot.zones[0].sells).toEqual([
+            { itemHrid: '/items/rare_charm', name: 'Rare Charm', unitsPerHour: 20 },
+        ]);
+    });
 });
 
 describe('the all-zones table', () => {
@@ -1017,7 +1068,7 @@ describe('the all-zones table', () => {
 
     describe('what gets drawn', () => {
         const HOUR_NS = 3600 * 1e9;
-        const result = (name, { xp = {}, profit = 0, tier = 0 } = {}) => ({
+        const result = (name, { xp = {}, profit = 0, tier = 0, dropEntries = [] } = {}) => ({
             zone: { name, difficultyTier: tier, zoneHrid: `/actions/combat/${name}` },
             simResult: {
                 simulatedTime: HOUR_NS,
@@ -1025,20 +1076,21 @@ describe('the all-zones table', () => {
                 deaths: { player1: 0 },
                 experienceGained: { player1: xp },
             },
-            revenue: { netPerHour: profit, revenuePerHour: profit, costPerHour: 0 },
+            revenue: { netPerHour: profit, revenuePerHour: profit, costPerHour: 0, dropEntries },
         });
 
         beforeEach(() => {
             ui.buildPanel();
             ui._allZonesSortCol = null;
+            liquidity.throttleByItem = {};
         });
 
         afterEach(() => {
             ui.destroy();
         });
 
-        test('drops the untrained skill headers and keeps the headline ones', () => {
-            ui._displayAllZonesResults(
+        test('drops the untrained skill headers and keeps the headline ones', async () => {
+            await ui._displayAllZonesResults(
                 [result('Fly', { xp: { defense: 900 }, profit: 100 }), result('Jungle', { xp: { defense: 1500 } })],
                 1,
                 {}
@@ -1052,8 +1104,8 @@ describe('the all-zones table', () => {
             expect(headers).not.toContain('stamina');
         });
 
-        test('names both winners above the table', () => {
-            ui._displayAllZonesResults(
+        test('names both winners above the table', async () => {
+            await ui._displayAllZonesResults(
                 [
                     result('Fly', { xp: { defense: 900 }, profit: 10 }),
                     result('Jungle', { xp: { defense: 100 }, profit: 5000 }),
@@ -1070,10 +1122,10 @@ describe('the all-zones table', () => {
             expect(shown).toContain('best profit');
         });
 
-        test('a max-tier-food run says so above the table and in the export name', () => {
+        test('a max-tier-food run says so above the table and in the export name', async () => {
             ui._allZonesMaxTierFood = true;
             ui._allZonesFoodSwaps = [{ playerHrid: 'player1', fromName: 'Cheese', toName: 'Marsberry Cake' }];
-            ui._displayAllZonesResults([result('Fly', { xp: { defense: 900 }, profit: 10 })], 1, {});
+            await ui._displayAllZonesResults([result('Fly', { xp: { defense: 900 }, profit: 10 })], 1, {});
             const container = ui.panel.querySelector('#mwi-csim-results');
 
             expect(container.textContent).toContain('max-tier food');
@@ -1082,13 +1134,76 @@ describe('the all-zones table', () => {
             expect(container.querySelector('[data-csv-export]').dataset.csvExport).toBe('combatsim-all-zones-maxfood');
         });
 
-        test('an ordinary run carries no food note and exports under the plain name', () => {
+        test('an ordinary run carries no food note and exports under the plain name', async () => {
             ui._allZonesMaxTierFood = false;
-            ui._displayAllZonesResults([result('Fly', { xp: { defense: 900 }, profit: 10 })], 1, {});
+            await ui._displayAllZonesResults([result('Fly', { xp: { defense: 900 }, profit: 10 })], 1, {});
             const container = ui.panel.querySelector('#mwi-csim-results');
 
             expect(container.textContent).not.toContain('max-tier food');
             expect(container.querySelector('[data-csv-export]').dataset.csvExport).toBe('combatsim-all-zones');
+        });
+
+        describe('the market-volume cap', () => {
+            const thinLoot = [{ itemHrid: '/items/rare_charm', name: 'Rare Charm', countPerHour: 20 }];
+            const liquidLoot = [{ itemHrid: '/items/meat', name: 'Meat', countPerHour: 200 }];
+
+            /** The drawn cell for a zone row and column, by header position */
+            function cell(zoneName, colKey) {
+                const headers = [...ui.panel.querySelectorAll('#mwi-csim-results th')].map((th) => th.dataset.col);
+                const index = headers.indexOf(colKey);
+                const rows = [...ui.panel.querySelectorAll('#mwi-csim-results tbody tr')];
+                const row = rows.find((tr) => tr.cells[0].textContent.startsWith(zoneName));
+                return row?.cells[index];
+            }
+
+            test('Profit/day is ranked and drawn at the pace the market pays, marked', async () => {
+                // The fantasy zone: 10,000/hr through loot the market takes a
+                // hundredth of. The honest zone: 1,000/hr of liquid meat.
+                liquidity.throttleByItem['/items/rare_charm'] = 0.01;
+                await ui._displayAllZonesResults(
+                    [
+                        result('Fantasy', { profit: 10_000, dropEntries: thinLoot }),
+                        result('Honest', { profit: 1_000, dropEntries: liquidLoot }),
+                    ],
+                    1,
+                    {}
+                );
+
+                // 10,000 × 0.01 × 24 = 2,400/day, against 24,000/day honest
+                expect(cell('Fantasy', 'profitDay').textContent).toContain('2.4K');
+                expect(cell('Honest', 'profitDay').textContent).toContain('24.0K');
+
+                // The capped cell says so, naming the limiting item; the liquid one is untouched
+                expect(cell('Fantasy', 'profitDay').innerHTML).toContain('vol-capped');
+                expect(cell('Fantasy', 'profitDay').querySelector('span[title]').title).toContain('Rare Charm');
+                expect(cell('Honest', 'profitDay').innerHTML).not.toContain('vol-capped');
+            });
+
+            test('the Score blends the capped Profit/day, not the raw claim', async () => {
+                liquidity.throttleByItem['/items/rare_charm'] = 0.01;
+                await ui._displayAllZonesResults(
+                    [
+                        result('Fantasy', { xp: { defense: 100 }, profit: 10_000, dropEntries: thinLoot }),
+                        result('Honest', { xp: { defense: 100 }, profit: 1_000, dropEntries: liquidLoot }),
+                    ],
+                    1,
+                    {}
+                );
+
+                // Equal XP; on raw profit Fantasy would win the profit ladder
+                // and the Score — capped, it loses both
+                expect(Number(cell('Honest', 'score').textContent)).toBeGreaterThan(
+                    Number(cell('Fantasy', 'score').textContent)
+                );
+                const shown = ui.panel.querySelector('#mwi-csim-results').textContent;
+                expect(shown).toContain('Honestbest profit');
+            });
+
+            test('a liquid run draws no marker anywhere', async () => {
+                await ui._displayAllZonesResults([result('Honest', { profit: 1_000, dropEntries: liquidLoot })], 1, {});
+
+                expect(ui.panel.querySelector('#mwi-csim-results').innerHTML).not.toContain('vol-capped');
+            });
         });
     });
 

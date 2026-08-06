@@ -23,6 +23,7 @@ import {
     loadAllZonesSnapshot,
 } from '../../utils/all-zones-snapshot.js';
 import { formatWithSeparator, formatKMB, parseKMB, timeReadable } from '../../utils/formatters.js';
+import { capProfitRate, liquidityMarkerHtml } from '../../utils/liquidity-cap.js';
 import {
     isSkillingGearItem,
     isAuraAbility,
@@ -689,8 +690,20 @@ export function buildAllZonesSnapshot(zoneResults, options = {}) {
                 zoneHrid: result.zone.zoneHrid || result.zone.hrid || '',
                 zoneName: result.zone.name || '',
                 difficultyTier: result.zone.difficultyTier ?? 0,
+                // Deliberately the sim's raw, uncapped claim: the calibration
+                // surfaces that compare sim-vs-measured read this figure, and a
+                // market-volume cap is a display truth, not a sim truth. The
+                // per-item composition below is what lets a *display* reading
+                // the snapshot apply the cap at rank time.
                 profitPerHour: Number.isFinite(result.revenue?.netPerHour) ? result.revenue.netPerHour : null,
                 xpPerHour: totalXp / simHours,
+                sells: (result.revenue?.dropEntries || [])
+                    .filter((entry) => entry?.itemHrid && Number(entry.countPerHour) > 0)
+                    .map((entry) => ({
+                        itemHrid: entry.itemHrid,
+                        name: entry.name || null,
+                        unitsPerHour: entry.countPerHour,
+                    })),
             };
         })
         .filter((zone) => zone.zoneHrid);
@@ -2415,12 +2428,19 @@ class CombatSimUI {
 
     /**
      * Display all-zones comparison results in a sortable table.
+     *
+     * The Profit columns and the Score built on them are bounded by market
+     * volume before anything is ranked: a zone whose loot the market cannot
+     * absorb is quoted at the pace it can actually be sold, with a marker
+     * saying so. The sim results themselves — and the snapshot they are saved
+     * to — keep the raw claim.
+     *
      * @param {Array<Object>} zoneResults - Array of {zone, simResult, revenue}
      * @param {number} hours - Simulation hours
      * @param {Object} gameData - Game data maps
      * @private
      */
-    _displayAllZonesResults(zoneResults, hours, gameData) {
+    async _displayAllZonesResults(zoneResults, hours, gameData) {
         const container = this.panel?.querySelector('#mwi-csim-results');
         if (!container) return;
 
@@ -2457,8 +2477,33 @@ class CombatSimUI {
                     expenses: r.revenue?.costPerHour || 0,
                     profit: r.revenue?.netPerHour || 0,
                     profitDay: (r.revenue?.netPerHour || 0) * 24,
+                    _sells: (r.revenue?.dropEntries || [])
+                        .filter((entry) => entry?.itemHrid && Number(entry.countPerHour) > 0)
+                        .map((entry) => ({
+                            itemHrid: entry.itemHrid,
+                            name: entry.name || null,
+                            unitsPerHour: entry.countPerHour,
+                        })),
                 };
             });
+
+        // Bound the profit pace before scoring or ranking anything — a Score
+        // blended from an unsellable rate would smuggle the fiction back in.
+        // The cap is display-only: `zoneResults` and the snapshot keep the raw
+        // figures, and a capped row always carries its marker.
+        for (const row of rows) {
+            try {
+                const capped = await capProfitRate({ goldPerHour: row.profit, sells: row._sells });
+                if (capped.capped) {
+                    row.uncappedProfit = row.profit;
+                    row.profit = capped.goldPerHour;
+                    row.profitDay = capped.goldPerHour * 24;
+                    row.liquidityLimit = capped.limit;
+                }
+            } catch (error) {
+                console.error('[CombatSimUI] Bounding a zone row by market volume failed:', error);
+            }
+        }
 
         // The Score and the two winners are decided over the whole run, before
         // any sort or column hiding — neither is a property of the current view
@@ -2563,6 +2608,11 @@ class CombatSimUI {
                             // of anything, so it is never abbreviated
                             display = col.key === 'score' ? String(val ?? 0) : formatKMB(Math.round(val));
                             style += ' text-align:right; font-variant-numeric:tabular-nums;';
+
+                            // A volume-bounded figure is never shown silently
+                            if ((col.key === 'profitDay' || col.key === 'profit') && row.liquidityLimit) {
+                                display += liquidityMarkerHtml(row.liquidityLimit, { compact: true });
+                            }
 
                             // Highlight best value per column in green
                             const isLowerBetter = col.key === 'expenses';
@@ -3462,7 +3512,7 @@ class CombatSimUI {
 
             this._allZonesSortCol = 'profit';
             this._allZonesSortAsc = false;
-            this._displayAllZonesResults(zoneResults, hours, gameData);
+            await this._displayAllZonesResults(zoneResults, hours, gameData);
 
             // Outlives the panel: the ranked action list reads this to put combat
             // zones next to skilling actions long after the results pane is gone
