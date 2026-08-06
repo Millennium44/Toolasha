@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Labyrinth pathing reveals more of the floor on ties
+
+- **Equal-cost routes now prefer the one that uncovers the most unknown rooms**: the path planner minimises shrouds, then grafts every chest reachable without an extra shroud, then minimises torches — but when several routes tied on all of that, it fell back to Dijkstra's arbitrary wall-hugging pick. It now breaks that tie toward the route that reveals the most currently-unknown rooms, via a bonus scaled below a single torch so it can never trade a torch or a shroud for a reveal — the shroud/chest/length result is unchanged, only the choice between otherwise-equal routes.
+
 ### "Guild" is no longer turned into a /profile link
 
 - **The guild-wide broadcast "Guild has reached level N!" stays plain text**: it matched the "&lt;name&gt; has …" announcement shape, so "Guild" was being made a clickable `/profile Guild` link even though it is the guild, not a player. That exact token is now excluded from announcement linking, in both the main chat and the pop-out chat window. Real names are untouched — a player called "GuildMaster" still links.
