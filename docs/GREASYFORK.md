@@ -15,14 +15,15 @@ biggest changes since forking, in rough order of how much they change the game:
   XP, drops, fight boundaries that survive refresh), replay them against the
   simulator, and get a verdict with honest noise bands. Record to N fights, M
   minutes, or a ±% precision target; export everything for sharing.
-- **Upgrade-advisor budget planner and handoffs** — a spending budget and
-  rank-blend scoring across the simulators' upgrade candidates, and per-row
-  handoffs on any result: save the gold for it, watch it, or jump straight to it
-  on the marketplace.
-- **Labyrinth simulator, grown up** — multi-target analysis with combined armor
-  swaps, supply-aware planning (torches/shrouds/beacons from the actual run),
-  skip-level finding, house rooms per fight, and skilling-sim candidates scoped to
-  the skill you're simming.
+- **Sim upgrades grounded in game reality** — the simulators' upgrade candidates
+  costed and ranked on what the game actually charges — live market prices, real
+  credit and material costs, and the constraints the game imposes — with a spending
+  budget and per-row handoffs: save the gold for it, watch it, or jump straight to
+  it on the marketplace.
+- **Labyrinth simulator, grown up** — auto-pathing and auto-beaconing planned from
+  the actual run, the skip level set for you when you open a config to edit,
+  multi-target analysis with combined armor swaps, supply-aware torch/shroud/beacon
+  planning, and skilling-sim candidates scoped to the skill you're simming.
 - **Per-character everything** — market state, sim state, histories, and panel
   layouts scoped per character, with consent-gated adoption of legacy data and
   repair tools. No more iron cow reading the market cow's books.
