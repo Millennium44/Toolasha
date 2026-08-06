@@ -41,11 +41,16 @@
  *
  * The guide gives the *shape* of tier scaling ("higher tiers need more work")
  * but not the curve, and the curve is not in any client data this script can
- * read. So it is measured: {@link estimateGrowthPerTier} fits a per-tier growth
- * factor to whatever tier totals have actually been observed this week, and
- * every projection that needs the next tier's size goes through it. With fewer
- * than two observed tiers there is no fit, the helpers return null, and the
- * panel says it does not know rather than inventing a curve.
+ * read. It has since been pinned down for both trial kinds, exactly, from
+ * observations the rules reproduce to the unit: a skilling tier's pool is the
+ * first tier's work plus a tenth of it per tier ({@link SKILLING_TIER_STEP}),
+ * and a combat tier's boss health scales with `10 + level` (see
+ * `guild-trial-forecast.js`). Both are *ratios* between tiers, so a single
+ * observed tier anchors the whole ladder — {@link exactTierTotal} — and the
+ * fitted growth factor ({@link estimateGrowthPerTier}) survives only as the
+ * fallback for a trial whose kind somehow escapes both rules. With no anchor
+ * and no fit the helpers return null, and the panel says it does not know
+ * rather than inventing a curve.
  *
  * The 1%-per-participant part *is* exact, and is applied separately
  * ({@link participantScale}) so a caller can show the next tier's cost with the
@@ -641,6 +646,108 @@ export function baseWorkFromObservations(observations, participants = 0) {
         return total / byParty / (1 + SKILLING_TIER_STEP * (tier - 1));
     }
     return null;
+}
+
+/**
+ * A tier's total from any known tier's total, by the exact ladder.
+ *
+ * Both trial kinds scale along a curve this codebase has already pinned down
+ * exactly, and both curves are *ratios* between tiers — so one observed
+ * `{tier, total}` anchor is enough to state every other tier, with no fitting:
+ *
+ * - **Skilling**: a pool is `base × (1 + 0.1 × (tier − 1)) × (1 + 0.01 ×
+ *   participants)` (see {@link tierPoolWork}). The participant factor is common
+ *   to every tier, so it cancels in the ratio and never needs to be known here.
+ * - **Combat**: boss health scales with `10 + level` — the `(10 + level)/110`
+ *   rule `guild-trial-forecast.js` derived and confirmed on two live tiers to
+ *   the unit (618,000 → 669,500 is exactly 120 → 130). With `level = 100 +
+ *   10 × (tier − 1)` that factor is `100 + 10 × tier`, and the `/110` cancels.
+ *
+ * The *nearest* anchor is used, as {@link projectTierTotal} does, so an anchor
+ * actually observed at the asked-for tier is returned unchanged. This is what
+ * the pace walk and the next-tier row now run on: the geometric fit it replaces
+ * needed two observed tiers before it would say anything, and overshot even
+ * then — a linear ladder read through a geometric fit drifts on every step.
+ *
+ * @param {Object} input - Inputs
+ * @param {'skilling'|'combat'} input.kind - Which ladder
+ * @param {Array<{tier: number, total: number}>} input.anchors - Tier totals known, any order
+ * @param {number} input.tier - The tier wanted
+ * @returns {number|null} The tier's total, or null without a usable anchor or ladder
+ */
+export function exactTierTotal({ kind, anchors = [], tier } = {}) {
+    if (!Number.isFinite(tier) || tier < 1 || tier > TRIAL_MAX_TIER) return null;
+
+    // Each kind's scaling factor, up to a constant that cancels in the ratio
+    const shape =
+        kind === 'skilling'
+            ? (t) => 1 + SKILLING_TIER_STEP * (t - 1)
+            : kind === 'combat'
+              ? (t) => TRIAL_START_LEVEL + TRIAL_LEVEL_STEP * t
+              : null;
+    if (!shape) return null;
+
+    const usable = (anchors || []).filter(
+        (anchor) =>
+            Number.isFinite(anchor?.tier) &&
+            anchor.tier >= 1 &&
+            anchor.tier <= TRIAL_MAX_TIER &&
+            Number(anchor?.total) > 0
+    );
+    if (!usable.length) return null;
+
+    const anchor = usable.reduce((best, candidate) =>
+        Math.abs(candidate.tier - tier) < Math.abs(best.tier - tier) ? candidate : best
+    );
+    return (Number(anchor.total) * shape(tier)) / shape(anchor.tier);
+}
+
+/**
+ * How close to a whole tier a work-target reading has to land to be believed.
+ *
+ * Tight on purpose. The inputs to {@link tierFromWorkTarget} are a learned base
+ * and a participant count, and a participant count that is off by one moves the
+ * derived tier by roughly 0.1 — so a tolerance below half of that rejects a
+ * miscounted party instead of stating a wrong tier with confidence.
+ */
+export const WORK_LADDER_TIER_TOLERANCE = 0.05;
+
+/**
+ * Which tier a skilling trial is on, from nothing but its bar's target.
+ *
+ * The In Progress tab's card carries the pool and no tier, and the pool's
+ * *target* identifies the tier uniquely once the skill's base work is known:
+ * `target = base × (1 + 0.1 × (tier − 1)) × (1 + 0.01 × participants)`, so
+ * `tier = 1 + (target / (base × (1 + 0.01 × participants)) − 1) / 0.1`. The
+ * crafting base of 40,000 is confirmed across two guilds — 49,920 with 4
+ * participants at T3 and 88,920 with 17 at T10 both back out to it exactly.
+ *
+ * Accepted only when the arithmetic lands within
+ * {@link WORK_LADDER_TIER_TOLERANCE} of a whole tier on the ladder; anything
+ * else returns null and the tier stays honestly unknown.
+ *
+ * @param {Object} input - Inputs
+ * @param {number} input.target - The bar's target (`targetWorkValue` / the `/ max`)
+ * @param {number} input.baseWork - The skill's first-tier work, before participants
+ * @param {number} [input.participants] - Members signed up
+ * @param {number} [input.tolerance] - How far from a whole tier is still that tier
+ * @returns {number|null} The tier, or null when the target fits no tier
+ */
+export function tierFromWorkTarget({
+    target,
+    baseWork,
+    participants = 0,
+    tolerance = WORK_LADDER_TIER_TOLERANCE,
+} = {}) {
+    if (!Number.isFinite(target) || target <= 0) return null;
+    if (!Number.isFinite(baseWork) || baseWork <= 0) return null;
+
+    const byParty = 1 + PARTICIPANT_SCALE_STEP * Math.max(0, Number(participants) || 0);
+    const exactTier = 1 + (target / (baseWork * byParty) - 1) / SKILLING_TIER_STEP;
+    const tier = Math.round(exactTier);
+
+    if (Math.abs(exactTier - tier) > tolerance) return null;
+    return tier >= 1 && tier <= TRIAL_MAX_TIER ? tier : null;
 }
 
 /**

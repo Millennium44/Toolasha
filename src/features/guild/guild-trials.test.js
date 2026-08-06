@@ -273,11 +273,12 @@ describe('analyseTrial', () => {
         expect(analysis.pace).toBeNull();
     });
 
-    test('the pace projection climbs the fitted curve', () => {
-        // Tier 4 cost 500,000 and tier 5 costs 600,000: ×1.2 a tier. The party
-        // does 1,000 damage a millisecond with 100,000 left, so tier 5 takes
-        // 100s, tier 6 (720,000) takes 720s, tier 7 (864,000) takes 864s.
-        // In 900s only tiers 5 and 6 fit.
+    test('the pace projection climbs the exact ladder, anchored on the bar in hand', () => {
+        // The party does 1,000 damage a millisecond with 100,000 left of the
+        // tier in progress (T6, on a 600,000 bar). Combat boss health scales
+        // with 100 + 10 × tier, so from that anchor T7 is 600,000 × 170/160 =
+        // 637,500 and T8 is 675,000. In 900s: 100s + 637.5s fit, T8 does not.
+        // The geometric fit this replaces would have priced T7 at 864,000.
         const analysis = analyseTrial(
             record({
                 samples: [
@@ -293,8 +294,9 @@ describe('analyseTrial', () => {
         );
 
         expect(analysis.rate).toBeCloseTo(1, 9);
-        expect(analysis.pace.clears.map((clear) => clear.tier)).toEqual([6]);
-        expect(analysis.pace.tiersCleared).toBe(6); // four banked plus two projected
+        expect(analysis.pace.clears.map((clear) => clear.tier)).toEqual([6, 7]);
+        expect(analysis.pace.tiersCleared).toBe(7); // five banked plus two projected
+        // The fit is still reported — it is simply no longer what the walk runs on
         expect(analysis.growthPerTier).toBeCloseTo(1.2, 9);
     });
 
@@ -311,7 +313,9 @@ describe('analyseTrial', () => {
         );
 
         expect(analysis.next).toMatchObject({ tier: 7, level: 160 });
-        expect(analysis.next.total).toBeCloseTo(864_000, 3);
+        // The exact combat ladder from the bar in hand — the T6 boss at
+        // 600,000 — not the ×1.2 geometric fit, which said 864,000
+        expect(analysis.next.total).toBeCloseTo(600_000 * (170 / 160), 3);
         expect(analysis.next.participantPenalty).toBeCloseTo(0.21, 12);
     });
 
@@ -1926,6 +1930,29 @@ describe('the panel, end to end', () => {
         expect(tile.personalByTier['10']).toMatchObject({ 'Success Rate': '8.0%' });
     });
 
+    test('the socket-stated tier reaches the panel, not only the observation filing', async () => {
+        // The four-minute "tier not known yet" over a stream stating the tier:
+        // `socketTier` fed `readingTier` and stopped there — the record never
+        // kept it, so the analysis derived its tier from a badge that was not
+        // on screen. It is persisted as `liveTier` now, and the block says the
+        // tier and the tiers banked below it straight off the socket.
+        game.skilling.crafting = {
+            trial: { kind: 'skilling', key: 'crafting', name: 'Crafting' },
+            tier: 3,
+            reading: { current: 3_741, max: 49_920 },
+            personal: {},
+            participantIds: [1, 2, 3, 4],
+            at: now,
+        };
+        const root = buildTab([{ name: 'Crafting', level: '', bar: '' }]);
+        root.querySelectorAll('[class*="ProgressBar_text"]').forEach((el) => el.remove());
+        fire(root);
+
+        expect(guildTrials.record.tiles['skilling::crafting'].liveTier).toBe(3);
+        expect(text()).not.toContain('tier not seen yet');
+        expect(text()).toContain('2 tiers');
+    });
+
     test('a card the game is drawing a bar on keeps its own numbers', async () => {
         game.skilling.crafting = {
             trial: { kind: 'skilling', key: 'crafting', name: 'Crafting' },
@@ -2228,14 +2255,17 @@ describe('the two trial tabs, as the game draws them', () => {
 
     test('a tier observation needs both tabs, and is recorded from both', () => {
         // The total comes off the In Progress bar and the tier off the Trials
-        // card. Requiring one card to carry both means the growth curve is never
-        // fitted and "Next tier work" never appears.
+        // card. Requiring one card to carry both means the ladder is never
+        // anchored and "Next tier work" never appears. The badge counts tiers
+        // *finished* — Alchemy's T6 has 840 pts banked behind it — so the pool
+        // on the In Progress tab is T7's, and that is the tier it files under:
+        // 65,280 is exactly 40,800 × 1.6, the seventh rung of a 40,800 ladder.
         buildTrialsTab();
         fire();
         buildInProgressTab();
         fire();
 
-        expect(guildTrials.record.tiles['skilling::alchemy'].tiers).toContainEqual({ tier: 6, total: 65_280 });
+        expect(guildTrials.record.tiles['skilling::alchemy'].tiers).toContainEqual({ tier: 7, total: 65_280 });
     });
 
     test('the sign-up count off the card is what the panel counts as participants', () => {
@@ -2249,6 +2279,55 @@ describe('the two trial tabs, as the game draws them', () => {
         expect(participantCounts()).toEqual({});
         expect(guildTrials.record.tiles['skilling::alchemy'].signups.signed).toBe(2);
         expect(document.body.textContent).toContain('Trial payout');
+    });
+
+    test('the skill’s base work is learned the moment tier, target and party line up', () => {
+        // Trials tab: Alchemy T6 banked (840 pts), 2 signed up. In Progress:
+        // the T7 pool at 65,280 — which is 40,000 × 1.6 × 1.02, so the base
+        // falls out exactly, and is written down for every later trial
+        buildTrialsTab();
+        fire();
+        buildInProgressTab();
+        fire();
+
+        expect(guildTrials.workBases.alchemy?.baseWork).toBeCloseTo(40_000, 6);
+        expect(game.store.guildTrialsWorkBases?.alchemy?.baseWork).toBeCloseTo(40_000, 6);
+    });
+
+    test('a learned base lets the In Progress tab alone state the tier', async () => {
+        // The user's explicit goal: the live view must know the tier RIGHT
+        // AWAY, without a Trials tab visit. The bar's target is on screen the
+        // whole time, and with the base learned it identifies the tier alone.
+        trialsFeature.cleanup();
+        game.store = {
+            guildTrialsWorkBases: {
+                alchemy: { baseWork: 40_000, tier: 7, target: 65_280, participants: 2, learnedAt: now },
+            },
+        };
+        // The participant count comes from the sign-up sheet when no card has
+        // stated one — the In Progress tab carries none
+        game.members = [
+            {
+                characterID: '1',
+                signupWeekStartAt: game.currentWeek,
+                signedUpSkillingTrialHrid: '/guild_trials/alchemy',
+            },
+            {
+                characterID: '2',
+                signupWeekStartAt: game.currentWeek,
+                signedUpSkillingTrialHrid: '/guild_trials/alchemy',
+            },
+        ];
+        await trialsFeature.initialize();
+
+        buildInProgressTab();
+        fire();
+
+        // The reading files under the tier the target identifies, and the
+        // panel states the tier instead of "tier not seen yet"
+        expect(guildTrials.record.tiles['skilling::alchemy'].tiers).toContainEqual({ tier: 7, total: 65_280 });
+        expect(document.body.textContent).not.toContain('tier not seen yet');
+        expect(document.body.textContent).toContain('6 tiers');
     });
 });
 
@@ -2415,6 +2494,125 @@ describe('the first tier of a running trial', () => {
         expect(started.tier).toBe(6);
         expect(started.tiersClearedSoFar).toBe(0);
         expect(banked.tierSource).toBe('card');
+    });
+});
+
+describe('the tier from the bar alone', () => {
+    // The live trial this was built from: a mid-trial join with the In
+    // Progress view open the whole time — target 49,920 on screen throughout —
+    // and the panel said "tier not known yet" for four minutes, until the
+    // Trials tab was visited. The target identifies the tier by itself once
+    // the skill's base work is known.
+    const midJoin = (max, readings = null) => ({
+        name: 'Crafting',
+        kind: 'skilling',
+        tier: null,
+        samples: readings || [
+            { t: now, readings: [{ current: 1_000, max }] },
+            { t: now + 10_000, readings: [{ current: 5_050, max }] },
+        ],
+        tiers: [],
+    });
+
+    test('a learned base and the bar’s target state the tier, and the tiers banked below it', () => {
+        const analysis = analyseTrial(midJoin(49_920), { participants: 4, phase: 'live', workBase: 40_000 });
+
+        expect(analysis.tier).toBe(3);
+        expect(analysis.tierKnown).toBe(true);
+        expect(analysis.tierSource).toBe('work-ladder');
+        // A trial climbs one tier at a time, so T3 in progress banks two
+        expect(analysis.tiersClearedSoFar).toBe(2);
+    });
+
+    test('the second confirmed guild: 17 participants at T10, same base', () => {
+        const analysis = analyseTrial(midJoin(88_920), { participants: 17, phase: 'live', workBase: 40_000 });
+
+        expect(analysis.tier).toBe(10);
+        expect(analysis.tiersClearedSoFar).toBe(9);
+    });
+
+    test('a target the ladder cannot place stays unknown — and mutes the first-tier rule', () => {
+        // The rule would claim T1, but a known base and a target that fits no
+        // tier is evidence against it, not an absence of evidence
+        const analysis = analyseTrial(midJoin(51_000), { participants: 4, phase: 'live', workBase: 40_000 });
+
+        expect(analysis.tier).toBeNull();
+        expect(analysis.tierKnown).toBe(false);
+    });
+
+    test('without a learned base the first-tier rule stands as before', () => {
+        const analysis = analyseTrial(midJoin(49_920), { participants: 4, phase: 'live' });
+
+        expect(analysis.tier).toBe(1);
+        expect(analysis.tierSource).toBe('first-tier-rule');
+    });
+
+    test('a socket-stated tier reaches the analysis, and outranks the derived rung', () => {
+        // `guild_skilling_updated.tier` states the tier in progress outright;
+        // the store keeps it as `liveTier`. It used to feed only the
+        // observation filing, never the analysis — the "tier not known yet"
+        // panel over a stream stating the tier every second.
+        const analysis = analyseTrial(
+            { ...midJoin(49_920), liveTier: 3 },
+            { participants: 4, phase: 'live', timeLeftMs: 30 * 60_000 }
+        );
+
+        expect(analysis.tier).toBe(3);
+        expect(analysis.tierSource).toBe('socket');
+        expect(analysis.tiersClearedSoFar).toBe(2);
+    });
+
+    test('the banked caption says the tier was derived from the work total', () => {
+        const analysis = analyseTrial(midJoin(49_920), { participants: 4, phase: 'live', workBase: 40_000 });
+        const html = renderTrialBlock(analysis, 4, { measured: false, reason: 'none' }, { phase: 'live' });
+
+        expect(html).toContain('derived from the tier’s work total');
+        expect(html).not.toContain('tier not seen yet');
+    });
+
+    test('the observed trial end to end: known at once, and paced far past T3', () => {
+        // The fixture as the screen showed it 90 seconds before the tier
+        // cleared: 41,385 / 49,920, filling at 405 work/s, 54m45s left
+        const analysis = analyseTrial(
+            midJoin(49_920, [
+                { t: now, readings: [{ current: 37_335, max: 49_920 }] },
+                { t: now + 10_000, readings: [{ current: 41_385, max: 49_920 }] },
+            ]),
+            { participants: 4, phase: 'live', timeLeftMs: 54.75 * 60_000, workBase: 40_000 }
+        );
+
+        expect(analysis.tier).toBe(3);
+        expect(analysis.tiersClearedSoFar).toBe(2);
+        expect(analysis.rate * 1000).toBeCloseTo(405, 9);
+        // The exact ladder from the bar in hand: T4 is 49,920 × 1.3 / 1.2 —
+        // not the 59.0K a misfiled observation once produced
+        expect(analysis.next.total).toBeCloseTo(54_080, 6);
+        // The walk clears most of the ladder instead of stopping at T3
+        expect(analysis.pace.limitedBy).toBe('time');
+        expect(analysis.pace.tiersCleared).toBe(18);
+        expect(analysis.pace.finalTier).toBe(18);
+
+        const html = renderTrialBlock(analysis, 4, { measured: false, reason: 'none' }, { phase: 'live' });
+        expect(html).toContain('18 tiers → T18 (Lv.270)');
+        expect(html).toContain('Next tier work (T4)');
+        expect(html).toContain('54.1K');
+        expect(html).toContain('2 tiers');
+    });
+
+    test('a walk still cut short by an unknown ladder reads “at least”, never a verdict', () => {
+        const analysis = analyseTrial(
+            midJoin(49_920, [
+                { t: now, readings: [{ current: 37_335, max: 49_920 }] },
+                { t: now + 10_000, readings: [{ current: 41_385, max: 49_920 }] },
+            ]),
+            { participants: 4, phase: 'live', timeLeftMs: 54.75 * 60_000, workBase: 40_000 }
+        );
+        analysis.pace.limitedBy = 'unknown-next-tier';
+        analysis.pace.tiersCleared = 3;
+        const html = renderTrialBlock(analysis, 4, { measured: false, reason: 'none' }, { phase: 'live' });
+
+        expect(html).toContain('at least 3 tiers → T3');
+        expect(html).toContain('ladder past that tier is not known');
     });
 });
 

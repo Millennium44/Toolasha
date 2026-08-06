@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The trials panel knows its tier immediately, and the pace projection stops lowballing
+
+- **The In Progress tab now identifies the tier on its own**: the live tab draws no status header, so the panel used to sit on "tier not known yet" until you visited the Trials tab. The tier now comes from a four-rung ladder — the card's badge, the socket's stated tier (now actually persisted instead of dropped on the floor), the work-target arithmetic (a skilling bar's target uniquely identifies its tier once the skill's base work is known — the crafting base of 40,000 is confirmed exact across two guilds), and the first-tier rule last. Each rung labels itself in the panel caption.
+- **Pace projections walk the exact ladder instead of a fitted curve**: both trial kinds scale by known ratios — skilling pools by `1 + 0.1×(tier−1)`, combat boss health by `100 + 10×tier` — so a single observed tier anchors every other tier's total exactly. The old geometric fit needed two observed tiers before it would say anything (mid-join with one tier seen, it stopped the walk and printed "3 tiers → T3" when the true pace was ~T18) and drifted even with two. When the next tier genuinely can't be priced, the caption now says "at least N tiers" instead of presenting the floor as the estimate.
+- **Live pool observations file under the tier being fought, not the stale badge**: a pool sampled mid-tier used to be recorded against the last banked tier, poisoning the learned base (the "59.0K next tier" figure reproduced exactly from that misfiling). Skill work bases are learned once from a stated-tier reading and shared across guilds, since the base is the game's constant, not the guild's.
+
 ### Release housekeeping
 
 - **The userscript header catches up to 2.90.0**: the release PR merged before the version-sync automation could stamp it, so the 2.90.0 build shipped labelled `@version 2.89.0` and update checkers never saw a new version. Headers, README, and the runtime version string now say 2.90.0, and a corrected build replaces the mislabelled one on the releases branch.

@@ -23,6 +23,7 @@ import {
     eligibleMemberTokens,
     estimateGrowthPerTier,
     etaMs,
+    exactTierTotal,
     guildPoints,
     levelFromTier,
     msUntilWeekReset,
@@ -38,6 +39,7 @@ import {
     interpretCardPoints,
     tierPoolWork,
     tierFromLevel,
+    tierFromWorkTarget,
     tierMarginalPoints,
     totalBasePoints,
     trailingRun,
@@ -347,6 +349,124 @@ describe('the skilling pool ladder', () => {
         // Geometric growth would give 40,000 × 1.1² = 48,400 at tier three; the
         // game gives 48,000, which is the linear rule
         expect(tierPoolWork({ baseWork: 40_000, tier: 3 })).toBeCloseTo(48_000, 6);
+    });
+});
+
+describe('the exact tier ladder, from one anchor', () => {
+    // Both kinds' curves are ratios between tiers, so one observed {tier,
+    // total} states every other tier — no fitting, and the participant factor
+    // cancels without ever being known
+    test('the live-trial fixture: T3 at 49,920 puts T4 at 54,080 exactly', () => {
+        // 49,920 × 1.3 / 1.2 — the panel's own "59.0K" came from an observation
+        // filed one tier low and can never come back
+        expect(exactTierTotal({ kind: 'skilling', anchors: [{ tier: 3, total: 49_920 }], tier: 4 })).toBeCloseTo(
+            54_080,
+            6
+        );
+    });
+
+    test('the combat ladder reproduces the recorded run to the unit', () => {
+        // The T2 boss read 618,000 and the T3 boss 669,500 — exactly 120 → 130
+        // of the (10 + level) rule
+        expect(exactTierTotal({ kind: 'combat', anchors: [{ tier: 2, total: 618_000 }], tier: 3 })).toBeCloseTo(
+            669_500,
+            6
+        );
+        expect(exactTierTotal({ kind: 'combat', anchors: [{ tier: 3, total: 669_500 }], tier: 2 })).toBeCloseTo(
+            618_000,
+            6
+        );
+    });
+
+    test('an anchor at the asked-for tier is returned unchanged', () => {
+        expect(exactTierTotal({ kind: 'skilling', anchors: [{ tier: 3, total: 49_920 }], tier: 3 })).toBe(49_920);
+    });
+
+    test('the nearest anchor wins, so a poisoned old observation cannot outvote the bar in hand', () => {
+        // A misfiled (1, 49,920) beside the live (3, 49,920): every projection
+        // above T2 anchors on the live reading
+        const anchors = [
+            { tier: 1, total: 49_920 },
+            { tier: 3, total: 49_920 },
+        ];
+        expect(exactTierTotal({ kind: 'skilling', anchors, tier: 4 })).toBeCloseTo(54_080, 6);
+    });
+
+    test('no anchors, an unknown kind, or a tier off the ladder is null', () => {
+        expect(exactTierTotal({ kind: 'skilling', anchors: [], tier: 4 })).toBeNull();
+        expect(exactTierTotal({ kind: 'mystery', anchors: [{ tier: 3, total: 49_920 }], tier: 4 })).toBeNull();
+        expect(exactTierTotal({ kind: 'skilling', anchors: [{ tier: 3, total: 49_920 }], tier: 0 })).toBeNull();
+        expect(exactTierTotal({ kind: 'skilling', anchors: [{ tier: 3, total: 49_920 }], tier: 99 })).toBeNull();
+        expect(exactTierTotal({ kind: 'skilling', anchors: [{ tier: 99, total: 1 }], tier: 4 })).toBeNull();
+    });
+});
+
+describe('the tier a work target identifies', () => {
+    test('the two confirmed guilds both back out to base 40,000, and back in to their tiers', () => {
+        // Learning: 49,920 = 40,000 × 1.2 × 1.04 (T3, 4 participants) and
+        // 88,920 = 40,000 × 1.9 × 1.17 (T10, 17 participants)
+        expect(baseWorkFromObservations([{ tier: 3, total: 49_920 }], 4)).toBeCloseTo(40_000, 6);
+        expect(baseWorkFromObservations([{ tier: 10, total: 88_920 }], 17)).toBeCloseTo(40_000, 6);
+
+        // Inference: the same two targets identify their tiers from the base
+        expect(tierFromWorkTarget({ target: 49_920, baseWork: 40_000, participants: 4 })).toBe(3);
+        expect(tierFromWorkTarget({ target: 88_920, baseWork: 40_000, participants: 17 })).toBe(10);
+    });
+
+    test('a target that fits no whole tier is null, never the nearest guess', () => {
+        expect(tierFromWorkTarget({ target: 51_000, baseWork: 40_000, participants: 4 })).toBeNull();
+        // A missing participant count moves the arithmetic well off a whole
+        // tier, which is the rejection doing its job
+        expect(tierFromWorkTarget({ target: 49_920, baseWork: 40_000, participants: 0 })).toBeNull();
+    });
+
+    test('unusable input is null', () => {
+        expect(tierFromWorkTarget({ target: 0, baseWork: 40_000, participants: 4 })).toBeNull();
+        expect(tierFromWorkTarget({ target: 49_920, baseWork: 0, participants: 4 })).toBeNull();
+        expect(tierFromWorkTarget({ target: 49_920, baseWork: null, participants: 4 })).toBeNull();
+        expect(tierFromWorkTarget({})).toBeNull();
+    });
+
+    test('a tier off the ladder is refused even when the arithmetic is whole', () => {
+        // base × (1 + 0.1 × 21) is "tier 22", which does not exist
+        expect(tierFromWorkTarget({ target: 40_000 * 3.1, baseWork: 40_000, participants: 0 })).toBeNull();
+    });
+});
+
+describe('the pace walk on the exact ladder — the live-trial regression', () => {
+    test('a mid-trial join at T3 clears far past T3, not “3 tiers”', () => {
+        // The observed fixture: 405 work/s, 8,535 left of T3's 49,920, and
+        // 54m45s on the clock. The starved walk reported "3 tiers → T3"; the
+        // trial then cleared far beyond it.
+        const anchors = [{ tier: 3, total: 49_920 }];
+        const rate = 405 / 1000; // per millisecond
+        const timeLeftMs = 54.75 * 60_000;
+
+        // The expected final tier, computed from the ladder here rather than
+        // read back out of the code under test
+        let expected = 3;
+        let workBudget = timeLeftMs * rate - 8_535;
+        for (let tier = 4; tier <= TRIAL_MAX_TIER; tier += 1) {
+            const cost = (49_920 * (1 + 0.1 * (tier - 1))) / 1.2;
+            if (workBudget < cost) break;
+            workBudget -= cost;
+            expected = tier;
+        }
+        // The point of the regression: the hour clears most of the ladder
+        expect(expected).toBeGreaterThan(10);
+
+        const pace = projectPace({
+            currentTier: 3,
+            remainingInTier: 8_535,
+            rate,
+            timeLeftMs,
+            totalForTier: (tier) => exactTierTotal({ kind: 'skilling', anchors, tier }),
+            tiersAlreadyCleared: 2,
+        });
+
+        expect(pace.limitedBy).toBe('time');
+        expect(pace.finalTier).toBe(expected);
+        expect(pace.tiersCleared).toBe(2 + (expected - 3) + 1);
     });
 });
 

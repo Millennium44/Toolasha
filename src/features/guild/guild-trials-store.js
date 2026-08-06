@@ -262,6 +262,13 @@ export function recordTileSample(record, tile, at) {
         kind: tile?.kind || existing.kind,
         level: Number.isFinite(tile?.level) ? tile.level : existing.level,
         tier: Number.isFinite(tile?.tier) ? tile.tier : existing.tier,
+        // The tier the socket stated for the trial *in progress*
+        // (`guild_skilling_updated.tier`), kept apart from `tier` because the
+        // two count different things: the badge counts tiers finished. Without
+        // this the socket's own statement reached the observation filing and
+        // never the analysis, and the panel said "tier not known yet" over a
+        // stream that was stating the tier several times a second.
+        liveTier: Number.isFinite(tile?.socketTier) ? tile.socketTier : existing.liveTier,
         // Both come off the Trials tab and are absent from the In Progress one,
         // so a card that does not carry them must not erase what the other tab
         // already said
@@ -366,6 +373,7 @@ export function mergeTrialRecords(base, incoming) {
             personalByTier: { ...(staler.personalByTier || {}), ...(fresher.personalByTier || {}) },
             level: Number.isFinite(fresher.level) ? fresher.level : existing.level,
             tier: Number.isFinite(fresher.tier) ? fresher.tier : existing.tier,
+            liveTier: Number.isFinite(fresher.liveTier) ? fresher.liveTier : staler.liveTier,
             // Carried across rather than dropped. Both come off the Trials tab
             // and only ever off the Trials tab, and the merge that runs when the
             // guild's name arrives happens on a record built from whichever tab
@@ -576,6 +584,56 @@ export async function saveTrialRecord(guildName, record, characterId = null, { g
         return true;
     } catch (error) {
         console.error('[GuildTrialsStore] Failed to save trial samples:', error);
+        return false;
+    }
+}
+
+// ─── Learned work bases ─────────────────────────────────────────────────────
+
+/**
+ * The key the learned per-skill work bases live under.
+ *
+ * Deliberately **not** scoped by guild or character, unlike the trial records
+ * above, and the exception is earned rather than an oversight: a skill's base
+ * work is a property of the game's ladder, not of anyone's guild. The crafting
+ * base of 40,000 is confirmed across two different guilds — 49,920 with 4
+ * participants at T3 in one, 88,920 with 17 at T10 in another, both exactly
+ * `40,000 × (1 + 0.1 × (tier − 1)) × (1 + 0.01 × participants)` — so a base
+ * learned watching one guild's trial is precisely what identifies the tier in
+ * the next guild's. Scoping it would relearn a constant per guild and leave a
+ * mid-trial join blind in every guild the player had not taught it in yet.
+ *
+ * Still under the `guildTrials` prefix, so {@link clearTrialStorage} — the
+ * escape hatch — takes it with everything else.
+ */
+const WORK_BASES_KEY = `${KEY_PREFIX}WorkBases`;
+
+/**
+ * The learned first-tier work per skill.
+ * @returns {Promise<Object<string, {baseWork: number, tier: number, target: number,
+ *   participants: number, learnedAt: number}>>} Skill key (`crafting`) → what was learned
+ */
+export async function loadWorkBases() {
+    try {
+        const held = await storage.get(WORK_BASES_KEY, STORE_NAME, null);
+        return held && typeof held === 'object' && !Array.isArray(held) ? held : {};
+    } catch (error) {
+        console.error('[GuildTrialsStore] Failed to load the learned work bases:', error);
+        return {};
+    }
+}
+
+/**
+ * Write the learned work bases down.
+ * @param {Object} bases - The map {@link loadWorkBases} returns
+ * @returns {Promise<boolean>} True when the write was queued
+ */
+export async function saveWorkBases(bases) {
+    try {
+        await storage.set(WORK_BASES_KEY, bases || {}, STORE_NAME);
+        return true;
+    } catch (error) {
+        console.error('[GuildTrialsStore] Failed to save the learned work bases:', error);
         return false;
     }
 }

@@ -22,10 +22,19 @@
  * are persisted: a player who checks the tab twice a minute should not restart
  * the measurement each time.
  *
- * **Tier growth is fitted.** Projecting the tier after the current one needs the
- * curve the totals grow along, which is likewise not in client data. It is
- * fitted from the tiers this trial has actually shown — so it appears only once
- * a second tier has been seen, and says so until then.
+ * **Tier growth is exact, anchored on one observation.** Projecting the tier
+ * after the current one needs the curve the totals grow along, which is not in
+ * client data — but both kinds' curves are now known exactly (`exactTierTotal`:
+ * a tenth of the first tier's work per skilling tier, `10 + level` for a combat
+ * boss), and they are ratios, so the bar in hand anchors the whole ladder. The
+ * fitted growth factor survives only as a fallback.
+ *
+ * **A skilling tier can be known from its bar alone.** The bar's target is
+ * `base × (1 + 0.1 × (tier − 1)) × (1 + 0.01 × participants)`, and the base is
+ * learned per skill the first time a stated tier, the target and the
+ * participant count are on screen together — after which a mid-trial join on
+ * the In Progress tab, which carries no tier at all, still knows which tier it
+ * is watching (`tierFromWorkTarget`, `tierSource: 'work-ladder'`).
  *
  * **Tiers cleared is inferred from the tier on screen.** A trial starts at tier
  * 1 and climbs one at a time, so a trial showing tier 7 has banked six. This is
@@ -108,6 +117,7 @@ import {
     combatDamageRate,
     estimateGrowthPerTier,
     etaMs,
+    exactTierTotal,
     inferBuildersHallBonus,
     levelFromTier,
     nextTierPreview,
@@ -116,7 +126,7 @@ import {
     projectTierTotal,
     ratePerMs,
     participantScale,
-    tierPoolWork,
+    tierFromWorkTarget,
     trialBankedBasePoints,
     trialWeekStart,
 } from './guild-trials-math.js';
@@ -145,12 +155,14 @@ import {
     archiveCycle,
     emptyRecord,
     loadTrialRecord,
+    loadWorkBases,
     mergeTrialRecords,
     purgeLegacyTrialRecord,
     readPayoutBonuses,
     recordProvenance,
     recordTileSample,
     saveTrialRecord,
+    saveWorkBases,
     tileKey,
 } from './guild-trials-store.js';
 import { FOREIGN_CYCLE_REASON, pastWeekLine, summariseArchivedCycle } from './guild-trial-history.js';
@@ -174,6 +186,16 @@ const FIRST_TIER = 1;
  */
 const SPECTATED_POOL_FRESH_MS = 10_000;
 
+/**
+ * How old a bar reading may be and still teach a skill's base work.
+ *
+ * The record's last target survives tab switches, and a tier that cleared
+ * while the tab was shut would pair the *old* target with the *new* badge —
+ * a wrong base learned once states wrong tiers with confidence from then on.
+ * Fifteen seconds matches the skilling stream's own freshness window.
+ */
+const WORK_BASE_LEARN_FRESH_MS = 15_000;
+
 const ACCENT = '#8fd3ff';
 const DIM = '#9ca3af';
 const GOOD = '#4ade80';
@@ -191,6 +213,7 @@ const WARN = '#f0a830';
  * @param {number|null} [options.timeLeftMs] - Active time left in the trial
  * @param {number|null} [options.buildersHallBonus] - Builders Hall bonus fraction, for reading the card's points
  * @param {string|null} [options.phase] - `scheduled`, `live` or `completed`, for the first-tier rule
+ * @param {number|null} [options.workBase] - The skill's learned first-tier work, for the work-ladder tier rung
  * @returns {{kind: string, tier: number|null, level: number|null, tiersClearedSoFar: number,
  *   rate: number|null, rateNote: string|null, remaining: number|null, total: number|null,
  *   etaMs: number|null, growthPerTier: number|null, next: Object|null, pace: Object|null,
@@ -198,7 +221,7 @@ const WARN = '#f0a830';
  */
 export function analyseTrial(
     record,
-    { participants = 0, timeLeftMs = null, buildersHallBonus = null, phase = null } = {}
+    { participants = 0, timeLeftMs = null, buildersHallBonus = null, phase = null, workBase = null } = {}
 ) {
     const samples = Array.isArray(record?.samples) ? record.samples : [];
     const kind = record?.kind === 'combat' ? 'combat' : 'skilling';
@@ -244,17 +267,65 @@ export function analyseTrial(
     const statedZero = record?.points === 0;
     const earned = statedPoints || record?.points > 0 || (completed && !statedZero);
     const assumeFirst = phase === 'live' && badge === null && !earned;
-
-    // The tier being fought, which is what a rate, a pace and a forecast are about
-    const tier = badge !== null ? (completed || !earned ? badge : badge + 1) : assumeFirst ? FIRST_TIER : null;
-    // What it has finished, which is what the payout is about
-    const bankedTiers = badge !== null && earned ? badge : 0;
     const observations = Array.isArray(record?.tiers) ? record.tiers : [];
 
     const history = samples.map((sample) => sample?.readings || []);
     const { bossIndex, poolIndex } = classifyReadings(history, kind);
     const index = kind === 'combat' ? bossIndex : poolIndex;
     const direction = kind === 'combat' ? -1 : 1;
+
+    // Read ahead of the tier because the tier may now be derived *from* it: the
+    // bar's target is the one thing the In Progress card does carry
+    const latest = index === null ? null : samples[samples.length - 1]?.readings?.[index] || null;
+    const total = Number.isFinite(latest?.max) ? latest.max : null;
+    const remaining = latest ? (direction === -1 ? latest.current : Math.max(0, latest.max - latest.current)) : null;
+
+    // The tier being fought, which is what a rate, a pace and a forecast are
+    // about — from the best of four rungs, each labelled so a caption can say
+    // where the number came from:
+    //
+    // 1. **The badge** ('card'), read as the comment above explains it.
+    // 2. **The socket** ('socket'): `guild_skilling_updated.tier` states the
+    //    tier in progress outright, and the store keeps it as `liveTier`. It
+    //    used to feed only the observation filing, never this — so the panel
+    //    said "tier not known yet" over a stream stating the tier every second.
+    //    Both count climbs; where both exist the larger is the fresher.
+    // 3. **The work ladder** ('work-ladder'): the bar's target identifies the
+    //    tier once the skill's base work has been learned — see
+    //    `tierFromWorkTarget`. This is what makes a mid-trial join on the In
+    //    Progress tab knowable without ever opening the Trials tab.
+    // 4. **The first-tier rule** ('first-tier-rule'), as before.
+    const fromBadge = badge !== null ? (completed || !earned ? badge : badge + 1) : null;
+    const fromSocket = !completed && Number.isFinite(record?.liveTier) ? record.liveTier : null;
+    const fromWorkLadder =
+        !completed && kind === 'skilling' && fromBadge === null && fromSocket === null
+            ? tierFromWorkTarget({ target: total, baseWork: workBase, participants })
+            : null;
+
+    let tier = null;
+    let tierSource = null;
+    if (fromBadge !== null || fromSocket !== null) {
+        tier = Math.max(fromBadge ?? -Infinity, fromSocket ?? -Infinity);
+        tierSource = fromBadge !== null && tier === fromBadge ? 'card' : 'socket';
+    } else if (fromWorkLadder !== null) {
+        tier = fromWorkLadder;
+        tierSource = 'work-ladder';
+    } else if (assumeFirst && !(kind === 'skilling' && Number.isFinite(workBase) && Number.isFinite(total))) {
+        // The first-tier rule stands down when the work ladder has actively
+        // contradicted it: a known base and a target that fits no tier is not
+        // a trial provably on tier one, whatever the rule would like to assume
+        tier = FIRST_TIER;
+        tierSource = 'first-tier-rule';
+    }
+
+    // What it has finished, which is what the payout is about. A trial climbs
+    // one tier at a time from the first, so a stated or derived tier in
+    // progress banks everything below it — that is how "Banked 2 tiers" is
+    // known on a mid-trial join whose cards were never on screen.
+    let bankedTiers = badge !== null && earned ? badge : 0;
+    if ((tierSource === 'socket' || tierSource === 'work-ladder') && Number.isFinite(tier)) {
+        bankedTiers = Math.max(bankedTiers, tier - 1);
+    }
 
     // Everything downstream of the tier — what is banked, what the payout is
     // worth, whether a pace can be walked — is unavailable rather than zero when
@@ -270,9 +341,9 @@ export function analyseTrial(
         kind,
         tier,
         tierKnown,
-        // Where the tier came from, so a caption can say "assumed" rather than
-        // implying the panel stated it
-        tierSource: badge !== null ? 'card' : assumeFirst ? 'first-tier-rule' : null,
+        // Where the tier came from, so a caption can say "assumed" or "derived
+        // from the tier's work total" rather than implying the panel stated it
+        tierSource,
         completed,
         // The card's own "840 pts", where it has been seen. It is Guild Points
         // rather than base points — see `trialBankedBasePoints` — so the Builders
@@ -303,10 +374,6 @@ export function analyseTrial(
     };
 
     if (index === null) return base;
-
-    const latest = samples[samples.length - 1]?.readings?.[index] || null;
-    const total = Number.isFinite(latest?.max) ? latest.max : null;
-    const remaining = latest ? (direction === -1 ? latest.current : Math.max(0, latest.max - latest.current)) : null;
 
     const growthPerTier = base.growthPerTier;
 
@@ -341,30 +408,38 @@ export function analyseTrial(
         rate = ratePerMs(series, direction);
     }
 
-    // The next tier's size. For a skilling trial the ladder is now derived from
-    // the rule the observed pools reproduce exactly, so a preview no longer
-    // waits for a second tier to be seen
-    const derivedNext =
-        kind === 'skilling' && Number.isFinite(tier)
-            ? tierPoolWork({
-                  baseWork: baseWorkFromObservations(observations, participants),
-                  tier: tier + 1,
-                  participants,
-              })
-            : null;
-    const fitted = Number.isFinite(tier) ? nextTierPreview({ observations, currentTier: tier, participants }) : null;
-    const next =
-        fitted ||
-        (Number.isFinite(derivedNext) && tier + 1 <= TRIAL_MAX_TIER
-            ? {
-                  tier: tier + 1,
-                  level: levelFromTier(tier + 1),
-                  total: derivedNext,
-                  participantPenalty: participantScale(participants) - 1,
-                  growthPerTier: null,
-              }
-            : null);
+    // Every tier total this trial has shown, plus the bar in hand: the live
+    // target is the one anchor a player who never opens the Trials tab has,
+    // and `observations` may still be empty when nothing has banked while
+    // watched. One anchor is all the exact ladder needs.
+    const anchors =
+        Number.isFinite(tier) && Number.isFinite(total) && total > 0
+            ? [...observations, { tier, total }]
+            : observations;
 
+    // The next tier's size, off the exact ladder first — both kinds' curves are
+    // known exactly, so a preview no longer waits for a fit — with the fitted
+    // growth kept only as the fallback for a trial neither rule covers
+    const exactNext =
+        Number.isFinite(tier) && tier + 1 <= TRIAL_MAX_TIER ? exactTierTotal({ kind, anchors, tier: tier + 1 }) : null;
+    const next = Number.isFinite(exactNext)
+        ? {
+              tier: tier + 1,
+              level: levelFromTier(tier + 1),
+              total: exactNext,
+              participantPenalty: participantScale(participants) - 1,
+              growthPerTier: null,
+          }
+        : Number.isFinite(tier)
+          ? nextTierPreview({ observations, currentTier: tier, participants })
+          : null;
+
+    // The pace walks the same ladder the next-tier row states, so the two can
+    // never disagree. The fitted-growth walk this replaces starved with fewer
+    // than two observed tiers: it stopped after the tier in hand with
+    // `limitedBy: 'unknown-next-tier'`, and "2 banked + the tier in hand" was
+    // then presented as a time verdict — a live trial that cleared far past T3
+    // had been captioned "On pace for 3 tiers → T3".
     const pace =
         Number.isFinite(tier) && Number.isFinite(remaining) && Number.isFinite(timeLeftMs)
             ? projectPace({
@@ -372,7 +447,9 @@ export function analyseTrial(
                   remainingInTier: remaining,
                   rate,
                   timeLeftMs,
-                  totalForTier: (candidate) => projectTierTotal({ observations, tier: candidate, growthPerTier }),
+                  totalForTier: (candidate) =>
+                      exactTierTotal({ kind, anchors, tier: candidate }) ??
+                      projectTierTotal({ observations, tier: candidate, growthPerTier }),
                   tiersAlreadyCleared: base.tiersClearedSoFar,
               })
             : null;
@@ -617,6 +694,34 @@ export function tokenPayoutLine(tokens, baseTitle) {
 }
 
 /**
+ * Where the tier figure came from, as a caption sentence.
+ *
+ * The tier drives everything on the block — the pace, the ladder, the banked
+ * count — and three of its four sources are inference rather than something the
+ * game wrote on this card. A caption that implies the panel stated it is
+ * claiming more than is known, so each rung says what it is.
+ *
+ * @param {Object} analysis - From {@link analyseTrial}
+ * @returns {string} A sentence to append to a tooltip, or an empty string
+ */
+function tierProvenance(analysis) {
+    if (analysis.tierSource === 'work-ladder') {
+        return (
+            ' The tier is derived from the tier’s work total: the bar’s target uniquely ' +
+            'identifies the tier once the skill’s base work is known, and this skill’s has ' +
+            'been learned from an earlier reading.'
+        );
+    }
+    if (analysis.tierSource === 'socket') {
+        return ' The tier was stated outright by the game’s own trial update on the socket.';
+    }
+    if (analysis.tierSource === 'first-tier-rule') {
+        return ' The tier is assumed: every trial starts at tier 1, and nothing has said otherwise.';
+    }
+    return '';
+}
+
+/**
  * What the trial has banked, as one row.
  *
  * Pulled out because all three phases want it and nothing else about them is
@@ -659,7 +764,7 @@ function bankedRow(analysis) {
             'Banked',
             `nothing yet — tier ${analysis.tier} in progress`,
             DIM,
-            'A trial starts at tier 1, so nothing is banked until the first tier completes.'
+            'A trial starts at tier 1, so nothing is banked until the first tier completes.' + tierProvenance(analysis)
         );
     }
 
@@ -672,9 +777,13 @@ function bankedRow(analysis) {
             ? 'This trial is over, so the tier on the card is the tier it reached — and the points it ' +
                   'states are the ladder’s total for exactly that many tiers, which is what makes this ' +
                   'figure exact rather than inferred.'
-            : 'The tier on the card counts what this trial has *finished* — it read T1 after the first ' +
-                  'tier cleared and T2 after the second, while the pool on screen was the next one along. ' +
-                  'So the tier being fought is one past the badge.'
+            : analysis.tierSource === 'card'
+              ? 'The tier on the card counts what this trial has *finished* — it read T1 after the first ' +
+                'tier cleared and T2 after the second, while the pool on screen was the next one along. ' +
+                'So the tier being fought is one past the badge.'
+              : 'A trial climbs one tier at a time from the first, so everything below the tier in ' +
+                'progress is banked.' +
+                tierProvenance(analysis)
     );
 }
 
@@ -865,11 +974,15 @@ export function renderTrialBlock(
         const projected = analysis.pace.tiersCleared;
         const level = levelFromTier(projected);
         const tiers = `${projected} tier${projected === 1 ? '' : 's'}`;
+        const target = projected ? ` → T${projected}${level ? ` (Lv.${level})` : ''}` : '';
 
-        if (analysis.pace.limitedBy === 'unknown-next-tier') return `${tiers} (next tier's size unknown)`;
+        // A walk cut short by an unknown ladder is a floor, never a verdict: it
+        // used to render "3 tiers → T3" for a walk that had merely run out of
+        // ladder to climb, and the trial then cleared far past T3
+        if (analysis.pace.limitedBy === 'unknown-next-tier') return `at least ${tiers}${target}`;
         // Nothing finished is nothing to point at
         if (!projected) return tiers;
-        return `${tiers} → T${projected}${level ? ` (Lv.${level})` : ''}`;
+        return `${tiers}${target}`;
     };
 
     if (analysis.pace && (!forecast || forecast.tier === null || slowdown)) {
@@ -880,6 +993,10 @@ export function renderTrialBlock(
                 analysis.pace.limitedBy === 'ladder' ? GOOD : WARN,
                 'The rate measured now, held flat for the rest of the hour. A tier only counts when it fits ' +
                     'whole.' +
+                    (analysis.pace.limitedBy === 'unknown-next-tier'
+                        ? '\nThe ladder past that tier is not known yet, so the walk stopped there — “at ' +
+                          'least”, because the real pace may be higher.'
+                        : '') +
                     (slowdown ? '\nThis one ignores the slowdown below, which is why it is the higher of the two.' : '')
             )
         );
@@ -934,14 +1051,17 @@ export function renderTrialBlock(
                 DIM,
                 (analysis.next.growthPerTier
                     ? `Fitted from the tiers seen this week (×${analysis.next.growthPerTier.toFixed(2)} per tier). `
-                    : 'Derived: each tier adds a tenth of the first tier’s work, which is what the pools ' +
-                      'observed on a live trial do exactly. ') +
+                    : analysis.kind === 'combat'
+                      ? 'Derived: boss health scales with the tier’s level, a rule the recorded tiers ' +
+                        'reproduce exactly, anchored on the total this trial has actually shown. '
+                      : 'Derived: each tier adds a tenth of the first tier’s work, which is what the pools ' +
+                        'observed on a live trial do exactly, anchored on the total this trial has shown. ') +
                     `${participants} participant${participants === 1 ? '' : 's'} already add ` +
                     `+${Math.round(analysis.next.participantPenalty * 100)}% to it.`
             )
         );
     } else if (Number.isFinite(analysis.tier) && analysis.tier < TRIAL_MAX_TIER) {
-        rows.push(line('Next tier', 'needs a second tier to fit the curve', DIM));
+        rows.push(line('Next tier', 'needs one tier’s total to anchor the ladder', DIM));
     }
 
     rows.push(bankedRow(analysis));
@@ -1213,6 +1333,12 @@ class GuildTrials {
         this.phase = null;
         /** The last combat forecast, for the per-player panel to echo */
         this.lastForecast = null;
+        /**
+         * Learned first-tier work per skill, `{crafting: {baseWork, …}}`.
+         * Game-wide rather than per guild — the base is the ladder's, confirmed
+         * across guilds — so a character switch does not drop it.
+         */
+        this.workBases = {};
         /** The spectated pool this render is working from, and its encounter */
         this.watchedPool = null;
         /** How strong a claim the card that owns the guild-report context has */
@@ -1304,6 +1430,10 @@ class GuildTrials {
         });
         this.record = mergeTrialRecords(stored, this.record);
         this._publishTrialNames();
+
+        // Merged under whatever a tick learned while the read was in flight, so
+        // a base observed seconds after startup is not thrown away by the load
+        this.workBases = { ...(await loadWorkBases()), ...this.workBases };
 
         await guildLoadoutCapture.initialize();
     }
@@ -1560,6 +1690,9 @@ class GuildTrials {
             // is about — and is asked once per card rather than once per render
             this.watchedPool = watched;
             this.contextRank = 0;
+            // Needed inside the sampling loop as well as the drawing one: the
+            // work-ladder tier filing wants a participant count
+            const counts = participantCounts();
             for (const tile of tiles) {
                 const withPersonal = this._withSocketSkilling(
                     this._withSpectatedPool(tile === owner ? { ...tile, personal } : tile, watched),
@@ -1570,6 +1703,13 @@ class GuildTrials {
                 // all — which is what the growth fit needs them filed under
                 const held = this.record.tiles?.[tileKey(tile)];
                 const badge = Number.isFinite(withPersonal.tier) ? withPersonal.tier : held?.tier;
+                // Whether the badge has anything banked behind it: an earned
+                // badge counts tiers finished, so the pool on screen is one
+                // past it; an unearned badge names the tier in progress itself
+                const banked =
+                    withPersonal.points > 0 ||
+                    held?.points > 0 ||
+                    Object.values(held?.pointsByTier || {}).some((points) => Number(points) > 0);
 
                 // Which tier a live reading belongs to. The badge counts tiers
                 // *finished*, so the pool on screen is the next one along; with
@@ -1577,13 +1717,16 @@ class GuildTrials {
                 const tilePhase = this._phaseFor(status, withPersonal, held);
                 let readingTier = null;
                 if (tilePhase === 'live' && withPersonal.readings.length) {
-                    // The stream states the tier outright. Nothing else does —
-                    // the badge counts tiers *finished*, so every other route to
-                    // this number is the badge plus one and an assumption
+                    // The stream states the tier outright; failing that, the
+                    // bar's own target identifies it once the skill's base work
+                    // is known — the target moves the moment a tier clears,
+                    // where a badge goes stale until the Trials tab is reopened
+                    const ladderTier = this._workLadderTier(withPersonal, held, counts);
                     if (Number.isFinite(withPersonal.socketTier)) readingTier = withPersonal.socketTier;
                     else if (Number.isFinite(withPersonal.spectatedTier)) readingTier = withPersonal.spectatedTier;
-                    else if (Number.isFinite(badge)) readingTier = badge + 1;
-                    else if (!(withPersonal.points > 0) && !Object.keys(held?.pointsByTier || {}).length) {
+                    else if (ladderTier !== null) readingTier = ladderTier;
+                    else if (Number.isFinite(badge)) readingTier = badge + (banked ? 1 : 0);
+                    else if (this._workBase(withPersonal) === null && !banked) {
                         readingTier = FIRST_TIER;
                     }
                 }
@@ -1664,7 +1807,6 @@ class GuildTrials {
                 return;
             }
 
-            const counts = participantCounts();
             const timeLeftMs = this._timeLeftMs(root);
             const bonuses = this._payoutBonuses();
 
@@ -1683,7 +1825,9 @@ class GuildTrials {
                     timeLeftMs,
                     buildersHallBonus: bonuses.buildersHall.bonus,
                     phase: tilePhase,
+                    workBase: this._workBase(tile),
                 });
+                this._learnWorkBase(tile, record, analysis, participants, now);
 
                 const key = `tile:${tileKey(tile)}`;
                 drawn.add(key);
@@ -1753,6 +1897,7 @@ class GuildTrials {
                 timeLeftMs,
                 buildersHallBonus: bonuses.buildersHall.bonus,
                 phase: this._phaseFor(status, record),
+                workBase: this._workBase(record),
             });
 
             trials.push({
@@ -1796,7 +1941,13 @@ class GuildTrials {
         if (tile?.completed || record?.completed) return 'completed';
 
         const phase = status?.phase || null;
-        if (!phase) return null;
+        // No status header at all is the everyday state of the In Progress tab
+        // — the header lives on the Trials tab — and treating it as no phase
+        // starved everything downstream that asks "is this live": the
+        // first-tier rule never fired, and a live pool's readings were filed
+        // under the record's stale badge instead of the tier being fought. A
+        // bar on a card that nothing has declared over is a trial running.
+        if (!phase) return tile?.readings?.length ? 'live' : null;
         // A header that does not name a kind is the old, single-trial case
         if (!status.kind || status.kind === tile.kind) return phase;
 
@@ -2508,6 +2659,107 @@ class GuildTrials {
     }
 
     /**
+     * The learned first-tier work for a tile's skill, if one is in hand.
+     *
+     * Keyed by the skill as the card names it — `Crafting` and the socket's
+     * `/guild_skilling/crafting` both lower-case to `crafting` — and only a
+     * skilling trial has one at all.
+     *
+     * @param {{kind: string, name: string}} tile - A card or a tile record
+     * @returns {number|null} The base work, or null when it has not been learned
+     */
+    _workBase(tile) {
+        if (tile?.kind !== 'skilling') return null;
+        const key = String(tile?.name || '')
+            .trim()
+            .toLowerCase();
+        const base = this.workBases[key]?.baseWork;
+        return Number.isFinite(base) && base > 0 ? base : null;
+    }
+
+    /**
+     * The tier a live skilling bar's own target identifies, if it does.
+     *
+     * The participant count is resolved the way the drawing loop resolves it —
+     * the card's own sign-up figure first, the tracker's sign-up sheet
+     * otherwise — because the work formula needs the same count the analysis
+     * uses everywhere else.
+     *
+     * @param {Object} tile - The card, with any socket reading already folded in
+     * @param {Object|null} held - The tile's stored record
+     * @param {Object} counts - Sign-ups per trial hrid, from `participantCounts`
+     * @returns {number|null} The tier, or null when the target fits no tier
+     */
+    _workLadderTier(tile, held, counts) {
+        const baseWork = this._workBase(tile);
+        if (baseWork === null) return null;
+
+        const target = tile.readings?.[0]?.max;
+        const hrid = matchTrialHrid(tile.name, Object.keys(counts || {}));
+        const participants = tile.signups?.signed ?? held?.signups?.signed ?? (hrid ? counts[hrid] : 0);
+        return tierFromWorkTarget({ target, baseWork, participants });
+    }
+
+    /**
+     * Learn a skill's first-tier work, the moment all three inputs line up.
+     *
+     * The tier, the bar's target and the participant count are each on screen
+     * at different times, and only a moment that has all three can state the
+     * base: `base = target / ((1 + 0.1 × (tier − 1)) × (1 + 0.01 × p))`. Once
+     * learned it identifies the tier from the bar alone — which is what lets a
+     * mid-trial join on the In Progress tab know its tier without ever opening
+     * the Trials tab.
+     *
+     * Guards, because a wrong base states wrong tiers with confidence:
+     *
+     * - Only a tier the game stated ('card', 'socket') teaches; the assumed and
+     *   the derived rungs must never feed themselves.
+     * - Only a *fresh* reading teaches. The record's last target survives tab
+     *   switches, and a tier that cleared while the tab was shut would pair the
+     *   old target with the new badge.
+     * - A base already in hand that explains the current target at any whole
+     *   tier is kept: relearning on a stale badge is how a constant drifts.
+     *
+     * @param {Object} tile - The card
+     * @param {Object} record - Its stored record
+     * @param {Object} analysis - From `analyseTrial`
+     * @param {number} participants - The count the analysis used
+     * @param {number} now - Clock
+     */
+    _learnWorkBase(tile, record, analysis, participants, now) {
+        try {
+            if (tile.kind !== 'skilling' || !(participants > 0)) return;
+            if (analysis.tierSource !== 'card' && analysis.tierSource !== 'socket') return;
+            if (!Number.isFinite(analysis.tier) || !Number.isFinite(analysis.total)) return;
+
+            const lastSampleAt = record?.samples?.[record.samples.length - 1]?.t;
+            if (!Number.isFinite(lastSampleAt) || now - lastSampleAt > WORK_BASE_LEARN_FRESH_MS) return;
+
+            const key = String(tile.name || '')
+                .trim()
+                .toLowerCase();
+            const held = this.workBases[key]?.baseWork;
+            if (
+                Number.isFinite(held) &&
+                tierFromWorkTarget({ target: analysis.total, baseWork: held, participants }) !== null
+            ) {
+                return;
+            }
+
+            const baseWork = baseWorkFromObservations([{ tier: analysis.tier, total: analysis.total }], participants);
+            if (!Number.isFinite(baseWork) || baseWork <= 0) return;
+
+            this.workBases = {
+                ...this.workBases,
+                [key]: { baseWork, tier: analysis.tier, target: analysis.total, participants, learnedAt: now },
+            };
+            saveWorkBases(this.workBases).catch(() => {});
+        } catch (error) {
+            console.error('[GuildTrials] Learning a work base failed:', error);
+        }
+    }
+
+    /**
      * Whether a card is the one the watched figures belong to.
      *
      * Ranked rather than decided, because the guild-report context is pushed
@@ -2610,6 +2862,9 @@ class GuildTrials {
         guildLoadoutCapture.cleanup();
         this.blockHtml.clear();
         document.querySelectorAll(`.${CSS_CLASS}`).forEach((el) => el.remove());
+        // In-memory only: the persisted copy stays, and the next initialize
+        // reads it back
+        this.workBases = {};
         this.initialized = false;
     }
 }
