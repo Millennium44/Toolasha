@@ -183,6 +183,7 @@ vi.mock('./guild-xp-tracker.js', () => ({
 
 const {
     analyseTrial,
+    breakdownFor,
     guildTrials,
     ownParticipation,
     participantCounts,
@@ -1185,6 +1186,137 @@ describe('the panel, end to end', () => {
             (block) => block.dataset.mwiBlock
         );
         expect(keys).toEqual(['tile:skilling::milking']);
+    });
+
+    test('one fight’s per-player rows dress only the encounter they measured', () => {
+        // Reported: Trial Hedgehog's panel — "0 pts, not started" — showed
+        // "Per player · 2 fights · watched" with the Chameleon fight's exact
+        // rows. One measurement, two combat cards, and it landed on both.
+        game.breakdown = {
+            measured: true,
+            source: 'spectated',
+            encounter: 'chameleon',
+            bossName: 'Trial Chameleon',
+            fights: 2,
+            seconds: 100,
+            partyDps: 2756,
+            totalDamage: 275_600,
+            players: [
+                {
+                    index: 'NPD',
+                    name: 'NPD',
+                    damage: 93_000,
+                    dps: 930,
+                    share: 34,
+                    hits: 10,
+                    crits: 1,
+                    misses: 0,
+                    accuracy: 1,
+                    critRate: 0.1,
+                    deaths: 0,
+                    measured: true,
+                },
+            ],
+            support: { players: [], unattributedHealing: 0 },
+        };
+        const root = buildTab(
+            [
+                { name: 'Trial Chameleon', level: 110, bar: '476,238 / 572,000' },
+                { name: 'Trial Hedgehog', level: 100, points: 0, bar: '' },
+            ],
+            'Combat Trial - In Progress — 42:15 remaining'
+        );
+        root.querySelectorAll('[class*="GuildPanel_tile"]')[1]
+            .querySelectorAll('[class*="ProgressBar_text"]')
+            .forEach((el) => el.remove());
+        fire(root);
+
+        const blocks = [...document.querySelectorAll('.mwi-trial-info[data-mwi-block^="tile:"]')];
+        const chameleon = blocks.find((block) => block.dataset.mwiBlock.includes('chameleon'));
+        const hedgehog = blocks.find((block) => block.dataset.mwiBlock.includes('hedgehog'));
+
+        expect(chameleon.textContent).toContain('NPD');
+        expect(chameleon.textContent).toContain('2 fights');
+        expect(hedgehog.textContent).not.toContain('NPD');
+        expect(hedgehog.textContent).not.toContain('2 fights');
+        // The empty state says whose fight is actually on the stream
+        expect(hedgehog.innerHTML).toContain('no fights watched for this encounter');
+    });
+
+    test('breakdownFor scopes the measurement, and keeps an unidentified one whole', () => {
+        const measured = {
+            measured: true,
+            source: 'spectated',
+            encounter: 'chameleon',
+            bossName: 'Trial Chameleon',
+            partyDps: 2756,
+            players: [{ name: 'NPD' }],
+            support: { players: [{ name: 'NPD' }], unattributedHealing: 5 },
+        };
+
+        expect(breakdownFor('Trial Chameleon', measured)).toBe(measured);
+
+        const scoped = breakdownFor('Trial Hedgehog', measured);
+        expect(scoped.measured).toBe(false);
+        expect(scoped.players).toEqual([]);
+        expect(scoped.partyDps).toBeNull();
+        expect(scoped.support.players).toEqual([]);
+        expect(scoped.support.unattributedHealing).toBe(5);
+        expect(scoped.reason).toContain('Trial Chameleon');
+
+        // A skilling tile never wears a fight's figures either — its fill
+        // rate must not be compared against a combat DPS
+        expect(breakdownFor('Crafting', measured).measured).toBe(false);
+
+        // Unidentified measurements pass through: "click the boss to
+        // identify" is already the honest caption for those
+        const unnamed = { ...measured, encounter: null };
+        expect(breakdownFor('Trial Hedgehog', unnamed)).toBe(unnamed);
+    });
+
+    test('a block stranded by a React re-parent follows its card', () => {
+        const root = buildTab([{ name: 'Trial Chameleon', level: 140, bar: '618,000 / 618,000' }]);
+        fire(root);
+        const card = root.querySelector('[class*="GuildPanel_tile__"]');
+        const block = document.querySelector('.mwi-trial-info[data-mwi-block^="tile:"]');
+        expect(block.previousElementSibling).toBe(card);
+
+        // The game re-parents the card into a late-mounted column, leaving
+        // the block where the card's first home was — the "detached block
+        // below the payout" first-render screenshot
+        const column = document.createElement('div');
+        column.className = 'GuildPanel_sideColumn__x';
+        root.appendChild(column);
+        column.appendChild(card);
+        expect(block.previousElementSibling).not.toBe(card);
+
+        fire(root);
+        expect(document.querySelector('.mwi-trial-info[data-mwi-block^="tile:"]')).toBe(block);
+        expect(block.previousElementSibling).toBe(card);
+    });
+
+    test('a boss card remounting after a tier clear does not flip the panel order', () => {
+        // Reported: after a tier cleared the view read [payout][DPS][boss
+        // card] — the game tore the CombatUnit down and remounted it after
+        // the blocks that were placed beside its predecessor
+        const root = buildTab([{ name: 'Trial Chameleon', level: 140, bar: '618,000 / 618,000' }]);
+        fire(root);
+        const oldCard = root.querySelector('[class*="GuildPanel_tile__"]');
+        const block = document.querySelector('.mwi-trial-info[data-mwi-block^="tile:"]');
+        const payout = document.querySelector('.mwi-trial-info[data-mwi-block="payout"]');
+
+        // The remount: same trial, fresh node, appended after everything
+        const fresh = oldCard.cloneNode(true);
+        oldCard.remove();
+        root.appendChild(fresh);
+        expect(block.previousElementSibling).not.toBe(fresh);
+
+        fire(root);
+
+        // [payout] … [boss card] [per-player block], in that document order
+        expect(block.previousElementSibling).toBe(fresh);
+        const following = payout.compareDocumentPosition(fresh) & Node.DOCUMENT_POSITION_FOLLOWING;
+        expect(following).toBeTruthy();
     });
 
     test('the card block is a block of its own, never inside the card', () => {

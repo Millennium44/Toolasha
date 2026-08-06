@@ -6,6 +6,16 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The per-player readout stays on its own tile, its panels stop drifting, and the panel does less work
+
+- **A watched fight's per-player DPS no longer dresses every tile**: the Chameleon's rows were being drawn under the Hedgehog card (and cross-checked against skilling pools), because one measurement was handed to every tile. Each tile now shows only the encounter it was measured from; the others say "no fights watched for this encounter" rather than borrowing someone else's numbers.
+- **The trial panels re-anchor instead of drifting**: React re-parenting the boss card — on first mount and again when a tier clears — used to strand the DPS block below the payout panel or flip the panel order. Each block now re-places itself against the game's own nodes whenever it comes loose, with scroll kept, so the first render and every tier rollover hold the intended layout.
+- **The panel recomputes and writes less**: the trial analysis ran twice per tile each pass and is now memoized per pass; the full-record IndexedDB write is throttled to the sampling window instead of firing on every observer burst; and the three storage reads at startup now run together instead of one after another.
+
+### Startup traces stop blaming the wrong feature
+
+- **A feature that only parked in `await` is no longer named the slow one**: the startup trace timed each feature as wall-clock around its initializer, so a trivial synchronous feature that happened to `await` at the moment a heavy storage read resolved absorbed that read's cost and topped the "slowest features" list. The trace now splits each feature's own synchronous work from time spent waiting, and labels the latter "waiting on other work" — so the next trace points at the real cost instead of the messenger.
+
 ### Damage totals stop swapping bodies at tier rollovers
 
 - **Per-player totals are banked by name at every wave boundary**: the trial-long tallies were keyed by actor slot, and the game re-deals the slots at every tier — so at a rollover, NPD's 156K could land under whoever inherited their index while they showed 24K (observed live). Each wave's damage, deaths, and support figures now fold into an immutable by-name bank before anything re-deals; live maps are per-wave only, attribution baselines reset with them, and the own-unit binding re-confirms by counters every wave. A never-named slot banks under its placeholder — an unknown then is an unknown forever, never someone else's credit. Regression test pins two waves with reversed slot orderings to exact, monotonically non-decreasing per-name totals.

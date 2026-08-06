@@ -1191,6 +1191,49 @@ export function renderTrialBlock(
 }
 
 /**
+ * The damage breakdown as one tile may wear it.
+ *
+ * There is one measurement and, on a two-combat week, two combat cards — and
+ * the whole breakdown used to land on both: Trial Hedgehog's panel showed
+ * "Per player · 2 fights · watched" with the Chameleon fight's exact rows,
+ * on a card reading "0 pts, not started". The measurement names the encounter
+ * it watched, so a tile of any other encounter — or a skilling tile, whose
+ * fill rate must never be compared against a fight's DPS — wears a scoped-out
+ * copy: the identity facts stay, the measured figures and rows do not, and
+ * the empty state says whose fight is actually being watched.
+ *
+ * A breakdown with no encounter of its own is passed through untouched: it
+ * has not been identified yet, and "click the boss to identify" is already the
+ * honest caption for that.
+ *
+ * @param {string} name - The tile's trial name
+ * @param {Object} [breakdown] - From `guildTrialDamage.breakdown()`
+ * @returns {Object} The breakdown this tile may show
+ */
+export function breakdownFor(name, breakdown = guildTrialDamage.breakdown()) {
+    if (!breakdown || !breakdown.encounter) return breakdown;
+
+    const encounter = encounterOf(name);
+    if (encounter === breakdown.encounter) return breakdown;
+
+    return {
+        ...breakdown,
+        measured: false,
+        measuredSupport: false,
+        players: [],
+        totalDamage: 0,
+        partyDps: null,
+        pool: null,
+        source: null,
+        stale: false,
+        support: { ...(breakdown.support || {}), players: [] },
+        reason:
+            `the watched fight is ${breakdown.bossName || breakdown.encounter}’s — ` +
+            'no fights watched for this encounter',
+    };
+}
+
+/**
  * Who in the party is producing the DPS the card is already showing.
  *
  * Drawn only under a combat card, and fed by the spectator stream: opening the
@@ -1419,7 +1462,11 @@ export function placeTrialBlock(root, card, block, name = '') {
         }
         block.style.width = '100%';
         block.style.flexBasis = '100%';
-        if (name) block.insertAdjacentHTML('afterbegin', trialBlockHeading(name));
+        // Placement can run again on the same block when a remount strands it,
+        // and a heading per placement is a stutter of headings
+        if (name && !block.querySelector('.mwi-trial-block-heading')) {
+            block.insertAdjacentHTML('afterbegin', trialBlockHeading(name));
+        }
         container.insertAdjacentElement('afterend', block);
         return 'after-container';
     };
@@ -1458,7 +1505,36 @@ export function placeTrialBlock(root, card, block, name = '') {
  * @returns {string} HTML
  */
 function trialBlockHeading(name) {
-    return `<div style="color:${ACCENT}; font-weight:600; margin-bottom:2px;">${name}</div>`;
+    return (
+        `<div class="mwi-trial-block-heading" style="color:${ACCENT}; font-weight:600; ` +
+        `margin-bottom:2px;">${name}</div>`
+    );
+}
+
+/**
+ * Whether a block still sits where its card's placement put it.
+ *
+ * Every placement {@link placeTrialBlock} makes leaves the block adjacent to
+ * the card or to the card's container — so "still anchored" is a cheap
+ * adjacency test, and failing it means the game has moved on underneath: React
+ * re-parents cards as a fresh panel settles, and tears the boss card down and
+ * remounts it at every wave boundary. Both were reported as the same symptom —
+ * the readout drifting to the bottom of the view on first render, and the
+ * panel order flipping to [payout][DPS][boss card] after a tier cleared,
+ * because the remounted card arrived *after* the block that was placed beside
+ * its predecessor.
+ *
+ * @param {Element} block - The injected block
+ * @param {Element} anchor - The card it belongs beside
+ * @returns {boolean} True while the placement still holds
+ */
+function blockNearAnchor(block, anchor) {
+    if (!anchor?.isConnected) return true; // nothing to re-anchor against
+    return (
+        anchor.nextElementSibling === block ||
+        anchor.parentElement?.nextElementSibling === block ||
+        anchor.contains(block)
+    );
 }
 
 class GuildTrials {
@@ -1483,6 +1559,8 @@ class GuildTrials {
         this.awaitingCharacter = false;
         /** Block key → the markup last drawn into it, so an unchanged pass touches nothing */
         this.blockHtml = new Map();
+        /** When the record last went to storage; writes run at the sampling cadence, not the render one */
+        this.lastRecordSaveAt = 0;
         /** Where the cycle was last seen to be: scheduled, live or completed */
         this.phase = null;
         /** The last combat forecast, for the per-player panel to echo */
@@ -1579,17 +1657,21 @@ class GuildTrials {
         this.characterId = dataManager.getCurrentCharacterId?.() ?? null;
         this.guildName = this._resolveGuildName();
         guildTrialRecorder.setGuildName(this.guildName);
-        const stored = await loadTrialRecord(this.guildName, Date.now(), this.characterId, {
-            guildId: this._guildId(),
-        });
+        // Three independent storage reads, awaited together rather than one
+        // after another: serially they were three IndexedDB round trips before
+        // the first panel could carry stored samples, which is a visible slice
+        // of the reported lag on load
+        const [stored, storedBases] = await Promise.all([
+            loadTrialRecord(this.guildName, Date.now(), this.characterId, { guildId: this._guildId() }),
+            loadWorkBases(),
+            guildLoadoutCapture.initialize(),
+        ]);
         this.record = mergeTrialRecords(stored, this.record);
         this._publishTrialNames();
 
         // Merged under whatever a tick learned while the read was in flight, so
         // a base observed seconds after startup is not thrown away by the load
-        this.workBases = { ...(await loadWorkBases()), ...this.workBases };
-
-        await guildLoadoutCapture.initialize();
+        this.workBases = { ...storedBases, ...this.workBases };
     }
 
     /**
@@ -1651,6 +1733,7 @@ class GuildTrials {
             this.socketGuildName = null;
             this.characterId = newId;
             this.adopting = false;
+            this.lastRecordSaveAt = 0;
             // The switch message arrives *before* the arriving character's own
             // data does, so for a moment every source of a guild name still
             // holds the departing one's. Adopting then would file the new
@@ -1915,7 +1998,13 @@ class GuildTrials {
 
                 this.record = recordTileSample(this.record, sampled, now);
             }
-            if (tiles.length) {
+            // Persisted at the sampling cadence, never the render cadence: the
+            // observer fires on every React burst and this used to write the
+            // full record — hundreds of samples per tile — to IndexedDB on
+            // each one. Five seconds of samples is the most a crash can lose,
+            // which is the sampling interval's own promise anyway.
+            if (tiles.length && now - this.lastRecordSaveAt >= SAMPLE_MS) {
+                this.lastRecordSaveAt = now;
                 saveTrialRecord(this.guildName, this.record, this.characterId, { guildId: this._guildId() });
             }
 
@@ -1970,6 +2059,28 @@ class GuildTrials {
             const timeLeftMs = this._timeLeftMs(root);
             const bonuses = this._payoutBonuses();
 
+            // One analysis per (tile, phase) per pass. The payout loop below
+            // used to re-derive the very same figures from the very same
+            // record — and an analysis walks up to 800 samples, so every tick
+            // and every observer burst paid for the whole arithmetic twice.
+            const analyses = new Map();
+            const analysisFor = (key, record, participants, phase) => {
+                const cacheKey = `${key}|${phase ?? ''}|${participants}`;
+                if (!analyses.has(cacheKey)) {
+                    analyses.set(
+                        cacheKey,
+                        analyseTrial(record, {
+                            participants,
+                            timeLeftMs,
+                            buildersHallBonus: bonuses.buildersHall.bonus,
+                            phase,
+                            workBase: this._workBase(record),
+                        })
+                    );
+                }
+                return analyses.get(cacheKey);
+            };
+
             for (const tile of tiles) {
                 const record = this.record.tiles[tileKey(tile)];
                 if (!record) continue;
@@ -1980,19 +2091,19 @@ class GuildTrials {
                 const hrid = matchTrialHrid(tile.name, Object.keys(counts));
                 const participants = record.signups?.signed ?? (hrid ? counts[hrid] : 0);
                 const tilePhase = this._phaseFor(status, tile, record);
-                const analysis = analyseTrial(record, {
-                    participants,
-                    timeLeftMs,
-                    buildersHallBonus: bonuses.buildersHall.bonus,
-                    phase: tilePhase,
-                    workBase: this._workBase(tile),
-                });
+                const analysis = analysisFor(tileKey(tile), record, participants, tilePhase);
                 this._learnWorkBase(tile, record, analysis, participants, now);
 
                 const key = `tile:${tileKey(tile)}`;
                 drawn.add(key);
                 this._placeBlock(root, key, {
-                    html: renderTrialBlock(analysis, participants, undefined, {
+                    // The card the block belongs beside, for the re-anchoring
+                    // check below — the game tears cards down and remounts
+                    // them at wave boundaries
+                    anchored: (block) => blockNearAnchor(block, tile.element),
+                    // Scoped to this tile's encounter: one measurement must
+                    // not dress every combat card
+                    html: renderTrialBlock(analysis, participants, breakdownFor(tile.name), {
                         participating: ownParticipation(tile.name),
                         phase: tilePhase,
                         startsInMs: status?.startsInMs ?? null,
@@ -2015,7 +2126,7 @@ class GuildTrials {
             // they were read — the two tabs were otherwise drawing the same
             // "Trial payout" title over different totals, because each summed
             // only the cards it could see.
-            const trialsForPayout = this._payoutTrials(status, counts, timeLeftMs, bonuses);
+            const trialsForPayout = this._payoutTrials(status, counts, analysisFor);
 
             if (this._renderPayout(root, trialsForPayout, tiles[0]?.element || null, bonuses)) {
                 drawn.add('payout');
@@ -2040,25 +2151,18 @@ class GuildTrials {
      *
      * @param {Object} status - From `readTrialStatus`
      * @param {Object} counts - Sign-ups per trial hrid
-     * @param {number|null} timeLeftMs - Active time left
-     * @param {Object} bonuses - From {@link _payoutBonuses}
+     * @param {Function} analysisFor - The render pass's shared, memoised analyser
      * @returns {Array<Object>} One entry per trial the record knows
      */
-    _payoutTrials(status, counts, timeLeftMs, bonuses) {
+    _payoutTrials(status, counts, analysisFor) {
         const trials = [];
 
-        for (const record of Object.values(this.record?.tiles || {})) {
+        for (const [key, record] of Object.entries(this.record?.tiles || {})) {
             if (!record?.name) continue;
 
             const hrid = matchTrialHrid(record.name, Object.keys(counts));
             const participants = record.signups?.signed ?? (hrid ? counts[hrid] : 0);
-            const analysis = analyseTrial(record, {
-                participants,
-                timeLeftMs,
-                buildersHallBonus: bonuses.buildersHall.bonus,
-                phase: this._phaseFor(status, record),
-                workBase: this._workBase(record),
-            });
+            const analysis = analysisFor(key, record, participants, this._phaseFor(status, record));
 
             trials.push({
                 name: record.name,
@@ -2127,7 +2231,9 @@ class GuildTrials {
      */
     _forecast(tile, analysis, participants) {
         try {
-            const breakdown = guildTrialDamage.breakdown?.();
+            // Scoped exactly as the block is: a Hedgehog forecast must not run
+            // on the Chameleon fight's measured DPS
+            const breakdown = breakdownFor(tile.name, guildTrialDamage.breakdown?.());
             // The card's own bar first: it covers everybody in the trial, where
             // the attributed figure covers only the fights this client was in
             const measuredDps =
@@ -2273,7 +2379,7 @@ class GuildTrials {
      * @param {Object} spec - `{html, style, place, onBuild}`; `place` inserts a fresh block
      * @returns {Element} The block
      */
-    _placeBlock(root, key, { html, style, place, onBuild }) {
+    _placeBlock(root, key, { html, style, place, onBuild, anchored }) {
         const existing = root.querySelector(`.${CSS_CLASS}[data-mwi-block="${key}"]`);
 
         // Compared against what this drew last time rather than against the
@@ -2283,6 +2389,16 @@ class GuildTrials {
         const unchanged = this.blockHtml.get(key) === html;
 
         if (existing) {
+            // The game's own nodes move underneath a block that was placed
+            // correctly: cards re-parent as a fresh panel settles, and the
+            // boss card remounts at every wave boundary — leaving the block
+            // where the old node used to be, which is how the readout ended up
+            // below the payout and how the panel order flipped after a tier
+            // cleared. Each block states what "still anchored" means for it,
+            // and a block that is not is re-placed against the current DOM.
+            if (anchored && !anchored(existing)) {
+                withScrollKept(root, () => place(existing));
+            }
             if (!unchanged) {
                 existing.innerHTML = html;
                 this.blockHtml.set(key, html);
@@ -2568,6 +2684,16 @@ class GuildTrials {
         // put it. The buttons are appended after, since they carry listeners
         // that markup cannot
         this._placeBlock(root, 'payout', {
+            // The payout's own placement rule, as a check: under the status
+            // row when there is one, else directly above the first card — so a
+            // boss card remounting after it can never leave the payout
+            // stranded mid-list
+            anchored: (block) => {
+                const statusRow = root.querySelector('[class*="GuildPanel_eventStatusRow"]');
+                if (statusRow) return statusRow.nextElementSibling === block;
+                if (firstTile?.isConnected) return block.nextElementSibling === firstTile;
+                return root.firstElementChild === block;
+            },
             html: rows.join('') + this._controlsHTML(),
             style:
                 'margin:8px 0 4px; padding:8px 12px; background:rgba(0,0,0,0.25);' +
