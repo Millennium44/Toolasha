@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Two safer shipped defaults
+
+- **"New settings start turned off" now defaults on**: the safety toggle that keeps a future update's new on-by-default switches off until you enable them yourself now ships enabled, so an update can no longer quietly turn new behaviour on. (Affects new installs and the "Defaults" preset only — existing saved settings are untouched.)
+- **Un-owned market items dim to 0.6 instead of 0.25**: with the visible-item-count feature on, tiles for items you own zero of were faded to 25% opacity, leaving most of the marketplace looking greyed-out. They now sit at 60% — clearly de-emphasised but still readable.
+
 ### Preset renamed: "Everything on" → "Defaults"
 
 - **The preset bar's "Everything on" button is now "Defaults"**: its tooltip already said "every feature at its shipped default," which contradicted a label that read as "turn everything on." It applies the schema defaults (several hides and warnings ship off on purpose), so "Defaults" is what it actually does. Behaviour is unchanged — only the label, its description, and the internal comments were reworded.
