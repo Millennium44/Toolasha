@@ -701,7 +701,42 @@ class DungeonTracker {
         // Handle "Key counts" messages
         if (message.m === 'systemChatMessage.partyKeyCount') {
             this.onKeyCountsMessage(timestamp, message);
+            return;
         }
+
+        // Handle "Battle ended" messages — the game's word for a start that was
+        // canceled or a fight that was fled, never for a completed run. Matched
+        // by suffix rather than the exact key, which no capture has pinned down
+        if (typeof message.m === 'string' && /battleended/i.test(message.m)) {
+            this.onBattleEnded(timestamp);
+        }
+    }
+
+    /**
+     * Handle a "Battle ended" message.
+     *
+     * The phantom this closes: a ready-check that fails posts "Key counts" and
+     * then "Battle ended" a second later. Nothing consumed the ended message,
+     * so the canceled start stayed armed as a run's beginning, and the *next*
+     * key count — however much party-forming idle later — read as its
+     * completion. One recorded 15:47 "run" was two canceled starts with a
+     * member swap in between; its party had not assembled at its supposed start.
+     *
+     * Only a run with no wave completed is reset here: that is what a canceled
+     * start looks like. A fight fled mid-run is the action feed's business, and
+     * a successful completion has already been recorded by the time this could
+     * fire — `isTracking` is false and this returns without touching it.
+     *
+     * @param {number} _timestamp - Message timestamp in milliseconds
+     */
+    onBattleEnded(_timestamp) {
+        if (!this.isTracking || !this.currentRun) {
+            return;
+        }
+        if (this.currentRun.wavesCompleted > 0) {
+            return;
+        }
+        this.resetTracking();
     }
 
     /**
