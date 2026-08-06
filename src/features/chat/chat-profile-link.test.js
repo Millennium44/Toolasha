@@ -49,6 +49,21 @@ describe('announcements that get a link', () => {
     test('a channel tag in front does not hide the name', () => {
         expect(nameIn('[General] Someone has completed a task')).toBe('Someone');
     });
+
+    test('a player whose name only starts with "Guild" still links', () => {
+        expect(nameIn('GuildMaster has reached level 150 Magic!')).toBe('GuildMaster');
+    });
+});
+
+describe('the guild-wide broadcast is not a player', () => {
+    test('"Guild has reached level N!" gets no name', () => {
+        // "Guild" is the guild, not a player — it must not become a /profile link
+        expect(nameIn('Guild has reached level 148!')).toBe(null);
+    });
+
+    test('a timestamp in front does not sneak it back in', () => {
+        expect(nameIn('[8/6 7:42:38 AM] Guild has reached level 148!')).toBe(null);
+    });
 });
 
 describe('party status lines', () => {

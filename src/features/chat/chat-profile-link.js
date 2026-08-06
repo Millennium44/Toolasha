@@ -29,9 +29,14 @@ import { PARTY_STATUS_PHRASES } from '../../utils/game-text.js';
 import { fillProfileCommand, VALID_PLAYER_NAME_RE } from '../../utils/profile-command.js';
 
 const NAME_CLASS = 'mwi-chat-profile-name';
-// "<Name> has <verb> …" announcements; names are single tokens in MWI
+// "<Name> has <verb> …" announcements; names are single tokens in MWI.
+// The `(?!Guild has\b)` guard skips the guild-wide broadcast "Guild has reached
+// level N!" — "Guild" is the guild there, not a player, so it must not become a
+// /profile link. Only the exact token "Guild" before " has" is excluded, so a
+// player named "GuildMaster" still links. Add more reserved subjects to the
+// lookahead as `(?!(?:Guild|Other) has\b)` if the game grows them.
 export const ANNOUNCE_RE =
-    /^\s*(?:\[[^\]]*\]\s*)?([A-Za-z0-9_]+) has (?:reached|obtained|found|completed|defeated|earned|achieved|unlocked|opened|crafted|caught|leveled|joined|left|added)\b/;
+    /^\s*(?:\[[^\]]*\]\s*)?(?!Guild has\b)([A-Za-z0-9_]+) has (?:reached|obtained|found|completed|defeated|earned|achieved|unlocked|opened|crafted|caught|leveled|joined|left|added)\b/;
 /** A phrase as a regex fragment: every character taken literally */
 const escapeForRegExp = (phrase) => phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // Party system lines: the leading name in exactly the four sentence shapes the

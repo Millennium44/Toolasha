@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### "Guild" is no longer turned into a /profile link
+
+- **The guild-wide broadcast "Guild has reached level N!" stays plain text**: it matched the "&lt;name&gt; has …" announcement shape, so "Guild" was being made a clickable `/profile Guild` link even though it is the guild, not a player. That exact token is now excluded from announcement linking, in both the main chat and the pop-out chat window. Real names are untouched — a player called "GuildMaster" still links.
+
 ### Selector canary stops false-alarming on alchemy and enhancing panels
 
 - **The "Skill action panel (name)" canary no longer cries "game update?" on alchemy/enhancing screens**: it reported the action-name selector missing whenever an alchemy or enhancing detail panel was open, because those panels reuse the shared `SkillActionDetail` wrapper but draw no name heading. The name check now gates on the regular (gathering/production/crafting) component, which always carries the name — so those screens are sat out, while a genuine rename of the name class on a standard panel still trips it. The name selector itself was never broken; the ~13 features that read the action name were unaffected.
