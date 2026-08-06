@@ -17,6 +17,9 @@ import {
     classifyReadings,
     findTrialClockMs,
     findTrialsRoot,
+    inFloatingDialog,
+    isPlausibleReading,
+    isStatLabel,
     isTrialsSetupTab,
     onTrialTab,
     parsePoints,
@@ -34,6 +37,7 @@ import {
     readTrialTiles,
     textLines,
 } from './guild-trials-scrape.js';
+import { NOTICE_BOARD_NAME } from './guild-notice-board.fixture.js';
 
 /** An hour, which is how long a trial runs */
 const HOUR_MS = 60 * 60 * 1000;
@@ -252,6 +256,97 @@ describe('readTrialTiles', () => {
 
         const tiles = readTrialTiles(document.querySelector('[class*="GuildPanel_guildPanel"]'));
         expect(tiles.map((tile) => tile.name)).toEqual(['Trial Milking']);
+    });
+});
+
+describe('a guild notice board is not a trial', () => {
+    // From a live 106-member guild: the whole notice — braille art, a welcome,
+    // three Discord links, the kick rules — became a tile, because two Discord
+    // channel ids in it have exactly the shape of a progress bar. It was then
+    // sampled every five seconds and used to start the recorder
+    const CHANNEL_LINK = 'https://discord.com/channels/1309080597314011148/1525897111936438314';
+
+    test('two Discord channel ids are not a progress bar', () => {
+        expect(parseBarReadings(CHANNEL_LINK)).toEqual([]);
+        expect(isPlausibleReading(1_309_080_597_314_011_148, 1_525_897_111_936_438_314)).toBe(false);
+    });
+
+    test('a real pool and a real boss still read', () => {
+        expect(parseBarReadings('20,500 / 57,120')).toEqual([{ current: 20_500, max: 57_120 }]);
+        expect(parseBarReadings('4.2M / 8.4M')).toEqual([{ current: 4_200_000, max: 8_400_000 }]);
+        expect(isPlausibleReading(490_871, 721_000)).toBe(true);
+        // A bar that has not been populated is still not a full one
+        expect(isPlausibleReading(0, 0)).toBe(false);
+    });
+
+    test('the notice yields no cards, however trial-shaped its prose', () => {
+        document.body.innerHTML = '';
+        const root = document.createElement('div');
+        root.className = 'GuildPanel_trialsContent__a';
+        const tile = document.createElement('div');
+        tile.className = 'GuildPanel_tile__c';
+        tile.innerHTML =
+            `<div class="GuildPanel_tileName__d">${NOTICE_BOARD_NAME.replace(/</g, '')}</div>` +
+            `<div class="ProgressBar_text__f">${CHANNEL_LINK}</div>`;
+        root.appendChild(tile);
+        document.body.appendChild(root);
+
+        expect(readTrialTiles(root)).toEqual([]);
+    });
+});
+
+describe('a card is not allowed to be in a dialog', () => {
+    // Reported live: clicking the boss in the trial fight view opens a stat
+    // popup headed "Trial Chameleon - Lv.110", and the whole trial block —
+    // Rate, On pace, Banked, Per player — was drawn inside it, above the boss's
+    // own stat lines. A trial name over a level is exactly what a card is
+    // anchored by, so no card filter could ever have caught this
+    function buildPopup() {
+        document.body.innerHTML =
+            '<div class="GuildPanel_trialsContent__a">' +
+            '<div class="Modal_modalContainer__m" role="dialog">' +
+            '<div class="Modal_modalContent__n">' +
+            '<div class="GuildPanel_tileName__q">Trial Chameleon</div>' +
+            '<div class="GuildPanel_tileSummary__p">Lv.110</div>' +
+            '<div class="ProgressBar_text__r">618,000 / 618,000</div>' +
+            '</div></div></div>';
+        return document.querySelector('[class*="GuildPanel_trialsContent"]');
+    }
+
+    test('the boss’s stat popup yields no cards', () => {
+        expect(readTrialTiles(buildPopup())).toEqual([]);
+    });
+
+    test('a dialog is recognised by its class or by its role', () => {
+        buildPopup();
+        const inside = document.querySelector('[class*="GuildPanel_tileSummary"]');
+        expect(inFloatingDialog(inside)).toBe(true);
+
+        document.body.innerHTML = '<div class="GuildPanel_tile__a"><span id="plain">Lv.110</span></div>';
+        expect(inFloatingDialog(document.getElementById('plain'))).toBe(false);
+        expect(inFloatingDialog(null)).toBe(false);
+    });
+
+    test('an aria-modal wrapper counts even without a matching class', () => {
+        document.body.innerHTML = '<div aria-modal="true"><span id="in">Lv.110</span></div>';
+        expect(inFloatingDialog(document.getElementById('in'))).toBe(true);
+    });
+
+    test('the real cards beside a popup are still read', () => {
+        document.body.innerHTML =
+            '<div class="GuildPanel_trialsContent__a">' +
+            '<div class="GuildPanel_tile__c">' +
+            '<div class="GuildPanel_tileName__q">Trial Chameleon</div>' +
+            '<div class="GuildPanel_tileSummary__p">Lv.140</div>' +
+            '</div>' +
+            '<div class="Modal_modalContent__n">' +
+            '<div class="GuildPanel_tileName__q">Trial Chameleon</div>' +
+            '<div class="GuildPanel_tileSummary__p">Lv.110</div>' +
+            '</div></div>';
+
+        const tiles = readTrialTiles(document.querySelector('[class*="GuildPanel_trialsContent"]'));
+        expect(tiles).toHaveLength(1);
+        expect(tiles[0].level).toBe(140);
     });
 });
 
@@ -681,6 +776,40 @@ describe('readTrialStatus', () => {
         expect(status.startsInMs).toBe(2 * 3600_000 + 24 * 60_000);
     });
 
+    test('the live header, exactly as the game writes it', () => {
+        // From the running trial: the status carries the trial's *kind* in front
+        // of it, which is not what this was built against, and the gate that
+        // reads it kept the recorder from arming
+        expect(readTrialStatus(tab(['Skilling Trial - In Progress  Thu 04:00 PM'])).phase).toBe('live');
+        expect(readTrialStatus(tab(['Combat Trial - In Progress  Thu 05:00 PM'])).phase).toBe('live');
+    });
+
+    test('a header split across elements is still one status', () => {
+        // The game draws the kind and the status as separate runs
+        expect(readTrialStatus(tab(['Skilling Trial -', 'In Progress', 'Thu 04:00 PM'])).phase).toBe('live');
+    });
+
+    test('a status below whatever the tab draws above it is still found', () => {
+        const preamble = Array.from({ length: 15 }, (_, index) => `Row ${index}`);
+        expect(readTrialStatus(tab([...preamble, 'Combat Trial - In Progress'])).phase).toBe('live');
+    });
+
+    test('the header names which trial it is about', () => {
+        // A cycle runs the skilling hour and then the combat one, so a status
+        // without its kind attached says the combat trial is under way during
+        // the skilling hour — which is what it did
+        expect(readTrialStatus(tab(['Skilling Trial - In Progress  Thu 04:00 PM']))).toMatchObject({
+            phase: 'live',
+            kind: 'skilling',
+        });
+        expect(readTrialStatus(tab(['Combat Trial - Scheduled Thu 05:00 PM 1h 2m']))).toMatchObject({
+            phase: 'scheduled',
+            kind: 'combat',
+        });
+        // A header that names no kind is the old, single-trial case
+        expect(readTrialStatus(tab(['In Progress'])).kind).toBeNull();
+    });
+
     test('a finished cycle', () => {
         expect(readTrialStatus(tab(['Completed Thu 09:00 AM'])).phase).toBe('completed');
     });
@@ -724,8 +853,47 @@ describe('readPersonalStats', () => {
     });
 
     test('a label and value on one run are read too', () => {
-        const stats = readPersonalStats(tab(['Success Rate: 60.8%', 'Time: 3.14s']));
-        expect(stats).toMatchObject({ 'Success Rate': '60.8%', Time: '3.14s' });
+        const stats = readPersonalStats(tab(['Success Rate: 60.8%', 'Work Time: 3.14s']));
+        expect(stats).toMatchObject({ 'Success Rate': '60.8%', 'Work Time': '3.14s' });
+    });
+
+    test('the per-minute time list is not a stat sheet', () => {
+        // Exactly what the export carried beside the real stats: fifty-eight
+        // rows of a session log, read as labelled numbers and stored as stats
+        const stats = readPersonalStats(
+            tab([
+                'Work Power',
+                '146',
+                'Success Rate',
+                '49.6%',
+                '59m',
+                '5s',
+                '58m',
+                '2s',
+                '1m',
+                '3s',
+                'Time',
+                '1s',
+                'Lv.100',
+                '6',
+            ])
+        );
+
+        expect(stats).toEqual({ 'Work Power': '146', 'Success Rate': '49.6%' });
+    });
+
+    test('what counts as a stat name is a word, not a number with a unit', () => {
+        expect(isStatLabel('Work Power')).toBe(true);
+        expect(isStatLabel('Double Progress')).toBe(true);
+        expect(isStatLabel('Armor')).toBe(true);
+        // A number with a unit stuck to it, a bare heading, and a level badge
+        expect(isStatLabel('59m')).toBe(false);
+        expect(isStatLabel('1m')).toBe(false);
+        expect(isStatLabel('Time')).toBe(false);
+        expect(isStatLabel('Total')).toBe(false);
+        expect(isStatLabel('Lv.100')).toBe(false);
+        expect(isStatLabel('T3')).toBe(false);
+        expect(isStatLabel('')).toBe(false);
     });
 
     test('a progress bar is not a stat', () => {

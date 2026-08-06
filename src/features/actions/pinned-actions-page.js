@@ -21,6 +21,7 @@ import { numberFormatter } from '../../utils/formatters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { calculateMaterialRequirements } from '../../utils/material-calculator.js';
 import assetManifest from '../../utils/asset-manifest.js';
+import { capProfitRate, sellsFromProfitData, liquidityMarkerHtml } from '../../utils/liquidity-cap.js';
 import alchemyProfitCalculator from '../market/alchemy-profit-calculator.js';
 
 const GATHERING_TYPES = ['/action_types/foraging', '/action_types/woodcutting', '/action_types/milking'];
@@ -145,6 +146,10 @@ export function combatZoneRows(snapshot, currentFingerprint) {
                 level: null,
                 profitPerHour: Number.isFinite(zone.profitPerHour) ? zone.profitPerHour : null,
                 expPerHour: Number.isFinite(zone.xpPerHour) ? zone.xpPerHour : null,
+                // What the run said it would sell each hour — the snapshot's
+                // profit figure is the sim's raw claim, and this is what lets
+                // the display bound it by market volume at read time
+                sells: Array.isArray(zone.sells) ? zone.sells : [],
                 source: 'combat-sim',
                 simulatedAt: snapshot.savedAt ?? null,
                 gearChanged,
@@ -343,6 +348,7 @@ class PinnedActionsPage {
                 level: details.levelRequirement?.level ?? 0,
                 profitPerHour: stats?.profitPerHour ?? null,
                 expPerHour: stats?.expPerHour ?? null,
+                liquidityLimit: stats?.liquidityLimit ?? null,
             });
         }
 
@@ -369,7 +375,22 @@ class PinnedActionsPage {
             if (!snapshot) return;
 
             const fingerprint = await combatSimUI.currentGearFingerprint();
-            this.allActions.push(...combatZoneRows(snapshot, fingerprint));
+            const rows = combatZoneRows(snapshot, fingerprint);
+
+            // The snapshot stores the sim's raw claim; this page ranks zones
+            // against skilling actions, so the pace shown is bounded by how
+            // fast the loot actually sells — marked, never silently
+            for (const row of rows) {
+                if (!(row.profitPerHour > 0) || !row.sells?.length) continue;
+                const capped = await capProfitRate({ goldPerHour: row.profitPerHour, sells: row.sells });
+                if (capped.capped) {
+                    row.uncappedProfitPerHour = row.profitPerHour;
+                    row.profitPerHour = capped.goldPerHour;
+                    row.liquidityLimit = capped.limit;
+                }
+            }
+
+            this.allActions.push(...rows);
         } catch (error) {
             console.error('[PinnedActionsPage] Loading simulated combat zones failed:', error);
         }
@@ -645,7 +666,7 @@ class PinnedActionsPage {
                 <span style="color: #aaa; font-size: 0.9em; text-align: left;">${action.skill}</span>
                 <span style="color: #aaa; text-align: left;">${action.level ?? '—'}</span>
                 <span style="text-align: right; color: ${profitColor};">
-                    ${profitPrefix}${formatCompact(action.profitPerHour)}
+                    ${profitPrefix}${formatCompact(action.profitPerHour)}${liquidityMarkerHtml(action.liquidityLimit, { compact: true })}
                 </span>
                 <span style="text-align: right; color: #7ec8e3;">
                     ${formatCompact(action.expPerHour)}
@@ -967,27 +988,43 @@ class PinnedActionsPage {
         try {
             let profitPerHour = null;
             let expPerHour = null;
+            let sells = [];
 
             if (pinnedItemHrid && actionHrid.startsWith('/actions/alchemy/')) {
                 const alchemyType = actionHrid.replace('/actions/alchemy/', '');
                 const profitData = this._computeAlchemyStats(alchemyType, pinnedItemHrid);
                 profitPerHour = profitData?.profitPerHour ?? null;
                 expPerHour = profitData?.expPerHour ?? null;
+                sells = profitData?.sells ?? [];
             } else {
                 const isGathering = GATHERING_TYPES.includes(details.type);
                 if (isGathering) {
                     const profitData = await calculateGatheringProfit(actionHrid);
                     profitPerHour = profitData?.profitPerHour ?? null;
+                    sells = sellsFromProfitData(profitData);
                 } else {
                     const profitData = await calculateProductionProfit(actionHrid);
                     profitPerHour = profitData?.profitPerHour ?? null;
+                    sells = sellsFromProfitData(profitData);
                 }
 
                 const expData = calculateExpPerHour(actionHrid);
                 expPerHour = expData?.expPerHour ?? null;
             }
 
-            const stats = { profitPerHour, expPerHour };
+            // The ranking seam: the pace this table sorts by is bounded by how
+            // fast the outputs actually trade, and a bounded row carries the
+            // marker payload the renderer must draw
+            let liquidityLimit = null;
+            if (profitPerHour > 0 && sells.length) {
+                const capped = await capProfitRate({ goldPerHour: profitPerHour, sells });
+                if (capped.capped) {
+                    profitPerHour = capped.goldPerHour;
+                    liquidityLimit = capped.limit;
+                }
+            }
+
+            const stats = { profitPerHour, expPerHour, liquidityLimit };
             if (!actionPanelSort.cachedStats) actionPanelSort.cachedStats = {};
             const cacheKey = pinnedItemHrid ? `${actionHrid}|${pinnedItemHrid}` : actionHrid;
             actionPanelSort.cachedStats[cacheKey] = stats;
@@ -1027,7 +1064,7 @@ class PinnedActionsPage {
             const expectedXP = profitData.successRate * fullXP + (1 - profitData.successRate) * fullXP * 0.1;
             const expPerHour = profitData.actionsPerHour * expectedXP;
 
-            return { profitPerHour: profitData.profitPerHour, expPerHour };
+            return { profitPerHour: profitData.profitPerHour, expPerHour, sells: sellsFromProfitData(profitData) };
         } catch (error) {
             console.error('[PinnedActionsPage] Failed to compute alchemy stats:', error);
             return null;

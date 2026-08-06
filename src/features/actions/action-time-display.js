@@ -32,6 +32,7 @@ import {
     parseGourmetBonus,
 } from '../../utils/tea-parser.js';
 import { getAlchemySuccessBonus } from '../../utils/buff-parser.js';
+import { capProfitData, liquidityMarkerHtml } from '../../utils/liquidity-cap.js';
 import {
     calculateProductionActionTotalsFromBase,
     calculateGatheringActionTotalsFromBase,
@@ -2706,6 +2707,11 @@ class ActionTimeDisplay {
                 }
             }
 
+            // Display seam: the quoted pace is bounded by how fast the outputs
+            // actually trade. A copy — the calculators themselves stay raw for
+            // every non-display consumer.
+            profitData = await capProfitData(profitData);
+
             if (this.activeBarProfitId !== calcId) return;
 
             if (!profitData || typeof profitData.profitPerHour !== 'number') {
@@ -2721,6 +2727,11 @@ class ActionTimeDisplay {
             const sign = profitPerHour >= 0 ? '+' : '';
 
             let html = `<span style="color:#888;">Profit:</span> <span style="color:${profitColor}; font-weight:600;">${sign}${this.formatLargeNumber(Math.abs(Math.round(profitPerHour)))}/hr</span>`;
+
+            // A capped figure is never shown silently
+            if (profitData.liquidityLimit) {
+                html += liquidityMarkerHtml(profitData.liquidityLimit, { compact: true });
+            }
 
             if (isFinite(remainingActions) && remainingActions > 0 && profitData.actionsPerHour > 0) {
                 const profitPerAction =

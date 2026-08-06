@@ -36,6 +36,10 @@ vi.mock('./guild-member-skills.js', () => ({
             tracker.opened.push(tracker.cycler.next?.name ?? null);
             return tracker.cyclerResult;
         },
+        redoAll: () => {
+            tracker.redone += 1;
+            return tracker.cycler.logged;
+        },
     },
 }));
 vi.mock('./guild-xp-tracker.js', () => ({
@@ -52,6 +56,7 @@ tracker.rows = [];
 tracker.cycler = { logged: 0, total: 0, next: null, stale: 0 };
 tracker.cyclerResult = { opened: null, how: 'done' };
 tracker.opened = [];
+tracker.redone = 0;
 
 const {
     drawProfileCycler,
@@ -62,6 +67,7 @@ const {
     contributionShares,
     projectGuildXP,
     buildRoster,
+    memberLabel,
     guildRosterPanel,
     registerGuildRosterRow,
     WINDOW_7D,
@@ -81,6 +87,7 @@ const series = (points) => points.map(([hoursAgo, xp]) => ({ t: now - hoursAgo *
 describe('the profile cycler', () => {
     beforeEach(() => {
         tracker.opened = [];
+        tracker.redone = 0;
         tracker.cycler = { logged: 2, total: 8, next: { name: 'Ada' }, stale: 0 };
         tracker.cyclerResult = { opened: 'Ada', how: 'row' };
         document.body.innerHTML = '';
@@ -110,7 +117,53 @@ describe('the profile cycler', () => {
         const button = body.querySelector('button');
         button.click();
 
-        expect(button.textContent).toContain('Press Enter');
+        // The button says what it did; the status line says what to do next
+        expect(button.textContent).toContain('Asked for Ada');
+        expect(body.textContent).toContain('Press Enter in chat');
+    });
+
+    test('a hidden chat is said plainly rather than swallowed', () => {
+        // The reported failure: chat was hidden, the fill went nowhere, and the
+        // cycler moved on regardless
+        tracker.cyclerResult = { opened: 'Ada', how: 'no-chat' };
+        const body = document.createElement('div');
+        drawProfileCycler(body);
+        body.querySelector('button').click();
+
+        expect(body.textContent).toContain('Open the chat panel first');
+        // And the member is still the one being offered
+        expect(body.querySelector('button').textContent).toContain('Ada');
+    });
+
+    test('a profile still in flight is shown as waiting, not as done', () => {
+        tracker.cycler = { logged: 2, total: 8, next: null, pending: { name: 'Ada' }, stale: 0 };
+        const body = document.createElement('div');
+        drawProfileCycler(body);
+
+        expect(body.textContent).toContain('Waiting for Ada');
+        expect(body.textContent).toContain('logged 2/8');
+    });
+
+    test('redo marks everyone due again without asking for anything', () => {
+        const body = document.createElement('div');
+        drawProfileCycler(body);
+
+        const redo = body.querySelector('.mwi-profile-redo');
+        expect(redo.textContent).toContain('Redo all 2');
+
+        redo.click();
+
+        expect(tracker.redone).toBe(1);
+        // Redo changes who is due; it never opens a profile
+        expect(tracker.opened).toEqual([]);
+    });
+
+    test('with nothing captured there is nothing to redo', () => {
+        tracker.cycler = { logged: 0, total: 8, next: { name: 'Ada' }, stale: 0 };
+        const body = document.createElement('div');
+        drawProfileCycler(body);
+
+        expect(body.querySelector('.mwi-profile-redo')).toBeNull();
     });
 
     test('a fully logged roster has nothing to click', () => {
@@ -271,6 +324,57 @@ describe('buildRoster', () => {
     });
 });
 
+describe('a member who has left the guild', () => {
+    // Reported live from a 107-member guild: "Gone quiet (2)" listed
+    // "#9349 · —/h today vs 348/h this week" — somebody who left, still holding
+    // last week's rate, doing nothing today because they were gone, and headed
+    // with an internal id because they had been dropped from the member list
+    const departed = {
+        now,
+        meta: { a: { name: 'Alice' } },
+        series: {
+            a: series([
+                [160, 0],
+                [24, 6000],
+                [1, 6500],
+            ]),
+            9349: series([
+                [160, 0],
+                [48, 9000],
+                [1, 9000],
+            ]),
+        },
+    };
+
+    test('is not on the roster at all, however much history they left behind', () => {
+        const roster = buildRoster(departed);
+
+        expect(roster.map((member) => member.characterID)).toEqual(['a']);
+        expect(roster.some((member) => member.quiet)).toBe(false);
+    });
+
+    test('and does not count towards anybody’s share', () => {
+        // Their nine thousand XP was diluting everyone else's contribution
+        const roster = buildRoster(departed);
+        expect(roster[0].share7d).toBeCloseTo(100, 6);
+    });
+
+    test('an empty member list is “not known yet”, not “nobody is here”', () => {
+        // Before any roster message has arrived, the history stands in — which
+        // is what it did before, and losing the whole panel would be worse
+        const roster = buildRoster({ ...departed, meta: {} });
+        expect(roster).toHaveLength(2);
+    });
+
+    test('a member with no name is said to have none, never numbered', () => {
+        const roster = buildRoster({ now, meta: { 9349: {} }, series: { 9349: series([[1, 10]]) } });
+
+        expect(roster[0].name).toBeNull();
+        expect(memberLabel(roster[0])).toBe('Unnamed member');
+        expect(memberLabel(roster[0])).not.toContain('9349');
+    });
+});
+
 describe('the panel and tile', () => {
     beforeEach(() => {
         vi.useFakeTimers();
@@ -279,6 +383,7 @@ describe('the panel and tile', () => {
         tracker.cycler = { logged: 0, total: 0, next: null, stale: 0 };
         tracker.cyclerResult = { opened: null, how: 'done' };
         tracker.opened = [];
+        tracker.redone = 0;
         tracker.members = [
             { characterID: 'a', name: 'Alice' },
             { characterID: 'b', name: 'Bob' },
@@ -316,6 +421,26 @@ describe('the panel and tile', () => {
         expect(text).toContain('Bob');
         expect(text).toContain('Gone quiet (1)');
         expect(text).toContain('Projected in 7d');
+    });
+
+    test('a departed member is drawn nowhere, not even in Gone quiet', () => {
+        // The live report: "Gone quiet (2)" listing "#9349 · —/h today vs 348/h
+        // this week" — a member who had left, still holding last week's rate
+        tracker.series = {
+            ...tracker.series,
+            9349: series([
+                [160, 0],
+                [48, 9000],
+                [1, 9000],
+            ]),
+        };
+        guildRosterPanel.show({ remember: false });
+        const text = guildRosterPanel.panel.textContent;
+
+        expect(text).not.toContain('9349');
+        // Bob is the one genuinely quiet member, and the count is his alone
+        expect(text).toContain('Gone quiet (1)');
+        expect(text).toContain('Contribution (2 of 2 measured)');
     });
 
     test('says so plainly when there is no guild yet', () => {

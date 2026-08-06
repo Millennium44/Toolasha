@@ -223,6 +223,38 @@ vi.mock('./all-zones-runner.js', () => ({
     cancelAllZonesSimulation: () => {},
 }));
 
+/**
+ * The market-volume cap, as a per-item throttle map. Its arithmetic is
+ * utils/liquidity-cap.js's tested business; this file proves the wiring — the
+ * zones table ranks and scores the *capped* Profit/day, draws the marker, and
+ * the snapshot keeps the raw claim.
+ */
+const liquidity = vi.hoisted(() => ({ throttleByItem: {} }));
+
+vi.mock('../../utils/liquidity-cap.js', () => ({
+    capProfitRate: async ({ goldPerHour, sells }) => {
+        for (const sold of sells || []) {
+            const throttle = liquidity.throttleByItem[sold.itemHrid];
+            if (throttle !== undefined && throttle < 1) {
+                return {
+                    goldPerHour: goldPerHour * throttle,
+                    capped: true,
+                    limit: {
+                        kind: 'volume',
+                        note: 'limited by market volume (~1/week)',
+                        detail: `${sold.name || sold.itemHrid} trades ~1/week, and you are not the only seller.`,
+                        itemHrid: sold.itemHrid,
+                        throttle,
+                    },
+                };
+            }
+        }
+        return { goldPerHour, capped: false, limit: null };
+    },
+    liquidityMarkerHtml: (limit, { compact = false } = {}) =>
+        limit ? `<span title="${limit.note} — ${limit.detail}">${compact ? 'vol-capped' : limit.note}</span>` : '',
+}));
+
 vi.mock('./sim-editor.js', () => ({
     SimEditor: class {
         getEditedDTOs() {
@@ -281,6 +313,11 @@ const {
     visibleAllZonesSkillColumns,
     scoreAllZoneRows,
     bestAllZoneRows,
+    isSkillingGearItem,
+    isAuraAbility,
+    skillingGearWarnings,
+    duplicateAuraWarnings,
+    partyLintWarnings,
 } = await import('./combat-sim-ui.js');
 
 /** A result row shaped like the upgrade advisor's output. */
@@ -888,6 +925,25 @@ describe('all-zones snapshot', () => {
         expect(snapshot.zones).toHaveLength(1);
         expect(snapshot).toMatchObject({ version: 1, hours: 4, fingerprint: null });
     });
+
+    test('stores the sim’s raw profit claim plus what was sold — the cap is applied by readers, not here', () => {
+        // The calibration loop compares the sim's claim against measured runs,
+        // so a market-volume cap baked in here would corrupt the comparison.
+        liquidity.throttleByItem['/items/rare_charm'] = 0.01;
+
+        const fly = zoneResult('Fly', { profit: 10_000 });
+        fly.revenue.dropEntries = [
+            { itemHrid: '/items/rare_charm', name: 'Rare Charm', countPerHour: 20, unitValue: 500, totalValue: 10_000 },
+            { itemHrid: '/items/no_value', name: 'Worthless', countPerHour: 0 },
+        ];
+
+        const snapshot = buildAllZonesSnapshot([fly], { hours: 2 });
+
+        expect(snapshot.zones[0].profitPerHour).toBe(10_000);
+        expect(snapshot.zones[0].sells).toEqual([
+            { itemHrid: '/items/rare_charm', name: 'Rare Charm', unitsPerHour: 20 },
+        ]);
+    });
 });
 
 describe('the all-zones table', () => {
@@ -1012,7 +1068,7 @@ describe('the all-zones table', () => {
 
     describe('what gets drawn', () => {
         const HOUR_NS = 3600 * 1e9;
-        const result = (name, { xp = {}, profit = 0, tier = 0 } = {}) => ({
+        const result = (name, { xp = {}, profit = 0, tier = 0, dropEntries = [] } = {}) => ({
             zone: { name, difficultyTier: tier, zoneHrid: `/actions/combat/${name}` },
             simResult: {
                 simulatedTime: HOUR_NS,
@@ -1020,20 +1076,21 @@ describe('the all-zones table', () => {
                 deaths: { player1: 0 },
                 experienceGained: { player1: xp },
             },
-            revenue: { netPerHour: profit, revenuePerHour: profit, costPerHour: 0 },
+            revenue: { netPerHour: profit, revenuePerHour: profit, costPerHour: 0, dropEntries },
         });
 
         beforeEach(() => {
             ui.buildPanel();
             ui._allZonesSortCol = null;
+            liquidity.throttleByItem = {};
         });
 
         afterEach(() => {
             ui.destroy();
         });
 
-        test('drops the untrained skill headers and keeps the headline ones', () => {
-            ui._displayAllZonesResults(
+        test('drops the untrained skill headers and keeps the headline ones', async () => {
+            await ui._displayAllZonesResults(
                 [result('Fly', { xp: { defense: 900 }, profit: 100 }), result('Jungle', { xp: { defense: 1500 } })],
                 1,
                 {}
@@ -1047,8 +1104,8 @@ describe('the all-zones table', () => {
             expect(headers).not.toContain('stamina');
         });
 
-        test('names both winners above the table', () => {
-            ui._displayAllZonesResults(
+        test('names both winners above the table', async () => {
+            await ui._displayAllZonesResults(
                 [
                     result('Fly', { xp: { defense: 900 }, profit: 10 }),
                     result('Jungle', { xp: { defense: 100 }, profit: 5000 }),
@@ -1065,10 +1122,10 @@ describe('the all-zones table', () => {
             expect(shown).toContain('best profit');
         });
 
-        test('a max-tier-food run says so above the table and in the export name', () => {
+        test('a max-tier-food run says so above the table and in the export name', async () => {
             ui._allZonesMaxTierFood = true;
             ui._allZonesFoodSwaps = [{ playerHrid: 'player1', fromName: 'Cheese', toName: 'Marsberry Cake' }];
-            ui._displayAllZonesResults([result('Fly', { xp: { defense: 900 }, profit: 10 })], 1, {});
+            await ui._displayAllZonesResults([result('Fly', { xp: { defense: 900 }, profit: 10 })], 1, {});
             const container = ui.panel.querySelector('#mwi-csim-results');
 
             expect(container.textContent).toContain('max-tier food');
@@ -1077,13 +1134,76 @@ describe('the all-zones table', () => {
             expect(container.querySelector('[data-csv-export]').dataset.csvExport).toBe('combatsim-all-zones-maxfood');
         });
 
-        test('an ordinary run carries no food note and exports under the plain name', () => {
+        test('an ordinary run carries no food note and exports under the plain name', async () => {
             ui._allZonesMaxTierFood = false;
-            ui._displayAllZonesResults([result('Fly', { xp: { defense: 900 }, profit: 10 })], 1, {});
+            await ui._displayAllZonesResults([result('Fly', { xp: { defense: 900 }, profit: 10 })], 1, {});
             const container = ui.panel.querySelector('#mwi-csim-results');
 
             expect(container.textContent).not.toContain('max-tier food');
             expect(container.querySelector('[data-csv-export]').dataset.csvExport).toBe('combatsim-all-zones');
+        });
+
+        describe('the market-volume cap', () => {
+            const thinLoot = [{ itemHrid: '/items/rare_charm', name: 'Rare Charm', countPerHour: 20 }];
+            const liquidLoot = [{ itemHrid: '/items/meat', name: 'Meat', countPerHour: 200 }];
+
+            /** The drawn cell for a zone row and column, by header position */
+            function cell(zoneName, colKey) {
+                const headers = [...ui.panel.querySelectorAll('#mwi-csim-results th')].map((th) => th.dataset.col);
+                const index = headers.indexOf(colKey);
+                const rows = [...ui.panel.querySelectorAll('#mwi-csim-results tbody tr')];
+                const row = rows.find((tr) => tr.cells[0].textContent.startsWith(zoneName));
+                return row?.cells[index];
+            }
+
+            test('Profit/day is ranked and drawn at the pace the market pays, marked', async () => {
+                // The fantasy zone: 10,000/hr through loot the market takes a
+                // hundredth of. The honest zone: 1,000/hr of liquid meat.
+                liquidity.throttleByItem['/items/rare_charm'] = 0.01;
+                await ui._displayAllZonesResults(
+                    [
+                        result('Fantasy', { profit: 10_000, dropEntries: thinLoot }),
+                        result('Honest', { profit: 1_000, dropEntries: liquidLoot }),
+                    ],
+                    1,
+                    {}
+                );
+
+                // 10,000 × 0.01 × 24 = 2,400/day, against 24,000/day honest
+                expect(cell('Fantasy', 'profitDay').textContent).toContain('2.4K');
+                expect(cell('Honest', 'profitDay').textContent).toContain('24.0K');
+
+                // The capped cell says so, naming the limiting item; the liquid one is untouched
+                expect(cell('Fantasy', 'profitDay').innerHTML).toContain('vol-capped');
+                expect(cell('Fantasy', 'profitDay').querySelector('span[title]').title).toContain('Rare Charm');
+                expect(cell('Honest', 'profitDay').innerHTML).not.toContain('vol-capped');
+            });
+
+            test('the Score blends the capped Profit/day, not the raw claim', async () => {
+                liquidity.throttleByItem['/items/rare_charm'] = 0.01;
+                await ui._displayAllZonesResults(
+                    [
+                        result('Fantasy', { xp: { defense: 100 }, profit: 10_000, dropEntries: thinLoot }),
+                        result('Honest', { xp: { defense: 100 }, profit: 1_000, dropEntries: liquidLoot }),
+                    ],
+                    1,
+                    {}
+                );
+
+                // Equal XP; on raw profit Fantasy would win the profit ladder
+                // and the Score — capped, it loses both
+                expect(Number(cell('Honest', 'score').textContent)).toBeGreaterThan(
+                    Number(cell('Fantasy', 'score').textContent)
+                );
+                const shown = ui.panel.querySelector('#mwi-csim-results').textContent;
+                expect(shown).toContain('Honestbest profit');
+            });
+
+            test('a liquid run draws no marker anywhere', async () => {
+                await ui._displayAllZonesResults([result('Honest', { profit: 1_000, dropEntries: liquidLoot })], 1, {});
+
+                expect(ui.panel.querySelector('#mwi-csim-results').innerHTML).not.toContain('vol-capped');
+            });
         });
     });
 
@@ -1714,7 +1834,7 @@ describe('the summary at the top of the Results tab', () => {
 
         expect(shown).toContain('Summary');
         expect(shown).toContain('Profit/day');
-        expect(shown).toContain('XP/day');
+        expect(shown).toContain('XP/hr');
         expect(shown).toContain('Kills/hr');
         expect(shown).toContain('Deaths/day');
         // Up top is the whole point: burying it under Overview would be the bug
@@ -1735,24 +1855,32 @@ describe('the summary at the top of the Results tab', () => {
         expect(shown).toContain('Costs 4.8K/day');
     });
 
-    test('XP/day is the same total the XP section adds up, times a day', () => {
-        // 1500 xp/hr → 36.0K a day, with the two skills named beside it
+    test('XP/hr is the same total the XP section adds up', () => {
+        // 1500 xp/hr on the tile, with the two skills still named per day beside it
         const shown = showFight().textContent;
 
-        expect(shown).toContain('36.0K');
+        expect(shown).toContain('XP/hr1.5K');
         expect(shown).toContain('Attack 24.0K');
         expect(shown).toContain('Stamina 12.0K');
     });
 
-    test('a dungeon is summarised on completions rather than on encounters', () => {
+    test('a dungeon is summarised on the average clear rather than on encounters', () => {
+        // 6 clears in an hour is one every ten minutes
         const shown = showFight(
             oneHourFight({ isDungeon: true, dungeonsCompleted: 6, dungeonsFailed: 2, maxWaveReached: 9 })
         ).textContent;
 
-        expect(shown).toContain('Dungeons/hr');
+        expect(shown).toContain('Avg clear0h 10m 00s');
         expect(shown).toContain('Success');
         expect(shown).toContain('75.0%');
         expect(shown).not.toContain('Kills/hr');
+    });
+
+    test('a dungeon that never completes shows no clear time rather than an infinity', () => {
+        const shown = showFight(oneHourFight({ isDungeon: true, dungeonsCompleted: 0, dungeonsFailed: 4 })).textContent;
+
+        expect(shown).toContain('Avg clear—');
+        expect(shown).toContain('0.0%');
     });
 
     test('deaths are a daily figure, because the hourly one rounds to never', () => {
@@ -1763,6 +1891,197 @@ describe('the summary at the top of the Results tab', () => {
         expect(shown).toContain('Deaths/day0.5');
         // The hourly figure is still down in Overview for anyone who wants it
         expect(shown).toContain('Deaths/hr0.02');
+    });
+
+    test('party lint warnings render in amber directly under the summary', () => {
+        ui._lastPartyWarnings = ['Mazo has skilling gear equipped: Foraging Shears'];
+        const shown = showFight().textContent;
+
+        expect(shown).toContain('Mazo has skilling gear equipped: Foraging Shears');
+        expect(shown.indexOf('Summary')).toBeLessThan(shown.indexOf('Mazo has skilling gear'));
+    });
+
+    test('and are absent entirely when there is nothing to warn about', () => {
+        ui._lastPartyWarnings = [];
+        const shown = showFight().textContent;
+
+        expect(shown).not.toContain('skilling gear');
+        expect(shown).not.toContain('auras do not stack');
+    });
+});
+
+/**
+ * Game data for the party lint: a skilling tool, a combat sword, a real aura,
+ * a self-only special and a plain damage ability — the shapes the detectors
+ * have to tell apart.
+ */
+const LINT_GAME_DATA = {
+    itemDetailMap: {
+        '/items/foraging_shears': {
+            name: 'Foraging Shears',
+            equipmentDetail: {
+                type: '/equipment_types/foraging_tool',
+                combatStats: { attackInterval: 0 },
+                noncombatStats: { foragingSpeed: 0.3 },
+            },
+        },
+        '/items/foragers_top': {
+            name: "Forager's Top",
+            equipmentDetail: {
+                type: '/equipment_types/body',
+                combatStats: {},
+                noncombatStats: { foragingExperience: 0.1 },
+            },
+        },
+        '/items/vampiric_sword': {
+            name: 'Vampiric Sword',
+            equipmentDetail: {
+                type: '/equipment_types/main_hand',
+                combatStats: { attackInterval: 3e9, lifeSteal: 0.05 },
+                noncombatStats: { foragingSpeed: 0 },
+            },
+        },
+    },
+    abilityDetailMap: {
+        '/abilities/fierce_aura': {
+            name: 'Fierce Aura',
+            isSpecialAbility: true,
+            abilityEffects: [
+                {
+                    targetType: 'allAllies',
+                    effectType: '/ability_effect_types/buff',
+                    buffs: [{ uniqueHrid: '/buff_uniques/fierce_aura' }],
+                },
+            ],
+        },
+        '/abilities/vampirism': {
+            name: 'Vampirism',
+            isSpecialAbility: true,
+            abilityEffects: [
+                {
+                    targetType: 'self',
+                    effectType: '/ability_effect_types/buff',
+                    buffs: [{ uniqueHrid: '/buff_uniques/vampirism' }],
+                },
+            ],
+        },
+        '/abilities/sweep': {
+            name: 'Sweep',
+            isSpecialAbility: false,
+            abilityEffects: [{ targetType: 'enemy', effectType: '/ability_effect_types/damage', buffs: null }],
+        },
+    },
+};
+
+const LINT_INFO = [
+    { hrid: 'player1', name: 'Mazo' },
+    { hrid: 'player2', name: 'Irokez' },
+    { hrid: 'player3', name: 'Tib' },
+];
+
+/** A party member DTO with just the fields the lint reads. */
+function partyMember(hrid, { equipment = {}, abilities = [] } = {}) {
+    return { hrid, equipment, abilities };
+}
+
+describe('linting a loaded party', () => {
+    test('a member wearing skilling gear in a combat slot is named, tools are not', () => {
+        // The shears live in a tool slot, which has no combat equivalent and is
+        // always occupied — never a mistake. The top displaces real armour.
+        const party = [
+            partyMember('player1', {
+                equipment: {
+                    '/equipment_types/foraging_tool': { hrid: '/items/foraging_shears', enhancementLevel: 5 },
+                    '/equipment_types/body': { hrid: '/items/foragers_top', enhancementLevel: 3 },
+                    '/equipment_types/main_hand': { hrid: '/items/vampiric_sword', enhancementLevel: 8 },
+                },
+            }),
+            partyMember('player2'),
+        ];
+
+        const warnings = skillingGearWarnings(party, LINT_INFO, LINT_GAME_DATA.itemDetailMap);
+
+        expect(warnings).toEqual(["Mazo has skilling gear equipped: Forager's Top"]);
+    });
+
+    test('a party in clean combat gear is not flagged', () => {
+        const party = [
+            partyMember('player1', {
+                equipment: { '/equipment_types/main_hand': { hrid: '/items/vampiric_sword', enhancementLevel: 8 } },
+            }),
+            partyMember('player2', {
+                equipment: { '/equipment_types/main_hand': { hrid: '/items/vampiric_sword', enhancementLevel: 2 } },
+            }),
+        ];
+
+        expect(skillingGearWarnings(party, LINT_INFO, LINT_GAME_DATA.itemDetailMap)).toEqual([]);
+    });
+
+    test('the same aura on two members is one warning naming both', () => {
+        const party = [
+            partyMember('player1', { abilities: [{ hrid: '/abilities/fierce_aura', level: 40 }, null, null] }),
+            partyMember('player2', { abilities: [{ hrid: '/abilities/fierce_aura', level: 55 }, null, null] }),
+        ];
+
+        const warnings = duplicateAuraWarnings(party, LINT_INFO, LINT_GAME_DATA.abilityDetailMap);
+
+        expect(warnings).toEqual(['Fierce Aura is equipped by Mazo and Irokez — auras do not stack']);
+    });
+
+    test('one aura on one member is the correct number and says nothing', () => {
+        const party = [
+            partyMember('player1', { abilities: [{ hrid: '/abilities/fierce_aura', level: 40 }, null, null] }),
+            partyMember('player2', { abilities: [{ hrid: '/abilities/sweep', level: 60 }, null, null] }),
+        ];
+
+        expect(duplicateAuraWarnings(party, LINT_INFO, LINT_GAME_DATA.abilityDetailMap)).toEqual([]);
+    });
+
+    test('a self-only special on two members is not an aura and is left alone', () => {
+        // Vampirism buffs only its caster, so two copies really are two buffs
+        const party = [
+            partyMember('player1', { abilities: [{ hrid: '/abilities/vampirism', level: 40 }] }),
+            partyMember('player2', { abilities: [{ hrid: '/abilities/vampirism', level: 55 }] }),
+        ];
+
+        expect(duplicateAuraWarnings(party, LINT_INFO, LINT_GAME_DATA.abilityDetailMap)).toEqual([]);
+    });
+
+    test('a solo run produces no warnings at all, whatever is equipped', () => {
+        const solo = [
+            partyMember('player1', {
+                equipment: { '/equipment_types/foraging_tool': { hrid: '/items/foraging_shears' } },
+                abilities: [{ hrid: '/abilities/fierce_aura', level: 40 }],
+            }),
+        ];
+
+        expect(partyLintWarnings(solo, LINT_INFO, LINT_GAME_DATA)).toEqual([]);
+    });
+
+    test('a party collects both kinds of warning through one call', () => {
+        const party = [
+            partyMember('player1', {
+                equipment: { '/equipment_types/body': { hrid: '/items/foragers_top' } },
+                abilities: [{ hrid: '/abilities/fierce_aura', level: 40 }],
+            }),
+            partyMember('player2', { abilities: [{ hrid: '/abilities/fierce_aura', level: 55 }] }),
+            partyMember('player3', { abilities: [{ hrid: '/abilities/fierce_aura', level: 12 }] }),
+        ];
+
+        expect(partyLintWarnings(party, LINT_INFO, LINT_GAME_DATA)).toEqual([
+            "Mazo has skilling gear equipped: Forager's Top",
+            'Fierce Aura is equipped by Mazo, Irokez and Tib — auras do not stack',
+        ]);
+    });
+
+    test('the predicates read the stats, not the names', () => {
+        expect(isSkillingGearItem(LINT_GAME_DATA.itemDetailMap['/items/foraging_shears'])).toBe(true);
+        expect(isSkillingGearItem(LINT_GAME_DATA.itemDetailMap['/items/vampiric_sword'])).toBe(false);
+        expect(isSkillingGearItem(undefined)).toBe(false);
+        expect(isAuraAbility(LINT_GAME_DATA.abilityDetailMap['/abilities/fierce_aura'])).toBe(true);
+        expect(isAuraAbility(LINT_GAME_DATA.abilityDetailMap['/abilities/vampirism'])).toBe(false);
+        expect(isAuraAbility(LINT_GAME_DATA.abilityDetailMap['/abilities/sweep'])).toBe(false);
+        expect(isAuraAbility(undefined)).toBe(false);
     });
 });
 

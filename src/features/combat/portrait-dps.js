@@ -35,7 +35,21 @@
  */
 
 import config from '../../core/config.js';
-import { damageBreakdown, battleBreakdown } from './damage-tracker.js';
+import { damageBreakdown, battleBreakdown, manaSamples } from './damage-tracker.js';
+import { takenBreakdown, battleTakenBreakdown } from './damage-taken-tracker.js';
+import {
+    timeToKillSeconds,
+    timeToKillText,
+    waveClearSeconds,
+    waveClearText,
+    manaRunwaySeconds,
+    manaRunwayText,
+    sustainLine,
+    accuracyText,
+    outgoingText,
+    enrageSecondsLeft,
+    enrageLine,
+} from './combat-estimates.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { formatLargeNumber, formatWithSeparator } from '../../utils/formatters.js';
 import { ROW_COLORS } from '../../utils/overlay-format.js';
@@ -99,10 +113,22 @@ export function matchPortraits(units, players) {
  * has been in the fight longest, which in a party is everybody equally and after
  * a death is not.
  *
+ * ## Every player gets the same lines
+ *
+ * A line one player has earned and another has not still renders on both — as
+ * a figure on one and a dash on the other — because a line that comes and goes
+ * per player gives five portraits five different heights. The `extras` flags
+ * decide which lines exist at all, and they change for everybody at once.
+ *
  * @param {Object} player - From `damageBreakdown().players`
- * @returns {{text: string, title: string}}
+ * @param {Object|null} [current] - This fight's row for them, from `battleBreakdown`
+ * @param {Object|null} [extras] - Which optional lines to draw, and their inputs:
+ *   `{showSustain, taken, showAccuracy, showMana, manaRunway}` — `taken` is
+ *   their row from `takenBreakdown().players`, `manaRunway` from
+ *   `manaRunwaySeconds`
+ * @returns {{lines: Array<string|{text: string, color: string}>, title: string}}
  */
-export function meterText(player, current = null) {
+export function meterText(player, current = null, extras = null) {
     // Null until there is enough to divide by, which is a different thing from
     // zero and should not be drawn as one
     const rate = (value) => (value === null || value === undefined ? null : Math.round(value));
@@ -119,47 +145,124 @@ export function meterText(player, current = null) {
     // This fight above the run, as DPs has it. The order is the point: the fight
     // in front of you is the one you can still change, and the run is the
     // context you read it against.
-    const lines = [];
-    if (current) lines.push(line(current.dps, current.damage, 'cur'));
+    //
+    // The cur line is always there, dashed when there is nothing to say yet.
+    // It used to render only once a player had acted this fight, which gave
+    // that player's tile a taller meter than their neighbours' — five portraits
+    // at three different heights, shifting again at every fight boundary.
+    const lines = [current ? line(current.dps, current.damage, 'cur') : '— cur'];
     lines.push(line(player.dps, player.damage, 'total'));
 
-    return {
-        lines,
-        title:
-            `${player.name}\n` +
-            (current
-                ? `This fight: ${formatLargeNumber(Math.round(current.damage || 0))} damage` +
-                  (rate(current.dps) === null
-                      ? ', too early for a rate.'
-                      : `, ${formatWithSeparator(rate(current.dps))}/s.`)
-                : '') +
-            `\nThis run: ${formatLargeNumber(Math.round(player.damage || 0))} damage` +
-            (rate(player.dps) === null
-                ? ', not yet long enough to give a rate.'
-                : `, ${formatWithSeparator(rate(player.dps))}/s.`),
-    };
+    let title =
+        `${player.name}\n` +
+        (current
+            ? `This fight: ${formatLargeNumber(Math.round(current.damage || 0))} damage` +
+              (rate(current.dps) === null
+                  ? ', too early for a rate.'
+                  : `, ${formatWithSeparator(rate(current.dps))}/s.`)
+            : '') +
+        `\nThis run: ${formatLargeNumber(Math.round(player.damage || 0))} damage` +
+        (rate(player.dps) === null
+            ? ', not yet long enough to give a rate.'
+            : `, ${formatWithSeparator(rate(player.dps))}/s.`);
+
+    if (extras?.showSustain) {
+        const sustain = sustainLine(extras.taken);
+        lines.push(
+            sustain
+                ? { text: sustain.text, color: sustain.negative ? ROW_COLORS.bad : ROW_COLORS.good }
+                : { text: '— taken', color: ROW_COLORS.dim }
+        );
+        title += sustain
+            ? '\nTaken and net sustain this run; a negative net is losing health.'
+            : '\nNo incoming rate to show yet.';
+    }
+
+    if (extras?.showAccuracy) {
+        const accuracy = accuracyText(player);
+        lines.push(accuracy ? { text: accuracy, color: ROW_COLORS.neutral } : { text: '— hit', color: ROW_COLORS.dim });
+        title += accuracy
+            ? '\nHit and crit rate this run.'
+            : '\nToo few swings this run for a hit rate to be a measurement.';
+    }
+
+    if (extras?.showMana) {
+        const mana = manaRunwayText(extras.manaRunway);
+        lines.push(mana ? { text: mana, color: ROW_COLORS.gold } : { text: '— mana', color: ROW_COLORS.dim });
+        title += mana
+            ? '\nMana is draining; this is the time until empty at the measured rate.'
+            : '\nMana steady, rising, or not yet measured — no runway to warn about.';
+    }
+
+    return { lines, title };
 }
 
 /**
- * What a monster's tile says: how fast it is being taken down.
+ * What a monster's tile says: how fast it is being taken down, and — line by
+ * optional line — how long it has left, how long the wave has, what it is
+ * doing to the party, and when it enrages.
  *
  * Per slot rather than per name, so two of the same monster side by side each
  * carry their own rate — averaging them would put a number on both tiles that
  * was true of neither.
  *
+ * The same equal-lines rule as the players: an enabled line renders on every
+ * enemy tile, dashed where its input is missing, so the tiles keep one height.
+ *
  * @param {Object} enemy - From `battleBreakdown().enemies`
- * @returns {{text: string, title: string}}
+ * @param {Object|null} [extras] - Which optional lines to draw, and their
+ *   inputs: `{showTimeToKill, showWaveClear, waveSeconds, showOutgoing,
+ *   outgoingDps, showEnrage, now}`. `waveSeconds` is passed only for the tile
+ *   the one wave figure lives on; the rest dash it.
+ * @returns {{text: string, lines: Array<string|{text: string, color: string}>, title: string}}
  */
-export function enemyMeterText(enemy) {
+export function enemyMeterText(enemy, extras = null) {
     const dps = enemy.dps === null || enemy.dps === undefined ? null : Math.round(enemy.dps);
 
-    return {
-        text: dps === null ? '—' : `${formatWithSeparator(dps)}/s`,
-        title:
-            `${enemy.name || 'This enemy'}: ${formatWithSeparator(Math.round(enemy.damage || 0))} damage dealt to ` +
-            'it this fight' +
-            (dps === null ? ', too early for a rate.' : `, ${formatWithSeparator(dps)} per second.`),
-    };
+    const first = dps === null ? '—' : `${formatWithSeparator(dps)}/s`;
+    const lines = [first];
+    let title =
+        `${enemy.name || 'This enemy'}: ${formatWithSeparator(Math.round(enemy.damage || 0))} damage dealt to ` +
+        'it this fight' +
+        (dps === null ? ', too early for a rate.' : `, ${formatWithSeparator(dps)} per second.`);
+
+    if (extras?.showTimeToKill) {
+        const ttk = timeToKillText(timeToKillSeconds(enemy.hp, enemy.dps));
+        lines.push(ttk ? { text: ttk, color: ROW_COLORS.good } : { text: '— dead', color: ROW_COLORS.dim });
+        title += ttk
+            ? '\nRemaining health over the rate it is being hit at.'
+            : '\nNo time to kill yet: its health or a rate on it is still unknown.';
+    }
+
+    if (extras?.showWaveClear) {
+        const wave = waveClearText(extras.waveSeconds);
+        lines.push(wave ? { text: wave, color: ROW_COLORS.good } : { text: '— wave', color: ROW_COLORS.dim });
+        title += wave
+            ? "\nThe whole wave's remaining health over the party's combined rate."
+            : '\nThe wave figure lives on the topmost tile, and only once every health bar and a rate are known.';
+    }
+
+    if (extras?.showOutgoing) {
+        const outgoing = outgoingText(extras.outgoingDps);
+        lines.push(outgoing ? { text: outgoing, color: ROW_COLORS.bad } : { text: '— hits', color: ROW_COLORS.dim });
+        title += outgoing
+            ? '\nWhat it is doing to the party this fight.'
+            : '\nNo attributable hit from it this fight yet.';
+    }
+
+    if (extras?.showEnrage) {
+        const enrage = enrageLine(enrageSecondsLeft(enemy.enrageAt, extras.now ?? Date.now()));
+        lines.push(
+            enrage
+                ? { text: enrage.text, color: enrage.warn ? ROW_COLORS.gold : ROW_COLORS.neutral }
+                : { text: '— enrage', color: ROW_COLORS.dim }
+        );
+        title += enrage
+            ? '\nCounting down to its enrage, from its own sheet.'
+            : '\nIts sheet states no enrage timer this battle.';
+    }
+
+    return { text: first, lines, title };
 }
 
 class PortraitDps {
@@ -215,13 +318,27 @@ class PortraitDps {
         });
     }
 
+    /** Which of the optional lines are on, read fresh so a toggle takes hold next draw */
+    _settings() {
+        return {
+            timeToKill: config.getSetting('portraitDps_timeToKill'),
+            waveClear: config.getSetting('portraitDps_waveClear'),
+            manaRunway: config.getSetting('portraitDps_manaRunway'),
+            sustain: config.getSetting('portraitDps_sustain'),
+            accuracy: config.getSetting('portraitDps_accuracy'),
+            enemyOutgoing: config.getSetting('portraitDps_enemyOutgoing'),
+            enrage: config.getSetting('portraitDps_enrage'),
+        };
+    }
+
     /** Put a meter on every portrait, and a rate on every monster */
     _draw() {
         try {
             const run = damageBreakdown();
             const fight = battleBreakdown();
-            this._drawPlayers(run, fight);
-            this._drawEnemies(fight);
+            const settings = this._settings();
+            this._drawPlayers(run, fight, settings);
+            this._drawEnemies(fight, settings);
         } catch (error) {
             console.error('[PortraitDps] Drawing the portrait meters failed:', error);
         }
@@ -230,8 +347,9 @@ class PortraitDps {
     /**
      * @param {Object} run - From `damageBreakdown`
      * @param {Object} fight - From `battleBreakdown`
+     * @param {Object} settings - From `_settings`
      */
-    _drawPlayers(run, fight) {
+    _drawPlayers(run, fight, settings) {
         const area = document.querySelector(PLAYERS_AREA);
         if (!area) return;
 
@@ -246,16 +364,35 @@ class PortraitDps {
             if (entry?.name) currentByName.set(entry.name, entry);
         }
 
+        // The incoming tracker's rows, by name for the same reason. Only read
+        // when the sustain line exists to spend them on.
+        const takenByName = new Map();
+        if (settings.sustain) {
+            for (const entry of takenBreakdown().players || []) {
+                if (entry?.name) takenByName.set(entry.name, entry);
+            }
+        }
+
+        const mana = settings.manaRunway ? manaSamples() : null;
+
         this._prune(area, new Set(pairs.map((pair) => pair.unit)));
         for (const { unit, player } of pairs) {
-            this._meter(unit, meterText(player, currentByName.get(player.name) || null));
+            const extras = {
+                showSustain: settings.sustain,
+                taken: takenByName.get(player.name) || null,
+                showAccuracy: settings.accuracy,
+                showMana: settings.manaRunway,
+                manaRunway: mana ? manaRunwaySeconds(mana[player.index]) : null,
+            };
+            this._meter(unit, meterText(player, currentByName.get(player.name) || null, extras));
         }
     }
 
     /**
      * @param {Object} fight - From `battleBreakdown`
+     * @param {Object} settings - From `_settings`
      */
-    _drawEnemies(fight) {
+    _drawEnemies(fight, settings) {
         const area = document.querySelector(MONSTERS_AREA);
         if (!area) return;
 
@@ -267,12 +404,26 @@ class PortraitDps {
         const units = [...area.querySelectorAll(UNIT)];
         const wanted = new Set();
 
+        // One figure for the whole wave, drawn on the topmost tile
+        const waveSeconds = settings.waveClear ? waveClearSeconds(fight.enemies) : null;
+        const outgoing = settings.enemyOutgoing ? battleTakenBreakdown().enemies : null;
+        const now = Date.now();
+
         units.forEach((unit, index) => {
             const enemy = fight.enemies?.[index];
             if (!enemy) return;
 
             wanted.add(unit);
-            this._meter(unit, enemyMeterText(enemy), true);
+            const extras = {
+                showTimeToKill: settings.timeToKill,
+                showWaveClear: settings.waveClear,
+                waveSeconds: index === 0 ? waveSeconds : null,
+                showOutgoing: settings.enemyOutgoing,
+                outgoingDps: outgoing?.[index]?.dps ?? null,
+                showEnrage: settings.enrage,
+                now,
+            };
+            this._meter(unit, enemyMeterText(enemy, extras), true);
         });
 
         this._prune(area, wanted);
@@ -332,13 +483,17 @@ class PortraitDps {
             else unit.insertBefore(meter, unit.firstChild);
         }
 
-        const text = lines.join('\n');
+        // A line is a string, or `{text, color}` when it carries its own colour
+        const text = lines
+            .map((line) => (typeof line === 'string' ? line : `${line.text}|${line.color || ''}`))
+            .join('\n');
         if (meter.dataset.text !== text) {
             meter.dataset.text = text;
             meter.replaceChildren();
             for (const line of lines) {
                 const row = document.createElement('div');
-                row.textContent = line;
+                row.textContent = typeof line === 'string' ? line : line.text;
+                if (typeof line !== 'string' && line.color) row.style.color = line.color;
                 meter.appendChild(row);
             }
         }

@@ -24,9 +24,10 @@ import { scoreEquipmentSetup } from '../../utils/tea-optimizer.js';
 import { formatKMB } from '../../utils/formatters.js';
 import { buildEnhancementLevelMap } from '../../utils/loadout-scraper.js';
 import loadoutSnapshotLocal from '../combat/loadout-snapshot.js';
+import { loadoutSnapshot, dataManager as sharedDataManager } from '../../utils/bundle-bridge.js';
 
 function getLoadoutSnapshot() {
-    return window.Toolasha?.Combat?.loadoutSnapshot || loadoutSnapshotLocal;
+    return loadoutSnapshot() || loadoutSnapshotLocal;
 }
 
 /**
@@ -1368,7 +1369,7 @@ class SkillingSimulatorUI {
     }
 
     _getItemName(hrid) {
-        const gameData = window.Toolasha?.Core?.dataManager?.getInitClientData?.();
+        const gameData = sharedDataManager()?.getInitClientData?.();
         return gameData?.itemDetailMap?.[hrid]?.name || null;
     }
 

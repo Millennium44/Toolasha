@@ -118,7 +118,7 @@ describe('buildGuildReport', () => {
         expect(report).toContain('ran dry 3×');
         expect(report).toContain('Healing · 150,000 attributed');
         expect(report).toContain('83% into T4');
-        expect(report).toContain('estimated from the battle feed');
+        expect(report).toContain('this client’s own battle feed');
     });
 
     test('carries no markup and no long lines', () => {
@@ -128,6 +128,39 @@ describe('buildGuildReport', () => {
         // Nothing padded out to a width a proportional font would ruin
         expect(report).not.toMatch(/ {3}/);
         for (const line of report.split('\n')) expect(line.length).toBeLessThanOrEqual(120);
+    });
+
+    test('with no measurement it pastes the estimate, labelled at the top', () => {
+        // Nobody watched, so there is no measurement to paste — but a guild
+        // deciding who to sign up still wants the shape, and must not mistake
+        // it for the real thing
+        const report = buildGuildReport({
+            trialName: 'Trial Chameleon',
+            tiersCleared: 4,
+            tier: 5,
+            breakdown: { players: [], reason: 'simulated' },
+            shortfall: { remaining: 112_000, total: 669_500, unit: 'HP' },
+            estimate: {
+                players: [
+                    { name: 'Tib', dps: 3000, share: 75 },
+                    { name: 'Moo', dps: 1000, share: 25 },
+                ],
+                unestimated: ['Ada'],
+                total: 4000,
+                covered: 2,
+                of: 3,
+            },
+        });
+
+        // The label is the second line, where a skimmer will read it
+        expect(report.split('\n')[1]).toContain('ESTIMATED FROM BUILDS');
+        expect(report).toContain('nobody had the In Progress fight view open');
+        expect(report).toContain('Est. party · ~4,000/s from 2 of 3 builds');
+        expect(report).toContain('1. Tib · ~3,000/s · 75%');
+        expect(report).toContain('No build captured, so not estimated · Ada');
+        // The result itself is still worth pasting
+        expect(report).toContain('83% into T5');
+        expect(report).not.toContain('Nothing was measured here');
     });
 
     test('a trial nobody measured says so instead of printing an empty table', () => {
@@ -154,5 +187,45 @@ describe('buildGuildReport', () => {
 
     test('one tier cleared is singular', () => {
         expect(buildGuildReport({ tiersCleared: 1, breakdown: breakdown() })).toContain('cleared 1 tier\n');
+    });
+
+    test('past weeks are a short tail at the bottom, and only when there are any', () => {
+        const report = buildGuildReport({
+            trialName: 'Trial Chameleon',
+            tiersCleared: 3,
+            breakdown: breakdown(),
+            pastWeeks: [
+                { when: 'last week', combatTier: 5, skillingTier: 6, points: 1800, tokens: 825 },
+                {
+                    when: '2 weeks ago',
+                    combatTier: null,
+                    skillingTier: null,
+                    points: null,
+                    tokens: null,
+                    foreign: true,
+                },
+            ],
+        });
+
+        const lines = report.split('\n');
+        expect(lines[lines.length - 3]).toBe('Past weeks:');
+        expect(report).toContain('Last week · combat T5 · skilling T6 · 1,800 pts · ~825 tokens each');
+        // A cycle archived off another guild's record is labelled, not mixed in
+        expect(report).toContain('2 weeks ago · combat — · skilling — · — pts · — tokens each · another guild’s week');
+
+        // No history, no header about it
+        expect(buildGuildReport({ breakdown: breakdown() })).not.toContain('Past weeks:');
+    });
+
+    test('the tail rides on a report nobody measured, too', () => {
+        const report = buildGuildReport({
+            breakdown: { players: [], reason: 'you were not in this fight' },
+            pastWeeks: [{ when: 'last week', combatTier: 0, skillingTier: null, points: 0, tokens: null }],
+        });
+
+        expect(report).toContain('Nothing was measured here');
+        expect(report).toContain('Past weeks:');
+        // A failed week is a result and prints its zeros
+        expect(report).toContain('Last week · combat T0 · skilling — · 0 pts · — tokens each');
     });
 });

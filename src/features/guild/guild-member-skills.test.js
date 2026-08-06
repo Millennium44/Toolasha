@@ -11,7 +11,7 @@
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
-const game = vi.hoisted(() => ({ store: {}, members: [], wsHandlers: {} }));
+const game = vi.hoisted(() => ({ store: {}, members: [], wsHandlers: {}, loadouts: [] }));
 
 vi.mock('../../core/storage.js', () => ({
     default: {
@@ -36,9 +36,20 @@ vi.mock('../../core/data-manager.js', () => ({
 vi.mock('./guild-xp-tracker.js', () => ({
     guildXPTracker: { getMemberList: () => game.members },
 }));
+vi.mock('./guild-loadout-capture.js', () => ({
+    default: { seen: () => game.loadouts },
+}));
 
-const { extractProfileSkills, guildMemberSkills, memberSkillsStorageKey, nextMemberToLog, STALE_AFTER_MS } =
-    await import('./guild-member-skills.js');
+const {
+    extractProfileSkills,
+    findBattleUnits,
+    guildMemberSkills,
+    memberSkillsStorageKey,
+    nextMemberToLog,
+    REQUEST_TIMEOUT_MS,
+    STALE_AFTER_MS,
+    UNIT_FRESH_MS,
+} = await import('./guild-member-skills.js');
 
 const now = Date.parse('2026-08-05T15:00:00Z');
 
@@ -67,6 +78,8 @@ beforeEach(async () => {
     game.store = {};
     game.members = [{ name: 'Ada' }, { name: 'Bo' }, { name: 'Cy' }];
     game.wsHandlers = {};
+    game.loadouts = [];
+    guildMemberSkills.unitRequests = {};
     guildMemberSkills.forget();
     guildMemberSkills.initialized = false;
     await guildMemberSkills.initialize('Milky Way');
@@ -176,14 +189,108 @@ describe('the cycler', () => {
         expect(guildMemberSkills.openNext()).toMatchObject({ opened: null, how: 'done', logged: 3, total: 3 });
     });
 
-    test('clicking twice quickly does not offer the same member twice', () => {
-        // The reply has not arrived yet, so nothing is captured — the walk has
-        // to move on by itself or the button would be stuck on one name
+    test('a click in flight moves on, but never marks anyone logged', () => {
+        document.body.innerHTML = '<div class="Chat_chatInputContainer__c"><input /></div>';
         const first = guildMemberSkills.openNext();
         const second = guildMemberSkills.openNext();
 
         expect(first.opened).toBe('Ada');
         expect(second.opened).toBe('Bo');
+        // Neither click captured anything, so nothing is logged
+        expect(guildMemberSkills.progress().logged).toBe(0);
+    });
+
+    test('a request that never lands is offered again', () => {
+        // The reported failure: chat was hidden, the fill went nowhere, and the
+        // cycler skipped that member for the session — "every member logged" at
+        // seven of eight
+        document.body.innerHTML = '<div class="Chat_chatInputContainer__c"><input /></div>';
+        expect(guildMemberSkills.openNext().opened).toBe('Ada');
+
+        vi.setSystemTime(now + REQUEST_TIMEOUT_MS + 1000);
+
+        expect(guildMemberSkills.progress().logged).toBe(0);
+        expect(guildMemberSkills.openNext(now + REQUEST_TIMEOUT_MS + 1000).opened).toBe('Ada');
+    });
+
+    test('a roster with real captures reads its real count, whatever was clicked', () => {
+        document.body.innerHTML = '<div class="Chat_chatInputContainer__c"><input /></div>';
+        game.wsHandlers.profile_shared(profile('Ada'));
+        game.wsHandlers.profile_shared(profile('Bo'));
+
+        // Clicks that went nowhere for the third
+        guildMemberSkills.openNext();
+        guildMemberSkills.openNext();
+
+        const state = guildMemberSkills.progress();
+        expect(state.logged).toBe(2);
+        expect(state.total).toBe(3);
+    });
+
+    test('hidden chat is said, not silently filled', () => {
+        // No chat input in the DOM at all, which is what a hidden chat looks
+        // like from here
+        document.body.innerHTML = '';
+        const result = guildMemberSkills.openNext();
+
+        expect(result.how).toBe('no-chat');
+        // And nothing was marked as asked for, so the same member is next
+        expect(guildMemberSkills.progress().next.name).toBe('Ada');
+    });
+});
+
+describe('redoing a check on demand', () => {
+    test('a fresh capture is offered again after a redo', () => {
+        game.wsHandlers.profile_shared(profile('Ada'));
+        game.wsHandlers.profile_shared(profile('Bo'));
+        game.wsHandlers.profile_shared(profile('Cy'));
+        expect(guildMemberSkills.progress()).toMatchObject({ logged: 3, next: null });
+
+        guildMemberSkills.redoAll(now);
+
+        const state = guildMemberSkills.progress(now + 1000);
+        expect(state.logged).toBe(0);
+        expect(state.next.name).toBe('Ada');
+    });
+
+    test('the levels already held stand until a fresh profile replaces them', () => {
+        game.wsHandlers.profile_shared(profile('Ada'));
+        guildMemberSkills.redoAll(now);
+
+        // Due again, but still the best answer available
+        expect(guildMemberSkills.levelFor('Ada', '/skills/alchemy')).toBe(90);
+    });
+
+    test('a redo asks for nothing by itself', () => {
+        document.body.innerHTML = '<div class="Chat_chatInputContainer__c"><input /></div>';
+        game.wsHandlers.profile_shared(profile('Ada'));
+
+        guildMemberSkills.redoAll(now);
+
+        // Nothing requested until somebody clicks
+        expect(guildMemberSkills.progress(now + 1000).pending).toBeNull();
+    });
+
+    test('one member can be asked for again on their own', () => {
+        game.wsHandlers.profile_shared(profile('Ada'));
+        game.wsHandlers.profile_shared(profile('Bo'));
+
+        guildMemberSkills.redoMember('Ada', now);
+
+        const state = guildMemberSkills.progress(now + 1000);
+        expect(state.logged).toBe(1);
+        expect(state.next.name).toBe('Ada');
+    });
+
+    test('a capture arriving after a redo counts again', () => {
+        game.wsHandlers.profile_shared(profile('Ada'));
+        guildMemberSkills.redoAll(now);
+
+        vi.setSystemTime(now + 5000);
+        game.wsHandlers.profile_shared(profile('Ada', { '/skills/alchemy': 95 }));
+
+        expect(guildMemberSkills.progress(now + 5000).logged).toBe(1);
+        expect(guildMemberSkills.levelFor('Ada', '/skills/alchemy')).toBe(95);
     });
 });
 
@@ -206,5 +313,88 @@ describe('per guild, and forgotten with the character', () => {
 
         guildMemberSkills.forget();
         expect(guildMemberSkills.all()).toEqual({});
+    });
+});
+
+describe('people in the battle come first', () => {
+    /**
+     * A spectated fight: unit boxes with a name line and a health reading.
+     * @param {Array<[string, string]>} units - [name, hp] pairs
+     */
+    function fightView(units, { boss = 'Trial Chameleon' } = {}) {
+        const view = document.createElement('div');
+        const rows = boss ? [[boss, '454,807/618,000'], ...units] : units;
+        for (const [name, hp] of rows) {
+            const box = document.createElement('div');
+            const nameEl = document.createElement('div');
+            nameEl.textContent = name;
+            const hpEl = document.createElement('div');
+            hpEl.textContent = hp;
+            box.append(nameEl, hpEl);
+            view.appendChild(box);
+        }
+        document.body.appendChild(view);
+        return view;
+    }
+
+    test('finds roster members by their unit boxes, and the boss never', () => {
+        fightView([['Ada', '2,612/2,612']]);
+        const units = findBattleUnits(game.members);
+        expect(units.map((u) => u.name)).toEqual(['Ada']);
+    });
+
+    test('a panel with no boss in it offers nobody — those units are inert', () => {
+        // The skilling instance draws members too (this is how Liqueur, off
+        // foraging, came to be offered during a fight), but only the fight's
+        // own subtree holds a "Trial …" boss
+        fightView([['Ada', '1,436/1,923']], { boss: null });
+        expect(findBattleUnits(game.members)).toEqual([]);
+        expect(guildMemberSkills.nextBattleUnit(now)).toBeNull();
+    });
+
+    test('a dead unit is clicked like anyone else', () => {
+        // Death hides nothing — a popup shows whatever the build holds, and a
+        // unit without abilities simply has none
+        fightView([['Ada', '0/1,923']]);
+        expect(guildMemberSkills.nextBattleUnit(now)?.name).toBe('Ada');
+    });
+
+    test('openNext clicks the alive unit before walking the roster', () => {
+        const view = fightView([['Bo', '2,612/2,612']]);
+        let clicked = null;
+        view.addEventListener('click', (event) => {
+            clicked = event.target;
+        });
+
+        const result = guildMemberSkills.openNext(now);
+        expect(result.how).toBe('unit');
+        expect(result.opened).toBe('Bo');
+        expect(clicked).toBeTruthy();
+
+        // In flight: not offered again until the window passes
+        expect(guildMemberSkills.nextBattleUnit(now)).toBeNull();
+        expect(guildMemberSkills.nextBattleUnit(now + REQUEST_TIMEOUT_MS + 1)?.name).toBe('Bo');
+    });
+
+    test('a fresh sheet stands down; a stale one is offered again', () => {
+        fightView([['Ada', '2,612/2,612']]);
+        game.loadouts = [{ name: 'Ada', at: now - 60_000 }];
+        expect(guildMemberSkills.nextBattleUnit(now)).toBeNull();
+
+        game.loadouts = [{ name: 'Ada', at: now - UNIT_FRESH_MS - 1 }];
+        expect(guildMemberSkills.nextBattleUnit(now)?.name).toBe('Ada');
+    });
+
+    test('redo makes a fresh sheet due again', () => {
+        fightView([['Ada', '2,612/2,612']]);
+        game.loadouts = [{ name: 'Ada', at: now - 60_000 }];
+        guildMemberSkills.redoAll(now);
+        expect(guildMemberSkills.nextBattleUnit(now)?.name).toBe('Ada');
+    });
+
+    test('no fight on screen falls back to the roster walk', () => {
+        const result = guildMemberSkills.openNext(now);
+        expect(result.how).not.toBe('unit');
+        expect(result.opened).toBe('Ada');
     });
 });

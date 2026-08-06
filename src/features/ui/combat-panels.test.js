@@ -22,24 +22,51 @@ const state = vi.hoisted(() => ({
     filtering: true,
     inventory: [],
     openable: {},
+    settings: {},
+    battle: null,
+    equipment: null,
+    itemDetailMap: {},
+    abilityDetailMap: {},
+    // One object for the whole file, mutated rather than replaced: the panel
+    // loads the snapshot once and caches the reference, so a reassigned object
+    // would never be seen again
+    snapshot: { savedAt: 0, zones: [] },
 }));
 
 vi.mock('../../core/config.js', () => ({
-    default: { Z_FLOATING_PANEL: 1100, getSetting: () => false, getSettingValue: (key, fallback) => fallback },
+    default: {
+        Z_FLOATING_PANEL: 1100,
+        getSetting: (key, fallback) => state.settings[key] ?? fallback ?? false,
+        getSettingValue: (key, fallback) => fallback,
+    },
 }));
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getInventory: () => state.inventory,
         getCurrentActions: () => state.actions,
         getActionDetails: () => state.actionDetail,
-        getInitClientData: () => ({ combatMonsterDetailMap: { '/monsters/rat': { name: 'Rat' } } }),
+        getInitClientData: () => ({
+            combatMonsterDetailMap: { '/monsters/rat': { name: 'Rat' } },
+            itemDetailMap: state.itemDetailMap,
+            abilityDetailMap: state.abilityDetailMap,
+        }),
         getItemDetails: (hrid) => ({ name: hrid, isOpenable: Boolean(state.openable[hrid]) }),
         // The Record button's state reaches storage through the character key,
         // to put back the record target the last session was using
         getCurrentCharacterId: () => 'char1',
         getCurrentCharacterGameMode: () => 'standard',
+        get battleData() {
+            return state.battle;
+        },
+        get characterEquipment() {
+            return state.equipment;
+        },
     },
 }));
+vi.mock('../../utils/all-zones-snapshot.js', async (importOriginal) => {
+    const actual = await importOriginal();
+    return { ...actual, loadAllZonesSnapshot: async () => state.snapshot };
+});
 vi.mock('../../core/storage.js', () => ({
     default: {
         getJSON: async () => null,
@@ -123,6 +150,20 @@ beforeEach(() => {
     state.filtering = true;
     state.inventory = [];
     state.openable = {};
+    state.settings = {};
+    state.battle = null;
+    state.equipment = null;
+    state.itemDetailMap = {};
+    state.abilityDetailMap = {};
+    // Mutated in place — see the hoisted comment
+    state.snapshot.savedAt = Date.parse('2026-08-01T00:00:00Z');
+    state.snapshot.zones.length = 0;
+    state.snapshot.zones.push({
+        zoneHrid: '/actions/combat/rats',
+        zoneName: 'Rats',
+        difficultyTier: 0,
+        profitPerHour: 1_000_000,
+    });
     state.breakdown = {
         seconds: 300,
         players: [
@@ -741,6 +782,132 @@ describe('what the panels add over their tiles', () => {
     test('Profit shows what patience is worth', () => {
         profitPanel.show();
         expect(profitPanel.panel.textContent).toContain('Patient over lazy');
+    });
+});
+
+/** Let the snapshot load land — one microtask queue flush is all it needs */
+const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+describe('the sim forecast beside the measured revenue', () => {
+    test('quotes the snapshot row for this zone at this tier, dated and marked simulated', async () => {
+        profitPanel.show();
+        await flush();
+        profitPanel.refresh();
+
+        const text = profitPanel.panel.textContent;
+        expect(text).toContain('sim said here');
+        // 1M/hr × 24, and never presented as a measurement
+        expect(text).toContain('24.0M/day');
+        expect(text).toContain('simulated');
+
+        const row = [...profitPanel.panel.querySelectorAll('div')].find((el) =>
+            el.textContent.startsWith('sim said here')
+        );
+        expect(row.title).toContain('knows nothing about this run');
+        expect(row.title).toContain('Rats');
+    });
+
+    test('a tier mismatch draws nothing rather than a neighbouring figure', async () => {
+        // Tier 1 of a zone is a different fight from the tier 0 being run
+        state.snapshot.zones[0].difficultyTier = 1;
+        profitPanel.show();
+        await flush();
+        profitPanel.refresh();
+
+        expect(profitPanel.panel.textContent).not.toContain('sim said here');
+    });
+
+    test('a zone the sim never ran draws nothing', async () => {
+        state.actions = [{ actionHrid: '/actions/combat/elsewhere' }];
+        profitPanel.show();
+        await flush();
+        profitPanel.refresh();
+
+        expect(profitPanel.panel.textContent).not.toContain('sim said here');
+    });
+});
+
+describe('the live party lint on the Damage panel', () => {
+    /** A `new_battle` player with the whole equipped kit, as the payload has it */
+    const battlePlayer = (id, name, abilityHrids) => ({
+        character: { id, name },
+        combatDetails: { combatAbilities: abilityHrids.map((hrid) => ({ abilityHrid: hrid, level: 40 })) },
+    });
+
+    beforeEach(() => {
+        state.abilityDetailMap = {
+            '/abilities/fierce_aura': {
+                name: 'Fierce Aura',
+                isSpecialAbility: true,
+                abilityEffects: [
+                    {
+                        targetType: 'allAllies',
+                        effectType: '/ability_effect_types/buff',
+                        buffs: [{ uniqueHrid: '/buff_uniques/fierce_aura' }],
+                    },
+                ],
+            },
+            '/abilities/sweep': { name: 'Sweep', isSpecialAbility: false, abilityEffects: [] },
+        };
+        state.itemDetailMap = {
+            '/items/foragers_top': {
+                name: "Forager's Top",
+                equipmentDetail: {
+                    type: '/equipment_types/body',
+                    combatStats: {},
+                    noncombatStats: { foragingExperience: 0.1 },
+                },
+            },
+        };
+        state.battle = {
+            players: [
+                battlePlayer('char1', 'You', ['/abilities/fierce_aura']),
+                battlePlayer('char2', 'Ally', ['/abilities/fierce_aura']),
+            ],
+        };
+    });
+
+    test('a duplicated aura across the live party is called out in amber', () => {
+        dpsPanel.show();
+
+        const text = dpsPanel.panel.textContent;
+        expect(text).toContain('Fierce Aura is equipped by You and Ally — auras do not stack');
+    });
+
+    test('your own skilling gear is flagged, and the block says gear is checked for you only', () => {
+        state.equipment = new Map([['/item_locations/body', { itemHrid: '/items/foragers_top', enhancementLevel: 2 }]]);
+        dpsPanel.show();
+
+        const text = dpsPanel.panel.textContent;
+        expect(text).toContain("You has skilling gear equipped: Forager's Top");
+        expect(text).toContain('checked for you only');
+    });
+
+    test('solo draws nothing, whatever is equipped', () => {
+        state.battle = { players: [battlePlayer('char1', 'You', ['/abilities/fierce_aura'])] };
+        state.equipment = new Map([['/item_locations/body', { itemHrid: '/items/foragers_top' }]]);
+        dpsPanel.show();
+
+        expect(dpsPanel.panel.textContent).not.toContain('⚠');
+    });
+
+    test('a clean party draws no block at all', () => {
+        state.battle = {
+            players: [
+                battlePlayer('char1', 'You', ['/abilities/fierce_aura']),
+                battlePlayer('char2', 'Ally', ['/abilities/sweep']),
+            ],
+        };
+        dpsPanel.show();
+
+        expect(dpsPanel.panel.textContent).not.toContain('⚠');
+    });
+
+    test('the setting turns it off', () => {
+        state.settings.partyLint_live = false;
+        dpsPanel.show();
+
+        expect(dpsPanel.panel.textContent).not.toContain('auras do not stack');
     });
 });
 

@@ -16,11 +16,12 @@ import dataManager from '../../../core/data-manager.js';
 import inventorySort from '../inventory-sort.js';
 import inventoryBadgeManager from '../inventory-badge-manager.js';
 // Lazy accessor: in production multi-bundle builds, the Market bundle can't statically import
-// from Combat (it loads first). Resolve at runtime via window.Toolasha.Combat, with a fallback
+// from Combat (it loads first). Resolve at runtime through the bundle bridge, with a fallback
 // to the static import for dev single-bundle builds.
 import loadoutSnapshotLocal from '../../combat/loadout-snapshot.js';
+import { loadoutSnapshot } from '../../../utils/bundle-bridge.js';
 function getLoadoutSnapshot() {
-    return window.Toolasha?.Combat?.loadoutSnapshot || loadoutSnapshotLocal;
+    return loadoutSnapshot() || loadoutSnapshotLocal;
 }
 import { formatKMB } from '../../../utils/formatters.js';
 import { PANEL_Z_CAP } from '../../../utils/panel-z-index.js';

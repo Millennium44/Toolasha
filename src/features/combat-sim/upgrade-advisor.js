@@ -2727,15 +2727,21 @@ function ownedAbility(abilityHrid) {
 function explainAbilityCandidateCost(candidate, gameData) {
     const swap = candidate.type === 'ability_swap';
     const hrid = swap ? candidate.upgradeHrid : candidate.currentHrid || candidate.upgradeHrid;
-    const owned = swap ? ownedAbility(hrid) : null;
+    const owned = ownedAbility(hrid);
 
     // A level-up starts from where the equipped ability is; a swap starts from
     // where the book you own is, and from nothing when you own none
     const fromLevel = swap ? owned?.level || 0 : candidate.currentLevel || 0;
     const levelFloorXp = (gameData?.levelExperienceTable || [])[fromLevel] || 0;
     // The experience on an owned book is a position within the level, not the
-    // floor of it — the books already read count towards the next one
-    const currentXp = swap ? owned?.experience || levelFloorXp : levelFloorXp;
+    // floor of it — the books already read count towards the next one. That is
+    // as true of a level-up as of a swap: an equipped ability part-way into its
+    // level priced from the floor re-buys the books already read, which
+    // overstated every ability row by up to a level's worth of books. The floor
+    // is the fallback — for a book with no experience recorded, and for a live
+    // book that disagrees with the candidate about what level it is on
+    const ownedXp = owned && owned.level === fromLevel ? Number(owned.experience) || 0 : 0;
+    const currentXp = Math.max(ownedXp, levelFloorXp);
 
     const priced = explainAbilityLevelUpCost(hrid, fromLevel, currentXp, candidate.upgradeLevel || 0);
     // A book already at or past the target buys nothing rather than a negative

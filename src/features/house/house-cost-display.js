@@ -3,8 +3,8 @@
  * UI rendering for house upgrade costs
  */
 
-import houseCostCalculator from './house-cost-calculator.js';
 import config from '../../core/config.js';
+import * as houseCostCalculator from '../../utils/house-cost-calculator.js';
 import { coinFormatter, formatWithSeparator } from '../../utils/formatters.js';
 import dataManager from '../../core/data-manager.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';

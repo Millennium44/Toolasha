@@ -76,6 +76,19 @@
  */
 
 import { COMBAT_ENCOUNTERS, TRIAL_MAX_TIER, isTrialName, tierFromLevel } from './guild-trials-math.js';
+import {
+    TRIAL_SIGNED_UP_RE,
+    TRIAL_CARD_COMPLETED_RE,
+    TRIAL_STATUS_SCHEDULED_RE,
+    TRIAL_STATUS_COMPLETED_RE,
+    TRIAL_STATUS_IN_PROGRESS_RE,
+    TRIAL_KIND_SKILLING_RE,
+    TRIAL_KIND_COMBAT_RE,
+    TRIAL_LEVEL_RE,
+    TRIAL_POINTS_RE,
+    TRIAL_TIER_RE,
+    TRIAL_CLOCK_LABEL_RE,
+} from '../../utils/game-text.js';
 
 /** Suffix multipliers on abbreviated numbers the game renders in bars */
 const SUFFIXES = { k: 1e3, m: 1e6, b: 1e9, t: 1e12 };
@@ -116,17 +129,47 @@ export function parseBarReadings(text) {
     while (match) {
         const current = parseAmount(match[1]);
         const max = parseAmount(match[2]);
-        // A max of zero is a bar that has not been populated, not a full one
-        if (Number.isFinite(current) && Number.isFinite(max) && max > 0) {
-            readings.push({ current, max });
-        }
+        if (isPlausibleReading(current, max)) readings.push({ current, max });
         match = pattern.exec(text);
     }
     return readings;
 }
 
+/**
+ * The largest pool or health bar a trial can have.
+ *
+ * The biggest real figure on the ladder is the top tier's boss health, which is
+ * a few million; a hundred million is two orders of magnitude of headroom and
+ * still refuses the thing this exists for.
+ *
+ * A guild notice board carrying `https://discord.com/channels/1309080597314011148/
+ * 1525897111936438314` has exactly the shape of a progress bar, and those two
+ * nineteen-digit channel ids were recorded as a trial's pool — then sampled
+ * every five seconds, and used to arm the recorder. Numbers that large are not
+ * a bar whatever else they are.
+ */
+export const MAX_PLAUSIBLE_READING = 1e8;
+
+/**
+ * Whether a `current / max` pair can be a progress bar at all.
+ *
+ * @param {number} current - The left-hand figure
+ * @param {number} max - The right-hand figure
+ * @returns {boolean} True when it is worth recording
+ */
+export function isPlausibleReading(current, max) {
+    if (!Number.isFinite(current) || !Number.isFinite(max)) return false;
+    // A max of zero is a bar that has not been populated, not a full one
+    if (max <= 0 || current < 0) return false;
+    if (max > MAX_PLAUSIBLE_READING || current > MAX_PLAUSIBLE_READING) return false;
+
+    // Past nine or so significant digits a double stops being able to hold the
+    // figure exactly, and every such number this has ever seen was an id
+    return Number.isSafeInteger(Math.round(max)) && Math.round(max) < MAX_PLAUSIBLE_READING;
+}
+
 /** A line saying how many members have signed up, either way round */
-const SIGNUP_PATTERN = /signed\s*up/i;
+const SIGNUP_PATTERN = TRIAL_SIGNED_UP_RE;
 
 /**
  * A card that says the trial is over.
@@ -138,7 +181,7 @@ const SIGNUP_PATTERN = /signed\s*up/i;
  * and 960 is the ladder's three-tier total with the Builder's Hall bonus on it.
  * So "Completed" is what makes the banked count exact rather than inferred.
  */
-const COMPLETED_PATTERN = /\bcomplet(?:e|ed)\b/i;
+const COMPLETED_PATTERN = TRIAL_CARD_COMPLETED_RE;
 
 /**
  * How many members have signed up for a trial, from its card.
@@ -172,7 +215,7 @@ export function parseSignups(text) {
  * @returns {number|null} Points, or null when the line does not carry any
  */
 export function parsePoints(text) {
-    const match = typeof text === 'string' ? text.match(/(\d[\d,]*)\s*(?:pts?|points?)\b/i) : null;
+    const match = typeof text === 'string' ? text.match(TRIAL_POINTS_RE) : null;
     if (!match) return null;
     const points = Number(match[1].replace(/,/g, ''));
     return Number.isFinite(points) ? points : null;
@@ -184,7 +227,7 @@ export function parsePoints(text) {
  * @returns {number|null} Level, or null when the tile does not carry one
  */
 export function parseTrialLevel(text) {
-    const match = typeof text === 'string' ? text.match(/Lv\.?\s*(\d+)/i) : null;
+    const match = typeof text === 'string' ? text.match(TRIAL_LEVEL_RE) : null;
     if (!match) return null;
     const level = Number(match[1]);
     return Number.isFinite(level) ? level : null;
@@ -209,7 +252,7 @@ export function parseTrialLevel(text) {
  * @returns {number|null} The tier, or null when the line does not state one
  */
 export function parseTrialTier(text) {
-    const match = typeof text === 'string' ? text.match(/\b(?:tier\s*|T)(\d{1,2})\b/i) : null;
+    const match = typeof text === 'string' ? text.match(TRIAL_TIER_RE) : null;
     if (!match) return null;
     const tier = Number(match[1]);
     return Number.isFinite(tier) && tier >= 1 && tier <= TRIAL_MAX_TIER ? tier : null;
@@ -303,7 +346,7 @@ export function findTrialClockMs(root, maxMs) {
     if (!root || typeof root.querySelectorAll !== 'function') return null;
 
     const plausible = (value) => Number.isFinite(value) && value > 0 && value <= maxMs;
-    const labelled = /remain|left|ends?\b|until|time/i;
+    const labelled = TRIAL_CLOCK_LABEL_RE;
     const notAClock = /\d+\.\d|%|\b(?:am|pm)\b|\b(?:mon|tue|wed|thu|fri|sat|sun)/i;
 
     // [labelled units, bare units, labelled colon, bare colon]
@@ -417,6 +460,44 @@ export function findTrialsRoot(scope = typeof document === 'undefined' ? null : 
 }
 
 /**
+ * Class fragments and attributes that mark a floating dialog.
+ *
+ * The game's own modal structure — a close cross, a dotted drag handle, a
+ * backdrop — is drawn inside an element whose class carries one of these.
+ * `guild-loadout-capture.js` already watches `Modal_modalContent`, so the first
+ * of them is confirmed on a live client rather than guessed at.
+ */
+const DIALOG_CLASSES = ['Modal_', 'Dialog', 'Popup', 'Popover', 'Tooltip', 'Overlay'];
+
+/**
+ * Whether an element is inside a floating dialog rather than the panel behind it.
+ *
+ * Reported live, and it is the worst kind of bug because it looks deliberate:
+ * clicking the boss in the trial fight view opens a stat popup headed **"Trial
+ * Chameleon - Lv.110"**, and this feature drew its whole block — Rate, On pace,
+ * Banked, Per player — *inside* that popup, above the boss's own stat lines. The
+ * popup's title is a trial name over a level, which is precisely the shape a
+ * card is recognised by, so every filter this file has said yes.
+ *
+ * The fix is not a better card filter; it is a statement about *where* a card is
+ * allowed to be. A trial card lives in the guild panel's tab content. Anything
+ * inside a modal is something else, however card-shaped it reads.
+ *
+ * @param {Element|null} el - Any element
+ * @returns {boolean} True when a floating dialog is an ancestor
+ */
+export function inFloatingDialog(el) {
+    for (let node = el; node; node = node.parentElement) {
+        if (node.getAttribute?.('role') === 'dialog') return true;
+        if (node.getAttribute?.('aria-modal') === 'true') return true;
+
+        const className = typeof node.className === 'string' ? node.className : '';
+        if (className && DIALOG_CLASSES.some((fragment) => className.includes(fragment))) return true;
+    }
+    return false;
+}
+
+/**
  * Whether the guild page is showing a trial tab at all.
  *
  * A second, independent gate on top of "are there trial cards here", and it
@@ -477,34 +558,57 @@ export function onTrialTab(root) {
  * with the same parser the trial clock uses.
  *
  * @param {Element} root - The trials root
- * @returns {{phase: 'scheduled'|'completed'|'live'|null, text: string, startsInMs: number|null}} The status
+ * @returns {{phase: 'scheduled'|'completed'|'live'|null, kind: 'skilling'|'combat'|null, text: string,
+ *   startsInMs: number|null}} The status
  */
 export function readTrialStatus(root) {
-    const none = { phase: null, text: '', startsInMs: null };
+    const none = { phase: null, kind: null, text: '', startsInMs: null };
     if (!root || typeof root.querySelectorAll !== 'function') return none;
 
+    // The status is a *run* of text, and the game splits it across elements —
+    // "Skilling Trial - In Progress" arrives as separate nodes on the live tab.
+    // Neighbouring runs are therefore considered together as well as alone, so
+    // the words being in two spans does not hide them.
     const lines = textLines(root).slice(0, STATUS_LINE_LIMIT);
-    for (const line of lines) {
+    const candidates = [];
+    for (let index = 0; index < lines.length; index += 1) {
+        candidates.push(lines[index]);
+        if (lines[index + 1]) candidates.push(`${lines[index]} ${lines[index + 1]}`);
+    }
+
+    for (const line of candidates) {
         if (line.length > STATUS_MAX_CHARS) continue;
 
-        const phase = /\bscheduled\b/i.test(line)
+        const phase = TRIAL_STATUS_SCHEDULED_RE.test(line)
             ? 'scheduled'
-            : /\bcompleted?\b/i.test(line)
+            : TRIAL_STATUS_COMPLETED_RE.test(line)
               ? 'completed'
-              : /\bin\s*progress\b/i.test(line)
+              : TRIAL_STATUS_IN_PROGRESS_RE.test(line)
                 ? 'live'
                 : null;
         if (!phase) continue;
 
         const startsInMs = phase === 'scheduled' ? parseWordyDurationMs(line) : null;
-        return { phase, text: line, startsInMs: Number.isFinite(startsInMs) ? startsInMs : null };
+        // The header names the trial it is about — "Skilling Trial - In
+        // Progress" — and a cycle runs the two kinds one after the other, so a
+        // status without its kind attached says the combat trial is under way
+        // during the skilling hour. Which is what it did.
+        const kind = TRIAL_KIND_SKILLING_RE.test(line) ? 'skilling' : TRIAL_KIND_COMBAT_RE.test(line) ? 'combat' : null;
+        return { phase, kind, text: line, startsInMs: Number.isFinite(startsInMs) ? startsInMs : null };
     }
 
     return none;
 }
 
-/** How far into the tab a status line can be before it is something else */
-const STATUS_LINE_LIMIT = 12;
+/**
+ * How far into the tab a status line can be before it is something else.
+ *
+ * Raised from a dozen once the live header turned out to be
+ * "Skilling Trial - In Progress  Thu 04:00 PM" — a kind prefix, a status and a
+ * timestamp, spread across several runs, and sitting below whatever the tab
+ * draws above it.
+ */
+const STATUS_LINE_LIMIT = 40;
 
 /** Longer than this and the line is prose, not a status */
 const STATUS_MAX_CHARS = 60;
@@ -540,7 +644,7 @@ export function readPersonalStats(root) {
         if (line.includes('/')) continue;
 
         const pair = line.match(inline);
-        if (pair && /[a-z]/i.test(pair[1])) {
+        if (pair && isStatLabel(pair[1])) {
             stats[pair[1].trim()] = pair[2].trim();
             continue;
         }
@@ -548,11 +652,54 @@ export function readPersonalStats(root) {
         // Label on one run, number on the next, which is how the game draws most
         // of them
         const next = lines[index + 1];
-        if (!next || !value.test(next) || value.test(line) || !/[a-z]/i.test(line)) continue;
+        if (!next || !value.test(next) || value.test(line) || !isStatLabel(line)) continue;
         stats[line.replace(/[:\s]+$/, '')] = next.trim();
         index += 1;
     }
     return stats;
+}
+
+/**
+ * Generic words that are a heading or a clock rather than the name of a stat.
+ *
+ * A denylist of exactly the words that turned up as labels, kept small on
+ * purpose: the open-ended capture is the point of this reader, and anything
+ * longer starts refusing stats the game has not invented yet.
+ */
+const NON_STAT_LABELS = /^(time|total|elapsed|duration|remaining|left|now)$/i;
+
+/** A label that is a number with an optional unit — `59m`, `12`, `3ms` */
+const NUMERIC_LABEL = /^[\d,.]+\s*[a-z]{0,2}$/i;
+
+/**
+ * Whether a run of text is the name of a stat rather than something beside one.
+ *
+ * The reader is deliberately open-ended — whatever the game shows lands in the
+ * record without this file having heard of it — and that is what let a **time
+ * list** in. The exported footer carried `"59m": "5s"`, `"58m": "2s"` … down to
+ * `"1m": "3s"` and `"Time": "1s"`: a per-minute session log, fifty-eight rows of
+ * it, read as stats and stored beside Work Power and Success Rate. It also
+ * carried `"Lv.100": "6"`.
+ *
+ * So the capture stays open and gains a floor. A stat's name is a *word*: it has
+ * a run of at least three letters, it is not a number with a unit stuck to it,
+ * and it is not one of the handful of generic headings that are a clock rather
+ * than a measurement. "Work Power", "Double Progress", "Ranged Accuracy" and
+ * anything shaped like them pass; "59m", "Lv.100" and a bare "Time" do not.
+ *
+ * @param {string} label - The candidate label
+ * @returns {boolean} True when it may name a stat
+ */
+export function isStatLabel(label) {
+    const text = String(label || '')
+        .replace(/[:\s]+$/, '')
+        .trim();
+    if (!text) return false;
+    if (NUMERIC_LABEL.test(text)) return false;
+    if (NON_STAT_LABELS.test(text)) return false;
+
+    // A letter-word of three, which "Lv.100" and "T3" do not have
+    return /[a-z]{3,}/i.test(text);
 }
 
 /**
@@ -663,6 +810,9 @@ export function readTrialTiles(root) {
         // Never this script's own output: the per-card block is appended to the
         // card it describes, so a careless anchor list reads it straight back
         if (el.closest?.('[class*="mwi-"]')) return false;
+        // And never a floating dialog. The boss's stat popup is headed with a
+        // trial name over a level, which is exactly what a card is anchored by
+        if (inFloatingDialog(el)) return false;
         if (typeof el.className === 'string' && el.className.includes('GuildPanel_tileSummary')) return true;
 
         // A stated tier or a points line anchors a card too. Without them a
@@ -788,7 +938,10 @@ function readTileName(tile, summary, lines) {
     const named = tile.querySelector?.('[class*="GuildPanel_tileName"], [class*="GuildPanel_name"]');
     if (named?.textContent?.trim()) return named.textContent.trim();
 
-    const levelMarker = /Lv\.?\s*\d+/i;
+    // `TRIAL_LEVEL_RE` carries a capture group, which `split` would interleave
+    // into its output; only the [0] "before the marker" piece is read, which is
+    // the same either way
+    const levelMarker = TRIAL_LEVEL_RE;
     for (const line of lines) {
         if (!levelMarker.test(line)) continue;
         const beforeLevel = line.split(levelMarker)[0].trim();

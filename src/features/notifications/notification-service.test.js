@@ -164,6 +164,17 @@ describe('de-duplication', () => {
         expect(toast.shown).toHaveLength(2);
     });
 
+    test('an event keyed per listing cools down per listing, not per feature', () => {
+        // The undercut alert keys on the listing id; one listing's silence must
+        // not be spent on another listing's news
+        setHidden(false);
+
+        expect(notificationService.notify('market-undercut-7', 'Cheese undercut').fired).toBe(true);
+        expect(notificationService.notify('market-undercut-7', 'Cheese undercut').fired).toBe(false);
+        expect(notificationService.notify('market-undercut-8', 'Milk undercut').fired).toBe(true);
+        expect(toast.shown).toHaveLength(2);
+    });
+
     test('it speaks again once the cooldown has passed', () => {
         setHidden(false);
         vi.useFakeTimers();

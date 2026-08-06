@@ -13,6 +13,7 @@ import {
     COMBAT_ENCOUNTERS,
     ELIGIBLE_TOKEN_SHARE,
     isTrialName,
+    MAX_TRIAL_NAME_CHARS,
     PARTICIPANT_BONUS_SHARE,
     TRIAL_ACTIVE_MS,
     TRIAL_MAX_LEVEL,
@@ -33,17 +34,22 @@ import {
     ratePerMs,
     rescaleForParticipants,
     inferBuildersHallBonus,
+    baseWorkFromObservations,
     interpretCardPoints,
+    tierPoolWork,
     tierFromLevel,
     tierMarginalPoints,
     totalBasePoints,
     trailingRun,
     trialBankedBasePoints,
     trialBasePoints,
+    trialFromHrid,
+    withinMidTrialUpgrade,
     trialTimeLeftMs,
     trialWeekEnd,
     trialWeekStart,
 } from './guild-trials-math.js';
+import { NOTICE_BOARD_NAME } from './guild-notice-board.fixture.js';
 
 describe('the ladder', () => {
     test('starts at level 100 and steps ten levels a tier to 300', () => {
@@ -300,6 +306,47 @@ describe('tier growth, fitted from observations', () => {
     test('an explicit growth factor overrides the fit', () => {
         const observations = [{ tier: 4, total: 1000 }];
         expect(projectTierTotal({ observations, tier: 5, growthPerTier: 1.5 })).toBeCloseTo(1500, 6);
+    });
+});
+
+describe('the skilling pool ladder', () => {
+    // Watched through three tiers of a live trial with two members signed up:
+    // 40,800 / 44,880 / 48,960. That is 40,000 / 44,000 / 48,000 with the same
+    // 1%-per-participant multiplier the combat side uses, and those are the
+    // first tier's work plus a tenth of it per tier. Linear, not geometric.
+    test('reproduces the live trial exactly, on all five tiers watched', () => {
+        // 40,800 / 44,880 / 48,960 / 53,040 / 57,120 — linear, +4,080 a tier,
+        // which is a tenth of the first tier's work each time
+        const baseWork = 40_000;
+        const observed = [40_800, 44_880, 48_960, 53_040, 57_120];
+        observed.forEach((total, index) => {
+            expect(tierPoolWork({ baseWork, tier: index + 1, participants: 2 })).toBeCloseTo(total, 6);
+        });
+    });
+
+    test('the tier after the last one watched', () => {
+        // The fitted curve this replaces overshot to 63.3K on the same data;
+        // the rule gives 61,200
+        expect(tierPoolWork({ baseWork: 40_000, tier: 6, participants: 2 })).toBeCloseTo(61_200, 6);
+    });
+
+    test('one reading anywhere on the ladder gives the first tier', () => {
+        expect(baseWorkFromObservations([{ tier: 3, total: 48_960 }], 2)).toBeCloseTo(40_000, 6);
+        expect(baseWorkFromObservations([{ tier: 1, total: 40_800 }], 2)).toBeCloseTo(40_000, 6);
+        expect(baseWorkFromObservations([{ tier: 5, total: 57_120 }], 2)).toBeCloseTo(40_000, 6);
+    });
+
+    test('nothing observed is nothing derived', () => {
+        expect(baseWorkFromObservations([], 2)).toBeNull();
+        expect(baseWorkFromObservations([{ tier: 0, total: 0 }], 2)).toBeNull();
+        expect(tierPoolWork({ baseWork: 0, tier: 1 })).toBeNull();
+        expect(tierPoolWork({ baseWork: 40_000, tier: 99 })).toBeNull();
+    });
+
+    test('the step is a tenth of the first tier, not a tenth of the last', () => {
+        // Geometric growth would give 40,000 × 1.1² = 48,400 at tier three; the
+        // game gives 48,000, which is the linear rule
+        expect(tierPoolWork({ baseWork: 40_000, tier: 3 })).toBeCloseTo(48_000, 6);
     });
 });
 
@@ -611,6 +658,176 @@ describe('the trial week', () => {
     });
 });
 
+describe('the points ladder, across three guilds', () => {
+    // Cross-guild, cross-bonus, and exact at every point — which is what makes
+    // these rules rather than a fit. Each figure is a card's stated Guild Points
+    // divided by that guild's own Builder's Hall bonus
+    test('a combat trial banks 200 × (tier + 1)', () => {
+        const cases = [
+            { stated: 3808, bonus: 0.12, tier: 16 }, // MilkMaxxing, Trial Badger
+            { stated: 2912, bonus: 0.12, tier: 12 }, // MilkMaxxing, Trial Hedgehog
+            { stated: 480, bonus: 0.2, tier: 1 }, // the first guild watched
+            { stated: 944, bonus: 0.18, tier: 3 }, // the Lazy guild, Trial Chameleon
+        ];
+
+        for (const { stated, bonus, tier } of cases) {
+            expect(trialBasePoints('combat', tier)).toBe(200 * (tier + 1));
+            expect(stated / (1 + bonus)).toBeCloseTo(200 * (tier + 1), 6);
+            expect(
+                interpretCardPoints({ type: 'combat', tier, statedPoints: stated, buildersHallBonus: bonus })
+                    .interpretation
+            ).toBe('cumulative');
+        }
+    });
+
+    test('a skilling trial banks 100 × (tier + 1)', () => {
+        const cases = [
+            { stated: 236, bonus: 0.18, tier: 1 },
+            { stated: 354, bonus: 0.18, tier: 2 },
+            { stated: 472, bonus: 0.18, tier: 3 },
+            { stated: 590, bonus: 0.18, tier: 4 },
+            { stated: 840, bonus: 0.2, tier: 6 },
+            { stated: 1080, bonus: 0.2, tier: 8 },
+        ];
+
+        for (const { stated, bonus, tier } of cases) {
+            expect(trialBasePoints('skilling', tier)).toBe(100 * (tier + 1));
+            expect(stated / (1 + bonus)).toBeCloseTo(100 * (tier + 1), 6);
+        }
+    });
+
+    test('the ladder is uniform: high tiers follow the same rule', () => {
+        // No high-tier wrinkle. MilkMaxxing's T10/T11/T12 look off only because
+        // they were banked across a Builder's Hall upgrade
+        expect(trialBasePoints('skilling', 10)).toBe(1100);
+        expect(trialBasePoints('skilling', 11)).toBe(1200);
+        expect(trialBasePoints('skilling', 12)).toBe(1300);
+        expect(trialBasePoints('combat', 16)).toBe(3400);
+    });
+
+    test('a total banked across a Builder’s Hall upgrade decomposes exactly', () => {
+        // Points bank live, tier by tier, at the bonus in force when each tier
+        // clears. The Hall went 5 → 6 (+10% → +12%) during the skilling hour
+        expect(500 * 1.1 + 600 * 1.12).toBeCloseTo(1222, 9); // Milking T10, base 1,100
+        expect(600 * 1.1 + 600 * 1.12).toBeCloseTo(1332, 9); // Foraging T11, base 1,200
+        expect(600 * 1.1 + 700 * 1.12).toBeCloseTo(1444, 9); // Crafting T12, base 1,300
+
+        // The combat hour ran afterwards, entirely at +12%, which is why those
+        // cards divided cleanly
+        expect(2912 / 1.12).toBeCloseTo(trialBasePoints('combat', 12), 6);
+    });
+
+    test('and is reported as an upgrade rather than as a disagreement', () => {
+        for (const { stated, tier } of [
+            { stated: 1222, tier: 10 },
+            { stated: 1332, tier: 11 },
+            { stated: 1444, tier: 12 },
+        ]) {
+            const reading = interpretCardPoints({
+                type: 'skilling',
+                tier,
+                statedPoints: stated,
+                buildersHallBonus: 0.12,
+            });
+
+            expect(reading.interpretation).toBe('mid-trial-upgrade');
+        }
+    });
+
+    test('the envelope is exactly one or two Builder’s Hall levels wide', () => {
+        // Open at the bottom by two levels, closed at the top — a total that
+        // matches today's bonus is `cumulative` and never reaches this
+        expect(withinMidTrialUpgrade(1100 * 1.12, 1100, 0.12)).toBe(false);
+        expect(withinMidTrialUpgrade(1100 * 1.1, 1100, 0.12)).toBe(true);
+        expect(withinMidTrialUpgrade(1100 * 1.08, 1100, 0.12)).toBe(true);
+        // Three levels below is not a building this guild has ever had
+        expect(withinMidTrialUpgrade(1100 * 1.06, 1100, 0.12)).toBe(false);
+        // And nothing above today's bonus is an upgrade downwards
+        expect(withinMidTrialUpgrade(1100 * 1.2, 1100, 0.12)).toBe(false);
+    });
+
+    test('a figure genuinely wrong is still called wrong', () => {
+        const reading = interpretCardPoints({
+            type: 'skilling',
+            tier: 10,
+            statedPoints: 700,
+            buildersHallBonus: 0.12,
+        });
+        expect(reading.interpretation).toBe('disagrees');
+    });
+
+    test('the card still states the Guild Points, but the base comes off the ladder', () => {
+        // Dividing by today's bonus recovers the base exactly only when one
+        // bonus applied throughout. Across an upgrade it lands under the truth,
+        // and tokens are paid on base — so 1,222 ÷ 1.12 = 1,091 would quietly
+        // short every member by nine points' worth
+        const banked = trialBankedBasePoints({
+            type: 'skilling',
+            bankedTiers: 10,
+            pointsByTier: { 10: 1222 },
+            buildersHallBonus: 0.12,
+        });
+
+        expect(banked.guildPoints).toBe(1222);
+        expect(banked.basePoints).toBe(1100);
+        expect(banked.basePoints).not.toBeCloseTo(1222 / 1.12, 2);
+        // The base is the ladder's and the Guild Points are the card's
+        expect(banked.source).toBe('mixed');
+    });
+
+    test('a cleanly-dividing card is untouched, because the two already agree', () => {
+        const banked = trialBankedBasePoints({
+            type: 'combat',
+            bankedTiers: 12,
+            pointsByTier: { 12: 2912 },
+            buildersHallBonus: 0.12,
+        });
+
+        expect(banked.guildPoints).toBe(2912);
+        expect(banked.basePoints).toBeCloseTo(2600, 6);
+        expect(banked.source).toBe('game');
+    });
+
+    test('the token sum uses the ladder base, not the divided one', () => {
+        const projection = payoutProjection({
+            trials: [{ type: 'skilling', tiersCleared: 10, basePointsOverride: 1100, guildPointsOverride: 1222 }],
+            buildersHallBonus: 0.12,
+            treasuryBonus: 0.1,
+        });
+
+        expect(projection.basePoints).toBe(1100);
+        expect(projection.guildPoints).toBe(1222);
+        // Half the base at the Treasury's +10%, paid once at the end
+        expect(projection.eligibleTokens).toBeCloseTo(0.5 * 1100 * 1.1, 6);
+    });
+});
+
+describe('trialFromHrid', () => {
+    // The socket names a trial by hrid where every other source names it in
+    // prose off a card, and both halves of the feature have to agree
+    test('the two families the game uses', () => {
+        expect(trialFromHrid('/guild_combat/badger')).toEqual({ kind: 'combat', key: 'badger', name: 'Trial Badger' });
+        expect(trialFromHrid('/guild_skilling/crafting')).toEqual({
+            kind: 'skilling',
+            key: 'crafting',
+            name: 'Crafting',
+        });
+    });
+
+    test('the name it produces is the name a card carries', () => {
+        // Which is what the record is keyed by
+        expect(isTrialName(trialFromHrid('/guild_combat/badger').name)).toBe(true);
+        expect(isTrialName(trialFromHrid('/guild_skilling/crafting').name)).toBe(true);
+    });
+
+    test('an hrid it does not recognise is not a trial', () => {
+        expect(trialFromHrid('/guild_skilling/knitting')).toBeNull();
+        expect(trialFromHrid('/monsters/chimerical_beast')).toBeNull();
+        expect(trialFromHrid('')).toBeNull();
+        expect(trialFromHrid(null)).toBeNull();
+    });
+});
+
 describe('isTrialName', () => {
     test('the five encounters and the ten skills a trial can run in', () => {
         expect(isTrialName('Trial Chameleon')).toBe(true);
@@ -627,6 +844,33 @@ describe('isTrialName', () => {
         expect(isTrialName('Guild Experience')).toBe(false);
         expect(isTrialName('MillenniumTest')).toBe(false);
         expect(isTrialName('')).toBe(false);
+    });
+});
+
+describe('a name has to be a name before it is matched', () => {
+    // A guild's whole notice board — braille art, a welcome, three Discord links
+    // and the kick rules, 987 characters over twenty lines — arrived here as a
+    // card name on a live client. The matcher happened to reject that paragraph;
+    // a filter should not depend on happening to
+    test('a multiline notice is refused before any matching happens', () => {
+        expect(isTrialName(NOTICE_BOARD_NAME)).toBe(false);
+        expect(NOTICE_BOARD_NAME.length).toBeGreaterThan(MAX_TRIAL_NAME_CHARS);
+        expect(NOTICE_BOARD_NAME).toContain('\n');
+    });
+
+    test('a newline is disqualifying even when a line of it is a trial', () => {
+        expect(isTrialName('Milking\nJoin our Discord')).toBe(false);
+        expect(isTrialName('Trial Chameleon\n')).toBe(false);
+    });
+
+    test('a name longer than a name is refused whatever it says', () => {
+        expect(isTrialName(`Milking${' '.repeat(MAX_TRIAL_NAME_CHARS)}`)).toBe(false);
+    });
+
+    test('and every real decoration still fits inside the limit', () => {
+        expect('Trial Chameleon Lv.140 T6'.length).toBeLessThan(MAX_TRIAL_NAME_CHARS);
+        expect(isTrialName('Trial Chameleon Lv.140 T6')).toBe(true);
+        expect(isTrialName('Cheesesmithing Lv.200 T11')).toBe(true);
     });
 });
 
@@ -760,6 +1004,36 @@ describe('inferBuildersHallBonus', () => {
     test('a ratio beyond twenty levels infers nothing', () => {
         expect(inferBuildersHallBonus([{ type: 'skilling', pointsByTier: { 5: 1200 } }])).toBeNull();
         expect(inferBuildersHallBonus([])).toBeNull();
+    });
+});
+
+describe('a card that states nothing yet', () => {
+    test('zero points is not a figure to disagree with', () => {
+        // Reported live: "Trial Chameleon T1 states 0 pts, which is neither the
+        // running total nor the per-tier step…" — on a combat trial that had not
+        // started. A card reading 0 is a card with nothing to say.
+        const banked = trialBankedBasePoints({
+            type: 'combat',
+            bankedTiers: 0,
+            pointsByTier: { 1: 0 },
+            buildersHallBonus: 0.2,
+        });
+
+        expect(banked.interpretation).toBeNull();
+        expect(banked.quoted).toBeNull();
+        expect(banked.source).toBe('ladder');
+    });
+
+    test('a real figure beside a zero is still read', () => {
+        const banked = trialBankedBasePoints({
+            type: 'skilling',
+            bankedTiers: 6,
+            pointsByTier: { 6: 840, 7: 0 },
+            buildersHallBonus: 0.2,
+        });
+
+        expect(banked.quoted).toEqual({ tier: 6, statedPoints: 840 });
+        expect(banked.guildPoints).toBe(840);
     });
 });
 

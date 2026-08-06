@@ -78,6 +78,15 @@ import { createPanel, panelCard, panelNote } from '../../utils/simple-panel.js';
 import { registerRow } from '../../utils/overlay-rows.js';
 import { roomSkill } from '../../utils/room-skills.js';
 import {
+    combatStatsDataCollector,
+    combatStatsCalculator,
+    marketOrderTotals,
+    enhancementCalculator,
+    enhancementConfig,
+    craftingPlanCalculator,
+    missingMaterialsButton,
+} from '../../utils/bundle-bridge.js';
+import {
     upgradeCost,
     craftCost,
     savingsProgress,
@@ -769,8 +778,7 @@ function networthIncomePerDay() {
  * @returns {number|null}
  */
 function combatIncomePerDay() {
-    const combat = window.Toolasha?.Combat;
-    const data = combat?.combatStatsDataCollector?.getLatestData?.();
+    const data = combatStatsDataCollector()?.getLatestData?.();
     const player = data?.players?.find((entry) => entry.isCurrentPlayer);
     if (!player) return null;
 
@@ -785,7 +793,7 @@ function combatIncomePerDay() {
     // which is the same Lazy/Mid distinction the Combat Profit panel draws.
     // Compared as a number it is NaN, so this returned null however long the run
     // had been, on top of the duration being read from a field that is not there.
-    const stats = combat?.combatStatsCalculator?.calculatePlayerStats?.(player, seconds);
+    const stats = combatStatsCalculator()?.calculatePlayerStats?.(player, seconds);
     const profit = state.noSell ? stats?.dailyProfit?.ask : stats?.dailyProfit?.bid;
     return profit > 0 ? profit : null;
 }
@@ -866,7 +874,7 @@ function wornRivalOf(itemHrid) {
  * @returns {number}
  */
 export function marketOrderValue() {
-    const totals = window.Toolasha?.Market?.marketOrderTotals?.calculateTotals?.();
+    const totals = marketOrderTotals()?.calculateTotals?.();
     if (!totals) return 0;
     return (totals.sellOrders || 0) + (totals.buyOrders || 0) + (totals.unclaimed || 0);
 }
@@ -971,12 +979,12 @@ function ownsBase(itemHrid) {
 export function enhancementCost(itemHrid, targetLevel, startLevel = 0) {
     if (!(targetLevel > startLevel) || targetLevel > MAX_ENHANCEMENT) return null;
 
-    const calculator = window.Toolasha?.Utils?.enhancementCalculator?.calculateEnhancement;
+    const calculator = enhancementCalculator()?.calculateEnhancement;
     // The character's own gear, skill and teas — not `getEnhancingParams`,
     // which hands back the simulator's manual settings unless auto-detect
     // happens to be on, and those default to a fully kitted enhancer. Costing
     // your cape at somebody else's bench quotes a run you cannot make.
-    const params = window.Toolasha?.Utils?.enhancementConfig?.getAutoDetectedParams?.();
+    const params = enhancementConfig()?.getAutoDetectedParams?.();
     const details = dataManager.getItemDetails?.(itemHrid);
     if (!calculator || !params || !details) return null;
 
@@ -1286,7 +1294,7 @@ function costOf(itemHrid, enhancementLevel) {
  * @returns {number|null} Coins for one, or null when it cannot be priced
  */
 function craftMaterialsCost(itemHrid, recipe) {
-    const planner = window.Toolasha?.Actions?.craftingPlanCalculator?.computeBestCraftingPlan;
+    const planner = craftingPlanCalculator()?.computeBestCraftingPlan;
 
     if (planner && recipe?.inputItems?.length) {
         try {
@@ -2046,7 +2054,7 @@ function missingMatsButton(actionHrid) {
     button.title = 'Open the marketplace on the materials this craft is short of.';
 
     button.addEventListener('click', async () => {
-        const open = window.Toolasha?.Actions?.missingMaterialsButton?.openMissingMaterials;
+        const open = missingMaterialsButton()?.openMissingMaterials;
         if (!open) {
             button.textContent = 'The action panel feature is off';
             return;

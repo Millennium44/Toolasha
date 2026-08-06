@@ -37,9 +37,11 @@ const {
     extractPartyLoadouts,
     foldLoadout,
     guildLoadoutsStorageKey,
+    isMonsterUnit,
     loadLoadouts,
     loadoutList,
     MAX_LOADOUTS,
+    purgeMonsterLoadouts,
     readAbilities,
     saveLoadouts,
 } = await import('./guild-loadouts.js');
@@ -178,6 +180,64 @@ describe('extractLoadout', () => {
         expect(extractLoadout(null)).toBeNull();
         expect(extractLoadout({})).toBeNull();
         expect(extractLoadout({ unit: {} })).toBeNull();
+    });
+});
+
+describe('the boss is not a guild member', () => {
+    // Reported live: clicking the boss in the trial fight view fires
+    // `battle_unit_fetched` exactly as clicking a member does, and the sheet was
+    // filed under the roster — "Seen loadouts (4): Trial Chameleon Lv.110". In
+    // the estimated damage split that is a 618,000-health monster's auto-attack
+    // shared out as if it were somebody's build
+    test('a trial boss is refused even when it arrives as a character', () => {
+        const boss = {
+            unit: {
+                character: { name: 'Trial Chameleon' },
+                combatDetails: { combatLevel: 110, maxHitpoints: 618_000, combatStats: { rangedDamage: 462 } },
+            },
+        };
+
+        expect(isMonsterUnit(boss.unit)).toBe(true);
+        expect(extractLoadout(boss)).toBeNull();
+    });
+
+    test('an hrid under /monsters/ is enough on its own', () => {
+        expect(isMonsterUnit({ name: 'Something', combatMonsterHrid: '/monsters/chameleon' })).toBe(true);
+        expect(isMonsterUnit({ name: 'Tib', hrid: '/characters/tib' })).toBe(false);
+    });
+
+    test('the five encounters are refused by name', () => {
+        for (const name of ['Chameleon', 'Badger', 'Jellyfish', 'Hedgehog', 'Swarm']) {
+            expect(isMonsterUnit({ name })).toBe(true);
+        }
+    });
+
+    test('a member whose name merely contains one of them is not a monster', () => {
+        // "Swarmy" is a person; the encounter list is matched as whole words
+        expect(isMonsterUnit({ name: 'Swarmy' })).toBe(false);
+        expect(isMonsterUnit({ name: 'Trialene' })).toBe(false);
+    });
+
+    test('what is already on disk is purged rather than filtered forever', () => {
+        const record = {
+            players: {
+                tib: { name: 'Tib', at: 2 },
+                'trial chameleon': { name: 'Trial Chameleon', at: 3 },
+            },
+        };
+
+        const { record: cleaned, purged } = purgeMonsterLoadouts(record);
+        expect(purged).toEqual(['Trial Chameleon']);
+        expect(Object.keys(cleaned.players)).toEqual(['tib']);
+
+        // Nothing to purge is the same object back, so no needless write
+        expect(purgeMonsterLoadouts(cleaned).record).toBe(cleaned);
+        expect(purgeMonsterLoadouts(null).purged).toEqual([]);
+    });
+
+    test('and is not listed even before the purge lands', () => {
+        const list = loadoutList({ players: { a: { name: 'Tib', at: 2 }, b: { name: 'Trial Chameleon', at: 3 } } });
+        expect(list.map((entry) => entry.name)).toEqual(['Tib']);
     });
 });
 

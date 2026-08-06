@@ -4,9 +4,11 @@
  */
 
 import config from '../../core/config.js';
+import dataManager from '../../core/data-manager.js';
 import marketAPI from '../../api/marketplace.js';
 import combatStatsDataCollector from './combat-stats-data-collector.js';
-import { calculateAllPlayerStats } from './combat-stats-calculator.js';
+import { calculateAllPlayerStats, describeLuckAdjustment } from './combat-stats-calculator.js';
+import { loadSessions } from './combat-session-history.js';
 import {
     formatWithSeparator,
     coinFormatter,
@@ -15,13 +17,53 @@ import {
     isAbbreviationEnabled,
 } from '../../utils/formatters.js';
 import { formatKeyCostNote } from '../../utils/key-cost.js';
+import { shortDuration } from '../../utils/overlay-format.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
+
+/**
+ * An archived run as one line in the session picker.
+ *
+ * "Aug 5 · 6h 12m · Chimerical Den · party of 5" — the four things that tell
+ * one stored run from another. Pure, so a picker's labelling is testable: the
+ * zone name comes in through `zoneNameOf` because game data lives with the
+ * caller, and a session whose zone the archive never recorded simply goes
+ * unnamed rather than being guessed.
+ *
+ * @param {Object} session - A snapshot from the session archive
+ * @param {Object} [options]
+ * @param {Function} [options.zoneNameOf] - `(actionHrid) => string|null`
+ * @param {Function} [options.formatDuration] - Seconds to something readable
+ * @returns {string}
+ */
+export function archivedSessionLabel(session, { zoneNameOf, formatDuration = shortDuration } = {}) {
+    const started = session?.combatStartTime ? new Date(session.combatStartTime) : null;
+    const when =
+        started && !Number.isNaN(started.getTime())
+            ? started.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+            : 'Unknown date';
+
+    const length = formatDuration(Math.round(session?.durationSeconds || 0));
+    const zone = (typeof zoneNameOf === 'function' && zoneNameOf(session?.actionHrid)) || null;
+    const count = session?.players?.length || 0;
+    const party = count > 1 ? `party of ${count}` : 'solo';
+
+    return [when, length, zone, party].filter(Boolean).join(' · ');
+}
 
 class CombatStatsUI {
     constructor() {
         this.isInitialized = false;
         this.observer = null;
         this.popup = null;
+        /**
+         * Which run the popup is showing: 'live', or an archived session's key.
+         * On the instance rather than the popup so reopening the popup shows
+         * the same run — and showPopup falls back to Live when the remembered
+         * session has since dropped off the archive.
+         */
+        this.viewing = 'live';
+        /** Archived runs, newest first; refreshed on every popup open */
+        this.sessions = [];
     }
 
     /**
@@ -235,7 +277,23 @@ class CombatStatsUI {
     }
 
     /**
+     * One archived run's picker line, with the zone named from game data.
+     * @param {Object} session - A snapshot from the archive
+     * @returns {string}
+     */
+    describeArchivedSession(session) {
+        return archivedSessionLabel(session, {
+            zoneNameOf: (actionHrid) => (actionHrid ? dataManager.getActionDetails?.(actionHrid)?.name || null : null),
+        });
+    }
+
+    /**
      * Show statistics popup
+     *
+     * Live by default; an archived session when one is picked. The archive is
+     * read-only here — choosing a run renders its final snapshot through the
+     * same calculator the live view uses, with the archived duration, and
+     * switching back to Live restores the run in progress.
      */
     async showPopup() {
         // Ensure market data is loaded
@@ -248,45 +306,77 @@ class CombatStatsUI {
             }
         }
 
-        // Get latest combat data (live = from a new_battle WS message this page session)
-        let combatData = combatStatsDataCollector.getLatestData();
-        const isLive = !!combatData;
-
-        if (!combatData) {
-            // Try to load from storage (may be from a previous combat session)
-            combatData = await combatStatsDataCollector.loadLatestData();
+        // The archive, for the picker. Fresh on every open — a run archives
+        // itself the moment the next one starts, and a stale list would hide it.
+        try {
+            this.sessions = await loadSessions();
+        } catch (error) {
+            console.error('[Combat Stats] Reading the session archive failed:', error);
+            this.sessions = [];
         }
 
-        if (!combatData || !combatData.players || combatData.players.length === 0) {
-            alert('No combat data available. Start a combat run first.');
-            return;
+        // A remembered session that has since fallen off the end of the list
+        // must not leave the popup claiming to show it
+        if (this.viewing !== 'live' && !this.sessions.some((session) => session.key === this.viewing)) {
+            this.viewing = 'live';
         }
 
-        // Calculate duration:
-        // - Live data: recalculate from combatStartTime (real-time, always correct)
-        // - Stored fallback: use snapshot durationSeconds (avoids inflated duration when
-        //   stored combatStartTime is from a previous combat session)
+        const archived = this.viewing !== 'live' ? this.sessions.find((session) => session.key === this.viewing) : null;
+
+        let combatData;
         let durationSeconds = null;
-        if (isLive && combatData.combatStartTime) {
-            const combatStartTime = new Date(combatData.combatStartTime).getTime() / 1000;
-            const currentTime = Date.now() / 1000;
-            durationSeconds = currentTime - combatStartTime;
-        } else if (combatData.durationSeconds) {
-            durationSeconds = combatData.durationSeconds;
+
+        if (archived) {
+            // The stored snapshot is the session's final state, and its stored
+            // duration is the run's whole length — never recomputed from a
+            // start time that is no longer ticking
+            combatData = archived;
+            durationSeconds = archived.durationSeconds || null;
+        } else {
+            // Get latest combat data (live = from a new_battle WS message this page session)
+            combatData = combatStatsDataCollector.getLatestData();
+            const isLive = !!combatData;
+
+            if (!combatData) {
+                // Try to load from storage (may be from a previous combat session)
+                combatData = await combatStatsDataCollector.loadLatestData();
+            }
+
+            if (!combatData || !combatData.players || combatData.players.length === 0) {
+                // With archived runs on file there is still something to show
+                if (this.sessions.length === 0) {
+                    alert('No combat data available. Start a combat run first.');
+                    return;
+                }
+                combatData = null;
+            }
+
+            // Calculate duration:
+            // - Live data: recalculate from combatStartTime (real-time, always correct)
+            // - Stored fallback: use snapshot durationSeconds (avoids inflated duration when
+            //   stored combatStartTime is from a previous combat session)
+            if (isLive && combatData?.combatStartTime) {
+                const combatStartTime = new Date(combatData.combatStartTime).getTime() / 1000;
+                const currentTime = Date.now() / 1000;
+                durationSeconds = currentTime - combatStartTime;
+            } else if (combatData?.durationSeconds) {
+                durationSeconds = combatData.durationSeconds;
+            }
         }
 
-        // Calculate statistics
-        const playerStats = calculateAllPlayerStats(combatData, durationSeconds);
+        // Calculate statistics — archived runs go through the same pathway
+        const playerStats = combatData ? calculateAllPlayerStats(combatData, durationSeconds) : [];
 
         // Create and show popup
-        this.createPopup(playerStats);
+        this.createPopup(playerStats, { archived });
     }
 
     /**
      * Create and display the statistics popup
      * @param {Array} playerStats - Array of player statistics
+     * @param {Object} [context] - `{archived}`: the archived session on show, or null for Live
      */
-    createPopup(playerStats) {
+    createPopup(playerStats, { archived = null } = {}) {
         // Remove existing popup if any
         if (this.popup) {
             this.closePopup();
@@ -337,7 +427,7 @@ class CombatStatsUI {
         `;
 
         const title = document.createElement('h2');
-        title.textContent = 'Combat Statistics';
+        title.textContent = archived ? 'Combat Statistics — Archived Session' : 'Combat Statistics';
         title.style.cssText = `
             margin: 0;
             color: ${textColor};
@@ -351,6 +441,39 @@ class CombatStatsUI {
             align-items: center;
             gap: 15px;
         `;
+
+        // Which run: Live, or one from the archive. Only offered when there is
+        // an archive to pick from — a picker with one option is furniture.
+        if (this.sessions.length > 0) {
+            const picker = document.createElement('select');
+            picker.className = 'toolasha-combat-stats-session-picker';
+            picker.style.cssText = `
+                background: #2a2a2a;
+                color: ${textColor};
+                border: 1px solid #4a4a4a;
+                border-radius: 4px;
+                padding: 5px 8px;
+                font-size: 12px;
+                max-width: 260px;
+            `;
+
+            const option = (value, label) => {
+                const element = document.createElement('option');
+                element.value = value;
+                element.textContent = label;
+                element.selected = this.viewing === value;
+                picker.appendChild(element);
+            };
+
+            option('live', 'Live session');
+            for (const session of this.sessions) option(session.key, this.describeArchivedSession(session));
+
+            picker.onchange = async () => {
+                this.viewing = picker.value;
+                await this.showPopup();
+            };
+            buttonContainer.appendChild(picker);
+        }
 
         const resetButton = document.createElement('button');
         resetButton.textContent = 'Reset Consumable Tracking';
@@ -409,7 +532,9 @@ class CombatStatsUI {
         `;
         closeButton.onclick = () => this.closePopup();
 
-        buttonContainer.appendChild(resetButton);
+        // Consumable tracking is a live measurement; resetting it from a view
+        // of last night's run would read as editing the archive
+        if (!archived) buttonContainer.appendChild(resetButton);
         buttonContainer.appendChild(closeButton);
 
         header.appendChild(title);
@@ -430,8 +555,34 @@ class CombatStatsUI {
             cardsContainer.appendChild(card);
         }
 
+        if (playerStats.length === 0) {
+            const empty = document.createElement('div');
+            empty.textContent = 'No live run measured yet — pick an archived session above.';
+            empty.style.cssText = 'color: #888; padding: 20px; text-align: center;';
+            cardsContainer.appendChild(empty);
+        }
+
         // Assemble popup
         popup.appendChild(header);
+        if (archived) {
+            // Headed as what it is, so an old run's figures are never mistaken
+            // for the one in progress
+            const banner = document.createElement('div');
+            banner.className = 'toolasha-combat-stats-archived-banner';
+            banner.textContent =
+                `Archived session — ${this.describeArchivedSession(archived)}. ` +
+                'Figures are this run’s final state, at today’s prices. Pick "Live session" to return.';
+            banner.style.cssText = `
+                margin-bottom: 15px;
+                padding: 8px 12px;
+                border: 1px solid #6b5a1f;
+                border-radius: 4px;
+                background: rgba(255, 200, 60, 0.08);
+                color: #e8c66c;
+                font-size: 13px;
+            `;
+            popup.appendChild(banner);
+        }
         popup.appendChild(cardsContainer);
         overlay.appendChild(popup);
 
@@ -540,17 +691,24 @@ class CombatStatsUI {
 
         const priceKey = config.getSettingValue('profitCalc_keyPricingMode') || 'ask';
 
+        // Chest EVs scaled by the player's own measured luck must say so on
+        // every figure that carries them — income, and the profit built on it
+        const luckNote = stats.chestLuckAdjustments?.length
+            ? stats.chestLuckAdjustments.map(describeLuckAdjustment).join('\n')
+            : null;
+
         const statsRows = [
             { label: 'Duration', value: stats.durationFormatted || '0s' },
             { label: 'Encounters/Hour', value: formatNum(stats.encountersPerHour) },
             {
                 label: 'Income',
                 value: formatNum(stats.income[priceKey]),
+                note: luckNote,
                 ...(stats.isDungeonRun && stats.incomeBreakdown?.length > 0
                     ? { expandable: true, incomeBreakdown: stats.incomeBreakdown }
                     : {}),
             },
-            { label: 'Daily Income', value: `${formatNum(stats.dailyIncome[priceKey])}/d` },
+            { label: 'Daily Income', value: `${formatNum(stats.dailyIncome[priceKey])}/d`, note: luckNote },
             {
                 label: 'Consumable Costs',
                 value: formatNumDecimals(stats.consumableCosts),
@@ -593,6 +751,7 @@ class CombatStatsUI {
                 label: 'Daily Profit',
                 value: `${formatNum(stats.dailyProfit[priceKey])}/d`,
                 color: stats.dailyProfit[priceKey] >= 0 ? '#51cf66' : '#ff6b6b',
+                note: luckNote,
             },
             { label: 'Total EXP', value: formatNum(stats.totalExp) },
             { label: 'EXP/hour', value: `${formatNum(stats.expPerHour)}/h` },
@@ -619,6 +778,12 @@ class CombatStatsUI {
             const value = document.createElement('span');
             value.textContent = row.value;
             value.style.color = row.color || textColor;
+
+            // A figure adjusted by measured luck is marked, never silent
+            if (row.note) {
+                value.textContent += ' *';
+                rowDiv.title = row.note;
+            }
 
             // Add expandable indicator if applicable
             if (row.expandable) {
@@ -705,6 +870,16 @@ class CombatStatsUI {
                                 totalCell.style.textAlign = 'right';
                                 totalCell.textContent = formatNum(chest.totalValue);
 
+                                // Marked, never silent: this EV is the drop
+                                // table's scaled by the player's measured luck
+                                if (chest.luckAdjustment) {
+                                    evCell.textContent += '*';
+                                    chestRow.title = describeLuckAdjustment({
+                                        itemName: chest.itemName,
+                                        ...chest.luckAdjustment,
+                                    });
+                                }
+
                                 chestRow.appendChild(nameCell);
                                 chestRow.appendChild(countCell);
                                 chestRow.appendChild(evCell);
@@ -771,12 +946,14 @@ class CombatStatsUI {
                                             grid-template-columns: 2fr 1fr 1fr 1fr 1fr;
                                             gap: 8px;
                                         `;
+                                        // The drop rows above sum to the drop-table EV; the total is
+                                        // that sum scaled by the measured ratio, and says so
                                         evTotalRow.innerHTML = `
-                                            <span>Total</span>
+                                            <span>Total${chest.luckAdjustment ? ' (luck-adjusted)' : ''}</span>
                                             <span></span>
                                             <span></span>
                                             <span></span>
-                                            <span style="text-align: right;">${formatNum(chest.evPerChest)}</span>
+                                            <span style="text-align: right;">${formatNum(chest.evPerChest)}${chest.luckAdjustment ? '*' : ''}</span>
                                         `;
                                         chestBreakdownDiv.appendChild(evTotalRow);
                                         chestRow.after(chestBreakdownDiv);

@@ -9,12 +9,75 @@ import domObserver from '../../core/dom-observer.js';
 import webSocketHook from '../../core/websocket.js';
 import dataManager from '../../core/data-manager.js';
 import { getItemPrices } from '../../utils/market-data.js';
+import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
 import { formatKMB, numberFormatter, formatDateTime } from '../../utils/formatters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { MARKET_TAX } from '../../utils/profit-constants.js';
 import { signedPercent } from '../../utils/overlay-format.js';
+import {
+    buildGatheringSession,
+    gatheringLootValue,
+    gatheringSessionLuck,
+    describeRunLuck,
+} from '../../utils/gathering-drop-model.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
 import lootLogHistory from './loot-log-history.js';
+
+/** The loot log export, one row per item per logged session */
+export const LOOT_LOG_CSV_COLUMNS = [
+    { key: 'sessionStart', label: 'Session Start' },
+    { key: 'action', label: 'Action' },
+    { key: 'actionHrid', label: 'Action Hrid' },
+    { key: 'item', label: 'Item' },
+    { key: 'itemHrid', label: 'Item Hrid' },
+    { key: 'quantity', label: 'Quantity' },
+    { key: 'askValue', label: 'Ask Value' },
+    { key: 'bidValue', label: 'Bid Value' },
+];
+
+/**
+ * Loot log entries as CSV rows, one per item per session.
+ *
+ * Pure: the pricing and naming come in as functions, so the arithmetic can be
+ * tested without a game. The values are the same figures the panel shows —
+ * whatever the resolver prices an item at, times the count — as raw numbers a
+ * spreadsheet can sum, not the panel's `1.2K`.
+ *
+ * Enhancing sessions are skipped, exactly as the panel skips drawing them.
+ *
+ * @param {Array<Object>} entries - Loot log entries (`{startTime, actionHrid, drops}`)
+ * @param {Object} resolve - How to read an entry
+ * @param {Function} resolve.itemInfo - `(baseHrid) => {name, askPerItem, bidPerItem}`
+ * @param {Function} resolve.actionName - `(actionHrid) => string`
+ * @returns {Array<Object>} Rows for `LOOT_LOG_CSV_COLUMNS`
+ */
+export function buildLootLogRows(entries, { itemInfo, actionName }) {
+    const rows = [];
+    for (const entry of entries || []) {
+        if (!entry?.drops) continue;
+        if (entry.actionHrid === '/actions/enhancing/enhance') continue;
+
+        const started = new Date(entry.startTime);
+        const sessionStart = Number.isNaN(started.getTime()) ? String(entry.startTime || '') : started.toISOString();
+        const action = actionName(entry.actionHrid);
+
+        for (const [hrid, count] of Object.entries(entry.drops)) {
+            const baseHrid = hrid.replace(/::\d+$/, '');
+            const info = itemInfo(baseHrid);
+            rows.push({
+                sessionStart,
+                action,
+                actionHrid: entry.actionHrid,
+                item: info.name,
+                itemHrid: baseHrid,
+                quantity: count,
+                askValue: (info.askPerItem || 0) * count,
+                bidValue: (info.bidPerItem || 0) * count,
+            });
+        }
+    }
+    return rows;
+}
 
 class LootLogStats {
     constructor() {
@@ -27,6 +90,9 @@ class LootLogStats {
         this.historyEnabled = false;
         this.historicalBatchSize = 20;
         this.historicalRendered = 0;
+        // Percentiles already worked out, keyed by what they were worked out
+        // from — an entry that has not changed costs a lookup, not a transform
+        this.luckCache = new Map();
     }
 
     /**
@@ -503,6 +569,12 @@ class LootLogStats {
             wrapper.appendChild(expectedLine);
         }
 
+        // Drop-luck verdict — the expected line's other half. "−12% of
+        // expected" cannot say whether that is routine or remarkable; the
+        // percentile can, and on a table whose value rides on one rare drop the
+        // two answers genuinely differ.
+        this.injectDropLuck(wrapper, logData);
+
         // Create details container (hidden by default)
         const details = this.buildItemBreakdown(logData.drops, profit?.inputs);
         details.style.display = 'none';
@@ -518,6 +590,117 @@ class LootLogStats {
         });
 
         secondDiv.appendChild(wrapper);
+    }
+
+    /**
+     * The price the drop-luck model uses for an item, ask side.
+     *
+     * Mirrors `calculateTotalValue`'s resolution — coins at face value,
+     * openable containers at expected value, everything else at market ask —
+     * because the distribution and the income measured against it must share
+     * one price source or the comparison measures pricing gaps rather than
+     * luck. Ask rather than bid to match the basis the Expected line prefers.
+     *
+     * @param {string} itemHrid - Base item HRID (no enhancement suffix)
+     * @returns {number|null} Price in coins, or null when the item has none
+     */
+    getModelPrice(itemHrid) {
+        if (itemHrid === '/items/coin') return 1;
+
+        const itemDetails = dataManager.getItemDetails(itemHrid);
+        if (itemDetails?.isOpenable && expectedValueCalculator.isInitialized) {
+            const evData = expectedValueCalculator.calculateExpectedValue(itemHrid);
+            if (evData && evData.expectedValue > 0) return evData.expectedValue;
+        }
+
+        const ask = getItemPrices(itemHrid, 0)?.ask;
+        return ask > 0 ? ask : null;
+    }
+
+    /**
+     * Bind a log entry to the gathering drop model.
+     *
+     * Null carries the model's own floors through — no completed actions, no
+     * static drop table (production, combat, alchemy), or nothing in the table
+     * with a price means no verdict rather than a made-up one.
+     *
+     * @param {Object} logData - Log entry ({actionHrid, actionCount, drops})
+     * @returns {{session: Object, income: number}|null}
+     */
+    buildLuckReading(logData) {
+        if (!logData?.drops) return null;
+
+        const session = buildGatheringSession({
+            actionDetail: dataManager.getActionDetails(logData.actionHrid),
+            actionCount: logData.actionCount,
+            priceOf: (itemHrid) => this.getModelPrice(itemHrid),
+        });
+        if (!session) return null;
+
+        return { session, income: gatheringLootValue(session, logData.drops) };
+    }
+
+    /**
+     * Add the drop-luck line to a loot entry's value block.
+     *
+     * The placeholder goes in synchronously and the transform runs off a
+     * timeout, as the combat verdict does — the inversion is milliseconds per
+     * entry but a loot log holds many entries, and none of them should stall
+     * the injection pass.
+     *
+     * @param {HTMLElement} wrapper - The `.mwi-loot-log-value` block
+     * @param {Object} logData - Log entry ({actionHrid, actionCount, drops})
+     */
+    injectDropLuck(wrapper, logData) {
+        if (!config.getSetting('lootLogDropLuck')) return;
+
+        const reading = this.buildLuckReading(logData);
+        if (!reading) return;
+
+        const line = document.createElement('div');
+        line.className = 'mwi-loot-log-luck';
+        line.style.cssText = 'text-align: right; font-size: 0.9em; color: #aaa;';
+        line.textContent = 'Drop luck: working it out…';
+        wrapper.appendChild(line);
+
+        const deferred = setTimeout(() => this.fillInDropLuck(line, reading, logData), 0);
+        this.timerRegistry.registerTimeout(deferred);
+    }
+
+    /**
+     * Replace the placeholder with the verdict, or remove it if there is none.
+     * @param {HTMLElement} line - The row to fill in
+     * @param {Object} reading - From `buildLuckReading`
+     * @param {Object} logData - The entry the reading came from, for the cache key
+     */
+    fillInDropLuck(line, reading, logData) {
+        try {
+            const key = `${logData.actionHrid}|${logData.actionCount}|${Math.round(reading.income)}`;
+            let percentile = this.luckCache.get(key);
+            if (percentile === undefined) {
+                percentile = gatheringSessionLuck(reading.session, reading.income).percentile;
+                // Prices move and entries churn; the cache is a session-length
+                // convenience, not a store, so it is dropped rather than evicted
+                if (this.luckCache.size > 200) this.luckCache.clear();
+                this.luckCache.set(key, percentile);
+            }
+
+            const { text, tone } = describeRunLuck(percentile);
+            const color = { lucky: config.COLOR_PROFIT, unlucky: config.COLOR_LOSS, normal: '#aaa' }[tone];
+
+            line.style.color = color;
+            line.textContent = `Drop luck: ${text}`;
+            line.title = [
+                `Value of ${numberFormatter(logData.actionCount)} actions' drops, against every outcome ` +
+                    'those actions could have had. 50 is typical; 5 means nineteen runs in twenty do better.',
+                'Drops with no market price are left out of both sides.',
+                "Essence and rare-find drops are not in the action's own drop table, so they are left out of " +
+                    'both sides too. Gathering-quantity buffs are not modelled; a buffed run reads high.',
+            ].join('\n');
+        } catch (error) {
+            console.error('[LootLogStats] Drop luck calculation failed:', error);
+            line.remove();
+        }
     }
 
     /**
@@ -541,37 +724,7 @@ class LootLogStats {
         const items = [];
         for (const [hrid, count] of Object.entries(drops)) {
             const baseHrid = hrid.replace(/::\d+$/, '');
-
-            let name;
-            let askPerItem = 0;
-            let bidPerItem = 0;
-
-            if (baseHrid === '/items/coin') {
-                name = 'Coins';
-                askPerItem = 1;
-                bidPerItem = 1;
-            } else {
-                const itemDetails = dataManager.getItemDetails(baseHrid);
-                name = itemDetails?.name || baseHrid.split('/').pop().replace(/_/g, ' ');
-
-                // Check for openable containers — use expected value
-                if (itemDetails?.isOpenable && expectedValueCalculator.isInitialized) {
-                    const evData = expectedValueCalculator.calculateExpectedValue(baseHrid);
-                    if (evData && evData.expectedValue > 0) {
-                        askPerItem = evData.expectedValue;
-                        bidPerItem = evData.expectedValue;
-                    }
-                }
-
-                // Fall back to market prices
-                if (askPerItem === 0 && bidPerItem === 0) {
-                    const prices = getItemPrices(baseHrid, 0);
-                    if (prices) {
-                        askPerItem = prices.ask || 0;
-                        bidPerItem = prices.bid || 0;
-                    }
-                }
-            }
+            const { name, askPerItem, bidPerItem } = this.resolveItemPricing(baseHrid);
 
             items.push({
                 hrid: baseHrid,
@@ -701,6 +854,48 @@ class LootLogStats {
         }
 
         return container;
+    }
+
+    /**
+     * How one item is named and priced, the same way everywhere.
+     *
+     * Coins at face value, openable containers at their expected value,
+     * everything else at the market — the resolution `buildItemBreakdown` has
+     * always used, pulled out so the CSV export prices a drop identically to
+     * the row on screen.
+     *
+     * @param {string} baseHrid - Item HRID with any enhancement level stripped
+     * @returns {{name: string, askPerItem: number, bidPerItem: number}}
+     */
+    resolveItemPricing(baseHrid) {
+        if (baseHrid === '/items/coin') {
+            return { name: 'Coins', askPerItem: 1, bidPerItem: 1 };
+        }
+
+        const itemDetails = dataManager.getItemDetails(baseHrid);
+        const name = itemDetails?.name || baseHrid.split('/').pop().replace(/_/g, ' ');
+        let askPerItem = 0;
+        let bidPerItem = 0;
+
+        // Check for openable containers — use expected value
+        if (itemDetails?.isOpenable && expectedValueCalculator.isInitialized) {
+            const evData = expectedValueCalculator.calculateExpectedValue(baseHrid);
+            if (evData && evData.expectedValue > 0) {
+                askPerItem = evData.expectedValue;
+                bidPerItem = evData.expectedValue;
+            }
+        }
+
+        // Fall back to market prices
+        if (askPerItem === 0 && bidPerItem === 0) {
+            const prices = getItemPrices(baseHrid, 0);
+            if (prices) {
+                askPerItem = prices.ask || 0;
+                bidPerItem = prices.bid || 0;
+            }
+        }
+
+        return { name, askPerItem, bidPerItem };
     }
 
     /**
@@ -850,6 +1045,7 @@ class LootLogStats {
         const wrapper = document.createElement('div');
         wrapper.className = 'mwi-loot-log-history';
         wrapper.appendChild(separator);
+        wrapper.appendChild(this.buildCsvExportBar());
 
         // Render first batch
         this.historicalRendered = 0;
@@ -898,6 +1094,53 @@ class LootLogStats {
         }
 
         container.appendChild(wrapper);
+    }
+
+    /**
+     * An Export CSV bar for the loot log, current and historical sessions both.
+     *
+     * Built only from `renderHistoricalEntries`, which has already established
+     * there are entries to write. The rows are gathered at click time rather
+     * than render time, so an export taken an hour after the panel was drawn
+     * carries the sessions recorded since.
+     *
+     * @returns {HTMLElement} The bar
+     */
+    buildCsvExportBar() {
+        const bar = document.createElement('div');
+        bar.dataset.csvExport = 'loot-log';
+        bar.style.cssText = 'display: flex; justify-content: flex-end; margin: 4px 0;';
+
+        const button = document.createElement('button');
+        button.textContent = 'Export CSV';
+        button.title = 'Save every logged session as a spreadsheet — one row per item per session, raw numbers.';
+        button.style.cssText = `
+            padding: 2px 8px;
+            background: rgba(96, 165, 250, 0.1);
+            border: 1px solid rgba(96, 165, 250, 0.3);
+            border-radius: 4px;
+            color: rgba(96, 165, 250, 0.8);
+            cursor: pointer;
+            font-size: 0.85em;
+        `;
+        button.addEventListener('click', async () => {
+            try {
+                const current = this.currentLootLogData || [];
+                const currentIds = new Set(current.map((e) => e.characterActionId));
+                const historical = await lootLogHistory.getHistoricalEntries(currentIds);
+                const rows = buildLootLogRows([...current, ...historical], {
+                    itemInfo: (baseHrid) => this.resolveItemPricing(baseHrid),
+                    actionName: (actionHrid) => this.getActionName(actionHrid),
+                });
+                if (!rows.length) return;
+                downloadCsv(csvFilename('loot-log'), toCsv(rows, LOOT_LOG_CSV_COLUMNS));
+            } catch (error) {
+                console.error('[LootLogStats] CSV export failed:', error);
+            }
+        });
+
+        bar.appendChild(button);
+        return bar;
     }
 
     /**
@@ -1153,6 +1396,7 @@ class LootLogStats {
         this.itemsSpriteUrl = null;
         this.actionsSpriteUrl = null;
         this.historicalRendered = 0;
+        this.luckCache.clear();
         this.initialized = false;
     }
 }

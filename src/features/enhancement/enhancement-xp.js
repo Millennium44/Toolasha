@@ -380,6 +380,14 @@ export function calculateEnhancementPredictions(itemHrid, startLevel, targetLeve
         return {
             expectedAttempts: Math.round(result.attemptsRounded),
             expectedProtections: Math.round(result.protectionCount),
+            // The distribution behind the expectation, kept with it so a finished
+            // run can be read back as a percentile of what was actually predicted
+            // — recomputing the chain later would measure the run against stats
+            // it was not played with. Additive: older sessions simply lack them,
+            // and every reader treats that as "no distribution recorded".
+            expectedAttemptsExact: result.attempts,
+            attemptsVariance: result.attemptsVariance,
+            minAttempts: result.minAttempts,
             expectedTime: result.totalTime,
             perActionTime: result.perActionTime,
             successMultiplier: result.successMultiplier,

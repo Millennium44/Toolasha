@@ -79,6 +79,40 @@ describe('with attribution', () => {
         tracker.breakdown.players.push({ index: '2', name: 'Just Joined', dps: null, accuracy: null });
         expect(draw().textContent).not.toContain('Just Joined');
     });
+
+    test('clicking a player name fills "/profile <name>" into chat', () => {
+        document.body.innerHTML = '<div class="Chat_chatInputContainer__c"><input /></div>';
+        const container = draw();
+
+        const nameCell = [...container.children].find((el) => el.textContent === 'Millennium44');
+        expect(nameCell.style.cursor).toBe('pointer');
+
+        nameCell.dispatchEvent(new Event('click', { bubbles: true }));
+        expect(document.querySelector('input').value).toBe('/profile Millennium44');
+
+        document.body.innerHTML = '';
+    });
+
+    test('a name that is not a single token gets no click handler', () => {
+        // "Someone Else" cannot be a real MWI name, and "/profile Someone Else"
+        // would be a broken command — so the cell stays an ordinary cell
+        document.body.innerHTML = '<div class="Chat_chatInputContainer__c"><input /></div>';
+        const container = draw();
+
+        const nameCell = [...container.children].find((el) => el.textContent === 'Someone Else');
+        expect(nameCell.style.cursor).not.toBe('pointer');
+
+        nameCell.dispatchEvent(new Event('click', { bubbles: true }));
+        expect(document.querySelector('input').value).toBe('');
+
+        document.body.innerHTML = '';
+    });
+
+    test('the total line is not clickable', () => {
+        const container = draw();
+        const totalCell = [...container.children].find((el) => el.textContent === 'Total DPS');
+        expect(totalCell.style.cursor).not.toBe('pointer');
+    });
 });
 
 describe('without attribution', () => {

@@ -280,6 +280,35 @@ function calcTimeToLevel(currentXP, xpPerHour) {
 
 // ─── Tracker class ──────────────────────────────────────────────────────────
 
+/**
+ * Drop the XP history of anybody no longer in the guild.
+ *
+ * Mutates the map it is given — it is the tracker's own and is about to be
+ * written back — and returns who left, so the caller can say so.
+ *
+ * Only ever called against a **full** roster. The login snapshot carries every
+ * member; `guild_characters_updated` has never been shown to, and pruning
+ * against a message that turns out to be a delta would delete the guild. So the
+ * routine refresh stays additive and a departure clears on the next load, which
+ * is the same guarantee everything else stored here has.
+ *
+ * @param {Object<string, Array<Object>>} history - characterID → XP samples, mutated
+ * @param {string[]} currentIds - The character ids the roster states
+ * @returns {string[]} The ids that were dropped
+ */
+export function pruneDepartedMembers(history, currentIds) {
+    if (!history || typeof history !== 'object') return [];
+    // An empty roster is "not known" rather than "nobody is in this guild", and
+    // pruning against it would empty the map on any message that arrived early
+    if (!Array.isArray(currentIds) || !currentIds.length) return [];
+
+    const current = new Set(currentIds.map(String));
+    const departed = Object.keys(history).filter((id) => !current.has(String(id)));
+    for (const id of departed) delete history[id];
+
+    return departed;
+}
+
 class GuildXPTracker {
     constructor() {
         this.initialized = false;
@@ -394,6 +423,22 @@ class GuildXPTracker {
         }
         if (this.ownGuildID) {
             this.memberXPHistory = await storage.get(`memberXP_${this.ownGuildID}`, STORE_NAME, {});
+            // Self-heal on the way in. The history map never forgets anybody it
+            // has ever sampled, so a member who left the guild kept their weekly
+            // rate, did nothing all day because they were gone, and sat in the
+            // roster's "Gone quiet" list permanently — headed `#9349`, because
+            // they had been dropped from the member list and there was no name
+            // left to head it with. The login snapshot is the whole roster, so
+            // it is the one moment this can be said with certainty.
+            const departed = pruneDepartedMembers(this.memberXPHistory, Object.keys(guildCharacterMap));
+            if (departed.length) {
+                console.warn(
+                    `[GuildXPTracker] Dropping ${departed.length} member${departed.length === 1 ? '' : 's'} ` +
+                        `no longer in the guild: ${departed.slice(0, 8).join(', ')}` +
+                        `${departed.length > 8 ? `, +${departed.length - 8} more` : ''}`
+                );
+                storage.set(`memberXP_${this.ownGuildID}`, this.memberXPHistory, STORE_NAME);
+            }
         }
         endLoad();
 
@@ -484,6 +529,26 @@ class GuildXPTracker {
 
         if (newGuildID) {
             this.ownGuildID = newGuildID;
+        }
+
+        // A refresh that carries most of the roster is the roster, and anybody
+        // missing from it has left. A *delta* — one member's XP ticking over —
+        // carries one entry out of a hundred, so the majority rule separates the
+        // two cleanly and fails in the safe direction: an unrecognised shape
+        // prunes nobody and the login snapshot heals it on the next load.
+        //
+        // Whether this message is ever a delta is genuinely unknown. It produced
+        // no events in the one raw capture there is, so this is a judgement about
+        // an unverified shape rather than a fact about it, and it is written to
+        // be wrong harmlessly.
+        const held = Object.keys(this.memberMeta).length;
+        const carries = Object.keys(sharableMap).length;
+        if (held && carries > held / 2) {
+            const gone = Object.keys(this.memberMeta).filter((charId) => !sharableMap[charId]);
+            for (const charId of gone) delete this.memberMeta[charId];
+            if (gone.length) {
+                console.warn(`[GuildXPTracker] ${gone.length} member(s) are no longer on the guild roster`);
+            }
         }
 
         // Update member metadata

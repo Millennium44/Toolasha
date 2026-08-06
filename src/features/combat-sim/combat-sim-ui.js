@@ -15,8 +15,22 @@ import { createAutofillManager } from '../../utils/marketplace-autofill.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable } from '../../utils/floating-panel.js';
 import { restoreGeometry, saveGeometry, saveOpenState, reopenIfLeftOpen } from '../../utils/panel-geometry.js';
-import { characterKey, readScoped, writeScoped } from '../../utils/character-key.js';
-import { formatWithSeparator, formatKMB, parseKMB } from '../../utils/formatters.js';
+import { readScoped, writeScoped } from '../../utils/character-key.js';
+import {
+    ALL_ZONES_SNAPSHOT_KEY,
+    ALL_ZONES_SNAPSHOT_STORE,
+    saveAllZonesSnapshot,
+    loadAllZonesSnapshot,
+} from '../../utils/all-zones-snapshot.js';
+import { formatWithSeparator, formatKMB, parseKMB, timeReadable } from '../../utils/formatters.js';
+import { capProfitRate, liquidityMarkerHtml } from '../../utils/liquidity-cap.js';
+import {
+    isSkillingGearItem,
+    isAuraAbility,
+    skillingGearWarnings,
+    duplicateAuraWarnings,
+    partyLintWarnings,
+} from '../../utils/party-lint.js';
 import { createEtaTracker } from '../../utils/progress-eta.js';
 import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
 import {
@@ -566,17 +580,10 @@ export function upgradeRowNotesHtml(result) {
     return notes.join('');
 }
 
-/** Where a finished all-zones run is kept, for anything that ranks zones later */
-export const ALL_ZONES_SNAPSHOT_KEY = 'allZonesSnapshot';
-
-/**
- * The store it goes in.
- *
- * `combatExport` rather than a new store: it already holds what the combat sim
- * produces for other features to read, and adding an object store means a
- * database version bump every consumer pays for.
- */
-export const ALL_ZONES_SNAPSHOT_STORE = 'combatExport';
+// The snapshot's home moved to `utils/all-zones-snapshot.js` so read-only
+// consumers need not import this whole module; re-exported here because this
+// is where every existing consumer looks for it
+export { ALL_ZONES_SNAPSHOT_KEY, ALL_ZONES_SNAPSHOT_STORE };
 
 /** Candidate types paid for in ability books rather than at the equipment market */
 const ABILITY_CANDIDATE_TYPES = new Set(['ability_level', 'ability_swap']);
@@ -683,8 +690,20 @@ export function buildAllZonesSnapshot(zoneResults, options = {}) {
                 zoneHrid: result.zone.zoneHrid || result.zone.hrid || '',
                 zoneName: result.zone.name || '',
                 difficultyTier: result.zone.difficultyTier ?? 0,
+                // Deliberately the sim's raw, uncapped claim: the calibration
+                // surfaces that compare sim-vs-measured read this figure, and a
+                // market-volume cap is a display truth, not a sim truth. The
+                // per-item composition below is what lets a *display* reading
+                // the snapshot apply the cap at rank time.
                 profitPerHour: Number.isFinite(result.revenue?.netPerHour) ? result.revenue.netPerHour : null,
                 xpPerHour: totalXp / simHours,
+                sells: (result.revenue?.dropEntries || [])
+                    .filter((entry) => entry?.itemHrid && Number(entry.countPerHour) > 0)
+                    .map((entry) => ({
+                        itemHrid: entry.itemHrid,
+                        name: entry.name || null,
+                        unitsPerHour: entry.countPerHour,
+                    })),
             };
         })
         .filter((zone) => zone.zoneHrid);
@@ -810,39 +829,7 @@ export function bestAllZoneRows(rows) {
     return { xp: bestBy('totalXP'), profit: bestBy('profitDay') };
 }
 
-/**
- * Write a snapshot out, immediately.
- *
- * Immediate rather than debounced: a run people wait ten minutes for is exactly
- * the thing a reload three seconds later must not lose.
- *
- * @param {Object} snapshot - From `buildAllZonesSnapshot`
- * @returns {Promise<boolean>} Whether it was stored
- */
-export async function saveAllZonesSnapshot(snapshot) {
-    try {
-        return await storage.setJSON(characterKey(ALL_ZONES_SNAPSHOT_KEY), snapshot, ALL_ZONES_SNAPSHOT_STORE, true);
-    } catch (error) {
-        console.error('[CombatSimUI] Saving the all-zones snapshot failed:', error);
-        return false;
-    }
-}
-
-/**
- * The last all-zones run, if there is one.
- * @returns {Promise<Object|null>} Snapshot, or null when nothing usable is stored
- */
-export async function loadAllZonesSnapshot() {
-    try {
-        // Discard any legacy global snapshot: a sim run against another
-        // character's gear is actively misleading, so no adoption.
-        const saved = await readScoped(ALL_ZONES_SNAPSHOT_KEY, ALL_ZONES_SNAPSHOT_STORE, null, { migrate: 'discard' });
-        return saved && Array.isArray(saved.zones) ? saved : null;
-    } catch (error) {
-        console.error('[CombatSimUI] Reading the all-zones snapshot failed:', error);
-        return null;
-    }
-}
+export { saveAllZonesSnapshot, loadAllZonesSnapshot };
 
 /**
  * What an upgrade row would have you buy, if anything.
@@ -1205,6 +1192,11 @@ export function wireUpgradeRowActions(container, logPrefix = 'CombatSimUI') {
     });
 }
 
+// The party lint lives in `utils/party-lint.js` now, so the DPS panel can run
+// the same checks on the live party without importing the simulator UI. It is
+// re-exported here because this is where callers and tests found it first.
+export { isSkillingGearItem, isAuraAbility, skillingGearWarnings, duplicateAuraWarnings, partyLintWarnings };
+
 /**
  * Sort result rows by a computed key, treating Infinity as "worst" so unknown
  * values land at the end rather than dominating the comparison.
@@ -1425,6 +1417,7 @@ class CombatSimUI {
         this._lastSimResult = null;
         this._lastSimHours = null;
         this._lastGameData = null;
+        this._lastPartyWarnings = [];
         // Session history for multi-scenario comparison
         this._simHistory = [];
         this._comparisonIndex = null;
@@ -2435,12 +2428,19 @@ class CombatSimUI {
 
     /**
      * Display all-zones comparison results in a sortable table.
+     *
+     * The Profit columns and the Score built on them are bounded by market
+     * volume before anything is ranked: a zone whose loot the market cannot
+     * absorb is quoted at the pace it can actually be sold, with a marker
+     * saying so. The sim results themselves — and the snapshot they are saved
+     * to — keep the raw claim.
+     *
      * @param {Array<Object>} zoneResults - Array of {zone, simResult, revenue}
      * @param {number} hours - Simulation hours
      * @param {Object} gameData - Game data maps
      * @private
      */
-    _displayAllZonesResults(zoneResults, hours, gameData) {
+    async _displayAllZonesResults(zoneResults, hours, gameData) {
         const container = this.panel?.querySelector('#mwi-csim-results');
         if (!container) return;
 
@@ -2477,8 +2477,33 @@ class CombatSimUI {
                     expenses: r.revenue?.costPerHour || 0,
                     profit: r.revenue?.netPerHour || 0,
                     profitDay: (r.revenue?.netPerHour || 0) * 24,
+                    _sells: (r.revenue?.dropEntries || [])
+                        .filter((entry) => entry?.itemHrid && Number(entry.countPerHour) > 0)
+                        .map((entry) => ({
+                            itemHrid: entry.itemHrid,
+                            name: entry.name || null,
+                            unitsPerHour: entry.countPerHour,
+                        })),
                 };
             });
+
+        // Bound the profit pace before scoring or ranking anything — a Score
+        // blended from an unsellable rate would smuggle the fiction back in.
+        // The cap is display-only: `zoneResults` and the snapshot keep the raw
+        // figures, and a capped row always carries its marker.
+        for (const row of rows) {
+            try {
+                const capped = await capProfitRate({ goldPerHour: row.profit, sells: row._sells });
+                if (capped.capped) {
+                    row.uncappedProfit = row.profit;
+                    row.profit = capped.goldPerHour;
+                    row.profitDay = capped.goldPerHour * 24;
+                    row.liquidityLimit = capped.limit;
+                }
+            } catch (error) {
+                console.error('[CombatSimUI] Bounding a zone row by market volume failed:', error);
+            }
+        }
 
         // The Score and the two winners are decided over the whole run, before
         // any sort or column hiding — neither is a property of the current view
@@ -2583,6 +2608,11 @@ class CombatSimUI {
                             // of anything, so it is never abbreviated
                             display = col.key === 'score' ? String(val ?? 0) : formatKMB(Math.round(val));
                             style += ' text-align:right; font-variant-numeric:tabular-nums;';
+
+                            // A volume-bounded figure is never shown silently
+                            if ((col.key === 'profitDay' || col.key === 'profit') && row.liquidityLimit) {
+                                display += liquidityMarkerHtml(row.liquidityLimit, { compact: true });
+                            }
 
                             // Highlight best value per column in green
                             const isLowerBetter = col.key === 'expenses';
@@ -3215,6 +3245,10 @@ class CombatSimUI {
         this._playerInfo = playerInfo;
         this._activePlayerTab = selfHrid;
 
+        // Loadout lint: mistakes a party would want called out before reading
+        // any of the numbers they distort
+        this._lastPartyWarnings = partyLintWarnings(playerDTOs, playerInfo, gameData);
+
         const communityBuffs = getCommunityBuffs();
 
         // Show party info
@@ -3288,6 +3322,7 @@ class CombatSimUI {
                 hours,
                 gameData,
                 metrics: null, // Filled by _displayResults
+                partyWarnings: this._lastPartyWarnings,
                 timestamp: Date.now(),
             };
 
@@ -3477,7 +3512,7 @@ class CombatSimUI {
 
             this._allZonesSortCol = 'profit';
             this._allZonesSortAsc = false;
-            this._displayAllZonesResults(zoneResults, hours, gameData);
+            await this._displayAllZonesResults(zoneResults, hours, gameData);
 
             // Outlives the panel: the ranked action list reads this to put combat
             // zones next to skilling actions long after the results pane is gone
@@ -3519,11 +3554,13 @@ class CombatSimUI {
      */
     _displayResults(simResult, hours, gameData) {
         // If an active detail index is set, show that history entry's details instead
+        let partyWarnings = this._lastPartyWarnings || [];
         if (this._activeDetailIndex !== null && this._simHistory[this._activeDetailIndex]) {
             const entry = this._simHistory[this._activeDetailIndex];
             simResult = entry.simResult;
             hours = entry.hours;
             gameData = entry.gameData;
+            partyWarnings = entry.partyWarnings || [];
         }
 
         const container = this.panel.querySelector('#mwi-csim-results');
@@ -3560,6 +3597,19 @@ class CombatSimUI {
         // run. It is stitched in at this marker afterwards rather than
         // recomputed, so the tiles and the tables can never disagree.
         html += RESULTS_SUMMARY_SLOT;
+
+        // Party loadout lint, directly under the summary: a warning about the
+        // inputs belongs beside the headline numbers it distorts. Same amber
+        // treatment as the engine's own warnings above.
+        if (partyWarnings.length > 0) {
+            html +=
+                `<div style="margin-bottom:10px; padding:6px 8px; border:1px solid #6b5a1f; ` +
+                `background:rgba(255,200,60,0.08); border-radius:4px; font-size:11px; color:#e8c66c;">`;
+            for (const warning of partyWarnings) {
+                html += `<div>&#9888; ${warning}</div>`;
+            }
+            html += '</div>';
+        }
 
         // History panel (above everything)
         if (this._simHistory.length > 0) {
@@ -4339,9 +4389,11 @@ class CombatSimUI {
      * tables still hold the working; this holds the conclusions, and takes them
      * from the same variables the tables printed rather than recomputing.
      *
-     * Per-day is the headline unit rather than per-hour: nobody fights a zone
-     * for an hour, and it is the number a player compares against the other
-     * things they could be doing with a day.
+     * Profit and deaths are quoted per day: nobody fights a zone for an hour,
+     * and a day is the unit a player weighs against the other things they
+     * could be doing. XP is per hour, the same unit the XP section below and
+     * every zone ranking use, so the tile can be read against them directly;
+     * a dungeon's pace reads best as the average length of one clear.
      *
      * @param {Object} data - Values already computed by `_displayResults`
      * @returns {string} HTML for the summary block
@@ -4402,24 +4454,18 @@ class CombatSimUI {
         );
         tiles.push(
             tile(
-                'XP/day',
-                `${formatKMB(Math.round(xpPerHr * 24))}` +
-                    this._formatDelta(xpPerHr * 24, prevXpPerHr === null ? null : prevXpPerHr * 24, true, true)
+                'XP/hr',
+                `${formatKMB(Math.round(xpPerHr))}` + this._formatDelta(xpPerHr, prevXpPerHr ?? null, true, true)
             )
         );
 
-        // Dungeons are entered, not encountered, so the rate a player watches is
-        // completions — encounters inside a run are a wave count, not a pace
+        // Dungeons are entered, not encountered — the pace a player plans a
+        // session around is how long one clear takes, not a wave count
         if (simResult.isDungeon) {
-            const completedPerHr = (simResult.dungeonsCompleted || 0) / hours;
-            const attempts = (simResult.dungeonsCompleted || 0) + (simResult.dungeonsFailed || 0);
-            tiles.push(tile('Dungeons/hr', this._formatRate(completedPerHr)));
-            tiles.push(
-                tile(
-                    'Success',
-                    attempts > 0 ? `${(((simResult.dungeonsCompleted || 0) / attempts) * 100).toFixed(1)}%` : '—'
-                )
-            );
+            const completed = simResult.dungeonsCompleted || 0;
+            const attempts = completed + (simResult.dungeonsFailed || 0);
+            tiles.push(tile('Avg clear', completed > 0 ? timeReadable((hours * 3600) / completed) : '—'));
+            tiles.push(tile('Success', attempts > 0 ? `${((completed / attempts) * 100).toFixed(1)}%` : '—'));
         } else {
             tiles.push(
                 tile(
@@ -4710,6 +4756,7 @@ class CombatSimUI {
         this._lastSimResult = null;
         this._lastSimHours = null;
         this._lastGameData = null;
+        this._lastPartyWarnings = [];
 
         const container = this.panel?.querySelector('#mwi-csim-results');
         if (container) {
@@ -4765,6 +4812,7 @@ class CombatSimUI {
             this._lastSimResult = null;
             this._lastSimHours = null;
             this._lastGameData = null;
+            this._lastPartyWarnings = [];
             const container = this.panel?.querySelector('#mwi-csim-results');
             if (container) container.style.display = 'none';
             return;
@@ -5246,6 +5294,7 @@ class CombatSimUI {
         this._lastSimResult = null;
         this._lastSimHours = null;
         this._lastGameData = null;
+        this._lastPartyWarnings = [];
         this._simHistory = [];
         this._comparisonIndex = null;
         this._comparisonBaseline = null;

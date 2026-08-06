@@ -98,6 +98,16 @@ export const TRIAL_SKILLS = [
 ];
 
 /**
+ * The longest a card's name may be before it is prose.
+ *
+ * The longest real one is "Trial Chameleon" with a level and a tier badge beside
+ * it — "Trial Chameleon Lv.140 T6", twenty-five characters — so forty is
+ * generous for every name the game has been seen to write and refuses anything
+ * that is a sentence.
+ */
+export const MAX_TRIAL_NAME_CHARS = 40;
+
+/**
  * Whether a card's name is a trial's name.
  *
  * A trial card's name is *only* the trial's name — "Milking", "Alchemy", "Trial
@@ -120,7 +130,17 @@ export const TRIAL_SKILLS = [
  * @returns {boolean} True when it names a trial
  */
 export function isTrialName(name) {
-    const lowered = String(name || '')
+    const raw = String(name || '');
+    // A precondition, not a match: a trial's name is one short line, and asking
+    // the matcher about anything else is asking the wrong question. A guild's
+    // **notice board** — braille art, "Welcome to Milkmaxxing!", three Discord
+    // links and the kick rules, 987 characters over twenty lines — reached this
+    // as a card name, and the two Discord channel ids in it read as a progress
+    // bar. The matcher happened to reject that particular paragraph; it is not
+    // the sort of thing that should depend on happening to.
+    if (!raw || raw.length > MAX_TRIAL_NAME_CHARS || /[\r\n]/.test(raw)) return false;
+
+    const lowered = raw
         .toLowerCase()
         .replace(/\b(?:lv\.?\s*\d+|tier\s*\d+|t\d+)\b/g, ' ')
         .replace(/^\s*trial\s+/, ' ')
@@ -129,6 +149,37 @@ export function isTrialName(name) {
     if (!lowered) return false;
 
     return [...COMBAT_ENCOUNTERS, ...TRIAL_SKILLS].includes(lowered);
+}
+
+/**
+ * The trial a `trialHrid` names.
+ *
+ * The socket identifies a trial by hrid — `/guild_combat/badger`,
+ * `/guild_skilling/crafting` — where every other source this feature has names
+ * it in prose off a card. One function, so the join is made in one place and the
+ * two halves of the feature agree about what a trial is called.
+ *
+ * The last segment is the whole of it, and it is checked against the same closed
+ * lists a card's name is: an hrid this does not recognise returns null rather
+ * than a trial nobody has heard of.
+ *
+ * @param {string} hrid - e.g. `/guild_combat/badger`
+ * @returns {{kind: 'combat'|'skilling', key: string, name: string}|null} The trial
+ */
+export function trialFromHrid(hrid) {
+    const key = String(hrid || '')
+        .toLowerCase()
+        .split('/')
+        .filter(Boolean)
+        .pop();
+    if (!key) return null;
+
+    const kind = COMBAT_ENCOUNTERS.includes(key) ? 'combat' : TRIAL_SKILLS.includes(key) ? 'skilling' : null;
+    if (!kind) return null;
+
+    // The name as a card writes it, which is what the record is keyed by
+    const titled = key[0].toUpperCase() + key.slice(1);
+    return { kind, key, name: kind === 'combat' ? `Trial ${titled}` : titled };
 }
 
 /**
@@ -312,6 +363,12 @@ export function interpretCardPoints({ type, tier, statedPoints, buildersHallBonu
     let interpretation = 'disagrees';
     if (same(ladderCumulative)) interpretation = 'cumulative';
     else if (same(ladderMarginal)) interpretation = 'marginal';
+    else if (withinMidTrialUpgrade(statedPoints, ladderCumulative, buildersHallBonus)) {
+        // Not a near-miss: a total banked across a Builder's Hall upgrade, which
+        // is a mixture of two bonuses by construction — see
+        // {@link MAX_MID_TRIAL_UPGRADE_LEVELS}
+        interpretation = 'mid-trial-upgrade';
+    }
 
     return {
         interpretation,
@@ -323,6 +380,64 @@ export function interpretCardPoints({ type, tier, statedPoints, buildersHallBonu
         ladderMarginal,
     };
 }
+
+/**
+ * Whether a stated total is the ladder banked across a building upgrade.
+ *
+ * The window is closed at the top — a total that matches today's bonus exactly
+ * is already `cumulative` and never reaches here — and open at the bottom by as
+ * many levels as {@link MAX_MID_TRIAL_UPGRADE_LEVELS} allows. Anything under
+ * that is a figure no arrangement of this guild's buildings produces, and stays
+ * a genuine disagreement.
+ *
+ * @param {number} statedPoints - The card's own figure
+ * @param {number} ladderCumulative - The ladder's base total for that tier
+ * @param {number} bonus - The Builder's Hall bonus in force now, as a fraction
+ * @returns {boolean} True when a mid-trial upgrade explains it
+ */
+export function withinMidTrialUpgrade(statedPoints, ladderCumulative, bonus) {
+    if (!Number.isFinite(statedPoints) || !Number.isFinite(ladderCumulative) || ladderCumulative <= 0) return false;
+    if (!Number.isFinite(bonus)) return false;
+
+    const atNow = ladderCumulative * (1 + bonus);
+    const older = Math.max(-1, bonus - BUILDING_BONUS_PER_LEVEL * MAX_MID_TRIAL_UPGRADE_LEVELS);
+    const atThen = ladderCumulative * (1 + older);
+
+    return statedPoints < atNow - POINTS_EPSILON && statedPoints >= atThen - POINTS_EPSILON;
+}
+
+/**
+ * How many Builder's Hall levels a guild may gain during one trial.
+ *
+ * A trial banks its points **live**, tier by tier, at the bonus in force when
+ * each tier clears — so a guild that levels its Builder's Hall partway through
+ * an hour pays the early tiers at the old bonus and the late ones at the new. A
+ * card's total is then a *mixture*, and dividing it by today's bonus does not
+ * give a whole number of base points. That is not a wrong figure and it is not a
+ * wrinkle in the ladder; it is the ladder plus a clock.
+ *
+ * Confirmed by the guild it happened to, whose Hall went 5 → 6 (+10% → +12%)
+ * during the skilling hour. The three cards decompose exactly, with nothing
+ * rounded:
+ *
+ * ```
+ * Milking  T10  base 1,100 =  500 × 1.10 +  600 × 1.12 =  550 + 672 = 1,222
+ * Foraging T11  base 1,200 =  600 × 1.10 +  600 × 1.12 =  660 + 672 = 1,332
+ * Crafting T12  base 1,300 =  600 × 1.10 +  700 × 1.12 =  660 + 784 = 1,444
+ * ```
+ *
+ * The upgrade lands between each trial's fourth and fifth clear, and the combat
+ * hour ran afterwards — entirely at +12% — which is why those cards divided
+ * cleanly and these did not. **The ladder is uniform at every tier**: cumulative
+ * base is 100 × (tier + 1) for skilling and 200 × (tier + 1) for combat, exact
+ * across three guilds and five bonuses.
+ *
+ * So the envelope is a statement about buildings rather than a tolerance. Two
+ * levels is generous — a guild banking two Hall levels inside one hour is
+ * remarkable — and at 2% a level it is a four-percent window that no genuinely
+ * wrong figure has ever landed in.
+ */
+export const MAX_MID_TRIAL_UPGRADE_LEVELS = 2;
 
 /**
  * What a trial has banked, in Guild Points and in base points.
@@ -376,9 +491,14 @@ export function trialBankedBasePoints({ type, bankedTiers, pointsByTier = {}, bu
     // The reading is taken from the highest tier the game has quoted, because
     // that is the one most likely to be unambiguous — tier 1 cannot tell the two
     // interpretations apart at all
+    // Zero is not a figure the card is stating; it is a card with nothing to
+    // state yet. A combat trial that has not started reads "0 pts", and letting
+    // that into the comparison put "Trial Chameleon T1 states 0 pts, which is
+    // neither the running total nor the per-tier step" on the screen of every
+    // guild whose combat hour had not begun.
     const quoted = Object.keys(pointsByTier || {})
         .map(Number)
-        .filter((tier) => Number.isFinite(tier) && stated(tier) !== null)
+        .filter((tier) => Number.isFinite(tier) && stated(tier) > 0)
         .sort((a, b) => b - a);
 
     const reading = quoted.length
@@ -438,10 +558,23 @@ export function trialBankedBasePoints({ type, bankedTiers, pointsByTier = {}, bu
     // Cumulative, or a figure the ladder cannot explain: either way it is the
     // game stating what this trial has earned, and the announcements say the sum
     // of exactly these figures is what the guild is paid
+    //
+    // The base half is the one exception. Dividing a card by *today's* bonus
+    // recovers the base exactly when one bonus applied throughout — which is
+    // what `cumulative` means, so those are unchanged by definition — but a
+    // total banked across a Builder's Hall upgrade is a mixture of two, and the
+    // division then lands under the truth: 1,222 ÷ 1.12 is 1,091 where the tier
+    // actually banked 1,100. That 9-point shortfall is real money, because
+    // tokens are paid on base. The ladder is exact at every tier and is used
+    // instead; the card still supplies the Guild Points, which are what the
+    // guild's own announcement will state.
+    const midTrialUpgrade = interpretation === 'mid-trial-upgrade';
     return {
-        basePoints: reading.basePoints,
+        basePoints: midTrialUpgrade ? reading.ladderCumulative : reading.basePoints,
         guildPoints: reading.statedPoints,
-        source: 'game',
+        // The base came from the ladder in the upgrade case, and a caption that
+        // says "from the cards" would be overstating it
+        source: midTrialUpgrade ? 'mixed' : 'game',
         interpretation,
         bonusKnown,
         needsBuildersHall: false,
@@ -449,6 +582,65 @@ export function trialBankedBasePoints({ type, bankedTiers, pointsByTier = {}, bu
         ladder,
         quoted: quotedAt,
     };
+}
+
+/**
+ * How much of the first tier's work each later tier adds.
+ *
+ * Derived, and exact on every observation there is. A live skilling trial was
+ * watched through three tiers with two members signed up, and its pools read
+ * 40,800 / 44,880 / 48,960 — which is 40,000 / 44,000 / 48,000 with the same
+ * 1%-per-participant multiplier the combat side uses, and those are the first
+ * tier's work plus a tenth of it per tier. Linear, not geometric, which is why
+ * fitting a growth *factor* to two tiers was always going to drift.
+ */
+export const SKILLING_TIER_STEP = 0.1;
+
+/**
+ * The work one tier of a skilling trial needs.
+ *
+ * The counterpart of {@link module:./guild-trial-forecast.tierMonsterHp} for the
+ * other half of a trial week, and derived the same way — from observations that
+ * it reproduces exactly rather than from a curve fitted through them. A tier
+ * actually read off the panel still wins; this is what fills in the tiers nobody
+ * has seen yet, which before now was every tier past the second.
+ *
+ * @param {Object} input - Inputs
+ * @param {number} input.baseWork - The first tier's work, before participants
+ * @param {number} input.tier - The tier wanted
+ * @param {number} [input.participants] - Members signed up
+ * @returns {number|null} Work, or null on unusable input
+ */
+export function tierPoolWork({ baseWork, tier, participants = 0 } = {}) {
+    if (!Number.isFinite(baseWork) || baseWork <= 0) return null;
+    if (!Number.isFinite(tier) || tier < 1 || tier > TRIAL_MAX_TIER) return null;
+
+    const byTier = 1 + SKILLING_TIER_STEP * (tier - 1);
+    const byParty = 1 + PARTICIPANT_SCALE_STEP * Math.max(0, Number(participants) || 0);
+    return baseWork * byTier * byParty;
+}
+
+/**
+ * The first tier's work, backed out of any tier that has been observed.
+ *
+ * A trial joined at tier three still knows what tier one needed, because the
+ * step between tiers is known — so one reading anywhere on the ladder gives the
+ * whole of it.
+ *
+ * @param {Array<{tier: number, total: number}>} observations - Pool sizes seen
+ * @param {number} [participants] - Members signed up
+ * @returns {number|null} The first tier's work, or null with nothing to derive from
+ */
+export function baseWorkFromObservations(observations, participants = 0) {
+    const byParty = 1 + PARTICIPANT_SCALE_STEP * Math.max(0, Number(participants) || 0);
+
+    for (const observation of observations || []) {
+        const tier = Number(observation?.tier);
+        const total = Number(observation?.total);
+        if (!Number.isFinite(tier) || tier < 1 || !Number.isFinite(total) || total <= 0) continue;
+        return total / byParty / (1 + SKILLING_TIER_STEP * (tier - 1));
+    }
+    return null;
 }
 
 /**
@@ -556,6 +748,26 @@ export function eligibleMemberTokens(basePoints, treasuryBonus = 0) {
  * this guild's +20% Builders Hall and +10% Treasury. The apparent "×1.1 on top
  * of half the base" is the Treasury bonus — it is already in the model, and
  * nothing needed inventing to fit it.
+ *
+ * ## Why the Treasury needs no mixture handling, and the one way that could be
+ * wrong
+ *
+ * The Builder's Hall does need it: Guild Points bank **live**, tier by tier, so a
+ * Hall levelled mid-trial pays the early tiers at the old bonus and the late ones
+ * at the new, and a card's total is a mixture of two (see
+ * {@link MAX_MID_TRIAL_UPGRADE_LEVELS}). Tokens are not like that. They are paid
+ * **once, at the end of the round**, against the summed base of the whole week —
+ * so there is one moment at which the Treasury bonus applies and one level to
+ * apply, which is the level now. A single multiplication is the whole of it.
+ *
+ * That rests on the game reading the Treasury at *payout* rather than
+ * snapshotting it when the round begins. If it snapshots at the start instead, a
+ * guild that levelled its Treasury mid-round would see this figure come out
+ * slightly high — by 2% a level — against the payout the game actually
+ * announces. Only a live payout following a mid-round Treasury upgrade can
+ * settle it, and none has been observed. It is written down here rather than
+ * guarded against, because guarding against it would mean picking one of the two
+ * behaviours on no evidence.
  *
  * @param {Object} input - Inputs
  * @param {Array<{type: string, tiersCleared: number, name?: string, basePointsOverride?: number,

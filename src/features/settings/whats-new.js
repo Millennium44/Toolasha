@@ -35,6 +35,7 @@ import {
 } from './whats-new-core.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { askChoice } from '../../utils/choice-dialog.js';
+import { toolashaRoot } from '../../utils/bundle-bridge.js';
 import forkChangelog from 'virtual:fork-changelog';
 
 const STATE_KEY_PREFIX = 'whatsNew_state';
@@ -61,7 +62,7 @@ class WhatsNew {
 
     /** @private */
     _identity() {
-        return buildIdentity(typeof window !== 'undefined' ? window.Toolasha : {});
+        return buildIdentity(toolashaRoot() || {});
     }
 
     /**

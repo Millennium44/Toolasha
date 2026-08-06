@@ -32,10 +32,17 @@ const coreExternalGlobals = new Map([
     [normalize(join(__dirname, 'src/core/settings-schema.js')), 'Toolasha.Core'],
     [normalize(join(__dirname, 'src/core/profile-manager.js')), 'Toolasha.Core.profileManager'],
     [normalize(join(__dirname, 'src/api/marketplace.js')), 'Toolasha.Core.marketAPI'],
+    // A utils path, but Core's module: feature-registry and dom-observer feed it,
+    // so the initialized copy lives in the core bundle (which loads first and
+    // cannot reference Toolasha.Utils.*). Mapping it here points every later
+    // bundle at that copy — before this entry each of them default-imported the
+    // Utils namespace object and called methods that were not on it.
+    [normalize(join(__dirname, 'src/utils/performance-monitor.js')), 'Toolasha.Core.performanceMonitor'],
 ]);
 
 const utilsExternalGlobals = new Map([
     [normalize(join(__dirname, 'src/utils/formatters.js')), 'Toolasha.Utils.formatters'],
+    [normalize(join(__dirname, 'src/utils/liquidity-cap.js')), 'Toolasha.Utils.liquidityCap'],
     [normalize(join(__dirname, 'src/utils/efficiency.js')), 'Toolasha.Utils.efficiency'],
     [normalize(join(__dirname, 'src/utils/profit-helpers.js')), 'Toolasha.Utils.profitHelpers'],
     [normalize(join(__dirname, 'src/utils/profit-constants.js')), 'Toolasha.Utils.profitConstants'],
@@ -81,7 +88,6 @@ const utilsExternalGlobals = new Map([
     [normalize(join(__dirname, 'src/utils/enhancement-worker-manager.js')), 'Toolasha.Utils.enhancementWorkerManager'],
     [normalize(join(__dirname, 'src/utils/networth-worker-manager.js')), 'Toolasha.Utils.networthWorkerManager'],
     [normalize(join(__dirname, 'src/utils/panel-z-index.js')), 'Toolasha.Utils.panelZIndex'],
-    [normalize(join(__dirname, 'src/utils/performance-monitor.js')), 'Toolasha.Utils.performanceMonitor'],
     [normalize(join(__dirname, 'src/utils/game-lookups.js')), 'Toolasha.Utils.gameLookups'],
     [normalize(join(__dirname, 'src/utils/item-navigation.js')), 'Toolasha.Utils.itemNavigation'],
     [normalize(join(__dirname, 'src/utils/marketplace-tabs.js')), 'Toolasha.Utils.marketplaceTabs'],
@@ -119,6 +125,46 @@ const utilsExternalGlobals = new Map([
     // different bundle from the tile that colours against it. Two copies means
     // the tile never hears about a change and quietly keeps its own answer.
     [normalize(join(__dirname, 'src/utils/consumable-target.js')), 'Toolasha.Utils.consumableTarget'],
+    // Everything below was found by scripts/check-bundle-sharing.mjs: each was
+    // reachable from two or more production bundles and silently copied into
+    // every one of them. The stateful ones were live bugs — adoption-consent's
+    // consent cache, character-key's decision cache and equipment-savings'
+    // goals record each existed once per bundle, so whichever bundle answered
+    // last won. The stateless ones are here for weight: the combat and ui
+    // bundles both sit near the bundle-size ceiling.
+    [normalize(join(__dirname, 'src/utils/action-context.js')), 'Toolasha.Utils.actionContext'],
+    [normalize(join(__dirname, 'src/utils/adoption-consent.js')), 'Toolasha.Utils.adoptionConsent'],
+    [normalize(join(__dirname, 'src/utils/alchemy-fees.js')), 'Toolasha.Utils.alchemyFees'],
+    [normalize(join(__dirname, 'src/utils/all-zones-snapshot.js')), 'Toolasha.Utils.allZonesSnapshot'],
+    [normalize(join(__dirname, 'src/utils/asset-manifest.js')), 'Toolasha.Utils.assetManifest'],
+    [normalize(join(__dirname, 'src/utils/background-work.js')), 'Toolasha.Utils.backgroundWork'],
+    [normalize(join(__dirname, 'src/utils/battle-panel-monsters.js')), 'Toolasha.Utils.battlePanelMonsters'],
+    [normalize(join(__dirname, 'src/utils/character-key.js')), 'Toolasha.Utils.characterKey'],
+    [normalize(join(__dirname, 'src/utils/chest-import.js')), 'Toolasha.Utils.chestImport'],
+    [normalize(join(__dirname, 'src/utils/chunked-history.js')), 'Toolasha.Utils.chunkedHistory'],
+    [normalize(join(__dirname, 'src/utils/consumable-forecast.js')), 'Toolasha.Utils.consumableForecast'],
+    [normalize(join(__dirname, 'src/utils/csv-export.js')), 'Toolasha.Utils.csvExport'],
+    [normalize(join(__dirname, 'src/utils/deferred-load.js')), 'Toolasha.Utils.deferredLoad'],
+    [normalize(join(__dirname, 'src/utils/drop-sources.js')), 'Toolasha.Utils.dropSources'],
+    [normalize(join(__dirname, 'src/utils/dungeon-keys.js')), 'Toolasha.Utils.dungeonKeys'],
+    [normalize(join(__dirname, 'src/utils/dungeon-level-gap.js')), 'Toolasha.Utils.dungeonLevelGap'],
+    [normalize(join(__dirname, 'src/utils/equipment-savings.js')), 'Toolasha.Utils.equipmentSavings'],
+    [normalize(join(__dirname, 'src/utils/game-server.js')), 'Toolasha.Utils.gameServer'],
+    [normalize(join(__dirname, 'src/utils/game-text.js')), 'Toolasha.Utils.gameText'],
+    [normalize(join(__dirname, 'src/utils/guild-credit-pricing.js')), 'Toolasha.Utils.guildCreditPricing'],
+    [normalize(join(__dirname, 'src/utils/key-ledger.js')), 'Toolasha.Utils.keyLedger'],
+    [normalize(join(__dirname, 'src/utils/mobile.js')), 'Toolasha.Utils.mobile'],
+    [normalize(join(__dirname, 'src/utils/number-parser.js')), 'Toolasha.Utils.numberParser'],
+    [normalize(join(__dirname, 'src/utils/party-lint.js')), 'Toolasha.Utils.partyLint'],
+    [normalize(join(__dirname, 'src/utils/profile-command.js')), 'Toolasha.Utils.profileCommand'],
+    [normalize(join(__dirname, 'src/utils/progress-eta.js')), 'Toolasha.Utils.progressEta'],
+    [normalize(join(__dirname, 'src/utils/room-skills.js')), 'Toolasha.Utils.roomSkills'],
+    [normalize(join(__dirname, 'src/utils/table-columns.js')), 'Toolasha.Utils.tableColumns'],
+    [normalize(join(__dirname, 'src/utils/watchlist.js')), 'Toolasha.Utils.watchlist'],
+    // The runtime accessors over window.Toolasha itself (see part C of the
+    // shared-state work). One shared copy keeps reach-throughs greppable at
+    // runtime; core still carries its own inline copy because it loads first.
+    [normalize(join(__dirname, 'src/utils/bundle-bridge.js')), 'Toolasha.Utils.bundleBridge'],
 ]);
 
 // The combat simulator engine, which is its own bundle.

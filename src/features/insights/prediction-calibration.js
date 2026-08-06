@@ -47,7 +47,7 @@ const STORE_NAME = 'lootLogHistory';
 const MAX_RECORDS = 1000;
 
 /** Under a minute a run's actual rate is mostly rounding on the clock */
-const MIN_DURATION_SEC = 60;
+export const MIN_DURATION_SEC = 60;
 
 /**
  * The skill an action belongs to, as the loot log names it.
@@ -224,7 +224,10 @@ class PredictionCalibration {
             } else if (PRODUCTION_TYPES.includes(type)) {
                 data = await calculateProductionProfit(actionHrid);
             }
-            // Combat, alchemy and enhancing have no per-action forecast to check
+            // Alchemy has no per-action forecast to check. Combat and enhancing
+            // do, but not here: their forecasts live elsewhere (the all-zones
+            // sim, the enhancement chain) and their own recorders —
+            // combat-calibration.js and enhancement-calibration.js — pair them.
             if (!data || data.hasMissingPrices) return null;
             return Number.isFinite(data.profitPerHour) ? data.profitPerHour : null;
         } catch (error) {
@@ -262,6 +265,34 @@ class PredictionCalibration {
         } catch (error) {
             console.error('[PredictionCalibration] Could not save history:', error);
         }
+    }
+
+    /**
+     * Add a pair another recorder measured — combat, whose forecast is the
+     * all-zones sim rather than a profit calculator, arrives this way.
+     *
+     * Same ledger, same trimming, same dedupe: a pair is a pair whatever
+     * produced it, and a second store would mean a panel reading two histories
+     * that can disagree about what has been measured.
+     *
+     * @param {Object} record - `{id, actionType, predicted, actual, t, ...}`,
+     *   shaped like the records `_record` writes; extra fields ride along
+     * @returns {Promise<boolean>} Whether it was new
+     */
+    async addRecord(record) {
+        if (!record?.id) return false;
+        if (this.ready) await this.ready;
+        if (!this.records) await this._load();
+        if (this.recorded.has(record.id)) return false;
+
+        this.records.push(record);
+        this.recorded.add(record.id);
+        if (this.records.length > MAX_RECORDS) {
+            const dropped = this.records.splice(0, this.records.length - MAX_RECORDS);
+            for (const old of dropped) this.recorded.delete(old.id);
+        }
+        await this._save();
+        return true;
     }
 
     // ─── Read API ────────────────────────────────────────────────────────────

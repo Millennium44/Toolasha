@@ -67,6 +67,7 @@ export const NOTIFICATION_SETTING_KEYS = [
     'notifications_browserEnabled',
     'notifications_consumableLow',
     'notifications_marketListingFilled',
+    'notifications_marketListingUndercut',
     'notifications_otherCharacterIdle',
     'notifications_communityBuffExpiring',
     'notifications_labyrinthRunFinished',

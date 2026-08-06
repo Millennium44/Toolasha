@@ -40,6 +40,15 @@ import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
 import { registeredRows } from '../../utils/overlay-rows.js';
 import { showToast } from '../../utils/toast.js';
 import overlayPanel from './overlay-panel.js';
+import {
+    goalPlanner,
+    ironCowFarmPanel,
+    treasureTracker,
+    pformancePanel,
+    combatSimUI,
+    labSimUI,
+    guildTrialScoreboard,
+} from '../../utils/bundle-bridge.js';
 
 const PALETTE_ID = 'toolasha-command-palette';
 
@@ -184,38 +193,30 @@ export function isPaletteHotkey(event) {
  * ---------------------------------------------------------------------- */
 
 /**
- * The global namespace, when there is one.
- * @returns {Object} `window.Toolasha`, or an empty object off-page
- */
-function root() {
-    return (typeof window !== 'undefined' && window.Toolasha) || {};
-}
-
-/**
  * The floating panels, each with the call that shows or hides it.
  *
  * Resolved when the palette opens rather than at module scope, because the
  * bundles load in order and the panels register themselves as their features
  * initialise — a list built at import time would be a list of undefineds.
+ * Each target is read through the bundle bridge, which answers null for
+ * anything whose bundle has not published it.
  *
  * @returns {Array<{name: string, hint: string, run: Function}>}
  */
 function panelCommands() {
-    const { UI = {}, Market = {}, Sim = {}, Actions = {} } = root();
-
     const entries = [
         { name: 'Overlay', hint: 'The tile overlay', run: () => overlayPanel.toggle() },
-        { name: 'Goal Planner', hint: 'Ordered steps to a goal, costed', target: Actions.goalPlanner },
-        { name: 'Iron Bell Farming', hint: 'The cowbell plan, and what it earns', target: UI.ironCowFarmPanel },
-        { name: 'Treasure Tracker', hint: 'Chests opened and what came out', target: Market.treasureTracker },
-        { name: 'PFormance', hint: "What the script's own timers say", target: UI.pformancePanel },
-        { name: 'Combat Simulator', hint: 'Simulate a fight', target: Sim.combatSimUI },
+        { name: 'Goal Planner', hint: 'Ordered steps to a goal, costed', target: goalPlanner() },
+        { name: 'Iron Bell Farming', hint: 'The cowbell plan, and what it earns', target: ironCowFarmPanel() },
+        { name: 'Treasure Tracker', hint: 'Chests opened and what came out', target: treasureTracker() },
+        { name: 'PFormance', hint: "What the script's own timers say", target: pformancePanel() },
+        { name: 'Combat Simulator', hint: 'Simulate a fight', target: combatSimUI() },
         {
             name: 'Lab Simulator',
             hint: 'Simulate a labyrinth run',
             // Not exported at a global of its own, so the Labyrinth page's own
             // button is the way in. It is only meaningful on that page anyway
-            target: Sim.labSimUI,
+            target: labSimUI(),
             fallback: () => document.querySelector('.toolasha-lab-sim-btn'),
         },
         {
@@ -229,7 +230,7 @@ function panelCommands() {
             name: 'Trial Damage',
             hint: 'Damage and healing per player, ranked',
             // A real panel, and reached the way every other panel here is
-            target: typeof window === 'undefined' ? null : window.Toolasha?.guildTrialScoreboard,
+            target: guildTrialScoreboard(),
         },
         { name: 'Settings', hint: "Toolasha's settings tab", run: () => openSettings() },
     ];

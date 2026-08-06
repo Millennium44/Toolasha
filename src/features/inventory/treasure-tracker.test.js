@@ -10,10 +10,12 @@ vi.mock('../../core/config.js', () => ({
 }));
 vi.mock('../../core/storage.js', () => ({ default: { getJSON: async () => ({}), setJSON: async () => {} } }));
 vi.mock('../../core/websocket.js', () => ({ default: { on: () => {}, off: () => {} } }));
+const dm = vi.hoisted(() => ({ dropTables: {} }));
+
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getItemDetails: (hrid) => (hrid === '/items/known' ? { name: 'Known Thing' } : null),
-        getInitClientData: () => ({ openableLootDropMap: {} }),
+        getInitClientData: () => ({ openableLootDropMap: dm.dropTables }),
         getCurrentCharacterId: () => 'char-1',
         getCurrentCharacterGameMode: () => 'standard',
         on: () => {},
@@ -49,6 +51,10 @@ const {
     worthShowing,
     capHeightToWindow,
     pricingBasis,
+    buildTreasureSummaryRows,
+    buildTreasureDetailRows,
+    TREASURE_SUMMARY_COLUMNS,
+    TREASURE_DETAIL_COLUMNS,
     default: treasureTracker,
 } = await import('./treasure-tracker.js');
 
@@ -338,5 +344,171 @@ describe('which side of the book the figures are', () => {
         // profit pricing mode, so the same chest can be worth two different
         // numbers and neither of them is wrong
         expect(pricingBasis()).toBe('bid');
+    });
+});
+
+describe('the CSV export', () => {
+    // The shape summariseTally hands the panel: a summary per chest, with the
+    // per-item performance the breakdown draws from
+    const summaryRow = {
+        chestHrid: '/items/known',
+        perChestValue: 1500,
+        opened: 10,
+        actualValue: 16000,
+        expectedValue: 15000,
+        difference: 1000,
+        ratio: 16000 / 15000,
+        items: [
+            {
+                itemHrid: '/items/coin',
+                actualCount: 16000,
+                expectedCount: 15000,
+                actualValue: 16000,
+                expectedValue: 15000,
+                unpriced: false,
+            },
+            // A rare that landed — kept however unlikely it was
+            {
+                itemHrid: '/items/mystery_box',
+                actualCount: 1,
+                expectedCount: 0.002,
+                actualValue: 0,
+                expectedValue: 0,
+                unpriced: true,
+            },
+            // Equipment at odds so long nothing happened — not worth a line
+            {
+                itemHrid: '/items/never_dropped',
+                actualCount: 0,
+                expectedCount: 0.001,
+                actualValue: 0,
+                expectedValue: 0.4,
+                unpriced: false,
+            },
+        ],
+    };
+    const untouchedRow = {
+        chestHrid: '/items/never_opened',
+        perChestValue: 900,
+        opened: 0,
+        actualValue: 0,
+        expectedValue: 0,
+        difference: 0,
+        ratio: null,
+        items: [],
+    };
+    const nameOf = (hrid) => hrid.split('/').pop().replace(/_/g, ' ');
+
+    test('an empty ledger is no rows, in both files', () => {
+        expect(buildTreasureSummaryRows([])).toEqual([]);
+        expect(buildTreasureSummaryRows(null)).toEqual([]);
+        expect(buildTreasureDetailRows([])).toEqual([]);
+        expect(buildTreasureDetailRows(null)).toEqual([]);
+    });
+
+    test('one summary row per opened chest, raw values, and no row for a chest never opened', () => {
+        expect(buildTreasureSummaryRows([summaryRow, untouchedRow], nameOf)).toEqual([
+            {
+                chest: 'known',
+                chestHrid: '/items/known',
+                opened: 10,
+                actualValue: 16000,
+                expectedValue: 15000,
+                difference: 1000,
+                ratio: 16000 / 15000,
+                perChestValue: 1500,
+            },
+        ]);
+    });
+
+    test('the detail file is one row per item worth a line, unpriced said out loud', () => {
+        expect(buildTreasureDetailRows([summaryRow, untouchedRow], nameOf)).toEqual([
+            {
+                chest: 'known',
+                chestHrid: '/items/known',
+                item: 'coin',
+                itemHrid: '/items/coin',
+                actualCount: 16000,
+                expectedCount: 15000,
+                actualValue: 16000,
+                expectedValue: 15000,
+                unpriced: false,
+            },
+            {
+                chest: 'known',
+                chestHrid: '/items/known',
+                item: 'mystery box',
+                itemHrid: '/items/mystery_box',
+                actualCount: 1,
+                expectedCount: 0.002,
+                actualValue: 0,
+                expectedValue: 0,
+                unpriced: true,
+            },
+        ]);
+    });
+
+    test('every column names a field its rows carry', () => {
+        const [summary] = buildTreasureSummaryRows([summaryRow], nameOf);
+        for (const column of TREASURE_SUMMARY_COLUMNS) expect(summary).toHaveProperty(column.key);
+
+        const [detail] = buildTreasureDetailRows([summaryRow], nameOf);
+        for (const column of TREASURE_DETAIL_COLUMNS) expect(detail).toHaveProperty(column.key);
+    });
+
+    describe('the buttons in the gear section', () => {
+        const CHEST = '/items/chimerical_chest';
+
+        afterEach(() => {
+            treasureTracker.tally = {};
+            dm.dropTables = {};
+        });
+
+        test('appear once something has been opened', () => {
+            dm.dropTables[CHEST] = [{ itemHrid: '/items/coin', dropRate: 1, minCount: 1, maxCount: 1 }];
+            treasureTracker.tally = { [CHEST]: { opened: 4, loot: { '/items/coin': 5 } } };
+
+            const section = treasureTracker._configSection();
+            const labels = [...section.querySelectorAll('button')].map((button) => button.textContent);
+
+            expect(labels).toContain('Chests CSV');
+            expect(labels).toContain('Items CSV');
+        });
+
+        test('and not before — an empty ledger has no rows to write', () => {
+            const section = treasureTracker._configSection();
+            const labels = [...section.querySelectorAll('button')].map((button) => button.textContent);
+
+            expect(labels).not.toContain('Chests CSV');
+            expect(labels).not.toContain('Items CSV');
+        });
+    });
+});
+
+describe('measuredReturn, the treasure rate a profit estimate may use', async () => {
+    const { default: treasureTracker } = await import('./treasure-tracker.js');
+    const CHEST = '/items/chimerical_chest';
+
+    afterEach(() => {
+        treasureTracker.tally = {};
+        dm.dropTables = {};
+    });
+
+    test('actual over expected, at one price source, with the sample it rests on', () => {
+        // One coin owed per open at price 1; 400 opens returned 500 coins
+        dm.dropTables[CHEST] = [{ itemHrid: '/items/coin', dropRate: 1, minCount: 1, maxCount: 1 }];
+        treasureTracker.tally = { [CHEST]: { opened: 400, loot: { '/items/coin': 500 } } };
+
+        expect(treasureTracker.measuredReturn(CHEST)).toEqual({ ratio: 1.25, opened: 400 });
+    });
+
+    test('nothing opened is nothing measured', () => {
+        dm.dropTables[CHEST] = [{ itemHrid: '/items/coin', dropRate: 1, minCount: 1, maxCount: 1 }];
+        expect(treasureTracker.measuredReturn(CHEST)).toBeNull();
+    });
+
+    test('a chest without a drop table cannot be compared to one', () => {
+        treasureTracker.tally = { [CHEST]: { opened: 400, loot: { '/items/coin': 500 } } };
+        expect(treasureTracker.measuredReturn(CHEST)).toBeNull();
     });
 });
