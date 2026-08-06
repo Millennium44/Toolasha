@@ -5,7 +5,7 @@
  * License: CC-BY-NC-SA-4.0
  */
 
-(function (config, dataManager, webSocketHook, storage, marketAPI, domObserver) {
+(function (config, dataManager$1, webSocketHook$1, storage, marketAPI, domObserver, performanceMonitor$1) {
     'use strict';
 
     /**
@@ -578,6 +578,360 @@
     });
 
     /**
+     * Bundle Bridge
+     *
+     * The one place cross-bundle reach-throughs live.
+     *
+     * The production build is several iife bundles that load in order and publish
+     * their initialized singletons on `window.Toolasha.*`. A module that needs a
+     * singleton from a bundle that loads after its own — or one whose import would
+     * copy a second, uninitialized instance into its own bundle — cannot import it;
+     * it has to read the namespace at call time. Those reads used to be ~80 bare
+     * `window.Toolasha?...` expressions scattered across the codebase, invisible to
+     * grep-by-intent and unmockable in tests.
+     *
+     * Every accessor here returns the live, initialized module the namespace holds
+     * — or `null`, honestly, when the owning bundle has not loaded (or the code is
+     * running off-page, as in tests and workers). No accessor caches anything: the
+     * namespace is the state, this module has none, which is also why a copy of it
+     * per bundle would be harmless.
+     *
+     * Callers keep their own fallbacks where they had them (`loadoutSnapshot() ||
+     * bundledCopy` for the single-bundle dev build); the bridge only answers "what
+     * does the namespace hold right now".
+     */
+
+    /**
+     * The published namespace itself, or null off-page.
+     * @returns {Object|null} `window.Toolasha`, or null when there is no window or no namespace
+     */
+    function toolashaRoot$1() {
+        return globalThis.window?.Toolasha || null;
+    }
+
+    // ---------------------------------------------------------------------------
+    // Core (loads first; reached from later bundles whose own copy is uninstalled)
+    // ---------------------------------------------------------------------------
+
+    /**
+     * The installed WebSocket hook. Only the Core bundle's instance has
+     * `install()` called on it; a bundle-local copy hears nothing.
+     * @returns {Object|null} The hook, or null before Core has loaded
+     */
+    function webSocketHook() {
+        return toolashaRoot$1()?.Core?.webSocketHook || null;
+    }
+
+    /**
+     * The initialized data manager, for the rare caller that cannot import it.
+     * @returns {Object|null} The manager, or null before Core has loaded
+     */
+    function dataManager() {
+        return toolashaRoot$1()?.Core?.dataManager || null;
+    }
+
+    /**
+     * The performance monitor the startup timeline was recorded on.
+     * @returns {Object|null} The monitor, or null before Core has loaded
+     */
+    function performanceMonitor() {
+        return toolashaRoot$1()?.Core?.performanceMonitor || null;
+    }
+
+    // ---------------------------------------------------------------------------
+    // Utils
+    // ---------------------------------------------------------------------------
+
+    /**
+     * The enhancement Markov-chain calculator module (namespace with
+     * `calculateEnhancement`), read lazily by code that only sometimes needs it.
+     * @returns {Object|null} The module, or null before the utils bundle has loaded
+     */
+    function enhancementCalculator$1() {
+        return toolashaRoot$1()?.Utils?.enhancementCalculator || null;
+    }
+
+    /**
+     * The enhancement config module (namespace with `getAutoDetectedParams`).
+     * @returns {Object|null} The module, or null before the utils bundle has loaded
+     */
+    function enhancementConfig$1() {
+        return toolashaRoot$1()?.Utils?.enhancementConfig || null;
+    }
+
+    // ---------------------------------------------------------------------------
+    // Market bundle singletons
+    // ---------------------------------------------------------------------------
+
+    /**
+     * The treasure tracker's measured chest returns.
+     * @returns {Object|null} The tracker, or null when the market bundle is absent
+     */
+    function treasureTracker() {
+        return toolashaRoot$1()?.Market?.treasureTracker || null;
+    }
+
+    /**
+     * The order-book cache behind the queue-length estimator.
+     * @returns {Object|null} The estimator, or null when the market bundle is absent
+     */
+    function queueLengthEstimator() {
+        return toolashaRoot$1()?.Market?.queueLengthEstimator || null;
+    }
+
+    /**
+     * The market-order totals calculator (coins committed to listings).
+     * @returns {Object|null} The module, or null when the market bundle is absent
+     */
+    function marketOrderTotals() {
+        return toolashaRoot$1()?.Market?.marketOrderTotals || null;
+    }
+
+    // ---------------------------------------------------------------------------
+    // Actions bundle singletons
+    // ---------------------------------------------------------------------------
+
+    /**
+     * The planner's market-volume measurement — the one copy with the cache in it.
+     * @returns {Object|null} The module, or null when the actions bundle is absent
+     */
+    function marketLiquidity() {
+        return toolashaRoot$1()?.Actions?.marketLiquidity || null;
+    }
+
+    /**
+     * The buy-versus-craft planner (namespace with `computeBestCraftingPlan`).
+     * @returns {Object|null} The module, or null when the actions bundle is absent
+     */
+    function craftingPlanCalculator() {
+        return toolashaRoot$1()?.Actions?.craftingPlanCalculator || null;
+    }
+
+    /**
+     * The action panel's missing-materials marketplace opener.
+     * @returns {Object|null} The module, or null when the feature is off or absent
+     */
+    function missingMaterialsButton() {
+        return toolashaRoot$1()?.Actions?.missingMaterialsButton || null;
+    }
+
+    /**
+     * The goal planner panel.
+     * @returns {Object|null} The panel, or null when the actions bundle is absent
+     */
+    function goalPlanner() {
+        return toolashaRoot$1()?.Actions?.goalPlanner || null;
+    }
+
+    // ---------------------------------------------------------------------------
+    // Combat bundle singletons
+    // ---------------------------------------------------------------------------
+
+    /**
+     * The initialized loadout snapshot store. Every other bundle's copy never
+     * reads storage and answers "no loadout" to everything.
+     * @returns {Object|null} The store, or null when the combat bundle is absent
+     */
+    function loadoutSnapshot$1() {
+        return toolashaRoot$1()?.Combat?.loadoutSnapshot || null;
+    }
+
+    /**
+     * The combat recorder the websocket actually feeds.
+     * @returns {Object|null} The recorder, or null when the combat bundle is absent
+     */
+    function combatRecorder() {
+        return toolashaRoot$1()?.Combat?.combatRecorder || null;
+    }
+
+    /**
+     * The party drop-luck panel.
+     * @returns {Object|null} The panel, or null when the combat bundle is absent
+     */
+    function partyLuckPanel() {
+        return toolashaRoot$1()?.Combat?.partyLuckPanel || null;
+    }
+
+    /**
+     * The stateful combat-stats collector the websocket feeds.
+     * @returns {Object|null} The collector, or null when the combat bundle is absent
+     */
+    function combatStatsDataCollector() {
+        return toolashaRoot$1()?.Combat?.combatStatsDataCollector || null;
+    }
+
+    /**
+     * The combat-stats calculator that reads the collector's data — shared with it
+     * because the two are read together.
+     * @returns {Object|null} The calculator module, or null when the combat bundle is absent
+     */
+    function combatStatsCalculator() {
+        return toolashaRoot$1()?.Combat?.combatStatsCalculator || null;
+    }
+
+    // ---------------------------------------------------------------------------
+    // Sim bundle singletons
+    // ---------------------------------------------------------------------------
+
+    /**
+     * The combat simulator's panel instance.
+     * @returns {Object|null} The panel, or null when the sim bundle is absent
+     */
+    function combatSimUI() {
+        return toolashaRoot$1()?.Sim?.combatSimUI || null;
+    }
+
+    /**
+     * The labyrinth simulator's panel instance, when one has been published.
+     * @returns {Object|null} The panel, or null when there is none
+     */
+    function labSimUI() {
+        return toolashaRoot$1()?.Sim?.labSimUI || null;
+    }
+
+    // ---------------------------------------------------------------------------
+    // UI bundle singletons (the ui bundle loads last, so everything below is
+    // reached at call time — usually a panel behind an overlay tile)
+    // ---------------------------------------------------------------------------
+
+    /**
+     * The DPS panel.
+     * @returns {Object|null} The panel, or null when the ui bundle is absent
+     */
+    function dpsPanel() {
+        return toolashaRoot$1()?.UI?.dpsPanel || null;
+    }
+
+    /**
+     * The settings UI (namespace with `onSettingsPanelAppear`).
+     * @returns {Object|null} The module, or null when the ui bundle is absent
+     */
+    function settingsUI() {
+        return toolashaRoot$1()?.UI?.settingsUI || null;
+    }
+
+    /**
+     * The profit panel's view function — maps raw stats to the reading the panel
+     * itself would show, so tiles agree with the panel behind them.
+     * @returns {Function|null} The view function, or null when the ui bundle is absent
+     */
+    function combatProfitView() {
+        return toolashaRoot$1()?.UI?.combatProfitView || null;
+    }
+
+    /**
+     * The combat profit panel.
+     * @returns {Object|null} The panel, or null when the ui bundle is absent
+     */
+    function profitPanel() {
+        return toolashaRoot$1()?.UI?.profitPanel || null;
+    }
+
+    /**
+     * The combat level / experience panel.
+     * @returns {Object|null} The panel, or null when the ui bundle is absent
+     */
+    function combatLevelPanel() {
+        return toolashaRoot$1()?.UI?.combatLevelPanel || null;
+    }
+
+    /**
+     * The deaths panel.
+     * @returns {Object|null} The panel, or null when the ui bundle is absent
+     */
+    function deathsPanel() {
+        return toolashaRoot$1()?.UI?.deathsPanel || null;
+    }
+
+    /**
+     * The party loot panel.
+     * @returns {Object|null} The panel, or null when the ui bundle is absent
+     */
+    function partyLootPanel() {
+        return toolashaRoot$1()?.UI?.partyLootPanel || null;
+    }
+
+    /**
+     * The consumables panel.
+     * @returns {Object|null} The panel, or null when the ui bundle is absent
+     */
+    function consumablesPanel() {
+        return toolashaRoot$1()?.UI?.consumablesPanel || null;
+    }
+
+    /**
+     * The overlay panel that owns the tile rows' shared display options.
+     * @returns {Object|null} The panel, or null when the ui bundle is absent
+     */
+    function overlayPanel() {
+        return toolashaRoot$1()?.UI?.overlayPanel || null;
+    }
+
+    /**
+     * The Iron Bell farming panel.
+     * @returns {Object|null} The panel, or null when the ui bundle is absent
+     */
+    function ironCowFarmPanel() {
+        return toolashaRoot$1()?.UI?.ironCowFarmPanel || null;
+    }
+
+    /**
+     * The PFormance panel (the script's own timings).
+     * @returns {Object|null} The panel, or null when the ui bundle is absent
+     */
+    function pformancePanel() {
+        return toolashaRoot$1()?.UI?.pformancePanel || null;
+    }
+
+    // ---------------------------------------------------------------------------
+    // Root-level singletons
+    // ---------------------------------------------------------------------------
+
+    /**
+     * The guild trial damage scoreboard, published at the namespace root.
+     * @returns {Object|null} The scoreboard, or null when the combat bundle is absent
+     */
+    function guildTrialScoreboard() {
+        return toolashaRoot$1()?.guildTrialScoreboard || null;
+    }
+
+    var bundleBridge = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        combatLevelPanel: combatLevelPanel,
+        combatProfitView: combatProfitView,
+        combatRecorder: combatRecorder,
+        combatSimUI: combatSimUI,
+        combatStatsCalculator: combatStatsCalculator,
+        combatStatsDataCollector: combatStatsDataCollector,
+        consumablesPanel: consumablesPanel,
+        craftingPlanCalculator: craftingPlanCalculator,
+        dataManager: dataManager,
+        deathsPanel: deathsPanel,
+        dpsPanel: dpsPanel,
+        enhancementCalculator: enhancementCalculator$1,
+        enhancementConfig: enhancementConfig$1,
+        goalPlanner: goalPlanner,
+        guildTrialScoreboard: guildTrialScoreboard,
+        ironCowFarmPanel: ironCowFarmPanel,
+        labSimUI: labSimUI,
+        loadoutSnapshot: loadoutSnapshot$1,
+        marketLiquidity: marketLiquidity,
+        marketOrderTotals: marketOrderTotals,
+        missingMaterialsButton: missingMaterialsButton,
+        overlayPanel: overlayPanel,
+        partyLootPanel: partyLootPanel,
+        partyLuckPanel: partyLuckPanel,
+        performanceMonitor: performanceMonitor,
+        pformancePanel: pformancePanel,
+        profitPanel: profitPanel,
+        queueLengthEstimator: queueLengthEstimator,
+        settingsUI: settingsUI,
+        toolashaRoot: toolashaRoot$1,
+        treasureTracker: treasureTracker,
+        webSocketHook: webSocketHook
+    });
+
+    /**
      * Loadout Snapshot
      *
      * Listens for `loadouts_updated` WebSocket messages to capture all loadout configurations
@@ -604,7 +958,7 @@
      * Falls back to the bundled copy for the dev standalone build (single bundle, one instance).
      */
     function getWebSocketHook() {
-        return (typeof window !== 'undefined' && window.Toolasha?.Core?.webSocketHook) || webSocketHook;
+        return webSocketHook() || webSocketHook$1;
     }
 
     /**
@@ -612,7 +966,7 @@
      * @returns {string}
      */
     function getStorageKey() {
-        const charId = dataManager.getCurrentCharacterId() || 'default';
+        const charId = dataManager$1.getCurrentCharacterId() || 'default';
         return `${STORAGE_KEY_PREFIX}_${charId}`;
     }
 
@@ -648,7 +1002,7 @@
      * @returns {Map<string, number>} Item hrid → highest enhancement level owned
      */
     function highestOwnedEnhancements(items) {
-        const inventory = dataManager.characterItems || dataManager.characterData?.characterItems || [];
+        const inventory = dataManager$1.characterItems || dataManager$1.characterData?.characterItems || [];
         const highest = new Map();
         for (const item of inventory) {
             if (!item?.itemHrid || !(item.count > 0)) continue;
@@ -786,7 +1140,7 @@
                 // Fallback for Steam users: if storage is also empty, bootstrap from
                 // the characterLoadoutMap embedded in init_character_data (already in dataManager).
                 if (Object.keys(this.snapshots).length === 0) {
-                    const characterLoadoutMap = dataManager.characterData?.characterLoadoutMap;
+                    const characterLoadoutMap = dataManager$1.characterData?.characterLoadoutMap;
                     if (characterLoadoutMap && Object.keys(characterLoadoutMap).length > 0) {
                         this._onLoadoutsUpdated({ characterLoadoutMap });
                     }
@@ -802,7 +1156,7 @@
                     this._emitUpdate();
                 }
             };
-            dataManager.on('character_initialized', this.characterInitializedHandler);
+            dataManager$1.on('character_initialized', this.characterInitializedHandler);
         }
 
         /**
@@ -966,7 +1320,7 @@
             }
 
             if (this.characterInitializedHandler) {
-                dataManager.off('character_initialized', this.characterInitializedHandler);
+                dataManager$1.off('character_initialized', this.characterInitializedHandler);
                 this.characterInitializedHandler = null;
             }
 
@@ -1012,7 +1366,7 @@
      * @returns {Object} The snapshot store
      */
     function loadouts() {
-        return (typeof window !== 'undefined' && window.Toolasha?.Combat?.loadoutSnapshot) || loadoutSnapshot;
+        return loadoutSnapshot$1() || loadoutSnapshot;
     }
 
     /**
@@ -1022,19 +1376,27 @@
     function resolveActionContext(actionTypeHrid) {
         const loadoutSnapshot = loadouts();
         const rawDrinks =
-            loadoutSnapshot.getSnapshotDrinksForSkill(actionTypeHrid) ?? dataManager.getActionDrinkSlots(actionTypeHrid);
+            loadoutSnapshot.getSnapshotDrinksForSkill(actionTypeHrid) ?? dataManager$1.getActionDrinkSlots(actionTypeHrid);
 
         // Only include drinks that are actually in stock — slotted-but-empty teas give no buff
-        const inventory = dataManager.getInventory() || [];
+        const inventory = dataManager$1.getInventory() || [];
         const drinks = (rawDrinks || []).filter(
             (d) => d?.itemHrid && inventory.some((i) => i.itemHrid === d.itemHrid && (i.count || 0) > 0)
         );
 
         return {
-            equipment: loadoutSnapshot.getSnapshotForSkill(actionTypeHrid) ?? dataManager.getEquipment(),
+            equipment: loadoutSnapshot.getSnapshotForSkill(actionTypeHrid) ?? dataManager$1.getEquipment(),
             drinks,
         };
     }
+
+    var actionContext = { resolveActionContext };
+
+    var actionContext$1 = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        default: actionContext,
+        resolveActionContext: resolveActionContext
+    });
 
     /**
      * Enhancement Multiplier System
@@ -2097,7 +2459,7 @@
         }
 
         // Get house room level from game data (via dataManager)
-        const roomLevel = dataManager.getHouseRoomLevel(houseRoomHrid);
+        const roomLevel = dataManager$1.getHouseRoomLevel(houseRoomHrid);
 
         // Formula: houseLevel × 1.5%
         // Returns as percentage (e.g., 12 for 12%)
@@ -2140,7 +2502,7 @@
      */
     function calculateHouseRareFind() {
         // Get all house rooms
-        const houseRooms = dataManager.getHouseRooms();
+        const houseRooms = dataManager$1.getHouseRooms();
 
         if (!houseRooms || houseRooms.size === 0) {
             return 0; // No house rooms
@@ -2381,9 +2743,9 @@
     function getActionEfficiencyContext(actionDetails, options = {}) {
         const { isProduction = false, gameData = null, communityEfficiency = 0 } = options;
 
-        const skills = dataManager.getSkills();
+        const skills = dataManager$1.getSkills();
         const { equipment, drinks: drinkSlots } = resolveActionContext(actionDetails.type);
-        const itemDetailMap = gameData?.itemDetailMap ?? dataManager.getInitClientData()?.itemDetailMap ?? {};
+        const itemDetailMap = gameData?.itemDetailMap ?? dataManager$1.getInitClientData()?.itemDetailMap ?? {};
 
         // Drink concentration
         const drinkConcentration = getDrinkConcentration(equipment, itemDetailMap);
@@ -2391,9 +2753,9 @@
         // Action time (nanoseconds → seconds)
         const baseTimePerActionSec = actionDetails.baseTimeCost / 1e9;
         const speedBonus = parseEquipmentSpeedBonuses(equipment, actionDetails.type, itemDetailMap);
-        const personalSpeedBonus = dataManager.getPersonalBuffFlatBoost(actionDetails.type, '/buff_types/action_speed');
+        const personalSpeedBonus = dataManager$1.getPersonalBuffFlatBoost(actionDetails.type, '/buff_types/action_speed');
 
-        const guildBuffs = dataManager.characterData?.guildActionTypeBuffsMap?.[actionDetails.type] || [];
+        const guildBuffs = dataManager$1.characterData?.guildActionTypeBuffsMap?.[actionDetails.type] || [];
         const guildSpeedBonus = guildBuffs.reduce(
             (sum, b) => (b.typeHrid === '/buff_types/action_speed' ? sum + (b.flatBoost || 0) + (b.ratioBoost || 0) : sum),
             0
@@ -2429,19 +2791,19 @@
         const teaEfficiency = parseTeaEfficiency(actionDetails.type, drinkSlots, itemDetailMap, drinkConcentration);
         const processingBonus = GATHERING_TYPES.includes(actionDetails.type)
             ? parseProcessingBonus(drinkSlots, itemDetailMap, drinkConcentration) +
-              dataManager.getPersonalBuffFlatBoost(actionDetails.type, '/buff_types/processing')
+              dataManager$1.getPersonalBuffFlatBoost(actionDetails.type, '/buff_types/processing')
             : 0;
         const gourmetBonus = PRODUCTION_TYPES.includes(actionDetails.type)
             ? parseGourmetBonus(drinkSlots, itemDetailMap, drinkConcentration) +
-              dataManager.getPersonalBuffFlatBoost(actionDetails.type, '/buff_types/gourmet')
+              dataManager$1.getPersonalBuffFlatBoost(actionDetails.type, '/buff_types/gourmet')
             : 0;
 
         // Equipment efficiency
         const equipmentEfficiency = parseEquipmentEfficiencyBonuses(equipment, actionDetails.type, itemDetailMap);
         const equipmentEfficiencyItems = parseEquipmentEfficiencyBreakdown(equipment, actionDetails.type, itemDetailMap);
         const achievementEfficiency =
-            dataManager.getAchievementBuffFlatBoost(actionDetails.type, '/buff_types/efficiency') * 100;
-        const personalEfficiency = dataManager.getPersonalBuffFlatBoost(actionDetails.type, '/buff_types/efficiency') * 100;
+            dataManager$1.getAchievementBuffFlatBoost(actionDetails.type, '/buff_types/efficiency') * 100;
+        const personalEfficiency = dataManager$1.getPersonalBuffFlatBoost(actionDetails.type, '/buff_types/efficiency') * 100;
 
         // Production-specific: artisan bonus, action level bonus, house via calculateHouseEfficiency
         // Gathering-specific: house via inline houseRooms loop
@@ -2455,8 +2817,8 @@
             houseEfficiency = calculateHouseEfficiency(actionDetails.type);
         } else {
             // Gathering: compute house efficiency from houseRooms + houseRoomDetailMap
-            const houseRooms = Array.from(dataManager.getHouseRooms().values());
-            const initData = gameData ?? dataManager.getInitClientData();
+            const houseRooms = Array.from(dataManager$1.getHouseRooms().values());
+            const initData = gameData ?? dataManager$1.getInitClientData();
             for (const room of houseRooms) {
                 const roomDetail = initData?.houseRoomDetailMap?.[room.houseRoomHrid];
                 if (roomDetail?.usableInActionTypeMap?.[actionDetails.type]) {
@@ -2471,13 +2833,13 @@
 
         if (!isProduction && GATHERING_TYPES.includes(actionDetails.type)) {
             const gatheringTea = parseGatheringBonus(drinkSlots, itemDetailMap, drinkConcentration);
-            const communityBuffLevel = dataManager.getCommunityBuffLevel('/community_buff_types/gathering_quantity');
+            const communityBuffLevel = dataManager$1.getCommunityBuffLevel('/community_buff_types/gathering_quantity');
             const communityGathering = communityBuffLevel ? 0.2 + (communityBuffLevel - 1) * 0.005 : 0;
-            const achievementGathering = dataManager.getAchievementBuffFlatBoost(
+            const achievementGathering = dataManager$1.getAchievementBuffFlatBoost(
                 actionDetails.type,
                 '/buff_types/gathering'
             );
-            const personalGathering = dataManager.getPersonalBuffFlatBoost(actionDetails.type, '/buff_types/gathering');
+            const personalGathering = dataManager$1.getPersonalBuffFlatBoost(actionDetails.type, '/buff_types/gathering');
             totalGathering = gatheringTea + communityGathering + achievementGathering + personalGathering;
             gatheringDetails = { gatheringTea, communityGathering, achievementGathering, personalGathering };
         }
@@ -2562,7 +2924,7 @@
      */
 
 
-    const STORAGE_KEY$2 = 'Toolasha_customPriceOverrides';
+    const STORAGE_KEY$3 = 'Toolasha_customPriceOverrides';
 
     /** @type {Object|null} In-memory cache of overrides */
     let overridesCache = null;
@@ -2573,7 +2935,7 @@
      */
     async function loadOverrides() {
         if (overridesCache === null) {
-            overridesCache = (await storage.getJSON(STORAGE_KEY$2, 'settings', {})) || {};
+            overridesCache = (await storage.getJSON(STORAGE_KEY$3, 'settings', {})) || {};
         }
         return overridesCache;
     }
@@ -2938,7 +3300,7 @@
      * @returns {string|null} Action HRID or null if not found
      */
     function getActionHridFromName(actionName) {
-        const gameData = dataManager.getInitClientData();
+        const gameData = dataManager$1.getInitClientData();
         if (!gameData?.actionDetailMap) {
             return null;
         }
@@ -2969,7 +3331,7 @@
      * @returns {string|null} Item HRID or null if not found
      */
     function getItemHridFromName(itemName) {
-        const gameData = dataManager.getInitClientData();
+        const gameData = dataManager$1.getInitClientData();
         if (!gameData?.itemDetailMap) {
             return null;
         }
@@ -3000,7 +3362,7 @@
      * @returns {number} Coin cost, or 0 if not available in shop
      */
     function getShopCoinCost(itemHrid) {
-        const gameData = dataManager.getInitClientData();
+        const gameData = dataManager$1.getInitClientData();
         if (!gameData?.shopItemDetailMap) return 0;
 
         for (const shopItem of Object.values(gameData.shopItemDetailMap)) {
@@ -3977,8 +4339,8 @@
         // what they actually enhance in. Skill-specific default first, then the
         // all-skills default, then anything saved, then what is worn.
         const { equipment, drinks: drinkSlots } = resolveActionContext('/action_types/enhancing');
-        const skills = dataManager.getSkills();
-        const itemDetailMap = dataManager.getInitClientData()?.itemDetailMap || {};
+        const skills = dataManager$1.getSkills();
+        const itemDetailMap = dataManager$1.getInitClientData()?.itemDetailMap || {};
 
         // Detect gear from equipped items only
         const gear = detectEnhancingGear(equipment, itemDetailMap);
@@ -4042,12 +4404,12 @@
         const enhancingLevel = enhancingSkill?.level || 1;
 
         // Get Observatory house room level (enhancing uses observatory, NOT laboratory!)
-        const houseLevel = dataManager.getHouseRoomLevel('/house_rooms/observatory');
+        const houseLevel = dataManager$1.getHouseRoomLevel('/house_rooms/observatory');
 
         // Calculate global house buffs from ALL house rooms
         // Rare Find: 0.2% base + 0.2% per level (per room, only if level >= 1)
         // Wisdom: 0.05% base + 0.05% per level (per room, only if level >= 1)
-        const houseRooms = dataManager.getHouseRooms();
+        const houseRooms = dataManager$1.getHouseRooms();
         let houseRareFindBonus = 0;
         let houseWisdomBonus = 0;
 
@@ -4062,26 +4424,26 @@
         }
 
         // Get Enhancing Speed community buff level
-        const communityBuffLevel = dataManager.getCommunityBuffLevel('/community_buff_types/enhancing_speed');
+        const communityBuffLevel = dataManager$1.getCommunityBuffLevel('/community_buff_types/enhancing_speed');
         // Formula: 20% base + 0.5% per level
         const communitySpeedBonus = communityBuffLevel > 0 ? 20 + (communityBuffLevel - 1) * 0.5 : 0;
 
         // Get Experience (Wisdom) community buff level
-        const communityWisdomLevel = dataManager.getCommunityBuffLevel('/community_buff_types/experience');
+        const communityWisdomLevel = dataManager$1.getCommunityBuffLevel('/community_buff_types/experience');
         // Formula: 20% base + 0.5% per level (same as other community buffs)
         const communityWisdomBonus = communityWisdomLevel > 0 ? 20 + (communityWisdomLevel - 1) * 0.5 : 0;
 
         const achievementWisdomBonus =
-            dataManager.getAchievementBuffFlatBoost('/action_types/enhancing', '/buff_types/wisdom') * 100;
+            dataManager$1.getAchievementBuffFlatBoost('/action_types/enhancing', '/buff_types/wisdom') * 100;
         const achievementRareFindBonus =
-            dataManager.getAchievementBuffFlatBoost('/action_types/enhancing', '/buff_types/rare_find') * 100;
+            dataManager$1.getAchievementBuffFlatBoost('/action_types/enhancing', '/buff_types/rare_find') * 100;
 
         // Calculate total success rate bonus
         // Equipment + house + achievement
         const houseSuccessBonus = houseLevel * 0.05; // 0.05% per level for success
         const equipmentSuccessBonus = gear.toolBonus;
         const achievementSuccessBonus =
-            dataManager.getAchievementBuffRatioBoost('/action_types/enhancing', '/buff_types/enhancing_success') * 100;
+            dataManager$1.getAchievementBuffRatioBoost('/action_types/enhancing', '/buff_types/enhancing_success') * 100;
         const totalSuccessBonus = equipmentSuccessBonus + houseSuccessBonus + achievementSuccessBonus;
 
         // Calculate total speed bonus
@@ -4146,7 +4508,7 @@
      */
     function getDetectedGearSettings() {
         const { equipment, drinks: drinkSlots } = resolveActionContext('/action_types/enhancing');
-        const skills = dataManager.getSkills();
+        const skills = dataManager$1.getSkills();
 
         const result = {};
 
@@ -4155,14 +4517,14 @@
         result.enhanceSim_enhancingLevel = enhancingSkill?.level || 1;
 
         // Observatory
-        result.enhanceSim_houseLevel = dataManager.getHouseRoomLevel('/house_rooms/observatory');
+        result.enhanceSim_houseLevel = dataManager$1.getHouseRoomLevel('/house_rooms/observatory');
 
         // Community buff
-        const communityLevel = dataManager.getCommunityBuffLevel('/community_buff_types/enhancing_speed');
+        const communityLevel = dataManager$1.getCommunityBuffLevel('/community_buff_types/enhancing_speed');
         result.enhanceSim_communityBuff = { enabled: true, level: communityLevel };
 
         // Achievement
-        const achievementBonus = dataManager.getAchievementBuffRatioBoost(
+        const achievementBonus = dataManager$1.getAchievementBuffRatioBoost(
             '/action_types/enhancing',
             '/buff_types/enhancing_success'
         );
@@ -4277,7 +4639,7 @@
      * @returns {Object} Manual parameters
      */
     function getManualParams({ useShippedDefaults = false } = {}) {
-        const itemDetailMap = dataManager.getInitClientData()?.itemDetailMap || {};
+        const itemDetailMap = dataManager$1.getInitClientData()?.itemDetailMap || {};
 
         // What this character actually has. Used to fill in every manual field the player never
         // touched, so an untouched panel quotes their own run rather than a stranger's.
@@ -4286,7 +4648,7 @@
             // With no character loaded there is nothing to detect, and "detected" would read as
             // "owns nothing" — worse than the shipped defaults. Fall back to those instead.
             // A pro-rates run answers from the shipped kit throughout, so it never asks.
-            if (!useShippedDefaults && dataManager.getSkills()?.length) {
+            if (!useShippedDefaults && dataManager$1.getSkills()?.length) {
                 detectedSettings = getDetectedSettingsCached();
             }
         } catch (error) {
@@ -4585,7 +4947,7 @@
         let communityBuffLevel;
         if (communityBuff.enabled) {
             // Checked = auto-detect from game
-            communityBuffLevel = dataManager.getCommunityBuffLevel('/community_buff_types/enhancing_speed');
+            communityBuffLevel = dataManager$1.getCommunityBuffLevel('/community_buff_types/enhancing_speed');
         } else {
             communityBuffLevel = communityBuff.level;
         }
@@ -4596,7 +4958,7 @@
         // character's own data, the same source auto-detect reads, so the two modes cannot drift.
         const achievementEnabled = getValue('enhanceSim_achievement', false, 'Achievement');
         const achievementSuccessBonus = achievementEnabled
-            ? dataManager.getAchievementBuffRatioBoost('/action_types/enhancing', '/buff_types/enhancing_success') * 100
+            ? dataManager$1.getAchievementBuffRatioBoost('/action_types/enhancing', '/buff_types/enhancing_success') * 100
             : 0;
 
         // --- HOUSE BONUSES ---
@@ -4604,7 +4966,7 @@
         const houseSuccessBonus = houseLevel * 0.05;
 
         // House wisdom: 0.05% per level per room (same as auto-detect)
-        const houseRooms = dataManager.getHouseRooms();
+        const houseRooms = dataManager$1.getHouseRooms();
         let houseWisdomBonus = 0;
         for (const [_hrid, room] of houseRooms) {
             const level = room.level || 0;
@@ -4619,7 +4981,7 @@
 
         // Tea wisdom bonus (Wisdom Tea/Coffee provide 12% wisdom, scales with drink concentration)
         let baseTeaWisdom = 0;
-        const drinkSlots = dataManager.getActionDrinkSlots('/action_types/enhancing');
+        const drinkSlots = dataManager$1.getActionDrinkSlots('/action_types/enhancing');
         if (drinkSlots && drinkSlots.length > 0) {
             for (const drink of drinkSlots) {
                 if (!drink || !drink.itemHrid) continue;
@@ -4636,12 +4998,12 @@
         const teaWisdomBonus = baseTeaWisdom > 0 ? baseTeaWisdom * (1 + drinkConcentration / 100) : 0;
 
         // Community wisdom buff
-        const communityWisdomLevel = dataManager.getCommunityBuffLevel('/community_buff_types/experience');
+        const communityWisdomLevel = dataManager$1.getCommunityBuffLevel('/community_buff_types/experience');
         const communityWisdomBonus = communityWisdomLevel > 0 ? 20 + (communityWisdomLevel - 1) * 0.5 : 0;
 
         // Achievement wisdom buff
         const achievementWisdomBonus =
-            dataManager.getAchievementBuffFlatBoost('/action_types/enhancing', '/buff_types/wisdom') * 100;
+            dataManager$1.getAchievementBuffFlatBoost('/action_types/enhancing', '/buff_types/wisdom') * 100;
 
         // --- TOTALS ---
         const totalToolBonus = equipmentSuccessBonus + houseSuccessBonus + achievementSuccessBonus;
@@ -4718,6 +5080,103 @@
     });
 
     /**
+     * Number Parser Utility
+     * Shared utilities for parsing numeric values from text, including item counts
+     */
+
+    /**
+     * Parse item count from text
+     * Handles various formats including:
+     * - Plain numbers: "100", "1000"
+     * - K/M suffixes: "1.5K", "2M"
+     * - International formats with separators: "1,000", "1 000", "1.000"
+     * - Mixed decimal formats: "1.234,56" (European) or "1,234.56" (US)
+     * - Prefixed formats: "x5", "Amount: 1000", "Amount: 1 000"
+     *
+     * @param {string} text - Text containing a number
+     * @param {number} defaultValue - Value to return if parsing fails (default: 1)
+     * @returns {number} Parsed numeric value
+     */
+    function parseItemCount(text, defaultValue = 1) {
+        if (!text) {
+            return defaultValue;
+        }
+
+        // Convert to string and normalize
+        text = String(text).toLowerCase().trim();
+
+        // Extract number from common patterns like "x5", "Amount: 1000"
+        const prefixMatch = text.match(/x([\d,\s.kmb]+)|amount:\s*([\d,\s.kmb]+)/i);
+        if (prefixMatch) {
+            text = prefixMatch[1] || prefixMatch[2];
+        }
+
+        // Determine whether periods and commas are thousands separators or decimal points.
+        // Rules:
+        // 1. If both exist: the one appearing first (or multiple times) is the thousands separator.
+        //    e.g. "1.234,56" → period is thousands, comma is decimal → 1234.56
+        //    e.g. "1,234.56" → comma is thousands, period is decimal → 1234.56
+        // 2. If only commas exist and comma is followed by exactly 3 digits at end: thousands separator.
+        //    e.g. "1,234" → 1234
+        // 3. If only periods exist and period is followed by exactly 3 digits at end: thousands separator.
+        //    e.g. "1.234" → 1234
+        // 4. Otherwise treat as decimal separator.
+        //    e.g. "1.5" → 1.5,  "1,5" → 1.5
+
+        const hasPeriod = text.includes('.');
+        const hasComma = text.includes(',');
+
+        if (hasPeriod && hasComma) {
+            // Both present — whichever comes last is the decimal separator
+            const lastPeriod = text.lastIndexOf('.');
+            const lastComma = text.lastIndexOf(',');
+            if (lastPeriod > lastComma) {
+                // Period is decimal: remove commas as thousands separators
+                text = text.replace(/,/g, '');
+            } else {
+                // Comma is decimal: remove periods as thousands separators, replace comma with period
+                text = text.replace(/\./g, '').replace(',', '.');
+            }
+        } else if (hasComma) {
+            // Only commas: thousands separator if followed by exactly 3 digits at end, else decimal
+            if (/,\d{3}$/.test(text)) {
+                text = text.replace(/,/g, '');
+            } else {
+                text = text.replace(',', '.');
+            }
+        } else if (hasPeriod) {
+            // Only periods: thousands separator if followed by exactly 3 digits at end, else decimal
+            if (/\.\d{3}$/.test(text)) {
+                text = text.replace(/\./g, '');
+            }
+            // else leave as-is (valid decimal like "1.5")
+        }
+
+        // Remove remaining whitespace separators
+        text = text.replace(/\s/g, '');
+
+        // Handle K/M/B suffixes (must end with the suffix letter)
+        if (/\d[kmb]$/.test(text)) {
+            if (text.endsWith('k')) {
+                return parseFloat(text) * 1000;
+            } else if (text.endsWith('m')) {
+                return parseFloat(text) * 1000000;
+            } else if (text.endsWith('b')) {
+                return parseFloat(text) * 1000000000;
+            }
+        }
+
+        // Parse plain number
+        const parsed = parseFloat(text);
+        return isNaN(parsed) ? defaultValue : parsed;
+    }
+
+    var numberParser = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        parseItemCount: parseItemCount
+    });
+
+    /**
      * Enhancement Tooltip Module
      *
      * Provides enhancement analysis for item tooltips.
@@ -4753,7 +5212,7 @@
     }
 
     function _computeProductionCost(itemHrid, mode = 'ask') {
-        const gameData = dataManager.getInitClientData();
+        const gameData = dataManager$1.getInitClientData();
         const itemDetails = gameData.itemDetailMap[itemHrid];
 
         if (!itemDetails || !itemDetails.name) {
@@ -4784,10 +5243,10 @@
         // Compute artisan tea reduction dynamically (same approach as material-calculator.js)
         let artisanBonus = 0;
         try {
-            const equipment = dataManager.getEquipment();
+            const equipment = dataManager$1.getEquipment();
             const itemDetailMap = gameData.itemDetailMap || {};
             const drinkConcentration = getDrinkConcentration(equipment, itemDetailMap);
-            const activeDrinks = dataManager.getActionDrinkSlots(action.type);
+            const activeDrinks = dataManager$1.getActionDrinkSlots(action.type);
             artisanBonus = parseArtisanBonus(activeDrinks, itemDetailMap, drinkConcentration);
         } catch {
             // Fall back to no reduction if data unavailable
@@ -6115,7 +6574,7 @@
         pricingModeSetting = 'profitCalc_pricingMode',
         respectModeSetting = 'expectedValue_respectPricingMode'
     ) {
-        const gameData = dataManager.getInitClientData();
+        const gameData = dataManager$1.getInitClientData();
         if (!gameData) return null;
 
         // Get all shop items for this token type
@@ -6772,20 +7231,20 @@ self.onmessage = function (e) {
                 return true;
             }
 
-            if (!dataManager.getInitClientData()) {
+            if (!dataManager$1.getInitClientData()) {
                 // Init data not yet available - set up retry on next character update
                 if (!this.retryHandler) {
                     this.retryHandler = () => {
                         this.initialize(); // Retry initialization
                     };
-                    dataManager.on('character_initialized', this.retryHandler);
+                    dataManager$1.on('character_initialized', this.retryHandler);
                 }
                 return false;
             }
 
             // Data is available - remove retry handler if it exists
             if (this.retryHandler) {
-                dataManager.off('character_initialized', this.retryHandler);
+                dataManager$1.off('character_initialized', this.retryHandler);
                 this.retryHandler = null;
             }
 
@@ -6800,7 +7259,7 @@ self.onmessage = function (e) {
             this.isInitialized = true;
 
             // Notify listeners that calculator is ready
-            dataManager.emit('expected_value_initialized', { timestamp: Date.now() });
+            dataManager$1.emit('expected_value_initialized', { timestamp: Date.now() });
 
             return true;
         }
@@ -6810,7 +7269,7 @@ self.onmessage = function (e) {
          * Iterates 4 times to resolve nested container values
          */
         async calculateNestedContainers() {
-            const initData = dataManager.getInitClientData();
+            const initData = dataManager$1.getInitClientData();
             if (!initData || !initData.openableLootDropMap) {
                 return;
             }
@@ -6877,7 +7336,7 @@ self.onmessage = function (e) {
 
                     // Get price and tradeable status
                     const price = this.getDropPrice(itemHrid);
-                    const itemDetails = dataManager.getItemDetails(itemHrid);
+                    const itemDetails = dataManager$1.getItemDetails(itemHrid);
                     const canBeSold = itemDetails?.isTradable !== false;
 
                     priceMap[itemHrid] = {
@@ -6899,7 +7358,7 @@ self.onmessage = function (e) {
         calculateSingleContainer(containerHrid, initData = null) {
             // Use cached data if provided, otherwise fetch
             if (!initData) {
-                initData = dataManager.getInitClientData();
+                initData = dataManager$1.getInitClientData();
             }
             if (!initData || !initData.openableLootDropMap) {
                 return null;
@@ -6936,7 +7395,7 @@ self.onmessage = function (e) {
                 }
 
                 // Check if item is tradeable (for tax calculation)
-                const itemDetails = dataManager.getItemDetails(itemHrid);
+                const itemDetails = dataManager$1.getItemDetails(itemHrid);
                 const canBeSold = itemDetails?.isTradable !== false;
 
                 // Special case: Coin never has market tax (it's currency, not a market item)
@@ -7012,7 +7471,7 @@ self.onmessage = function (e) {
             }
 
             // Get item details
-            const itemDetails = dataManager.getItemDetails(itemHrid);
+            const itemDetails = dataManager$1.getItemDetails(itemHrid);
             if (!itemDetails) {
                 return null;
             }
@@ -7051,7 +7510,7 @@ self.onmessage = function (e) {
          * @returns {Array} Array of drop objects
          */
         getDropBreakdown(containerHrid) {
-            const initData = dataManager.getInitClientData();
+            const initData = dataManager$1.getInitClientData();
             if (!initData || !initData.openableLootDropMap) {
                 return [];
             }
@@ -7074,7 +7533,7 @@ self.onmessage = function (e) {
                 }
 
                 // Get item details
-                const itemDetails = dataManager.getItemDetails(itemHrid);
+                const itemDetails = dataManager$1.getItemDetails(itemHrid);
                 if (!itemDetails) {
                     continue;
                 }
@@ -7125,7 +7584,7 @@ self.onmessage = function (e) {
             this.isInitialized = false;
 
             // Re-initialize if data is available
-            if (dataManager.getInitClientData() && marketAPI.isLoaded()) {
+            if (dataManager$1.getInitClientData() && marketAPI.isLoaded()) {
                 this.initialize();
             }
         }
@@ -7135,7 +7594,7 @@ self.onmessage = function (e) {
          */
         cleanup() {
             if (this.retryHandler) {
-                dataManager.off('character_initialized', this.retryHandler);
+                dataManager$1.off('character_initialized', this.retryHandler);
                 this.retryHandler = null;
             }
 
@@ -7177,11 +7636,11 @@ self.onmessage = function (e) {
         const equipmentRareFindBonus = parseRareFindBonus(characterEquipment, actionDetails.type, itemDetailMap);
         const houseRareFindBonus = calculateHouseRareFind();
         const achievementRareFindBonus =
-            dataManager.getAchievementBuffFlatBoost(actionDetails.type, '/buff_types/rare_find') * 100;
+            dataManager$1.getAchievementBuffFlatBoost(actionDetails.type, '/buff_types/rare_find') * 100;
         const personalRareFindBonus =
-            dataManager.getPersonalBuffFlatBoost(actionDetails.type, '/buff_types/rare_find') * 100;
+            dataManager$1.getPersonalBuffFlatBoost(actionDetails.type, '/buff_types/rare_find') * 100;
 
-        const guildBuffs = dataManager.characterData?.guildActionTypeBuffsMap?.[actionDetails.type] || [];
+        const guildBuffs = dataManager$1.characterData?.guildActionTypeBuffsMap?.[actionDetails.type] || [];
         const guildRareFindBonus =
             guildBuffs.reduce(
                 (sum, b) => (b.typeHrid === '/buff_types/rare_find' ? sum + (b.flatBoost || 0) + (b.ratioBoost || 0) : sum),
@@ -7450,7 +7909,7 @@ self.onmessage = function (e) {
      * @returns {number} Total wisdom from house rooms (e.g., 0.4 for 8 total levels)
      */
     function parseHouseRoomWisdom() {
-        const houseRooms = dataManager.getHouseRooms();
+        const houseRooms = dataManager$1.getHouseRooms();
         if (!houseRooms || houseRooms.size === 0) {
             return 0;
         }
@@ -7471,7 +7930,7 @@ self.onmessage = function (e) {
      * @returns {number} Wisdom percentage from community buff (e.g., 29.5 for T20)
      */
     function parseCommunityBuffWisdom() {
-        const buffLevel = dataManager.getCommunityBuffLevel('/community_buff_types/experience');
+        const buffLevel = dataManager$1.getCommunityBuffLevel('/community_buff_types/experience');
         if (!buffLevel) {
             return 0;
         }
@@ -7486,7 +7945,7 @@ self.onmessage = function (e) {
      * @returns {number} Wisdom percentage from MooPass (5% if active, 0 if not)
      */
     function parseMooPassWisdom() {
-        const mooPassBuffs = dataManager.getMooPassBuffs();
+        const mooPassBuffs = dataManager$1.getMooPassBuffs();
         if (!mooPassBuffs || mooPassBuffs.length === 0) {
             return 0;
         }
@@ -7549,7 +8008,7 @@ self.onmessage = function (e) {
      */
     function calculateExperienceMultiplier(skillHrid, actionTypeHrid) {
         const { equipment, drinks: activeDrinks } = resolveActionContext(actionTypeHrid);
-        const gameData = dataManager.getInitClientData();
+        const gameData = dataManager$1.getInitClientData();
         const itemDetailMap = gameData?.itemDetailMap || {};
 
         // Get drink concentration (tea-parser returns a decimal; convert to percentage for parseConsumableWisdom)
@@ -7561,10 +8020,10 @@ self.onmessage = function (e) {
         const houseWisdom = parseHouseRoomWisdom();
         const communityWisdom = parseCommunityBuffWisdom();
         const consumableWisdom = parseConsumableWisdom(activeDrinks, itemDetailMap, drinkConcentration);
-        const achievementWisdom = dataManager.getAchievementBuffFlatBoost(actionTypeHrid, '/buff_types/wisdom') * 100;
+        const achievementWisdom = dataManager$1.getAchievementBuffFlatBoost(actionTypeHrid, '/buff_types/wisdom') * 100;
         const mooPassWisdom = parseMooPassWisdom();
-        const personalWisdom = dataManager.getPersonalBuffFlatBoost(actionTypeHrid, '/buff_types/wisdom') * 100;
-        const guildBuffs = dataManager.characterData?.guildActionTypeBuffsMap?.[actionTypeHrid] || [];
+        const personalWisdom = dataManager$1.getPersonalBuffFlatBoost(actionTypeHrid, '/buff_types/wisdom') * 100;
+        const guildBuffs = dataManager$1.characterData?.guildActionTypeBuffsMap?.[actionTypeHrid] || [];
         const guildWisdom =
             guildBuffs.reduce(
                 (sum, b) => (b.typeHrid === '/buff_types/wisdom' ? sum + (b.flatBoost || 0) + (b.ratioBoost || 0) : sum),
@@ -7729,9 +8188,9 @@ self.onmessage = function (e) {
 
             // Get equipment speed bonus
             const speedBonus = parseEquipmentSpeedBonuses(equipment, actionDetails.type, itemDetailMap);
-            const personalSpeedBonus = dataManager.getPersonalBuffFlatBoost(actionDetails.type, '/buff_types/action_speed');
+            const personalSpeedBonus = dataManager$1.getPersonalBuffFlatBoost(actionDetails.type, '/buff_types/action_speed');
 
-            const guildBuffs = dataManager.characterData?.guildActionTypeBuffsMap?.[actionDetails.type] || [];
+            const guildBuffs = dataManager$1.characterData?.guildActionTypeBuffsMap?.[actionDetails.type] || [];
             const guildSpeedBonus = guildBuffs.reduce(
                 (sum, b) =>
                     b.typeHrid === '/buff_types/action_speed' ? sum + (b.flatBoost || 0) + (b.ratioBoost || 0) : sum,
@@ -7747,8 +8206,8 @@ self.onmessage = function (e) {
             let actionTime = baseTime / (1 + speedBonus + personalSpeedBonus + guildSpeedBonus);
 
             // Apply task speed multiplicatively (if action is an active task)
-            if (actionHrid && dataManager.isTaskAction(actionHrid)) {
-                const taskSpeedBonus = dataManager.getTaskSpeedBonus(); // Returns percentage (e.g., 15 for 15%)
+            if (actionHrid && dataManager$1.isTaskAction(actionHrid)) {
+                const taskSpeedBonus = dataManager$1.getTaskSpeedBonus(); // Returns percentage (e.g., 15 for 15%)
                 actionTime = actionTime / (1 + taskSpeedBonus / 100); // Apply multiplicatively
             }
 
@@ -7793,9 +8252,9 @@ self.onmessage = function (e) {
             const houseEfficiency = calculateHouseEfficiency(actionDetails.type);
             const equipmentEfficiency = parseEquipmentEfficiencyBonuses(equipment, actionDetails.type, itemDetailMap);
             const achievementEfficiency =
-                dataManager.getAchievementBuffFlatBoost(actionDetails.type, '/buff_types/efficiency') * 100;
+                dataManager$1.getAchievementBuffFlatBoost(actionDetails.type, '/buff_types/efficiency') * 100;
             const personalEfficiency =
-                dataManager.getPersonalBuffFlatBoost(actionDetails.type, '/buff_types/efficiency') * 100;
+                dataManager$1.getPersonalBuffFlatBoost(actionDetails.type, '/buff_types/efficiency') * 100;
 
             // Calculate tea efficiency
             let teaEfficiency;
@@ -7828,7 +8287,7 @@ self.onmessage = function (e) {
                 ];
 
                 if (productionSkills.includes(actionDetails.type)) {
-                    const communityBuffLevel = dataManager.getCommunityBuffLevel(
+                    const communityBuffLevel = dataManager$1.getCommunityBuffLevel(
                         '/community_buff_types/production_efficiency'
                     );
                     communityEfficiency = communityBuffLevel ? (0.14 + (communityBuffLevel - 1) * 0.003) * 100 : 0;
@@ -8004,7 +8463,7 @@ self.onmessage = function (e) {
      */
     function getAlchemySuccessBonus() {
         try {
-            const characterData = dataManager.characterData;
+            const characterData = dataManager$1.characterData;
             if (!characterData || !characterData.consumableActionTypeBuffsMap) {
                 return 0;
             }
@@ -8054,12 +8513,17 @@ self.onmessage = function (e) {
         TAB_PANELS_CONTAINER: '[class*="TabsComponent_tabPanelsContainer"]',
         TAB_PANEL: '[class*="TabPanel_tabPanel"]',
 
+        // Tab strips (shared by every game panel that draws tabs)
+        TABS_CONTAINER: '[class*="TabsComponent_tabsContainer"]',
+        TAB_BADGE: '[class*="TabsComponent_badge"]',
+
         // Game Panel
         GAME_PANEL: 'div[class*="GamePage_gamePanel"]',
 
         // Skill Action Detail
         SKILL_ACTION_DETAIL: '[class*="SkillActionDetail_skillActionDetail"]',
         SKILL_ACTION_NAME: '[class*="SkillActionDetail_name"]',
+        SKILL_ACTION_ITEM_REQUIREMENTS: '[class*="SkillActionDetail_itemRequirements"]',
         ENHANCING_COMPONENT: 'div[class*="SkillActionDetail_enhancingComponent"]',
 
         // Action Queue
@@ -8107,11 +8571,22 @@ self.onmessage = function (e) {
         // trailing "__" too, or it would match every item container as well.
         ITEM_ITEM: '[class*="Item_item__"]',
         ITEM_COUNT: '[class*="Item_count"]',
+        ITEM_NAME: '[class*="Item_name"]',
         ITEM_TOOLTIP_TEXT: '[class*="ItemTooltipText_itemTooltipText"]',
 
         // Navigation/Experience Bars
         NAV_LEVEL: '[class*="NavigationBar_level"]',
         NAV_CURRENT_EXPERIENCE: '[class*="NavigationBar_currentExperience"]',
+        // Matches loosely on purpose — consumers use it via closest() the same way
+        NAV_BAR: '[class*="NavigationBar_nav"]',
+
+        // Chat
+        CHAT_MESSAGE: '[class*="ChatMessage_chatMessage"]',
+        CHAT_INPUT_CONTAINER: '[class*="Chat_chatInputContainer"]',
+
+        // Combat
+        COMBAT_UNIT: '[class*="CombatUnit_combatUnit"]',
+        BATTLE_MONSTERS_AREA: '[class*="BattlePanel_monstersArea"]',
 
         // Enhancement
         PROTECTION_ITEM_INPUT: '[class*="protectionItemInputContainer"]',
@@ -8234,7 +8709,7 @@ self.onmessage = function (e) {
      *   }
      */
     function calculateExpPerHour(actionHrid) {
-        const actionDetails = dataManager.getActionDetails(actionHrid);
+        const actionDetails = dataManager$1.getActionDetails(actionHrid);
 
         // Validate action has experience gain
         if (!actionDetails || !actionDetails.experienceGain || !actionDetails.experienceGain.value) {
@@ -8242,9 +8717,9 @@ self.onmessage = function (e) {
         }
 
         // Get character data
-        const skills = dataManager.getSkills();
+        const skills = dataManager$1.getSkills();
         const { equipment } = resolveActionContext(actionDetails.type);
-        const gameData = dataManager.getInitClientData();
+        const gameData = dataManager$1.getInitClientData();
 
         if (!gameData || !skills || !equipment) {
             return null;
@@ -8422,7 +8897,7 @@ self.onmessage = function (e) {
      *   with `bookPrice` and `total` null when the book has no market listing
      */
     function explainAbilityLevelUpCost(abilityHrid, currentLevel, currentXp, targetLevel) {
-        const gameData = dataManager.getInitClientData();
+        const gameData = dataManager$1.getInitClientData();
         const bookHrid = String(abilityHrid || '').replace('/abilities/', '/items/');
         const bookName =
             gameData?.itemDetailMap?.[bookHrid]?.name || bookHrid.split('/').pop().replace(/_/g, ' ') || 'ability book';
@@ -8755,14 +9230,14 @@ self.onmessage = function (e) {
      */
     function calculateQueuedMaterialsForAction(actionHrid = null) {
         const queuedMaterials = new Map();
-        const gameData = dataManager.getInitClientData();
+        const gameData = dataManager$1.getInitClientData();
 
         if (!gameData) {
             return queuedMaterials;
         }
 
         // Get all queued actions
-        const queuedActions = dataManager.getCurrentActions();
+        const queuedActions = dataManager$1.getCurrentActions();
 
         if (!queuedActions || queuedActions.length === 0) {
             return queuedMaterials;
@@ -8777,7 +9252,7 @@ self.onmessage = function (e) {
                 continue;
             }
 
-            const actionDetails = dataManager.getActionDetails(queuedAction.actionHrid);
+            const actionDetails = dataManager$1.getActionDetails(queuedAction.actionHrid);
             if (!actionDetails) {
                 continue;
             }
@@ -8836,9 +9311,9 @@ self.onmessage = function (e) {
      * @returns {Array<Object>} Array of material requirement objects (includes upgrade items)
      */
     function calculateMaterialRequirements(actionHrid, numActions, accountForQueue = false) {
-        const actionDetails = dataManager.getActionDetails(actionHrid);
-        const inventory = dataManager.getInventory() || [];
-        const gameData = dataManager.getInitClientData();
+        const actionDetails = dataManager$1.getActionDetails(actionHrid);
+        const inventory = dataManager$1.getInventory() || [];
+        const gameData = dataManager$1.getInitClientData();
 
         if (!actionDetails) {
             return [];
@@ -8933,7 +9408,7 @@ self.onmessage = function (e) {
      */
     function calculateArtisanBonus(actionDetails) {
         try {
-            const gameData = dataManager.getInitClientData();
+            const gameData = dataManager$1.getInitClientData();
             if (!gameData) {
                 return 0;
             }
@@ -8957,16 +9432,16 @@ self.onmessage = function (e) {
      */
     function isArtisanTeaOutOfStock(actionHrid) {
         try {
-            const actionDetails = dataManager.getActionDetails(actionHrid);
+            const actionDetails = dataManager$1.getActionDetails(actionHrid);
             if (!actionDetails) return false;
 
-            const gameData = dataManager.getInitClientData();
+            const gameData = dataManager$1.getInitClientData();
             if (!gameData) return false;
 
             const itemDetailMap = gameData.itemDetailMap || {};
 
             // Raw slotted drinks (ignoring stock)
-            const rawDrinks = dataManager.getActionDrinkSlots(actionDetails.type);
+            const rawDrinks = dataManager$1.getActionDrinkSlots(actionDetails.type);
             if (!rawDrinks?.length) return false;
 
             // In-stock drinks come from resolveActionContext (already filtered)
@@ -9001,7 +9476,7 @@ self.onmessage = function (e) {
         protectFromLevel,
         repeatCount
     ) {
-        const gameData = dataManager.getInitClientData();
+        const gameData = dataManager$1.getInitClientData();
         if (!gameData) {
             return [];
         }
@@ -9034,7 +9509,7 @@ self.onmessage = function (e) {
             guzzlingBonus: params.guzzlingBonus,
         });
 
-        const inventory = dataManager.getInventory() || [];
+        const inventory = dataManager$1.getInventory() || [];
         const materials = [];
 
         // Process enhancement cost materials
@@ -9276,10 +9751,15 @@ self.onmessage = function (e) {
     });
 
     /**
-     * House Cost Calculator Utility
+     * House Cost Calculator
      *
      * What it costs to build a house room up to a level, materials priced at the
-     * market.
+     * market. The one calculator for that question: the networth and combat-score
+     * totals, the Houses panel's affordability count, the house modal's cost
+     * column and the goal planner all ask here. There used to be a second copy in
+     * `features/house/`, which meant the same room could be quoted two different
+     * figures depending on which panel asked — the same bug the pricing note below
+     * records, one layer up.
      *
      * ## Which side of the book
      *
@@ -9294,8 +9774,57 @@ self.onmessage = function (e) {
      * two different figures in two of this script's own panels — the advisor and the
      * savings row already asked for the ask. One side, and it is the one the money
      * actually leaves at.
+     *
+     * When there is no ask, the one side the book has is still a market price, so
+     * the bid stands in; a material with no book at all falls back to what the
+     * vendor pays for it — a floor, but dropping the material would understate the
+     * room by exactly that material. Custom price overrides apply, because they
+     * come in through {@link getItemPrice} like every other priced feature.
      */
 
+
+    /** Whether {@link initialize} has already made sure market data is loaded */
+    let marketReady = false;
+
+    /**
+     * Make sure market data is available before costing anything.
+     * @returns {Promise<void>}
+     */
+    async function initialize() {
+        if (marketReady) return;
+
+        // Check in-memory first to avoid storage reads
+        if (!marketAPI.isLoaded()) {
+            await marketAPI.fetch();
+        }
+
+        marketReady = true;
+    }
+
+    /**
+     * What one unit of a build material costs.
+     *
+     * Ask first (with any custom override), the bid when nobody is selling, and
+     * the vendor's sell price when there is no book at all. Zero only when the
+     * game itself has no price for the item.
+     *
+     * @param {string} itemHrid - Item HRID
+     * @returns {number} Price in coins
+     */
+    function materialUnitPrice(itemHrid) {
+        const ask = getItemPrice(itemHrid, { mode: 'ask' });
+        if (ask !== null && ask !== 0) {
+            return ask;
+        }
+
+        const bid = getItemPrice(itemHrid, { mode: 'bid' });
+        if (bid !== null && bid !== 0) {
+            return bid;
+        }
+
+        const itemData = dataManager$1.getInitClientData()?.itemDetailMap?.[itemHrid];
+        return itemData?.sellPrice || 0;
+    }
 
     /**
      * Calculate the total cost to build a house room to a specific level
@@ -9304,7 +9833,7 @@ self.onmessage = function (e) {
      * @returns {number} Total build cost in coins
      */
     function calculateHouseBuildCost(houseRoomHrid, currentLevel) {
-        const gameData = dataManager.getInitClientData();
+        const gameData = dataManager$1.getInitClientData();
         if (!gameData) return 0;
 
         const houseRoomDetailMap = gameData.houseRoomDetailMap;
@@ -9327,23 +9856,11 @@ self.onmessage = function (e) {
             for (const item of levelUpgrades) {
                 // Special case: Coins have face value of 1 (no market price)
                 if (item.itemHrid === '/items/coin') {
-                    const itemCost = item.count * 1;
-                    totalCost += itemCost;
+                    totalCost += item.count;
                     continue;
                 }
 
-                const prices = marketAPI.getPrice(item.itemHrid, 0);
-                if (!prices) continue;
-
-                // The buy side, because buying is the thing being costed. A book
-                // with no ask still has a bid to go on — one side is a worse
-                // estimate than two, but it is an estimate, and dropping the
-                // material would understate the room by exactly that material
-                // (getPrice normalizes missing sides to null)
-                const price = prices.ask ?? prices.bid;
-                if (price == null) continue;
-
-                totalCost += item.count * price;
+                totalCost += item.count * materialUnitPrice(item.itemHrid);
             }
         }
 
@@ -9358,7 +9875,7 @@ self.onmessage = function (e) {
     function calculateBattleHousesCost(characterHouseRooms) {
         const battleHouses = ['dining_room', 'library', 'dojo', 'gym', 'armory', 'archery_range', 'mystical_study'];
 
-        const gameData = dataManager.getInitClientData();
+        const gameData = dataManager$1.getInitClientData();
         if (!gameData) return { totalCost: 0, breakdown: [] };
 
         const houseRoomDetailMap = gameData.houseRoomDetailMap;
@@ -9396,10 +9913,171 @@ self.onmessage = function (e) {
         return { totalCost, breakdown };
     }
 
+    /**
+     * Get current level of a house room
+     * @param {string} houseRoomHrid - House room HRID (e.g., "/house_rooms/brewery")
+     * @returns {number} Current level (0-8)
+     */
+    function getCurrentRoomLevel(houseRoomHrid) {
+        return dataManager$1.getHouseRoomLevel(houseRoomHrid);
+    }
+
+    /**
+     * Calculate cost for a single level upgrade
+     * @param {string} houseRoomHrid - House room HRID
+     * @param {number} targetLevel - Target level (1-8)
+     * @returns {Promise<Object>} Cost breakdown {level, coins, materials, totalValue}
+     */
+    async function calculateLevelCost(houseRoomHrid, targetLevel) {
+        const initData = dataManager$1.getInitClientData();
+        if (!initData || !initData.houseRoomDetailMap) {
+            throw new Error('Game data not loaded');
+        }
+
+        const roomData = initData.houseRoomDetailMap[houseRoomHrid];
+        if (!roomData) {
+            throw new Error(`House room not found: ${houseRoomHrid}`);
+        }
+
+        const upgradeCosts = roomData.upgradeCostsMap[targetLevel];
+        if (!upgradeCosts) {
+            throw new Error(`No upgrade costs for level ${targetLevel}`);
+        }
+
+        // Calculate costs
+        let totalCoins = 0;
+        const materials = [];
+
+        for (const item of upgradeCosts) {
+            if (item.itemHrid === '/items/coin') {
+                totalCoins = item.count;
+            } else {
+                const marketPrice = materialUnitPrice(item.itemHrid);
+                materials.push({
+                    itemHrid: item.itemHrid,
+                    count: item.count,
+                    marketPrice: marketPrice,
+                    totalValue: marketPrice * item.count,
+                });
+            }
+        }
+
+        const totalMaterialValue = materials.reduce((sum, m) => sum + m.totalValue, 0);
+
+        return {
+            level: targetLevel,
+            coins: totalCoins,
+            materials: materials,
+            totalValue: totalCoins + totalMaterialValue,
+        };
+    }
+
+    /**
+     * Calculate cumulative cost from current level to target level
+     * @param {string} houseRoomHrid - House room HRID
+     * @param {number} currentLevel - Current level
+     * @param {number} targetLevel - Target level (currentLevel+1 to 8)
+     * @returns {Promise<Object>} Aggregated costs {fromLevel, toLevel, coins, materials, totalValue}
+     */
+    async function calculateCumulativeCost(houseRoomHrid, currentLevel, targetLevel) {
+        if (targetLevel <= currentLevel) {
+            throw new Error('Target level must be greater than current level');
+        }
+
+        if (targetLevel > 8) {
+            throw new Error('Maximum house level is 8');
+        }
+
+        let totalCoins = 0;
+        const materialMap = new Map(); // itemHrid -> {itemHrid, count, marketPrice, totalValue}
+
+        // Aggregate costs across all levels
+        for (let level = currentLevel + 1; level <= targetLevel; level++) {
+            const levelCost = await calculateLevelCost(houseRoomHrid, level);
+
+            totalCoins += levelCost.coins;
+
+            // Aggregate materials
+            for (const material of levelCost.materials) {
+                if (materialMap.has(material.itemHrid)) {
+                    const existing = materialMap.get(material.itemHrid);
+                    existing.count += material.count;
+                    existing.totalValue += material.totalValue;
+                } else {
+                    materialMap.set(material.itemHrid, { ...material });
+                }
+            }
+        }
+
+        const materials = Array.from(materialMap.values());
+        const totalMaterialValue = materials.reduce((sum, m) => sum + m.totalValue, 0);
+
+        return {
+            fromLevel: currentLevel,
+            toLevel: targetLevel,
+            coins: totalCoins,
+            materials: materials,
+            totalValue: totalCoins + totalMaterialValue,
+        };
+    }
+
+    /**
+     * Get player's inventory count for an item
+     * @param {string} itemHrid - Item HRID
+     * @returns {number} Item count in inventory
+     */
+    function getInventoryCount(itemHrid) {
+        const inventory = dataManager$1.getInventory();
+        if (!inventory) return 0;
+
+        // Only count items in inventory (not equipped) with no enhancement
+        // Enhanced items and equipped items cannot be used for house construction
+        const item = inventory.find(
+            (i) =>
+                i.itemHrid === itemHrid &&
+                i.itemLocationHrid === '/item_locations/inventory' &&
+                (!i.enhancementLevel || i.enhancementLevel === 0)
+        );
+        return item ? item.count : 0;
+    }
+
+    /**
+     * Get item name from game data
+     * @param {string} itemHrid - Item HRID
+     * @returns {string} Item name
+     */
+    function getItemName(itemHrid) {
+        if (itemHrid === '/items/coin') {
+            return 'Gold';
+        }
+
+        const initData = dataManager$1.getInitClientData();
+        const itemData = initData?.itemDetailMap?.[itemHrid];
+        return itemData?.name || 'Unknown Item';
+    }
+
+    /**
+     * Get house room name from game data
+     * @param {string} houseRoomHrid - House room HRID
+     * @returns {string} Room name
+     */
+    function getRoomName(houseRoomHrid) {
+        const initData = dataManager$1.getInitClientData();
+        const roomData = initData?.houseRoomDetailMap?.[houseRoomHrid];
+        return roomData?.name || 'Unknown Room';
+    }
+
     var houseCostCalculator = /*#__PURE__*/Object.freeze({
         __proto__: null,
         calculateBattleHousesCost: calculateBattleHousesCost,
-        calculateHouseBuildCost: calculateHouseBuildCost
+        calculateCumulativeCost: calculateCumulativeCost,
+        calculateHouseBuildCost: calculateHouseBuildCost,
+        calculateLevelCost: calculateLevelCost,
+        getCurrentRoomLevel: getCurrentRoomLevel,
+        getInventoryCount: getInventoryCount,
+        getItemName: getItemName,
+        getRoomName: getRoomName,
+        initialize: initialize
     });
 
     /**
@@ -9424,6 +10102,7 @@ self.onmessage = function (e) {
      * None of this shows up in the dev standalone build, which is a single bundle
      * where every arrangement works.
      */
+
 
     /**
      * Rows, in registration order.
@@ -9819,8 +10498,7 @@ self.onmessage = function (e) {
      * @returns {boolean} False when the panel is not up, which is the quiet default
      */
     function rowOption(key) {
-        if (typeof window === 'undefined') return false;
-        return Boolean(window.Toolasha?.UI?.overlayPanel?.settings?.[key]);
+        return Boolean(overlayPanel()?.settings?.[key]);
     }
 
     var overlayRows = /*#__PURE__*/Object.freeze({
@@ -11942,29 +12620,40 @@ self.onmessage = function (e) {
      *
      * ## An attack counter identifies the attacker
      *
-     * Each player carries `atkCounter`, and it goes up when they attack. Across two
-     * recorded runs it rose on **every** tick that dealt damage — sixty-nine of
-     * sixty-nine — which makes it the join between a player and a monster's lost
-     * health.
+     * Each player carries `atkCounter`, and it goes up when they attack. On a
+     * five-player recording it decided 89% of all damage exactly — the join
+     * between a player and a monster's lost health, and the one signal that also
+     * expresses misses, crits and the per-ability split.
      *
-     * It replaced mana, which was the original answer and a weaker one: only an
-     * ability costs mana, so `cMP` falling identified the actor on eight of those
-     * sixty-nine ticks. Mana is kept below the counter, for a payload that carries
-     * no counter and for the tick where two people act at once and one of them cast.
+     * ## Presence is the attribution when no counter moved
      *
-     * **In a party of two this changed nothing**, and it took five to show why it
-     * mattered. `pMap` is a delta exactly as `mMap` is, so a character who did
-     * nothing is not in the tick, and with two people "the only one here must be
-     * them" is usually right — the old and new rules pick the same character on all
-     * 137 damage ticks of a recorded pair.
+     * The server groups each `battle_updated` by **actor**: the player in a tick's
+     * `pMap` is the one whose action the tick reports — their swing's damage,
+     * their damage-over-time effect ticking, their thorns firing. So when nobody's
+     * counter rose and exactly one player is in the tick, the damage is theirs.
      *
-     * With five, one person tanks. The character a tick is about is then very often
-     * the one being **hit**, not the one attacking: on 82 of 440 damage ticks the
-     * lone character in the tick was there because their own health and damage
-     * counter had moved. Crediting them handed 8,500 points of other people's
-     * damage to whoever was holding aggro. That rung is now "the last character to
-     * swing", because a swing and its damage are not always in the same tick —
-     * 76 of those 82 had somebody else swinging one real tick earlier.
+     * This module used to believe the opposite, and the correction is worth
+     * keeping on record. On that five-player recording, 82 of 440 damage ticks
+     * had the lone character present because their own health and damage counter
+     * had moved — being *hit*, not attacking — and crediting them looked like
+     * handing 8,500 points of other people's damage to whoever held aggro. So the
+     * fallback became "the last character to swing". Adjudicating the same
+     * recording against the counters showed the diagnosis was wrong: every one of
+     * those ticks also carried the **monster's own attack counter rising** — the
+     * monster attacked, the tank was hit, and the health the monster lost in the
+     * same breath was the tank's **thorns**. The last-swinger fallback was not
+     * protecting the tank's teammates; it was stealing the tank's reflect, 5.7%
+     * of the party's damage, tick by provable tick. The remaining lone-present
+     * ticks were players present with *nothing* changed about them while the
+     * monster took a counted hit — their DoT ticking, which is itself the
+     * actor-grouping stated as plainly as a payload can state it.
+     *
+     * Mana sits below both: only an ability costs mana, so a **unique** `cMP` drop
+     * still separates the caster out of a crowd. Unique, not last-of-several —
+     * with synchronized builds two casts land on the same tick, and "whoever
+     * iterated last wins" is an iteration-order artifact, not an attribution.
+     * The last swinger remains as the final fallback for the multi-player tick
+     * nothing else can split.
      *
      * ## Every payload arrives twice
      *
@@ -12051,9 +12740,15 @@ self.onmessage = function (e) {
      *
      * @param {Object} pMap - This tick's players
      * @param {Object} state - From `newAttributionState`, mutated
+     * @param {Object} [options] - `{soloFallback}`; see below
+     * @param {boolean} [options.soloFallback] - Whether "the party has one member, so it was them"
+     *   may be used on a tick that names nobody at all. True for this client's own fights, where
+     *   the party is genuinely known from `new_battle`; false for a spectated guild trial, where
+     *   there is no party statement and the rung would fire off whichever slot happened to appear
+     *   first. The presence rung above it is unaffected — it reads this tick's own payload
      * @returns {string|null} The player index, or null when nobody can be identified
      */
-    function findCaster(pMap, state) {
+    function findCaster(pMap, state, { soloFallback = true } = {}) {
         const indices = Object.keys(pMap || {});
         const swung = [];
         const spent = [];
@@ -12085,19 +12780,26 @@ self.onmessage = function (e) {
             return swung[0];
         }
 
-        // Two people acting at once. Mana at least separates a cast from a swing,
-        // which is the older and worse answer rather than no answer.
-        if (spent.length) return spent[spent.length - 1];
+        // The delta names the actor. A tick's `pMap` carries the player whose
+        // action this tick reports, so a lone entry with no counter movement is a
+        // DoT ticking or thorns firing — theirs either way. Adjudicated against
+        // the counters on a five-player recording: this rung was right on every
+        // tick the counters could decide, and the last-swinger fallback it
+        // replaces was provably wrong on 5.7% of the party's damage.
+        if (indices.length === 1) return indices[0];
 
-        // Nobody else it could have been. This is the rung that carries a solo run
-        // on a payload with no attack counter at all.
-        const party = Object.keys(state.party);
-        if (party.length === 1) return party[0];
-        if (!party.length && indices.length === 1) return indices[0];
+        // Several people at once. A unique mana drop separates the caster; two
+        // drops on one tick separate nothing, and "whoever iterated last" is an
+        // artifact of key order, not an attribution.
+        if (spent.length === 1) return spent[0];
 
-        // The last character to swing. A swing and the damage it does are not always
-        // in the same tick — see the note above — and the person the tick *is* about
-        // is usually the one being hit, which is who this used to credit.
+        // A tick that names nobody at all, in a fight whose party is one person.
+        if (soloFallback && Object.keys(state.party).length === 1) {
+            return Object.keys(state.party)[0];
+        }
+
+        // The last character to swing — the final fallback for a multi-player
+        // tick nothing above could split.
         return state.lastSwing;
     }
 
@@ -12106,14 +12808,15 @@ self.onmessage = function (e) {
      *
      * @param {Object} tick - A `battle_updated` payload
      * @param {Object} state - From `newAttributionState`, mutated
+     * @param {Object} [options] - Passed to {@link findCaster}; `{soloFallback}`
      * @returns {Array<Object>} Hits as
      *   `{playerIndex, monsterIndex, amount, isCrit, isMiss, isHeal, action}`, and
      *   deaths as `{monsterIndex, isKill}` — the two are separate events because a
      *   bleed can land the killing blow on a tick where no counter moved
      */
-    function attributeTick(tick, state) {
+    function attributeTick(tick, state, options) {
         const { mMap, pMap } = tick || {};
-        const caster = findCaster(pMap, state);
+        const caster = findCaster(pMap, state, options);
         const events = [];
 
         for (const [index, monster] of Object.entries(mMap || {})) {
@@ -12380,6 +13083,16 @@ self.onmessage = function (e) {
     }
 
     /**
+     * Clear the stored decision and allow the dialog to show again.
+     * @returns {Promise<void>}
+     */
+    async function resetAdoptionDecision() {
+        cachedDecision = null;
+        promptPromise = null;
+        await storage.delete(DECISION_KEY, 'settings');
+    }
+
+    /**
      * Show the choose-a-character dialog (once per session).
      *
      * Fire-and-forget from data paths: callers must not await this before
@@ -12394,8 +13107,8 @@ self.onmessage = function (e) {
         promptPromise = (async () => {
             try {
                 const names = (await storage.get('accountCharacterNames', 'settings', null)) || {};
-                const currentId = dataManager.getCurrentCharacterId();
-                const currentName = dataManager.getCurrentCharacterName?.() || '';
+                const currentId = dataManager$1.getCurrentCharacterId();
+                const currentName = dataManager$1.getCurrentCharacterName?.() || '';
                 const known = { ...names };
                 if (currentId && !known[currentId]) known[currentId] = currentName || String(currentId);
                 const recommended = options.recommendedId || currentId;
@@ -12470,6 +13183,23 @@ self.onmessage = function (e) {
     }
 
     /**
+     * Test-only: forget the cached decision and any open prompt.
+     */
+    function _resetConsentCache() {
+        cachedDecision = undefined;
+        promptPromise = null;
+    }
+
+    var adoptionConsent = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        _resetConsentCache: _resetConsentCache,
+        getAdoptionTargetId: getAdoptionTargetId,
+        requestAdoptionConsent: requestAdoptionConsent,
+        resetAdoptionDecision: resetAdoptionDecision,
+        setAdoptionTargetId: setAdoptionTargetId
+    });
+
+    /**
      * Append-only history, stored as records rather than as one array.
      *
      * ## The write amplification this exists to end
@@ -12513,6 +13243,29 @@ self.onmessage = function (e) {
      */
 
 
+    /** Two digits, for a date part */
+    const pad = (value) => String(value).padStart(2, '0');
+
+    /**
+     * Which bucket a timestamp falls in.
+     *
+     * UTC rather than local time, so a chunk id does not change meaning when the
+     * player travels or the clocks go back — a record written in one zone has to be
+     * found again from another.
+     *
+     * @param {number} t - Milliseconds since the epoch
+     * @param {'month'|'day'|'hour'} granularity - How wide a bucket is
+     * @returns {string} A sortable id: `YYYY-MM`, `YYYY-MM-DD` or `YYYY-MM-DDTHH`
+     */
+    function timeChunkId(t, granularity = 'month') {
+        const date = new Date(Number.isFinite(t) ? t : 0);
+        const month = `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}`;
+        if (granularity === 'month') return month;
+        const day = `${month}-${pad(date.getUTCDate())}`;
+        if (granularity === 'day') return day;
+        return `${day}T${pad(date.getUTCHours())}`;
+    }
+
     /**
      * The character ids a set of record keys names.
      *
@@ -12555,6 +13308,314 @@ self.onmessage = function (e) {
     }
 
     /**
+     * A history kept as one record per time bucket.
+     *
+     * @param {Object} options - Wiring
+     * @param {string} options.storeName - Object store the records live in
+     * @param {string} options.prefix - Record key prefix, e.g. `lootLogRec`
+     * @param {Function} options.legacyKey - `(charId) => string`, the pre-split single key
+     * @param {Function} options.groupOf - `(entry) => string`, which chunk an entry belongs to
+     * @param {Function} options.compare - Sort comparator for the assembled array
+     * @param {boolean} [options.immediate] - Skip write debouncing, for recorders that did
+     * @param {string} [options.label] - Module name for log lines
+     * @returns {ChunkedHistory} The store
+     */
+    function createChunkedHistory(options) {
+        return new ChunkedHistory(options);
+    }
+
+    class ChunkedHistory {
+        constructor({ storeName, prefix, legacyKey, groupOf, compare, immediate = false, label = 'ChunkedHistory' }) {
+            this.storeName = storeName;
+            this.prefix = prefix;
+            this.legacyKey = legacyKey;
+            this.groupOf = groupOf;
+            this.compare = compare;
+            this.immediate = immediate;
+            this.label = label;
+
+            /** Whose records are in memory */
+            this._charId = null;
+            /** Whether a read has happened for that character */
+            this._loaded = false;
+            /** The assembled array, which is the truth between flushes */
+            this._entries = [];
+            /** chunkId → the JSON last written for it, so a save can write only what moved */
+            this._snapshot = new Map();
+            /**
+             * Whether the split failed and the legacy key is still the record.
+             *
+             * Set when a migration could not be written — a full disk, a database
+             * that will not answer. Reads and writes then go to the legacy key as
+             * they always did, and the next session tries the split again.
+             */
+            this._legacy = false;
+        }
+
+        /**
+         * @param {string} charId - Whose record
+         * @param {string} chunkId - Which bucket
+         * @returns {string} The key that bucket lives under
+         */
+        keyFor(charId, chunkId) {
+            return `${this.prefix}_${charId}_${chunkId}`;
+        }
+
+        /** @returns {boolean} True while the legacy single-array key is still in use */
+        isLegacy() {
+            return this._legacy;
+        }
+
+        /**
+         * The whole history, oldest or newest first per the comparator.
+         *
+         * Returns a copy: the array held here is what the next save diffs against,
+         * and a caller that sorted or spliced the live one would make that diff a
+         * lie. The entry objects themselves are shared, which is what lets a
+         * recorder mutate the session it is in the middle of.
+         *
+         * @param {string} charId - Whose history
+         * @returns {Promise<Array<Object>>} The assembled entries
+         */
+        async load(charId) {
+            if (!charId) return [];
+            if (this._loaded && this._charId === charId) return [...this._entries];
+
+            this._charId = charId;
+            this._loaded = true;
+            this._entries = [];
+            this._snapshot = new Map();
+            this._legacy = false;
+
+            try {
+                const legacy = await storage.get(this.legacyKey(charId), this.storeName, null);
+
+                if (Array.isArray(legacy) && legacy.length > 0) {
+                    const split = await this._migrate(charId, legacy);
+                    this._legacy = !split;
+                    this._entries = this._sorted(legacy);
+                    return [...this._entries];
+                }
+
+                if (Array.isArray(legacy)) {
+                    // An empty legacy array is nothing to split and nothing to keep
+                    await storage.delete(this.legacyKey(charId), this.storeName);
+                }
+
+                this._entries = await this._readRecords(charId);
+            } catch (error) {
+                console.error(`[${this.label}] Reading the history failed:`, error);
+                this._entries = [];
+            }
+
+            return [...this._entries];
+        }
+
+        /**
+         * Persist a whole history, writing only the chunks that moved.
+         *
+         * Deliberately not awaited by most callers: the debounced write's promise
+         * resolves when its timer fires, so awaiting it would stall the caller for
+         * the debounce delay. `storage.flushAll()` on unload is what lands the last
+         * one.
+         *
+         * @param {string} charId - Whose history
+         * @param {Array<Object>} entries - The history as it now stands
+         * @returns {Promise<boolean>} False when there was nowhere to write it
+         */
+        async save(charId, entries) {
+            if (!charId) return false;
+
+            // A save before any read has nothing to diff against, and taking the
+            // list as the whole truth would delete every chunk it does not mention
+            if (!this._loaded || this._charId !== charId) await this.load(charId);
+
+            const list = Array.isArray(entries) ? entries : [];
+            this._entries = this._sorted(list);
+
+            if (this._legacy) {
+                storage.set(this.legacyKey(charId), list, this.storeName, this.immediate);
+                return true;
+            }
+
+            const grouped = this._group(list);
+            const next = new Map();
+            const pending = [];
+
+            for (const [chunkId, bucket] of grouped) {
+                const serialized = JSON.stringify(bucket);
+                next.set(chunkId, serialized);
+                if (this._snapshot.get(chunkId) === serialized) continue;
+                const write = storage.set(this.keyFor(charId, chunkId), bucket, this.storeName, this.immediate);
+                if (this.immediate) pending.push(write);
+            }
+
+            // A rolling window drops its oldest entries; here that is a chunk that
+            // no longer has any, and pruning is deleting its key
+            for (const chunkId of this._snapshot.keys()) {
+                if (next.has(chunkId)) continue;
+                pending.push(storage.delete(this.keyFor(charId, chunkId), this.storeName));
+            }
+
+            this._snapshot = next;
+
+            if (pending.length > 0) await Promise.all(pending);
+            return true;
+        }
+
+        /**
+         * Forget one character's history entirely, records and legacy key alike.
+         * @param {string} charId - Whose history
+         * @returns {Promise<void>}
+         */
+        async clear(charId) {
+            if (!charId) return;
+
+            try {
+                const keys = await storage.getAllKeys(this.storeName);
+                for (const key of recordKeysFor(keys, this.prefix, charId)) {
+                    await storage.delete(key, this.storeName);
+                }
+                await storage.delete(this.legacyKey(charId), this.storeName);
+            } catch (error) {
+                console.error(`[${this.label}] Clearing the history failed:`, error);
+            }
+
+            this.forget();
+        }
+
+        /**
+         * Drop the in-memory copy, so the next read comes from storage.
+         *
+         * What a character switch needs: the departing character's entries must not
+         * be served to the arriving one, and — far worse — must not be written back
+         * under the arriving one's key.
+         */
+        forget() {
+            this._charId = null;
+            this._loaded = false;
+            this._entries = [];
+            this._snapshot = new Map();
+            this._legacy = false;
+        }
+
+        /**
+         * Split a legacy array into records and remove it.
+         *
+         * @param {string} charId - Whose history
+         * @param {Array<Object>} legacy - The single-array value as stored
+         * @returns {Promise<boolean>} True when the records are now the record
+         * @private
+         */
+        async _migrate(charId, legacy) {
+            const grouped = this._group(legacy);
+            if (grouped.size === 0) return false;
+
+            const records = {};
+            for (const [chunkId, bucket] of grouped) records[this.keyFor(charId, chunkId)] = bucket;
+
+            const written = await storage.putAll(this.storeName, records);
+            if (written !== grouped.size || storage.isQuotaExceeded()) {
+                console.warn(
+                    `[${this.label}] Splitting the stored history stalled (${written}/${grouped.size} chunks) — ` +
+                        'keeping the single key and reading from it'
+                );
+                return false;
+            }
+
+            // Records from an interrupted earlier attempt would otherwise show up
+            // beside the ones just written, as entries nothing put there
+            try {
+                const keys = await storage.getAllKeys(this.storeName);
+                for (const key of recordKeysFor(keys, this.prefix, charId)) {
+                    if (key in records) continue;
+                    await storage.delete(key, this.storeName);
+                }
+            } catch (error) {
+                console.error(`[${this.label}] Clearing stale chunks failed:`, error);
+            }
+
+            const removed = await storage.delete(this.legacyKey(charId), this.storeName);
+            if (!removed) {
+                // The legacy key outliving the split is the one state that loses
+                // data: the next load would read it and overwrite everything
+                // recorded since. Stay on it until it can actually be removed.
+                console.warn(`[${this.label}] The legacy key could not be removed — continuing to use it`);
+                return false;
+            }
+
+            this._snapshot = new Map();
+            for (const [chunkId, bucket] of grouped) this._snapshot.set(chunkId, JSON.stringify(bucket));
+            return true;
+        }
+
+        /**
+         * Read every record of one character back into one array.
+         *
+         * One key at a time rather than `getAll()`: these stores hold other things
+         * too — a year of item-level networth snapshots, another feature's keys —
+         * and a whole-store read would pull all of it into memory to assemble a
+         * series of timestamps and totals.
+         *
+         * @param {string} charId - Whose records
+         * @returns {Promise<Array<Object>>} The assembled entries
+         * @private
+         */
+        async _readRecords(charId) {
+            const keys = await storage.getAllKeys(this.storeName);
+            const entries = [];
+
+            for (const key of recordKeysFor(keys, this.prefix, charId)) {
+                const bucket = await storage.get(key, this.storeName, null);
+                if (!Array.isArray(bucket)) continue;
+                this._snapshot.set(key.slice(`${this.prefix}_${charId}_`.length), JSON.stringify(bucket));
+                entries.push(...bucket);
+            }
+
+            return this._sorted(entries);
+        }
+
+        /**
+         * @param {Array<Object>} entries - Entries in any order
+         * @returns {Map<string, Array<Object>>} chunkId → its entries, in input order
+         * @private
+         */
+        _group(entries) {
+            const grouped = new Map();
+            for (const entry of entries || []) {
+                if (entry == null) continue;
+                const chunkId = this.groupOf(entry);
+                if (chunkId === null || chunkId === undefined || chunkId === '') continue;
+                const id = String(chunkId);
+                const bucket = grouped.get(id);
+                if (bucket) bucket.push(entry);
+                else grouped.set(id, [entry]);
+            }
+            return grouped;
+        }
+
+        /**
+         * @param {Array<Object>} entries - Entries in any order
+         * @returns {Array<Object>} A new array in the comparator's order
+         * @private
+         */
+        _sorted(entries) {
+            return this.compare ? [...entries].sort(this.compare) : [...entries];
+        }
+    }
+
+    var chunkedHistory = { createChunkedHistory, timeChunkId, idsFromRecordKeys, recordKeysFor };
+
+    var chunkedHistory$1 = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        createChunkedHistory: createChunkedHistory,
+        default: chunkedHistory,
+        idsFromRecordKeys: idsFromRecordKeys,
+        recordKeysFor: recordKeysFor,
+        timeChunkId: timeChunkId
+    });
+
+    /**
      * Per-character storage key helpers.
      *
      * Character-specific state stored under a bare key leaks between characters —
@@ -12593,7 +13654,7 @@ self.onmessage = function (e) {
      * @returns {string} `base_<characterId>`, or `base_default` before login
      */
     function characterKey(base) {
-        return `${base}_${dataManager.getCurrentCharacterId() || 'default'}`;
+        return `${base}_${dataManager$1.getCurrentCharacterId() || 'default'}`;
     }
 
     /**
@@ -12638,10 +13699,10 @@ self.onmessage = function (e) {
         try {
             // Same signal MCS reads: character.gameMode. 'standard' is the market
             // character; 'ironcow' and 'legacy_ironcow' never adopt.
-            const gameMode = dataManager.getCurrentCharacterGameMode();
+            const gameMode = dataManager$1.getCurrentCharacterGameMode();
             const name =
-                typeof dataManager.getCurrentCharacterName === 'function'
-                    ? dataManager.getCurrentCharacterName() || ''
+                typeof dataManager$1.getCurrentCharacterName === 'function'
+                    ? dataManager$1.getCurrentCharacterName() || ''
                     : '';
             if (typeof gameMode === 'string' && gameMode.includes('ironcow')) {
                 decision = false;
@@ -12720,7 +13781,7 @@ self.onmessage = function (e) {
             return defaultValue;
         }
 
-        const charId = dataManager.getCurrentCharacterId();
+        const charId = dataManager$1.getCurrentCharacterId();
         if (!charId) {
             return defaultValue;
         }
@@ -12759,6 +13820,21 @@ self.onmessage = function (e) {
     }
 
     /**
+     * Test-only: forget memoized adoption decisions.
+     */
+    function _resetAdoptionCache() {
+        adoptionDecisions.clear();
+    }
+
+    var characterKey$1 = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        _resetAdoptionCache: _resetAdoptionCache,
+        characterKey: characterKey,
+        readScoped: readScoped,
+        writeScoped: writeScoped
+    });
+
+    /**
      * Panel Geometry
      *
      * Where a floating panel was left, and how big it was left.
@@ -12782,12 +13858,12 @@ self.onmessage = function (e) {
      */
 
 
-    const STORAGE_KEY$1 = 'panelGeometry';
+    const STORAGE_KEY$2 = 'panelGeometry';
     /** Per-character open flags: `{ [panelKey]: boolean }` */
     const OPEN_KEY = 'panelOpenState';
 
     /** Cache of every panel's geometry, so opening a panel does not wait on storage */
-    let cache = null;
+    let cache$1 = null;
     let loading = null;
 
     /**
@@ -12920,18 +13996,18 @@ self.onmessage = function (e) {
         // read there comes back with the default — indistinguishable from nothing
         // having been stored
         await storage.ready;
-        if (cache) return cache;
+        if (cache$1) return cache$1;
         if (!loading) {
             loading = storage
-                .getJSON(STORAGE_KEY$1, 'settings', {})
+                .getJSON(STORAGE_KEY$2, 'settings', {})
                 .then((saved) => {
-                    cache = saved || {};
-                    return cache;
+                    cache$1 = saved || {};
+                    return cache$1;
                 })
                 .catch((error) => {
                     console.error('[PanelGeometry] Loading saved geometry failed:', error);
-                    cache = {};
-                    return cache;
+                    cache$1 = {};
+                    return cache$1;
                 });
         }
         return loading;
@@ -12946,7 +14022,7 @@ self.onmessage = function (e) {
         const all = await allGeometry();
         all[panelKey] = { ...all[panelKey], ...geometry };
         try {
-            await storage.setJSON(STORAGE_KEY$1, all, 'settings');
+            await storage.setJSON(STORAGE_KEY$2, all, 'settings');
         } catch (error) {
             console.error('[PanelGeometry] Saving geometry failed:', error);
         }
@@ -12960,7 +14036,7 @@ self.onmessage = function (e) {
         const all = await allGeometry();
         delete all[panelKey];
         try {
-            await storage.setJSON(STORAGE_KEY$1, all, 'settings');
+            await storage.setJSON(STORAGE_KEY$2, all, 'settings');
         } catch (error) {
             console.error('[PanelGeometry] Clearing geometry failed:', error);
         }
@@ -12982,7 +14058,7 @@ self.onmessage = function (e) {
         const { left: _left, top: _top, ...rest } = all[panelKey];
         all[panelKey] = rest;
         try {
-            await storage.setJSON(STORAGE_KEY$1, all, 'settings');
+            await storage.setJSON(STORAGE_KEY$2, all, 'settings');
         } catch (error) {
             console.error('[PanelGeometry] Clearing a panel position failed:', error);
         }
@@ -13057,7 +14133,7 @@ self.onmessage = function (e) {
         // adopt it; that copy is the newer one and wins
         const waiting = await storage.get(OPEN_KEY, 'settings', null);
         await storage.set(OPEN_KEY, { ...flags, ...(waiting || {}) }, 'settings', true);
-        await storage.setJSON(STORAGE_KEY$1, all, 'settings');
+        await storage.setJSON(STORAGE_KEY$2, all, 'settings');
     }
 
     /**
@@ -13152,13 +14228,13 @@ self.onmessage = function (e) {
      * @returns {Promise<void>}
      */
     function characterReady() {
-        if (dataManager.getCurrentCharacterId()) return Promise.resolve();
+        if (dataManager$1.getCurrentCharacterId()) return Promise.resolve();
         return new Promise((resolve) => {
             const onInitialized = () => {
-                dataManager.off('character_initialized', onInitialized);
+                dataManager$1.off('character_initialized', onInitialized);
                 resolve();
             };
-            dataManager.on('character_initialized', onInitialized);
+            dataManager$1.on('character_initialized', onInitialized);
         });
     }
 
@@ -13192,7 +14268,7 @@ self.onmessage = function (e) {
      * Test-only: forget the loaded geometry and open flags.
      */
     function _resetCaches() {
-        cache = null;
+        cache$1 = null;
         loading = null;
         openCache.clear();
         openLoading.clear();
@@ -13969,7 +15045,7 @@ self.onmessage = function (e) {
      */
 
 
-    const STORAGE_KEY = 'consumablesSettings';
+    const STORAGE_KEY$1 = 'consumablesSettings';
 
     /** The durations offered, in the order the header button cycles them */
     const TARGETS = [
@@ -14001,7 +15077,7 @@ self.onmessage = function (e) {
      */
     function cycleTarget() {
         index = (index + 1) % TARGETS.length;
-        writeScoped(STORAGE_KEY, { targetSeconds: currentTarget().seconds }, 'settings').catch((error) => {
+        writeScoped(STORAGE_KEY$1, { targetSeconds: currentTarget().seconds }, 'settings').catch((error) => {
             console.error('[ConsumableTarget] Saving the target failed:', error);
         });
         return currentTarget();
@@ -14019,7 +15095,7 @@ self.onmessage = function (e) {
             // Waits for the database: it is opened after the libraries are
             // evaluated, so a read at module scope always returns the default
             await storage.ready;
-            const saved = await readScoped(STORAGE_KEY, 'settings', null, { migrate: 'adopt' });
+            const saved = await readScoped(STORAGE_KEY$1, 'settings', null, { migrate: 'adopt' });
             const found = TARGETS.findIndex((target) => target.seconds === saved?.targetSeconds);
             // A value stored by an older list must not win over the code's
             index = found >= 0 ? found : DEFAULT_INDEX;
@@ -14031,8 +15107,8 @@ self.onmessage = function (e) {
 
     // How much stock is enough is a question about one character's habits, so the
     // key is theirs — and nothing here re-runs on a switch unless it asks to be told
-    dataManager.on('character_initialized', () => loadTarget());
-    dataManager.on('character_switched', () => loadTarget());
+    dataManager$1.on('character_initialized', () => loadTarget());
+    dataManager$1.on('character_switched', () => loadTarget());
 
     var consumableTarget = /*#__PURE__*/Object.freeze({
         __proto__: null,
@@ -16419,263 +17495,6 @@ self.onmessage = function (e) {
     });
 
     /**
-     * Performance Monitor
-     * Tracks execution time of features and DOM observer handlers
-     * using a rolling window for CPU percentage calculations.
-     */
-
-    const WINDOW_MS = 5000;
-
-    /**
-     * When the script started, as the clock the rest of the timings are quoted
-     * against. `performance.now()` is already relative to page navigation, but the
-     * userscript runs at document-start and the difference matters when the
-     * question is "what happened before my feature got a turn".
-     */
-    const BOOT_AT = typeof performance !== 'undefined' ? performance.now() : 0;
-
-    class PerformanceMonitor {
-        constructor() {
-            this.measurements = new Map();
-            this.snapshots = new Map();
-            // Named moments on the startup timeline, in the order they happened
-            this.marks = [];
-            // Work that a snapshot was made of, broken into its parts
-            this.spans = new Map();
-            this.bootAt = BOOT_AT;
-            this.windowMs = WINDOW_MS;
-            this.enabled = false;
-            this._onVisibilityChange = () => {
-                this._tabVisible = !document.hidden;
-            };
-            this._tabVisible = true;
-            if (typeof document !== 'undefined') {
-                document.addEventListener('visibilitychange', this._onVisibilityChange);
-            }
-        }
-
-        /**
-         * Record a timing measurement
-         * @param {string} name - Metric name (e.g. "dom:MarketFilter", "init:tooltipPrices")
-         * @param {number} durationMs - Duration in milliseconds
-         */
-        record(name, durationMs) {
-            if (!this.enabled || !this._tabVisible) return;
-            if (!this.measurements.has(name)) {
-                this.measurements.set(name, []);
-            }
-            this.measurements.get(name).push({ time: Date.now(), duration: durationMs });
-        }
-
-        /**
-         * Store a one-time snapshot measurement that persists beyond the rolling window
-         *
-         * `startedAt` is what makes a startup trace readable: a feature that took six
-         * seconds is one fact, and whether it took them at second two or second
-         * fourteen is a different one — and only the second says what else was
-         * waiting behind it.
-         *
-         * @param {string} name - Metric name
-         * @param {number} durationMs - Duration in milliseconds
-         * @param {number} [startedAt] - Milliseconds since boot when it began
-         */
-        snapshot(name, durationMs, startedAt) {
-            this.snapshots.set(name, {
-                duration: durationMs,
-                time: Date.now(),
-                startedAt: startedAt ?? this.sinceBoot() - durationMs,
-            });
-        }
-
-        /** @returns {number} Milliseconds since the script started */
-        sinceBoot() {
-            return (typeof performance !== 'undefined' ? performance.now() : 0) - this.bootAt;
-        }
-
-        /**
-         * Note that something happened, and when.
-         *
-         * Marks answer the question a list of durations cannot: where did the gaps
-         * go. Half of a slow start is usually spent waiting — for IndexedDB, for the
-         * game's own data to arrive — and waiting shows up in nobody's duration.
-         *
-         * @param {string} name - What happened, e.g. `storage:open`
-         * @param {Object} [detail] - Anything worth carrying alongside
-         */
-        mark(name, detail = null) {
-            this.marks.push({ name, at: this.sinceBoot(), detail });
-        }
-
-        /**
-         * Time a part of something already being timed.
-         *
-         * A feature that takes six seconds is a question, not an answer. Spans are
-         * how the answer gets recorded — which call inside it was the six seconds —
-         * and they are always on, because the run worth profiling is the one that
-         * already happened.
-         *
-         * @param {string} name - Parent metric, e.g. `init:networth`
-         * @param {string} part - What this piece is, e.g. `recalculate`
-         * @returns {Function} Call it when the piece is done
-         */
-        startSpan(name, part) {
-            const startedAt = this.sinceBoot();
-            return () => {
-                const duration = this.sinceBoot() - startedAt;
-                if (!this.spans.has(name)) this.spans.set(name, []);
-                this.spans.get(name).push({ part, duration, startedAt });
-                return duration;
-            };
-        }
-
-        /**
-         * Run a function, recording how long its part took.
-         *
-         * @param {string} name - Parent metric
-         * @param {string} part - What this piece is
-         * @param {Function} fn - The work
-         * @returns {*} Whatever the work returned
-         */
-        async span(name, part, fn) {
-            const end = this.startSpan(name, part);
-            try {
-                return await fn();
-            } finally {
-                end();
-            }
-        }
-
-        /** @returns {Array<Object>} The parts of one metric, longest first */
-        getSpans(name) {
-            return [...(this.spans.get(name) || [])].sort((a, b) => b.duration - a.duration);
-        }
-
-        /** @returns {Array<Object>} Every mark, in the order they happened */
-        getMarks() {
-            return [...this.marks].sort((a, b) => a.at - b.at);
-        }
-
-        /**
-         * Wrap a function with automatic timing
-         * @param {string} name - Metric name
-         * @param {Function} fn - Function to wrap
-         * @returns {Function} Wrapped function
-         */
-        wrap(name, fn) {
-            const monitor = this;
-            return function (...args) {
-                if (!monitor.enabled || !monitor._tabVisible) return fn.apply(this, args);
-                const start = performance.now();
-                try {
-                    const result = fn.apply(this, args);
-                    if (result && typeof result.then === 'function') {
-                        return result.finally(() => monitor.record(name, performance.now() - start));
-                    }
-                    monitor.record(name, performance.now() - start);
-                    return result;
-                } catch (error) {
-                    monitor.record(name, performance.now() - start);
-                    throw error;
-                }
-            };
-        }
-
-        /**
-         * Get stats for a single metric within the rolling window
-         * @param {string} name - Metric name
-         * @returns {{ calls: number, totalMs: number, avgMs: number, cpuPercent: number } | null}
-         */
-        getStats(name) {
-            const entries = this.measurements.get(name);
-            if (!entries || entries.length === 0) return null;
-
-            const cutoff = Date.now() - this.windowMs;
-            let calls = 0;
-            let totalMs = 0;
-
-            for (let i = entries.length - 1; i >= 0; i--) {
-                if (entries[i].time < cutoff) break;
-                calls++;
-                totalMs += entries[i].duration;
-            }
-
-            if (calls === 0) return null;
-
-            return {
-                calls,
-                totalMs,
-                avgMs: totalMs / calls,
-                cpuPercent: Math.min((totalMs / this.windowMs) * 100, 100),
-            };
-        }
-
-        /**
-         * Get stats for all metrics, cleaning up stale data
-         * @returns {Map<string, { calls: number, totalMs: number, avgMs: number, cpuPercent: number }>}
-         */
-        getAllStats() {
-            this._cleanup();
-            const result = new Map();
-
-            for (const [name, entries] of this.measurements) {
-                if (entries.length === 0) continue;
-                const stats = this.getStats(name);
-                if (stats) {
-                    result.set(name, stats);
-                }
-            }
-
-            return result;
-        }
-
-        /**
-         * Remove measurements older than the rolling window
-         * @private
-         */
-        _cleanup() {
-            const cutoff = Date.now() - this.windowMs;
-            for (const [name, entries] of this.measurements) {
-                let firstValid = 0;
-                while (firstValid < entries.length && entries[firstValid].time < cutoff) {
-                    firstValid++;
-                }
-                if (firstValid > 0) {
-                    entries.splice(0, firstValid);
-                }
-                if (entries.length === 0) {
-                    this.measurements.delete(name);
-                }
-            }
-        }
-
-        /**
-         * Get all snapshot measurements
-         * @returns {Map<string, { duration: number, time: number }>}
-         */
-        getSnapshots() {
-            return new Map(this.snapshots);
-        }
-
-        /**
-         * Clear all measurements
-         */
-        reset() {
-            this.measurements.clear();
-            this.snapshots.clear();
-            this.spans.clear();
-            // Marks are the startup trace and cannot be taken again without a
-            // reload, so resetting the rolling stats leaves them alone
-        }
-    }
-
-    const performanceMonitor = new PerformanceMonitor();
-
-    var performanceMonitor$1 = /*#__PURE__*/Object.freeze({
-        __proto__: null,
-        default: performanceMonitor
-    });
-
-    /**
      * Item Navigation Utilities
      * Handles Alt+click navigation to crafting/gathering actions or item dictionary
      */
@@ -16706,7 +17525,7 @@ self.onmessage = function (e) {
      * @returns {Object|null} { actionHrid, type: 'production'|'gathering' } or null
      */
     function findActionForItem(itemHrid) {
-        const gameData = dataManager.getInitClientData();
+        const gameData = dataManager$1.getInitClientData();
         if (!gameData?.actionDetailMap) {
             return null;
         }
@@ -16751,7 +17570,7 @@ self.onmessage = function (e) {
             return false;
         }
         // Validate HRID exists before passing to game (invalid HRIDs crash renderDescription)
-        if (!dataManager.getItemDetails(itemHrid)) {
+        if (!dataManager$1.getItemDetails(itemHrid)) {
             return false;
         }
         game.handleOpenItemDictionary(itemHrid);
@@ -16806,7 +17625,7 @@ self.onmessage = function (e) {
             return true;
         } else if (game.handleOpenItemDictionary) {
             // Validate HRID exists before passing to game (invalid HRIDs crash renderDescription)
-            const itemDetails = dataManager.getItemDetails(itemHrid);
+            const itemDetails = dataManager$1.getItemDetails(itemHrid);
             if (!itemDetails) {
                 return false;
             }
@@ -17254,7 +18073,7 @@ self.onmessage = function (e) {
      * @returns {number} Total count in inventory
      */
     function currentAcquiredCount(itemHrid, enhancementLevel) {
-        const inventory = dataManager.getInventory?.() || [];
+        const inventory = dataManager$1.getInventory?.() || [];
         return inventory
             .filter((item) => item.itemHrid === itemHrid && (item.enhancementLevel || 0) === (enhancementLevel || 0))
             .reduce((sum, item) => sum + (item.count || 0), 0);
@@ -17344,7 +18163,7 @@ self.onmessage = function (e) {
         unwatchTabAcquisition(tab);
 
         const itemName =
-            options.itemName || dataManager.getItemDetails?.(itemHrid)?.name || itemHrid.split('/').pop() || itemHrid;
+            options.itemName || dataManager$1.getItemDetails?.(itemHrid)?.name || itemHrid.split('/').pop() || itemHrid;
 
         const retire = () => {
             showAcquiredBadge(tab, itemName);
@@ -17391,8 +18210,8 @@ self.onmessage = function (e) {
             }
         };
 
-        webSocketHook.on('*', handler);
-        acquisitionWatchers.set(tab, () => webSocketHook.off('*', handler));
+        webSocketHook$1.on('*', handler);
+        acquisitionWatchers.set(tab, () => webSocketHook$1.off('*', handler));
 
         // Cover the case where the item was already sitting in inventory before
         // this tab started watching (e.g. a stale plan reopened after buying).
@@ -18131,6 +18950,4477 @@ self.onmessage = function (e) {
     });
 
     /**
+     * Which game server this is
+     *
+     * Milky Way Idle runs a test server beside the live one, on its own hostname
+     * and with its own database. Playing on it is ordinary — it is where new
+     * content is tried — but the two are different worlds: different characters,
+     * different prices, different economy.
+     *
+     * That matters wherever Toolasha sends something outward. A test-server order
+     * book uploaded to a pooled price dataset is not a cheaper price, it is a wrong
+     * one, and it is indistinguishable from a real one once it has landed. So
+     * anything that contributes data to a shared service asks here first.
+     *
+     * Reading is a different question and mostly harmless — a test-server session
+     * looking up live history gets live history, which is what it was after.
+     */
+
+    /** The live game, the test game, and nothing else Toolasha runs on */
+    const TEST_HOSTNAMES = new Set(['test.milkywayidle.com', 'api-test.milkywayidle.com']);
+
+    /**
+     * The hostname this page is on, or an empty string off a browser.
+     * @returns {string}
+     */
+    function currentHostname() {
+        try {
+            return String(globalThis.location?.hostname || '').toLowerCase();
+        } catch {
+            return '';
+        }
+    }
+
+    /**
+     * Whether this is the test server.
+     *
+     * Matches by hostname rather than by anything in the game data, because the
+     * answer is needed before a character has loaded and because the hostname is
+     * the one thing the two servers can never share.
+     *
+     * @param {string} [hostname] - Overrides the page's own, for tests
+     * @returns {boolean} True on the test server, false on live and false anywhere
+     *   the question does not apply — an unknown host is treated as live, which is
+     *   the answer that keeps a real session contributing
+     */
+    function isTestServer(hostname = currentHostname()) {
+        const host = String(hostname || '').toLowerCase();
+        if (!host) return false;
+        return TEST_HOSTNAMES.has(host);
+    }
+
+    var gameServer = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        isTestServer: isTestServer
+    });
+
+    /**
+     * Market History API
+     *
+     * Fetches an item's price history from the pooled server the mooket project
+     * runs, and — when you let it — contributes what your own client sees back.
+     *
+     * Adapted from mooket II by Q7 (MIT). See docs/THIRD-PARTY-LICENSES.md.
+     *
+     * The dataset exists because clients report the order books they open, so
+     * reading and contributing are one switch rather than two. A version that let
+     * you read without ever giving anything back would work perfectly and quietly
+     * drain a shared resource — the history is only as good as what people send,
+     * and a reader who contributes nothing is someone else's missing data point.
+     *
+     * Both directions talk to a third party, which is why the switch starts off and
+     * why the setting says plainly what each does: reading tells the server which
+     * items you look up, contributing tells it the books you opened and when.
+     *
+     * ## Never from the test server
+     *
+     * The test server has its own economy, so a book observed there is not a cheap
+     * price, it is a wrong one — and once it is in a pooled dataset there is nothing
+     * in it that says where it came from. Contributing is therefore off on the test
+     * server whatever the setting says, and the socket that carries it is never
+     * opened. Reading still works, because a test-server session asking for live
+     * history gets live history.
+     */
+
+
+    /** The mooket project's server */
+    const HISTORY_HOST = 'https://q7.nainai.eu.org';
+
+    /** How long a fetched range is reused before asking again */
+    const CACHE_TTL_MS = 5 * 60 * 1000;
+
+    /** A request that has not answered by now is not going to */
+    const REQUEST_TIMEOUT_MS = 10_000;
+
+    /** How long to wait before reconnecting the reporting socket */
+    const RECONNECT_DELAY_MS = 30_000;
+
+    class MarketHistoryAPI {
+        constructor() {
+            this.cache = new Map();
+            this.socket = null;
+            this.reconnectTimer = null;
+            this.closing = false;
+            /** Said once. The getter is read on every book, and on every reconnect. */
+            this.notedTestServer = false;
+        }
+
+        /** @returns {boolean} Whether history may be fetched at all */
+        get enabled() {
+            return config.getSetting('market_pooledHistory') === true;
+        }
+
+        /**
+         * @returns {boolean} Whether observed books may be sent back. The same
+         *   switch as reading — taking from a pooled dataset without feeding it is
+         *   what empties it — except on the test server, where the honest
+         *   contribution is none.
+         */
+        get contributing() {
+            if (!this.enabled) return false;
+
+            if (isTestServer()) {
+                if (!this.notedTestServer) {
+                    this.notedTestServer = true;
+                    console.log('[Mooket] test server — not sending data');
+                }
+                return false;
+            }
+
+            return true;
+        }
+
+        /**
+         * One item's history over a range of days.
+         *
+         * @param {string} itemHrid - Item
+         * @param {number} enhancementLevel - Enhancement level
+         * @param {number} days - How far back
+         * @returns {Promise<Array<Object>|null>} Rows, or null when unavailable
+         */
+        async fetchHistory(itemHrid, enhancementLevel, days) {
+            if (!this.enabled || !itemHrid) return null;
+
+            const key = `${itemHrid}:${enhancementLevel}:${days}`;
+            const cached = this.cache.get(key);
+            if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.rows;
+
+            const url =
+                `${HISTORY_HOST}/api/market/history?item_id=${encodeURIComponent(itemHrid)}` +
+                `&variant=${enhancementLevel}&days=${days}`;
+
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+            try {
+                const response = await fetch(url, { signal: controller.signal });
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const rows = await response.json();
+                this.cache.set(key, { rows, at: Date.now() });
+                return rows;
+            } catch (error) {
+                console.error('[MooketHistory] Fetching history failed:', error);
+                return null;
+            } finally {
+                clearTimeout(timeout);
+            }
+        }
+
+        /**
+         * Open the reporting socket, if contributing is on.
+         *
+         * It reconnects on its own because the alternative is a session that stops
+         * contributing after the first blip and never says so.
+         */
+        connect() {
+            if (!this.contributing || this.socket) return;
+
+            this.closing = false;
+            const url = `${HISTORY_HOST.replace(/^http/, 'ws')}/market/ws`;
+
+            try {
+                this.socket = new WebSocket(url);
+            } catch (error) {
+                console.error('[MooketHistory] Opening the reporting socket failed:', error);
+                this.socket = null;
+                return;
+            }
+
+            this.socket.addEventListener('close', () => {
+                this.socket = null;
+                if (this.closing || !this.contributing) return;
+                this.reconnectTimer = setTimeout(() => this.connect(), RECONNECT_DELAY_MS);
+            });
+            this.socket.addEventListener('error', () => {
+                // 'close' follows and handles the reconnect; logging both would
+                // just double the noise on a server that is simply down
+            });
+        }
+
+        disconnect() {
+            this.closing = true;
+            if (this.reconnectTimer) {
+                clearTimeout(this.reconnectTimer);
+                this.reconnectTimer = null;
+            }
+            this.socket?.close();
+            this.socket = null;
+        }
+
+        /**
+         * Send an order-book payload back to the pool.
+         * @param {Object} payload - The market_item_order_books_updated message
+         */
+        report(payload) {
+            if (!this.contributing) return;
+            if (!this.socket) {
+                this.connect();
+                return;
+            }
+            if (this.socket.readyState !== WebSocket.OPEN) return;
+
+            try {
+                this.socket.send(JSON.stringify({ ...payload, time: Math.floor(Date.now() / 1000) }));
+            } catch (error) {
+                console.error('[MooketHistory] Reporting an order book failed:', error);
+            }
+        }
+    }
+
+    const marketHistoryAPI = new MarketHistoryAPI();
+
+    /**
+     * Market History Data
+     *
+     * Turns the pooled history server's rows into the series a chart can draw.
+     *
+     * Adapted from mooket II by Q7 (MIT). See docs/THIRD-PARTY-LICENSES.md.
+     *
+     * A row is one sighting of an item's market: the best ask (`a`), the best bid
+     * (`b`), an average transacted price (`p`) and the volume traded (`v`). Two
+     * things have to happen before that is drawable.
+     *
+     * **Long ranges are grouped by day.** Three months of raw sightings is tens of
+     * thousands of points, and the shape is lost in the noise long before the
+     * browser struggles. Grouping uses the median rather than the mean: a single
+     * absurd ask — someone listing a 300-coin item at 40 million to see if anyone
+     * bites — moves a mean for the whole day and moves a median not at all.
+     *
+     * **Volume is split between the two sides.** The server reports how much traded
+     * and at what average price, not who crossed. Where in the spread that average
+     * price landed says which side was doing the trading: at the ask, buyers were
+     * lifting offers; at the bid, sellers were hitting bids; in between, both. It is
+     * an estimate and labelled as one, but it is the difference between "this item
+     * moved 4,000 units" and "buyers took 4,000 units off the shelf".
+     *
+     * Pure: rows in, series out. No DOM, no fetching.
+     */
+
+
+    /** Past this many days the rows are grouped into one point per day */
+    const DAILY_GROUPING_THRESHOLD = 7;
+
+    /**
+     * Middle value of the positive numbers in a list.
+     *
+     * Zero and negative mean "nothing was listed on that side", not "it was worth
+     * nothing", so they are dropped rather than counted as low prices — averaging
+     * them in would drag a day's ask toward zero every time the book emptied.
+     *
+     * @param {Array<number>} values - Values, in any order
+     * @returns {number} Median of the positive values, or 0 when there are none
+     */
+    function median(values) {
+        const positive = (values || []).filter((value) => value > 0).sort((a, b) => a - b);
+        if (!positive.length) return 0;
+
+        const middle = Math.floor(positive.length / 2);
+        return positive.length % 2 ? positive[middle] : (positive[middle - 1] + positive[middle]) / 2;
+    }
+
+    /**
+     * Split one row's volume between buyers lifting the ask and sellers hitting the
+     * bid.
+     *
+     * Where the average transacted price sits in the spread is the only evidence
+     * available. At or above the ask, everything traded was a buyer taking an offer;
+     * at or below the bid, a seller taking a bid; in between, the split is linear in
+     * how far up the spread the average landed.
+     *
+     * With only one side quoted there is nothing to interpolate against, so the
+     * whole volume goes to the side that could have traded. With neither, it is
+     * halved — an admission of ignorance rather than a measurement.
+     *
+     * @param {Object} row - { a, b, p, v }
+     * @returns {{atAsk: number, atBid: number}}
+     */
+    function splitVolume(row) {
+        const ask = row?.a > 0 ? row.a : 0;
+        const bid = row?.b > 0 ? row.b : 0;
+        const price = row?.p > 0 ? row.p : 0;
+        const volume = Math.max(0, Number(row?.v) || 0);
+
+        if (volume <= 0) return { atAsk: 0, atBid: 0 };
+
+        if (ask > 0 && bid > 0 && ask > bid) {
+            if (price >= ask) return { atAsk: volume, atBid: 0 };
+            if (price <= bid) return { atAsk: 0, atBid: volume };
+            const atAsk = (volume * (price - bid)) / (ask - bid);
+            return { atAsk, atBid: volume - atAsk };
+        }
+
+        // Only a bid quoted means anything that traded was sold into it, and vice
+        // versa. The naming is from the taker's side throughout.
+        if (bid > 0) return { atAsk: volume, atBid: 0 };
+        if (ask > 0) return { atAsk: 0, atBid: volume };
+        return { atAsk: volume / 2, atBid: volume / 2 };
+    }
+
+    /**
+     * Seconds since the epoch for a row, whichever way the server wrote its time.
+     * @param {Object} row - History row
+     * @returns {number}
+     */
+    function rowTime(row) {
+        if (typeof row?.time === 'number') return row.time;
+        const parsed = new Date(row?.time).getTime();
+        return Number.isFinite(parsed) ? parsed / 1000 : 0;
+    }
+
+    /**
+     * Reduce history rows to the points a chart draws.
+     *
+     * @param {Array<Object>} rows - Rows from the history API
+     * @param {number} days - The range being shown
+     * @returns {Array<Object>} { time, ask, bid, avg, volume, atAsk, atBid }, oldest first
+     */
+    function buildHistorySeries(rows, days) {
+        if (!Array.isArray(rows)) return [];
+
+        if (Number(days) <= DAILY_GROUPING_THRESHOLD) {
+            return rows
+                .map((row) => {
+                    const { atAsk, atBid } = splitVolume(row);
+                    return {
+                        time: rowTime(row),
+                        ask: row.a > 0 ? row.a : 0,
+                        bid: row.b > 0 ? row.b : 0,
+                        avg: row.p > 0 ? row.p : 0,
+                        volume: Math.max(0, Number(row.v) || 0),
+                        atAsk: Math.round(atAsk),
+                        atBid: Math.round(atBid),
+                    };
+                })
+                .sort((a, b) => a.time - b.time);
+        }
+
+        const byDay = new Map();
+        for (const row of rows) {
+            const time = rowTime(row);
+            const date = new Date(time * 1000);
+            const key = `${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}`;
+
+            let day = byDay.get(key);
+            if (!day) {
+                day = { time, asks: [], bids: [], avgs: [], volume: 0, atAsk: 0, atBid: 0 };
+                byDay.set(key, day);
+            }
+
+            const { atAsk, atBid } = splitVolume(row);
+            day.atAsk += atAsk;
+            day.atBid += atBid;
+            day.volume += Math.max(0, Number(row.v) || 0);
+            day.asks.push(row.a);
+            day.bids.push(row.b);
+            day.avgs.push(row.p);
+            // The day is stamped with its latest sighting, so a partial day sits
+            // where it belongs on the axis rather than at midnight
+            if (time > day.time) day.time = time;
+        }
+
+        return [...byDay.values()]
+            .map((day) => ({
+                time: day.time,
+                ask: median(day.asks),
+                bid: median(day.bids),
+                avg: median(day.avgs),
+                volume: day.volume,
+                atAsk: Math.round(day.atAsk),
+                atBid: Math.round(day.atBid),
+            }))
+            .sort((a, b) => a.time - b.time);
+    }
+
+    /**
+     * How fast a market will actually absorb what a method produces.
+     *
+     * ## The hole this closes
+     *
+     * A gold rate is a claim about *realizing* gold, and every step between the
+     * action and the coins was modelled except the last one: somebody has to buy
+     * what you made. The planner would rank a method at 134.3B/hr because its
+     * outputs are priced at 134.3B/hr of ask, on a book where one unit changes hands
+     * a week. You cannot sell into a market that is not there. The price is real and
+     * the rate is fiction.
+     *
+     * The `sustainable` cap already says "a rate is only a rate while its inputs
+     * last". This is the same sentence about the other end: *a rate is only a rate
+     * while somebody is buying.*
+     *
+     * ## Where the number comes from
+     *
+     * The pooled market history Toolasha already fetches for the history chart. Each
+     * row carries a traded volume, and `buildHistorySeries` already turns rows into
+     * per-day volume with the ask/bid split the chart's tooltip shows. Summing that
+     * over a window and dividing gives units per day, client-side, with no
+     * order-book round trips — the same data the user is looking at when they say
+     * "this thing sells once a week".
+     *
+     * Total volume rather than only the sell-into-bid half: a player selling can
+     * either hit the bid or post an ask and wait to be lifted, and both are units of
+     * that item changing hands. Counting only one side would halve every answer for
+     * no reason.
+     *
+     * ## The two judgement calls, and why
+     *
+     * **You are not the only seller.** {@link LIQUIDITY_SHARE} is the fraction of
+     * observed trade this character is assumed to be able to capture. A quarter is
+     * already aggressive — it says one in every four units traded market-wide is
+     * yours — and anything higher is not a share of the market, it is a claim to
+     * *be* the market. It is deliberately a single constant rather than something
+     * clever about spreads: the point is a sanity bound, and a bound nobody can
+     * explain is worse than a blunt one.
+     *
+     * **A week is the horizon.** {@link LIQUIDITY_HORIZON_DAYS} is how far ahead a
+     * total is allowed to count. A windfall you can only unwind over eight months
+     * is not money the next step of a plan can spend, so what a method is worth is
+     * what it can be turned into inside a week at the pace the book will take.
+     *
+     * ## Absence of data is not data showing absence
+     *
+     * Two different unknowns, and conflating them would either break the planner or
+     * lie to it:
+     *
+     * - **The history is not available** — the pooled-history setting is off, or the
+     *   server did not answer. Nothing is known about any item, so nothing is
+     *   bounded and the panel says out loud that it is not checking. Crushing every
+     *   rate to zero because a third-party server is down would be conservative in
+     *   the same way that unplugging the computer is.
+     * - **The history is available and shows no trades** — that *is* an answer, and
+     *   it is the answer the user is complaining about. It bounds normally, all the
+     *   way to zero if the pool watched the item for a month and saw nothing.
+     */
+
+
+    /** How much history to average over. Long enough that a quiet week is not a verdict. */
+    const LIQUIDITY_WINDOW_DAYS = 30;
+
+    /**
+     * The share of an item's observed trade one character is assumed to be able to take.
+     * See the module doc: a quarter is already a strong claim.
+     */
+    const LIQUIDITY_SHARE = 0.25;
+
+    /** How far ahead a total is allowed to count as realizable */
+    const LIQUIDITY_HORIZON_DAYS = 7;
+
+    /** Coins are not sold on the marketplace, so they never bound anything */
+    const COIN_HRID$1 = '/items/coin';
+
+    /**
+     * One session's answers. The planner asks about the same handful of items on
+     * every replan, and the fetch behind this is a network round trip.
+     * @type {Map<string, Object>}
+     */
+    const cache = new Map();
+
+    /** Forget everything measured, for tests and for a hard refresh */
+    function resetLiquidityCache() {
+        cache.clear();
+    }
+
+    /**
+     * How many units of an item change hands in a day.
+     *
+     * @param {string} itemHrid - The item
+     * @param {number} [enhancementLevel=0] - Which variant
+     * @returns {Promise<{itemHrid: string, unitsPerDay: number, days: number, known: boolean}>}
+     *   `known` is false when nothing could be measured — no setting, no server, no
+     *   rows — which is different from a measured zero and must not be treated as one.
+     */
+    async function dailyVolume(itemHrid, enhancementLevel = 0) {
+        const key = `${itemHrid}:${enhancementLevel}`;
+        const cached = cache.get(key);
+        if (cached) return cached;
+
+        const unknown = { itemHrid, unitsPerDay: 0, days: 0, known: false };
+        let answer = unknown;
+
+        try {
+            const rows = await marketHistoryAPI.fetchHistory(itemHrid, enhancementLevel, LIQUIDITY_WINDOW_DAYS);
+            if (Array.isArray(rows) && rows.length) {
+                const series = buildHistorySeries(rows, LIQUIDITY_WINDOW_DAYS);
+                const traded = series.reduce((sum, point) => sum + (Number(point.volume) || 0), 0);
+
+                // Divided by the span the data covers, not by the number of days it
+                // has a point for. A thing traded on four days out of thirty traded
+                // four times in a month, not four times in four days — counting only
+                // the days something happened is how an item that sells once a week
+                // comes out looking like an item that sells once a day.
+                const first = series[0]?.time || 0;
+                const last = series[series.length - 1]?.time || first;
+                const span = Math.min(LIQUIDITY_WINDOW_DAYS, Math.max(1, (last - first) / 86_400 + 1));
+
+                answer = { itemHrid, unitsPerDay: traded / span, days: span, known: true };
+            }
+        } catch (error) {
+            console.error(`[MarketLiquidity] Reading the history for ${itemHrid} failed:`, error);
+        }
+
+        cache.set(key, answer);
+        return answer;
+    }
+
+    /**
+     * How many units an hour the market will take from you.
+     * @param {{unitsPerDay: number, known: boolean}} volume - From {@link dailyVolume}
+     * @returns {number} Units per hour, or `Infinity` when nothing is known
+     */
+    function absorbablePerHour(volume) {
+        if (!volume?.known) return Number.POSITIVE_INFINITY;
+        return (LIQUIDITY_SHARE * Math.max(0, volume.unitsPerDay)) / 24;
+    }
+
+    /**
+     * A traded volume, said the way somebody looking at a history chart would say it.
+     * @param {{unitsPerDay: number, known: boolean}} volume - From {@link dailyVolume}
+     * @returns {string} e.g. "~1/week", "~340/day"
+     */
+    function describeVelocity(volume) {
+        const perDay = Math.max(0, Number(volume?.unitsPerDay) || 0);
+        if (perDay <= 0) return 'none traded';
+
+        // The largest unit the count still rounds to at least one in. The threshold
+        // is 0.995 rather than 1 because the number arrives as a quotient — an item
+        // that traded four times in twenty-eight days is one a week, and float
+        // arithmetic makes it 0.9999999999999999 of one.
+        const roundsToOne = 0.995;
+        if (perDay >= roundsToOne) return `~${Math.round(perDay)}/day`;
+        const perWeek = perDay * 7;
+        if (perWeek >= roundsToOne) return `~${Math.round(perWeek)}/week`;
+        return `~${Math.round(perDay * 30)}/month`;
+    }
+
+    /**
+     * What the market lets a method actually run at.
+     *
+     * The binding output is the slowest-selling one: running the action faster than
+     * its worst product can be sold does not make coins, it makes a pile. So the
+     * throttle is the minimum over everything the method has to sell.
+     *
+     * @param {Array<{itemHrid: string, unitsPerHour: number}>} sells - What one hour produces
+     * @returns {Promise<{throttle: number, binding: Object|null}>} A multiplier in [0, 1],
+     *   and the output that set it
+     */
+    async function sellThrottle(sells) {
+        let throttle = 1;
+        let binding = null;
+
+        for (const sold of sells || []) {
+            const wanted = Number(sold?.unitsPerHour) || 0;
+            if (!sold?.itemHrid || sold.itemHrid === COIN_HRID$1 || wanted <= 0) continue;
+
+            const volume = await dailyVolume(sold.itemHrid, sold.enhancementLevel || 0);
+            const allowed = absorbablePerHour(volume);
+            if (!Number.isFinite(allowed)) continue;
+
+            const share = Math.min(1, allowed / wanted);
+            if (share < throttle) {
+                throttle = share;
+                binding = { ...sold, volume };
+            }
+        }
+
+        return { throttle, binding };
+    }
+
+    /**
+     * Bound a rate by how fast what it makes can be sold.
+     *
+     * Two bounds from the one measurement, because a rate makes two claims:
+     *
+     * - **the pace** — `goldPerHour` is throttled to what the book will absorb;
+     * - **the total** — a rate that already carries a `sustainable` ceiling has that
+     *   ceiling cut to what the throttled pace can realize inside
+     *   {@link LIQUIDITY_HORIZON_DAYS}. An uncapped method is left uncapped: giving
+     *   gathering a ceiling it never had would be a different bug.
+     *
+     * The rate is copied rather than edited. The ranking is rebuilt on every
+     * refresh out of arrays other features hold, and quietly rewriting one of their
+     * objects is how two surfaces start disagreeing about the same number.
+     *
+     * @param {Object} rate - A gold rate, carrying `sells: [{itemHrid, unitsPerHour}]`
+     * @returns {Promise<Object>} The rate, bounded, with a `limits` note if it was
+     */
+    async function applySellLimit(rate) {
+        const sells = Array.isArray(rate?.sells) ? rate.sells : [];
+        if (!sells.length) return rate;
+
+        const { throttle, binding } = await sellThrottle(sells);
+        if (!(throttle < 1) || !binding) return rate;
+
+        const goldPerHour = Math.max(0, Number(rate.goldPerHour) || 0) * throttle;
+        const limited = {
+            ...rate,
+            goldPerHour,
+            limits: [
+                ...(rate.limits || []),
+                {
+                    kind: 'volume',
+                    note: `limited by market volume (${describeVelocity(binding.volume)})`,
+                    detail:
+                        `${binding.name || binding.itemHrid.split('/').pop()} trades ` +
+                        `${describeVelocity(binding.volume)}, and you are not the only seller.`,
+                    throttle,
+                    itemHrid: binding.itemHrid,
+                },
+            ],
+        };
+
+        // Only a method that already had a ceiling gets a smaller one
+        const ceiling = Number(rate.sustainable?.gold);
+        if (rate.sustainable && !rate.sustainable.unbounded && Number.isFinite(ceiling)) {
+            const realizable = Math.min(ceiling, goldPerHour * LIQUIDITY_HORIZON_DAYS * 24);
+            const goldPerUnit = Number(rate.sustainable.goldPerUnit) || 0;
+            limited.sustainable = {
+                ...rate.sustainable,
+                gold: realizable,
+                ...(goldPerUnit > 0 ? { units: realizable / goldPerUnit } : {}),
+            };
+        }
+
+        return limited;
+    }
+
+    /** Below this, restocking an input is not something you do on demand */
+    const THIN_INPUT_PER_DAY = 1;
+
+    /**
+     * Say when a method's *input* is the thing that barely trades.
+     *
+     * A note rather than a cap, deliberately. What an input costs is already inside
+     * the margin, and a method run on stock you already hold is bounded by that
+     * stock rather than by the book — the `sustainable` ceiling covers it. What the
+     * book does decide is whether you could ever do this *again*, and a plan that
+     * quietly assumes you can restock a once-a-week item is worth one line of doubt.
+     *
+     * @param {Object} rate - A gold rate, whose `itemHrid` is what it consumes
+     * @returns {Promise<Object>} The rate, with a note if its input is thin
+     */
+    async function applyInputNote(rate) {
+        if (!rate?.itemHrid) return rate;
+
+        const volume = await dailyVolume(rate.itemHrid);
+        if (!volume.known || volume.unitsPerDay >= THIN_INPUT_PER_DAY) return rate;
+
+        const name = rate.sustainable?.unitLabel || rate.itemName || rate.itemHrid.split('/').pop();
+        return {
+            ...rate,
+            limits: [
+                ...(rate.limits || []),
+                {
+                    kind: 'input',
+                    note: `restocking ${name} means buying into a ${describeVelocity(volume)} book`,
+                    itemHrid: rate.itemHrid,
+                },
+            ],
+        };
+    }
+
+    /**
+     * Bound every rate in a ranking, and say whether the bounding could happen at all.
+     *
+     * @param {Array<Object>} rates - Gold rates
+     * @returns {Promise<{rates: Array<Object>, measured: boolean}>} The rates, best
+     *   first, and whether any volume figure was available — a run where none was is
+     *   a run where nothing was checked, which the panel has to be able to say
+     */
+    async function applyLiquidityLimits(rates) {
+        const list = Array.isArray(rates) ? rates : [];
+        const bounded = [];
+
+        for (const rate of list) {
+            try {
+                bounded.push(await applyInputNote(await applySellLimit(rate)));
+            } catch (error) {
+                console.error('[MarketLiquidity] Bounding a rate failed:', error);
+                bounded.push(rate);
+            }
+        }
+
+        bounded.sort((a, b) => (Number(b.goldPerHour) || 0) - (Number(a.goldPerHour) || 0));
+        const measured = [...cache.values()].some((entry) => entry.known);
+        return { rates: bounded, measured };
+    }
+
+    var bundledMarketLiquidity = {
+        LIQUIDITY_SHARE,
+        LIQUIDITY_HORIZON_DAYS,
+        LIQUIDITY_WINDOW_DAYS,
+        dailyVolume,
+        absorbablePerHour,
+        describeVelocity,
+        sellThrottle,
+        applySellLimit,
+        applyInputNote,
+        applyLiquidityLimits,
+        resetLiquidityCache,
+    };
+
+    /**
+     * The market-liquidity cap, at the display seam.
+     *
+     * `features/planner/market-liquidity.js` already measures the thing that
+     * matters — how many units of an item actually change hands in a day — and the
+     * goal planner bounds its gold rates with it. Every other profit surface kept
+     * quoting the fiction: an alchemy ranking, an action-bar profit line or an
+     * all-zones combat table would happily print 134.3B/hr for a method whose
+     * output trades once a week. The price is real; the pace is not.
+     *
+     * This module is the one place those surfaces apply the same bound. It reuses
+     * the planner's measurement (`sellThrottle`, `describeVelocity`) and its
+     * wording — a capped figure carries `limited by market volume (~1/week)` and a
+     * detail sentence naming the limiting item — so every surface says the same
+     * thing about the same number.
+     *
+     * ## A display truth, not a calculator truth
+     *
+     * Nothing here mutates a calculator result another feature consumes. Callers
+     * get a *copy* with the capped pace and a `liquidityLimit` marker on it; the
+     * raw object keeps the raw claim. Net-worth, expected-value, the sim-vs-measured
+     * calibration loop and the planner (which runs its own copy of this bound)
+     * must keep reading uncapped figures, and they do, because they never come
+     * through here.
+     *
+     * ## Unknowns, the planner's way
+     *
+     * An item the pooled history could not measure at all — the setting is off, the
+     * server did not answer — bounds nothing: `absorbablePerHour` answers Infinity
+     * for it, and crushing every rate because a third-party server is down would be
+     * conservative in the way that unplugging the computer is. An item the history
+     * *watched and saw nothing trade* is a measured zero and bounds all the way
+     * down. Both behaviours are `market-liquidity.js`'s own, taken as-is.
+     *
+     * ## One switch for the whole display
+     *
+     * {@link LIQUIDITY_CAP_SETTING} (default on) turns the capping off display-wide
+     * for a user who wants raw rates. It sits with the pricing settings, because it
+     * is a statement about what a displayed rate means.
+     *
+     * ## Which copy of the measurement answers
+     *
+     * Same trick as `action-context.js` with the loadout store: in the production
+     * multi-bundle build every bundle that imports this file would get its own copy
+     * of `market-liquidity.js` and therefore its own volume cache, so at call time
+     * the initialized shared copy on `window.Toolasha.Actions.marketLiquidity` is
+     * preferred and the bundled import is the dev-build (single bundle) fallback.
+     */
+
+
+    /** The one checkbox that turns display-wide capping off */
+    const LIQUIDITY_CAP_SETTING = 'profitCalc_liquidityCap';
+
+    /**
+     * The market-liquidity module that actually holds the volume cache.
+     * @returns {Object} The planner's liquidity module
+     */
+    function liquidity() {
+        return marketLiquidity() || bundledMarketLiquidity;
+    }
+
+    /**
+     * Whether displayed rates are being bounded at all.
+     * @returns {boolean} True unless the user turned the cap off
+     */
+    function liquidityCapEnabled() {
+        return config.getSetting(LIQUIDITY_CAP_SETTING, true) !== false;
+    }
+
+    /**
+     * What a profit calculation has to sell, whatever calculator said it.
+     *
+     * The three shapes the profit surfaces hold:
+     *
+     * - **gathering** (`calculateGatheringProfit`): `baseOutputs` is the drop table
+     *   with per-hour unit rates. Gourmet copies and processed conversions carry no
+     *   `itemHrid`, so they are left out — an undercount, which can only make the
+     *   cap *less* aggressive, never invent one.
+     * - **alchemy** (`alchemy-profit-calculator`): `dropRevenues`, minus the
+     *   self-returned copies of the input, which are not sold.
+     * - **production** (`profit-calculator`): one output item at `itemsPerHour`,
+     *   gourmet copies included since they are the same item.
+     *
+     * Essence and rare-find bonus drops (`bonusRevenue.bonusDrops`) are added for
+     * any shape that has them.
+     *
+     * @param {Object|null} profitData - A calculator result
+     * @returns {Array<{itemHrid: string, name: string|null, unitsPerHour: number}>}
+     */
+    function sellsFromProfitData(profitData) {
+        if (!profitData) return [];
+
+        const sells = new Map();
+        const add = (itemHrid, name, unitsPerHour) => {
+            const units = Number(unitsPerHour) || 0;
+            if (!itemHrid || units <= 0) return;
+            const entry = sells.get(itemHrid) || { itemHrid, name: name || null, unitsPerHour: 0 };
+            entry.unitsPerHour += units;
+            entry.name = entry.name || name || null;
+            sells.set(itemHrid, entry);
+        };
+
+        if (Array.isArray(profitData.baseOutputs)) {
+            for (const output of profitData.baseOutputs) add(output.itemHrid, output.name, output.itemsPerHour);
+        } else if (Array.isArray(profitData.dropRevenues)) {
+            for (const drop of profitData.dropRevenues) {
+                if (drop?.isSelfReturn) continue;
+                add(drop?.itemHrid, drop?.itemName, drop?.dropsPerHour);
+            }
+        } else if (profitData.itemHrid) {
+            const units = (Number(profitData.itemsPerHour) || 0) + (Number(profitData.gourmetBonusItems) || 0);
+            add(profitData.itemHrid, profitData.itemName || null, units);
+        }
+
+        for (const drop of profitData.bonusRevenue?.bonusDrops || []) {
+            add(drop?.itemHrid, drop?.itemName, drop?.dropsPerHour);
+        }
+
+        return [...sells.values()];
+    }
+
+    /**
+     * Bound one displayed rate by how fast its outputs actually sell.
+     *
+     * The uncapped answer comes back for: a rate that earns nothing (there is
+     * nothing to bound), a rate that names nothing it sells (bounding a guess would
+     * be a different bug), a liquid market, an unmeasurable one, or the setting
+     * being off.
+     *
+     * @param {Object} rate - `{goldPerHour, sells: [{itemHrid, unitsPerHour}]}`
+     * @returns {Promise<{goldPerHour: number, capped: boolean, limit: Object|null}>}
+     *   The pace the market will pay, whether it was cut, and — when it was — a
+     *   marker payload in the planner's wording: `note` for the visible text,
+     *   `detail` for the tooltip naming the limiting item and its traded volume.
+     */
+    async function capProfitRate({ goldPerHour, sells } = {}) {
+        const raw = Number(goldPerHour) || 0;
+        const uncapped = { goldPerHour: raw, capped: false, limit: null };
+
+        if (raw <= 0 || !liquidityCapEnabled()) return uncapped;
+
+        const list = (Array.isArray(sells) ? sells : []).filter((sold) => sold?.itemHrid && Number(sold.unitsPerHour) > 0);
+        if (!list.length) return uncapped;
+
+        try {
+            const { sellThrottle, describeVelocity } = liquidity();
+            const { throttle, binding } = await sellThrottle(list);
+            if (!(throttle < 1) || !binding) return uncapped;
+
+            const velocity = describeVelocity(binding.volume);
+            const itemName = binding.name || binding.itemHrid.split('/').pop();
+            return {
+                goldPerHour: raw * throttle,
+                capped: true,
+                limit: {
+                    kind: 'volume',
+                    note: `limited by market volume (${velocity})`,
+                    detail: `${itemName} trades ${velocity}, and you are not the only seller.`,
+                    itemHrid: binding.itemHrid,
+                    itemName,
+                    velocity,
+                    throttle,
+                },
+            };
+        } catch (error) {
+            console.error('[LiquidityCap] Bounding a displayed rate failed:', error);
+            return uncapped;
+        }
+    }
+
+    /**
+     * A calculator result, copied with its displayed pace bounded.
+     *
+     * Only the pace claims move: `profitPerHour` and `profitPerDay` are throttled,
+     * the raw hourly figure is kept on `uncappedProfitPerHour`, and the marker
+     * payload lands on `liquidityLimit`. Per-action margins are left alone — the
+     * margin on one action is real, it is the actions-per-hour of *selling* that
+     * the market disputes. The original object is never touched.
+     *
+     * @param {Object|null} profitData - A calculator result
+     * @param {Array<Object>} [sells] - Override the extracted sells list
+     * @returns {Promise<Object|null>} The same object when nothing binds, a bounded
+     *   copy when something does
+     */
+    async function capProfitData(profitData, sells = null) {
+        if (!profitData) return profitData;
+
+        const bounded = await capProfitRate({
+            goldPerHour: profitData.profitPerHour,
+            sells: sells ?? sellsFromProfitData(profitData),
+        });
+        if (!bounded.capped) return profitData;
+
+        const copy = {
+            ...profitData,
+            profitPerHour: bounded.goldPerHour,
+            uncappedProfitPerHour: Number(profitData.profitPerHour) || 0,
+            liquidityLimit: bounded.limit,
+        };
+        if (Number.isFinite(profitData.profitPerDay)) {
+            copy.profitPerDay = profitData.profitPerDay * bounded.limit.throttle;
+        }
+        return copy;
+    }
+
+    /** &, <, >, " made safe for text and title attributes */
+    function escapeHtml(text) {
+        return String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    /**
+     * The visible marker a capped figure carries — never render one without it.
+     *
+     * Full form prints the planner's note (`limited by market volume (~1/week)`);
+     * the compact form, for tight table cells, prints `vol-capped`. Both carry the
+     * note and the item-naming detail in the tooltip.
+     *
+     * @param {Object|null} limit - The `limit` payload from {@link capProfitRate}
+     * @param {Object} [options] - Options
+     * @param {boolean} [options.compact=false] - Short text for narrow cells
+     * @returns {string} HTML, empty when there is no cap to mark
+     */
+    function liquidityMarkerHtml(limit, { compact = false } = {}) {
+        if (!limit) return '';
+        const title = escapeHtml(`${limit.note} — ${limit.detail}`);
+        const text = compact ? 'vol-capped' : escapeHtml(limit.note);
+        return (
+            `<span title="${title}" style="font-size:0.85em; margin-left:4px; padding:0 3px; border-radius:2px; ` +
+            `background:rgba(255,183,77,0.14); color:#ffb74d; cursor:help; white-space:nowrap;">${text}</span>`
+        );
+    }
+
+    var liquidityCap = {
+        LIQUIDITY_CAP_SETTING,
+        liquidityCapEnabled,
+        sellsFromProfitData,
+        capProfitRate,
+        capProfitData,
+        liquidityMarkerHtml,
+    };
+
+    var liquidityCap$1 = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        LIQUIDITY_CAP_SETTING: LIQUIDITY_CAP_SETTING,
+        capProfitData: capProfitData,
+        capProfitRate: capProfitRate,
+        default: liquidityCap,
+        liquidityCapEnabled: liquidityCapEnabled,
+        liquidityMarkerHtml: liquidityMarkerHtml,
+        sellsFromProfitData: sellsFromProfitData
+    });
+
+    /**
+     * Alchemy coin fees.
+     *
+     * The game charges gold to run an alchemy action, and that charge is nowhere in
+     * the game's data: `actionDetails.coinCost` is 0 for every `/actions/alchemy/*`
+     * action, and nothing the websocket reports records the fee that was actually
+     * paid (the decompose tracker drops the coin entry from `endCharacterItems`
+     * outright). Both formulas below are reverse-engineered, and this module is the
+     * one place that states them so the callers cannot drift apart again.
+     */
+
+    /** Alchemy types billed by item level: (10 + itemLevel) × 5 per item */
+    const LEVEL_PRICED_TYPES = new Set(['decompose', 'unrefine']);
+
+    /**
+     * Coinify is not billed at all — the item is the input and coins are the output,
+     * so there is no separate gold fee to pay. Every other coinify site in the repo
+     * already assumed this (the profit calculator hardcodes `coinCost = 0`, the action
+     * planner and the gold summary both skip coinify outright); only the coinify history
+     * viewer charged the transmute fee, which overstated every session's cost. The rule
+     * lives here now so the sites cannot disagree again.
+     */
+    const FREE_TYPES = new Set(['coinify']);
+
+    /**
+     * Coin fee for one alchemy action, including the item's bulk multiplier.
+     *
+     * Three families:
+     *  - decompose / unrefine — `(10 + itemLevel) * 5` per item
+     *  - transmute — `max(50, floor(sellPrice / 5))` per item
+     *  - coinify — free (see FREE_TYPES)
+     *
+     * Decompose used `max(50, floor(sellPrice / 5))` in the history viewer while
+     * every other decompose site used the item-level formula. Nothing in the repo
+     * can adjudicate that — the fee is absent from game data and unrecorded in
+     * session history — so the item-level formula won, being the one the other
+     * decompose sites and upstream already agreed on.
+     *
+     * @param {Object|null|undefined} itemDetails - Item details from dataManager
+     * @param {'decompose'|'unrefine'|'transmute'|'coinify'} alchemyType - Which alchemy action
+     * @param {number} [bulkMultiplierOverride] - Bulk size to bill at, for history callers that
+     *   recorded the multiplier in effect at the time rather than the item's current one
+     * @returns {number} Coin fee per action, or 0 when the item is unknown
+     */
+    function getAlchemyCoinCost(itemDetails, alchemyType, bulkMultiplierOverride) {
+        if (!itemDetails) return 0;
+        if (FREE_TYPES.has(alchemyType)) return 0;
+
+        const bulkMultiplier = bulkMultiplierOverride || itemDetails.alchemyDetail?.bulkMultiplier || 1;
+
+        if (LEVEL_PRICED_TYPES.has(alchemyType)) {
+            const itemLevel = itemDetails.itemLevel || 1;
+            return (10 + itemLevel) * 5 * bulkMultiplier;
+        }
+
+        const sellPrice = itemDetails.sellPrice || 0;
+        return Math.max(50, Math.floor(sellPrice / 5)) * bulkMultiplier;
+    }
+
+    /**
+     * Which alchemy type an action hrid names, for callers holding an action rather
+     * than a panel selection.
+     * @param {string} actionHrid - e.g. `/actions/alchemy/decompose`
+     * @returns {string|null} The alchemy type, or null when the hrid is not alchemy
+     */
+    function getAlchemyTypeFromActionHrid(actionHrid) {
+        if (!actionHrid) return null;
+        for (const type of ['decompose', 'unrefine', 'transmute', 'coinify']) {
+            if (actionHrid.includes(type)) return type;
+        }
+        return null;
+    }
+
+    var alchemyFees = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        getAlchemyCoinCost: getAlchemyCoinCost,
+        getAlchemyTypeFromActionHrid: getAlchemyTypeFromActionHrid
+    });
+
+    /**
+     * All-zones snapshot
+     *
+     * Where a finished all-zones sim run is kept, and how it is read back.
+     *
+     * Extracted from `combat-sim-ui.js` so the surfaces that only *read* the
+     * snapshot — the profit panel comparing a dungeon to your best solo zone, the
+     * pinned actions page, the planner — do not have to import the whole simulator
+     * UI to get two string constants and a loader. Stateless, so the production
+     * bundle split can hold a copy on each side without anything diverging.
+     */
+
+
+    /** Where a finished all-zones run is kept, for anything that ranks zones later */
+    const ALL_ZONES_SNAPSHOT_KEY = 'allZonesSnapshot';
+
+    /**
+     * The store it goes in.
+     *
+     * `combatExport` rather than a new store: it already holds what the combat sim
+     * produces for other features to read, and adding an object store means a
+     * database version bump every consumer pays for.
+     */
+    const ALL_ZONES_SNAPSHOT_STORE = 'combatExport';
+
+    /**
+     * Write a snapshot out, immediately.
+     *
+     * Immediate rather than debounced: a run people wait ten minutes for is exactly
+     * the thing a reload three seconds later must not lose.
+     *
+     * @param {Object} snapshot - From `buildAllZonesSnapshot`
+     * @returns {Promise<boolean>} Whether it was stored
+     */
+    async function saveAllZonesSnapshot(snapshot) {
+        try {
+            return await storage.setJSON(characterKey(ALL_ZONES_SNAPSHOT_KEY), snapshot, ALL_ZONES_SNAPSHOT_STORE, true);
+        } catch (error) {
+            console.error('[AllZonesSnapshot] Saving the all-zones snapshot failed:', error);
+            return false;
+        }
+    }
+
+    /**
+     * The last all-zones run, if there is one.
+     * @returns {Promise<Object|null>} Snapshot, or null when nothing usable is stored
+     */
+    async function loadAllZonesSnapshot() {
+        try {
+            // Discard any legacy global snapshot: a sim run against another
+            // character's gear is actively misleading, so no adoption.
+            const saved = await readScoped(ALL_ZONES_SNAPSHOT_KEY, ALL_ZONES_SNAPSHOT_STORE, null, { migrate: 'discard' });
+            return saved && Array.isArray(saved.zones) ? saved : null;
+        } catch (error) {
+            console.error('[AllZonesSnapshot] Reading the all-zones snapshot failed:', error);
+            return null;
+        }
+    }
+
+    /**
+     * The snapshot's row for one particular zone at one particular tier.
+     *
+     * For the surfaces that compare a *measured* run against what the sim promised
+     * for the same place — same shape as {@link bestSoloZone} so a caller can hold
+     * either. Tiers must match exactly, with an unstated tier read as 0 on both
+     * sides: tier 2 of a zone is a different fight from tier 0, and quoting one
+     * against a run in the other would be a comparison of nothing. A row without a
+     * finite `profitPerHour` is no answer, not an answer of zero.
+     *
+     * @param {Object|null} snapshot - From {@link loadAllZonesSnapshot}
+     * @param {string} zoneHrid - The zone being measured, e.g. `/actions/combat/fly`
+     * @param {number} [difficultyTier] - Its difficulty tier
+     * @returns {{zoneName: string, zoneHrid: string, difficultyTier: number,
+     *   profitPerHour: number, xpPerHour: number|null, savedAt: number|null,
+     *   fingerprint: string|null}|null} The row, or null when the snapshot has none
+     */
+    function zoneFromSnapshot(snapshot, zoneHrid, difficultyTier = 0) {
+        if (!zoneHrid) return null;
+
+        const zones = Array.isArray(snapshot?.zones) ? snapshot.zones : [];
+        const zone = zones.find(
+            (entry) => entry?.zoneHrid === zoneHrid && (entry.difficultyTier ?? 0) === (difficultyTier ?? 0)
+        );
+        if (!zone || !Number.isFinite(zone.profitPerHour)) return null;
+
+        return {
+            zoneName: zone.zoneName || zone.zoneHrid,
+            zoneHrid: zone.zoneHrid,
+            difficultyTier: zone.difficultyTier ?? 0,
+            profitPerHour: zone.profitPerHour,
+            xpPerHour: Number.isFinite(zone.xpPerHour) ? zone.xpPerHour : null,
+            savedAt: snapshot.savedAt ?? null,
+            fingerprint: snapshot.fingerprint ?? null,
+        };
+    }
+
+    /**
+     * The snapshot's most profitable zone, dungeons excluded.
+     *
+     * The comparison this feeds is "what would my time earn solo instead", and a
+     * dungeon is not an *instead* — it is the thing being compared. Exclusion is by
+     * the caller's predicate because game data lives with the caller; a zone the
+     * predicate cannot classify is kept, since most zones are not dungeons.
+     *
+     * @param {Object|null} snapshot - From {@link loadAllZonesSnapshot}
+     * @param {Object} [options] - `{isDungeonZone}`
+     * @param {Function} [options.isDungeonZone] - `(zoneHrid) => boolean`
+     * @returns {{zoneName: string, zoneHrid: string, difficultyTier: number,
+     *   profitPerHour: number, savedAt: number|null, fingerprint: string|null}|null}
+     */
+    function bestSoloZone(snapshot, { isDungeonZone } = {}) {
+        const zones = Array.isArray(snapshot?.zones) ? snapshot.zones : [];
+        let best = null;
+
+        for (const zone of zones) {
+            if (!Number.isFinite(zone?.profitPerHour)) continue;
+            if (typeof isDungeonZone === 'function' && isDungeonZone(zone.zoneHrid) === true) continue;
+            if (!best || zone.profitPerHour > best.profitPerHour) best = zone;
+        }
+        if (!best) return null;
+
+        return {
+            zoneName: best.zoneName || best.zoneHrid,
+            zoneHrid: best.zoneHrid,
+            difficultyTier: best.difficultyTier ?? 0,
+            profitPerHour: best.profitPerHour,
+            savedAt: snapshot.savedAt ?? null,
+            fingerprint: snapshot.fingerprint ?? null,
+        };
+    }
+
+    var allZonesSnapshot = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        ALL_ZONES_SNAPSHOT_KEY: ALL_ZONES_SNAPSHOT_KEY,
+        ALL_ZONES_SNAPSHOT_STORE: ALL_ZONES_SNAPSHOT_STORE,
+        bestSoloZone: bestSoloZone,
+        loadAllZonesSnapshot: loadAllZonesSnapshot,
+        saveAllZonesSnapshot: saveAllZonesSnapshot,
+        zoneFromSnapshot: zoneFromSnapshot
+    });
+
+    /**
+     * Asset Manifest Utility
+     *
+     * Fetches the game's asset-manifest.json to resolve current webpack hashed
+     * sprite URLs without hardcoding hashes that break on game updates.
+     */
+
+    const MANIFEST_URL = 'https://www.milkywayidle.com/asset-manifest.json';
+
+    // Sprite keys to extract from the manifest (key → sprite name)
+    const SPRITE_KEYS = {
+        actions: 'actions_sprite',
+        items: 'items_sprite',
+        monsters: 'combat_monsters_sprite',
+        misc: 'misc_sprite',
+        abilities: 'abilities_sprite',
+    };
+
+    let manifestPromise = null;
+    let cachedUrls = null;
+
+    /**
+     * Fetch and parse the asset manifest, returning a map of sprite name → URL.
+     * Result is cached for the lifetime of the page.
+     * @returns {Promise<Object>} Map of sprite key → full URL
+     */
+    async function fetchManifest() {
+        if (cachedUrls) return cachedUrls;
+        if (manifestPromise) return manifestPromise;
+
+        manifestPromise = (async () => {
+            try {
+                const response = await fetch(MANIFEST_URL);
+                if (!response.ok) {
+                    console.warn('[AssetManifest] Failed to fetch manifest:', response.status);
+                    return {};
+                }
+
+                const manifest = await response.json();
+                const files = manifest.files || manifest; // handle both formats
+
+                const urls = {};
+                for (const [key, spriteName] of Object.entries(SPRITE_KEYS)) {
+                    // Find the entry whose key contains the sprite name and ends in .svg
+                    const entry = Object.entries(files).find(([k]) => k.includes(spriteName) && k.endsWith('.svg'));
+                    if (entry) {
+                        // Values may be relative paths like /static/media/...
+                        urls[key] = entry[1];
+                    }
+                }
+
+                cachedUrls = urls;
+                return urls;
+            } catch (error) {
+                console.warn('[AssetManifest] Error fetching manifest:', error);
+                return {};
+            }
+        })();
+
+        return manifestPromise;
+    }
+
+    /**
+     * Get a specific sprite URL by key.
+     * @param {'actions'|'items'|'monsters'|'misc'|'abilities'} key
+     * @returns {Promise<string|null>}
+     */
+    async function getSpriteUrl(key) {
+        const urls = await fetchManifest();
+        return urls[key] || null;
+    }
+
+    var assetManifest = {
+        fetchManifest,
+        getSpriteUrl,
+    };
+
+    /**
+     * Work that should not hold up the rest of the start.
+     *
+     * Features are initialised one after another and each is awaited, so anything a
+     * feature does inside `initialize()` is time every feature behind it spends
+     * waiting. That is right for wiring up listeners, which is fast, and wrong for
+     * reading a year of history out of IndexedDB or repricing an entire inventory —
+     * work whose result nobody is looking at yet, and which cost the page thirteen
+     * seconds between two features alone.
+     *
+     * The rule this expresses: **register synchronously, compute later**. A feature
+     * hands its heavy part to `runInBackground`, gets a promise back, and awaits that
+     * promise anywhere its own correctness depends on the work being done. Everything
+     * else gets to start.
+     */
+
+
+    /**
+     * Wait for a quiet moment, or the next tick if the browser will not say.
+     *
+     * @returns {Promise<void>}
+     */
+    function whenIdle() {
+        return new Promise((resolve) => {
+            if (typeof requestIdleCallback === 'function') {
+                requestIdleCallback(() => resolve(), { timeout: 2000 });
+            } else {
+                setTimeout(resolve, 0);
+            }
+        });
+    }
+
+    /**
+     * Run something after the page has drawn, and time it.
+     *
+     * Timed under `bg:` so a startup trace can tell work that delayed the page from
+     * work that merely happened afterwards — the difference between a slow start and
+     * a busy one, which a flat list of durations cannot show.
+     *
+     * Failures are logged and swallowed: this is work nobody is waiting on, and a
+     * rejected promise nobody awaits is an unhandled rejection in the console for
+     * every user who has that feature on.
+     *
+     * @param {string} name - What it is, e.g. `networth`
+     * @param {Function} work - The heavy part
+     * @returns {Promise<*>} Resolves when the work is done, never rejects
+     */
+    async function runInBackground(name, work) {
+        await whenIdle();
+        const startedAt = performanceMonitor$1.sinceBoot();
+        try {
+            return await work();
+        } catch (error) {
+            console.error(`[Toolasha] Background work "${name}" failed:`, error);
+            return null;
+        } finally {
+            performanceMonitor$1.snapshot(`bg:${name}`, performanceMonitor$1.sinceBoot() - startedAt, startedAt);
+        }
+    }
+
+    var backgroundWork = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        runInBackground: runInBackground
+    });
+
+    /**
+     * Recovering monster names after a reload
+     *
+     * A `battle_updated` tick carries `cHP`, `cMP` and two counters per monster, and
+     * nothing that says what the monster is. Identity arrives once, in `new_battle`,
+     * and a page reloaded mid-fight never sees that message — so everything that hits
+     * you for the rest of that battle is filed under "Unknown Enemy", and so is
+     * everything you kill in it. MCS has the same hole for the same reason.
+     *
+     * The names do exist, though: the game is drawing them on screen. Each monster in
+     * the battle panel is a tile with its name and its health bar, and the health bar
+     * is the useful part — it is the same number the tick reports as `cHP`.
+     *
+     * ## Matched by health, not by position
+     *
+     * The obvious join is positional: the first tile is monster 0. That is an
+     * assumption about how the panel handles a dead monster, which is exactly the
+     * kind of assumption that is right until a game update and then silently
+     * mis-attributes everything. Health is a fact both sides state, so it is what
+     * the two are matched on.
+     *
+     * Two monsters at the same health are ambiguous, and the ambiguity resolves
+     * itself: if the candidates all have the same name it does not matter which one
+     * it is, and if they do not, nothing is claimed. A wave of three Eyes at full
+     * health is the common case and it is the harmless one.
+     *
+     * ## It fails closed
+     *
+     * Every part of this reads the game's DOM, which is not a contract. A missing
+     * panel, a renamed class, a tile whose text no longer starts with the name — each
+     * of them produces nothing, and nothing means the tracker carries on saying
+     * "Unknown Enemy" exactly as it does today. Nothing here can produce a wrong
+     * name where there was previously a right one.
+     */
+
+    const MONSTER_AREA = '[class*="BattlePanel_monstersArea"]';
+    const UNIT_GRID = '[class*="BattlePanel_combatUnitGrid"]';
+
+    /** A health bar, alone in its own element: `1,348/2,035` */
+    const BAR = /^(\d[\d,]*)\s*\/\s*(\d[\d,]*)$/;
+
+    /** Any health bar, for the fallback when the bars are not their own elements */
+    const LOOSE_BAR = /(\d[\d,]*)\s*\/\s*(\d[\d,]*)/;
+
+    /**
+     * @param {string} text - A number with separators
+     * @returns {number} NaN when it is not one
+     */
+    function toNumber(text) {
+        return Number(String(text).replace(/,/g, ''));
+    }
+
+    /**
+     * The text of every leaf element inside a tile, in order.
+     *
+     * Per element rather than the tile's `textContent`, because flattening a tile
+     * runs its two bars together: `2215/2215` above `2215/2215` becomes
+     * `2215/22152215/2215`, and there is then no way to tell where the first bar's
+     * denominator ends. The first draft read the health right by luck and the
+     * maximum as `22152215`.
+     *
+     * @param {HTMLElement} tile - A unit tile
+     * @returns {Array<string>} Non-empty trimmed texts
+     */
+    function leafTexts(tile) {
+        const texts = [];
+        for (const node of tile.querySelectorAll?.('*') || []) {
+            if (node.children.length) continue;
+
+            const text = node.textContent.trim();
+            if (text) texts.push(text);
+        }
+        return texts;
+    }
+
+    /**
+     * One tile's name and health, from its parts.
+     *
+     * The name is the first part with no digit in it. A tile's parts run
+     * `Eyes`, `2215/2215`, `2215/2215`, `T2`, `Auto Attack`, `0/s`, and only the
+     * first and `Auto Attack` have no digits — so first wins. Reaching for an inner
+     * class instead would be one more thing to break at the next patch.
+     *
+     * Only the current health is taken. The bar's denominator is the monster's full
+     * health, which is what a kill is worth — but every tick states that as `mHP`,
+     * on every monster it mentions, so reading it off the screen would be a second
+     * and worse source for a number the payload already gives.
+     *
+     * @param {Array<string>} texts - The tile's parts, in order
+     * @returns {{name: string, hp: number}|null} Null when it is not a unit tile
+     */
+    function parseUnitTexts(texts) {
+        const parts = (texts || []).map((text) => String(text).trim()).filter(Boolean);
+        const name = parts.find((text) => !/\d/.test(text));
+        if (!name) return null;
+
+        const exact = parts.map((text) => text.match(BAR)).find(Boolean);
+        const bar = exact || parts.join(' ').match(LOOSE_BAR);
+        if (!bar) return null;
+
+        const hp = toNumber(bar[1]);
+        return Number.isFinite(hp) ? { name, hp } : null;
+    }
+
+    /**
+     * One tile, read from the page.
+     *
+     * @param {HTMLElement} tile - A unit tile
+     * @returns {{name: string, hp: number}|null}
+     */
+    function parseUnit(tile) {
+        const texts = leafTexts(tile);
+        return parseUnitTexts(texts.length ? texts : [tile?.textContent || '']);
+    }
+
+    /**
+     * The monsters the game is currently drawing.
+     *
+     * @param {Document|HTMLElement} [root] - Where to look
+     * @returns {Array<{name: string, hp: number}>} Empty when the panel is not up
+     */
+    function readMonsterUnits(root = document) {
+        const area = root.querySelector?.(MONSTER_AREA);
+        if (!area) return [];
+
+        const grid = area.querySelector(UNIT_GRID) || area;
+        return [...grid.children].map(parseUnit).filter(Boolean);
+    }
+
+    /**
+     * Which drawn monster is which slot of the tick, joined on health.
+     *
+     * @param {Array<{name: string, hp: number}>} units - From `readMonsterUnits`
+     * @param {Object} mMap - The tick's monsters
+     * @returns {Object<string, string>} Monster index → name, for the ones it is sure of
+     */
+    function matchMonsterNames(units, mMap) {
+        const names = {};
+        if (!units?.length) return names;
+
+        for (const [index, monster] of Object.entries(mMap || {})) {
+            const health = Number(monster?.cHP);
+            if (!Number.isFinite(health)) continue;
+
+            const candidates = units.filter((unit) => unit.hp === health);
+            if (!candidates.length) continue;
+
+            // Several at the same health is only a problem when they disagree; three
+            // Eyes at full health are all called Eyes whichever one this is
+            const distinct = new Set(candidates.map((unit) => unit.name));
+            if (distinct.size === 1) names[index] = candidates[0].name;
+        }
+        return names;
+    }
+
+    /**
+     * What the battle panel looks like right now, for a recording to carry.
+     *
+     * A diagnostic rather than something the tracker uses. Whether the selectors
+     * here still match the game is not a thing that can be reasoned about from this
+     * side of the screen, and it is exactly what goes wrong silently — so a
+     * recording made during a refresh can carry the answer instead.
+     *
+     * @param {Document|HTMLElement} [root] - Where to look
+     * @returns {Object} `{area, grid, tiles}` — what was found and what it said
+     */
+    function describeMonsterPanel(root = document) {
+        try {
+            const area = root.querySelector?.(MONSTER_AREA);
+            if (!area) return { area: false };
+
+            const grid = area.querySelector(UNIT_GRID);
+            return {
+                area: true,
+                grid: Boolean(grid),
+                tiles: [...(grid || area).children].map((tile) => leafTexts(tile)),
+            };
+        } catch (error) {
+            return { area: false, error: String(error?.message || error) };
+        }
+    }
+
+    /**
+     * Names for a battle whose `new_battle` was missed, or nothing.
+     *
+     * @param {Object} mMap - The tick's monsters
+     * @param {Document|HTMLElement} [root] - Where to read the panel from
+     * @returns {Object<string, string>} Monster index → name
+     */
+    function recoverMonsterNames(mMap, root = document) {
+        try {
+            return matchMonsterNames(readMonsterUnits(root), mMap);
+        } catch (error) {
+            console.error('[BattlePanelMonsters] Reading the battle panel failed:', error);
+            return {};
+        }
+    }
+
+    var battlePanelMonsters = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        describeMonsterPanel: describeMonsterPanel,
+        matchMonsterNames: matchMonsterNames,
+        parseUnit: parseUnit,
+        parseUnitTexts: parseUnitTexts,
+        readMonsterUnits: readMonsterUnits,
+        recoverMonsterNames: recoverMonsterNames
+    });
+
+    /**
+     * Chest history import and export.
+     *
+     * A chest ledger is only worth keeping if it survives — a new browser, a second
+     * machine, or a move from whichever script you were using before. All three are
+     * the same problem: read someone else's shape of the same facts, and write ours
+     * in a shape that can be read back.
+     *
+     * Kept pure and apart from the tracker because an import that silently drops
+     * half a ledger looks exactly like an import that worked. Every conversion here
+     * reports what it could not translate rather than skipping quietly.
+     */
+
+    /**
+     * Our own export, which is the tally plus enough context to read it later.
+     *
+     * Item counts only — no prices. Prices are a property of the market on the day
+     * you exported, and baking them in would make an old file re-import as a ledger
+     * priced in last month's money.
+     *
+     * @param {Object} tally - `{ [chestHrid]: { opened, loot, last } }`
+     * @param {Object} settings - Valuation settings to carry along
+     * @param {string} [player] - Whose ledger this is, for the reader's benefit
+     * @returns {Object} The exportable object
+     */
+    function toExport(tally, settings, player = '') {
+        return {
+            format: 'toolasha-treasure',
+            version: 1,
+            player,
+            exportedAt: new Date().toISOString(),
+            settings: { ...settings },
+            chests: { ...tally },
+        };
+    }
+
+    /**
+     * Read our own export back.
+     * @param {Object} json - Parsed file
+     * @returns {{tally: Object, settings: Object}|null} Null when it is not ours
+     */
+    function fromToolashaExport(json) {
+        if (json?.format !== 'toolasha-treasure' || !json.chests) return null;
+        return { tally: json.chests, settings: json.settings || {} };
+    }
+
+    /**
+     * Read a TReasure export from MWI Combat Suite.
+     *
+     * Its shape is richer than ours — every entry carries the name, unit price and
+     * total value as they stood at export — but the only durable facts are the
+     * counts. The rest is re-derived from today's market, so it is dropped rather
+     * than trusted.
+     *
+     * @param {Object} json - Parsed file
+     * @returns {{tally: Object, settings: Object}|null} Null when it is not TReasure's
+     */
+    function fromTreasureExport(json) {
+        if (!json?.chests || json.format === 'toolasha-treasure') return null;
+
+        const sample = Object.values(json.chests)[0];
+        if (!sample?.total?.loot) return null;
+
+        const tally = {};
+        for (const [chestHrid, chest] of Object.entries(json.chests)) {
+            const loot = {};
+            for (const [itemHrid, entry] of Object.entries(chest.total?.loot || {})) {
+                // Entries are objects there and bare counts here
+                loot[itemHrid] = typeof entry === 'number' ? entry : entry?.count || 0;
+            }
+
+            const lastLoot = {};
+            for (const [itemHrid, entry] of Object.entries(chest.last?.loot || {})) {
+                lastLoot[itemHrid] = typeof entry === 'number' ? entry : entry?.count || 0;
+            }
+
+            tally[chestHrid] = {
+                opened: chest.total?.opened || 0,
+                loot,
+                last: { opened: chest.last?.opened || 0, loot: lastLoot },
+            };
+        }
+
+        // Their names for the same two choices
+        const settings = {};
+        if (json.settings?.useMirrorValue) settings.capeValue = json.settings.useMirrorValue;
+        if (json.settings?.useCowbell0 !== undefined) settings.valueCowbells = !json.settings.useCowbell0;
+
+        return { tally, settings };
+    }
+
+    /**
+     * Read Edible Tools' chest data out of its own storage shape.
+     *
+     * It keys everything by **display name** rather than hrid, in the language the
+     * game was running in, so translating it needs a name index built from the
+     * current game data. Anything that does not match is reported rather than
+     * dropped in silence — a chest whose name has since changed would otherwise
+     * vanish without trace.
+     *
+     * @param {Object} chestData - The `开箱数据` object for one player
+     * @param {Object<string, string>} nameToHrid - Item display name → hrid
+     * @returns {{tally: Object, unmatched: string[]}}
+     */
+    function fromEdibleTools(chestData, nameToHrid) {
+        const tally = {};
+        const unmatched = [];
+
+        for (const [chestName, chest] of Object.entries(chestData || {})) {
+            const chestHrid = nameToHrid[chestName];
+            if (!chestHrid) {
+                unmatched.push(chestName);
+                continue;
+            }
+
+            const loot = {};
+            for (const [itemName, item] of Object.entries(chest?.获得物品 || {})) {
+                const itemHrid = nameToHrid[itemName];
+                if (!itemHrid) {
+                    unmatched.push(itemName);
+                    continue;
+                }
+                loot[itemHrid] = item?.数量 || 0;
+            }
+
+            tally[chestHrid] = {
+                opened: chest?.总计开箱数量 || 0,
+                loot,
+                // It keeps no record of the most recent opening, and inventing one
+                // from the total would report a single opening of hundreds of chests
+                last: { opened: 0, loot: {} },
+            };
+        }
+
+        return { tally, unmatched };
+    }
+
+    /**
+     * Find Edible Tools' data for the current character in its localStorage blob.
+     * @param {Object} stored - Parsed `Edible_Tools` value
+     * @param {string|number} characterId - Current character
+     * @param {string} characterName - Current character's name
+     * @returns {Object|null} The `开箱数据` object, or null
+     */
+    function findEdibleToolsData(stored, characterId, characterName) {
+        const byPlayer = stored?.Chest_Open_Data;
+        if (!byPlayer) return null;
+
+        const byId = byPlayer[characterId] || byPlayer[String(characterId)];
+        if (byId?.开箱数据 && Object.keys(byId.开箱数据).length) return byId.开箱数据;
+
+        // Falling back to the name, because the id it stored may predate a move
+        // between accounts on the same browser
+        for (const entry of Object.values(byPlayer)) {
+            if (entry?.玩家昵称 === characterName && Object.keys(entry?.开箱数据 || {}).length) {
+                return entry.开箱数据;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Combine an imported ledger with the one already held.
+     *
+     * `replace` is the honest default for a file that came from this same tool on
+     * another machine — the two are the same ledger, and adding them together would
+     * double it. `append` is for merging genuinely separate histories, and only ever
+     * adds counts, never the `last` opening, which belongs to whichever ledger saw
+     * it most recently.
+     *
+     * @param {Object} current - The tally now
+     * @param {Object} incoming - The tally being imported
+     * @param {string} mode - `'replace'` or `'append'`
+     * @returns {Object} A new tally
+     */
+    function mergeTally(current, incoming, mode = 'replace') {
+        if (mode !== 'append') return { ...incoming };
+
+        const merged = { ...current };
+        for (const [chestHrid, entry] of Object.entries(incoming || {})) {
+            const existing = merged[chestHrid];
+            if (!existing) {
+                merged[chestHrid] = entry;
+                continue;
+            }
+
+            const loot = { ...existing.loot };
+            for (const [itemHrid, count] of Object.entries(entry.loot || {})) {
+                loot[itemHrid] = (loot[itemHrid] || 0) + count;
+            }
+            merged[chestHrid] = {
+                opened: (existing.opened || 0) + (entry.opened || 0),
+                loot,
+                last: existing.last || entry.last,
+            };
+        }
+        return merged;
+    }
+
+    var chestImport = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        findEdibleToolsData: findEdibleToolsData,
+        fromEdibleTools: fromEdibleTools,
+        fromToolashaExport: fromToolashaExport,
+        fromTreasureExport: fromTreasureExport,
+        mergeTally: mergeTally,
+        toExport: toExport
+    });
+
+    /**
+     * Consumable Forecast
+     *
+     * When the food and drinks run out, and what it costs to keep them topped up.
+     *
+     * This is the figure that decides whether a run survives the night. Everything
+     * else on the overlay tells you how well the run is going; this tells you how
+     * long it will still be going, which is the only one you can act on before it is
+     * too late to act on it.
+     *
+     * ## The one that matters is the soonest
+     *
+     * A character stops when its **first** consumable runs out, not its average one.
+     * So the headline is a minimum, not a mean, and a consumable that is not being
+     * used at all has to be kept out of that minimum rather than counted as lasting
+     * forever and quietly winning it.
+     *
+     * Kept pure and apart from the panel because the arithmetic has several answers
+     * that look right: a rate of zero that means "not used" against one that means
+     * "not measured yet", a stock of zero that means "ran out" against one that
+     * means "never had any", and a refill figure that has to be rounded up, since
+     * nine and a half drinks is ten drinks.
+     */
+
+    /**
+     * One consumable, normalised out of the combat stats breakdown.
+     *
+     * @typedef {Object} Forecast
+     * @property {string} itemHrid - The item
+     * @property {string} name - Display name
+     * @property {number} held - How many are in the inventory
+     * @property {number} perDay - How many are consumed a day
+     * @property {number} secondsLeft - Until it runs out; `Infinity` when it is not being used
+     * @property {number|null} costPerDay - What a day of it costs, or null with no price
+     * @property {number|null} price - Price per item, or null
+     * @property {{ask: number|null, bid: number|null}} costPerDaySides - A day's cost at each side
+     */
+
+    /**
+     * Normalise one entry of `consumableBreakdown`.
+     *
+     * @param {Object} entry - From `calculatePlayerStats`
+     * @returns {Forecast}
+     */
+    function forecast(entry, prices = null) {
+        const held = Number(entry?.inventoryAmount ?? entry?.currentCount ?? 0) || 0;
+        const rate = Number(entry?.consumptionRate) || 0;
+        const price = Number(entry?.pricePerItem) > 0 ? Number(entry.pricePerItem) : null;
+
+        // Not being used is not the same as lasting forever, but it is the same
+        // arithmetic — what keeps them apart is that the headline ignores anything
+        // infinite rather than letting it win the minimum
+        const secondsLeft = rate > 0 ? held / rate : Infinity;
+        const perDay = rate * 86400;
+
+        // Both sides, because buying costs ask and the stock you already hold is
+        // worth bid — MCS shows the pair and the gap between them is real money
+        const side = (value) => (value > 0 ? perDay * value : null);
+
+        return {
+            itemHrid: entry?.itemHrid || '',
+            name: entry?.itemName || entry?.itemHrid || 'Unknown',
+            held,
+            perDay,
+            secondsLeft,
+            price,
+            costPerDay: price === null ? null : perDay * price,
+            costPerDaySides: { ask: side(prices?.ask), bid: side(prices?.bid) },
+        };
+    }
+
+    /**
+     * Every consumable in use, soonest to run out first.
+     *
+     * Ones that are not being consumed sort last rather than being dropped — you
+     * still want to see that a slot is filled with something it is not drinking.
+     *
+     * @param {Array<Object>} breakdown - From `calculatePlayerStats`
+     * @param {Function} [pricesFor] - `(itemHrid) => {ask, bid}`, for the two-sided cost
+     * @param {Object} [options] - `keepOrder` leaves them in the order given, which is slot order
+     * @returns {Forecast[]}
+     */
+    function forecastAll(breakdown, pricesFor = null, { keepOrder = false } = {}) {
+        const list = (breakdown || []).map((entry) => forecast(entry, pricesFor?.(entry?.itemHrid)));
+
+        // The order the game gave them is slot order, which is how they are equipped
+        // and therefore how you think about them — the soonest is already marked, so
+        // sorting by it as well trades a familiar list for a shuffling one
+        return keepOrder ? list : list.sort((a, b) => a.secondsLeft - b.secondsLeft);
+    }
+
+    /**
+     * When the character actually stops.
+     *
+     * The minimum, not the mean — a run ends when its first consumable runs out.
+     * Anything not being used is left out entirely, because "never" is not a
+     * candidate for "soonest" however the arithmetic is written.
+     *
+     * @param {Forecast[]} forecasts - Normalised consumables
+     * @returns {Forecast|null} The one that goes first, or null when nothing is being used
+     */
+    function firstToRunOut(forecasts) {
+        let soonest = null;
+        for (const entry of forecasts || []) {
+            if (!Number.isFinite(entry.secondsLeft)) continue;
+            if (!soonest || entry.secondsLeft < soonest.secondsLeft) soonest = entry;
+        }
+        return soonest;
+    }
+
+    /**
+     * What a day of every consumable costs.
+     *
+     * Unpriced items are counted as nothing and reported separately, rather than
+     * silently making the total look smaller than it is.
+     *
+     * @param {Forecast[]} forecasts - Normalised consumables
+     * @returns {{total: number, unpriced: number}}
+     */
+    function costPerDay(forecasts) {
+        let total = 0;
+        let unpriced = 0;
+
+        for (const entry of forecasts || []) {
+            if (entry.costPerDay === null) unpriced++;
+            else total += entry.costPerDay;
+        }
+        return { total, unpriced };
+    }
+
+    /**
+     * How many more of something is needed to last a given time, and what that costs.
+     *
+     * Rounded **up**: nine and a half drinks is ten drinks, and a refill that leaves
+     * you half an item short leaves you stopped.
+     *
+     * @param {Forecast} entry - Normalised consumable
+     * @param {number} seconds - How long it should last
+     * @returns {{count: number, cost: number|null}} Zero when there is already enough
+     */
+    function refillFor(entry, seconds) {
+        // Something not being consumed needs nothing, however long the target
+        if (!(entry?.perDay > 0) || !(seconds > 0)) return { count: 0, cost: 0 };
+
+        const wanted = Math.ceil((entry.perDay * seconds) / 86400);
+        const count = Math.max(0, wanted - Math.floor(entry.held));
+
+        return { count, cost: entry.price === null ? null : count * entry.price };
+    }
+
+    /**
+     * What it costs to bring everything up to a given duration.
+     *
+     * @param {Forecast[]} forecasts - Normalised consumables
+     * @param {number} seconds - Target duration
+     * @returns {{items: number, cost: number, unpriced: number}}
+     */
+    function refillAll(forecasts, seconds) {
+        let items = 0;
+        let cost = 0;
+        let unpriced = 0;
+
+        for (const entry of forecasts || []) {
+            const need = refillFor(entry, seconds);
+            if (!need.count) continue;
+
+            items += need.count;
+            if (need.cost === null) unpriced++;
+            else cost += need.cost;
+        }
+        return { items, cost, unpriced };
+    }
+
+    /**
+     * A day of everything, at each side of the book.
+     *
+     * Buying costs ask and selling returns bid, and on a consumable bill of twelve
+     * million a day the gap between them is worth seeing rather than averaging away.
+     *
+     * @param {Forecast[]} forecasts - Normalised consumables
+     * @returns {{ask: number, bid: number}}
+     */
+    function costPerDaySides(forecasts) {
+        let ask = 0;
+        let bid = 0;
+
+        for (const entry of forecasts || []) {
+            ask += entry.costPerDaySides?.ask || 0;
+            bid += entry.costPerDaySides?.bid || 0;
+        }
+        return { ask, bid };
+    }
+
+    /**
+     * When you stop, and when the party stops.
+     *
+     * Two separate answers because they mean different things to act on: your own
+     * countdown is what you can do something about right now, and the party's is
+     * what ends the run regardless of how well stocked you are. Rolling them into
+     * one figure loses whichever of those you needed.
+     *
+     * The party figure deliberately **excludes you** — it answers "and how is
+     * everyone else doing", which is the only part of it you cannot see already.
+     *
+     * @param {Array<{isCurrent: boolean, name: string, forecasts: Forecast[]}>} players - Per player
+     * @returns {{you: Forecast|null, party: Forecast|null, partyName: string|null}}
+     */
+    function partyOutlook(players) {
+        let you = null;
+        let party = null;
+        let partyName = null;
+
+        for (const player of players || []) {
+            const soonest = firstToRunOut(player.forecasts);
+            if (!soonest) continue;
+
+            if (player.isCurrent) {
+                you = soonest;
+                continue;
+            }
+            if (!party || soonest.secondsLeft < party.secondsLeft) {
+                party = soonest;
+                partyName = player.name || null;
+            }
+        }
+        return { you, party, partyName };
+    }
+
+    /** The game keeps every duration in nanoseconds */
+    const NS_PER_SECOND = 1e9;
+
+    /**
+     * How often a drink is drunk, from the game's own numbers.
+     *
+     * Drinks do not need measuring. A drink is re-drunk the moment its buff expires,
+     * and the combat simulator divides that duration by `1 + drinkConcentration` —
+     * so the rate is arithmetic, not observation. Food is the opposite: it is eaten
+     * when health or mana crosses a threshold, which depends on what is hitting you,
+     * so there is nothing to compute and measurement is the only honest answer.
+     *
+     * This matters beyond tidiness. The measured rate is capped at a hardcoded
+     * 345.6 a day — 300 seconds at the maximum 20% concentration — so anyone with
+     * less concentration than the cap assumes was being told they drink faster than
+     * they do, and that their stock would last less long than it will.
+     *
+     * @param {number} durationNs - The buff's base duration, in nanoseconds
+     * @param {number} [drinkConcentration] - The player's concentration, as a fraction
+     * @returns {number|null} Drinks per day, or null when the duration is unknown
+     */
+    function drinkRatePerDay(durationNs, drinkConcentration = 0) {
+        const seconds = Number(durationNs) / NS_PER_SECOND;
+        if (!(seconds > 0)) return null;
+
+        const concentration = Number(drinkConcentration) || 0;
+        return 86400 / (seconds / (1 + concentration));
+    }
+
+    /**
+     * Whether to place a buy order or simply take the ask.
+     *
+     * The same judgement the bulk sell assistant makes in the other direction. A
+     * buy order at bid saves the spread but only pays out if it fills, and a fill
+     * that arrives after you have already run out has saved you nothing — so
+     * urgency beats price. Above the threshold the saving is worth the wait; below
+     * it, the spread is rounding and waiting is a worse deal than paying it.
+     *
+     * @param {Object} input - What is being bought
+     * @param {number} input.count - How many are needed
+     * @param {number|null} input.ask - Price to buy now
+     * @param {number|null} input.bid - Price an order would sit at
+     * @param {number} input.secondsLeft - Until the current stock runs out
+     * @param {number|null} [input.fillSeconds] - Measured fill time; null falls back to an assumption
+     * @param {number} [input.minSaving] - Spread below which the saving is not worth waiting for
+     * @returns {{mode: string, saving: number, measured: boolean, reason: string}} `order` or `instant`
+     */
+    function buyStrategy({ count, ask, bid, secondsLeft, fillSeconds = null, minSaving = 0.02 }) {
+        // Only reached when no order book has been seen for this item. Six hours is
+        // a placeholder, not a measurement, and the caller is told which it got so
+        // it can say so rather than presenting a guess as an estimate
+        const measured = Number.isFinite(fillSeconds);
+        const waitSeconds = measured ? fillSeconds : 6 * 3600;
+        if (!(count > 0) || !(ask > 0)) {
+            return { mode: 'instant', saving: 0, measured, reason: 'No price to compare.' };
+        }
+        if (!(bid > 0)) {
+            return { mode: 'instant', saving: 0, measured, reason: 'Nothing bid, so an order has nothing to sit at.' };
+        }
+
+        const saving = (ask - bid) * count;
+        const spread = (ask - bid) / ask;
+
+        // Running out before an order would plausibly fill makes the saving
+        // theoretical — you cannot spend a discount you did not receive in time
+        if (secondsLeft < waitSeconds) {
+            const how = measured ? 'the book says it would fill in' : 'an order is assumed to take';
+            return { mode: 'instant', saving, measured, reason: `Runs out before ${how} ${formatWait(waitSeconds)}.` };
+        }
+        if (spread < minSaving) {
+            return { mode: 'instant', saving, measured, reason: 'The spread is too thin to be worth waiting for.' };
+        }
+
+        const fills = measured ? `Fills in about ${formatWait(waitSeconds)}. ` : 'No order book seen for this item yet. ';
+        return { mode: 'order', saving, measured, reason: `${fills}Saves about ${Math.round(saving).toLocaleString()}.` };
+    }
+
+    /**
+     * A wait, in the words you would use for one.
+     * @param {number} seconds - How long
+     * @returns {string} e.g. `40 minutes`, `3 hours`, `2 days`
+     */
+    function formatWait(seconds) {
+        if (seconds < 3600) return `${Math.max(1, Math.round(seconds / 60))} minutes`;
+        if (seconds < 86400) return `${Math.round(seconds / 3600)} hours`;
+        return `${Math.round(seconds / 86400)} days`;
+    }
+
+    var consumableForecast = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        buyStrategy: buyStrategy,
+        costPerDay: costPerDay,
+        costPerDaySides: costPerDaySides,
+        drinkRatePerDay: drinkRatePerDay,
+        firstToRunOut: firstToRunOut,
+        forecast: forecast,
+        forecastAll: forecastAll,
+        partyOutlook: partyOutlook,
+        refillAll: refillAll,
+        refillFor: refillFor
+    });
+
+    /**
+     * Results as a CSV file.
+     *
+     * A ranked table in a panel is read once and closed. The same numbers in a
+     * spreadsheet can be sorted three other ways, kept next to last week's run, and
+     * shown to somebody else — which is most of what people do with an analysis that
+     * took minutes to produce.
+     *
+     * ## Two values per column, not one
+     *
+     * The panel shows `1.2B` and `+0.32%`; a spreadsheet needs `1200000000` and
+     * `0.0032` or it cannot sort, sum or chart them. So the row objects handed here
+     * carry raw numbers and the formatting stays in the panel. A CSV of display
+     * strings is a screenshot with extra steps.
+     */
+
+    /** Leading characters a spreadsheet will treat as the start of a formula */
+    const FORMULA_START = /^[=@\t\r]/;
+
+    /**
+     * One cell, quoted only where it has to be.
+     *
+     * Numbers go out bare so they arrive as numbers. Text that starts like a formula
+     * is prefixed with an apostrophe: a cell reading `=cmd|…` is a real attack on
+     * whoever opens the file, and no upgrade description needs to be evaluated.
+     *
+     * @param {*} value - Whatever the row holds
+     * @returns {string} CSV-safe cell
+     */
+    function csvCell(value) {
+        if (value === null || value === undefined) return '';
+        if (typeof value === 'number') return Number.isFinite(value) ? String(value) : '';
+        if (typeof value === 'boolean') return value ? 'true' : 'false';
+
+        let text = String(value);
+        if (FORMULA_START.test(text)) text = `'${text}`;
+        if (/[",\n\r]/.test(text)) text = `"${text.replace(/"/g, '""')}"`;
+        return text;
+    }
+
+    /**
+     * Rows and columns as one CSV document.
+     *
+     * @param {Array<Object>} rows - The data
+     * @param {Array<{key: string, label: string}>} columns - Which fields, in order, and their headings
+     * @returns {string} CSV text, CRLF-delimited as the format specifies
+     */
+    function toCsv(rows, columns) {
+        const lines = [columns.map((column) => csvCell(column.label)).join(',')];
+        for (const row of rows || []) {
+            lines.push(columns.map((column) => csvCell(row?.[column.key])).join(','));
+        }
+        return lines.join('\r\n');
+    }
+
+    /**
+     * A filename with the moment in it.
+     *
+     * Two exports of the same table on the same day is the normal case — before and
+     * after buying something — and `results.csv` and `results (1).csv` do not say
+     * which is which.
+     *
+     * @param {string} stem - e.g. `labsim-upgrades`
+     * @param {Date} [now] - Injectable for tests
+     * @returns {string} e.g. `toolasha-labsim-upgrades-20260803-2214.csv`
+     */
+    function csvFilename(stem, now = new Date()) {
+        const pad = (value) => String(value).padStart(2, '0');
+        const stamp =
+            `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}` +
+            `-${pad(now.getHours())}${pad(now.getMinutes())}`;
+        return `toolasha-${stem}-${stamp}.csv`;
+    }
+
+    /**
+     * Save a CSV to the user's downloads.
+     *
+     * A BOM in front, because Excel reads a UTF-8 file without one as the local
+     * ANSI codepage and turns every `→` and `−` in a description into mojibake.
+     *
+     * @param {string} filename - From `csvFilename`
+     * @param {string} csv - From `toCsv`
+     * @param {Document} [doc] - Injectable for tests
+     * @returns {boolean} False when the browser would not take it
+     */
+    function downloadCsv(filename, csv, doc = typeof document !== 'undefined' ? document : null) {
+        // The BOM is for Excel, which reads a UTF-8 file without one as the local
+        // ANSI codepage and turns every arrow in a description into mojibake
+        return downloadFile(filename, '\ufeff' + csv, 'text/csv;charset=utf-8;', doc);
+    }
+
+    /**
+     * Save any text to the user's downloads.
+     *
+     * The same anchor trick as the CSV export, without the spreadsheet's opinions
+     * about encoding — a performance trace is read by a person or a parser, neither
+     * of which wants a byte-order mark in front of it.
+     *
+     * @param {string} filename - What to call it
+     * @param {string} text - The contents
+     * @param {string} [mime] - Content type
+     * @param {Document} [doc] - Injectable for tests
+     * @returns {boolean} False when the browser would not take it
+     */
+    function downloadFile(
+        filename,
+        text,
+        mime = 'text/plain;charset=utf-8;',
+        doc = typeof document !== 'undefined' ? document : null
+    ) {
+        if (!doc) return false;
+        try {
+            const blob = new Blob([text], { type: mime });
+            const url = URL.createObjectURL(blob);
+            const link = doc.createElement('a');
+            link.href = url;
+            link.download = filename;
+            link.style.display = 'none';
+            doc.body.appendChild(link);
+            link.click();
+            link.remove();
+            // Revoking immediately can beat the download in some browsers
+            setTimeout(() => URL.revokeObjectURL(url), 10_000);
+            return true;
+        } catch (error) {
+            console.error('[CsvExport] Saving the file failed:', error);
+            return false;
+        }
+    }
+
+    var csvExport = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        csvCell: csvCell,
+        csvFilename: csvFilename,
+        downloadCsv: downloadCsv,
+        downloadFile: downloadFile,
+        toCsv: toCsv
+    });
+
+    /**
+     * Deferred load
+     *
+     * Reading from storage that is not open yet.
+     *
+     * A module that loads its saved state at import time is racing the database.
+     * IndexedDB opens asynchronously and the bootstrap opens it after the libraries
+     * are evaluated, so a `storage.getJSON` at module scope reliably returns the
+     * default — and reliably logs "Database not available" while doing it. The
+     * feature then runs on defaults for the rest of the session and looks like it
+     * simply forgot everything.
+     *
+     * The fix is not to load later, because the overlay reads that state on its
+     * first paint. It is to wait for the database rather than to ask it early.
+     *
+     * This used to poll — read, wait, read again, for about five seconds — because
+     * a shut database is indistinguishable from an empty one from the outside. The
+     * storage module now says when it has finished starting up, so there is one
+     * thing to wait on and no guessing about how long.
+     */
+
+
+    /**
+     * Read a key once storage can answer.
+     *
+     * @param {string} key - Storage key
+     * @param {string} store - Object store
+     * @param {Function} onLoaded - Called with the value, only when one was found
+     * @param {string} [label] - What to call this in the log
+     * @returns {Promise<void>}
+     */
+    async function loadWhenReady(key, store, onLoaded, label = key) {
+        try {
+            await storage.ready;
+            const saved = await storage.getJSON(key, store, null);
+            if (saved !== null && saved !== undefined) onLoaded(saved);
+        } catch (error) {
+            console.error(`[DeferredLoad] Reading ${label} failed:`, error);
+        }
+    }
+
+    var deferredLoad = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        loadWhenReady: loadWhenReady
+    });
+
+    /**
+     * Drop sources
+     *
+     * Everything a combat zone can drop, and everything a chest can contain.
+     *
+     * The point is to turn one gesture — "track Pirate Cove" — into the thirty rows
+     * that means. Doing it by hand is thirty clicks and a wiki tab; doing it from
+     * the game's own data is exact and cannot go stale.
+     *
+     * ## Three tables, not one
+     *
+     * An ordinary zone drops from its monsters, and a monster has **two** tables:
+     * `dropTable` and `rareDropTable`. They are separate in the game's data because
+     * they scale by different stats, and a walk that reads only the first quietly
+     * omits precisely the drops anybody would be tracking a zone for.
+     *
+     * A zone also has **boss spawns** alongside its random ones, whose drops are
+     * again the interesting ones.
+     *
+     * A **dungeon** does not work like either: it pays out of a reward table on
+     * completion rather than per monster, so its drops come from `dungeonInfo`
+     * instead. Reading a dungeon as an ordinary zone finds nothing at all.
+     *
+     * Coins are excluded throughout. Everything drops coins, they are not an item
+     * anybody tracks, and one row saying "Coin" on every set is noise.
+     *
+     * The model is NTally's, from MWI Combat Suite by Frotty (MIT) — see
+     * `third-party/mwi-combat-suite/` and `docs/THIRD-PARTY-LICENSES.md`. The code is
+     * Toolasha's own.
+     */
+
+    const COIN_HRID = '/items/coin';
+    const COMBAT_ACTION_PREFIX = '/actions/combat/';
+
+    /**
+     * An item's display name, falling back to something readable.
+     *
+     * @param {string} itemHrid - e.g. `/items/purples_gift`
+     * @param {Object} itemDetailMap - The game's map
+     * @returns {string}
+     */
+    function nameOf(itemHrid, itemDetailMap) {
+        const known = itemDetailMap?.[itemHrid]?.name;
+        if (known) return known;
+
+        return itemHrid.replace('/items/', '').replace(/_/g, ' ');
+    }
+
+    /**
+     * Every combat zone the game has, as sets you could track.
+     *
+     * Read from the action map rather than listed, so a zone added by an update
+     * appears without anybody editing a constant — which is what a hardcoded list of
+     * fifteen planets guarantees will not happen.
+     *
+     * @param {Object} actionDetailMap - The game's map
+     * @returns {Array<{id: string, hrid: string, name: string, isDungeon: boolean}>}
+     */
+    function combatZones(actionDetailMap) {
+        const zones = [];
+
+        for (const [hrid, action] of Object.entries(actionDetailMap || {})) {
+            if (!hrid.startsWith(COMBAT_ACTION_PREFIX) || !action?.combatZoneInfo) continue;
+
+            zones.push({
+                // Keyed by hrid, like the chests are, because the id is what gets
+                // handed back to look the set's contents up — a short name looks
+                // tidier in storage and resolves to nothing in the action map
+                id: hrid,
+                hrid,
+                name: action.name || hrid.slice(COMBAT_ACTION_PREFIX.length).replace(/_/g, ' '),
+                isDungeon: Boolean(action.combatZoneInfo.isDungeon),
+            });
+        }
+        return zones.sort((a, b) => (a.sortIndex ?? 0) - (b.sortIndex ?? 0) || a.name.localeCompare(b.name));
+    }
+
+    /**
+     * Everything a zone can drop.
+     *
+     * @param {string} actionHrid - e.g. `/actions/combat/pirate_cove`
+     * @param {Object} data - The game's `initClientData`
+     * @returns {Array<{hrid: string, name: string}>} Deduplicated, coins excluded
+     */
+    function zoneDrops(actionHrid, data) {
+        const { actionDetailMap, combatMonsterDetailMap, itemDetailMap } = data || {};
+        const zone = actionDetailMap?.[actionHrid]?.combatZoneInfo;
+        if (!zone) return [];
+
+        const drops = new Map();
+        const add = (drop) => {
+            const hrid = drop?.itemHrid;
+            if (!hrid || hrid === COIN_HRID || drops.has(hrid)) return;
+            drops.set(hrid, { hrid, name: nameOf(hrid, itemDetailMap) });
+        };
+
+        // A dungeon pays out of a reward table on completion, so its monsters'
+        // tables are not where its drops come from
+        if (zone.isDungeon) {
+            for (const drop of zone.dungeonInfo?.rewardDropTable || []) add(drop);
+            return [...drops.values()];
+        }
+
+        const fight = zone.fightInfo;
+        if (!fight || !combatMonsterDetailMap) return [];
+
+        const addMonster = (monsterHrid) => {
+            const monster = combatMonsterDetailMap[monsterHrid];
+            if (!monster) return;
+            // Both tables: rare is where the reason to track a zone usually lives
+            for (const drop of monster.dropTable || []) add(drop);
+            for (const drop of monster.rareDropTable || []) add(drop);
+        };
+
+        for (const spawn of fight.randomSpawnInfo?.spawns || []) addMonster(spawn.combatMonsterHrid);
+        for (const spawn of fight.bossSpawns || []) addMonster(spawn.combatMonsterHrid);
+
+        return [...drops.values()];
+    }
+
+    /**
+     * Every item that can be opened, as sets you could track.
+     *
+     * @param {Object} data - The game's `initClientData`
+     * @returns {Array<{id: string, hrid: string, name: string}>}
+     */
+    function openableItems(data) {
+        const { openableLootDropMap, itemDetailMap } = data || {};
+
+        return Object.keys(openableLootDropMap || {})
+            .map((hrid) => ({ id: hrid, hrid, name: nameOf(hrid, itemDetailMap) }))
+            .sort((a, b) => a.name.localeCompare(b.name));
+    }
+
+    /**
+     * Everything a chest can contain, and the chest itself.
+     *
+     * The chest is included because a chest you have not opened is a thing you hold
+     * and a thing with a price, and a list of its contents that omits it cannot tell
+     * you what the pile is worth.
+     *
+     * @param {string} chestHrid - e.g. `/items/purples_gift`
+     * @param {Object} data - The game's `initClientData`
+     * @returns {Array<{hrid: string, name: string}>} Deduplicated, coins excluded
+     */
+    function openableDrops(chestHrid, data) {
+        const { openableLootDropMap, itemDetailMap } = data || {};
+        const table = openableLootDropMap?.[chestHrid];
+        if (!table) return [];
+
+        const drops = new Map([[chestHrid, { hrid: chestHrid, name: nameOf(chestHrid, itemDetailMap) }]]);
+
+        for (const drop of table) {
+            const hrid = drop?.itemHrid;
+            if (!hrid || hrid === COIN_HRID || drops.has(hrid)) continue;
+            drops.set(hrid, { hrid, name: nameOf(hrid, itemDetailMap) });
+        }
+        return [...drops.values()];
+    }
+
+    var dropSources = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        combatZones: combatZones,
+        openableDrops: openableDrops,
+        openableItems: openableItems,
+        zoneDrops: zoneDrops
+    });
+
+    /**
+     * Dungeon chest → key maps
+     *
+     * Which key each dungeon chest costs. Two relationships, both 1:1 per chest:
+     * a *regular* chest implies one entry key was spent to enter the dungeon that
+     * dropped it, and *every* chest (regular or refinement) takes one chest key to
+     * open.
+     *
+     * Shared here so combat-stats and the combat-sim adapter (and everything that
+     * prices chests net of their key) read the same table instead of each keeping
+     * a copy. For the dungeon-action → entry-key map, see `key-ledger.js`.
+     */
+
+    /** Regular dungeon chest HRID → the entry key spent to earn it (1:1) */
+    const DUNGEON_CHEST_ENTRY_KEYS = {
+        '/items/chimerical_chest': '/items/chimerical_entry_key',
+        '/items/sinister_chest': '/items/sinister_entry_key',
+        '/items/enchanted_chest': '/items/enchanted_entry_key',
+        '/items/pirate_chest': '/items/pirate_entry_key',
+    };
+
+    /** Dungeon chest HRID (regular and refinement) → the chest key that opens it (1:1) */
+    const DUNGEON_CHEST_CHEST_KEYS = {
+        '/items/chimerical_chest': '/items/chimerical_chest_key',
+        '/items/sinister_chest': '/items/sinister_chest_key',
+        '/items/enchanted_chest': '/items/enchanted_chest_key',
+        '/items/pirate_chest': '/items/pirate_chest_key',
+        '/items/chimerical_refinement_chest': '/items/chimerical_chest_key',
+        '/items/sinister_refinement_chest': '/items/sinister_chest_key',
+        '/items/enchanted_refinement_chest': '/items/enchanted_chest_key',
+        '/items/pirate_refinement_chest': '/items/pirate_chest_key',
+    };
+
+    var dungeonKeys = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        DUNGEON_CHEST_CHEST_KEYS: DUNGEON_CHEST_CHEST_KEYS,
+        DUNGEON_CHEST_ENTRY_KEYS: DUNGEON_CHEST_ENTRY_KEYS
+    });
+
+    /**
+     * The level gap debuff
+     *
+     * A character fighting alongside people far above their level takes a penalty to
+     * what drops for them. It starts once somebody in the party is 20% above them
+     * and deepens fast: three points of penalty for every point of ratio past that,
+     * capped at 90%.
+     *
+     * ## Why this is its own file
+     *
+     * The formula lived inside the simulator's party builder, where it was applied
+     * to per-monster drops and to nothing else. The live drop model — the one behind
+     * Party Luck and the Drop Luck tile — did not have it at all, so the two
+     * disagreed about the same party: the simulator would predict a level-gapped
+     * player taking a fraction of the loot, and the panel measuring that same player
+     * afterwards would call them unlucky for it.
+     *
+     * Shared here so they cannot drift apart again. The simulator imports it rather
+     * than keeping its copy.
+     *
+     * ## What it deliberately does not claim
+     *
+     * **Whether this is what reduces a dungeon's chests, and by how much.** The
+     * simulator applies the debuff to per-monster drops and leaves the chest line
+     * alone, and a dungeon can visibly pay a low-level character nothing at all —
+     * which a 90% cap cannot produce. So the two are not obviously the same
+     * mechanic, and guessing a chest multiplier from a monster-drop formula would
+     * produce a confident number with nothing behind it.
+     *
+     * What the caller gets is the gap itself. What to do with it — here, suppress a
+     * luck verdict that would otherwise blame the player for their party — is the
+     * caller's decision, and the honest one while the chest penalty is unmeasured.
+     */
+
+    /** Below this ratio between the party's top level and yours there is no penalty */
+    const LEVEL_GAP_RATIO = 1.2;
+
+    /** However far below the party you are, the penalty stops here */
+    const MAX_LEVEL_GAP_DEBUFF = 0.9;
+
+    /**
+     * One character's penalty for being below the party.
+     *
+     * @param {number} level - Their combat level
+     * @param {number} topLevel - The highest combat level in the party
+     * @returns {number|null} A negative fraction, 0 for no penalty, or null when a
+     *   level was not available — which is not the same as no penalty and should not
+     *   be shown as one
+     */
+    function levelGapDebuff(level, topLevel) {
+        if (!(level > 0) || !(topLevel > 0)) return null;
+
+        const ratio = topLevel / level;
+        if (ratio <= LEVEL_GAP_RATIO) return 0;
+
+        // Floored to whole percent before scaling, matching the game's own rounding —
+        // an unfloored version drifts by a fraction of a percent at every ratio
+        const levelPercent = Math.floor((ratio - LEVEL_GAP_RATIO) * 100) / 100;
+        return -Math.min(MAX_LEVEL_GAP_DEBUFF, 3 * levelPercent);
+    }
+
+    /**
+     * Every party member's penalty, measured against whoever is highest.
+     *
+     * @param {Array<number|null>} levels - Combat levels, in party order
+     * @returns {Array<number|null>} Debuffs in the same order
+     */
+    function partyLevelGaps(levels) {
+        const known = (levels || []).filter((level) => level > 0);
+
+        // Alone there is nobody to be below, and with no levels at all there is
+        // nothing to measure against — either way, no penalty rather than a guess
+        if (known.length < 2) return (levels || []).map((level) => (level > 0 ? 0 : null));
+
+        const topLevel = Math.max(...known);
+        return levels.map((level) => levelGapDebuff(level, topLevel));
+    }
+
+    /**
+     * Whether a penalty is big enough that a luck reading would be about it.
+     *
+     * A percentile computed against a full share is a verdict on the player's gear
+     * when the player is actually being penalised for their party. Better to say
+     * which it is.
+     *
+     * @param {number|null} debuff - From `levelGapDebuff`
+     * @returns {boolean}
+     */
+    function isLevelGapped(debuff) {
+        return typeof debuff === 'number' && debuff < 0;
+    }
+
+    var dungeonLevelGap = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        LEVEL_GAP_RATIO: LEVEL_GAP_RATIO,
+        MAX_LEVEL_GAP_DEBUFF: MAX_LEVEL_GAP_DEBUFF,
+        isLevelGapped: isLevelGapped,
+        levelGapDebuff: levelGapDebuff,
+        partyLevelGaps: partyLevelGaps
+    });
+
+    /**
+     * Equipment savings
+     *
+     * How far you are from affording the piece you want, and when you will be.
+     *
+     * ## The cost is not the price
+     *
+     * An upgrade costs the asking price of the thing you want **minus what the piece
+     * it replaces is worth**, because you sell the old one. Reading the ask alone
+     * overstates every upgrade by the value of the gear you are already wearing,
+     * which for a late-game slot is most of the price.
+     *
+     * That is only true if you actually sell it. Somebody keeping the old piece for
+     * a second loadout is paying the full ask, so the trade-in is a mode rather than
+     * an assumption — `noSell` turns it off.
+     *
+     * ## Unpriced is not free
+     *
+     * A target nobody is selling has no cost, not a cost of nothing. Treating it as
+     * zero would report it as already affordable, which is the most misleading thing
+     * this could possibly say. Those come back null and are counted separately in a
+     * total, so a total is never quietly a lower bound.
+     *
+     * ## Levels are bought too
+     *
+     * An ability level is a purchase like any other: so many books at what the
+     * market wants for them. It is a savings goal in every way that matters here,
+     * so it lives on the same list — and, because a sim run refines its own estimate
+     * every time it is asked, adding a goal for an ability that already has one
+     * replaces it rather than stacking a second guess beside the first.
+     *
+     * The one thing a level has that a sword does not is a way of being *finished*
+     * without being bought: you can read the books over a week of drops and arrive
+     * anyway. So a goal is checked against the level the character is actually at,
+     * and says so, rather than sitting on the list forever.
+     *
+     * The goals live in the same stored record as the gear, under `abilities`, which
+     * is why the loading and saving of that record is here rather than in the panel:
+     * two writers of one key lose each other's edits. A record written before this
+     * existed simply has no `abilities` key and loads exactly as it did.
+     *
+     * ## So are rooms
+     *
+     * A house room level is the same shape of purchase again — a pile of materials
+     * at what the market wants for them, plus the coins the level asks for outright
+     * — and it is finishable without being bought in exactly the same way, by
+     * building it. So rooms sit beside abilities under `houses`, keyed by room and
+     * capped at the level the game stops at, and a record written before they
+     * existed has no `houses` key either.
+     *
+     * The model is EWatch's, from MWI Combat Suite by Frotty (MIT) — see
+     * `third-party/mwi-combat-suite/` and `docs/THIRD-PARTY-LICENSES.md`. The code is
+     * Toolasha's own.
+     */
+
+
+    /** The one record the whole feature is stored in, per character */
+    const STORAGE_KEY = 'equipmentSavings';
+
+    /**
+     * What one upgrade actually costs.
+     *
+     * @param {Object} input - What it needs
+     * @param {number|null} input.targetAsk - The asking price of the piece you want
+     * @param {number} [input.equippedBid] - What the piece it replaces would fetch
+     * @param {boolean} [input.noSell] - Keeping the old piece, so no trade-in
+     * @returns {number|null} Coins needed, or null when the target has no price
+     */
+    function upgradeCost({ targetAsk, equippedBid = 0, noSell = false }) {
+        if (!(targetAsk > 0)) return null;
+        if (noSell) return targetAsk;
+
+        // Never negative: an upgrade cheaper than what you are wearing costs
+        // nothing, and a negative cost would make a progress bar meaningless
+        return Math.max(0, targetAsk - (Number(equippedBid) || 0));
+    }
+
+    /**
+     * What the materials for one craft come to.
+     *
+     * An upgrade recipe has two halves the game keeps apart: the **inputs**, which
+     * are consumed, and the **upgrade item**, which is the piece being upgraded. For
+     * somebody who already owns the base piece — the usual reason to craft rather
+     * than buy — only the inputs are a purchase, and the finished item's ask is
+     * irrelevant. A Furious Spear you already hold becomes a Refined one for the
+     * price of the shards.
+     *
+     * Any unpriced input makes the whole thing unpriced. A recipe totalled from the
+     * ingredients it could price is a lower bound wearing a total's clothes, and
+     * here it would report a cheaper craft than is possible.
+     *
+     * @param {Object} input - What it needs
+     * @param {Array<{itemHrid: string, count: number}>} input.inputItems - The recipe
+     * @param {Function} input.priceOf - `(itemHrid) => number|null`
+     * @param {number} [input.outputCount] - How many one action makes
+     * @param {boolean} [input.haveBase] - Whether the piece being upgraded is already owned
+     * @param {number} [input.upgradeAsk] - What the piece being upgraded costs, if not
+     * @returns {number|null} Coins for one finished item, or null when it cannot be priced
+     */
+    function craftCost({ inputItems, priceOf, outputCount = 1, haveBase = true, upgradeAsk = 0 }) {
+        if (!inputItems?.length) return null;
+
+        let total = 0;
+        for (const input of inputItems) {
+            const price = priceOf(input.itemHrid);
+            if (!(price > 0)) return null;
+            total += price * (input.count || 0);
+        }
+
+        // The base piece is only a cost if it has to be bought
+        if (!haveBase) {
+            if (!(upgradeAsk > 0)) return null;
+            total += upgradeAsk;
+        }
+
+        const made = outputCount > 0 ? outputCount : 1;
+        return total / made;
+    }
+
+    /**
+     * How far along the saving is.
+     *
+     * @param {number|null} cost - From `upgradeCost`
+     * @param {number} coins - What you have
+     * @returns {{fraction: number|null, affordable: boolean, needed: number|null}}
+     *   `fraction` is capped at 1 — a bar cannot say more than full — while `needed`
+     *   is what is actually left, which is the figure worth reading
+     */
+    function savingsProgress(cost, coins) {
+        if (cost === null) return { fraction: null, affordable: false, needed: null };
+
+        const held = Number(coins) || 0;
+        // Nothing to save for is already there, rather than a division by zero
+        if (cost <= 0) return { fraction: 1, affordable: true, needed: 0 };
+
+        return {
+            fraction: Math.min(1, held / cost),
+            affordable: held >= cost,
+            needed: Math.max(0, cost - held),
+        };
+    }
+
+    /**
+     * How long the rest of it takes at what you are earning.
+     *
+     * @param {number|null} needed - Coins still to find
+     * @param {number} perDay - Income per day
+     * @returns {number|null} Seconds, or null when it cannot be said
+     */
+    function timeToAffordSeconds(needed, perDay) {
+        if (needed === null || !(needed > 0)) return 0;
+        // Not infinity: no income is not "never", it is nothing to divide by. A
+        // figure would be a claim about the future that this cannot make.
+        if (!(perDay > 0)) return null;
+
+        return (needed / perDay) * 86400;
+    }
+
+    /**
+     * The whole shopping list at once.
+     *
+     * @param {Array<{cost: number|null}>} watches - Priced watches
+     * @returns {{cost: number, unpriced: number}} `unpriced` is how many targets it
+     *   could not include, which is the difference between a total and a lower bound
+     *   presented as one
+     */
+    function totalSavings(watches) {
+        let cost = 0;
+        let unpriced = 0;
+
+        for (const watch of watches || []) {
+            if (!watch) continue;
+            if (watch.cost === null) unpriced++;
+            else cost += watch.cost;
+        }
+        return { cost, unpriced };
+    }
+
+    /**
+     * The order a savings list reads best in.
+     *
+     * Nearest to done first, because that is the next thing that happens and the
+     * only entry you might act on today. Insertion order says nothing at all, and
+     * cost order buries the piece you are two days from behind one you are two
+     * months from.
+     *
+     * Affordable ones lead — they are done, and a list that hides its finished
+     * entries at the bottom makes you hunt for good news. Unpriced ones go last:
+     * they have no progress to sort by, and putting them anywhere else implies one.
+     *
+     * @param {Array<Object>} targets - Costed targets
+     * @returns {Array<Object>} A new array
+     */
+    function orderTargets(targets) {
+        const rank = (target) => (target.cost === null ? 2 : target.affordable ? 0 : 1);
+
+        return [...(targets || [])].filter(Boolean).sort((a, b) => {
+            if (rank(a) !== rank(b)) return rank(a) - rank(b);
+            if (rank(a) === 2) return (a.name || '').localeCompare(b.name || '');
+            // Within a band, the one furthest along leads
+            return (b.fraction || 0) - (a.fraction || 0);
+        });
+    }
+
+    /**
+     * The item that levels an ability, which is the thing the market has a price for.
+     *
+     * @param {string} abilityHrid - e.g. `/abilities/fierce_aura`
+     * @returns {string} e.g. `/items/fierce_aura`
+     */
+    function abilityBookHrid(abilityHrid) {
+        return String(abilityHrid || '').replace('/abilities/', '/items/');
+    }
+
+    /** The level the game stops a house room at, and so the highest a goal can ask for */
+    const MAX_HOUSE_ROOM_LEVEL = 8;
+
+    /** A name out of an hrid, for when nothing better was supplied */
+    const prettyName = (hrid) =>
+        String(hrid || '')
+            .split('/')
+            .pop()
+            .replace(/_/g, ' ')
+            .replace(/\b\w/g, (letter) => letter.toUpperCase());
+
+    /**
+     * How an ability goal reads: the ability and the level, e.g. `Fierce Aura Lv46`.
+     *
+     * Exported so a caller with a better name for the ability than its hrid still
+     * produces the same shape of label, rather than each one inventing its own.
+     *
+     * @param {string} abilityHrid - The ability
+     * @param {number} targetLevel - The level being saved for
+     * @param {string} [name] - A nicer name for the ability, if one is known
+     * @returns {string}
+     */
+    function abilityGoalLabel(abilityHrid, targetLevel, name = '') {
+        return goalLabel(abilityHrid, targetLevel, name);
+    }
+
+    /**
+     * How a house room goal reads: the room and the level, e.g. `Mystical Study Lv5`.
+     *
+     * @param {string} houseRoomHrid - The room
+     * @param {number} targetLevel - The level being saved for
+     * @param {string} [name] - A nicer name for the room, if one is known
+     * @returns {string}
+     */
+    function houseGoalLabel(houseRoomHrid, targetLevel, name = '') {
+        return goalLabel(houseRoomHrid, targetLevel, name);
+    }
+
+    /**
+     * The shape both labels take: a name and the level it is going to.
+     *
+     * @param {string} hrid - The ability or the room
+     * @param {number} targetLevel - The level being saved for
+     * @param {string} name - A nicer name, if one is known
+     * @returns {string}
+     */
+    function goalLabel(hrid, targetLevel, name) {
+        return `${name || prettyName(hrid)} Lv${Math.max(0, Math.floor(Number(targetLevel) || 0))}`;
+    }
+
+    /**
+     * Whether a goal has already happened.
+     *
+     * A goal the character has read their way past is done, not pending: leaving it
+     * on the list at full price is the same lie as pricing an unlisted item at zero,
+     * pointed the other way.
+     *
+     * @param {{targetLevel: number}} goal - The goal
+     * @param {number} currentLevel - Where the ability is now
+     * @returns {boolean}
+     */
+    function abilityGoalReached(goal, currentLevel) {
+        return goalReached(goal, currentLevel);
+    }
+
+    /**
+     * Whether a room has already been built to the level being saved for.
+     *
+     * The same test as an ability's, for the same reason: a room you built out of
+     * materials you already had was never bought, and a goal that cannot notice
+     * that sits on the list at full price forever.
+     *
+     * @param {{targetLevel: number}} goal - The goal
+     * @param {number} currentLevel - Where the room is now
+     * @returns {boolean}
+     */
+    function houseGoalReached(goal, currentLevel) {
+        return goalReached(goal, currentLevel);
+    }
+
+    /**
+     * @param {{targetLevel: number}} goal - The goal
+     * @param {number} currentLevel - Where it is now
+     * @returns {boolean}
+     */
+    function goalReached(goal, currentLevel) {
+        const target = Math.max(0, Math.floor(Number(goal?.targetLevel) || 0));
+        if (!(target > 0)) return false;
+
+        return (Number(currentLevel) || 0) >= target;
+    }
+
+    /**
+     * The ability goals, keyed by ability hrid.
+     *
+     * One goal per ability rather than a list: "get Fierce Aura to 46" and "get
+     * Fierce Aura to 51" are the same intention measured twice, and a list would
+     * show both and total both.
+     */
+    let goals = {};
+
+    /**
+     * The house room goals, keyed by room hrid, for the same reason: one goal per
+     * room, because "get the Dojo to 6" and "get the Dojo to 8" are one intention.
+     */
+    let rooms = {};
+
+    /** The rest of the stored record — the gear side, which this module only carries */
+    let record = {};
+
+    /** Whether the stored record has been read since the last character change */
+    let loaded = false;
+
+    /**
+     * One stored goal, with everything it must have and nothing it must not.
+     *
+     * @param {string} hrid - The ability or the room the goal is about
+     * @param {Object} goal - What was handed over or read back
+     * @param {number} [cap] - The highest level the game allows, when there is one
+     * @returns {Object}
+     */
+    function normalizeGoal(hrid, goal, cap = 0) {
+        let targetLevel = Math.max(0, Math.floor(Number(goal?.targetLevel) || 0));
+        // A goal above what the game allows is not a goal, it is a typo — and left
+        // alone it would be costed for levels that cannot be built and never reached
+        if (cap > 0) targetLevel = Math.min(cap, targetLevel);
+
+        // Explicitly, because `Number(null)` is 0 and an unpriced goal recorded as
+        // costing nothing reports itself as already affordable
+        const raw = goal?.cost === null || goal?.cost === undefined || goal?.cost === '' ? null : Number(goal.cost);
+        const cost = Number.isFinite(raw) && raw >= 0 ? raw : null;
+
+        return {
+            targetLevel,
+            cost,
+            label: String(goal?.label || goalLabel(hrid, targetLevel, '')),
+            updatedAt: Number(goal?.updatedAt) || 0,
+        };
+    }
+
+    /**
+     * Write the record back: the gear side as the panel last left it, the goals as
+     * they are now. One writer, so neither side can drop the other's edits.
+     *
+     * @returns {Promise<boolean>} Whether it was written
+     */
+    async function write() {
+        try {
+            return await writeScoped(STORAGE_KEY, { ...record, abilities: { ...goals }, houses: { ...rooms } }, 'settings');
+        } catch (error) {
+            console.error('[EquipmentSavings] Saving the savings record failed:', error);
+            return false;
+        }
+    }
+
+    /**
+     * Read the whole savings record, keeping the level goals and handing back the
+     * rest.
+     *
+     * The goals are absorbed rather than returned because this module owns them from
+     * here on; the caller gets the gear side it owns, and a record written before
+     * ability or house goals existed simply has no `abilities` or `houses` key and
+     * comes back untouched.
+     *
+     * @returns {Promise<Object|null>} The record without the goals, or null when
+     *   nothing has been stored for this character
+     */
+    async function loadSavingsRecord() {
+        try {
+            await storage.ready;
+            const saved = await readScoped(STORAGE_KEY, 'settings', null, { migrate: 'adopt' });
+
+            const rest = { ...(saved || {}) };
+            goals = {};
+            for (const [abilityHrid, goal] of Object.entries(rest.abilities || {})) {
+                if (!abilityHrid || !goal || typeof goal !== 'object') continue;
+                goals[abilityHrid] = normalizeGoal(abilityHrid, goal);
+            }
+            delete rest.abilities;
+
+            rooms = {};
+            for (const [houseRoomHrid, goal] of Object.entries(rest.houses || {})) {
+                if (!houseRoomHrid || !goal || typeof goal !== 'object') continue;
+                rooms[houseRoomHrid] = normalizeGoal(houseRoomHrid, goal, MAX_HOUSE_ROOM_LEVEL);
+            }
+            delete rest.houses;
+
+            record = rest;
+            loaded = true;
+            return saved ? rest : null;
+        } catch (error) {
+            console.error('[EquipmentSavings] Reading the savings record failed:', error);
+            loaded = true;
+            return null;
+        }
+    }
+
+    /**
+     * Store the gear side of the record.
+     *
+     * @param {Object} gear - The panel's own state
+     * @returns {Promise<boolean>} Whether it was written
+     */
+    async function saveSavingsRecord(gear) {
+        record = { ...(gear || {}) };
+        // Never from the caller: the goals below are the only copy that is current
+        delete record.abilities;
+        delete record.houses;
+        return write();
+    }
+
+    /** Read the record once, for a caller that arrived before the panel did */
+    async function ensureLoaded() {
+        if (!loaded) await loadSavingsRecord();
+    }
+
+    /**
+     * Save towards a level of an ability.
+     *
+     * Idempotent per ability: a second call for an ability already on the list
+     * replaces its target and its cost, because the caller is usually a sim run that
+     * has just costed the same intention more accurately than the last one did.
+     *
+     * @param {Object} goal - The goal
+     * @param {string} goal.abilityHrid - e.g. `/abilities/fierce_aura`
+     * @param {number} goal.targetLevel - The level being saved for
+     * @param {number|null} goal.cost - Coins for the books, or null when unpriced
+     * @param {string} [goal.label] - How it should read, e.g. `Fierce Aura Lv46`
+     * @returns {Promise<void>}
+     */
+    async function addAbilityGoal({ abilityHrid, targetLevel, cost, label } = {}) {
+        if (!abilityHrid) return;
+        await ensureLoaded();
+
+        goals[abilityHrid] = normalizeGoal(abilityHrid, { targetLevel, cost, label, updatedAt: Date.now() });
+        await write();
+    }
+
+    /**
+     * Stop saving for a level.
+     * @param {string} abilityHrid - The ability
+     * @returns {Promise<void>}
+     */
+    async function removeAbilityGoal(abilityHrid) {
+        await ensureLoaded();
+        if (!goals[abilityHrid]) return;
+
+        delete goals[abilityHrid];
+        await write();
+    }
+
+    /**
+     * Every ability goal, as a list.
+     * @returns {Array<{abilityHrid: string, targetLevel: number, cost: number|null, label: string}>}
+     */
+    function abilityGoals() {
+        return Object.entries(goals).map(([abilityHrid, goal]) => ({ abilityHrid, ...goal }));
+    }
+
+    /**
+     * One ability's goal.
+     * @param {string} abilityHrid - The ability
+     * @returns {Object|null}
+     */
+    function abilityGoalFor(abilityHrid) {
+        const goal = goals[abilityHrid];
+        return goal ? { abilityHrid, ...goal } : null;
+    }
+
+    /** @param {string} abilityHrid - Whether a level of this is being saved for */
+    function hasAbilityGoal(abilityHrid) {
+        return Boolean(goals[abilityHrid]);
+    }
+
+    /**
+     * Forget every goal, for a test that must not inherit the last one.
+     *
+     * @param {{loaded?: boolean}} [options] - `loaded: false` also forgets that the
+     *   record was ever read, which is the state a caller arriving before the panel
+     *   finds — the only way to exercise the read-on-demand path
+     */
+    function resetAbilityGoals({ loaded: hasLoaded = true } = {}) {
+        goals = {};
+        record = {};
+        loaded = hasLoaded;
+    }
+
+    /**
+     * Save towards a level of a house room.
+     *
+     * Idempotent per room, as an ability goal is per ability: a second call for a
+     * room already on the list replaces its target and its cost rather than putting
+     * a second guess beside the first, because the caller is usually something that
+     * has just costed the same intention more accurately.
+     *
+     * @param {Object} goal - The goal
+     * @param {string} goal.houseRoomHrid - e.g. `/house_rooms/mystical_study`
+     * @param {number} goal.targetLevel - The level being saved for, capped at the game's own
+     * @param {number|null} goal.cost - Coins for the build, or null when unpriced
+     * @param {string} [goal.label] - How it should read, e.g. `Mystical Study Lv5`
+     * @returns {Promise<void>}
+     */
+    async function addHouseGoal({ houseRoomHrid, targetLevel, cost, label } = {}) {
+        if (!houseRoomHrid) return;
+        await ensureLoaded();
+
+        rooms[houseRoomHrid] = normalizeGoal(
+            houseRoomHrid,
+            { targetLevel, cost, label, updatedAt: Date.now() },
+            MAX_HOUSE_ROOM_LEVEL
+        );
+        await write();
+    }
+
+    /**
+     * Stop saving for a room level.
+     * @param {string} houseRoomHrid - The room
+     * @returns {Promise<void>}
+     */
+    async function removeHouseGoal(houseRoomHrid) {
+        await ensureLoaded();
+        if (!rooms[houseRoomHrid]) return;
+
+        delete rooms[houseRoomHrid];
+        await write();
+    }
+
+    /**
+     * Every house room goal, as a list.
+     * @returns {Array<{houseRoomHrid: string, targetLevel: number, cost: number|null, label: string}>}
+     */
+    function houseGoals() {
+        return Object.entries(rooms).map(([houseRoomHrid, goal]) => ({ houseRoomHrid, ...goal }));
+    }
+
+    /**
+     * One room's goal.
+     * @param {string} houseRoomHrid - The room
+     * @returns {Object|null}
+     */
+    function houseGoalFor(houseRoomHrid) {
+        const goal = rooms[houseRoomHrid];
+        return goal ? { houseRoomHrid, ...goal } : null;
+    }
+
+    /** @param {string} houseRoomHrid - Whether a level of this room is being saved for */
+    function hasHouseGoal(houseRoomHrid) {
+        return Boolean(rooms[houseRoomHrid]);
+    }
+
+    /**
+     * Forget every room goal, for a test that must not inherit the last one.
+     *
+     * @param {{loaded?: boolean}} [options] - `loaded: false` also forgets that the
+     *   record was ever read, as `resetAbilityGoals` does
+     */
+    function resetHouseGoals({ loaded: hasLoaded = true } = {}) {
+        rooms = {};
+        record = {};
+        loaded = hasLoaded;
+    }
+
+    var equipmentSavings = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        MAX_HOUSE_ROOM_LEVEL: MAX_HOUSE_ROOM_LEVEL,
+        abilityBookHrid: abilityBookHrid,
+        abilityGoalFor: abilityGoalFor,
+        abilityGoalLabel: abilityGoalLabel,
+        abilityGoalReached: abilityGoalReached,
+        abilityGoals: abilityGoals,
+        addAbilityGoal: addAbilityGoal,
+        addHouseGoal: addHouseGoal,
+        craftCost: craftCost,
+        hasAbilityGoal: hasAbilityGoal,
+        hasHouseGoal: hasHouseGoal,
+        houseGoalFor: houseGoalFor,
+        houseGoalLabel: houseGoalLabel,
+        houseGoalReached: houseGoalReached,
+        houseGoals: houseGoals,
+        loadSavingsRecord: loadSavingsRecord,
+        orderTargets: orderTargets,
+        removeAbilityGoal: removeAbilityGoal,
+        removeHouseGoal: removeHouseGoal,
+        resetAbilityGoals: resetAbilityGoals,
+        resetHouseGoals: resetHouseGoals,
+        saveSavingsRecord: saveSavingsRecord,
+        savingsProgress: savingsProgress,
+        timeToAffordSeconds: timeToAffordSeconds,
+        totalSavings: totalSavings,
+        upgradeCost: upgradeCost
+    });
+
+    /**
+     * Game-Text Constants
+     *
+     * Every load-bearing English literal the script matches against text the game
+     * renders, in one place. These strings are as much a part of the game's API as
+     * its class names and data keys: a rewording ("Battle started:" becoming
+     * "Battle begins:") silently blinds every consumer, with no error anywhere.
+     * Collecting them here makes the dependency visible, greppable, and testable —
+     * game-text.test.js pins each one against a real message it was seen in.
+     *
+     * String constants are for consumers that `includes()`/`split()`; the RegExp
+     * constants preserve exactly the pattern their consumer matched with before the
+     * literal moved here (word boundaries, optional spacing, case-insensitivity).
+     * None carry the `g` flag, so sharing one instance across modules is safe.
+     */
+
+    /* ------------------------------------------------------------------------- *
+     * Dungeon party chat (dungeon-tracker.js, dungeon-tracker-chat-annotations.js)
+     * ------------------------------------------------------------------------- */
+
+    /** Seen in: "[08/04 10:00:00 AM] Battle started: Chimerical Den" */
+    const DUNGEON_BATTLE_STARTED = 'Battle started:';
+
+    /** Seen in: "[08/04 10:05:00 AM] Battle ended: Chimerical Den" (canceled/fled) */
+    const DUNGEON_BATTLE_ENDED = 'Battle ended:';
+
+    /** Seen in: "[08/04 10:00:00 AM] Key counts: [Alice - 12]" */
+    const DUNGEON_KEY_COUNTS = 'Key counts:';
+
+    /** Seen in: "[08/04 10:04:00 AM] Party failed on wave 7" */
+    const DUNGEON_PARTY_FAILED = 'Party failed on wave';
+
+    /** The phrase above with the wave number it is always followed by. */
+    const DUNGEON_PARTY_FAILED_RE = new RegExp(`${DUNGEON_PARTY_FAILED} \\d+`);
+
+    /* ------------------------------------------------------------------------- *
+     * Party status lines (chat-profile-link.js)
+     * ------------------------------------------------------------------------- */
+
+    /** Seen in: "Briggsy99 has joined the party." */
+    const PARTY_HAS_JOINED = 'has joined the party.';
+
+    /** Seen in: "Briggsy99 has left the party." */
+    const PARTY_HAS_LEFT = 'has left the party.';
+
+    /** Seen in: "Briggsy99 is ready." */
+    const PARTY_IS_READY = 'is ready.';
+
+    /** Seen in: "Briggsy99 is not ready." */
+    const PARTY_IS_NOT_READY = 'is not ready.';
+
+    /**
+     * The four party status sentence shapes, for consumers that build a "name
+     * followed by exactly one of these" matcher. Longer phrases first so an
+     * alternation never lets "is ready." shadow "is not ready.".
+     */
+    const PARTY_STATUS_PHRASES = [PARTY_HAS_JOINED, PARTY_HAS_LEFT, PARTY_IS_NOT_READY, PARTY_IS_READY];
+
+    /* ------------------------------------------------------------------------- *
+     * Guild trial tabs (guild-trials-scrape.js)
+     * ------------------------------------------------------------------------- */
+
+    /** Seen in: "1/28 signed up" (and the other way round, "Signed Up 3/56") */
+    const TRIAL_SIGNED_UP_RE = /signed\s*up/i;
+
+    /** Seen in: "Completed" on a finished trial card ("Lv.120, 960 pts, T3") */
+    const TRIAL_CARD_COMPLETED_RE = /\bcomplet(?:e|ed)\b/i;
+
+    /** Seen in: "Scheduled Wed 04:00 PM 2h 24m" above a tab of "0 pts" cards */
+    const TRIAL_STATUS_SCHEDULED_RE = /\bscheduled\b/i;
+
+    /** Seen in: "Completed Thu 09:00 AM" once the cycle is over */
+    const TRIAL_STATUS_COMPLETED_RE = /\bcompleted?\b/i;
+
+    /** Seen in: "Skilling Trial - In Progress  Thu 04:00 PM" */
+    const TRIAL_STATUS_IN_PROGRESS_RE = /\bin\s*progress\b/i;
+
+    /** Seen in: "Skilling Trial - In Progress" (names the hour's trial kind) */
+    const TRIAL_KIND_SKILLING_RE = /\bskilling\b/i;
+
+    /** Seen in: "Combat Trial - Scheduled Thu 05:00 PM 1h 2m" */
+    const TRIAL_KIND_COMBAT_RE = /\bcombat\b/i;
+
+    /** Seen in: "Milking Lv.130" on a trial card's summary line */
+    const TRIAL_LEVEL_RE = /Lv\.?\s*(\d+)/i;
+
+    /** Seen in: "600 pts" — what a card says clearing the trial is worth */
+    const TRIAL_POINTS_RE = /(\d[\d,]*)\s*(?:pts?|points?)\b/i;
+
+    /** Seen in: "T6" (also written "Tier 6") on a card that states its tier */
+    const TRIAL_TIER_RE = /\b(?:tier\s*|T)(\d{1,2})\b/i;
+
+    /** Seen in: "Time: 20m 37s" and "42:15 remaining" — a clock that says what it is */
+    const TRIAL_CLOCK_LABEL_RE = /remain|left|ends?\b|until|time/i;
+
+    /* ------------------------------------------------------------------------- *
+     * Guild panel (guild-xp-display.js)
+     * ------------------------------------------------------------------------- */
+
+    /**
+     * Seen in: "Exp to Level Up" on the guild overview's data blocks.
+     *
+     * Not yet imported by its consumer — guild-xp-display.js matches this label to
+     * find where to append the catch-up estimate; rewire it to this constant the
+     * next time that file is touched.
+     */
+    const GUILD_EXP_TO_LEVEL = 'Exp to';
+
+    var gameText = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        DUNGEON_BATTLE_ENDED: DUNGEON_BATTLE_ENDED,
+        DUNGEON_BATTLE_STARTED: DUNGEON_BATTLE_STARTED,
+        DUNGEON_KEY_COUNTS: DUNGEON_KEY_COUNTS,
+        DUNGEON_PARTY_FAILED: DUNGEON_PARTY_FAILED,
+        DUNGEON_PARTY_FAILED_RE: DUNGEON_PARTY_FAILED_RE,
+        GUILD_EXP_TO_LEVEL: GUILD_EXP_TO_LEVEL,
+        PARTY_HAS_JOINED: PARTY_HAS_JOINED,
+        PARTY_HAS_LEFT: PARTY_HAS_LEFT,
+        PARTY_IS_NOT_READY: PARTY_IS_NOT_READY,
+        PARTY_IS_READY: PARTY_IS_READY,
+        PARTY_STATUS_PHRASES: PARTY_STATUS_PHRASES,
+        TRIAL_CARD_COMPLETED_RE: TRIAL_CARD_COMPLETED_RE,
+        TRIAL_CLOCK_LABEL_RE: TRIAL_CLOCK_LABEL_RE,
+        TRIAL_KIND_COMBAT_RE: TRIAL_KIND_COMBAT_RE,
+        TRIAL_KIND_SKILLING_RE: TRIAL_KIND_SKILLING_RE,
+        TRIAL_LEVEL_RE: TRIAL_LEVEL_RE,
+        TRIAL_POINTS_RE: TRIAL_POINTS_RE,
+        TRIAL_SIGNED_UP_RE: TRIAL_SIGNED_UP_RE,
+        TRIAL_STATUS_COMPLETED_RE: TRIAL_STATUS_COMPLETED_RE,
+        TRIAL_STATUS_IN_PROGRESS_RE: TRIAL_STATUS_IN_PROGRESS_RE,
+        TRIAL_STATUS_SCHEDULED_RE: TRIAL_STATUS_SCHEDULED_RE,
+        TRIAL_TIER_RE: TRIAL_TIER_RE
+    });
+
+    /**
+     * Guild credit pricing
+     *
+     * Guild credits are never listed on the marketplace, so "what did this shrine
+     * level cost" has no direct answer. It has an indirect one: credits are obtained
+     * by handing in ordinary tradeable items at published conversion rates, so the
+     * gold value of a credit is the price of the cheapest item that yields one.
+     *
+     * That is the same reasoning the guild credit exchange table uses, kept here so
+     * the upgrade advisor and the build score agree with the exchange table and with
+     * each other rather than each inventing a rate.
+     *
+     * Guild *tokens* are deliberately not priced. Nothing converts into them, so any
+     * gold figure would be invented; callers show the token count separately.
+     */
+
+
+    /**
+     * Cheapest gold cost of one credit of each type, by conversion.
+     * @param {string} [mode='ask'] - Pricing side: 'ask' to buy the items in, 'bid' to value what you hand over
+     * @returns {Object} creditItemHrid → gold per credit
+     */
+    function buildGoldPerCredit(mode = 'ask') {
+        const itemDetailMap = dataManager$1.getInitClientData()?.itemDetailMap || {};
+        const cheapest = {};
+
+        for (const [hrid, item] of Object.entries(itemDetailMap)) {
+            for (const conversion of item.guildCreditConversions || []) {
+                const price = getItemPrice(hrid, { mode });
+                if (!(price > 0) || !(conversion.creditCount > 0)) continue;
+                const perCredit = (price * conversion.itemCount) / conversion.creditCount;
+                const creditHrid = conversion.creditItemHrid;
+                if (!cheapest[creditHrid] || perCredit < cheapest[creditHrid]) cheapest[creditHrid] = perCredit;
+            }
+        }
+
+        return cheapest;
+    }
+
+    /**
+     * Price a list of credit costs in gold.
+     *
+     * A credit item with a market listing of its own is taken at that price; every
+     * other one falls back to the cheapest conversion. An item with neither is
+     * reported rather than counted as free — a total that quietly drops a line is
+     * worse than no total.
+     *
+     * @param {Array<{itemHrid: string, count: number}>} creditCosts - Costs to price
+     * @param {Object} [options]
+     * @param {string} [options.mode='ask'] - Pricing side
+     * @param {Object} [options.goldPerCredit] - Prebuilt rate map, to avoid rebuilding it per call
+     * @returns {{lines: Array<Object>, total: number|null, unpriced: Array<string>}}
+     */
+    function priceGuildCreditCosts(creditCosts, { mode = 'ask', goldPerCredit = null } = {}) {
+        const rates = goldPerCredit || buildGoldPerCredit(mode);
+        const itemDetailMap = dataManager$1.getInitClientData()?.itemDetailMap || {};
+
+        const lines = [];
+        const unpriced = [];
+        let total = 0;
+
+        for (const { itemHrid, count } of creditCosts || []) {
+            if (!itemHrid || !(count > 0)) continue;
+            const name = itemDetailMap[itemHrid]?.name || itemHrid.split('/').pop().replace(/_/g, ' ');
+            const direct = getItemPrice(itemHrid, { mode });
+            const each = direct > 0 ? direct : rates[itemHrid] || null;
+
+            lines.push({ itemHrid, name, count, goldEach: each, gold: each === null ? null : each * count });
+            if (each === null) unpriced.push(name);
+            else total += each * count;
+        }
+
+        return { lines, total: unpriced.length > 0 ? null : total, unpriced };
+    }
+
+    var guildCreditPricing = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        buildGoldPerCredit: buildGoldPerCredit,
+        priceGuildCreditCosts: priceGuildCreditCosts
+    });
+
+    /**
+     * Dungeon key ledger
+     *
+     * How many keys a character actually spent, as opposed to how many they were
+     * assumed to have spent.
+     *
+     * ## Why not just take the difference
+     *
+     * The obvious measurement is the count at the start of a run against the count
+     * at the end, which is what the "Key counts" chat message offers. It is wrong
+     * the moment somebody buys keys mid-run: start at 10, spend 3, buy 20, and the
+     * difference says they *gained* 17. There is no way to recover the 3 from two
+     * samples, because two samples cannot tell one number changing twice from one
+     * number changing once.
+     *
+     * So this does not sample. It watches every change and adds up the two
+     * directions separately: a count that falls is keys consumed, a count that rises
+     * is keys acquired. Buying mid-run lands in `gained` and never touches `spent`.
+     *
+     * ## What it can and cannot see
+     *
+     * `items_updated` is the character's own inventory, so this is exact for the
+     * player running it and silent about everybody else. Party members are only
+     * visible through the chat message, which is two samples — so their figure is
+     * trustworthy only while it falls, and this exposes `sample()` to record that
+     * distinction rather than averaging a wrong number into a right one.
+     *
+     * A fall is not necessarily a dungeon: keys can be listed on the market or given
+     * away, and both look exactly like spending one. Nothing in the payload
+     * distinguishes them, so the ledger counts what it sees and the caller decides
+     * what window to trust — which for a dungeon is the run itself.
+     */
+
+    /** The key a dungeon takes to enter, per dungeon */
+    const ENTRY_KEYS = {
+        '/actions/combat/chimerical_den': '/items/chimerical_entry_key',
+        '/actions/combat/sinister_circus': '/items/sinister_entry_key',
+        '/actions/combat/enchanted_fortress': '/items/enchanted_entry_key',
+        '/actions/combat/pirate_cove': '/items/pirate_entry_key',
+    };
+
+    /** Everything this tracks, entry keys and the keys that open the chests */
+    const TRACKED_KEYS = new Set([
+        ...Object.values(ENTRY_KEYS),
+        '/items/chimerical_chest_key',
+        '/items/sinister_chest_key',
+        '/items/enchanted_chest_key',
+        '/items/pirate_chest_key',
+    ]);
+
+    /** Where a key has to be for this to be counting the right pile */
+    const INVENTORY = '/item_locations/inventory';
+
+    /**
+     * A fresh ledger.
+     *
+     * @returns {Object} `{counts, spent, gained, samples}`
+     */
+    function newKeyLedger() {
+        return { counts: {}, spent: {}, gained: {}, samples: {} };
+    }
+
+    /**
+     * Take an `items_updated` payload and record what moved.
+     *
+     * The payload carries new absolute counts for the rows that changed, not deltas,
+     * so the previous count has to be remembered here — by the time a listener runs,
+     * the data manager has already applied the update over the old value.
+     *
+     * @param {Object} ledger - From `newKeyLedger`, mutated
+     * @param {Array<Object>} endCharacterItems - The changed rows
+     * @returns {Object} The same ledger
+     */
+    function noteItems(ledger, endCharacterItems) {
+        for (const item of endCharacterItems || []) {
+            if (!TRACKED_KEYS.has(item?.itemHrid)) continue;
+            if (item.itemLocationHrid && item.itemLocationHrid !== INVENTORY) continue;
+
+            const count = Number(item.count);
+            if (!Number.isFinite(count) || count < 0) continue;
+
+            const hrid = item.itemHrid;
+            const before = ledger.counts[hrid];
+            ledger.counts[hrid] = count;
+
+            // The first sighting is where counting starts. Whatever they were
+            // already holding is not a purchase and is certainly not a dungeon.
+            if (before === undefined) continue;
+
+            const moved = count - before;
+            if (moved < 0) ledger.spent[hrid] = (ledger.spent[hrid] || 0) + -moved;
+            else if (moved > 0) ledger.gained[hrid] = (ledger.gained[hrid] || 0) + moved;
+        }
+        return ledger;
+    }
+
+    /**
+     * Record somebody else's key count, seen from the outside.
+     *
+     * This is the two-sample case, and it is kept apart from `spent` because it is a
+     * weaker measurement. A fall is real spending. A rise means they acquired keys,
+     * and how many they *also* spent in that window is not recoverable — so the
+     * sample is marked unusable rather than counted as zero, which would quietly
+     * drag an average down every time somebody restocked.
+     *
+     * @param {Object} ledger - From `newKeyLedger`, mutated
+     * @param {string} who - Whose count this is
+     * @param {number} count - What they hold now
+     * @returns {Object} The same ledger
+     */
+    function sample(ledger, who, count) {
+        if (!who || !Number.isFinite(count) || count < 0) return ledger;
+
+        const previous = ledger.samples[who];
+        if (!previous) {
+            ledger.samples[who] = { seen: count, spent: 0, runs: 0, unmeasurable: 0 };
+            return ledger;
+        }
+
+        const moved = count - previous.seen;
+        previous.seen = count;
+
+        if (moved < 0) {
+            previous.spent += -moved;
+            previous.runs += 1;
+        } else if (moved > 0) {
+            // They bought, traded for or opened something into keys. Whatever they
+            // spent in the same window is underneath that and cannot be dug out.
+            previous.unmeasurable += 1;
+        }
+        return ledger;
+    }
+
+    /**
+     * What one key cost this character, net of anything they picked up.
+     *
+     * @param {Object} ledger - From `newKeyLedger`
+     * @param {string} itemHrid - Which key
+     * @returns {{spent: number, gained: number}}
+     */
+    function keyFlow(ledger, itemHrid) {
+        return { spent: ledger.spent[itemHrid] || 0, gained: ledger.gained[itemHrid] || 0 };
+    }
+
+    /**
+     * The entry key a dungeon takes.
+     *
+     * @param {string} actionHrid - The dungeon
+     * @returns {string|null}
+     */
+    function entryKeyFor(actionHrid) {
+        return ENTRY_KEYS[actionHrid] || null;
+    }
+
+    var keyLedger = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        ENTRY_KEYS: ENTRY_KEYS,
+        TRACKED_KEYS: TRACKED_KEYS,
+        entryKeyFor: entryKeyFor,
+        keyFlow: keyFlow,
+        newKeyLedger: newKeyLedger,
+        noteItems: noteItems,
+        sample: sample
+    });
+
+    /**
+     * Party lint
+     *
+     * Loadout mistakes worth calling out on a party, as readable strings.
+     *
+     * Extracted from `combat-sim-ui.js` so the surfaces that lint a *live* party —
+     * the DPS panel watching a run in progress — do not have to import the whole
+     * simulator UI to ask two questions about gear and auras. The sim re-exports
+     * everything here, so its callers and tests are untouched. Pure throughout:
+     * game data comes in as arguments, never through an import.
+     *
+     * The two checks are the two mistakes a party cannot see from inside the game:
+     * gear that does nothing in combat quietly occupying a combat slot, and the
+     * same aura equipped twice when one copy reaches every ally.
+     */
+
+    /**
+     * Is this equipment piece skilling gear — a piece that contributes nothing to combat?
+     *
+     * Read off the item's own stats rather than a name list, the same way
+     * `skilling-gear-candidates.js` scopes gear to a skill: skilling tools and
+     * outfits carry a nonzero value in `equipmentDetail.noncombatStats` and no
+     * nonzero value in `equipmentDetail.combatStats`. A Philosopher's Necklace,
+     * which carries both, is not flagged — it does work in combat; a piece with
+     * neither is not flagged either, because "no stats" is not the same claim as
+     * "skilling gear".
+     *
+     * @param {Object} itemDetail - From `itemDetailMap`
+     * @returns {boolean}
+     */
+    function isSkillingGearItem(itemDetail) {
+        const equipment = itemDetail?.equipmentDetail;
+        if (!equipment) return false;
+        const hasValue = (stats) => Object.values(stats || {}).some((value) => Number(value) !== 0);
+        return hasValue(equipment.noncombatStats) && !hasValue(equipment.combatStats);
+    }
+
+    /**
+     * Is this ability an aura — a special ability whose buffs land on the whole party?
+     *
+     * Read off the ability data rather than the hrid: the engine treats exactly
+     * this shape as party-wide (`processAbilityBuffEffect` walks every living ally
+     * for a `/ability_effect_types/buff` effect with `targetType 'allAllies'`), so
+     * anything matching it is an aura in the only sense that matters here — and a
+     * special ability that only buffs its caster (Invincible, Vampirism) is not.
+     *
+     * @param {Object} abilityDetail - From `abilityDetailMap`
+     * @returns {boolean}
+     */
+    function isAuraAbility(abilityDetail) {
+        if (!abilityDetail?.isSpecialAbility) return false;
+        return (abilityDetail.abilityEffects || []).some(
+            (effect) =>
+                effect?.effectType === '/ability_effect_types/buff' &&
+                effect?.targetType === 'allAllies' &&
+                Array.isArray(effect?.buffs) &&
+                effect.buffs.length > 0
+        );
+    }
+
+    /**
+     * The name a party warning calls a member by.
+     * @param {Object} dto - Player DTO
+     * @param {Array<Object>} playerInfo - `[{ hrid, name }]` as the sim loads it
+     * @returns {string}
+     */
+    function partyMemberName(dto, playerInfo) {
+        const entry = (playerInfo || []).find((info) => info?.hrid === dto?.hrid);
+        return entry?.name || dto?.hrid || 'Unknown player';
+    }
+
+    /**
+     * Party members wearing gear that does nothing in combat.
+     *
+     * One warning per offending member, naming every piece at once — five separate
+     * lines about one person's outfit would read as five problems.
+     *
+     * @param {Array<Object>} playerDTOs - Player DTOs (`equipment` keyed by slot)
+     * @param {Array<Object>} playerInfo - `[{ hrid, name }]`
+     * @param {Object} itemDetailMap - Game data
+     * @returns {Array<string>} Human-readable warnings
+     */
+    function skillingGearWarnings(playerDTOs, playerInfo, itemDetailMap = {}) {
+        const warnings = [];
+        for (const dto of playerDTOs || []) {
+            const pieces = [];
+            for (const [slot, worn] of Object.entries(dto?.equipment || {})) {
+                // Tool slots have no combat equivalent — a Holy Alembic is always
+                // equipped and never displacing combat gear, so it is not a mistake
+                if (String(slot).endsWith('_tool')) continue;
+                if (!worn?.hrid) continue;
+                const detail = itemDetailMap[worn.hrid];
+                if (!isSkillingGearItem(detail)) continue;
+                pieces.push(detail.name || worn.hrid.split('/').pop());
+            }
+            if (pieces.length > 0) {
+                warnings.push(`${partyMemberName(dto, playerInfo)} has skilling gear equipped: ${pieces.join(', ')}`);
+            }
+        }
+        return warnings;
+    }
+
+    /**
+     * Auras equipped by more than one party member.
+     *
+     * Two copies of the same aura are one aura: the buff reaches every ally from
+     * whoever casts it, keyed by its unique hrid, so the second copy adds nothing
+     * and costs its wearer the special slot.
+     *
+     * @param {Array<Object>} playerDTOs - Player DTOs (`abilities` array of slots)
+     * @param {Array<Object>} playerInfo - `[{ hrid, name }]`
+     * @param {Object} abilityDetailMap - Game data
+     * @returns {Array<string>} Human-readable warnings, one per duplicated aura
+     */
+    function duplicateAuraWarnings(playerDTOs, playerInfo, abilityDetailMap = {}) {
+        const wearersByAura = new Map();
+        for (const dto of playerDTOs || []) {
+            const seen = new Set();
+            for (const ability of dto?.abilities || []) {
+                if (!ability?.hrid || seen.has(ability.hrid)) continue;
+                seen.add(ability.hrid);
+                if (!isAuraAbility(abilityDetailMap[ability.hrid])) continue;
+                const wearers = wearersByAura.get(ability.hrid) || [];
+                wearers.push(partyMemberName(dto, playerInfo));
+                wearersByAura.set(ability.hrid, wearers);
+            }
+        }
+
+        const warnings = [];
+        for (const [auraHrid, wearers] of wearersByAura) {
+            if (wearers.length < 2) continue;
+            const auraName = abilityDetailMap[auraHrid]?.name || auraHrid.split('/').pop();
+            const names =
+                wearers.length === 2
+                    ? wearers.join(' and ')
+                    : `${wearers.slice(0, -1).join(', ')} and ${wearers[wearers.length - 1]}`;
+            warnings.push(`${auraName} is equipped by ${names} — auras do not stack`);
+        }
+        return warnings;
+    }
+
+    /**
+     * Every loadout mistake worth flagging on a loaded party, as readable strings.
+     *
+     * Only for actual parties: solo, both checks are moot — one copy of an aura is
+     * the correct number, and gear is the player's own screen looking back at them.
+     *
+     * @param {Array<Object>} playerDTOs - Player DTOs as the sim will run them
+     * @param {Array<Object>} playerInfo - `[{ hrid, name }]`
+     * @param {Object} gameData - Payload from `buildGameDataPayload`
+     * @returns {Array<string>} Warnings, empty when there is nothing to say
+     */
+    function partyLintWarnings(playerDTOs, playerInfo, gameData) {
+        if (!Array.isArray(playerDTOs) || playerDTOs.length < 2) return [];
+        return [
+            ...skillingGearWarnings(playerDTOs, playerInfo, gameData?.itemDetailMap || {}),
+            ...duplicateAuraWarnings(playerDTOs, playerInfo, gameData?.abilityDetailMap || {}),
+        ];
+    }
+
+    /**
+     * The live party, in the DTO shape the lint reads.
+     *
+     * `new_battle` names every player and carries every player's equipped kit whole
+     * (`combatDetails.combatAbilities`) — but nobody's equipment: the combat unit
+     * has stats, not wearables. So the mapping is honest about what it can source:
+     * abilities are filled for everyone from the payload, and equipment only for
+     * the current player, from the client's own always-current equipment list
+     * passed in by the caller. Everyone else's `equipment` is left empty rather
+     * than guessed from a stale cached profile, which means the gear check only
+     * ever speaks about the one loadout it can actually see.
+     *
+     * @param {Object} battle - A `new_battle` payload (`players` is an array)
+     * @param {Object} [options]
+     * @param {string|number} [options.currentCharacterId] - Who the client is
+     * @param {Array<Object>} [options.ownEquipment] - The current player's equipped
+     *   items, `[{ itemHrid, enhancementLevel }]`
+     * @param {Object} [options.itemDetailMap] - Game data, to key equipment by
+     *   `equipmentDetail.type`; an item the map cannot place is skipped
+     * @returns {{playerDTOs: Array<Object>, playerInfo: Array<Object>}} Lint inputs;
+     *   both empty when the battle names nobody
+     */
+    function battleLintInputs(battle, { currentCharacterId, ownEquipment, itemDetailMap } = {}) {
+        const players = Array.isArray(battle?.players) ? battle.players : [];
+        const playerDTOs = [];
+        const playerInfo = [];
+
+        players.forEach((player, index) => {
+            const hrid = `player${index + 1}`;
+            const name = player?.character?.name || player?.name || `Player ${index + 1}`;
+
+            const isSelf =
+                currentCharacterId !== null &&
+                currentCharacterId !== undefined &&
+                player?.character?.id === currentCharacterId;
+
+            const equipment = {};
+            if (isSelf) {
+                for (const item of ownEquipment || []) {
+                    const type = itemDetailMap?.[item?.itemHrid]?.equipmentDetail?.type;
+                    if (!type) continue;
+                    equipment[type] = { hrid: item.itemHrid, enhancementLevel: item.enhancementLevel || 0 };
+                }
+            }
+
+            const abilities = (player?.combatDetails?.combatAbilities || [])
+                .filter((ability) => ability?.abilityHrid)
+                .map((ability) => ({ hrid: ability.abilityHrid, level: ability.level || 1 }));
+
+            playerDTOs.push({ hrid, equipment, abilities });
+            playerInfo.push({ hrid, name });
+        });
+
+        return { playerDTOs, playerInfo };
+    }
+
+    var partyLint = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        battleLintInputs: battleLintInputs,
+        duplicateAuraWarnings: duplicateAuraWarnings,
+        isAuraAbility: isAuraAbility,
+        isSkillingGearItem: isSkillingGearItem,
+        partyLintWarnings: partyLintWarnings,
+        skillingGearWarnings: skillingGearWarnings
+    });
+
+    /**
+     * Profile Command
+     *
+     * The "/profile <name>" chat trick, in one place.
+     *
+     * The game opens a player's profile from a chat command, and a userscript can
+     * get the player one keypress away from that: write `/profile <name>` into the
+     * chat input through the native value setter (so React notices the change),
+     * dispatch an input event, and focus the box — the user just presses Enter.
+     * Extracted from `guild-member-skills.js` so every surface that makes a player
+     * name clickable fills the box the same way.
+     */
+
+    /** What a real MWI player name looks like: a single alphanumeric/underscore token */
+    const VALID_PLAYER_NAME_RE = /^[A-Za-z0-9_]+$/;
+
+    /**
+     * The chat input, if there is one the player can actually use.
+     *
+     * Hidden chat is why the visibility check matters: a fill into an input nobody
+     * can see opens nothing while looking like it worked.
+     *
+     * @returns {Element|null} The input
+     */
+    function findChatInput() {
+        if (typeof document === 'undefined') return null;
+        const input = document.querySelector('[class*="Chat_chatInputContainer"] input');
+        if (!input) return null;
+
+        const visible = input.offsetParent !== null || (input.getClientRects?.().length ?? 0) > 0;
+        return visible ? input : null;
+    }
+
+    /**
+     * Put `/profile <name>` in the chat box, focused and ready to send.
+     *
+     * @param {string} name - Player name
+     * @param {Element|null} [chatInput] - The input to fill; found via {@link findChatInput} when omitted
+     * @param {string} [logPrefix] - Module name for the error log, so a failure names its caller
+     * @returns {boolean} True when the box was filled
+     */
+    function fillProfileCommand(name, chatInput = null, logPrefix = 'ProfileCommand') {
+        try {
+            const input = chatInput || findChatInput();
+            if (!input) return false;
+
+            const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
+            setter?.call(input, `/profile ${name}`);
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            input.focus();
+            return true;
+        } catch (error) {
+            console.error(`[${logPrefix}] Could not fill the profile command:`, error);
+            return false;
+        }
+    }
+
+    var profileCommand = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        VALID_PLAYER_NAME_RE: VALID_PLAYER_NAME_RE,
+        fillProfileCommand: fillProfileCommand,
+        findChatInput: findChatInput
+    });
+
+    /**
+     * Time remaining on a long run.
+     *
+     * A percentage answers "how far in", which is not the question anyone staring at
+     * an upgrade analysis is asking. The runs here are minutes long and vary by an
+     * order of magnitude with the mode, the candidate count and the machine, so the
+     * only honest source for the estimate is the run itself.
+     *
+     * ## Why two rates rather than one
+     *
+     * Elapsed over fraction — the whole run's average pace — is stable and slow to
+     * notice that things changed: an analysis that spends its first third on cheap
+     * candidates and the rest on expensive ones keeps promising a finish it has
+     * already fallen behind. The pace over the last few updates notices immediately
+     * and is jumpy enough to be useless on its own, since one slow candidate makes
+     * it claim another ten minutes. Averaging the two gives an estimate that moves
+     * when the run's character changes without lurching on every step.
+     *
+     * ## Why it says nothing at first
+     *
+     * The first second of a run is mostly workers starting, and a percent or two of
+     * one is a rounding error being multiplied by a hundred. An estimate drawn from
+     * either is wrong by a factor of several — and the wrong one is the one people
+     * remember. It reads "estimating…" until there is enough of the run to divide by.
+     */
+
+    /**
+     * Round an estimate to something worth reading, and say it.
+     *
+     * Quantised because a number that ticks 2m14s, 2m11s, 2m16s reads as precision
+     * that is not there — the estimate is not good to the second and should not
+     * claim to be. Coarser the further out it is, for the same reason.
+     *
+     * @param {number} remainingMs - Milliseconds remaining
+     * @returns {string} e.g. `40s`, `2m 30s`, `1h 10m`
+     */
+    function formatEta(remainingMs) {
+        const seconds = Math.max(0, (Number(remainingMs) || 0) / 1000);
+        if (seconds < 10) return 'a few seconds';
+
+        const step = seconds < 60 ? 5 : seconds < 600 ? 15 : 60;
+        const rounded = Math.round(seconds / step) * step;
+
+        if (rounded < 60) return `${rounded}s`;
+
+        const minutes = Math.floor(rounded / 60);
+        const secs = rounded % 60;
+        if (minutes < 60) return secs ? `${minutes}m ${secs}s` : `${minutes}m`;
+
+        const hours = Math.floor(minutes / 60);
+        const mins = minutes % 60;
+        return mins ? `${hours}h ${mins}m` : `${hours}h`;
+    }
+
+    /**
+     * Track a run's pace and estimate what is left of it.
+     *
+     * One tracker per run — it starts its clock when it is made, so it is built
+     * where the run starts rather than kept on the panel.
+     *
+     * @param {Object} [options] - Overrides
+     * @param {Function} [options.now] - Clock, for tests
+     * @param {number} [options.smoothing] - EWMA weight on the newest pace reading
+     * @param {number} [options.minElapsedMs] - Stay quiet until the run is this old
+     * @param {number} [options.minFraction] - Stay quiet until this much is done
+     * @returns {{update: Function, elapsedMs: Function}} Tracker
+     */
+    function createEtaTracker({
+        now = () => Date.now(),
+        smoothing = 0.3,
+        minElapsedMs = 1500,
+        minFraction = 0.02,
+    } = {}) {
+        const start = now();
+        let lastAt = start;
+        let lastFraction = 0;
+        let recentRate = null;
+
+        return {
+            /** @returns {number} Milliseconds since the run started */
+            elapsedMs: () => now() - start,
+
+            /**
+             * Report progress and get the estimate back.
+             *
+             * @param {number} fraction - How much is done, 0 to 1
+             * @returns {{elapsedMs: number, remainingMs: number|null, text: string}}
+             *   `remainingMs` is null while there is not enough to go on, and `text`
+             *   is empty once finished so a completed bar does not read "0s left"
+             */
+            update(fraction) {
+                const at = now();
+                const done = Math.max(0, Math.min(1, Number(fraction) || 0));
+                const elapsedMs = at - start;
+
+                const stepMs = at - lastAt;
+                const stepFraction = done - lastFraction;
+                // Only real forward movement carries pace; a repeated percentage
+                // would otherwise read as the run having stalled
+                if (stepMs > 0 && stepFraction > 0) {
+                    const instant = stepFraction / stepMs;
+                    recentRate = recentRate === null ? instant : recentRate + smoothing * (instant - recentRate);
+                    lastAt = at;
+                    lastFraction = done;
+                }
+
+                if (done >= 1) return { elapsedMs, remainingMs: 0, text: '' };
+                if (!recentRate || elapsedMs < minElapsedMs || done < minFraction) {
+                    return { elapsedMs, remainingMs: null, text: 'estimating…' };
+                }
+
+                const rate = (recentRate + done / elapsedMs) / 2;
+                const remainingMs = (1 - done) / rate;
+                return { elapsedMs, remainingMs, text: `~${formatEta(remainingMs)} left` };
+            },
+        };
+    }
+
+    var progressEta = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        createEtaTracker: createEtaTracker,
+        formatEta: formatEta
+    });
+
+    /**
+     * Room skills
+     *
+     * Which skill's artwork stands for a house room.
+     *
+     * A room is recognised by its skill far faster than by its name — a sword says
+     * Dojo before "Dojo" has been read, a milk bottle says Dairy Barn — and the game
+     * has artwork for every skill but none for a room. JHouse makes the same
+     * association; this is its map.
+     *
+     * Hardcoded because the room detail the game sends does not carry the link. A
+     * room the game adds and this does not know falls back to its own name, which
+     * finds no sprite and draws a spacer: a missing icon rather than a wrong one.
+     *
+     * Pure data and one lookup, on purpose. Both panels that draw rooms — the Houses
+     * panel and the equipment savings row — used to carry their own copy of this,
+     * because the module the first one lives in does work at import time and the
+     * second one could not afford to pull that in for a map of seventeen strings.
+     * Nothing here runs at import, so there is nothing left to avoid.
+     */
+
+    /** Room name (the tail of its hrid) → the skill whose sprite stands for it */
+    const ROOM_SKILLS = {
+        dairy_barn: 'milking',
+        garden: 'foraging',
+        log_shed: 'woodcutting',
+        forge: 'cheesesmithing',
+        workshop: 'crafting',
+        sewing_parlor: 'tailoring',
+        kitchen: 'cooking',
+        brewery: 'brewing',
+        laboratory: 'alchemy',
+        observatory: 'enhancing',
+        dining_room: 'stamina',
+        library: 'intelligence',
+        dojo: 'attack',
+        armory: 'defense',
+        gym: 'melee',
+        archery_range: 'ranged',
+        mystical_study: 'magic',
+    };
+
+    /**
+     * The skill sprite that stands for a room.
+     * @param {string} houseRoomHrid - The room, e.g. `/house_rooms/dojo`
+     * @returns {string} The skill sprite's id, or the room's own name when it is not
+     *   one this knows
+     */
+    function roomSkill(houseRoomHrid) {
+        const key = String(houseRoomHrid || '')
+            .split('/')
+            .pop();
+        return ROOM_SKILLS[key] || key;
+    }
+
+    var roomSkills = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        ROOM_SKILLS: ROOM_SKILLS,
+        roomSkill: roomSkill
+    });
+
+    /**
+     * Shared table column utilities for injecting sortable columns into game tables.
+     */
+
+
+    const SORT_ICON_CLASS = 'mwi-col-sort-icon';
+
+    /**
+     * Format a number with thousands separators.
+     * @param {number} n
+     * @returns {string}
+     */
+    function fNum(n) {
+        return formatWithSeparator(Math.round(n));
+    }
+
+    /**
+     * Get ranking badge HTML for top 3 places.
+     * @param {number} rank - 1-indexed rank
+     * @returns {string} HTML
+     */
+    function rankBadge(rank) {
+        if (rank <= 3) {
+            return ['&#x1F947;', '&#x1F948;', '&#x1F949;'][rank - 1];
+        }
+        return `<span style="color: var(--color-disabled);">#${rank}</span>`;
+    }
+
+    /**
+     * Sort icon HTML.
+     * @param {string} direction - 'asc', 'desc', or 'none'
+     * @returns {string} HTML
+     */
+    function sortIcon(direction) {
+        return `<span class="${SORT_ICON_CLASS}" style="display: inline-flex; flex-direction: column; vertical-align: middle; margin-left: 2px;">
+        <span style="font-size: 8px; line-height: 8px;">${direction === 'asc' ? '▲' : '△'}</span>
+        <span style="font-size: 8px; line-height: 8px;">${direction === 'desc' ? '▼' : '▽'}</span>
+    </span>`;
+    }
+
+    /**
+     * Make a column header sortable.
+     * @param {HTMLElement} thEl - Header cell
+     * @param {Object} options
+     * @param {string} options.sortId - Unique sort identifier
+     * @param {Function} options.valueGetter - (trEl) => number|string
+     * @param {boolean} [options.skipFirst=false] - Skip first body row (sticky row)
+     */
+    function makeColumnSortable(thEl, options) {
+        const tableEl = thEl.closest('table');
+        if (!tableEl) return;
+
+        thEl.dataset.sortId = options.sortId;
+        thEl.style.cursor = 'pointer';
+        thEl.insertAdjacentHTML('beforeend', sortIcon('none'));
+
+        thEl.addEventListener('click', (e) => {
+            e.stopPropagation();
+            e.stopImmediatePropagation();
+            const tbodyEl = tableEl.querySelector('tbody');
+            if (!tbodyEl) return;
+
+            if (tableEl.dataset.sortId === options.sortId) {
+                tableEl.dataset.sortDirection = tableEl.dataset.sortDirection === 'asc' ? 'desc' : 'asc';
+            } else {
+                tableEl.dataset.sortId = options.sortId;
+                tableEl.dataset.sortDirection = 'desc';
+            }
+
+            const direction = tableEl.dataset.sortDirection;
+
+            let rows = Array.from(tbodyEl.children);
+            if (options.skipFirst) {
+                rows = rows.slice(1);
+            }
+
+            rows.sort((a, b) => {
+                const av = options.valueGetter(a);
+                const bv = options.valueGetter(b);
+                const aInf = av === Infinity || av === -Infinity;
+                const bInf = bv === Infinity || bv === -Infinity;
+                if (aInf && bInf) return 0;
+                if (aInf) return 1;
+                if (bInf) return -1;
+                if (typeof av === 'number' && typeof bv === 'number') {
+                    return direction === 'asc' ? av - bv : bv - av;
+                }
+                const sa = String(av);
+                const sb = String(bv);
+                return direction === 'asc' ? sa.localeCompare(sb) : sb.localeCompare(sa);
+            });
+
+            for (const row of rows) {
+                tbodyEl.appendChild(row);
+            }
+
+            const theadTr = thEl.parentElement;
+            for (const th of theadTr.children) {
+                const icon = th.querySelector(`.${SORT_ICON_CLASS}`);
+                if (icon) {
+                    const d = th.dataset.sortId === tableEl.dataset.sortId ? direction : 'none';
+                    icon.outerHTML = sortIcon(d);
+                }
+            }
+        });
+    }
+
+    /**
+     * Add a column to a table.
+     * @param {HTMLElement} tableEl
+     * @param {string} cssPrefix - CSS class applied to injected th/td elements
+     * @param {Object} options
+     * @param {string} options.name - Column header text
+     * @param {Array} options.data - One value per body row
+     * @param {Function} [options.format] - (value, index) => HTML string
+     * @param {number} [options.insertAfter] - Column index to insert after
+     * @param {boolean} [options.makeSortable] - Whether to make column sortable
+     * @param {string} [options.sortId] - Sort identifier
+     * @param {boolean} [options.skipFirst] - Skip first row for sorting
+     * @param {Array} [options.sortData] - Custom sort values (numbers) per row
+     */
+    function addColumn(tableEl, cssPrefix, options) {
+        if (tableEl.querySelector(`th.${cssPrefix}[data-name="${options.name}"]`)) return;
+
+        const theadTr = tableEl.querySelector('thead tr');
+        if (!theadTr) return;
+
+        const insertAfter = options.insertAfter !== undefined ? options.insertAfter : theadTr.children.length - 1;
+
+        const th = document.createElement('th');
+        th.className = cssPrefix;
+        th.dataset.name = options.name;
+        th.textContent = options.name;
+
+        if (insertAfter < theadTr.children.length - 1) {
+            theadTr.children[insertAfter + 1].insertAdjacentElement('beforebegin', th);
+        } else {
+            theadTr.appendChild(th);
+        }
+
+        const tbodyEl = tableEl.querySelector('tbody');
+        const rows = Array.from(tbodyEl.children);
+
+        for (let i = 0; i < rows.length; i++) {
+            const td = document.createElement('td');
+            td.className = cssPrefix;
+
+            const value = i < options.data.length ? options.data[i] : null;
+            if (options.format) {
+                td.innerHTML = options.format(value, i);
+            } else if (value === null || value === undefined || (typeof value === 'number' && isNaN(value))) {
+                td.textContent = '';
+            } else if (typeof value === 'number') {
+                td.textContent = fNum(value);
+            } else {
+                td.textContent = value;
+            }
+
+            if (options.sortData) {
+                td._sortValue = options.sortData[i];
+            } else if (typeof value === 'number') {
+                td._sortValue = value;
+            }
+
+            const refChild = rows[i].children[insertAfter + 1];
+            if (refChild) {
+                refChild.insertAdjacentElement('beforebegin', td);
+            } else {
+                rows[i].appendChild(td);
+            }
+        }
+
+        if (options.makeSortable) {
+            makeColumnSortable(th, {
+                sortId: options.sortId || options.name,
+                skipFirst: options.skipFirst || false,
+                valueGetter: (trEl) => {
+                    const currentIndex = Array.from(theadTr.children).indexOf(th);
+                    const cell = currentIndex >= 0 ? trEl.children[currentIndex] : undefined;
+                    if (cell && cell._sortValue !== undefined) return cell._sortValue;
+                    const text = cell?.textContent?.replace(/[^\d.-]/g, '');
+                    return text ? parseFloat(text) : 0;
+                },
+            });
+        }
+    }
+
+    var tableColumns = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        addColumn: addColumn,
+        fNum: fNum,
+        makeColumnSortable: makeColumnSortable,
+        rankBadge: rankBadge,
+        sortIcon: sortIcon
+    });
+
+    /**
+     * Watchlist
+     *
+     * A named set of items, what you hold of each, and what it is worth.
+     *
+     * The list itself is trivial. Two things about it are not, and they are the
+     * reason this is a module with tests rather than a few lines inside a panel.
+     *
+     * ## Un-ticking a set must not take items another set still wants
+     *
+     * Items go on the list one at a time, or a whole zone's drop table at once, or a
+     * whole chest's contents. Zones share drops — Aqua Planet and Jungle Planet have
+     * items in common — so removing one set cannot simply remove everything it
+     * contributed. Every row remembers which set put it there, and un-ticking a set
+     * **re-homes** any of its rows that another still-enabled set also contains,
+     * rather than deleting them. Get that wrong and un-ticking one zone silently
+     * empties part of another, which reads as the list losing things at random.
+     *
+     * Rows added by hand have no set, and nothing automatic ever removes them.
+     *
+     * ## The vendor price is a floor, not a comparison
+     *
+     * The market bid can sit below what the vendor pays flat. When it does, the bid
+     * is not the item's value — it is a number you would be a fool to accept, and
+     * showing it as the value quietly advises the worse of two sales. So the row
+     * reports the vendor price and says why. The same applies with more force to an
+     * item that has no market at all: a bid of zero is the absence of a price, not a
+     * value of nothing.
+     *
+     * The model is NTally's, from MWI Combat Suite by Frotty (MIT) — see
+     * `third-party/mwi-combat-suite/` and `docs/THIRD-PARTY-LICENSES.md`. The code is
+     * Toolasha's own.
+     */
+
+    /**
+     * Put items on the list under a given set.
+     *
+     * Items already on the list are left where they are rather than moved, so
+     * ticking a second set that shares a drop does not take that row's existing
+     * home — which is the thing un-ticking relies on.
+     *
+     * @param {Array<{hrid: string, name: string, source: string|null}>} entries - The list
+     * @param {Array<{hrid: string, name: string}>} items - What to add
+     * @param {string|null} source - The set adding them, or null when added by hand
+     * @returns {Array<Object>} A new list
+     */
+    function addToWatchlist(entries, items, source = null) {
+        const known = new Set((entries || []).map((entry) => entry.hrid));
+        const added = [];
+
+        for (const item of items || []) {
+            if (!item?.hrid || known.has(item.hrid)) continue;
+            known.add(item.hrid);
+            added.push({ hrid: item.hrid, name: item.name || item.hrid, source });
+        }
+        return [...(entries || []), ...added];
+    }
+
+    /**
+     * Take one item off, whoever put it there.
+     *
+     * @param {Array<Object>} entries - The list
+     * @param {string} hrid - What to remove
+     * @returns {Array<Object>} A new list
+     */
+    function removeFromWatchlist(entries, hrid) {
+        return (entries || []).filter((entry) => entry.hrid !== hrid);
+    }
+
+    /**
+     * Un-tick a set, keeping what another still-enabled set also contains.
+     *
+     * @param {Array<Object>} entries - The list
+     * @param {string} source - The set being turned off
+     * @param {Array<{id: string, hrids: Iterable<string>}>} stillOn - Sets still enabled, in order
+     * @returns {Array<Object>} A new list, with survivors re-homed
+     */
+    function removeSource(entries, source, stillOn = []) {
+        const homes = (stillOn || []).map((set) => ({ id: set.id, hrids: new Set(set.hrids) }));
+
+        return (entries || []).flatMap((entry) => {
+            // Added by hand, or by a set that is not the one being turned off
+            if (entry.source === null || entry.source === undefined || entry.source !== source) return [entry];
+
+            // First in the given order, so the same list re-homes the same way every
+            // time rather than shuffling as sets are toggled
+            const home = homes.find((set) => set.hrids.has(entry.hrid));
+            return home ? [{ ...entry, source: home.id }] : [];
+        });
+    }
+
+    /**
+     * The price a row should report, and whether that needs saying out loud.
+     *
+     * @param {number} bid - Current market bid
+     * @param {number} vendor - What the vendor pays flat
+     * @returns {{price: number, flag: string|null}} `flag` is `below-vendor`,
+     *   `equals-vendor`, `no-market`, or null when the bid stands on its own
+     */
+    function vendorFloor(bid, vendor) {
+        const market = Number(bid) || 0;
+        const flat = Number(vendor) || 0;
+
+        if (!(flat > 0)) return { price: market, flag: null };
+        // No market at all: the vendor price is the only price, and zero would be a
+        // claim that the item is worthless rather than that nobody is buying it
+        if (!(market > 0)) return { price: flat, flag: 'no-market' };
+        if (market < flat) return { price: flat, flag: 'below-vendor' };
+        if (market === flat) return { price: flat, flag: 'equals-vendor' };
+
+        return { price: market, flag: null };
+    }
+
+    /**
+     * How many of an item are sitting in your own sell orders.
+     *
+     * A watchlist that counts only the inventory says you have none of something
+     * you have two hundred of — they are just on the market rather than in the bag.
+     * That is the difference between "I need to farm this" and "I need to wait", and
+     * a collection checklist that cannot tell them apart is worse than no checklist.
+     *
+     * Unclaimed items from a filled **buy** order count too: they are yours, bought
+     * and paid for, and only a click away from the inventory.
+     *
+     * @param {Array<Object>} listings - The game's `myMarketListings`
+     * @returns {Object<string, {listed: number, unclaimed: number}>} By item hrid
+     */
+    function listedCounts(listings) {
+        const counts = {};
+        const bump = (hrid, field, amount) => {
+            if (!hrid || !(amount > 0)) return;
+            counts[hrid] = counts[hrid] || { listed: 0, unclaimed: 0 };
+            counts[hrid][field] += amount;
+        };
+
+        for (const listing of listings || []) {
+            const remaining = Math.max(0, (listing?.orderQuantity || 0) - (listing?.filledQuantity || 0));
+            // Only a sell order is holding items; a buy order's remainder is coin
+            if (listing?.isSell) bump(listing.itemHrid, 'listed', remaining);
+            bump(listing?.itemHrid, 'unclaimed', listing?.unclaimedItemCount || 0);
+        }
+        return counts;
+    }
+
+    /**
+     * Price and count every row.
+     *
+     * The lookups are passed in rather than imported, so the awkward parts — the
+     * vendor floor, the multiplication, the totals — are testable without a market.
+     *
+     * @param {Array<Object>} entries - The list
+     * @param {Object} lookups - How to resolve a row
+     * @param {Function} lookups.quantityOf - `(hrid) => number`
+     * @param {Function} lookups.pricesFor - `(hrid) => {ask, bid}|null`
+     * @param {Function} [lookups.vendorOf] - `(hrid) => number`
+     * @param {Function} [lookups.listedOf] - `(hrid) => {listed, unclaimed}`
+     * @returns {Array<Object>} Rows with `held`, `listed`, `unclaimed`, `quantity`,
+     *   `ask`, `bid`, `flag`, `totalAsk`, `totalBid`. `quantity` is everything you
+     *   own of the item wherever it is sitting; `held` is only the bag.
+     */
+    function valueWatchlist(entries, { quantityOf, pricesFor, vendorOf, listedOf }) {
+        return (entries || []).map((entry) => {
+            const held = Number(quantityOf?.(entry.hrid)) || 0;
+            const market = listedOf?.(entry.hrid) || {};
+            const listed = Number(market.listed) || 0;
+            const unclaimed = Number(market.unclaimed) || 0;
+            // Everything you own of it, wherever it happens to be
+            const quantity = held + listed + unclaimed;
+
+            const prices = pricesFor?.(entry.hrid) || {};
+            const ask = Number(prices.ask) || 0;
+            const floor = vendorFloor(prices.bid, vendorOf?.(entry.hrid));
+
+            return {
+                ...entry,
+                held,
+                listed,
+                unclaimed,
+                quantity,
+                ask,
+                bid: floor.price,
+                flag: floor.flag,
+                totalAsk: ask * quantity,
+                totalBid: floor.price * quantity,
+            };
+        });
+    }
+
+    /**
+     * What the whole list is worth.
+     * @param {Array<Object>} rows - From `valueWatchlist`
+     * @returns {{ask: number, bid: number, items: number, held: number}}
+     */
+    function watchlistTotals(rows) {
+        return (rows || []).reduce(
+            (totals, row) => ({
+                ask: totals.ask + (row.totalAsk || 0),
+                bid: totals.bid + (row.totalBid || 0),
+                items: totals.items + 1,
+                // How many of the tracked items you actually hold any of, which is
+                // the "12 / 30" a collection checklist is for
+                held: totals.held + (row.quantity > 0 ? 1 : 0),
+            }),
+            { ask: 0, bid: 0, items: 0, held: 0 }
+        );
+    }
+
+    /**
+     * Order the rows.
+     *
+     * By value means by what you hold, not by unit price — a stack of one cheap item
+     * is not more valuable than a stack of a thousand. Ties break on name so the
+     * order is stable rather than dependent on which sets were ticked first.
+     *
+     * @param {Array<Object>} rows - From `valueWatchlist`
+     * @param {string} by - `name` or `value`
+     * @param {string} direction - `asc` or `desc`
+     * @returns {Array<Object>} A new array
+     */
+    function sortRows(rows, by = 'name', direction = 'asc') {
+        const sign = direction === 'desc' ? -1 : 1;
+
+        return [...(rows || [])].sort((a, b) => {
+            if (by === 'value') {
+                const difference = (a.totalAsk || 0) - (b.totalAsk || 0);
+                if (difference) return sign * difference;
+            }
+            return sign * String(a.name).localeCompare(String(b.name));
+        });
+    }
+
+    var watchlist = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        addToWatchlist: addToWatchlist,
+        listedCounts: listedCounts,
+        removeFromWatchlist: removeFromWatchlist,
+        removeSource: removeSource,
+        sortRows: sortRows,
+        valueWatchlist: valueWatchlist,
+        vendorFloor: vendorFloor,
+        watchlistTotals: watchlistTotals
+    });
+
+    /**
      * Foundation Utils Library
      * All utility modules
      *
@@ -18204,7 +23494,6 @@ self.onmessage = function (e) {
         enhancementWorkerManager,
         networthWorkerManager,
         panelZIndex,
-        performanceMonitor: performanceMonitor$1,
         gameLookups,
         itemNavigation,
         marketplaceTabs,
@@ -18212,8 +23501,38 @@ self.onmessage = function (e) {
         shoppingList,
         scrollBuffValues,
         toast,
+        liquidityCap: liquidityCap$1,
+        actionContext: actionContext$1,
+        adoptionConsent,
+        alchemyFees,
+        allZonesSnapshot,
+        assetManifest,
+        backgroundWork,
+        battlePanelMonsters,
+        characterKey: characterKey$1,
+        chestImport,
+        chunkedHistory: chunkedHistory$1,
+        consumableForecast,
+        csvExport,
+        deferredLoad,
+        dropSources,
+        dungeonKeys,
+        dungeonLevelGap,
+        equipmentSavings,
+        gameServer,
+        gameText,
+        guildCreditPricing,
+        keyLedger,
+        numberParser,
+        partyLint,
+        profileCommand,
+        progressEta,
+        roomSkills,
+        tableColumns,
+        watchlist,
+        bundleBridge,
     };
 
     console.log('[Toolasha] Utils library loaded');
 
-})(Toolasha.Core.config, Toolasha.Core.dataManager, Toolasha.Core.webSocketHook, Toolasha.Core.storage, Toolasha.Core.marketAPI, Toolasha.Core.domObserver);
+})(Toolasha.Core.config, Toolasha.Core.dataManager, Toolasha.Core.webSocketHook, Toolasha.Core.storage, Toolasha.Core.marketAPI, Toolasha.Core.domObserver, Toolasha.Core.performanceMonitor);

@@ -5,7 +5,7 @@
  * License: CC-BY-NC-SA-4.0
  */
 
-(function (config, dataManager, domObserver, marketAPI, houseEfficiency_js, efficiency_js, bonusRevenueCalculator_js, enhancementCalculator_js, enhancementConfig_js, profitConstants_js, formatters_js, marketData_js, teaParser_js, profitHelpers_js, buffParser_js, equipmentParser_js, actionCalculator_js, tokenValuation_js, evWorkerManager_js, dom, materialCalculator_js, gameLookups_js, timerRegistry_js, storage, cleanupRegistry_js, domObserverHelpers_js, marketplaceTabs_js, reactInput_js, panelZIndex_js, floatingPanel_js, panelGeometry_js, overlayFormat_js, overlayRows_js, webSocketHook, toast_js, enhancementMultipliers_js, performanceMonitor, abilityCostCalculator_js, houseCostCalculator_js, networthWorkerManager_js, marketplaceAutofill_js, skillHistory_js, abilityBooks_js, simplePanel_js, settingsStorage, chestTally_js, choiceDialog_js) {
+(function (config, dataManager, domObserver, marketAPI, houseEfficiency_js, efficiency_js, bonusRevenueCalculator_js, enhancementCalculator_js, enhancementConfig_js, profitConstants_js, formatters_js, marketData_js, teaParser_js, numberParser_js, profitHelpers_js, buffParser_js, alchemyFees_js, equipmentParser_js, actionCalculator_js, tokenValuation_js, evWorkerManager_js, abilityCostCalculator_js, dom, dungeonKeys_js, materialCalculator_js, gameLookups_js, timerRegistry_js, storage, characterKey_js, cleanupRegistry_js, domObserverHelpers_js, marketplaceTabs_js, reactInput_js, panelZIndex_js, floatingPanel_js, panelGeometry_js, overlayFormat_js, watchlist_js, dropSources_js, overlayRows_js, webSocketHook, bundleBridge_js, toast_js, mobile_js, gameServer_js, enhancementMultipliers_js, performanceMonitor, backgroundWork_js, houseCostCalculator_js, networthWorkerManager_js, guildCreditPricing_js, chunkedHistory_js, marketplaceAutofill_js, skillHistory_js, abilityBooks_js, deferredLoad_js, simplePanel_js, settingsStorage, chestTally_js, choiceDialog_js, chestImport_js, csvExport_js, roomSkills_js, equipmentSavings_js) {
     'use strict';
 
     function _interopNamespaceDefault(e) {
@@ -307,98 +307,6 @@
             `${SECTION_ATTR}="${escapeAttr(kind)}" data-toolasha-enh-item="${escapeAttr(itemHrid)}" ` +
             `data-toolasha-enh-level="${escapeAttr(level)}"`
         );
-    }
-
-    /**
-     * Number Parser Utility
-     * Shared utilities for parsing numeric values from text, including item counts
-     */
-
-    /**
-     * Parse item count from text
-     * Handles various formats including:
-     * - Plain numbers: "100", "1000"
-     * - K/M suffixes: "1.5K", "2M"
-     * - International formats with separators: "1,000", "1 000", "1.000"
-     * - Mixed decimal formats: "1.234,56" (European) or "1,234.56" (US)
-     * - Prefixed formats: "x5", "Amount: 1000", "Amount: 1 000"
-     *
-     * @param {string} text - Text containing a number
-     * @param {number} defaultValue - Value to return if parsing fails (default: 1)
-     * @returns {number} Parsed numeric value
-     */
-    function parseItemCount(text, defaultValue = 1) {
-        if (!text) {
-            return defaultValue;
-        }
-
-        // Convert to string and normalize
-        text = String(text).toLowerCase().trim();
-
-        // Extract number from common patterns like "x5", "Amount: 1000"
-        const prefixMatch = text.match(/x([\d,\s.kmb]+)|amount:\s*([\d,\s.kmb]+)/i);
-        if (prefixMatch) {
-            text = prefixMatch[1] || prefixMatch[2];
-        }
-
-        // Determine whether periods and commas are thousands separators or decimal points.
-        // Rules:
-        // 1. If both exist: the one appearing first (or multiple times) is the thousands separator.
-        //    e.g. "1.234,56" → period is thousands, comma is decimal → 1234.56
-        //    e.g. "1,234.56" → comma is thousands, period is decimal → 1234.56
-        // 2. If only commas exist and comma is followed by exactly 3 digits at end: thousands separator.
-        //    e.g. "1,234" → 1234
-        // 3. If only periods exist and period is followed by exactly 3 digits at end: thousands separator.
-        //    e.g. "1.234" → 1234
-        // 4. Otherwise treat as decimal separator.
-        //    e.g. "1.5" → 1.5,  "1,5" → 1.5
-
-        const hasPeriod = text.includes('.');
-        const hasComma = text.includes(',');
-
-        if (hasPeriod && hasComma) {
-            // Both present — whichever comes last is the decimal separator
-            const lastPeriod = text.lastIndexOf('.');
-            const lastComma = text.lastIndexOf(',');
-            if (lastPeriod > lastComma) {
-                // Period is decimal: remove commas as thousands separators
-                text = text.replace(/,/g, '');
-            } else {
-                // Comma is decimal: remove periods as thousands separators, replace comma with period
-                text = text.replace(/\./g, '').replace(',', '.');
-            }
-        } else if (hasComma) {
-            // Only commas: thousands separator if followed by exactly 3 digits at end, else decimal
-            if (/,\d{3}$/.test(text)) {
-                text = text.replace(/,/g, '');
-            } else {
-                text = text.replace(',', '.');
-            }
-        } else if (hasPeriod) {
-            // Only periods: thousands separator if followed by exactly 3 digits at end, else decimal
-            if (/\.\d{3}$/.test(text)) {
-                text = text.replace(/\./g, '');
-            }
-            // else leave as-is (valid decimal like "1.5")
-        }
-
-        // Remove remaining whitespace separators
-        text = text.replace(/\s/g, '');
-
-        // Handle K/M/B suffixes (must end with the suffix letter)
-        if (/\d[kmb]$/.test(text)) {
-            if (text.endsWith('k')) {
-                return parseFloat(text) * 1000;
-            } else if (text.endsWith('m')) {
-                return parseFloat(text) * 1000000;
-            } else if (text.endsWith('b')) {
-                return parseFloat(text) * 1000000000;
-            }
-        }
-
-        // Parse plain number
-        const parsed = parseFloat(text);
-        return isNaN(parsed) ? defaultValue : parsed;
     }
 
     /**
@@ -1558,7 +1466,7 @@
         // Target hourly rate / minimum sell price — only when a rate is configured.
         // The rate is a text setting, so it is read with getSettingValue(); getSetting() only
         // ever answers with a boolean and would silently parse to 0 here.
-        const hourlyRate = parseItemCount(config.getSettingValue('itemTooltip_enhancingHourlyRate', ''), 0);
+        const hourlyRate = numberParser_js.parseItemCount(config.getSettingValue('itemTooltip_enhancingHourlyRate', ''), 0);
         if (hourlyRate > 0) {
             const includeTax = config.getSetting('itemTooltip_enhancingHourlyRateTax');
             const minSellAsk = calculateMinimumSellPrice(totalAsk, optimalStrategy.totalTime, hourlyRate, includeTax);
@@ -2395,65 +2303,6 @@
     }
 
     const profitCalculator = new ProfitCalculator();
-
-    /**
-     * Alchemy coin fees.
-     *
-     * The game charges gold to run an alchemy action, and that charge is nowhere in
-     * the game's data: `actionDetails.coinCost` is 0 for every `/actions/alchemy/*`
-     * action, and nothing the websocket reports records the fee that was actually
-     * paid (the decompose tracker drops the coin entry from `endCharacterItems`
-     * outright). Both formulas below are reverse-engineered, and this module is the
-     * one place that states them so the callers cannot drift apart again.
-     */
-
-    /** Alchemy types billed by item level: (10 + itemLevel) × 5 per item */
-    const LEVEL_PRICED_TYPES = new Set(['decompose', 'unrefine']);
-
-    /**
-     * Coinify is not billed at all — the item is the input and coins are the output,
-     * so there is no separate gold fee to pay. Every other coinify site in the repo
-     * already assumed this (the profit calculator hardcodes `coinCost = 0`, the action
-     * planner and the gold summary both skip coinify outright); only the coinify history
-     * viewer charged the transmute fee, which overstated every session's cost. The rule
-     * lives here now so the sites cannot disagree again.
-     */
-    const FREE_TYPES = new Set(['coinify']);
-
-    /**
-     * Coin fee for one alchemy action, including the item's bulk multiplier.
-     *
-     * Three families:
-     *  - decompose / unrefine — `(10 + itemLevel) * 5` per item
-     *  - transmute — `max(50, floor(sellPrice / 5))` per item
-     *  - coinify — free (see FREE_TYPES)
-     *
-     * Decompose used `max(50, floor(sellPrice / 5))` in the history viewer while
-     * every other decompose site used the item-level formula. Nothing in the repo
-     * can adjudicate that — the fee is absent from game data and unrecorded in
-     * session history — so the item-level formula won, being the one the other
-     * decompose sites and upstream already agreed on.
-     *
-     * @param {Object|null|undefined} itemDetails - Item details from dataManager
-     * @param {'decompose'|'unrefine'|'transmute'|'coinify'} alchemyType - Which alchemy action
-     * @param {number} [bulkMultiplierOverride] - Bulk size to bill at, for history callers that
-     *   recorded the multiplier in effect at the time rather than the item's current one
-     * @returns {number} Coin fee per action, or 0 when the item is unknown
-     */
-    function getAlchemyCoinCost(itemDetails, alchemyType, bulkMultiplierOverride) {
-        if (!itemDetails) return 0;
-        if (FREE_TYPES.has(alchemyType)) return 0;
-
-        const bulkMultiplier = itemDetails.alchemyDetail?.bulkMultiplier || 1;
-
-        if (LEVEL_PRICED_TYPES.has(alchemyType)) {
-            const itemLevel = itemDetails.itemLevel || 1;
-            return (10 + itemLevel) * 5 * bulkMultiplier;
-        }
-
-        const sellPrice = itemDetails.sellPrice || 0;
-        return Math.max(50, Math.floor(sellPrice / 5)) * bulkMultiplier;
-    }
 
     /**
      * Expected Value Calculator Module
@@ -3758,7 +3607,7 @@
                     }
                 }
 
-                const coinCost = getAlchemyCoinCost(itemDetails, 'decompose');
+                const coinCost = alchemyFees_js.getAlchemyCoinCost(itemDetails, 'decompose');
 
                 // Calculate per-hour values
                 // Convert efficiency from percentage to decimal
@@ -4048,7 +3897,7 @@
                     }
                 }
 
-                const coinCost = getAlchemyCoinCost(itemDetails, 'transmute');
+                const coinCost = alchemyFees_js.getAlchemyCoinCost(itemDetails, 'transmute');
 
                 // Gross material cost (before self-return adjustment)
                 const grossMaterialCost = inputPrice * bulkMultiplier;
@@ -4830,32 +4679,6 @@
     });
 
     /**
-     * Dungeon chest → key maps
-     *
-     * Which key each dungeon chest costs. Two relationships, both 1:1 per chest:
-     * a *regular* chest implies one entry key was spent to enter the dungeon that
-     * dropped it, and *every* chest (regular or refinement) takes one chest key to
-     * open.
-     *
-     * Shared here so combat-stats and the combat-sim adapter (and everything that
-     * prices chests net of their key) read the same table instead of each keeping
-     * a copy. For the dungeon-action → entry-key map, see `key-ledger.js`.
-     */
-
-
-    /** Dungeon chest HRID (regular and refinement) → the chest key that opens it (1:1) */
-    const DUNGEON_CHEST_CHEST_KEYS = {
-        '/items/chimerical_chest': '/items/chimerical_chest_key',
-        '/items/sinister_chest': '/items/sinister_chest_key',
-        '/items/enchanted_chest': '/items/enchanted_chest_key',
-        '/items/pirate_chest': '/items/pirate_chest_key',
-        '/items/chimerical_refinement_chest': '/items/chimerical_chest_key',
-        '/items/sinister_refinement_chest': '/items/sinister_chest_key',
-        '/items/enchanted_refinement_chest': '/items/enchanted_chest_key',
-        '/items/pirate_refinement_chest': '/items/pirate_chest_key',
-    };
-
-    /**
      * Market Tooltip Prices Feature
      * Adds market prices to item tooltips
      */
@@ -4883,6 +4706,23 @@
     function formatTooltipPrice(num) {
         const useKMB = formatters_js.isAbbreviationEnabled();
         return useKMB ? formatters_js.networthFormatter(num) : formatters_js.numberFormatter(num);
+    }
+
+    /**
+     * The highest level a cumulative experience total has reached.
+     *
+     * @param {number[]} table - The game's cumulative `levelExperienceTable`
+     * @param {number} experience - A cumulative experience total
+     * @returns {number|null} The level, or null without a table to read
+     */
+    function levelAtExperience(table, experience) {
+        if (!Array.isArray(table)) return null;
+        let reached = 0;
+        for (let level = 1; level < Math.min(table.length, 201); level++) {
+            if (table[level] <= experience) reached = level;
+            else break;
+        }
+        return reached;
     }
 
     /**
@@ -5101,7 +4941,7 @@
                 if (evData) {
                     // Compute chest key deduction for dungeon chests
                     let keyPrice = 0;
-                    const chestKeyHrid = DUNGEON_CHEST_CHEST_KEYS[itemHrid];
+                    const chestKeyHrid = dungeonKeys_js.DUNGEON_CHEST_CHEST_KEYS[itemHrid];
                     if (chestKeyHrid) {
                         const keyPricingSetting = config.getSettingValue('profitCalc_keyPricingMode') || 'ask';
                         const keyPrices = marketAPI.getPrice(chestKeyHrid);
@@ -5343,7 +5183,7 @@
          */
         extractItemAmount(tooltipElement) {
             const text = tooltipElement.textContent;
-            return parseItemCount(text, 1);
+            return numberParser_js.parseItemCount(text, 1);
         }
 
         /**
@@ -6070,7 +5910,8 @@
         /**
          * Get ability status for an ability book
          * @param {string} itemHrid - Item HRID (e.g., /items/ice_shield)
-         * @returns {Object|null} {learned, level, xp, xpToNext, percentToNext, abilityName} or null
+         * @returns {Object|null} {learned, level, xp, xpToNext, percentToNext, abilityName,
+         *   loadouts, heldBooks, levelWithHeld, freshCost} or null
          */
         getAbilityStatus(itemHrid) {
             const characterData = dataManager.characterData;
@@ -6090,14 +5931,34 @@
                 return null;
             }
 
+            // Which saved loadouts slot this ability, by name — the answer to "can
+            // I coinify these books, or does something still use it"
+            const loadouts = [];
+            for (const loadout of Object.values(characterData.characterLoadoutMap || {})) {
+                if (!loadout?.name) continue;
+                if (Object.values(loadout.abilityMap || {}).includes(abilityHrid)) loadouts.push(loadout.name);
+            }
+
+            // What reading every held copy would reach, from where the ability is
+            const heldBooks = (dataManager.getInventory?.() || [])
+                .filter((item) => item?.itemHrid === itemHrid && item?.itemLocationHrid === '/item_locations/inventory')
+                .reduce((sum, item) => sum + (Number(item.count) || 0), 0);
+            const xpPerBook = Number(gameData.itemDetailMap?.[itemHrid]?.abilityBookDetail?.experienceGain) || 0;
+
             // Check if player has this ability
             const ability = characterData.characterAbilities?.find((a) => a.abilityHrid === abilityHrid);
 
             if (!ability) {
-                // Not learned
+                // Not learned. The first held book teaches; the rest level.
                 return {
                     learned: false,
                     abilityName: abilityDetails.name,
+                    loadouts,
+                    heldBooks,
+                    levelWithHeld:
+                        heldBooks > 0
+                            ? levelAtExperience(gameData.levelExperienceTable, (heldBooks - 1) * xpPerBook)
+                            : null,
                 };
             }
 
@@ -6140,6 +6001,15 @@
                 xpToNext,
                 percentToNext,
                 abilityName: abilityDetails.name,
+                loadouts,
+                heldBooks,
+                levelWithHeld:
+                    heldBooks > 0 && xpPerBook > 0
+                        ? levelAtExperience(levelXpTable, currentXp + heldBooks * xpPerBook)
+                        : null,
+                // What the level already reached would cost to buy today, from
+                // nothing — the books to learn and level it, at the book's price
+                freshCost: abilityCostCalculator_js.explainAbilityCost(abilityHrid, currentLevel),
             };
         }
 
@@ -6169,10 +6039,20 @@
 
             let html = '';
 
+            // What reading every held copy would reach, said the same way for a
+            // learned book and an unlearned one
+            const heldLine =
+                abilityStatus.heldBooks > 0 && abilityStatus.levelWithHeld !== null
+                    ? `<div>Books held: ${formatters_js.numberFormatter(abilityStatus.heldBooks)} \u2192 Lv ${abilityStatus.levelWithHeld}</div>`
+                    : '';
+
             if (!abilityStatus.learned) {
                 // Not learned
                 html += `<div style="color: ${config.COLOR_TOOLTIP_LOSS}; font-weight: 600;">`;
                 html += `\u26A0 Unlearned</div>`;
+                if (heldLine) {
+                    html += `<div style="margin-top: 4px; margin-left: 8px; font-size: 0.9em;">${heldLine}</div>`;
+                }
             } else {
                 // Learned
                 html += `<div style="color: ${config.COLOR_TOOLTIP_INFO}; font-weight: 600;">`;
@@ -6189,7 +6069,26 @@
                     html += `<div style="opacity: 0.7;">XP to Next: ${formatters_js.numberFormatter(abilityStatus.xpToNext)}</div>`;
                 }
 
+                html += heldLine;
+
+                // What the level already reached would cost to buy today \u2014 the
+                // sunk value a "should I coinify these" decision weighs
+                const fresh = abilityStatus.freshCost;
+                if (fresh?.total > 0) {
+                    html +=
+                        `<div style="opacity: 0.7;">Fresh to Lv ${abilityStatus.level}: ` +
+                        `${formatTooltipPrice(Math.round(fresh.total))} (${formatters_js.numberFormatter(Math.ceil(fresh.books))} books)</div>`;
+                }
+
                 html += '</div>';
+            }
+
+            // Named rather than counted: "in 2 loadouts" still makes you open the
+            // loadouts tab to find out which two
+            if (abilityStatus.loadouts?.length) {
+                html +=
+                    `<div style="margin-top: 4px; color: ${config.COLOR_TOOLTIP_INFO}; font-size: 0.9em;">` +
+                    `In loadouts: ${abilityStatus.loadouts.join(', ')}</div>`;
             }
 
             statusDiv.innerHTML = html;
@@ -7903,748 +7802,6 @@
     const itemCountDisplay = new ItemCountDisplay();
 
     /**
-     * Consent gate for the adopt-once migration.
-     *
-     * Legacy account-wide data is never silently claimed by whichever character
-     * logs in first. The first time an adoptable value is found, one modal asks
-     * which character should inherit the pre-scoping data; until the user
-     * confirms, every legacy value stays where it is. The heuristics (game mode,
-     * test names, networth history) only choose which character the dialog
-     * preselects.
-     *
-     * The decision is stored account-wide under `adoptionTargetCharacterId` and
-     * can be reopened from the console via `Toolasha.debug.chooseDataOwner()`.
-     */
-
-    const DECISION_KEY = 'adoptionTargetCharacterId';
-
-    /** undefined = not read yet, null = undecided, string = chosen character id. */
-    let cachedDecision;
-
-    /** One prompt per session, shared by every concurrent readScoped call. */
-    let promptPromise = null;
-
-    /**
-     * The character chosen to inherit legacy data, or null while undecided.
-     * @returns {Promise<string|null>} Chosen character id
-     */
-    async function getAdoptionTargetId() {
-        if (cachedDecision === undefined) {
-            cachedDecision = await storage.get(DECISION_KEY, 'settings', null);
-        }
-        return cachedDecision;
-    }
-
-    /**
-     * Record the choice.
-     * @param {string} id - Character id that inherits legacy data
-     * @returns {Promise<void>}
-     */
-    async function setAdoptionTargetId(id) {
-        cachedDecision = id;
-        await storage.set(DECISION_KEY, id, 'settings', true);
-    }
-
-    /**
-     * Show the choose-a-character dialog (once per session).
-     *
-     * Fire-and-forget from data paths: callers must not await this before
-     * returning a fallback, or a modal would block feature initialization.
-     * @param {{recommendedId?: string|null}} [options] - Which character to preselect
-     * @returns {Promise<string|null>} The chosen id, or null for "not now"
-     */
-    function requestAdoptionConsent(options = {}) {
-        if (promptPromise) return promptPromise;
-        if (typeof document === 'undefined' || !document.body) return Promise.resolve(null);
-
-        promptPromise = (async () => {
-            try {
-                const names = (await storage.get('accountCharacterNames', 'settings', null)) || {};
-                const currentId = dataManager.getCurrentCharacterId();
-                const currentName = dataManager.getCurrentCharacterName?.() || '';
-                const known = { ...names };
-                if (currentId && !known[currentId]) known[currentId] = currentName || String(currentId);
-                const recommended = options.recommendedId || currentId;
-                const chosen = await showDialog(known, recommended, currentId);
-                if (chosen) await setAdoptionTargetId(chosen);
-                return chosen;
-            } catch (error) {
-                console.error('[AdoptionConsent] Prompt failed:', error);
-                return null;
-            }
-        })();
-        return promptPromise;
-    }
-
-    /**
-     * The dialog itself. Resolves with a character id or null for "not now".
-     * @param {Record<string, string>} characters - id → display name
-     * @param {string|null} recommendedId - Preselected id
-     * @param {string|null} currentId - The logged-in character, labeled as such
-     * @returns {Promise<string|null>} Choice
-     */
-    function showDialog(characters, recommendedId, currentId) {
-        return new Promise((resolve) => {
-            const overlay = document.createElement('div');
-            // Above every panel tier — this blocks a data migration, nothing may cover it
-            overlay.style.cssText =
-                'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:2147483600; ' +
-                'display:flex; align-items:center; justify-content:center;';
-
-            const ids = Object.keys(characters);
-            const rows = ids
-                .map((id) => {
-                    const checked = id === recommendedId ? ' checked' : '';
-                    const who = `${characters[id]}${id === currentId ? ' (this character)' : ''}`;
-                    return (
-                        `<label style="display:block; margin:4px 0; cursor:pointer;">` +
-                        `<input type="radio" name="mwi-adopt-target" value="${id}"${checked}> ${who}</label>`
-                    );
-                })
-                .join('');
-
-            const card = document.createElement('div');
-            card.style.cssText =
-                'background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:8px; ' +
-                'padding:16px 20px; max-width:420px; font-size:13px; line-height:1.5;';
-            card.innerHTML =
-                `<div style="font-weight:700; font-size:14px; margin-bottom:8px;">Toolasha — who owns the saved data?</div>` +
-                `<div style="color:#aaa; margin-bottom:10px;">Saved data from before per-character scoping was found ` +
-                `(watchlist, savings targets, trackers, panel state…). Choose which character should inherit it — ` +
-                `nothing moves until you confirm.</div>` +
-                rows +
-                `<div style="margin-top:12px; display:flex; gap:8px; justify-content:flex-end;">` +
-                `<button id="mwi-adopt-later" style="background:#333; color:#ccc; border:1px solid #555; border-radius:4px; padding:4px 12px; cursor:pointer;">Not now</button>` +
-                `<button id="mwi-adopt-confirm" style="background:#4a6fdc; color:#fff; border:none; border-radius:4px; padding:4px 12px; cursor:pointer;">Confirm</button>` +
-                `</div>` +
-                `<div style="color:#777; margin-top:8px; font-size:11px;">Applies as data is next read; reload to apply everywhere. ` +
-                `Reopen later with Toolasha.debug.chooseDataOwner().</div>`;
-
-            overlay.appendChild(card);
-            document.body.appendChild(overlay);
-
-            const done = (value) => {
-                overlay.remove();
-                resolve(value);
-            };
-            card.querySelector('#mwi-adopt-confirm').addEventListener('click', () => {
-                const picked = card.querySelector('input[name="mwi-adopt-target"]:checked');
-                done(picked ? picked.value : null);
-            });
-            card.querySelector('#mwi-adopt-later').addEventListener('click', () => done(null));
-        });
-    }
-
-    /**
-     * Append-only history, stored as records rather than as one array.
-     *
-     * ## The write amplification this exists to end
-     *
-     * A recorder that keeps its history in a single key does the same three things
-     * on every event: read the whole array, push one entry, write the whole array
-     * back. The cost of recording one loot drop is therefore the size of every loot
-     * drop already recorded, and it grows for as long as the player keeps playing —
-     * which is the shape of every quota failure this script has had. The loot log
-     * rewrote five hundred entries per `loot_log_updated`; the alchemy trackers
-     * rewrote every session ever, immediately, on every completed action.
-     *
-     * Splitting the array over several keys makes the write proportional to what
-     * changed instead of to what is kept. A new entry lands in one record; the other
-     * records are untouched, so IndexedDB never sees them.
-     *
-     * ## Chunks, not one key per entry
-     *
-     * A key per entry would make every write minimal, and would also put a thousand
-     * keys per character into a store whose soft budget is measured in hundreds (see
-     * `STORE_KEY_BUDGETS` in `core/storage.js`). Grouping entries by the hour, day or
-     * month they belong to keeps both numbers small: the record written is the
-     * current bucket, which holds the handful of entries recorded since the bucket
-     * opened, and the key count grows with calendar time rather than with events.
-     *
-     * ## What the callers keep
-     *
-     * Nothing above this changes shape. A recorder still holds its history as one
-     * array, still hands the whole array to `save()`, and still gets the whole array
-     * back from `load()`. The diff against the last known state is what turns a
-     * whole-array save into a one-record write, so the call sites did not have to
-     * learn about chunking to stop paying for it.
-     *
-     * ## Migration, and what happens when the disk is full
-     *
-     * The legacy single-array key is split on the first read and then deleted. If
-     * the split cannot be written — which on a full disk is exactly when it matters —
-     * the legacy key is left alone and the recorder keeps using it. A migration that
-     * bricked the history the moment storage filled up would be worse than the write
-     * amplification it was meant to fix.
-     */
-
-
-    /** Two digits, for a date part */
-    const pad = (value) => String(value).padStart(2, '0');
-
-    /**
-     * Which bucket a timestamp falls in.
-     *
-     * UTC rather than local time, so a chunk id does not change meaning when the
-     * player travels or the clocks go back — a record written in one zone has to be
-     * found again from another.
-     *
-     * @param {number} t - Milliseconds since the epoch
-     * @param {'month'|'day'|'hour'} granularity - How wide a bucket is
-     * @returns {string} A sortable id: `YYYY-MM`, `YYYY-MM-DD` or `YYYY-MM-DDTHH`
-     */
-    function timeChunkId(t, granularity = 'month') {
-        const date = new Date(Number.isFinite(t) ? t : 0);
-        const month = `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}`;
-        if (granularity === 'month') return month;
-        const day = `${month}-${pad(date.getUTCDate())}`;
-        if (granularity === 'day') return day;
-        return `${day}T${pad(date.getUTCHours())}`;
-    }
-
-    /**
-     * The character ids a set of record keys names.
-     *
-     * Record keys are `<prefix>_<characterId>_<chunkId>`, so the id is the segment
-     * between the prefix and the next underscore. Character ids are alphanumeric
-     * (see `NETWORTH_SERIES_RE` in `utils/character-key.js`), which is what makes
-     * that split unambiguous.
-     *
-     * @param {Array<string>} keys - Keys from one store
-     * @param {string} prefix - The record prefix including its trailing underscore
-     * @returns {Array<string>} Character ids, in key order, deduplicated
-     */
-    function idsFromRecordKeys(keys, prefix) {
-        const ids = [];
-        const seen = new Set();
-        for (const key of keys || []) {
-            if (typeof key !== 'string' || !key.startsWith(prefix)) continue;
-            const rest = key.slice(prefix.length);
-            const end = rest.indexOf('_');
-            if (end <= 0) continue;
-            const id = rest.slice(0, end);
-            if (seen.has(id)) continue;
-            seen.add(id);
-            ids.push(id);
-        }
-        return ids;
-    }
-
-    /**
-     * Every record key in a store belonging to one character.
-     *
-     * @param {Array<string>} keys - Keys from one store
-     * @param {string} prefix - The record prefix, without its trailing underscore
-     * @param {string} charId - Whose records to pick out
-     * @returns {Array<string>} Matching keys, in chunk-id order
-     */
-    function recordKeysFor(keys, prefix, charId) {
-        const scoped = `${prefix}_${charId}_`;
-        return (keys || []).filter((key) => typeof key === 'string' && key.startsWith(scoped)).sort();
-    }
-
-    /**
-     * A history kept as one record per time bucket.
-     *
-     * @param {Object} options - Wiring
-     * @param {string} options.storeName - Object store the records live in
-     * @param {string} options.prefix - Record key prefix, e.g. `lootLogRec`
-     * @param {Function} options.legacyKey - `(charId) => string`, the pre-split single key
-     * @param {Function} options.groupOf - `(entry) => string`, which chunk an entry belongs to
-     * @param {Function} options.compare - Sort comparator for the assembled array
-     * @param {boolean} [options.immediate] - Skip write debouncing, for recorders that did
-     * @param {string} [options.label] - Module name for log lines
-     * @returns {ChunkedHistory} The store
-     */
-    function createChunkedHistory(options) {
-        return new ChunkedHistory(options);
-    }
-
-    class ChunkedHistory {
-        constructor({ storeName, prefix, legacyKey, groupOf, compare, immediate = false, label = 'ChunkedHistory' }) {
-            this.storeName = storeName;
-            this.prefix = prefix;
-            this.legacyKey = legacyKey;
-            this.groupOf = groupOf;
-            this.compare = compare;
-            this.immediate = immediate;
-            this.label = label;
-
-            /** Whose records are in memory */
-            this._charId = null;
-            /** Whether a read has happened for that character */
-            this._loaded = false;
-            /** The assembled array, which is the truth between flushes */
-            this._entries = [];
-            /** chunkId → the JSON last written for it, so a save can write only what moved */
-            this._snapshot = new Map();
-            /**
-             * Whether the split failed and the legacy key is still the record.
-             *
-             * Set when a migration could not be written — a full disk, a database
-             * that will not answer. Reads and writes then go to the legacy key as
-             * they always did, and the next session tries the split again.
-             */
-            this._legacy = false;
-        }
-
-        /**
-         * @param {string} charId - Whose record
-         * @param {string} chunkId - Which bucket
-         * @returns {string} The key that bucket lives under
-         */
-        keyFor(charId, chunkId) {
-            return `${this.prefix}_${charId}_${chunkId}`;
-        }
-
-        /** @returns {boolean} True while the legacy single-array key is still in use */
-        isLegacy() {
-            return this._legacy;
-        }
-
-        /**
-         * The whole history, oldest or newest first per the comparator.
-         *
-         * Returns a copy: the array held here is what the next save diffs against,
-         * and a caller that sorted or spliced the live one would make that diff a
-         * lie. The entry objects themselves are shared, which is what lets a
-         * recorder mutate the session it is in the middle of.
-         *
-         * @param {string} charId - Whose history
-         * @returns {Promise<Array<Object>>} The assembled entries
-         */
-        async load(charId) {
-            if (!charId) return [];
-            if (this._loaded && this._charId === charId) return [...this._entries];
-
-            this._charId = charId;
-            this._loaded = true;
-            this._entries = [];
-            this._snapshot = new Map();
-            this._legacy = false;
-
-            try {
-                const legacy = await storage.get(this.legacyKey(charId), this.storeName, null);
-
-                if (Array.isArray(legacy) && legacy.length > 0) {
-                    const split = await this._migrate(charId, legacy);
-                    this._legacy = !split;
-                    this._entries = this._sorted(legacy);
-                    return [...this._entries];
-                }
-
-                if (Array.isArray(legacy)) {
-                    // An empty legacy array is nothing to split and nothing to keep
-                    await storage.delete(this.legacyKey(charId), this.storeName);
-                }
-
-                this._entries = await this._readRecords(charId);
-            } catch (error) {
-                console.error(`[${this.label}] Reading the history failed:`, error);
-                this._entries = [];
-            }
-
-            return [...this._entries];
-        }
-
-        /**
-         * Persist a whole history, writing only the chunks that moved.
-         *
-         * Deliberately not awaited by most callers: the debounced write's promise
-         * resolves when its timer fires, so awaiting it would stall the caller for
-         * the debounce delay. `storage.flushAll()` on unload is what lands the last
-         * one.
-         *
-         * @param {string} charId - Whose history
-         * @param {Array<Object>} entries - The history as it now stands
-         * @returns {Promise<boolean>} False when there was nowhere to write it
-         */
-        async save(charId, entries) {
-            if (!charId) return false;
-
-            // A save before any read has nothing to diff against, and taking the
-            // list as the whole truth would delete every chunk it does not mention
-            if (!this._loaded || this._charId !== charId) await this.load(charId);
-
-            const list = Array.isArray(entries) ? entries : [];
-            this._entries = this._sorted(list);
-
-            if (this._legacy) {
-                storage.set(this.legacyKey(charId), list, this.storeName, this.immediate);
-                return true;
-            }
-
-            const grouped = this._group(list);
-            const next = new Map();
-            const pending = [];
-
-            for (const [chunkId, bucket] of grouped) {
-                const serialized = JSON.stringify(bucket);
-                next.set(chunkId, serialized);
-                if (this._snapshot.get(chunkId) === serialized) continue;
-                const write = storage.set(this.keyFor(charId, chunkId), bucket, this.storeName, this.immediate);
-                if (this.immediate) pending.push(write);
-            }
-
-            // A rolling window drops its oldest entries; here that is a chunk that
-            // no longer has any, and pruning is deleting its key
-            for (const chunkId of this._snapshot.keys()) {
-                if (next.has(chunkId)) continue;
-                pending.push(storage.delete(this.keyFor(charId, chunkId), this.storeName));
-            }
-
-            this._snapshot = next;
-
-            if (pending.length > 0) await Promise.all(pending);
-            return true;
-        }
-
-        /**
-         * Forget one character's history entirely, records and legacy key alike.
-         * @param {string} charId - Whose history
-         * @returns {Promise<void>}
-         */
-        async clear(charId) {
-            if (!charId) return;
-
-            try {
-                const keys = await storage.getAllKeys(this.storeName);
-                for (const key of recordKeysFor(keys, this.prefix, charId)) {
-                    await storage.delete(key, this.storeName);
-                }
-                await storage.delete(this.legacyKey(charId), this.storeName);
-            } catch (error) {
-                console.error(`[${this.label}] Clearing the history failed:`, error);
-            }
-
-            this.forget();
-        }
-
-        /**
-         * Drop the in-memory copy, so the next read comes from storage.
-         *
-         * What a character switch needs: the departing character's entries must not
-         * be served to the arriving one, and — far worse — must not be written back
-         * under the arriving one's key.
-         */
-        forget() {
-            this._charId = null;
-            this._loaded = false;
-            this._entries = [];
-            this._snapshot = new Map();
-            this._legacy = false;
-        }
-
-        /**
-         * Split a legacy array into records and remove it.
-         *
-         * @param {string} charId - Whose history
-         * @param {Array<Object>} legacy - The single-array value as stored
-         * @returns {Promise<boolean>} True when the records are now the record
-         * @private
-         */
-        async _migrate(charId, legacy) {
-            const grouped = this._group(legacy);
-            if (grouped.size === 0) return false;
-
-            const records = {};
-            for (const [chunkId, bucket] of grouped) records[this.keyFor(charId, chunkId)] = bucket;
-
-            const written = await storage.putAll(this.storeName, records);
-            if (written !== grouped.size || storage.isQuotaExceeded()) {
-                console.warn(
-                    `[${this.label}] Splitting the stored history stalled (${written}/${grouped.size} chunks) — ` +
-                        'keeping the single key and reading from it'
-                );
-                return false;
-            }
-
-            // Records from an interrupted earlier attempt would otherwise show up
-            // beside the ones just written, as entries nothing put there
-            try {
-                const keys = await storage.getAllKeys(this.storeName);
-                for (const key of recordKeysFor(keys, this.prefix, charId)) {
-                    if (key in records) continue;
-                    await storage.delete(key, this.storeName);
-                }
-            } catch (error) {
-                console.error(`[${this.label}] Clearing stale chunks failed:`, error);
-            }
-
-            const removed = await storage.delete(this.legacyKey(charId), this.storeName);
-            if (!removed) {
-                // The legacy key outliving the split is the one state that loses
-                // data: the next load would read it and overwrite everything
-                // recorded since. Stay on it until it can actually be removed.
-                console.warn(`[${this.label}] The legacy key could not be removed — continuing to use it`);
-                return false;
-            }
-
-            this._snapshot = new Map();
-            for (const [chunkId, bucket] of grouped) this._snapshot.set(chunkId, JSON.stringify(bucket));
-            return true;
-        }
-
-        /**
-         * Read every record of one character back into one array.
-         *
-         * One key at a time rather than `getAll()`: these stores hold other things
-         * too — a year of item-level networth snapshots, another feature's keys —
-         * and a whole-store read would pull all of it into memory to assemble a
-         * series of timestamps and totals.
-         *
-         * @param {string} charId - Whose records
-         * @returns {Promise<Array<Object>>} The assembled entries
-         * @private
-         */
-        async _readRecords(charId) {
-            const keys = await storage.getAllKeys(this.storeName);
-            const entries = [];
-
-            for (const key of recordKeysFor(keys, this.prefix, charId)) {
-                const bucket = await storage.get(key, this.storeName, null);
-                if (!Array.isArray(bucket)) continue;
-                this._snapshot.set(key.slice(`${this.prefix}_${charId}_`.length), JSON.stringify(bucket));
-                entries.push(...bucket);
-            }
-
-            return this._sorted(entries);
-        }
-
-        /**
-         * @param {Array<Object>} entries - Entries in any order
-         * @returns {Map<string, Array<Object>>} chunkId → its entries, in input order
-         * @private
-         */
-        _group(entries) {
-            const grouped = new Map();
-            for (const entry of entries || []) {
-                if (entry == null) continue;
-                const chunkId = this.groupOf(entry);
-                if (chunkId === null || chunkId === undefined || chunkId === '') continue;
-                const id = String(chunkId);
-                const bucket = grouped.get(id);
-                if (bucket) bucket.push(entry);
-                else grouped.set(id, [entry]);
-            }
-            return grouped;
-        }
-
-        /**
-         * @param {Array<Object>} entries - Entries in any order
-         * @returns {Array<Object>} A new array in the comparator's order
-         * @private
-         */
-        _sorted(entries) {
-            return this.compare ? [...entries].sort(this.compare) : [...entries];
-        }
-    }
-
-    /**
-     * Per-character storage key helpers.
-     *
-     * Character-specific state stored under a bare key leaks between characters —
-     * the market cow's watchlist shows up on the iron cow. Every feature that
-     * persists per-character state should build its key through {@link characterKey}
-     * and read through {@link readScoped}, which also handles one-time adoption of
-     * the legacy global value.
-     *
-     * Adoption policy: a legacy global value almost always belongs to the account's
-     * main character. It is adopted (moved to the scoped key, legacy deleted) only
-     * by an adoption candidate — a non-ironcow character which, when several
-     * characters have networth history, owns the longest series. Other characters
-     * simply start clean and leave the legacy value in place for the main to claim.
-     */
-
-    const NETWORTH_SERIES_RE = /^networth_[0-9a-zA-Z]+$/;
-
-    /**
-     * The networth series after it was split into one record per month.
-     *
-     * A migrated character has no `networth_<id>` key at all, so the length
-     * comparison below would see nothing and let every character adopt — including
-     * the alts the policy exists to keep out.
-     */
-    const NETWORTH_RECORD_PREFIX = 'networthSeries';
-
-    /** Per-character memo of the adoption decision, reset only on reload. */
-    const adoptionDecisions = new Map();
-
-    /**
-     * A storage key scoped to the character now logged in.
-     *
-     * Uses the codebase's dominant `${base}_${charId}` idiom with a `'default'`
-     * fallback before login, so account-view suffix parsing keeps working.
-     * @param {string} base - The unscoped key
-     * @returns {string} `base_<characterId>`, or `base_default` before login
-     */
-    function characterKey(base) {
-        return `${base}_${dataManager.getCurrentCharacterId() || 'default'}`;
-    }
-
-    /**
-     * How many networth points one character has recorded, either way it is stored.
-     *
-     * The pre-migration single key wins where it exists: its presence is what says
-     * the split has not happened, so any records beside it are a half-finished
-     * migration rather than the series.
-     *
-     * @param {Array<string>} keys - Every key in the networth store
-     * @param {string} id - Whose series
-     * @returns {Promise<number>} Points recorded
-     */
-    async function networthSeriesLength(keys, id) {
-        const legacy = await storage.get(`networth_${id}`, 'networthHistory', null);
-        if (Array.isArray(legacy) && legacy.length > 0) return legacy.length;
-
-        let length = 0;
-        for (const key of recordKeysFor(keys, NETWORTH_RECORD_PREFIX, id)) {
-            const chunk = await storage.get(key, 'networthHistory', null);
-            if (Array.isArray(chunk)) length += chunk.length;
-        }
-        return length;
-    }
-
-    /**
-     * Whether the given character should inherit legacy (pre-scoping) global data.
-     *
-     * Iron cow characters never adopt — the legacy value was almost certainly
-     * written by the market character. When several characters have networth
-     * history, only the one with the longest series adopts. On any failure the
-     * check errs toward adopting, so a solo-character install migrates cleanly.
-     * @param {string} charId - The character considering adoption
-     * @returns {Promise<boolean>} True when this character may claim legacy data
-     */
-    async function isAdoptionCandidate(charId) {
-        if (adoptionDecisions.has(charId)) {
-            return adoptionDecisions.get(charId);
-        }
-
-        let decision = true;
-        try {
-            // Same signal MCS reads: character.gameMode. 'standard' is the market
-            // character; 'ironcow' and 'legacy_ironcow' never adopt.
-            const gameMode = dataManager.getCurrentCharacterGameMode();
-            const name =
-                typeof dataManager.getCurrentCharacterName === 'function'
-                    ? dataManager.getCurrentCharacterName() || ''
-                    : '';
-            if (typeof gameMode === 'string' && gameMode.includes('ironcow')) {
-                decision = false;
-            } else if (/test/i.test(name)) {
-                // A test character is never the main, whatever its history says.
-                decision = false;
-            } else {
-                const keys = await storage.getAllKeys('networthHistory');
-                const ids = new Set([
-                    ...keys
-                        .filter((key) => typeof key === 'string' && NETWORTH_SERIES_RE.test(key))
-                        .map((key) => key.slice('networth_'.length)),
-                    ...idsFromRecordKeys(keys, `${NETWORTH_RECORD_PREFIX}_`),
-                ]);
-
-                if (ids.size > 0 && !ids.has(charId)) {
-                    // Someone on this account has recorded history and this
-                    // character has none — it is not the main. Skipping the
-                    // comparison here is what once let a fresh alt adopt
-                    // everything just by logging in first.
-                    decision = false;
-                } else if (ids.size > 1) {
-                    let bestId = null;
-                    let bestLength = -1;
-                    for (const id of ids) {
-                        const length = await networthSeriesLength(keys, id);
-                        if (length > bestLength) {
-                            bestLength = length;
-                            bestId = id;
-                        }
-                    }
-                    decision = bestId === null || bestId === charId;
-                }
-            }
-        } catch (error) {
-            console.error('[CharacterKey] Adoption check failed, adopting by default:', error);
-            decision = true;
-        }
-
-        adoptionDecisions.set(charId, decision);
-        return decision;
-    }
-
-    /**
-     * Read a per-character key, migrating any legacy global value exactly once.
-     *
-     * Looks up `characterKey(base)` first. When absent and the legacy bare `base`
-     * key exists, either adopts it (moves it to this character's key and deletes
-     * the legacy copy — main character only, see module doc) or discards it
-     * (deletes the legacy copy and starts clean), per `options.migrate`.
-     *
-     * Discard is for state derived from one character's gear or sim results, where
-     * inheriting another character's data is worse than starting empty.
-     * @param {string} base - The unscoped key
-     * @param {string} [storeName] - Object store name (default: 'settings')
-     * @param {*} [defaultValue] - Value returned when neither key exists
-     * @param {{migrate?: 'adopt'|'discard'}} [options] - Legacy migration mode (default: 'adopt')
-     * @returns {Promise<*>} The stored value or default
-     */
-    async function readScoped(base, storeName = 'settings', defaultValue = null, options = {}) {
-        const { migrate = 'adopt' } = options;
-
-        const scopedKey = characterKey(base);
-        const scoped = await storage.get(scopedKey, storeName, null);
-        if (scoped !== null) {
-            return scoped;
-        }
-
-        const legacy = await storage.get(base, storeName, null);
-        if (legacy === null) {
-            return defaultValue;
-        }
-
-        if (migrate === 'discard') {
-            await storage.delete(base, storeName);
-            return defaultValue;
-        }
-
-        const charId = dataManager.getCurrentCharacterId();
-        if (!charId) {
-            return defaultValue;
-        }
-
-        // Adoption is user-confirmed, never automatic. The heuristics only pick
-        // which character the dialog preselects.
-        const targetId = await getAdoptionTargetId();
-        if (targetId === null) {
-            // Fire-and-forget: awaiting a modal here would hang feature init.
-            isAdoptionCandidate(charId).then(
-                (candidate) => requestAdoptionConsent({ recommendedId: candidate ? charId : null }),
-                () => requestAdoptionConsent({})
-            );
-            return defaultValue;
-        }
-        if (targetId !== charId) {
-            // Leave the legacy value in place for the chosen character to claim.
-            return defaultValue;
-        }
-
-        await storage.set(scopedKey, legacy, storeName, true);
-        await storage.delete(base, storeName);
-        return legacy;
-    }
-
-    /**
-     * Write a value under this character's scoped key.
-     * @param {string} base - The unscoped key
-     * @param {*} value - Value to store
-     * @param {string} [storeName] - Object store name (default: 'settings')
-     * @param {boolean} [immediate] - Skip write debouncing
-     * @returns {Promise<boolean>} Success status
-     */
-    async function writeScoped(base, value, storeName = 'settings', immediate = false) {
-        return storage.set(characterKey(base), value, storeName, immediate);
-    }
-
-    /**
      * Estimated Listing Age Module
      *
      * Estimates creation times for all market listings using listing ID interpolation
@@ -8823,7 +7980,7 @@
                     await this.loadAnchors();
                 }
 
-                const stored = (await readScoped(LISTINGS_BASE, LISTINGS_STORE, [], { migrate: 'adopt' })) || [];
+                const stored = (await characterKey_js.readScoped(LISTINGS_BASE, LISTINGS_STORE, [], { migrate: 'adopt' })) || [];
 
                 // Load all historical data (no time-based filtering). Entries without
                 // an itemHrid are anchors, which now live in their own global key.
@@ -8977,7 +8134,7 @@
          */
         async saveHistoricalData() {
             try {
-                await writeScoped(LISTINGS_BASE, this.knownListings, LISTINGS_STORE, true);
+                await characterKey_js.writeScoped(LISTINGS_BASE, this.knownListings, LISTINGS_STORE, true);
             } catch (error) {
                 console.error('[EstimatedListingAge] Failed to save historical data:', error);
             }
@@ -12151,7 +11308,7 @@
                 // Discarded rather than adopted on migration: a filter naming items
                 // and dates is a view of one character's log, and pointing it at
                 // another's shows an empty table with no visible reason
-                const savedFilters = await readScoped('marketHistoryFilters', 'settings', null, { migrate: 'discard' });
+                const savedFilters = await characterKey_js.readScoped('marketHistoryFilters', 'settings', null, { migrate: 'discard' });
                 if (savedFilters) {
                     // Convert date strings back to Date objects
                     this.filters.dateFrom = savedFilters.dateFrom ? new Date(savedFilters.dateFrom) : null;
@@ -12178,7 +11335,7 @@
                     selectedEnhLevels: this.filters.selectedEnhLevels,
                     selectedTypes: this.filters.selectedTypes,
                 };
-                await writeScoped('marketHistoryFilters', filtersToSave, 'settings', true);
+                await characterKey_js.writeScoped('marketHistoryFilters', filtersToSave, 'settings', true);
             } catch (error) {
                 console.error('[MarketHistoryViewer] Failed to save filters:', error);
             }
@@ -13855,7 +13012,7 @@
                 }
 
                 // Save to storage
-                await writeScoped(this.storageKey, existingListings, 'marketListings', true);
+                await characterKey_js.writeScoped(this.storageKey, existingListings, 'marketListings', true);
                 await estimatedListingAge.addAnchors(newAnchors);
 
                 // Remove progress message
@@ -14020,7 +13177,7 @@
                 }
 
                 // Save to storage
-                await writeScoped(this.storageKey, existingListings, 'marketListings', true);
+                await characterKey_js.writeScoped(this.storageKey, existingListings, 'marketListings', true);
                 await estimatedListingAge.addAnchors(newAnchors);
 
                 // Remove progress message
@@ -14085,7 +13242,7 @@
                 await estimatedListingAge.addAnchors(this.listings.map((l) => ({ id: l.id, timestamp: l.timestamp })));
 
                 // Clear from storage
-                await writeScoped(this.storageKey, [], 'marketListings', true);
+                await characterKey_js.writeScoped(this.storageKey, [], 'marketListings', true);
 
                 // Clear local data
                 this.listings = [];
@@ -15123,7 +14280,7 @@
      */
 
 
-    const STORAGE_KEY$4 = 'inventoryTabs_config';
+    const STORAGE_KEY$3 = 'inventoryTabs_config';
     const STORE = 'settings';
     const CONFIG_VERSION = 1;
 
@@ -15150,7 +14307,7 @@
      * @returns {string}
      */
     function getStorageKey$2(characterId) {
-        return `${characterId}_${STORAGE_KEY$4}`;
+        return `${characterId}_${STORAGE_KEY$3}`;
     }
 
     /**
@@ -16593,397 +15750,6 @@
     }
 
     /**
-     * Watchlist
-     *
-     * A named set of items, what you hold of each, and what it is worth.
-     *
-     * The list itself is trivial. Two things about it are not, and they are the
-     * reason this is a module with tests rather than a few lines inside a panel.
-     *
-     * ## Un-ticking a set must not take items another set still wants
-     *
-     * Items go on the list one at a time, or a whole zone's drop table at once, or a
-     * whole chest's contents. Zones share drops — Aqua Planet and Jungle Planet have
-     * items in common — so removing one set cannot simply remove everything it
-     * contributed. Every row remembers which set put it there, and un-ticking a set
-     * **re-homes** any of its rows that another still-enabled set also contains,
-     * rather than deleting them. Get that wrong and un-ticking one zone silently
-     * empties part of another, which reads as the list losing things at random.
-     *
-     * Rows added by hand have no set, and nothing automatic ever removes them.
-     *
-     * ## The vendor price is a floor, not a comparison
-     *
-     * The market bid can sit below what the vendor pays flat. When it does, the bid
-     * is not the item's value — it is a number you would be a fool to accept, and
-     * showing it as the value quietly advises the worse of two sales. So the row
-     * reports the vendor price and says why. The same applies with more force to an
-     * item that has no market at all: a bid of zero is the absence of a price, not a
-     * value of nothing.
-     *
-     * The model is NTally's, from MWI Combat Suite by Frotty (MIT) — see
-     * `third-party/mwi-combat-suite/` and `docs/THIRD-PARTY-LICENSES.md`. The code is
-     * Toolasha's own.
-     */
-
-    /**
-     * Put items on the list under a given set.
-     *
-     * Items already on the list are left where they are rather than moved, so
-     * ticking a second set that shares a drop does not take that row's existing
-     * home — which is the thing un-ticking relies on.
-     *
-     * @param {Array<{hrid: string, name: string, source: string|null}>} entries - The list
-     * @param {Array<{hrid: string, name: string}>} items - What to add
-     * @param {string|null} source - The set adding them, or null when added by hand
-     * @returns {Array<Object>} A new list
-     */
-    function addToWatchlist(entries, items, source = null) {
-        const known = new Set((entries || []).map((entry) => entry.hrid));
-        const added = [];
-
-        for (const item of items || []) {
-            if (!item?.hrid || known.has(item.hrid)) continue;
-            known.add(item.hrid);
-            added.push({ hrid: item.hrid, name: item.name || item.hrid, source });
-        }
-        return [...(entries || []), ...added];
-    }
-
-    /**
-     * Take one item off, whoever put it there.
-     *
-     * @param {Array<Object>} entries - The list
-     * @param {string} hrid - What to remove
-     * @returns {Array<Object>} A new list
-     */
-    function removeFromWatchlist(entries, hrid) {
-        return (entries || []).filter((entry) => entry.hrid !== hrid);
-    }
-
-    /**
-     * Un-tick a set, keeping what another still-enabled set also contains.
-     *
-     * @param {Array<Object>} entries - The list
-     * @param {string} source - The set being turned off
-     * @param {Array<{id: string, hrids: Iterable<string>}>} stillOn - Sets still enabled, in order
-     * @returns {Array<Object>} A new list, with survivors re-homed
-     */
-    function removeSource(entries, source, stillOn = []) {
-        const homes = (stillOn || []).map((set) => ({ id: set.id, hrids: new Set(set.hrids) }));
-
-        return (entries || []).flatMap((entry) => {
-            // Added by hand, or by a set that is not the one being turned off
-            if (entry.source === null || entry.source === undefined || entry.source !== source) return [entry];
-
-            // First in the given order, so the same list re-homes the same way every
-            // time rather than shuffling as sets are toggled
-            const home = homes.find((set) => set.hrids.has(entry.hrid));
-            return home ? [{ ...entry, source: home.id }] : [];
-        });
-    }
-
-    /**
-     * The price a row should report, and whether that needs saying out loud.
-     *
-     * @param {number} bid - Current market bid
-     * @param {number} vendor - What the vendor pays flat
-     * @returns {{price: number, flag: string|null}} `flag` is `below-vendor`,
-     *   `equals-vendor`, `no-market`, or null when the bid stands on its own
-     */
-    function vendorFloor(bid, vendor) {
-        const market = Number(bid) || 0;
-        const flat = Number(vendor) || 0;
-
-        if (!(flat > 0)) return { price: market, flag: null };
-        // No market at all: the vendor price is the only price, and zero would be a
-        // claim that the item is worthless rather than that nobody is buying it
-        if (!(market > 0)) return { price: flat, flag: 'no-market' };
-        if (market < flat) return { price: flat, flag: 'below-vendor' };
-        if (market === flat) return { price: flat, flag: 'equals-vendor' };
-
-        return { price: market, flag: null };
-    }
-
-    /**
-     * How many of an item are sitting in your own sell orders.
-     *
-     * A watchlist that counts only the inventory says you have none of something
-     * you have two hundred of — they are just on the market rather than in the bag.
-     * That is the difference between "I need to farm this" and "I need to wait", and
-     * a collection checklist that cannot tell them apart is worse than no checklist.
-     *
-     * Unclaimed items from a filled **buy** order count too: they are yours, bought
-     * and paid for, and only a click away from the inventory.
-     *
-     * @param {Array<Object>} listings - The game's `myMarketListings`
-     * @returns {Object<string, {listed: number, unclaimed: number}>} By item hrid
-     */
-    function listedCounts(listings) {
-        const counts = {};
-        const bump = (hrid, field, amount) => {
-            if (!hrid || !(amount > 0)) return;
-            counts[hrid] = counts[hrid] || { listed: 0, unclaimed: 0 };
-            counts[hrid][field] += amount;
-        };
-
-        for (const listing of listings || []) {
-            const remaining = Math.max(0, (listing?.orderQuantity || 0) - (listing?.filledQuantity || 0));
-            // Only a sell order is holding items; a buy order's remainder is coin
-            if (listing?.isSell) bump(listing.itemHrid, 'listed', remaining);
-            bump(listing?.itemHrid, 'unclaimed', listing?.unclaimedItemCount || 0);
-        }
-        return counts;
-    }
-
-    /**
-     * Price and count every row.
-     *
-     * The lookups are passed in rather than imported, so the awkward parts — the
-     * vendor floor, the multiplication, the totals — are testable without a market.
-     *
-     * @param {Array<Object>} entries - The list
-     * @param {Object} lookups - How to resolve a row
-     * @param {Function} lookups.quantityOf - `(hrid) => number`
-     * @param {Function} lookups.pricesFor - `(hrid) => {ask, bid}|null`
-     * @param {Function} [lookups.vendorOf] - `(hrid) => number`
-     * @param {Function} [lookups.listedOf] - `(hrid) => {listed, unclaimed}`
-     * @returns {Array<Object>} Rows with `held`, `listed`, `unclaimed`, `quantity`,
-     *   `ask`, `bid`, `flag`, `totalAsk`, `totalBid`. `quantity` is everything you
-     *   own of the item wherever it is sitting; `held` is only the bag.
-     */
-    function valueWatchlist(entries, { quantityOf, pricesFor, vendorOf, listedOf }) {
-        return (entries || []).map((entry) => {
-            const held = Number(quantityOf?.(entry.hrid)) || 0;
-            const market = listedOf?.(entry.hrid) || {};
-            const listed = Number(market.listed) || 0;
-            const unclaimed = Number(market.unclaimed) || 0;
-            // Everything you own of it, wherever it happens to be
-            const quantity = held + listed + unclaimed;
-
-            const prices = pricesFor?.(entry.hrid) || {};
-            const ask = Number(prices.ask) || 0;
-            const floor = vendorFloor(prices.bid, vendorOf?.(entry.hrid));
-
-            return {
-                ...entry,
-                held,
-                listed,
-                unclaimed,
-                quantity,
-                ask,
-                bid: floor.price,
-                flag: floor.flag,
-                totalAsk: ask * quantity,
-                totalBid: floor.price * quantity,
-            };
-        });
-    }
-
-    /**
-     * What the whole list is worth.
-     * @param {Array<Object>} rows - From `valueWatchlist`
-     * @returns {{ask: number, bid: number, items: number, held: number}}
-     */
-    function watchlistTotals(rows) {
-        return (rows || []).reduce(
-            (totals, row) => ({
-                ask: totals.ask + (row.totalAsk || 0),
-                bid: totals.bid + (row.totalBid || 0),
-                items: totals.items + 1,
-                // How many of the tracked items you actually hold any of, which is
-                // the "12 / 30" a collection checklist is for
-                held: totals.held + (row.quantity > 0 ? 1 : 0),
-            }),
-            { ask: 0, bid: 0, items: 0, held: 0 }
-        );
-    }
-
-    /**
-     * Order the rows.
-     *
-     * By value means by what you hold, not by unit price — a stack of one cheap item
-     * is not more valuable than a stack of a thousand. Ties break on name so the
-     * order is stable rather than dependent on which sets were ticked first.
-     *
-     * @param {Array<Object>} rows - From `valueWatchlist`
-     * @param {string} by - `name` or `value`
-     * @param {string} direction - `asc` or `desc`
-     * @returns {Array<Object>} A new array
-     */
-    function sortRows(rows, by = 'name', direction = 'asc') {
-        const sign = direction === 'desc' ? -1 : 1;
-
-        return [...(rows || [])].sort((a, b) => {
-            if (by === 'value') {
-                const difference = (a.totalAsk || 0) - (b.totalAsk || 0);
-                if (difference) return sign * difference;
-            }
-            return sign * String(a.name).localeCompare(String(b.name));
-        });
-    }
-
-    /**
-     * Drop sources
-     *
-     * Everything a combat zone can drop, and everything a chest can contain.
-     *
-     * The point is to turn one gesture — "track Pirate Cove" — into the thirty rows
-     * that means. Doing it by hand is thirty clicks and a wiki tab; doing it from
-     * the game's own data is exact and cannot go stale.
-     *
-     * ## Three tables, not one
-     *
-     * An ordinary zone drops from its monsters, and a monster has **two** tables:
-     * `dropTable` and `rareDropTable`. They are separate in the game's data because
-     * they scale by different stats, and a walk that reads only the first quietly
-     * omits precisely the drops anybody would be tracking a zone for.
-     *
-     * A zone also has **boss spawns** alongside its random ones, whose drops are
-     * again the interesting ones.
-     *
-     * A **dungeon** does not work like either: it pays out of a reward table on
-     * completion rather than per monster, so its drops come from `dungeonInfo`
-     * instead. Reading a dungeon as an ordinary zone finds nothing at all.
-     *
-     * Coins are excluded throughout. Everything drops coins, they are not an item
-     * anybody tracks, and one row saying "Coin" on every set is noise.
-     *
-     * The model is NTally's, from MWI Combat Suite by Frotty (MIT) — see
-     * `third-party/mwi-combat-suite/` and `docs/THIRD-PARTY-LICENSES.md`. The code is
-     * Toolasha's own.
-     */
-
-    const COIN_HRID = '/items/coin';
-    const COMBAT_ACTION_PREFIX = '/actions/combat/';
-
-    /**
-     * An item's display name, falling back to something readable.
-     *
-     * @param {string} itemHrid - e.g. `/items/purples_gift`
-     * @param {Object} itemDetailMap - The game's map
-     * @returns {string}
-     */
-    function nameOf$2(itemHrid, itemDetailMap) {
-        const known = itemDetailMap?.[itemHrid]?.name;
-        if (known) return known;
-
-        return itemHrid.replace('/items/', '').replace(/_/g, ' ');
-    }
-
-    /**
-     * Every combat zone the game has, as sets you could track.
-     *
-     * Read from the action map rather than listed, so a zone added by an update
-     * appears without anybody editing a constant — which is what a hardcoded list of
-     * fifteen planets guarantees will not happen.
-     *
-     * @param {Object} actionDetailMap - The game's map
-     * @returns {Array<{id: string, hrid: string, name: string, isDungeon: boolean}>}
-     */
-    function combatZones(actionDetailMap) {
-        const zones = [];
-
-        for (const [hrid, action] of Object.entries(actionDetailMap || {})) {
-            if (!hrid.startsWith(COMBAT_ACTION_PREFIX) || !action?.combatZoneInfo) continue;
-
-            zones.push({
-                // Keyed by hrid, like the chests are, because the id is what gets
-                // handed back to look the set's contents up — a short name looks
-                // tidier in storage and resolves to nothing in the action map
-                id: hrid,
-                hrid,
-                name: action.name || hrid.slice(COMBAT_ACTION_PREFIX.length).replace(/_/g, ' '),
-                isDungeon: Boolean(action.combatZoneInfo.isDungeon),
-            });
-        }
-        return zones.sort((a, b) => (a.sortIndex ?? 0) - (b.sortIndex ?? 0) || a.name.localeCompare(b.name));
-    }
-
-    /**
-     * Everything a zone can drop.
-     *
-     * @param {string} actionHrid - e.g. `/actions/combat/pirate_cove`
-     * @param {Object} data - The game's `initClientData`
-     * @returns {Array<{hrid: string, name: string}>} Deduplicated, coins excluded
-     */
-    function zoneDrops(actionHrid, data) {
-        const { actionDetailMap, combatMonsterDetailMap, itemDetailMap } = data || {};
-        const zone = actionDetailMap?.[actionHrid]?.combatZoneInfo;
-        if (!zone) return [];
-
-        const drops = new Map();
-        const add = (drop) => {
-            const hrid = drop?.itemHrid;
-            if (!hrid || hrid === COIN_HRID || drops.has(hrid)) return;
-            drops.set(hrid, { hrid, name: nameOf$2(hrid, itemDetailMap) });
-        };
-
-        // A dungeon pays out of a reward table on completion, so its monsters'
-        // tables are not where its drops come from
-        if (zone.isDungeon) {
-            for (const drop of zone.dungeonInfo?.rewardDropTable || []) add(drop);
-            return [...drops.values()];
-        }
-
-        const fight = zone.fightInfo;
-        if (!fight || !combatMonsterDetailMap) return [];
-
-        const addMonster = (monsterHrid) => {
-            const monster = combatMonsterDetailMap[monsterHrid];
-            if (!monster) return;
-            // Both tables: rare is where the reason to track a zone usually lives
-            for (const drop of monster.dropTable || []) add(drop);
-            for (const drop of monster.rareDropTable || []) add(drop);
-        };
-
-        for (const spawn of fight.randomSpawnInfo?.spawns || []) addMonster(spawn.combatMonsterHrid);
-        for (const spawn of fight.bossSpawns || []) addMonster(spawn.combatMonsterHrid);
-
-        return [...drops.values()];
-    }
-
-    /**
-     * Every item that can be opened, as sets you could track.
-     *
-     * @param {Object} data - The game's `initClientData`
-     * @returns {Array<{id: string, hrid: string, name: string}>}
-     */
-    function openableItems(data) {
-        const { openableLootDropMap, itemDetailMap } = data || {};
-
-        return Object.keys(openableLootDropMap || {})
-            .map((hrid) => ({ id: hrid, hrid, name: nameOf$2(hrid, itemDetailMap) }))
-            .sort((a, b) => a.name.localeCompare(b.name));
-    }
-
-    /**
-     * Everything a chest can contain, and the chest itself.
-     *
-     * The chest is included because a chest you have not opened is a thing you hold
-     * and a thing with a price, and a list of its contents that omits it cannot tell
-     * you what the pile is worth.
-     *
-     * @param {string} chestHrid - e.g. `/items/purples_gift`
-     * @param {Object} data - The game's `initClientData`
-     * @returns {Array<{hrid: string, name: string}>} Deduplicated, coins excluded
-     */
-    function openableDrops(chestHrid, data) {
-        const { openableLootDropMap, itemDetailMap } = data || {};
-        const table = openableLootDropMap?.[chestHrid];
-        if (!table) return [];
-
-        const drops = new Map([[chestHrid, { hrid: chestHrid, name: nameOf$2(chestHrid, itemDetailMap) }]]);
-
-        for (const drop of table) {
-            const hrid = drop?.itemHrid;
-            if (!hrid || hrid === COIN_HRID || drops.has(hrid)) continue;
-            drops.set(hrid, { hrid, name: nameOf$2(hrid, itemDetailMap) });
-        }
-        return [...drops.values()];
-    }
-
-    /**
      * Networth Cache
      * LRU cache for expensive enhancement cost calculations
      * Prevents recalculating the same enhancement paths repeatedly
@@ -17446,7 +16212,7 @@
                 const countElem = itemElem.querySelector('[class*="Item_count"]');
                 if (!countElem) continue;
 
-                const itemCount = parseItemCount(countElem.textContent, 0);
+                const itemCount = numberParser_js.parseItemCount(countElem.textContent, 0);
 
                 // Get item details (reused throughout)
                 const itemDetails = gameData.itemDetailMap[itemHrid];
@@ -17480,7 +16246,7 @@
                     if (evData && evData.expectedValue > 0) {
                         let netValue = evData.expectedValue;
 
-                        const chestKeyHrid = DUNGEON_CHEST_CHEST_KEYS[itemHrid];
+                        const chestKeyHrid = dungeonKeys_js.DUNGEON_CHEST_CHEST_KEYS[itemHrid];
                         if (chestKeyHrid) {
                             const keyPricingSetting = config.getSettingValue('profitCalc_keyPricingMode') || 'ask';
                             const keyPrices = marketAPI.getPrice(chestKeyHrid);
@@ -17788,7 +16554,7 @@
 
     const PANEL_ID$3 = 'toolasha-watchlist-panel';
     const GEOMETRY_KEY$1 = 'watchlistPanel';
-    const STORAGE_KEY$3 = 'watchlist';
+    const STORAGE_KEY$2 = 'watchlist';
     const DEFAULT_PANEL$2 = { width: 560, height: 640 };
     const REFRESH_MS$1 = 5000;
     const DOT_CLASS = 'toolasha-watchlist-dot';
@@ -17830,7 +16596,7 @@
     async function reload$1() {
         try {
             await storage.ready;
-            const saved = await readScoped(STORAGE_KEY$3, 'settings', null, { migrate: 'adopt' });
+            const saved = await characterKey_js.readScoped(STORAGE_KEY$2, 'settings', null, { migrate: 'adopt' });
             Object.assign(state$1, emptyState(), saved || {});
             // The dot has by now drawn the previous character's list on every item
             inventoryBadgeManager.invalidateCache?.();
@@ -17848,7 +16614,7 @@
 
     /** Write the list back, without making anybody wait for it */
     function persist$1() {
-        writeScoped(STORAGE_KEY$3, { ...state$1 }, 'settings').catch((error) =>
+        characterKey_js.writeScoped(STORAGE_KEY$2, { ...state$1 }, 'settings').catch((error) =>
             console.error('[Watchlist] Saving the list failed:', error)
         );
     }
@@ -17881,7 +16647,7 @@
      * @param {string} [name] - Its display name
      */
     function watchItem(itemHrid, name) {
-        state$1.entries = addToWatchlist(state$1.entries, [{ hrid: itemHrid, name: name || nameOf$1(itemHrid) }], null);
+        state$1.entries = watchlist_js.addToWatchlist(state$1.entries, [{ hrid: itemHrid, name: name || nameOf$1(itemHrid) }], null);
         persist$1();
     }
 
@@ -17890,7 +16656,7 @@
      * @param {string} itemHrid - The item
      */
     function unwatchItem(itemHrid) {
-        state$1.entries = removeFromWatchlist(state$1.entries, itemHrid);
+        state$1.entries = watchlist_js.removeFromWatchlist(state$1.entries, itemHrid);
         persist$1();
     }
 
@@ -17953,17 +16719,17 @@
     function watchlistRows() {
         // Built once per pass rather than per row: it is a walk of every listing,
         // and there are more rows than listings
-        const listed = listedCounts(
+        const listed = watchlist_js.listedCounts(
             dataManager.getCharacterData?.()?.myMarketListings || dataManager.characterData?.myMarketListings
         );
 
-        const rows = valueWatchlist(state$1.entries, {
+        const rows = watchlist_js.valueWatchlist(state$1.entries, {
             quantityOf: heldCount,
             pricesFor: (hrid) => marketData_js.getItemPrices(hrid),
             vendorOf: vendorPriceOf,
             listedOf: (hrid) => listed[hrid],
         });
-        return sortRows(rows, state$1.sortBy, state$1.direction);
+        return watchlist_js.sortRows(rows, state$1.sortBy, state$1.direction);
     }
 
     /**
@@ -17978,7 +16744,7 @@
 
         if (on) {
             state$1[kind][id] = true;
-            state$1.entries = addToWatchlist(state$1.entries, contentsOf(kind, id), source);
+            state$1.entries = watchlist_js.addToWatchlist(state$1.entries, contentsOf(kind, id), source);
         } else {
             delete state$1[kind][id];
             // Everything still ticked, so an item two sets share is re-homed rather
@@ -17989,7 +16755,7 @@
                     stillOn.push({ id: `${other}:${otherId}`, hrids: contentsOf(other, otherId).map((item) => item.hrid) });
                 }
             }
-            state$1.entries = removeSource(state$1.entries, source, stillOn);
+            state$1.entries = watchlist_js.removeSource(state$1.entries, source, stillOn);
         }
         persist$1();
         inventoryBadgeManager.invalidateCache?.();
@@ -18004,7 +16770,7 @@
         const data = dataManager.getInitClientData?.();
         if (!data) return [];
 
-        return kind === 'zones' ? zoneDrops(id, data) : openableDrops(id, data);
+        return kind === 'zones' ? dropSources_js.zoneDrops(id, data) : dropSources_js.openableDrops(id, data);
     }
 
     class WatchlistPanel {
@@ -18200,7 +16966,7 @@
             if (!this.bodyEl) return;
 
             const rows = watchlistRows();
-            const totals = watchlistTotals(rows);
+            const totals = watchlist_js.watchlistTotals(rows);
 
             this.headerCount.textContent = `${totals.held} / ${totals.items}`;
             this.headerCount.title = 'How many of the tracked items you hold any of.';
@@ -18209,8 +16975,8 @@
 
             this.bodyEl.replaceChildren();
             for (const build of [
-                () => this._sets('zones', 'Zones', combatZones(dataManager.getInitClientData?.()?.actionDetailMap)),
-                () => this._sets('chests', 'Chests', openableItems(dataManager.getInitClientData?.())),
+                () => this._sets('zones', 'Zones', dropSources_js.combatZones(dataManager.getInitClientData?.()?.actionDetailMap)),
+                () => this._sets('chests', 'Chests', dropSources_js.openableItems(dataManager.getInitClientData?.())),
                 () => this._table(rows),
             ]) {
                 // One section that cannot be drawn must not take the others with it
@@ -18689,7 +17455,7 @@
             const rows = watchlistRows();
             if (!rows.length) return overlayFormat_js.blank(container);
 
-            const totals = watchlistTotals(rows);
+            const totals = watchlist_js.watchlistTotals(rows);
             const flagged = rows.filter((item) => item.flag === 'below-vendor').length;
 
             overlayFormat_js.row(container, [
@@ -18734,7 +17500,7 @@
      * Falls back to the bundled copy for the dev standalone build (single bundle, one instance).
      */
     function getWebSocketHook() {
-        return (typeof window !== 'undefined' && window.Toolasha?.Core?.webSocketHook) || webSocketHook;
+        return bundleBridge_js.webSocketHook() || webSocketHook;
     }
 
     /**
@@ -20318,6 +19084,7 @@
         'notifications_browserEnabled',
         'notifications_consumableLow',
         'notifications_marketListingFilled',
+        'notifications_marketListingUndercut',
         'notifications_otherCharacterIdle',
         'notifications_communityBuffExpiring',
         'notifications_labyrinthRunFinished',
@@ -20943,43 +19710,6 @@
     const marketplaceBadgeFilter = new MarketplaceBadgeFilter();
 
     /**
-     * Whether this is a touch device, and whether to act like it.
-     *
-     * Two questions, deliberately separate. `hasCoarsePointer` is a fact about the
-     * hardware — the primary pointer cannot hit a 14px target — and things sized
-     * for fingers key on it directly. `isMobileMode` is a *choice* that defaults to
-     * that fact: auto-detection is right until the one person on a touchscreen
-     * laptop wants desktop layouts, and a setting that cannot be overridden is a
-     * bug report waiting to be written.
-     */
-
-
-    /**
-     * Whether the primary pointer is a finger rather than a cursor.
-     *
-     * `pointer: coarse` rather than user-agent sniffing: it asks about the actual
-     * input device instead of guessing from a browser string that lies for
-     * compatibility reasons.
-     *
-     * @returns {boolean}
-     */
-    function hasCoarsePointer() {
-        return typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
-    }
-
-    /**
-     * Whether features should adjust for a phone-sized, touch-driven screen.
-     *
-     * @returns {boolean}
-     */
-    function isMobileMode() {
-        const mode = config.getSettingValue('mobileMode', 'auto');
-        if (mode === 'on') return true;
-        if (mode === 'off') return false;
-        return hasCoarsePointer();
-    }
-
-    /**
      * Market Prices
      *
      * A price cache that remembers how much was resting at the top of each book,
@@ -21117,7 +19847,7 @@
      */
 
 
-    const STORAGE_KEY$2 = 'mooketPrices';
+    const STORAGE_KEY$1 = 'mooketPrices';
     const SAVE_INTERVAL_MS = 60 * 1000;
 
     class MarketPriceStore {
@@ -21134,7 +19864,7 @@
             if (this.bookHandler) return;
 
             try {
-                const stored = (await storage.getJSON(STORAGE_KEY$2, 'marketListings', {})) || {};
+                const stored = (await storage.getJSON(STORAGE_KEY$1, 'marketListings', {})) || {};
                 this.entries = pruneStale(stored, Date.now() - PRICE_MAX_AGE_MS);
             } catch (error) {
                 console.error('[MooketPrices] Loading prices failed:', error);
@@ -21263,7 +19993,7 @@
             this.dirty = false;
             try {
                 this.entries = pruneStale(this.entries, Date.now() - PRICE_MAX_AGE_MS);
-                await storage.setJSON(STORAGE_KEY$2, this.entries, 'marketListings');
+                await storage.setJSON(STORAGE_KEY$1, this.entries, 'marketListings');
             } catch (error) {
                 console.error('[MooketPrices] Saving prices failed:', error);
             }
@@ -21271,56 +20001,6 @@
     }
 
     const marketPriceStore = new MarketPriceStore();
-
-    /**
-     * Which game server this is
-     *
-     * Milky Way Idle runs a test server beside the live one, on its own hostname
-     * and with its own database. Playing on it is ordinary — it is where new
-     * content is tried — but the two are different worlds: different characters,
-     * different prices, different economy.
-     *
-     * That matters wherever Toolasha sends something outward. A test-server order
-     * book uploaded to a pooled price dataset is not a cheaper price, it is a wrong
-     * one, and it is indistinguishable from a real one once it has landed. So
-     * anything that contributes data to a shared service asks here first.
-     *
-     * Reading is a different question and mostly harmless — a test-server session
-     * looking up live history gets live history, which is what it was after.
-     */
-
-    /** The live game, the test game, and nothing else Toolasha runs on */
-    const TEST_HOSTNAMES = new Set(['test.milkywayidle.com', 'api-test.milkywayidle.com']);
-
-    /**
-     * The hostname this page is on, or an empty string off a browser.
-     * @returns {string}
-     */
-    function currentHostname() {
-        try {
-            return String(globalThis.location?.hostname || '').toLowerCase();
-        } catch {
-            return '';
-        }
-    }
-
-    /**
-     * Whether this is the test server.
-     *
-     * Matches by hostname rather than by anything in the game data, because the
-     * answer is needed before a character has loaded and because the hostname is
-     * the one thing the two servers can never share.
-     *
-     * @param {string} [hostname] - Overrides the page's own, for tests
-     * @returns {boolean} True on the test server, false on live and false anywhere
-     *   the question does not apply — an unknown host is treated as live, which is
-     *   the answer that keeps a real session contributing
-     */
-    function isTestServer(hostname = currentHostname()) {
-        const host = String(hostname || '').toLowerCase();
-        if (!host) return false;
-        return TEST_HOSTNAMES.has(host);
-    }
 
     /**
      * Market History API
@@ -21387,7 +20067,7 @@
         get contributing() {
             if (!this.enabled) return false;
 
-            if (isTestServer()) {
+            if (gameServer_js.isTestServer()) {
                 if (!this.notedTestServer) {
                     this.notedTestServer = true;
                     console.log('[Mooket] test server — not sending data');
@@ -21983,7 +20663,7 @@
                 // Assigned whether or not anything was found: initialize runs again
                 // after a character switch, and the previous character's list must
                 // not survive it
-                this.watchlist = normaliseWatchlist(await readScoped(WATCHLIST_BASE, 'settings', null));
+                this.watchlist = normaliseWatchlist(await characterKey_js.readScoped(WATCHLIST_BASE, 'settings', null));
             } catch (error) {
                 console.error('[MarketHistory] Loading panel preferences failed:', error);
             }
@@ -21994,7 +20674,7 @@
                 const prefs = { ...this.prefs };
                 delete prefs.watchlist;
                 await storage.setJSON(PREFS_KEY, prefs, 'settings');
-                await writeScoped(WATCHLIST_BASE, this.watchlist, 'settings');
+                await characterKey_js.writeScoped(WATCHLIST_BASE, this.watchlist, 'settings');
             } catch (error) {
                 console.error('[MarketHistory] Saving panel preferences failed:', error);
             }
@@ -22303,7 +20983,7 @@
                 // finger, and right-click-to-remove does not exist there — an
                 // explicit × stands in, since a long-press that silently deletes a
                 // watch would be worse than one extra glyph of clutter
-                const coarse = hasCoarsePointer();
+                const coarse = mobile_js.hasCoarsePointer();
 
                 const arrows = document.createElement('span');
                 arrows.style.cssText = coarse
@@ -22691,7 +21371,7 @@
                 }
             };
 
-            const settingsUI = window.Toolasha?.UI?.settingsUI;
+            const settingsUI = bundleBridge_js.settingsUI();
             if (settingsUI && typeof settingsUI.onSettingsPanelAppear === 'function') {
                 settingsUI.onSettingsPanelAppear(ensureButtonExists);
             }
@@ -22800,7 +21480,7 @@
             try {
                 // Read every time the calculator is opened, so the key is the one
                 // belonging to whoever is logged in now
-                const saved = await readScoped('philoCalculatorSettings', 'settings', null, { migrate: 'adopt' });
+                const saved = await characterKey_js.readScoped('philoCalculatorSettings', 'settings', null, { migrate: 'adopt' });
                 if (saved) {
                     this.useCatalyst = saved.useCatalyst !== false;
                     this.useCatalyticTea = saved.useCatalyticTea || false;
@@ -22826,7 +21506,7 @@
          */
         async saveSettings() {
             try {
-                await writeScoped(
+                await characterKey_js.writeScoped(
                     'philoCalculatorSettings',
                     {
                         useCatalyst: this.useCatalyst,
@@ -23181,7 +21861,7 @@
             const catalystCostPerAction = this.useCatalyst ? successRate * this.catalystPrice : 0;
 
             // Transmute coin fee — see utils/alchemy-fees.js (bulkMultiplier already folded in)
-            const coinCost = getAlchemyCoinCost(itemDetails, 'transmute');
+            const coinCost = alchemyFees_js.getAlchemyCoinCost(itemDetails, 'transmute');
 
             // Real action time and efficiency from game data
             const { actionTime, efficiency, estimated } = this.getActionStats(itemLevel);
@@ -25224,66 +23904,6 @@
         formatProfitDisplay: formatProfitDisplay
     });
 
-    /**
-     * Work that should not hold up the rest of the start.
-     *
-     * Features are initialised one after another and each is awaited, so anything a
-     * feature does inside `initialize()` is time every feature behind it spends
-     * waiting. That is right for wiring up listeners, which is fast, and wrong for
-     * reading a year of history out of IndexedDB or repricing an entire inventory —
-     * work whose result nobody is looking at yet, and which cost the page thirteen
-     * seconds between two features alone.
-     *
-     * The rule this expresses: **register synchronously, compute later**. A feature
-     * hands its heavy part to `runInBackground`, gets a promise back, and awaits that
-     * promise anywhere its own correctness depends on the work being done. Everything
-     * else gets to start.
-     */
-
-
-    /**
-     * Wait for a quiet moment, or the next tick if the browser will not say.
-     *
-     * @returns {Promise<void>}
-     */
-    function whenIdle() {
-        return new Promise((resolve) => {
-            if (typeof requestIdleCallback === 'function') {
-                requestIdleCallback(() => resolve(), { timeout: 2000 });
-            } else {
-                setTimeout(resolve, 0);
-            }
-        });
-    }
-
-    /**
-     * Run something after the page has drawn, and time it.
-     *
-     * Timed under `bg:` so a startup trace can tell work that delayed the page from
-     * work that merely happened afterwards — the difference between a slow start and
-     * a busy one, which a flat list of durations cannot show.
-     *
-     * Failures are logged and swallowed: this is work nobody is waiting on, and a
-     * rejected promise nobody awaits is an unhandled rejection in the console for
-     * every user who has that feature on.
-     *
-     * @param {string} name - What it is, e.g. `networth`
-     * @param {Function} work - The heavy part
-     * @returns {Promise<*>} Resolves when the work is done, never rejects
-     */
-    async function runInBackground(name, work) {
-        await whenIdle();
-        const startedAt = performanceMonitor.sinceBoot();
-        try {
-            return await work();
-        } catch (error) {
-            console.error(`[Toolasha] Background work "${name}" failed:`, error);
-            return null;
-        } finally {
-            performanceMonitor.snapshot(`bg:${name}`, performanceMonitor.sinceBoot() - startedAt, startedAt);
-        }
-    }
-
     const CONNECTION_STATES = {
         CONNECTED: 'connected',
         DISCONNECTED: 'disconnected',
@@ -26091,81 +24711,6 @@
     }
 
     /**
-     * Guild credit pricing
-     *
-     * Guild credits are never listed on the marketplace, so "what did this shrine
-     * level cost" has no direct answer. It has an indirect one: credits are obtained
-     * by handing in ordinary tradeable items at published conversion rates, so the
-     * gold value of a credit is the price of the cheapest item that yields one.
-     *
-     * That is the same reasoning the guild credit exchange table uses, kept here so
-     * the upgrade advisor and the build score agree with the exchange table and with
-     * each other rather than each inventing a rate.
-     *
-     * Guild *tokens* are deliberately not priced. Nothing converts into them, so any
-     * gold figure would be invented; callers show the token count separately.
-     */
-
-
-    /**
-     * Cheapest gold cost of one credit of each type, by conversion.
-     * @param {string} [mode='ask'] - Pricing side: 'ask' to buy the items in, 'bid' to value what you hand over
-     * @returns {Object} creditItemHrid → gold per credit
-     */
-    function buildGoldPerCredit(mode = 'ask') {
-        const itemDetailMap = dataManager.getInitClientData()?.itemDetailMap || {};
-        const cheapest = {};
-
-        for (const [hrid, item] of Object.entries(itemDetailMap)) {
-            for (const conversion of item.guildCreditConversions || []) {
-                const price = marketData_js.getItemPrice(hrid, { mode });
-                if (!(price > 0) || !(conversion.creditCount > 0)) continue;
-                const perCredit = (price * conversion.itemCount) / conversion.creditCount;
-                const creditHrid = conversion.creditItemHrid;
-                if (!cheapest[creditHrid] || perCredit < cheapest[creditHrid]) cheapest[creditHrid] = perCredit;
-            }
-        }
-
-        return cheapest;
-    }
-
-    /**
-     * Price a list of credit costs in gold.
-     *
-     * A credit item with a market listing of its own is taken at that price; every
-     * other one falls back to the cheapest conversion. An item with neither is
-     * reported rather than counted as free — a total that quietly drops a line is
-     * worse than no total.
-     *
-     * @param {Array<{itemHrid: string, count: number}>} creditCosts - Costs to price
-     * @param {Object} [options]
-     * @param {string} [options.mode='ask'] - Pricing side
-     * @param {Object} [options.goldPerCredit] - Prebuilt rate map, to avoid rebuilding it per call
-     * @returns {{lines: Array<Object>, total: number|null, unpriced: Array<string>}}
-     */
-    function priceGuildCreditCosts(creditCosts, { mode = 'ask', goldPerCredit = null } = {}) {
-        const rates = goldPerCredit || buildGoldPerCredit(mode);
-        const itemDetailMap = dataManager.getInitClientData()?.itemDetailMap || {};
-
-        const lines = [];
-        const unpriced = [];
-        let total = 0;
-
-        for (const { itemHrid, count } of creditCosts || []) {
-            if (!itemHrid || !(count > 0)) continue;
-            const name = itemDetailMap[itemHrid]?.name || itemHrid.split('/').pop().replace(/_/g, ' ');
-            const direct = marketData_js.getItemPrice(itemHrid, { mode });
-            const each = direct > 0 ? direct : rates[itemHrid] || null;
-
-            lines.push({ itemHrid, name, count, goldEach: each, gold: each === null ? null : each * count });
-            if (each === null) unpriced.push(name);
-            else total += each * count;
-        }
-
-        return { lines, total: unpriced.length > 0 ? null : total, unpriced };
-    }
-
-    /**
      * Networth Calculator
      * Calculates total character networth including:
      * - Equipped items
@@ -26296,7 +24841,7 @@
                     let netValue = evData.expectedValue;
 
                     // Deduct chest key cost for dungeon chests
-                    const chestKeyHrid = DUNGEON_CHEST_CHEST_KEYS[itemHrid];
+                    const chestKeyHrid = dungeonKeys_js.DUNGEON_CHEST_CHEST_KEYS[itemHrid];
                     if (chestKeyHrid) {
                         const keyPricingSetting = config.getSettingValue('profitCalc_keyPricingMode') || 'ask';
                         const keyPrices = marketAPI.getPrice(chestKeyHrid);
@@ -26577,7 +25122,7 @@
         }
 
         // Built once and shared: every level of every shrine prices the same credits
-        const goldPerCredit = buildGoldPerCredit(pricingMode);
+        const goldPerCredit = guildCreditPricing_js.buildGoldPerCredit(pricingMode);
 
         let totalCost = 0;
         let totalTokens = 0;
@@ -26597,7 +25142,7 @@
                 // An unpriced credit contributes nothing rather than blocking the
                 // whole row: this is a running total of what was spent, and one
                 // credit type without a conversion should not blank the other four
-                const { lines } = priceGuildCreditCosts(levelCost.creditCosts, { mode: pricingMode, goldPerCredit });
+                const { lines } = guildCreditPricing_js.priceGuildCreditCosts(levelCost.creditCosts, { mode: pricingMode, goldPerCredit });
                 for (const line of lines) cost += line.gold || 0;
             }
 
@@ -27263,11 +25808,11 @@
      */
     const SERIES_PREFIX = 'networthSeries';
 
-    const seriesStore = createChunkedHistory({
+    const seriesStore = chunkedHistory_js.createChunkedHistory({
         storeName: STORE_NAME,
         prefix: SERIES_PREFIX,
         legacyKey: (charId) => `networth_${charId}`,
-        groupOf: (point) => timeChunkId(point?.t, 'month'),
+        groupOf: (point) => chunkedHistory_js.timeChunkId(point?.t, 'month'),
         compare: (a, b) => (a?.t || 0) - (b?.t || 0),
         label: 'NetworthHistory',
     });
@@ -31033,7 +29578,7 @@
 
             let detailsHTML = '';
             if (evData) {
-                const chestKeyHrid = DUNGEON_CHEST_CHEST_KEYS[item.itemHrid];
+                const chestKeyHrid = dungeonKeys_js.DUNGEON_CHEST_CHEST_KEYS[item.itemHrid];
                 let keyPrice = 0;
                 let keyName = null;
                 if (chestKeyHrid) {
@@ -31327,7 +29872,7 @@
             // saved snapshot in the history — seconds of work, and every feature
             // after this one in the registry was waiting behind it for a number
             // nobody has looked at yet. It runs once the page has drawn instead.
-            this.ready = runInBackground('networth', async () => {
+            this.ready = backgroundWork_js.runInBackground('networth', async () => {
                 if (connectionState.isConnected()) {
                     await performanceMonitor.span('bg:networth', 'first calculation', () => this.recalculate());
                 }
@@ -32431,47 +30976,6 @@
     });
 
     /**
-     * Deferred load
-     *
-     * Reading from storage that is not open yet.
-     *
-     * A module that loads its saved state at import time is racing the database.
-     * IndexedDB opens asynchronously and the bootstrap opens it after the libraries
-     * are evaluated, so a `storage.getJSON` at module scope reliably returns the
-     * default — and reliably logs "Database not available" while doing it. The
-     * feature then runs on defaults for the rest of the session and looks like it
-     * simply forgot everything.
-     *
-     * The fix is not to load later, because the overlay reads that state on its
-     * first paint. It is to wait for the database rather than to ask it early.
-     *
-     * This used to poll — read, wait, read again, for about five seconds — because
-     * a shut database is indistinguishable from an empty one from the outside. The
-     * storage module now says when it has finished starting up, so there is one
-     * thing to wait on and no guessing about how long.
-     */
-
-
-    /**
-     * Read a key once storage can answer.
-     *
-     * @param {string} key - Storage key
-     * @param {string} store - Object store
-     * @param {Function} onLoaded - Called with the value, only when one was found
-     * @param {string} [label] - What to call this in the log
-     * @returns {Promise<void>}
-     */
-    async function loadWhenReady(key, store, onLoaded, label = key) {
-        try {
-            await storage.ready;
-            const saved = await storage.getJSON(key, store, null);
-            if (saved !== null && saved !== undefined) onLoaded(saved);
-        } catch (error) {
-            console.error(`[DeferredLoad] Reading ${label} failed:`, error);
-        }
-    }
-
-    /**
      * Charm value
      *
      * Which charm buys the most experience per coin.
@@ -32764,7 +31268,7 @@
 
     // Not read at module scope: IndexedDB opens after the libraries evaluate, so a
     // read here reliably returns the default and reliably logs that it could not
-    loadWhenReady(FOLDS_KEY, 'settings', (saved) => Object.assign(sectionOpen, saved), 'the charm panel folds');
+    deferredLoad_js.loadWhenReady(FOLDS_KEY, 'settings', (saved) => Object.assign(sectionOpen, saved), 'the charm panel folds');
 
     /** Remember a fold across sessions, since a panel you keep refolding is a chore */
     async function saveFolds() {
@@ -33311,7 +31815,7 @@
             try {
                 // Read on initialize, and initialize runs again after a character
                 // switch, so the key is always the current character's
-                const settings = await readScoped('inventorySort', 'settings', null, { migrate: 'adopt' });
+                const settings = await characterKey_js.readScoped('inventorySort', 'settings', null, { migrate: 'adopt' });
                 if (settings && settings.mode) {
                     this.currentMode = settings.mode;
                 }
@@ -33325,7 +31829,7 @@
          */
         saveSettings() {
             try {
-                writeScoped(
+                characterKey_js.writeScoped(
                     'inventorySort',
                     {
                         mode: this.currentMode,
@@ -34439,205 +32943,6 @@
     };
 
     /**
-     * Chest history import and export.
-     *
-     * A chest ledger is only worth keeping if it survives — a new browser, a second
-     * machine, or a move from whichever script you were using before. All three are
-     * the same problem: read someone else's shape of the same facts, and write ours
-     * in a shape that can be read back.
-     *
-     * Kept pure and apart from the tracker because an import that silently drops
-     * half a ledger looks exactly like an import that worked. Every conversion here
-     * reports what it could not translate rather than skipping quietly.
-     */
-
-    /**
-     * Our own export, which is the tally plus enough context to read it later.
-     *
-     * Item counts only — no prices. Prices are a property of the market on the day
-     * you exported, and baking them in would make an old file re-import as a ledger
-     * priced in last month's money.
-     *
-     * @param {Object} tally - `{ [chestHrid]: { opened, loot, last } }`
-     * @param {Object} settings - Valuation settings to carry along
-     * @param {string} [player] - Whose ledger this is, for the reader's benefit
-     * @returns {Object} The exportable object
-     */
-    function toExport(tally, settings, player = '') {
-        return {
-            format: 'toolasha-treasure',
-            version: 1,
-            player,
-            exportedAt: new Date().toISOString(),
-            settings: { ...settings },
-            chests: { ...tally },
-        };
-    }
-
-    /**
-     * Read our own export back.
-     * @param {Object} json - Parsed file
-     * @returns {{tally: Object, settings: Object}|null} Null when it is not ours
-     */
-    function fromToolashaExport(json) {
-        if (json?.format !== 'toolasha-treasure' || !json.chests) return null;
-        return { tally: json.chests, settings: json.settings || {} };
-    }
-
-    /**
-     * Read a TReasure export from MWI Combat Suite.
-     *
-     * Its shape is richer than ours — every entry carries the name, unit price and
-     * total value as they stood at export — but the only durable facts are the
-     * counts. The rest is re-derived from today's market, so it is dropped rather
-     * than trusted.
-     *
-     * @param {Object} json - Parsed file
-     * @returns {{tally: Object, settings: Object}|null} Null when it is not TReasure's
-     */
-    function fromTreasureExport(json) {
-        if (!json?.chests || json.format === 'toolasha-treasure') return null;
-
-        const sample = Object.values(json.chests)[0];
-        if (!sample?.total?.loot) return null;
-
-        const tally = {};
-        for (const [chestHrid, chest] of Object.entries(json.chests)) {
-            const loot = {};
-            for (const [itemHrid, entry] of Object.entries(chest.total?.loot || {})) {
-                // Entries are objects there and bare counts here
-                loot[itemHrid] = typeof entry === 'number' ? entry : entry?.count || 0;
-            }
-
-            const lastLoot = {};
-            for (const [itemHrid, entry] of Object.entries(chest.last?.loot || {})) {
-                lastLoot[itemHrid] = typeof entry === 'number' ? entry : entry?.count || 0;
-            }
-
-            tally[chestHrid] = {
-                opened: chest.total?.opened || 0,
-                loot,
-                last: { opened: chest.last?.opened || 0, loot: lastLoot },
-            };
-        }
-
-        // Their names for the same two choices
-        const settings = {};
-        if (json.settings?.useMirrorValue) settings.capeValue = json.settings.useMirrorValue;
-        if (json.settings?.useCowbell0 !== undefined) settings.valueCowbells = !json.settings.useCowbell0;
-
-        return { tally, settings };
-    }
-
-    /**
-     * Read Edible Tools' chest data out of its own storage shape.
-     *
-     * It keys everything by **display name** rather than hrid, in the language the
-     * game was running in, so translating it needs a name index built from the
-     * current game data. Anything that does not match is reported rather than
-     * dropped in silence — a chest whose name has since changed would otherwise
-     * vanish without trace.
-     *
-     * @param {Object} chestData - The `开箱数据` object for one player
-     * @param {Object<string, string>} nameToHrid - Item display name → hrid
-     * @returns {{tally: Object, unmatched: string[]}}
-     */
-    function fromEdibleTools(chestData, nameToHrid) {
-        const tally = {};
-        const unmatched = [];
-
-        for (const [chestName, chest] of Object.entries(chestData || {})) {
-            const chestHrid = nameToHrid[chestName];
-            if (!chestHrid) {
-                unmatched.push(chestName);
-                continue;
-            }
-
-            const loot = {};
-            for (const [itemName, item] of Object.entries(chest?.获得物品 || {})) {
-                const itemHrid = nameToHrid[itemName];
-                if (!itemHrid) {
-                    unmatched.push(itemName);
-                    continue;
-                }
-                loot[itemHrid] = item?.数量 || 0;
-            }
-
-            tally[chestHrid] = {
-                opened: chest?.总计开箱数量 || 0,
-                loot,
-                // It keeps no record of the most recent opening, and inventing one
-                // from the total would report a single opening of hundreds of chests
-                last: { opened: 0, loot: {} },
-            };
-        }
-
-        return { tally, unmatched };
-    }
-
-    /**
-     * Find Edible Tools' data for the current character in its localStorage blob.
-     * @param {Object} stored - Parsed `Edible_Tools` value
-     * @param {string|number} characterId - Current character
-     * @param {string} characterName - Current character's name
-     * @returns {Object|null} The `开箱数据` object, or null
-     */
-    function findEdibleToolsData(stored, characterId, characterName) {
-        const byPlayer = stored?.Chest_Open_Data;
-        if (!byPlayer) return null;
-
-        const byId = byPlayer[characterId] || byPlayer[String(characterId)];
-        if (byId?.开箱数据 && Object.keys(byId.开箱数据).length) return byId.开箱数据;
-
-        // Falling back to the name, because the id it stored may predate a move
-        // between accounts on the same browser
-        for (const entry of Object.values(byPlayer)) {
-            if (entry?.玩家昵称 === characterName && Object.keys(entry?.开箱数据 || {}).length) {
-                return entry.开箱数据;
-            }
-        }
-        return null;
-    }
-
-    /**
-     * Combine an imported ledger with the one already held.
-     *
-     * `replace` is the honest default for a file that came from this same tool on
-     * another machine — the two are the same ledger, and adding them together would
-     * double it. `append` is for merging genuinely separate histories, and only ever
-     * adds counts, never the `last` opening, which belongs to whichever ledger saw
-     * it most recently.
-     *
-     * @param {Object} current - The tally now
-     * @param {Object} incoming - The tally being imported
-     * @param {string} mode - `'replace'` or `'append'`
-     * @returns {Object} A new tally
-     */
-    function mergeTally(current, incoming, mode = 'replace') {
-        if (mode !== 'append') return { ...incoming };
-
-        const merged = { ...current };
-        for (const [chestHrid, entry] of Object.entries(incoming || {})) {
-            const existing = merged[chestHrid];
-            if (!existing) {
-                merged[chestHrid] = entry;
-                continue;
-            }
-
-            const loot = { ...existing.loot };
-            for (const [itemHrid, count] of Object.entries(entry.loot || {})) {
-                loot[itemHrid] = (loot[itemHrid] || 0) + count;
-            }
-            merged[chestHrid] = {
-                opened: (existing.opened || 0) + (entry.opened || 0),
-                loot,
-                last: existing.last || entry.last,
-            };
-        }
-        return merged;
-    }
-
-    /**
      * Treasure Tracker
      *
      * Keeps a ledger of every chest you open, and shows whether they paid out.
@@ -34668,7 +32973,7 @@
      * at each read and write, since the user switches characters without reloading.
      * The pre-scoping global values are adopted by the main character once.
      */
-    const STORAGE_KEY$1 = 'treasureTally';
+    const STORAGE_KEY = 'treasureTally';
     const SETTINGS_KEY = 'treasureSettings';
     const ADOPT_LEGACY = { migrate: 'adopt' };
     const PANEL_ID = 'toolasha-treasure-panel';
@@ -34825,6 +33130,88 @@
         return marketData_js.getPricingMode('profit', 'sell');
     }
 
+    /** The chest-summary export, one row per chest kind */
+    const TREASURE_SUMMARY_COLUMNS = [
+        { key: 'chest', label: 'Chest' },
+        { key: 'chestHrid', label: 'Chest Hrid' },
+        { key: 'opened', label: 'Opened' },
+        { key: 'actualValue', label: 'Actual Value' },
+        { key: 'expectedValue', label: 'Expected Value' },
+        { key: 'difference', label: 'Difference' },
+        { key: 'ratio', label: 'Ratio' },
+        { key: 'perChestValue', label: 'Per-Chest Value' },
+    ];
+
+    /** The per-item export, one row per item per chest kind */
+    const TREASURE_DETAIL_COLUMNS = [
+        { key: 'chest', label: 'Chest' },
+        { key: 'chestHrid', label: 'Chest Hrid' },
+        { key: 'item', label: 'Item' },
+        { key: 'itemHrid', label: 'Item Hrid' },
+        { key: 'actualCount', label: 'Actual Count' },
+        { key: 'expectedCount', label: 'Expected Count' },
+        { key: 'actualValue', label: 'Actual Value' },
+        { key: 'expectedValue', label: 'Expected Value' },
+        { key: 'unpriced', label: 'Unpriced' },
+    ];
+
+    /**
+     * The ledger as CSV rows, one per chest kind you have actually opened.
+     *
+     * Two exports rather than one file of mixed shapes: a summary row and an item
+     * line have different columns, and a CSV that alternates between them cannot be
+     * sorted, summed or pivoted — which is the only reason to want a CSV. The
+     * summary answers "which chest let me down"; the detail file underneath it is
+     * the same ledger one item per row, ready to pivot.
+     *
+     * @param {Array<Object>} rows - From `summariseTally`
+     * @param {Function} [nameOf] - `(itemHrid) => string`, injectable for tests
+     * @returns {Array<Object>} Rows for `TREASURE_SUMMARY_COLUMNS`
+     */
+    function buildTreasureSummaryRows(rows, nameOf = itemName) {
+        return (rows || [])
+            .filter((row) => row.opened > 0)
+            .map((row) => ({
+                chest: nameOf(row.chestHrid),
+                chestHrid: row.chestHrid,
+                opened: row.opened,
+                actualValue: row.actualValue,
+                expectedValue: row.expectedValue,
+                difference: row.difference,
+                // Null with nothing priced, which the CSV writes as an empty cell
+                // rather than a claim of zero
+                ratio: row.ratio,
+                perChestValue: row.perChestValue,
+            }));
+    }
+
+    /**
+     * The same ledger one item per row: what each opened chest paid, against what
+     * its drop table owed. Filtered the way the panel filters — anything that
+     * dropped is kept, and an expectation too small to print is left out.
+     *
+     * @param {Array<Object>} rows - From `summariseTally`
+     * @param {Function} [nameOf] - `(itemHrid) => string`, injectable for tests
+     * @returns {Array<Object>} Rows for `TREASURE_DETAIL_COLUMNS`
+     */
+    function buildTreasureDetailRows(rows, nameOf = itemName) {
+        return (rows || [])
+            .filter((row) => row.opened > 0)
+            .flatMap((row) =>
+                worthShowing(row.items).map((item) => ({
+                    chest: nameOf(row.chestHrid),
+                    chestHrid: row.chestHrid,
+                    item: nameOf(item.itemHrid),
+                    itemHrid: item.itemHrid,
+                    actualCount: item.actualCount,
+                    expectedCount: item.expectedCount,
+                    actualValue: item.actualValue,
+                    expectedValue: item.expectedValue,
+                    unpriced: Boolean(item.unpriced),
+                }))
+            );
+    }
+
     /** The tallest a freshly-opened popup is allowed to be */
     const POPUP_MAX_HEIGHT = 560;
 
@@ -34873,8 +33260,8 @@
             if (!config.getSetting('treasureTracker')) return;
             this.isInitialized = true;
 
-            this.tally = (await readScoped(STORAGE_KEY$1, 'settings', {}, ADOPT_LEGACY)) || {};
-            const saved = await readScoped(SETTINGS_KEY, 'settings', null, ADOPT_LEGACY);
+            this.tally = (await characterKey_js.readScoped(STORAGE_KEY, 'settings', {}, ADOPT_LEGACY)) || {};
+            const saved = await characterKey_js.readScoped(SETTINGS_KEY, 'settings', null, ADOPT_LEGACY);
             if (saved) this.settings = { ...DEFAULT_SETTINGS, ...saved };
 
             // A panel reopened at start-up is created before this runs, so it drew
@@ -35013,7 +33400,7 @@
         }
 
         _save() {
-            writeScoped(STORAGE_KEY$1, this.tally, 'settings').catch((error) => {
+            characterKey_js.writeScoped(STORAGE_KEY, this.tally, 'settings').catch((error) => {
                 console.error('[TreasureTracker] Saving the chest tally failed:', error);
             });
         }
@@ -35053,6 +33440,33 @@
          */
         restore() {
             panelGeometry_js.reopenIfLeftOpen(PANEL_GEOMETRY_KEY, () => this.show({ remember: false }));
+        }
+
+        /**
+         * Your measured return on one chest kind, for the profit adjustment.
+         *
+         * Actual value out against the drop table's expectation, both priced at
+         * today's prices through the panel's own price source — so the ratio says
+         * "my openings run this far off the table", never "prices moved". This is
+         * the treasure rate the dungeon profit option applies.
+         *
+         * @param {string} chestHrid - The chest item
+         * @returns {{ratio: number, opened: number}|null} Null before anything has
+         *   been opened, without a drop table, or when nothing could be priced
+         */
+        measuredReturn(chestHrid) {
+            try {
+                const entry = this.tally?.[chestHrid];
+                const dropTable = dataManager.getInitClientData()?.openableLootDropMap?.[chestHrid];
+                if (!entry?.opened || !dropTable) return null;
+
+                const lifetime = chestTally_js.chestPerformance(entry, dropTable, this._priceOf());
+                if (!(lifetime.expectedValue > 0) || !Number.isFinite(lifetime.ratio)) return null;
+                return { ratio: lifetime.ratio, opened: lifetime.opened };
+            } catch (error) {
+                console.error('[TreasureTracker] Measuring a chest return failed:', error);
+                return null;
+            }
         }
 
         /**
@@ -35139,7 +33553,7 @@
         }
 
         _saveSettings() {
-            writeScoped(SETTINGS_KEY, this.settings, 'settings').catch((error) => {
+            characterKey_js.writeScoped(SETTINGS_KEY, this.settings, 'settings').catch((error) => {
                 console.error('[TreasureTracker] Saving treasure settings failed:', error);
             });
         }
@@ -35207,7 +33621,7 @@
                 overflow: 'hidden',
             });
 
-            const touch = isMobileMode();
+            const touch = mobile_js.isMobileMode();
             const header = document.createElement('div');
             Object.assign(header.style, {
                 display: 'flex',
@@ -35517,7 +33931,7 @@
         }
 
         _createHeader() {
-            const touch = isMobileMode();
+            const touch = mobile_js.isMobileMode();
             const header = document.createElement('div');
             Object.assign(header.style, {
                 display: 'flex',
@@ -35736,6 +34150,19 @@
             buttons.appendChild(this._actionButton('Import', () => this._importHistory()));
             buttons.appendChild(this._actionButton('Import from Edible Tools', () => this._importEdibleTools()));
 
+            // The CSV pair appears only once something has been opened — a ledger
+            // with nothing in it has no rows to write, and a button that saves an
+            // empty file reads as the button breaking
+            if (this._summary().rows.some((row) => row.opened > 0)) {
+                const chestsCsv = this._actionButton('Chests CSV', () => this._exportSummaryCsv());
+                chestsCsv.title = 'One row per chest kind: opened, actual and expected value, ratio. Raw numbers.';
+                buttons.appendChild(chestsCsv);
+
+                const itemsCsv = this._actionButton('Items CSV', () => this._exportDetailCsv());
+                itemsCsv.title = 'One row per item per chest: counts and values against the drop table. Raw numbers.';
+                buttons.appendChild(itemsCsv);
+            }
+
             // Always here, saying which way it is set. It used to appear only while
             // the popup was pinned, so pressing it made the button itself disappear
             // — which reads as the button breaking rather than as the setting
@@ -35803,10 +34230,32 @@
             return button;
         }
 
+        /** The chest summary as a CSV download, built at click time */
+        _exportSummaryCsv() {
+            try {
+                const rows = buildTreasureSummaryRows(this._summary().rows);
+                if (!rows.length) return;
+                csvExport_js.downloadCsv(csvExport_js.csvFilename('treasure-chests'), csvExport_js.toCsv(rows, TREASURE_SUMMARY_COLUMNS));
+            } catch (error) {
+                console.error('[TreasureTracker] CSV export failed:', error);
+            }
+        }
+
+        /** The per-item ledger as a CSV download, built at click time */
+        _exportDetailCsv() {
+            try {
+                const rows = buildTreasureDetailRows(this._summary().rows);
+                if (!rows.length) return;
+                csvExport_js.downloadCsv(csvExport_js.csvFilename('treasure-chest-items'), csvExport_js.toCsv(rows, TREASURE_DETAIL_COLUMNS));
+            } catch (error) {
+                console.error('[TreasureTracker] CSV export failed:', error);
+            }
+        }
+
         /** Write the ledger to a file */
         _exportHistory() {
             try {
-                const file = toExport(this.tally, this.settings, settingsStorage.currentCharacterName || '');
+                const file = chestImport_js.toExport(this.tally, this.settings, settingsStorage.currentCharacterName || '');
                 const blob = new Blob([JSON.stringify(file, null, 2)], { type: 'application/json' });
                 const url = URL.createObjectURL(blob);
 
@@ -35835,7 +34284,7 @@
                     const json = JSON.parse(await file.text());
                     // Ours first, since a TReasure file is anything with chests and
                     // ours would otherwise be read by the looser reader
-                    const read = fromToolashaExport(json) || fromTreasureExport(json);
+                    const read = chestImport_js.fromToolashaExport(json) || chestImport_js.fromTreasureExport(json);
                     if (!read) {
                         window.alert('That file is not a Toolasha or TReasure chest export.');
                         return;
@@ -35845,7 +34294,7 @@
                     const mode = await this._askImportMode(`Import ${chests} chest${chests === 1 ? '' : 's'}.`);
                     if (!mode) return;
 
-                    this.tally = mergeTally(this.tally, read.tally, mode);
+                    this.tally = chestImport_js.mergeTally(this.tally, read.tally, mode);
                     if (Object.keys(read.settings || {}).length) {
                         this.settings = { ...this.settings, ...read.settings };
                         this._saveSettings();
@@ -35898,7 +34347,7 @@
                     return;
                 }
 
-                const found = findEdibleToolsData(
+                const found = chestImport_js.findEdibleToolsData(
                     JSON.parse(raw),
                     dataManager.getCurrentCharacterId?.(),
                     settingsStorage.currentCharacterName
@@ -35916,7 +34365,7 @@
                     if (detail?.name) nameToHrid[detail.name] = hrid;
                 }
 
-                const { tally, unmatched } = fromEdibleTools(found, nameToHrid);
+                const { tally, unmatched } = chestImport_js.fromEdibleTools(found, nameToHrid);
                 const chests = Object.keys(tally).length;
                 if (!chests) {
                     window.alert('None of the Edible Tools entries matched an item this game knows about.');
@@ -35932,7 +34381,7 @@
                 );
                 if (!mode) return;
 
-                this.tally = mergeTally(this.tally, tally, mode);
+                this.tally = chestImport_js.mergeTally(this.tally, tally, mode);
                 this._save();
                 this._render();
             } catch (error) {
@@ -36441,6 +34890,1119 @@
     });
 
     /**
+     * Trade ledger arithmetic — fills from listing diffs, and realized profit from fills.
+     *
+     * The wire never says "you just sold 40 for 3,920 coins". What it says, via
+     * `market_listings_updated`, is the new state of a listing: `filledQuantity`
+     * went from 60 to 100. This module owns both halves of turning that into a
+     * ledger: diffing successive listing states into fill records, and aggregating
+     * those records into per-item and per-week realized profit.
+     *
+     * Honesty rules, enforced here rather than in the UI:
+     * - A fill is only ever a *delta from an observed baseline*. The first sighting
+     *   of a listing establishes state; a listing first seen at 60/100 filled
+     *   contributes nothing until it moves.
+     * - Sell proceeds are always net of the 2% market tax.
+     * - Realized profit uses average-cost matching, and only against buys this
+     *   ledger recorded. Sells with no recorded cost stay revenue, never profit.
+     */
+
+
+    /**
+     * How many fill records are kept per character, oldest-out.
+     *
+     * Generous on purpose: a record is ~100 bytes, so this is a couple of MB at
+     * worst, and an active flipper produces tens of fills a day, not thousands —
+     * this is years of history before anything is evicted.
+     */
+    const LEDGER_RECORD_CAP = 20000;
+
+    /** Listing status HRIDs after which a listing can never fill again. */
+    const TERMINAL_STATUSES = new Set([
+        '/market_listing_status/cancelled',
+        '/market_listing_status/expired',
+        '/market_listing_status/filled',
+    ]);
+
+    /**
+     * Coins a fill moved, from the taker's side of the tax.
+     *
+     * Buys spend the full `quantity × price` (the game taxes the seller, not the
+     * buyer); sells receive `quantity × price` minus the 2% market tax, rounded to
+     * whole coins the way every other net-of-tax figure in this codebase is.
+     *
+     * @param {boolean} isSell - Which side of the trade this fill is
+     * @param {number} quantity - Units filled
+     * @param {number} price - Coins per unit on the listing
+     * @returns {number} Coins received (sell, after tax) or spent (buy)
+     */
+    function fillCoins(isSell, quantity, price) {
+        const gross = quantity * price;
+        return isSell ? Math.round(gross * (1 - profitConstants_js.MARKET_TAX)) : gross;
+    }
+
+    /**
+     * Whether a wire listing carries everything a diff needs.
+     * @param {Object} listing - Listing object from `market_listings_updated`
+     * @returns {boolean} True when it can be diffed
+     */
+    function isDiffableListing(listing) {
+        return Boolean(
+            listing &&
+            typeof listing.id === 'number' &&
+            typeof listing.itemHrid === 'string' &&
+            typeof listing.filledQuantity === 'number' &&
+            typeof listing.price === 'number'
+        );
+    }
+
+    /**
+     * Diff a batch of wire listings against the previously observed states,
+     * producing fill records and the next state map.
+     *
+     * The rule, verified against what the game actually sends: one listing object
+     * per changed listing, with `filledQuantity` cumulative for the listing's
+     * lifetime. So a fill is `filledQuantity - previouslyObserved.filledQuantity`
+     * when positive; partial fills are just smaller deltas. A listing with no
+     * previous state only establishes a baseline — even if it arrives already
+     * partially filled, that history predates the ledger and is not invented.
+     *
+     * Listings whose status is terminal (cancelled / expired / filled) are diffed
+     * one last time — a cancel after a partial fill still reports the fill — and
+     * then dropped from the state map, which is what keeps it bounded by the
+     * number of concurrently open listings.
+     *
+     * @param {Object<string, Object>} prevStates - Listing id → last observed
+     *   `{filledQuantity, itemHrid, enhancementLevel, price, isSell}` (JSON-safe)
+     * @param {Array<Object>} listings - Listing objects from the wire
+     * @param {Object} [options] - Diff options
+     * @param {number} [options.now] - Timestamp stamped on fills (injectable for tests)
+     * @param {boolean} [options.snapshot] - Treat `listings` as the complete set of
+     *   open listings: state entries absent from it ended while we were not looking,
+     *   and their final fills are unknowable — dropped without inventing anything
+     * @returns {{fills: Array<Object>, states: Object<string, Object>, changed: boolean}}
+     *   Fill records `{t, itemHrid, enhancementLevel, side, quantity, price, coins,
+     *   listingId}`, the next state map, and whether the state map differs from `prevStates`
+     */
+    function detectFills(prevStates, listings, options = {}) {
+        const { now = Date.now(), snapshot = false } = options;
+        const states = { ...(prevStates || {}) };
+        const fills = [];
+        let changed = false;
+
+        const seenIds = new Set();
+
+        for (const listing of Array.isArray(listings) ? listings : []) {
+            if (!isDiffableListing(listing)) {
+                continue;
+            }
+
+            const key = String(listing.id);
+            seenIds.add(key);
+            const prev = states[key];
+
+            if (prev && listing.filledQuantity > prev.filledQuantity) {
+                const quantity = listing.filledQuantity - prev.filledQuantity;
+                const isSell = Boolean(listing.isSell);
+                fills.push({
+                    t: now,
+                    itemHrid: listing.itemHrid,
+                    enhancementLevel: listing.enhancementLevel || 0,
+                    side: isSell ? 'sell' : 'buy',
+                    quantity,
+                    price: listing.price,
+                    coins: fillCoins(isSell, quantity, listing.price),
+                    listingId: listing.id,
+                });
+            }
+
+            if (TERMINAL_STATUSES.has(listing.status)) {
+                if (prev) {
+                    delete states[key];
+                    changed = true;
+                }
+            } else if (!prev || prev.filledQuantity !== listing.filledQuantity) {
+                states[key] = {
+                    filledQuantity: listing.filledQuantity,
+                    itemHrid: listing.itemHrid,
+                    enhancementLevel: listing.enhancementLevel || 0,
+                    price: listing.price,
+                    isSell: Boolean(listing.isSell),
+                };
+                changed = true;
+            }
+        }
+
+        if (snapshot) {
+            for (const key of Object.keys(states)) {
+                if (!seenIds.has(key)) {
+                    delete states[key];
+                    changed = true;
+                }
+            }
+        }
+
+        return { fills, states, changed };
+    }
+
+    /**
+     * Keep the ledger under its cap, oldest-out.
+     *
+     * Records arrive in time order, so this is normally a cheap slice; the sort is
+     * insurance against an imported or hand-edited store.
+     *
+     * @param {Array<Object>} records - Fill records
+     * @param {number} [cap] - Maximum records to keep
+     * @returns {Array<Object>} At most `cap` records, oldest dropped first
+     */
+    function trimLedger(records, cap = LEDGER_RECORD_CAP) {
+        const safe = Array.isArray(records) ? [...records] : [];
+        if (safe.length <= cap) {
+            return safe;
+        }
+        safe.sort((a, b) => a.t - b.t);
+        return safe.slice(safe.length - cap);
+    }
+
+    /**
+     * Start of the local week (Monday 00:00) containing `t`.
+     * @param {number} t - Timestamp in milliseconds
+     * @returns {number} Timestamp of that week's Monday midnight, local time
+     */
+    function weekStartOf(t) {
+        const date = new Date(t);
+        date.setHours(0, 0, 0, 0);
+        const daysSinceMonday = (date.getDay() + 6) % 7;
+        date.setDate(date.getDate() - daysSinceMonday);
+        return date.getTime();
+    }
+
+    /**
+     * Aggregate fill records into per-item and per-week realized figures.
+     *
+     * Average-cost matching, chronological per item+enhancement: buys grow a pool
+     * of quantity and cost; each sell is matched against the pool's current average
+     * cost for up to the pooled quantity. The matched slice realizes
+     * `netProceeds − averageCost × matched`; any unmatched remainder — the item was
+     * never bought through this ledger — is reported as `unmatchedRevenue` and
+     * never as profit, because calling untracked cost zero would fake a 100% margin.
+     *
+     * @param {Array<Object>} records - Fill records from {@link detectFills}
+     * @returns {{
+     *   items: Array<Object>,
+     *   weeks: Array<Object>,
+     *   totals: {boughtCoins: number, soldCoinsNet: number, realizedProfit: number, unmatchedRevenue: number}
+     * }} `items` sorted by most recent activity; `weeks` sorted most recent first.
+     *   Per item: `{itemHrid, enhancementLevel, boughtQty, boughtCoins, avgBuyPrice,
+     *   soldQty, soldCoinsNet, avgSellNet, matchedQty, realizedProfit, unmatchedRevenue,
+     *   lastActivity}` — `avgBuyPrice`/`avgSellNet` null with no fills on that side,
+     *   `realizedProfit` null when no sell was ever matched against a recorded buy.
+     *   Per week: `{weekStart, boughtQty, boughtCoins, soldQty, soldCoinsNet,
+     *   matchedSellQty, realizedProfit, unmatchedRevenue}` with the same null rule.
+     */
+    function aggregateLedger(records) {
+        const sorted = (Array.isArray(records) ? records.filter((record) => record && record.itemHrid) : []).sort(
+            (a, b) => a.t - b.t
+        );
+
+        const items = new Map(); // itemHrid:enhancementLevel -> aggregate + cost pool
+        const weeks = new Map(); // weekStart -> aggregate
+
+        const itemFor = (record) => {
+            const key = `${record.itemHrid}:${record.enhancementLevel || 0}`;
+            let item = items.get(key);
+            if (!item) {
+                item = {
+                    itemHrid: record.itemHrid,
+                    enhancementLevel: record.enhancementLevel || 0,
+                    boughtQty: 0,
+                    boughtCoins: 0,
+                    soldQty: 0,
+                    soldCoinsNet: 0,
+                    matchedQty: 0,
+                    realizedProfit: 0,
+                    unmatchedRevenue: 0,
+                    lastActivity: 0,
+                    _poolQty: 0,
+                    _poolCost: 0,
+                };
+                items.set(key, item);
+            }
+            return item;
+        };
+
+        const weekFor = (record) => {
+            const weekStart = weekStartOf(record.t);
+            let week = weeks.get(weekStart);
+            if (!week) {
+                week = {
+                    weekStart,
+                    boughtQty: 0,
+                    boughtCoins: 0,
+                    soldQty: 0,
+                    soldCoinsNet: 0,
+                    matchedSellQty: 0,
+                    realizedProfit: 0,
+                    unmatchedRevenue: 0,
+                };
+                weeks.set(weekStart, week);
+            }
+            return week;
+        };
+
+        for (const record of sorted) {
+            const item = itemFor(record);
+            const week = weekFor(record);
+            const quantity = record.quantity || 0;
+            const coins = record.coins || 0;
+            item.lastActivity = Math.max(item.lastActivity, record.t);
+
+            if (record.side === 'buy') {
+                item.boughtQty += quantity;
+                item.boughtCoins += coins;
+                item._poolQty += quantity;
+                item._poolCost += coins;
+                week.boughtQty += quantity;
+                week.boughtCoins += coins;
+            } else if (record.side === 'sell') {
+                item.soldQty += quantity;
+                item.soldCoinsNet += coins;
+                week.soldQty += quantity;
+                week.soldCoinsNet += coins;
+
+                const matched = Math.min(quantity, item._poolQty);
+                if (matched > 0) {
+                    const avgCost = item._poolCost / item._poolQty;
+                    const costOut = avgCost * matched;
+                    const matchedProceeds = coins * (matched / quantity);
+                    const realized = matchedProceeds - costOut;
+                    item._poolQty -= matched;
+                    item._poolCost -= costOut;
+                    item.matchedQty += matched;
+                    item.realizedProfit += realized;
+                    week.matchedSellQty += matched;
+                    week.realizedProfit += realized;
+                }
+                const unmatchedRevenue = coins * ((quantity - matched) / quantity);
+                item.unmatchedRevenue += unmatchedRevenue;
+                week.unmatchedRevenue += unmatchedRevenue;
+            }
+        }
+
+        const totals = { boughtCoins: 0, soldCoinsNet: 0, realizedProfit: 0, unmatchedRevenue: 0 };
+
+        const itemRows = [...items.values()].map((item) => {
+            totals.boughtCoins += item.boughtCoins;
+            totals.soldCoinsNet += item.soldCoinsNet;
+            totals.realizedProfit += item.matchedQty > 0 ? item.realizedProfit : 0;
+            totals.unmatchedRevenue += item.unmatchedRevenue;
+            return {
+                itemHrid: item.itemHrid,
+                enhancementLevel: item.enhancementLevel,
+                boughtQty: item.boughtQty,
+                boughtCoins: item.boughtCoins,
+                avgBuyPrice: item.boughtQty > 0 ? item.boughtCoins / item.boughtQty : null,
+                soldQty: item.soldQty,
+                soldCoinsNet: item.soldCoinsNet,
+                avgSellNet: item.soldQty > 0 ? item.soldCoinsNet / item.soldQty : null,
+                matchedQty: item.matchedQty,
+                realizedProfit: item.matchedQty > 0 ? item.realizedProfit : null,
+                unmatchedRevenue: item.unmatchedRevenue,
+                lastActivity: item.lastActivity,
+            };
+        });
+        itemRows.sort((a, b) => b.lastActivity - a.lastActivity);
+
+        const weekRows = [...weeks.values()].map((week) => ({
+            ...week,
+            realizedProfit: week.matchedSellQty > 0 ? week.realizedProfit : null,
+        }));
+        weekRows.sort((a, b) => b.weekStart - a.weekStart);
+
+        return { items: itemRows, weeks: weekRows, totals };
+    }
+
+    /**
+     * Trade Ledger Store Module
+     *
+     * Records every observed fill on your own market listings — one record per
+     * fill event, partial fills included — by diffing successive listing states
+     * from `market_listings_updated`. Where `trade-history.js` keeps only the last
+     * buy/sell price per item, this keeps the whole history, which is what realized
+     * flip profit needs.
+     *
+     * The diffing itself (what counts as a fill, what a baseline is, how the state
+     * map stays bounded) lives in `src/utils/trade-ledger.js`; this module owns the
+     * wiring: WebSocket events in, per-character IndexedDB persistence out.
+     */
+
+
+    /** Same store the other market trackers live in. */
+    const LEDGER_STORE = 'marketListings';
+
+    /** Per-character fill records, capped at LEDGER_RECORD_CAP oldest-out. */
+    const RECORDS_BASE = 'tradeLedgerRecords';
+
+    /**
+     * Per-character listing-state baselines (id → last observed fill progress).
+     * Persisted so fills that land while the page is closed still surface as a
+     * delta against the stored baseline when the next snapshot arrives.
+     */
+    const STATE_BASE = 'tradeLedgerState';
+
+    class TradeLedgerStore {
+        constructor() {
+            this.records = [];
+            this.states = {};
+            this.isInitialized = false;
+            this.isLoaded = false;
+            this.initHandler = null;
+            this.updateHandler = null;
+        }
+
+        /**
+         * Setup setting listener for feature toggle
+         */
+        setupSettingListener() {
+            config.onSettingChange('market_tradeLedger', (value) => {
+                if (value) {
+                    this.initialize();
+                } else {
+                    this.disable();
+                }
+            });
+        }
+
+        /**
+         * Initialize ledger recording
+         */
+        async initialize() {
+            if (this.isInitialized) {
+                return;
+            }
+
+            if (!config.getSetting('market_tradeLedger')) {
+                return;
+            }
+
+            this.isInitialized = true;
+
+            await this.load();
+
+            // Diff the listings we already have against the stored baselines: fills
+            // that landed while the script was not running surface here. Snapshot
+            // mode, because this is the complete set of open listings — baselines
+            // for listings that ended offline are unknowable and get dropped. Only
+            // when character data has actually arrived, though: before that,
+            // getMarketListings() is an empty array that means "not loaded yet",
+            // and treating it as a snapshot would wipe every stored baseline.
+            if (dataManager.characterData) {
+                this.processListings(dataManager.getMarketListings(), true);
+            }
+
+            this.initHandler = (data) => {
+                if (Array.isArray(data?.myMarketListings)) {
+                    this.processListings(data.myMarketListings, true);
+                }
+            };
+            this.updateHandler = (data) => {
+                this.handleMarketUpdate(data);
+            };
+
+            dataManager.on('character_initialized', this.initHandler);
+            dataManager.on('market_listings_updated', this.updateHandler);
+        }
+
+        /**
+         * Load records and listing-state baselines from storage
+         */
+        async load() {
+            try {
+                this.records = (await characterKey_js.readScoped(RECORDS_BASE, LEDGER_STORE, [])) || [];
+                this.states = (await characterKey_js.readScoped(STATE_BASE, LEDGER_STORE, {})) || {};
+            } catch (error) {
+                console.error('[TradeLedger] Failed to load ledger:', error);
+                this.records = [];
+                this.states = {};
+            }
+            this.isLoaded = true;
+        }
+
+        /**
+         * Handle a market_listings_updated event.
+         *
+         * `endMarketListings` is the raw array of changed listings (fills, cancels,
+         * expiries, new orders); `myMarketListings` is dataManager's merged view of
+         * everything still open. Both describe the same listings, so they are
+         * deduplicated by id with the `endMarketListings` copy winning — it is the
+         * one that carries terminal statuses and final fill counts.
+         * @param {Object} data - Event payload from dataManager
+         */
+        handleMarketUpdate(data) {
+            const byId = new Map();
+            for (const listing of Array.isArray(data?.myMarketListings) ? data.myMarketListings : []) {
+                if (listing && listing.id !== undefined && listing.id !== null) {
+                    byId.set(listing.id, listing);
+                }
+            }
+            for (const listing of Array.isArray(data?.endMarketListings) ? data.endMarketListings : []) {
+                if (listing && listing.id !== undefined && listing.id !== null) {
+                    byId.set(listing.id, listing);
+                }
+            }
+
+            if (byId.size === 0) {
+                return;
+            }
+
+            this.processListings([...byId.values()], false);
+        }
+
+        /**
+         * Diff a batch of listings against stored baselines, appending any fills.
+         * @param {Array<Object>} listings - Listing objects from the wire
+         * @param {boolean} snapshot - Whether `listings` is the complete set of open listings
+         */
+        processListings(listings, snapshot) {
+            if (!this.isLoaded) {
+                return;
+            }
+
+            const { fills, states, changed } = detectFills(this.states, listings, { snapshot });
+            this.states = states;
+
+            if (fills.length > 0) {
+                this.records = trimLedger([...this.records, ...fills], LEDGER_RECORD_CAP);
+                this.saveRecords();
+            }
+            if (changed) {
+                this.saveStates();
+            }
+        }
+
+        /**
+         * Persist fill records (immediate — fills are the whole point of the ledger)
+         */
+        async saveRecords() {
+            try {
+                await characterKey_js.writeScoped(RECORDS_BASE, this.records, LEDGER_STORE, true);
+            } catch (error) {
+                console.error('[TradeLedger] Failed to save records:', error);
+            }
+        }
+
+        /**
+         * Persist listing-state baselines (debounced — they change on every event)
+         */
+        async saveStates() {
+            try {
+                await characterKey_js.writeScoped(STATE_BASE, this.states, LEDGER_STORE);
+            } catch (error) {
+                console.error('[TradeLedger] Failed to save listing states:', error);
+            }
+        }
+
+        /**
+         * All fill records, oldest first, as copies.
+         * @returns {Array<Object>} Fill records `{t, itemHrid, enhancementLevel, side, quantity, price, coins, listingId}`
+         */
+        getRecords() {
+            return this.records.map((record) => ({ ...record }));
+        }
+
+        /**
+         * Whether ledger data is loaded
+         * @returns {boolean}
+         */
+        isReady() {
+            return this.isLoaded;
+        }
+
+        /**
+         * Stop recording (keeps stored data)
+         */
+        disable() {
+            if (this.initHandler) {
+                dataManager.off('character_initialized', this.initHandler);
+                this.initHandler = null;
+            }
+            if (this.updateHandler) {
+                dataManager.off('market_listings_updated', this.updateHandler);
+                this.updateHandler = null;
+            }
+            this.isInitialized = false;
+        }
+
+        /**
+         * Handle character switch - drop the old character's data and reinitialize
+         */
+        async handleCharacterSwitch() {
+            this.disable();
+            this.records = [];
+            this.states = {};
+            this.isLoaded = false;
+            await this.initialize();
+        }
+    }
+
+    const tradeLedgerStore = new TradeLedgerStore();
+    tradeLedgerStore.setupSettingListener();
+
+    dataManager.on('character_switched', () => {
+        if (config.getSetting('market_tradeLedger')) {
+            tradeLedgerStore.handleCharacterSwitch();
+        }
+    });
+
+    /**
+     * Trade Ledger View Module
+     *
+     * A "Ledger" tab beside the Market History tab in the marketplace, showing
+     * realized flip profit from your own fills: per-item rows (bought, sold,
+     * realized profit, last activity), per-week summary lines, and a CSV export.
+     *
+     * All arithmetic lives in `src/utils/trade-ledger.js`; the records come from
+     * `trade-ledger-store.js`. This module only draws, following the same tab and
+     * modal conventions as `market-history-viewer.js`.
+     */
+
+
+    /** How many weekly summary lines the modal shows. */
+    const WEEKS_SHOWN = 8;
+
+    const BASIS_TOOLTIP =
+        'Average-cost basis: each sell is matched against the average price of buys recorded in this ledger ' +
+        'for the same item + enhancement level. Sell proceeds are always net of the 2% market tax. ' +
+        'Sells of items never bought through the ledger are shown as revenue with cost "—", not as profit.';
+
+    class TradeLedgerView {
+        constructor() {
+            this.isInitialized = false;
+            this.modal = null;
+            this.marketplaceTab = null;
+            this.tabCleanupObserver = null;
+            this.aggregates = null;
+            this.itemNameCache = new Map();
+        }
+
+        /**
+         * Initialize the feature
+         */
+        async initialize() {
+            if (this.isInitialized) {
+                return;
+            }
+
+            if (!config.getSetting('market_tradeLedger')) {
+                return;
+            }
+
+            this.isInitialized = true;
+            this.addMarketplaceTab();
+        }
+
+        /**
+         * Add a "Ledger" tab to the marketplace tab strip, following the same
+         * clone-a-real-tab convention as the Market History tab.
+         */
+        addMarketplaceTab() {
+            const ensureTabExists = () => {
+                const tabsContainer = marketplaceTabs_js.visibleTabsContainer();
+                if (!tabsContainer) return;
+
+                const hasMarketListingsTab = Array.from(tabsContainer.children).some((btn) =>
+                    btn.textContent.includes('Market Listings')
+                );
+                if (!hasMarketListingsTab) return;
+
+                if (tabsContainer.querySelector('[data-mwi-trade-ledger-tab="true"]')) {
+                    return;
+                }
+
+                const referenceTab = Array.from(tabsContainer.children).find((btn) =>
+                    btn.textContent.includes('My Listings')
+                );
+                if (!referenceTab) return;
+
+                const tab = referenceTab.cloneNode(true);
+                tab.setAttribute('data-mwi-trade-ledger-tab', 'true');
+
+                const badgeSpan = tab.querySelector('[class*="TabsComponent_badge"]');
+                if (badgeSpan) {
+                    badgeSpan.innerHTML = `
+                    <div style="text-align: center;">
+                        <div>Ledger</div>
+                    </div>
+                `;
+                }
+
+                tab.classList.remove('Mui-selected');
+                tab.setAttribute('aria-selected', 'false');
+                tab.setAttribute('tabindex', '-1');
+
+                tab.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    this.openModal();
+                });
+
+                // Sit right after the Market History tab when it exists, otherwise
+                // before any pinned material tabs, otherwise at the end
+                const historyTab = tabsContainer.querySelector('[data-mwi-market-history-tab="true"]');
+                const firstCustomTab = Array.from(tabsContainer.children).find(
+                    (btn) => btn.getAttribute('data-mwi-custom-tab') === 'true'
+                );
+                if (historyTab) {
+                    historyTab.after(tab);
+                } else if (firstCustomTab) {
+                    firstCustomTab.before(tab);
+                } else {
+                    tabsContainer.appendChild(tab);
+                }
+
+                this.marketplaceTab = tab;
+            };
+
+            if (!this.tabCleanupObserver) {
+                this.tabCleanupObserver = domObserverHelpers_js.createMutationWatcher(
+                    document.body,
+                    () => {
+                        const tabsContainer = marketplaceTabs_js.visibleTabsContainer();
+                        if (!tabsContainer) {
+                            if (this.marketplaceTab && !document.body.contains(this.marketplaceTab)) {
+                                this.marketplaceTab = null;
+                            }
+                            return;
+                        }
+
+                        const hasMarketListingsTab = Array.from(tabsContainer.children).some((btn) =>
+                            btn.textContent.includes('Market Listings')
+                        );
+                        if (!hasMarketListingsTab) {
+                            if (this.marketplaceTab && document.body.contains(this.marketplaceTab)) {
+                                this.marketplaceTab.remove();
+                                this.marketplaceTab = null;
+                            }
+                            return;
+                        }
+
+                        ensureTabExists();
+                    },
+                    { childList: true, subtree: true }
+                );
+            }
+
+            ensureTabExists();
+        }
+
+        /**
+         * Item display name from HRID, cached
+         * @param {string} itemHrid - Item HRID
+         * @returns {string} Item name
+         */
+        getItemName(itemHrid) {
+            if (this.itemNameCache.has(itemHrid)) {
+                return this.itemNameCache.get(itemHrid);
+            }
+            const itemDetails = dataManager.getItemDetails(itemHrid);
+            const name = itemDetails?.name || itemHrid.split('/').pop().replace(/_/g, ' ');
+            this.itemNameCache.set(itemHrid, name);
+            return name;
+        }
+
+        /**
+         * Coins for display
+         * @param {number} value - Coin amount
+         * @returns {string} K/M/B formatted
+         */
+        formatCoins(value) {
+            return formatters_js.formatKMB(Math.round(value), 1);
+        }
+
+        /**
+         * Signed coins for display (profit/loss)
+         * @param {number} value - Coin amount, either sign
+         * @returns {string} e.g. "+1.2M" / "-340.0K"
+         */
+        formatSigned(value) {
+            const rounded = Math.round(value);
+            return rounded >= 0 ? `+${formatters_js.formatKMB(rounded, 1)}` : formatters_js.formatKMB(rounded, 1);
+        }
+
+        /**
+         * Open the ledger modal with fresh aggregates
+         */
+        openModal() {
+            this.aggregates = aggregateLedger(tradeLedgerStore.getRecords());
+
+            if (!this.modal) {
+                this.createModal();
+            }
+
+            this.modal.style.display = 'flex';
+            this.renderContent();
+        }
+
+        /**
+         * Close the modal
+         */
+        closeModal() {
+            if (this.modal) {
+                this.modal.style.display = 'none';
+            }
+        }
+
+        /**
+         * Create the modal shell (same chrome as the Market History modal)
+         */
+        createModal() {
+            this.modal = document.createElement('div');
+            this.modal.className = 'mwi-trade-ledger-modal';
+            this.modal.style.cssText = `
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: ${config.Z_MODAL};
+        `;
+
+            const content = document.createElement('div');
+            content.className = 'mwi-trade-ledger-content';
+            content.style.cssText = `
+            background: rgba(10, 10, 20, 0.97);
+            border: 1px solid rgba(74, 158, 255, 0.5);
+            border-radius: 8px;
+            padding: 20px;
+            max-width: 95%;
+            max-height: 90%;
+            min-width: 640px;
+            overflow: auto;
+            color: #e8ecf5;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+        `;
+
+            const header = document.createElement('div');
+            header.style.cssText = `
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid rgba(74, 158, 255, 0.3);
+        `;
+
+            const title = document.createElement('h2');
+            title.textContent = 'Trade Ledger';
+            title.title = BASIS_TOOLTIP;
+            title.style.cssText = `
+            margin: 0;
+            color: #8fb4ff;
+        `;
+
+            const headerRight = document.createElement('div');
+            headerRight.style.cssText = `
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        `;
+
+            const exportBtn = document.createElement('button');
+            exportBtn.textContent = 'Export CSV';
+            exportBtn.style.cssText = `
+            padding: 6px 12px;
+            background: #4a90e2;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        `;
+            exportBtn.addEventListener('click', () => this.exportCSV());
+
+            const closeBtn = document.createElement('button');
+            closeBtn.textContent = '✕';
+            closeBtn.style.cssText = `
+            background: none;
+            border: none;
+            color: #e8ecf5;
+            font-size: 24px;
+            cursor: pointer;
+            padding: 0;
+            width: 30px;
+            height: 30px;
+        `;
+            closeBtn.addEventListener('click', () => this.closeModal());
+
+            headerRight.appendChild(exportBtn);
+            headerRight.appendChild(closeBtn);
+            header.appendChild(title);
+            header.appendChild(headerRight);
+
+            const weeksContainer = document.createElement('div');
+            weeksContainer.className = 'mwi-trade-ledger-weeks';
+            weeksContainer.style.cssText = `
+            margin-bottom: 15px;
+            font-size: 13px;
+            color: #aaa;
+            line-height: 1.6;
+        `;
+
+            const tableContainer = document.createElement('div');
+            tableContainer.className = 'mwi-trade-ledger-table-container';
+
+            content.appendChild(header);
+            content.appendChild(weeksContainer);
+            content.appendChild(tableContainer);
+            this.modal.appendChild(content);
+            document.body.appendChild(this.modal);
+
+            this.modal.addEventListener('click', (e) => {
+                if (e.target === this.modal) {
+                    this.closeModal();
+                }
+            });
+        }
+
+        /**
+         * Render weekly summary lines and the per-item table
+         */
+        renderContent() {
+            this.renderWeeks();
+            this.renderItemTable();
+        }
+
+        /**
+         * One line per recent week: bought, sold (net), realized — or revenue when
+         * no sell that week had a ledger-known cost.
+         */
+        renderWeeks() {
+            const container = this.modal.querySelector('.mwi-trade-ledger-weeks');
+            while (container.firstChild) {
+                container.removeChild(container.firstChild);
+            }
+
+            const weeks = this.aggregates.weeks.slice(0, WEEKS_SHOWN);
+            if (weeks.length === 0) {
+                return;
+            }
+
+            for (const week of weeks) {
+                const line = document.createElement('div');
+                const weekLabel = formatters_js.formatDateTime(new Date(week.weekStart), { includeTime: false });
+                const parts = [
+                    `Week of ${weekLabel}:`,
+                    `bought ${this.formatCoins(week.boughtCoins)}`,
+                    `· sold ${this.formatCoins(week.soldCoinsNet)} net`,
+                ];
+                line.textContent = parts.join(' ');
+
+                const realizedSpan = document.createElement('span');
+                if (week.realizedProfit !== null) {
+                    realizedSpan.textContent = ` · realized ${this.formatSigned(week.realizedProfit)}`;
+                    realizedSpan.style.color = week.realizedProfit >= 0 ? '#4ade80' : '#f87171';
+                    realizedSpan.title = BASIS_TOOLTIP;
+                } else if (week.soldCoinsNet > 0) {
+                    realizedSpan.textContent = ` · realized — (revenue only, no ledger-known cost)`;
+                    realizedSpan.style.color = '#9ca3af';
+                    realizedSpan.title = BASIS_TOOLTIP;
+                }
+                line.appendChild(realizedSpan);
+
+                if (week.realizedProfit !== null && week.unmatchedRevenue > 0) {
+                    const unmatchedSpan = document.createElement('span');
+                    unmatchedSpan.textContent = ` (+ ${this.formatCoins(week.unmatchedRevenue)} revenue with unknown cost)`;
+                    unmatchedSpan.style.color = '#9ca3af';
+                    unmatchedSpan.title = BASIS_TOOLTIP;
+                    line.appendChild(unmatchedSpan);
+                }
+
+                container.appendChild(line);
+            }
+        }
+
+        /**
+         * Per-item rows sorted by most recent activity
+         */
+        renderItemTable() {
+            const tableContainer = this.modal.querySelector('.mwi-trade-ledger-table-container');
+            while (tableContainer.firstChild) {
+                tableContainer.removeChild(tableContainer.firstChild);
+            }
+
+            const items = this.aggregates.items;
+
+            if (items.length === 0) {
+                const empty = document.createElement('div');
+                empty.textContent =
+                    'No fills recorded yet. The ledger records fills on your own listings as they happen — ' +
+                    'place or watch some orders and come back.';
+                empty.style.cssText = `
+                padding: 20px;
+                text-align: center;
+                color: #888;
+            `;
+                tableContainer.appendChild(empty);
+                return;
+            }
+
+            const table = document.createElement('table');
+            table.style.cssText = `
+            width: 100%;
+            border-collapse: collapse;
+            color: #fff;
+        `;
+
+            const thead = document.createElement('thead');
+            const headerRow = document.createElement('tr');
+            headerRow.style.cssText = 'background: #1a1a1a;';
+
+            const headers = [
+                { label: 'Item' },
+                { label: 'Enh' },
+                { label: 'Bought' },
+                { label: 'Sold (net)', title: 'Quantity @ average proceeds per unit, after the 2% market tax' },
+                { label: 'Realized', title: BASIS_TOOLTIP },
+                { label: 'Last Activity' },
+            ];
+            for (const header of headers) {
+                const th = document.createElement('th');
+                th.textContent = header.label;
+                if (header.title) th.title = header.title;
+                th.style.cssText = `
+                padding: 8px 10px;
+                text-align: left;
+                border-bottom: 2px solid #555;
+                user-select: none;
+            `;
+                headerRow.appendChild(th);
+            }
+            thead.appendChild(headerRow);
+            table.appendChild(thead);
+
+            const tbody = document.createElement('tbody');
+            items.forEach((item, index) => {
+                const row = document.createElement('tr');
+                row.style.cssText = `
+                border-bottom: 1px solid #333;
+                background: ${index % 2 === 0 ? '#2a2a2a' : '#252525'};
+            `;
+
+                const itemCell = document.createElement('td');
+                itemCell.textContent = this.getItemName(item.itemHrid);
+                itemCell.style.padding = '4px 10px';
+                row.appendChild(itemCell);
+
+                const enhCell = document.createElement('td');
+                enhCell.textContent = item.enhancementLevel > 0 ? `+${item.enhancementLevel}` : '-';
+                enhCell.style.padding = '4px 10px';
+                row.appendChild(enhCell);
+
+                const boughtCell = document.createElement('td');
+                boughtCell.textContent =
+                    item.boughtQty > 0 ? `${item.boughtQty} @ ${this.formatCoins(item.avgBuyPrice)}` : '—';
+                boughtCell.title = item.boughtQty > 0 ? `Total spent: ${this.formatCoins(item.boughtCoins)}` : '';
+                boughtCell.style.cssText = 'padding: 4px 10px; color: #60a5fa;';
+                row.appendChild(boughtCell);
+
+                const soldCell = document.createElement('td');
+                soldCell.textContent = item.soldQty > 0 ? `${item.soldQty} @ ${this.formatCoins(item.avgSellNet)}` : '—';
+                soldCell.title = item.soldQty > 0 ? `Total received after tax: ${this.formatCoins(item.soldCoinsNet)}` : '';
+                soldCell.style.cssText = 'padding: 4px 10px; color: #4ade80;';
+                row.appendChild(soldCell);
+
+                const realizedCell = document.createElement('td');
+                realizedCell.title = BASIS_TOOLTIP;
+                if (item.realizedProfit !== null) {
+                    realizedCell.textContent = this.formatSigned(item.realizedProfit);
+                    realizedCell.style.cssText = `
+                    padding: 4px 10px;
+                    font-weight: 500;
+                    color: ${item.realizedProfit >= 0 ? '#4ade80' : '#f87171'};
+                `;
+                    if (item.unmatchedRevenue > 0) {
+                        realizedCell.textContent += ` (+${this.formatCoins(item.unmatchedRevenue)} rev, cost —)`;
+                    }
+                } else if (item.soldQty > 0) {
+                    realizedCell.textContent = `${this.formatCoins(item.soldCoinsNet)} rev (cost —)`;
+                    realizedCell.style.cssText = 'padding: 4px 10px; color: #9ca3af;';
+                } else {
+                    realizedCell.textContent = '—';
+                    realizedCell.style.cssText = 'padding: 4px 10px; color: #9ca3af;';
+                }
+                row.appendChild(realizedCell);
+
+                const activityCell = document.createElement('td');
+                activityCell.textContent = formatters_js.formatDateTime(new Date(item.lastActivity));
+                activityCell.style.cssText = 'padding: 4px 10px; color: #aaa;';
+                row.appendChild(activityCell);
+
+                tbody.appendChild(row);
+            });
+            table.appendChild(tbody);
+            tableContainer.appendChild(table);
+        }
+
+        /**
+         * Export the per-item aggregates as CSV (raw numbers, not display strings)
+         */
+        exportCSV() {
+            const columns = [
+                { key: 'item', label: 'Item' },
+                { key: 'enhancementLevel', label: 'Enhancement' },
+                { key: 'boughtQty', label: 'Bought Qty' },
+                { key: 'avgBuyPrice', label: 'Avg Buy Price' },
+                { key: 'boughtCoins', label: 'Bought Coins' },
+                { key: 'soldQty', label: 'Sold Qty' },
+                { key: 'avgSellNet', label: 'Avg Sell Net' },
+                { key: 'soldCoinsNet', label: 'Sold Coins Net' },
+                { key: 'matchedQty', label: 'Matched Qty' },
+                { key: 'realizedProfit', label: 'Realized Profit (avg-cost)' },
+                { key: 'unmatchedRevenue', label: 'Revenue With Unknown Cost' },
+                { key: 'lastActivity', label: 'Last Activity' },
+            ];
+            const rows = this.aggregates.items.map((item) => ({
+                ...item,
+                item: this.getItemName(item.itemHrid),
+                lastActivity: new Date(item.lastActivity).toISOString(),
+            }));
+            csvExport_js.downloadCsv(csvExport_js.csvFilename('trade-ledger'), csvExport_js.toCsv(rows, columns));
+        }
+
+        /**
+         * Disable the feature and remove its DOM
+         */
+        disable() {
+            if (this.tabCleanupObserver) {
+                this.tabCleanupObserver();
+                this.tabCleanupObserver = null;
+            }
+            if (this.marketplaceTab) {
+                this.marketplaceTab.remove();
+                this.marketplaceTab = null;
+            }
+            if (this.modal) {
+                this.modal.remove();
+                this.modal = null;
+            }
+            this.isInitialized = false;
+        }
+    }
+
+    const tradeLedgerView = new TradeLedgerView();
+
+    config.onSettingChange('market_tradeLedger', (value) => {
+        if (value) {
+            tradeLedgerView.initialize();
+        } else {
+            tradeLedgerView.disable();
+        }
+    });
+
+    /**
      * Tooltip Observer
      * Centralized observer for tooltip/popper appearances
      * Any feature can subscribe to be notified when tooltips appear
@@ -36870,7 +36432,7 @@
      */
 
     function getLoadoutSnapshot() {
-        return window.Toolasha?.Combat?.loadoutSnapshot || loadoutSnapshot;
+        return bundleBridge_js.loadoutSnapshot() || loadoutSnapshot;
     }
 
     // ---------------------------------------------------------------------------
@@ -40053,582 +39615,6 @@
     };
 
     /**
-     * Room skills
-     *
-     * Which skill's artwork stands for a house room.
-     *
-     * A room is recognised by its skill far faster than by its name — a sword says
-     * Dojo before "Dojo" has been read, a milk bottle says Dairy Barn — and the game
-     * has artwork for every skill but none for a room. JHouse makes the same
-     * association; this is its map.
-     *
-     * Hardcoded because the room detail the game sends does not carry the link. A
-     * room the game adds and this does not know falls back to its own name, which
-     * finds no sprite and draws a spacer: a missing icon rather than a wrong one.
-     *
-     * Pure data and one lookup, on purpose. Both panels that draw rooms — the Houses
-     * panel and the equipment savings row — used to carry their own copy of this,
-     * because the module the first one lives in does work at import time and the
-     * second one could not afford to pull that in for a map of seventeen strings.
-     * Nothing here runs at import, so there is nothing left to avoid.
-     */
-
-    /** Room name (the tail of its hrid) → the skill whose sprite stands for it */
-    const ROOM_SKILLS = {
-        dairy_barn: 'milking',
-        garden: 'foraging',
-        log_shed: 'woodcutting',
-        forge: 'cheesesmithing',
-        workshop: 'crafting',
-        sewing_parlor: 'tailoring',
-        kitchen: 'cooking',
-        brewery: 'brewing',
-        laboratory: 'alchemy',
-        observatory: 'enhancing',
-        dining_room: 'stamina',
-        library: 'intelligence',
-        dojo: 'attack',
-        armory: 'defense',
-        gym: 'melee',
-        archery_range: 'ranged',
-        mystical_study: 'magic',
-    };
-
-    /**
-     * The skill sprite that stands for a room.
-     * @param {string} houseRoomHrid - The room, e.g. `/house_rooms/dojo`
-     * @returns {string} The skill sprite's id, or the room's own name when it is not
-     *   one this knows
-     */
-    function roomSkill(houseRoomHrid) {
-        const key = String(houseRoomHrid || '')
-            .split('/')
-            .pop();
-        return ROOM_SKILLS[key] || key;
-    }
-
-    /**
-     * Equipment savings
-     *
-     * How far you are from affording the piece you want, and when you will be.
-     *
-     * ## The cost is not the price
-     *
-     * An upgrade costs the asking price of the thing you want **minus what the piece
-     * it replaces is worth**, because you sell the old one. Reading the ask alone
-     * overstates every upgrade by the value of the gear you are already wearing,
-     * which for a late-game slot is most of the price.
-     *
-     * That is only true if you actually sell it. Somebody keeping the old piece for
-     * a second loadout is paying the full ask, so the trade-in is a mode rather than
-     * an assumption — `noSell` turns it off.
-     *
-     * ## Unpriced is not free
-     *
-     * A target nobody is selling has no cost, not a cost of nothing. Treating it as
-     * zero would report it as already affordable, which is the most misleading thing
-     * this could possibly say. Those come back null and are counted separately in a
-     * total, so a total is never quietly a lower bound.
-     *
-     * ## Levels are bought too
-     *
-     * An ability level is a purchase like any other: so many books at what the
-     * market wants for them. It is a savings goal in every way that matters here,
-     * so it lives on the same list — and, because a sim run refines its own estimate
-     * every time it is asked, adding a goal for an ability that already has one
-     * replaces it rather than stacking a second guess beside the first.
-     *
-     * The one thing a level has that a sword does not is a way of being *finished*
-     * without being bought: you can read the books over a week of drops and arrive
-     * anyway. So a goal is checked against the level the character is actually at,
-     * and says so, rather than sitting on the list forever.
-     *
-     * The goals live in the same stored record as the gear, under `abilities`, which
-     * is why the loading and saving of that record is here rather than in the panel:
-     * two writers of one key lose each other's edits. A record written before this
-     * existed simply has no `abilities` key and loads exactly as it did.
-     *
-     * ## So are rooms
-     *
-     * A house room level is the same shape of purchase again — a pile of materials
-     * at what the market wants for them, plus the coins the level asks for outright
-     * — and it is finishable without being bought in exactly the same way, by
-     * building it. So rooms sit beside abilities under `houses`, keyed by room and
-     * capped at the level the game stops at, and a record written before they
-     * existed has no `houses` key either.
-     *
-     * The model is EWatch's, from MWI Combat Suite by Frotty (MIT) — see
-     * `third-party/mwi-combat-suite/` and `docs/THIRD-PARTY-LICENSES.md`. The code is
-     * Toolasha's own.
-     */
-
-
-    /** The one record the whole feature is stored in, per character */
-    const STORAGE_KEY = 'equipmentSavings';
-
-    /**
-     * What one upgrade actually costs.
-     *
-     * @param {Object} input - What it needs
-     * @param {number|null} input.targetAsk - The asking price of the piece you want
-     * @param {number} [input.equippedBid] - What the piece it replaces would fetch
-     * @param {boolean} [input.noSell] - Keeping the old piece, so no trade-in
-     * @returns {number|null} Coins needed, or null when the target has no price
-     */
-    function upgradeCost({ targetAsk, equippedBid = 0, noSell = false }) {
-        if (!(targetAsk > 0)) return null;
-        if (noSell) return targetAsk;
-
-        // Never negative: an upgrade cheaper than what you are wearing costs
-        // nothing, and a negative cost would make a progress bar meaningless
-        return Math.max(0, targetAsk - (Number(equippedBid) || 0));
-    }
-
-    /**
-     * What the materials for one craft come to.
-     *
-     * An upgrade recipe has two halves the game keeps apart: the **inputs**, which
-     * are consumed, and the **upgrade item**, which is the piece being upgraded. For
-     * somebody who already owns the base piece — the usual reason to craft rather
-     * than buy — only the inputs are a purchase, and the finished item's ask is
-     * irrelevant. A Furious Spear you already hold becomes a Refined one for the
-     * price of the shards.
-     *
-     * Any unpriced input makes the whole thing unpriced. A recipe totalled from the
-     * ingredients it could price is a lower bound wearing a total's clothes, and
-     * here it would report a cheaper craft than is possible.
-     *
-     * @param {Object} input - What it needs
-     * @param {Array<{itemHrid: string, count: number}>} input.inputItems - The recipe
-     * @param {Function} input.priceOf - `(itemHrid) => number|null`
-     * @param {number} [input.outputCount] - How many one action makes
-     * @param {boolean} [input.haveBase] - Whether the piece being upgraded is already owned
-     * @param {number} [input.upgradeAsk] - What the piece being upgraded costs, if not
-     * @returns {number|null} Coins for one finished item, or null when it cannot be priced
-     */
-    function craftCost({ inputItems, priceOf, outputCount = 1, haveBase = true, upgradeAsk = 0 }) {
-        if (!inputItems?.length) return null;
-
-        let total = 0;
-        for (const input of inputItems) {
-            const price = priceOf(input.itemHrid);
-            if (!(price > 0)) return null;
-            total += price * (input.count || 0);
-        }
-
-        // The base piece is only a cost if it has to be bought
-        if (!haveBase) {
-            if (!(upgradeAsk > 0)) return null;
-            total += upgradeAsk;
-        }
-
-        const made = outputCount > 0 ? outputCount : 1;
-        return total / made;
-    }
-
-    /**
-     * How far along the saving is.
-     *
-     * @param {number|null} cost - From `upgradeCost`
-     * @param {number} coins - What you have
-     * @returns {{fraction: number|null, affordable: boolean, needed: number|null}}
-     *   `fraction` is capped at 1 — a bar cannot say more than full — while `needed`
-     *   is what is actually left, which is the figure worth reading
-     */
-    function savingsProgress(cost, coins) {
-        if (cost === null) return { fraction: null, affordable: false, needed: null };
-
-        const held = Number(coins) || 0;
-        // Nothing to save for is already there, rather than a division by zero
-        if (cost <= 0) return { fraction: 1, affordable: true, needed: 0 };
-
-        return {
-            fraction: Math.min(1, held / cost),
-            affordable: held >= cost,
-            needed: Math.max(0, cost - held),
-        };
-    }
-
-    /**
-     * How long the rest of it takes at what you are earning.
-     *
-     * @param {number|null} needed - Coins still to find
-     * @param {number} perDay - Income per day
-     * @returns {number|null} Seconds, or null when it cannot be said
-     */
-    function timeToAffordSeconds(needed, perDay) {
-        if (needed === null || !(needed > 0)) return 0;
-        // Not infinity: no income is not "never", it is nothing to divide by. A
-        // figure would be a claim about the future that this cannot make.
-        if (!(perDay > 0)) return null;
-
-        return (needed / perDay) * 86400;
-    }
-
-    /**
-     * The whole shopping list at once.
-     *
-     * @param {Array<{cost: number|null}>} watches - Priced watches
-     * @returns {{cost: number, unpriced: number}} `unpriced` is how many targets it
-     *   could not include, which is the difference between a total and a lower bound
-     *   presented as one
-     */
-    function totalSavings(watches) {
-        let cost = 0;
-        let unpriced = 0;
-
-        for (const watch of watches || []) {
-            if (!watch) continue;
-            if (watch.cost === null) unpriced++;
-            else cost += watch.cost;
-        }
-        return { cost, unpriced };
-    }
-
-    /**
-     * The order a savings list reads best in.
-     *
-     * Nearest to done first, because that is the next thing that happens and the
-     * only entry you might act on today. Insertion order says nothing at all, and
-     * cost order buries the piece you are two days from behind one you are two
-     * months from.
-     *
-     * Affordable ones lead — they are done, and a list that hides its finished
-     * entries at the bottom makes you hunt for good news. Unpriced ones go last:
-     * they have no progress to sort by, and putting them anywhere else implies one.
-     *
-     * @param {Array<Object>} targets - Costed targets
-     * @returns {Array<Object>} A new array
-     */
-    function orderTargets(targets) {
-        const rank = (target) => (target.cost === null ? 2 : target.affordable ? 0 : 1);
-
-        return [...(targets || [])].filter(Boolean).sort((a, b) => {
-            if (rank(a) !== rank(b)) return rank(a) - rank(b);
-            if (rank(a) === 2) return (a.name || '').localeCompare(b.name || '');
-            // Within a band, the one furthest along leads
-            return (b.fraction || 0) - (a.fraction || 0);
-        });
-    }
-
-    /**
-     * The item that levels an ability, which is the thing the market has a price for.
-     *
-     * @param {string} abilityHrid - e.g. `/abilities/fierce_aura`
-     * @returns {string} e.g. `/items/fierce_aura`
-     */
-    function abilityBookHrid(abilityHrid) {
-        return String(abilityHrid || '').replace('/abilities/', '/items/');
-    }
-
-    /** The level the game stops a house room at, and so the highest a goal can ask for */
-    const MAX_HOUSE_ROOM_LEVEL = 8;
-
-    /** A name out of an hrid, for when nothing better was supplied */
-    const prettyName = (hrid) =>
-        String(hrid || '')
-            .split('/')
-            .pop()
-            .replace(/_/g, ' ')
-            .replace(/\b\w/g, (letter) => letter.toUpperCase());
-
-    /**
-     * How an ability goal reads: the ability and the level, e.g. `Fierce Aura Lv46`.
-     *
-     * Exported so a caller with a better name for the ability than its hrid still
-     * produces the same shape of label, rather than each one inventing its own.
-     *
-     * @param {string} abilityHrid - The ability
-     * @param {number} targetLevel - The level being saved for
-     * @param {string} [name] - A nicer name for the ability, if one is known
-     * @returns {string}
-     */
-    function abilityGoalLabel(abilityHrid, targetLevel, name = '') {
-        return goalLabel(abilityHrid, targetLevel, name);
-    }
-
-    /**
-     * How a house room goal reads: the room and the level, e.g. `Mystical Study Lv5`.
-     *
-     * @param {string} houseRoomHrid - The room
-     * @param {number} targetLevel - The level being saved for
-     * @param {string} [name] - A nicer name for the room, if one is known
-     * @returns {string}
-     */
-    function houseGoalLabel(houseRoomHrid, targetLevel, name = '') {
-        return goalLabel(houseRoomHrid, targetLevel, name);
-    }
-
-    /**
-     * The shape both labels take: a name and the level it is going to.
-     *
-     * @param {string} hrid - The ability or the room
-     * @param {number} targetLevel - The level being saved for
-     * @param {string} name - A nicer name, if one is known
-     * @returns {string}
-     */
-    function goalLabel(hrid, targetLevel, name) {
-        return `${name || prettyName(hrid)} Lv${Math.max(0, Math.floor(Number(targetLevel) || 0))}`;
-    }
-
-    /**
-     * Whether a goal has already happened.
-     *
-     * A goal the character has read their way past is done, not pending: leaving it
-     * on the list at full price is the same lie as pricing an unlisted item at zero,
-     * pointed the other way.
-     *
-     * @param {{targetLevel: number}} goal - The goal
-     * @param {number} currentLevel - Where the ability is now
-     * @returns {boolean}
-     */
-    function abilityGoalReached(goal, currentLevel) {
-        return goalReached(goal, currentLevel);
-    }
-
-    /**
-     * Whether a room has already been built to the level being saved for.
-     *
-     * The same test as an ability's, for the same reason: a room you built out of
-     * materials you already had was never bought, and a goal that cannot notice
-     * that sits on the list at full price forever.
-     *
-     * @param {{targetLevel: number}} goal - The goal
-     * @param {number} currentLevel - Where the room is now
-     * @returns {boolean}
-     */
-    function houseGoalReached(goal, currentLevel) {
-        return goalReached(goal, currentLevel);
-    }
-
-    /**
-     * @param {{targetLevel: number}} goal - The goal
-     * @param {number} currentLevel - Where it is now
-     * @returns {boolean}
-     */
-    function goalReached(goal, currentLevel) {
-        const target = Math.max(0, Math.floor(Number(goal?.targetLevel) || 0));
-        if (!(target > 0)) return false;
-
-        return (Number(currentLevel) || 0) >= target;
-    }
-
-    /**
-     * The ability goals, keyed by ability hrid.
-     *
-     * One goal per ability rather than a list: "get Fierce Aura to 46" and "get
-     * Fierce Aura to 51" are the same intention measured twice, and a list would
-     * show both and total both.
-     */
-    let goals = {};
-
-    /**
-     * The house room goals, keyed by room hrid, for the same reason: one goal per
-     * room, because "get the Dojo to 6" and "get the Dojo to 8" are one intention.
-     */
-    let rooms = {};
-
-    /** The rest of the stored record — the gear side, which this module only carries */
-    let record = {};
-
-    /** Whether the stored record has been read since the last character change */
-    let loaded = false;
-
-    /**
-     * One stored goal, with everything it must have and nothing it must not.
-     *
-     * @param {string} hrid - The ability or the room the goal is about
-     * @param {Object} goal - What was handed over or read back
-     * @param {number} [cap] - The highest level the game allows, when there is one
-     * @returns {Object}
-     */
-    function normalizeGoal(hrid, goal, cap = 0) {
-        let targetLevel = Math.max(0, Math.floor(Number(goal?.targetLevel) || 0));
-        // A goal above what the game allows is not a goal, it is a typo — and left
-        // alone it would be costed for levels that cannot be built and never reached
-        if (cap > 0) targetLevel = Math.min(cap, targetLevel);
-
-        // Explicitly, because `Number(null)` is 0 and an unpriced goal recorded as
-        // costing nothing reports itself as already affordable
-        const raw = goal?.cost === null || goal?.cost === undefined || goal?.cost === '' ? null : Number(goal.cost);
-        const cost = Number.isFinite(raw) && raw >= 0 ? raw : null;
-
-        return {
-            targetLevel,
-            cost,
-            label: String(goal?.label || goalLabel(hrid, targetLevel, '')),
-            updatedAt: Number(goal?.updatedAt) || 0,
-        };
-    }
-
-    /**
-     * Write the record back: the gear side as the panel last left it, the goals as
-     * they are now. One writer, so neither side can drop the other's edits.
-     *
-     * @returns {Promise<boolean>} Whether it was written
-     */
-    async function write() {
-        try {
-            return await writeScoped(STORAGE_KEY, { ...record, abilities: { ...goals }, houses: { ...rooms } }, 'settings');
-        } catch (error) {
-            console.error('[EquipmentSavings] Saving the savings record failed:', error);
-            return false;
-        }
-    }
-
-    /**
-     * Read the whole savings record, keeping the level goals and handing back the
-     * rest.
-     *
-     * The goals are absorbed rather than returned because this module owns them from
-     * here on; the caller gets the gear side it owns, and a record written before
-     * ability or house goals existed simply has no `abilities` or `houses` key and
-     * comes back untouched.
-     *
-     * @returns {Promise<Object|null>} The record without the goals, or null when
-     *   nothing has been stored for this character
-     */
-    async function loadSavingsRecord() {
-        try {
-            await storage.ready;
-            const saved = await readScoped(STORAGE_KEY, 'settings', null, { migrate: 'adopt' });
-
-            const rest = { ...(saved || {}) };
-            goals = {};
-            for (const [abilityHrid, goal] of Object.entries(rest.abilities || {})) {
-                if (!abilityHrid || !goal || typeof goal !== 'object') continue;
-                goals[abilityHrid] = normalizeGoal(abilityHrid, goal);
-            }
-            delete rest.abilities;
-
-            rooms = {};
-            for (const [houseRoomHrid, goal] of Object.entries(rest.houses || {})) {
-                if (!houseRoomHrid || !goal || typeof goal !== 'object') continue;
-                rooms[houseRoomHrid] = normalizeGoal(houseRoomHrid, goal, MAX_HOUSE_ROOM_LEVEL);
-            }
-            delete rest.houses;
-
-            record = rest;
-            loaded = true;
-            return saved ? rest : null;
-        } catch (error) {
-            console.error('[EquipmentSavings] Reading the savings record failed:', error);
-            loaded = true;
-            return null;
-        }
-    }
-
-    /**
-     * Store the gear side of the record.
-     *
-     * @param {Object} gear - The panel's own state
-     * @returns {Promise<boolean>} Whether it was written
-     */
-    async function saveSavingsRecord(gear) {
-        record = { ...(gear || {}) };
-        // Never from the caller: the goals below are the only copy that is current
-        delete record.abilities;
-        delete record.houses;
-        return write();
-    }
-
-    /** Read the record once, for a caller that arrived before the panel did */
-    async function ensureLoaded() {
-        if (!loaded) await loadSavingsRecord();
-    }
-
-    /**
-     * Save towards a level of an ability.
-     *
-     * Idempotent per ability: a second call for an ability already on the list
-     * replaces its target and its cost, because the caller is usually a sim run that
-     * has just costed the same intention more accurately than the last one did.
-     *
-     * @param {Object} goal - The goal
-     * @param {string} goal.abilityHrid - e.g. `/abilities/fierce_aura`
-     * @param {number} goal.targetLevel - The level being saved for
-     * @param {number|null} goal.cost - Coins for the books, or null when unpriced
-     * @param {string} [goal.label] - How it should read, e.g. `Fierce Aura Lv46`
-     * @returns {Promise<void>}
-     */
-    async function addAbilityGoal({ abilityHrid, targetLevel, cost, label } = {}) {
-        if (!abilityHrid) return;
-        await ensureLoaded();
-
-        goals[abilityHrid] = normalizeGoal(abilityHrid, { targetLevel, cost, label, updatedAt: Date.now() });
-        await write();
-    }
-
-    /**
-     * Stop saving for a level.
-     * @param {string} abilityHrid - The ability
-     * @returns {Promise<void>}
-     */
-    async function removeAbilityGoal(abilityHrid) {
-        await ensureLoaded();
-        if (!goals[abilityHrid]) return;
-
-        delete goals[abilityHrid];
-        await write();
-    }
-
-    /**
-     * Every ability goal, as a list.
-     * @returns {Array<{abilityHrid: string, targetLevel: number, cost: number|null, label: string}>}
-     */
-    function abilityGoals() {
-        return Object.entries(goals).map(([abilityHrid, goal]) => ({ abilityHrid, ...goal }));
-    }
-
-    /**
-     * Save towards a level of a house room.
-     *
-     * Idempotent per room, as an ability goal is per ability: a second call for a
-     * room already on the list replaces its target and its cost rather than putting
-     * a second guess beside the first, because the caller is usually something that
-     * has just costed the same intention more accurately.
-     *
-     * @param {Object} goal - The goal
-     * @param {string} goal.houseRoomHrid - e.g. `/house_rooms/mystical_study`
-     * @param {number} goal.targetLevel - The level being saved for, capped at the game's own
-     * @param {number|null} goal.cost - Coins for the build, or null when unpriced
-     * @param {string} [goal.label] - How it should read, e.g. `Mystical Study Lv5`
-     * @returns {Promise<void>}
-     */
-    async function addHouseGoal({ houseRoomHrid, targetLevel, cost, label } = {}) {
-        if (!houseRoomHrid) return;
-        await ensureLoaded();
-
-        rooms[houseRoomHrid] = normalizeGoal(
-            houseRoomHrid,
-            { targetLevel, cost, label, updatedAt: Date.now() },
-            MAX_HOUSE_ROOM_LEVEL
-        );
-        await write();
-    }
-
-    /**
-     * Stop saving for a room level.
-     * @param {string} houseRoomHrid - The room
-     * @returns {Promise<void>}
-     */
-    async function removeHouseGoal(houseRoomHrid) {
-        await ensureLoaded();
-        if (!rooms[houseRoomHrid]) return;
-
-        delete rooms[houseRoomHrid];
-        await write();
-    }
-
-    /**
-     * Every house room goal, as a list.
-     * @returns {Array<{houseRoomHrid: string, targetLevel: number, cost: number|null, label: string}>}
-     */
-    function houseGoals() {
-        return Object.entries(rooms).map(([houseRoomHrid, goal]) => ({ houseRoomHrid, ...goal }));
-    }
-
-    /**
      * Equipment Savings
      *
      * The gear you are saving for, and when you will have it.
@@ -40768,7 +39754,7 @@
     // key lose each other's edits, so there is only the one.
     async function reload() {
         try {
-            const saved = await loadSavingsRecord();
+            const saved = await equipmentSavings_js.loadSavingsRecord();
             Object.assign(
                 state,
                 { targets: {}, noSell: false, marketValue: true, selected: null, locked: false },
@@ -40786,7 +39772,7 @@
 
     /** Write the list back, without making anybody wait for it */
     function persist() {
-        saveSavingsRecord({ ...state }).catch((error) =>
+        equipmentSavings_js.saveSavingsRecord({ ...state }).catch((error) =>
             console.error('[EquipmentSavings] Saving the list failed:', error)
         );
     }
@@ -41020,20 +40006,20 @@
         const perDay = incomePerDay();
         const levels = learnedAbilityLevels();
 
-        const goals = abilityGoals().map((goal) => {
+        const goals = equipmentSavings_js.abilityGoals().map((goal) => {
             const currentLevel = levels.get(goal.abilityHrid)?.level || 0;
-            const done = abilityGoalReached(goal, currentLevel);
+            const done = equipmentSavings_js.abilityGoalReached(goal, currentLevel);
             // A goal already reached costs nothing more, whatever it was costed at
             // when it went on the list
             const cost = done ? 0 : (goal.cost ?? null);
-            const progress = savingsProgress(cost, coins);
+            const progress = equipmentSavings_js.savingsProgress(cost, coins);
 
             return {
                 abilityHrid: goal.abilityHrid,
                 // The book, so the icon and the marketplace link have something to
                 // point at — an ability itself is not a tradeable thing
-                itemHrid: abilityBookHrid(goal.abilityHrid),
-                name: goal.label || abilityGoalLabel(goal.abilityHrid, goal.targetLevel, abilityName(goal.abilityHrid)),
+                itemHrid: equipmentSavings_js.abilityBookHrid(goal.abilityHrid),
+                name: goal.label || equipmentSavings_js.abilityGoalLabel(goal.abilityHrid, goal.targetLevel, abilityName(goal.abilityHrid)),
                 targetLevel: goal.targetLevel,
                 currentLevel,
                 done,
@@ -41041,11 +40027,11 @@
                 enhancementLevel: 0,
                 cost,
                 ...progress,
-                seconds: timeToAffordSeconds(progress.needed, perDay),
+                seconds: equipmentSavings_js.timeToAffordSeconds(progress.needed, perDay),
             };
         });
 
-        return orderTargets(goals);
+        return equipmentSavings_js.orderTargets(goals);
     }
 
     /**
@@ -41060,11 +40046,11 @@
         if (!abilityHrid || !(targetLevel > 0)) return;
 
         const priced = cost === undefined ? abilityBookCost(abilityHrid, targetLevel) : cost;
-        await addAbilityGoal({
+        await equipmentSavings_js.addAbilityGoal({
             abilityHrid,
             targetLevel,
             cost: priced,
-            label: abilityGoalLabel(abilityHrid, targetLevel, abilityName(abilityHrid)),
+            label: equipmentSavings_js.abilityGoalLabel(abilityHrid, targetLevel, abilityName(abilityHrid)),
         });
     }
 
@@ -41074,7 +40060,7 @@
      * @returns {Promise<void>}
      */
     async function unwatchAbility(abilityHrid) {
-        await removeAbilityGoal(abilityHrid);
+        await equipmentSavings_js.removeAbilityGoal(abilityHrid);
     }
 
     /**
@@ -41158,21 +40144,21 @@
         const perDay = incomePerDay();
         const levels = houseRoomLevels();
 
-        const goals = houseGoals().map((goal) => {
+        const goals = equipmentSavings_js.houseGoals().map((goal) => {
             const currentLevel = levels.get(goal.houseRoomHrid) || 0;
-            const done = houseGoalReached(goal, currentLevel);
+            const done = equipmentSavings_js.houseGoalReached(goal, currentLevel);
             // A room already built costs nothing more, whatever it was costed at
             // when it went on the list
             const cost = done ? 0 : (goal.cost ?? null);
-            const progress = savingsProgress(cost, coins);
+            const progress = equipmentSavings_js.savingsProgress(cost, coins);
 
             return {
                 houseRoomHrid: goal.houseRoomHrid,
                 // A room is built rather than bought, so there is no item to point
                 // the marketplace at — the skill's artwork stands in for the icon
                 itemHrid: '',
-                skill: roomSkill(goal.houseRoomHrid),
-                name: goal.label || houseGoalLabel(goal.houseRoomHrid, goal.targetLevel, houseRoomName(goal.houseRoomHrid)),
+                skill: roomSkills_js.roomSkill(goal.houseRoomHrid),
+                name: goal.label || equipmentSavings_js.houseGoalLabel(goal.houseRoomHrid, goal.targetLevel, houseRoomName(goal.houseRoomHrid)),
                 targetLevel: goal.targetLevel,
                 currentLevel,
                 done,
@@ -41180,11 +40166,11 @@
                 enhancementLevel: 0,
                 cost,
                 ...progress,
-                seconds: timeToAffordSeconds(progress.needed, perDay),
+                seconds: equipmentSavings_js.timeToAffordSeconds(progress.needed, perDay),
             };
         });
 
-        return orderTargets(goals);
+        return equipmentSavings_js.orderTargets(goals);
     }
 
     /**
@@ -41198,13 +40184,13 @@
     async function watchHouse(houseRoomHrid, targetLevel, cost = undefined) {
         if (!houseRoomHrid || !(targetLevel > 0)) return;
 
-        const wanted = Math.min(MAX_HOUSE_ROOM_LEVEL, Math.floor(Number(targetLevel) || 0));
+        const wanted = Math.min(equipmentSavings_js.MAX_HOUSE_ROOM_LEVEL, Math.floor(Number(targetLevel) || 0));
         const priced = cost === undefined ? houseUpgradeCost(houseRoomHrid, wanted) : cost;
-        await addHouseGoal({
+        await equipmentSavings_js.addHouseGoal({
             houseRoomHrid,
             targetLevel: wanted,
             cost: priced,
-            label: houseGoalLabel(houseRoomHrid, wanted, houseRoomName(houseRoomHrid)),
+            label: equipmentSavings_js.houseGoalLabel(houseRoomHrid, wanted, houseRoomName(houseRoomHrid)),
         });
     }
 
@@ -41214,7 +40200,7 @@
      * @returns {Promise<void>}
      */
     async function unwatchHouse(houseRoomHrid) {
-        await removeHouseGoal(houseRoomHrid);
+        await equipmentSavings_js.removeHouseGoal(houseRoomHrid);
     }
 
     /**
@@ -41314,8 +40300,7 @@
      * @returns {number|null}
      */
     function combatIncomePerDay() {
-        const combat = window.Toolasha?.Combat;
-        const data = combat?.combatStatsDataCollector?.getLatestData?.();
+        const data = bundleBridge_js.combatStatsDataCollector()?.getLatestData?.();
         const player = data?.players?.find((entry) => entry.isCurrentPlayer);
         if (!player) return null;
 
@@ -41330,7 +40315,7 @@
         // which is the same Lazy/Mid distinction the Combat Profit panel draws.
         // Compared as a number it is NaN, so this returned null however long the run
         // had been, on top of the duration being read from a field that is not there.
-        const stats = combat?.combatStatsCalculator?.calculatePlayerStats?.(player, seconds);
+        const stats = bundleBridge_js.combatStatsCalculator()?.calculatePlayerStats?.(player, seconds);
         const profit = state.noSell ? stats?.dailyProfit?.ask : stats?.dailyProfit?.bid;
         return profit > 0 ? profit : null;
     }
@@ -41411,7 +40396,7 @@
      * @returns {number}
      */
     function marketOrderValue() {
-        const totals = window.Toolasha?.Market?.marketOrderTotals?.calculateTotals?.();
+        const totals = bundleBridge_js.marketOrderTotals()?.calculateTotals?.();
         if (!totals) return 0;
         return (totals.sellOrders || 0) + (totals.buyOrders || 0) + (totals.unclaimed || 0);
     }
@@ -41516,12 +40501,12 @@
     function enhancementCost(itemHrid, targetLevel, startLevel = 0) {
         if (!(targetLevel > startLevel) || targetLevel > MAX_ENHANCEMENT) return null;
 
-        const calculator = window.Toolasha?.Utils?.enhancementCalculator?.calculateEnhancement;
+        const calculator = bundleBridge_js.enhancementCalculator()?.calculateEnhancement;
         // The character's own gear, skill and teas — not `getEnhancingParams`,
         // which hands back the simulator's manual settings unless auto-detect
         // happens to be on, and those default to a fully kitted enhancer. Costing
         // your cape at somebody else's bench quotes a run you cannot make.
-        const params = window.Toolasha?.Utils?.enhancementConfig?.getAutoDetectedParams?.();
+        const params = bundleBridge_js.enhancementConfig()?.getAutoDetectedParams?.();
         const details = dataManager.getItemDetails?.(itemHrid);
         if (!calculator || !params || !details) return null;
 
@@ -41790,7 +40775,7 @@
 
         if (!isCrafting(itemHrid)) {
             return {
-                cost: upgradeCost({ targetAsk: ask, equippedBid: wornBid, noSell }),
+                cost: equipmentSavings_js.upgradeCost({ targetAsk: ask, equippedBid: wornBid, noSell }),
                 ask,
                 crafted: false,
                 recipe: null,
@@ -41831,7 +40816,7 @@
      * @returns {number|null} Coins for one, or null when it cannot be priced
      */
     function craftMaterialsCost(itemHrid, recipe) {
-        const planner = window.Toolasha?.Actions?.craftingPlanCalculator?.computeBestCraftingPlan;
+        const planner = bundleBridge_js.craftingPlanCalculator()?.computeBestCraftingPlan;
 
         if (planner && recipe?.inputItems?.length) {
             try {
@@ -41857,7 +40842,7 @@
             }
         }
 
-        return craftCost({
+        return equipmentSavings_js.craftCost({
             inputItems: recipe?.inputItems,
             priceOf: (hrid) => marketData_js.getItemPrices(hrid, 0)?.ask || 0,
             outputCount: recipe?.outputCount,
@@ -41892,7 +40877,7 @@
 
             const worn = wornRivalOf(itemHrid);
             const wornBid = worn ? marketData_js.getItemPrices(worn.itemHrid, worn.enhancementLevel || 0)?.bid || 0 : 0;
-            const progress = savingsProgress(cost, coins);
+            const progress = equipmentSavings_js.savingsProgress(cost, coins);
 
             return {
                 itemHrid,
@@ -41913,13 +40898,13 @@
                 worn: worn ? { ...worn, name: nameOf(worn.itemHrid), bid: wornBid } : null,
                 cost,
                 ...progress,
-                seconds: timeToAffordSeconds(progress.needed, perDay),
+                seconds: equipmentSavings_js.timeToAffordSeconds(progress.needed, perDay),
             };
         });
 
         // Nearest to done first: that is the next thing that happens, and the only
         // entry you might act on today
-        return orderTargets(targets);
+        return equipmentSavings_js.orderTargets(targets);
     }
 
     /** @returns {Object} The whole list against your coins */
@@ -41931,8 +40916,8 @@
         // totalling it would keep the plan expensive after it got cheaper
         const outstanding = [...targets, ...abilities.filter((goal) => !goal.done), ...houses.filter((goal) => !goal.done)];
 
-        const { cost, unpriced } = totalSavings(outstanding);
-        const progress = savingsProgress(outstanding.length ? cost : null, spendable());
+        const { cost, unpriced } = equipmentSavings_js.totalSavings(outstanding);
+        const progress = equipmentSavings_js.savingsProgress(outstanding.length ? cost : null, spendable());
 
         return {
             targets,
@@ -41941,7 +40926,7 @@
             cost,
             unpriced,
             ...progress,
-            seconds: timeToAffordSeconds(progress.needed, incomePerDay()),
+            seconds: equipmentSavings_js.timeToAffordSeconds(progress.needed, incomePerDay()),
         };
     }
 
@@ -42132,8 +41117,8 @@
         // watched perfectly well, which is a preview saying the opposite of what
         // the panel was about to do.
         const { cost, ask, crafted, enhancing, fromLevel, ladder } = costOf(itemHrid, enhancementLevel);
-        const progress = savingsProgress(cost, spendable());
-        const seconds = timeToAffordSeconds(progress.needed, incomePerDay());
+        const progress = equipmentSavings_js.savingsProgress(cost, spendable());
+        const seconds = equipmentSavings_js.timeToAffordSeconds(progress.needed, incomePerDay());
 
         const wrap = document.createElement('div');
         Object.assign(wrap.style, { display: 'flex', flexDirection: 'column', gap: '2px', fontSize: '11px' });
@@ -42591,7 +41576,7 @@
         button.title = 'Open the marketplace on the materials this craft is short of.';
 
         button.addEventListener('click', async () => {
-            const open = window.Toolasha?.Actions?.missingMaterialsButton?.openMissingMaterials;
+            const open = bundleBridge_js.missingMaterialsButton()?.openMissingMaterials;
             if (!open) {
                 button.textContent = 'The action panel feature is off';
                 return;
@@ -43259,7 +42244,7 @@
 
         const byName = (a, b) => a.name.localeCompare(b.name);
         return [
-            ...rooms.filter((room) => room.built && room.level < MAX_HOUSE_ROOM_LEVEL).sort(byName),
+            ...rooms.filter((room) => room.built && room.level < equipmentSavings_js.MAX_HOUSE_ROOM_LEVEL).sort(byName),
             ...rooms.filter((room) => !room.built).sort(byName),
         ];
     }
@@ -43318,7 +42303,7 @@
             // A level below the one the room is already at is not a goal, so the
             // form opens on the next one up rather than on zero
             const at = choices.find((choice) => choice.houseRoomHrid === list.value)?.level || 0;
-            if (editing.houseLevel <= at) editing.houseLevel = Math.min(MAX_HOUSE_ROOM_LEVEL, at + 1);
+            if (editing.houseLevel <= at) editing.houseLevel = Math.min(equipmentSavings_js.MAX_HOUSE_ROOM_LEVEL, at + 1);
             equipmentSavingsPanel.render();
         });
         list.addEventListener('keydown', (event) => event.stopPropagation());
@@ -43334,7 +42319,7 @@
         const level = document.createElement('input');
         level.type = 'number';
         level.min = '1';
-        level.max = String(MAX_HOUSE_ROOM_LEVEL);
+        level.max = String(equipmentSavings_js.MAX_HOUSE_ROOM_LEVEL);
         level.dataset.houseLevel = 'true';
         level.value = String(editing.houseLevel || '');
         Object.assign(level.style, {
@@ -43349,7 +42334,7 @@
         level.addEventListener('input', () => {
             // Capped as it is typed: the game stops at MAX_HOUSE_ROOM_LEVEL, and a
             // goal past it would be costed for levels that cannot be built
-            editing.houseLevel = Math.min(MAX_HOUSE_ROOM_LEVEL, Math.max(0, Math.floor(Number(level.value) || 0)));
+            editing.houseLevel = Math.min(equipmentSavings_js.MAX_HOUSE_ROOM_LEVEL, Math.max(0, Math.floor(Number(level.value) || 0)));
         });
         // On change rather than on every keystroke: the estimate below is worth
         // redrawing once the number has settled, not three times while it is typed
@@ -44122,6 +43107,8 @@
         inventoryBadgePrices,
         dungeonTokenTooltips: dungeonTokenTooltips$1,
         treasureTracker,
+        tradeLedgerStore,
+        tradeLedgerView,
         abilityBookPanel,
         watchlist,
         watchlistPanel,
@@ -44147,4 +43134,4 @@
 
     console.log('[Toolasha] Market library loaded');
 
-})(Toolasha.Core.config, Toolasha.Core.dataManager, Toolasha.Core.domObserver, Toolasha.Core.marketAPI, Toolasha.Utils.houseEfficiency, Toolasha.Utils.efficiency, Toolasha.Utils.bonusRevenueCalculator, Toolasha.Utils.enhancementCalculator, Toolasha.Utils.enhancementConfig, Toolasha.Utils.profitConstants, Toolasha.Utils.formatters, Toolasha.Utils.marketData, Toolasha.Utils.teaParser, Toolasha.Utils.profitHelpers, Toolasha.Utils.buffParser, Toolasha.Utils.equipmentParser, Toolasha.Utils.actionCalculator, Toolasha.Utils.tokenValuation, Toolasha.Utils.evWorkerManager, Toolasha.Utils.dom, Toolasha.Utils.materialCalculator, Toolasha.Utils.gameLookups, Toolasha.Utils.timerRegistry, Toolasha.Core.storage, Toolasha.Utils.cleanupRegistry, Toolasha.Utils.domObserverHelpers, Toolasha.Utils.marketplaceTabs, Toolasha.Utils.reactInput, Toolasha.Utils.panelZIndex, Toolasha.Utils.floatingPanel, Toolasha.Utils.panelGeometry, Toolasha.Utils.overlayFormat, Toolasha.Utils.overlayRows, Toolasha.Core.webSocketHook, Toolasha.Utils.toast, Toolasha.Utils.enhancementMultipliers, Toolasha.Utils.performanceMonitor, Toolasha.Utils.abilityCalc, Toolasha.Utils.houseCostCalculator, Toolasha.Utils.networthWorkerManager, Toolasha.Utils.marketplaceAutofill, Toolasha.Utils.skillHistory, Toolasha.Utils.abilityBooks, Toolasha.Utils.simplePanel, Toolasha.Core.settingsStorage, Toolasha.Utils.chestTally, Toolasha.Utils.choiceDialog);
+})(Toolasha.Core.config, Toolasha.Core.dataManager, Toolasha.Core.domObserver, Toolasha.Core.marketAPI, Toolasha.Utils.houseEfficiency, Toolasha.Utils.efficiency, Toolasha.Utils.bonusRevenueCalculator, Toolasha.Utils.enhancementCalculator, Toolasha.Utils.enhancementConfig, Toolasha.Utils.profitConstants, Toolasha.Utils.formatters, Toolasha.Utils.marketData, Toolasha.Utils.teaParser, Toolasha.Utils.numberParser, Toolasha.Utils.profitHelpers, Toolasha.Utils.buffParser, Toolasha.Utils.alchemyFees, Toolasha.Utils.equipmentParser, Toolasha.Utils.actionCalculator, Toolasha.Utils.tokenValuation, Toolasha.Utils.evWorkerManager, Toolasha.Utils.abilityCalc, Toolasha.Utils.dom, Toolasha.Utils.dungeonKeys, Toolasha.Utils.materialCalculator, Toolasha.Utils.gameLookups, Toolasha.Utils.timerRegistry, Toolasha.Core.storage, Toolasha.Utils.characterKey, Toolasha.Utils.cleanupRegistry, Toolasha.Utils.domObserverHelpers, Toolasha.Utils.marketplaceTabs, Toolasha.Utils.reactInput, Toolasha.Utils.panelZIndex, Toolasha.Utils.floatingPanel, Toolasha.Utils.panelGeometry, Toolasha.Utils.overlayFormat, Toolasha.Utils.watchlist, Toolasha.Utils.dropSources, Toolasha.Utils.overlayRows, Toolasha.Core.webSocketHook, Toolasha.Utils.bundleBridge, Toolasha.Utils.toast, Toolasha.Utils.mobile, Toolasha.Utils.gameServer, Toolasha.Utils.enhancementMultipliers, Toolasha.Core.performanceMonitor, Toolasha.Utils.backgroundWork, Toolasha.Utils.houseCostCalculator, Toolasha.Utils.networthWorkerManager, Toolasha.Utils.guildCreditPricing, Toolasha.Utils.chunkedHistory, Toolasha.Utils.marketplaceAutofill, Toolasha.Utils.skillHistory, Toolasha.Utils.abilityBooks, Toolasha.Utils.deferredLoad, Toolasha.Utils.simplePanel, Toolasha.Core.settingsStorage, Toolasha.Utils.chestTally, Toolasha.Utils.choiceDialog, Toolasha.Utils.chestImport, Toolasha.Utils.csvExport, Toolasha.Utils.roomSkills, Toolasha.Utils.equipmentSavings);

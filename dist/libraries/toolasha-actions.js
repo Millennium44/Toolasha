@@ -5,8 +5,27 @@
  * License: CC-BY-NC-SA-4.0
  */
 
-(function (dataManager, config, domObserver, enhancementConfig_js, enhancementCalculator_js, profitConstants_js, formatters_js, marketAPI, domObserverHelpers_js, gatheringProfit_js, productionProfit_js, uiComponents_js, actionPanelHelper_js, profitHelpers_js, webSocketHook, storage, scrollBuffValues_js, marketData_js, dom_js, timerRegistry_js, gameLookups_js, teaParser_js, profitCalculator, alchemyProfitCalculator, actionCalculator_js, efficiency_js, cleanupRegistry_js, buffParser_js, equipmentParser_js, experienceParser_js, reactInput_js, experienceCalculator_js, materialCalculator_js, marketplaceAutofill_js, marketplaceTabs_js, panelZIndex_js, expectedValueCalculator, bonusRevenueCalculator_js, combatSimUI, toast_js, shoppingList_js, itemNavigation_js, floatingPanel_js, panelGeometry_js, marketHistoryAPI, marketHistoryData_js, overlayRows_js, overlayFormat_js) {
+(function (dataManager, config, domObserver, enhancementConfig_js, enhancementCalculator_js, profitConstants_js, formatters_js, marketAPI, domObserverHelpers_js, gatheringProfit_js, productionProfit_js, uiComponents_js, actionPanelHelper_js, profitHelpers_js, webSocketHook, storage, bundleBridge_js, scrollBuffValues_js, marketData_js, dom_js, timerRegistry_js, gameLookups_js, teaParser_js, numberParser_js, profitCalculator, alchemyProfitCalculator, actionCalculator_js, alchemyFees_js, efficiency_js, cleanupRegistry_js, buffParser_js, liquidityCap_js, equipmentParser_js, experienceParser_js, reactInput_js, experienceCalculator_js, materialCalculator_js, marketplaceAutofill_js, marketplaceTabs_js, panelZIndex_js, expectedValueCalculator, bonusRevenueCalculator_js, combatSimUI, assetManifest, toast_js, actionContext_js, characterKey_js, shoppingList_js, itemNavigation_js, floatingPanel_js, panelGeometry_js, marketHistoryAPI, marketHistoryData_js, houseCostCalculator, overlayRows_js, overlayFormat_js) {
     'use strict';
+
+    function _interopNamespaceDefault(e) {
+        var n = Object.create(null);
+        if (e) {
+            Object.keys(e).forEach(function (k) {
+                if (k !== 'default') {
+                    var d = Object.getOwnPropertyDescriptor(e, k);
+                    Object.defineProperty(n, k, d.get ? d : {
+                        enumerable: true,
+                        get: function () { return e[k]; }
+                    });
+                }
+            });
+        }
+        n.default = e;
+        return Object.freeze(n);
+    }
+
+    var houseCostCalculator__namespace = /*#__PURE__*/_interopNamespaceDefault(houseCostCalculator);
 
     /**
      * Enhancement Display
@@ -1202,7 +1221,7 @@
      * Falls back to the bundled copy for the dev standalone build (single bundle, one instance).
      */
     function getWebSocketHook() {
-        return (typeof window !== 'undefined' && window.Toolasha?.Core?.webSocketHook) || webSocketHook;
+        return bundleBridge_js.webSocketHook() || webSocketHook;
     }
 
     /**
@@ -5380,6 +5399,14 @@
             return {
                 expectedAttempts: Math.round(result.attemptsRounded),
                 expectedProtections: Math.round(result.protectionCount),
+                // The distribution behind the expectation, kept with it so a finished
+                // run can be read back as a percentile of what was actually predicted
+                // — recomputing the chain later would measure the run against stats
+                // it was not played with. Additive: older sessions simply lack them,
+                // and every reader treats that as "no distribution recorded".
+                expectedAttemptsExact: result.attempts,
+                attemptsVariance: result.attemptsVariance,
+                minAttempts: result.minAttempts,
                 expectedTime: result.totalTime,
                 perActionTime: result.perActionTime,
                 successMultiplier: result.successMultiplier,
@@ -7152,79 +7179,6 @@
     }
 
     const tooltipObserver = new TooltipObserver();
-
-    /**
-     * Alchemy coin fees.
-     *
-     * The game charges gold to run an alchemy action, and that charge is nowhere in
-     * the game's data: `actionDetails.coinCost` is 0 for every `/actions/alchemy/*`
-     * action, and nothing the websocket reports records the fee that was actually
-     * paid (the decompose tracker drops the coin entry from `endCharacterItems`
-     * outright). Both formulas below are reverse-engineered, and this module is the
-     * one place that states them so the callers cannot drift apart again.
-     */
-
-    /** Alchemy types billed by item level: (10 + itemLevel) × 5 per item */
-    const LEVEL_PRICED_TYPES = new Set(['decompose', 'unrefine']);
-
-    /**
-     * Coinify is not billed at all — the item is the input and coins are the output,
-     * so there is no separate gold fee to pay. Every other coinify site in the repo
-     * already assumed this (the profit calculator hardcodes `coinCost = 0`, the action
-     * planner and the gold summary both skip coinify outright); only the coinify history
-     * viewer charged the transmute fee, which overstated every session's cost. The rule
-     * lives here now so the sites cannot disagree again.
-     */
-    const FREE_TYPES = new Set(['coinify']);
-
-    /**
-     * Coin fee for one alchemy action, including the item's bulk multiplier.
-     *
-     * Three families:
-     *  - decompose / unrefine — `(10 + itemLevel) * 5` per item
-     *  - transmute — `max(50, floor(sellPrice / 5))` per item
-     *  - coinify — free (see FREE_TYPES)
-     *
-     * Decompose used `max(50, floor(sellPrice / 5))` in the history viewer while
-     * every other decompose site used the item-level formula. Nothing in the repo
-     * can adjudicate that — the fee is absent from game data and unrecorded in
-     * session history — so the item-level formula won, being the one the other
-     * decompose sites and upstream already agreed on.
-     *
-     * @param {Object|null|undefined} itemDetails - Item details from dataManager
-     * @param {'decompose'|'unrefine'|'transmute'|'coinify'} alchemyType - Which alchemy action
-     * @param {number} [bulkMultiplierOverride] - Bulk size to bill at, for history callers that
-     *   recorded the multiplier in effect at the time rather than the item's current one
-     * @returns {number} Coin fee per action, or 0 when the item is unknown
-     */
-    function getAlchemyCoinCost(itemDetails, alchemyType, bulkMultiplierOverride) {
-        if (!itemDetails) return 0;
-        if (FREE_TYPES.has(alchemyType)) return 0;
-
-        const bulkMultiplier = itemDetails.alchemyDetail?.bulkMultiplier || 1;
-
-        if (LEVEL_PRICED_TYPES.has(alchemyType)) {
-            const itemLevel = itemDetails.itemLevel || 1;
-            return (10 + itemLevel) * 5 * bulkMultiplier;
-        }
-
-        const sellPrice = itemDetails.sellPrice || 0;
-        return Math.max(50, Math.floor(sellPrice / 5)) * bulkMultiplier;
-    }
-
-    /**
-     * Which alchemy type an action hrid names, for callers holding an action rather
-     * than a panel selection.
-     * @param {string} actionHrid - e.g. `/actions/alchemy/decompose`
-     * @returns {string|null} The alchemy type, or null when the hrid is not alchemy
-     */
-    function getAlchemyTypeFromActionHrid(actionHrid) {
-        if (!actionHrid) return null;
-        for (const type of ['decompose', 'unrefine', 'transmute', 'coinify']) {
-            if (actionHrid.includes(type)) return type;
-        }
-        return null;
-    }
 
     /**
      * Action Time Display Module
@@ -9058,9 +9012,9 @@
                     // Alchemy coin fees are not in the game's action data — actionDetails.coinCost
                     // is 0 for every alchemy action, so gold could never be the limiting material.
                     // The formulas live in utils/alchemy-fees.js, shared with every other fee site.
-                    const alchemyType = getAlchemyTypeFromActionHrid(actionDetails.hrid);
+                    const alchemyType = alchemyFees_js.getAlchemyTypeFromActionHrid(actionDetails.hrid);
                     const alchemyCoinCost =
-                        alchemyType && alchemyType !== 'coinify' ? getAlchemyCoinCost(alchItemDetails, alchemyType) : 0;
+                        alchemyType && alchemyType !== 'coinify' ? alchemyFees_js.getAlchemyCoinCost(alchItemDetails, alchemyType) : 0;
 
                     if (alchemyCoinCost > 0) {
                         const availableGold = byHrid['/items/coin'] || 0;
@@ -9905,6 +9859,11 @@
                     }
                 }
 
+                // Display seam: the quoted pace is bounded by how fast the outputs
+                // actually trade. A copy — the calculators themselves stay raw for
+                // every non-display consumer.
+                profitData = await liquidityCap_js.capProfitData(profitData);
+
                 if (this.activeBarProfitId !== calcId) return;
 
                 if (!profitData || typeof profitData.profitPerHour !== 'number') {
@@ -9920,6 +9879,11 @@
                 const sign = profitPerHour >= 0 ? '+' : '';
 
                 let html = `<span style="color:#888;">Profit:</span> <span style="color:${profitColor}; font-weight:600;">${sign}${this.formatLargeNumber(Math.abs(Math.round(profitPerHour)))}/hr</span>`;
+
+                // A capped figure is never shown silently
+                if (profitData.liquidityLimit) {
+                    html += liquidityCap_js.liquidityMarkerHtml(profitData.liquidityLimit, { compact: true });
+                }
 
                 if (isFinite(remainingActions) && remainingActions > 0 && profitData.actionsPerHour > 0) {
                     const profitPerAction =
@@ -21052,83 +21016,6 @@
     };
 
     /**
-     * Asset Manifest Utility
-     *
-     * Fetches the game's asset-manifest.json to resolve current webpack hashed
-     * sprite URLs without hardcoding hashes that break on game updates.
-     */
-
-    const MANIFEST_URL = 'https://www.milkywayidle.com/asset-manifest.json';
-
-    // Sprite keys to extract from the manifest (key → sprite name)
-    const SPRITE_KEYS = {
-        actions: 'actions_sprite',
-        items: 'items_sprite',
-        monsters: 'combat_monsters_sprite',
-        misc: 'misc_sprite',
-        abilities: 'abilities_sprite',
-    };
-
-    let manifestPromise = null;
-    let cachedUrls = null;
-
-    /**
-     * Fetch and parse the asset manifest, returning a map of sprite name → URL.
-     * Result is cached for the lifetime of the page.
-     * @returns {Promise<Object>} Map of sprite key → full URL
-     */
-    async function fetchManifest() {
-        if (cachedUrls) return cachedUrls;
-        if (manifestPromise) return manifestPromise;
-
-        manifestPromise = (async () => {
-            try {
-                const response = await fetch(MANIFEST_URL);
-                if (!response.ok) {
-                    console.warn('[AssetManifest] Failed to fetch manifest:', response.status);
-                    return {};
-                }
-
-                const manifest = await response.json();
-                const files = manifest.files || manifest; // handle both formats
-
-                const urls = {};
-                for (const [key, spriteName] of Object.entries(SPRITE_KEYS)) {
-                    // Find the entry whose key contains the sprite name and ends in .svg
-                    const entry = Object.entries(files).find(([k]) => k.includes(spriteName) && k.endsWith('.svg'));
-                    if (entry) {
-                        // Values may be relative paths like /static/media/...
-                        urls[key] = entry[1];
-                    }
-                }
-
-                cachedUrls = urls;
-                return urls;
-            } catch (error) {
-                console.warn('[AssetManifest] Error fetching manifest:', error);
-                return {};
-            }
-        })();
-
-        return manifestPromise;
-    }
-
-    /**
-     * Get a specific sprite URL by key.
-     * @param {'actions'|'items'|'monsters'|'misc'|'abilities'} key
-     * @returns {Promise<string|null>}
-     */
-    async function getSpriteUrl(key) {
-        const urls = await fetchManifest();
-        return urls[key] || null;
-    }
-
-    var assetManifest = {
-        fetchManifest,
-        getSpriteUrl,
-    };
-
-    /**
      * Pinned Actions Page
      * Adds a "Pinned" button to the left nav bar that shows all pinned actions
      * in a consolidated list with skill, level, profit/hr, and XP/hr.
@@ -21258,6 +21145,10 @@
                     level: null,
                     profitPerHour: Number.isFinite(zone.profitPerHour) ? zone.profitPerHour : null,
                     expPerHour: Number.isFinite(zone.xpPerHour) ? zone.xpPerHour : null,
+                    // What the run said it would sell each hour — the snapshot's
+                    // profit figure is the sim's raw claim, and this is what lets
+                    // the display bound it by market volume at read time
+                    sells: Array.isArray(zone.sells) ? zone.sells : [],
                     source: 'combat-sim',
                     simulatedAt: snapshot.savedAt ?? null,
                     gearChanged,
@@ -21456,6 +21347,7 @@
                     level: details.levelRequirement?.level ?? 0,
                     profitPerHour: stats?.profitPerHour ?? null,
                     expPerHour: stats?.expPerHour ?? null,
+                    liquidityLimit: stats?.liquidityLimit ?? null,
                 });
             }
 
@@ -21482,7 +21374,22 @@
                 if (!snapshot) return;
 
                 const fingerprint = await combatSimUI.currentGearFingerprint();
-                this.allActions.push(...combatZoneRows(snapshot, fingerprint));
+                const rows = combatZoneRows(snapshot, fingerprint);
+
+                // The snapshot stores the sim's raw claim; this page ranks zones
+                // against skilling actions, so the pace shown is bounded by how
+                // fast the loot actually sells — marked, never silently
+                for (const row of rows) {
+                    if (!(row.profitPerHour > 0) || !row.sells?.length) continue;
+                    const capped = await liquidityCap_js.capProfitRate({ goldPerHour: row.profitPerHour, sells: row.sells });
+                    if (capped.capped) {
+                        row.uncappedProfitPerHour = row.profitPerHour;
+                        row.profitPerHour = capped.goldPerHour;
+                        row.liquidityLimit = capped.limit;
+                    }
+                }
+
+                this.allActions.push(...rows);
             } catch (error) {
                 console.error('[PinnedActionsPage] Loading simulated combat zones failed:', error);
             }
@@ -21758,7 +21665,7 @@
                 <span style="color: #aaa; font-size: 0.9em; text-align: left;">${action.skill}</span>
                 <span style="color: #aaa; text-align: left;">${action.level ?? '—'}</span>
                 <span style="text-align: right; color: ${profitColor};">
-                    ${profitPrefix}${formatCompact(action.profitPerHour)}
+                    ${profitPrefix}${formatCompact(action.profitPerHour)}${liquidityCap_js.liquidityMarkerHtml(action.liquidityLimit, { compact: true })}
                 </span>
                 <span style="text-align: right; color: #7ec8e3;">
                     ${formatCompact(action.expPerHour)}
@@ -22080,27 +21987,43 @@
             try {
                 let profitPerHour = null;
                 let expPerHour = null;
+                let sells = [];
 
                 if (pinnedItemHrid && actionHrid.startsWith('/actions/alchemy/')) {
                     const alchemyType = actionHrid.replace('/actions/alchemy/', '');
                     const profitData = this._computeAlchemyStats(alchemyType, pinnedItemHrid);
                     profitPerHour = profitData?.profitPerHour ?? null;
                     expPerHour = profitData?.expPerHour ?? null;
+                    sells = profitData?.sells ?? [];
                 } else {
                     const isGathering = GATHERING_TYPES.includes(details.type);
                     if (isGathering) {
                         const profitData = await gatheringProfit_js.calculateGatheringProfit(actionHrid);
                         profitPerHour = profitData?.profitPerHour ?? null;
+                        sells = liquidityCap_js.sellsFromProfitData(profitData);
                     } else {
                         const profitData = await productionProfit_js.calculateProductionProfit(actionHrid);
                         profitPerHour = profitData?.profitPerHour ?? null;
+                        sells = liquidityCap_js.sellsFromProfitData(profitData);
                     }
 
                     const expData = experienceCalculator_js.calculateExpPerHour(actionHrid);
                     expPerHour = expData?.expPerHour ?? null;
                 }
 
-                const stats = { profitPerHour, expPerHour };
+                // The ranking seam: the pace this table sorts by is bounded by how
+                // fast the outputs actually trade, and a bounded row carries the
+                // marker payload the renderer must draw
+                let liquidityLimit = null;
+                if (profitPerHour > 0 && sells.length) {
+                    const capped = await liquidityCap_js.capProfitRate({ goldPerHour: profitPerHour, sells });
+                    if (capped.capped) {
+                        profitPerHour = capped.goldPerHour;
+                        liquidityLimit = capped.limit;
+                    }
+                }
+
+                const stats = { profitPerHour, expPerHour, liquidityLimit };
                 if (!actionPanelSort.cachedStats) actionPanelSort.cachedStats = {};
                 const cacheKey = pinnedItemHrid ? `${actionHrid}|${pinnedItemHrid}` : actionHrid;
                 actionPanelSort.cachedStats[cacheKey] = stats;
@@ -22140,7 +22063,7 @@
                 const expectedXP = profitData.successRate * fullXP + (1 - profitData.successRate) * fullXP * 0.1;
                 const expPerHour = profitData.actionsPerHour * expectedXP;
 
-                return { profitPerHour: profitData.profitPerHour, expPerHour };
+                return { profitPerHour: profitData.profitPerHour, expPerHour, sells: liquidityCap_js.sellsFromProfitData(profitData) };
             } catch (error) {
                 console.error('[PinnedActionsPage] Failed to compute alchemy stats:', error);
                 return null;
@@ -22405,6 +22328,7 @@
         'notifications_browserEnabled',
         'notifications_consumableLow',
         'notifications_marketListingFilled',
+        'notifications_marketListingUndercut',
         'notifications_otherCharacterIdle',
         'notifications_communityBuffExpiring',
         'notifications_labyrinthRunFinished',
@@ -22703,65 +22627,6 @@
     }
 
     /**
-     * Action context resolver
-     *
-     * Returns the equipment and active drinks to use when predicting an action's
-     * outcome (XP, time, profit, materials). When the loadoutSnapshot feature is
-     * enabled and a saved loadout matches the action type, that snapshot is used
-     * — so predictions reflect the gear the user would auto-equip rather than
-     * whatever happens to be on their character right now.
-     *
-     * Resolution priority (handled inside loadoutSnapshot._findSnapshot):
-     *   1. Skill-specific default loadout
-     *   2. All-skills default loadout
-     *   3. Skill-specific non-default
-     *   4. All-skills non-default
-     *   5. Fall back to currently-equipped gear / current drinks
-     *
-     * Equipment and drinks are resolved independently — it's valid to inherit the
-     * snapshot's equipment while no snapshot drinks exist, in which case the
-     * current drinks are used (and vice-versa).
-     */
-
-
-    /**
-     * The loadout store that actually has the loadouts in it.
-     *
-     * In the multi-bundle build every bundle that imports this file gets its own
-     * copy of the snapshot singleton, and only the Combat one has `initialize`
-     * called on it — the others never read storage, so they answer "no loadout" to
-     * everything and every caller quietly falls back to whatever is worn right now.
-     * The global is the initialized one. The bundled copy is the dev build, where
-     * there is only ever one.
-     *
-     * @returns {Object} The snapshot store
-     */
-    function loadouts$1() {
-        return (typeof window !== 'undefined' && window.Toolasha?.Combat?.loadoutSnapshot) || loadoutSnapshot;
-    }
-
-    /**
-     * @param {string} actionTypeHrid - e.g. "/action_types/cooking"
-     * @returns {{equipment: Map, drinks: Array}}
-     */
-    function resolveActionContext(actionTypeHrid) {
-        const loadoutSnapshot = loadouts$1();
-        const rawDrinks =
-            loadoutSnapshot.getSnapshotDrinksForSkill(actionTypeHrid) ?? dataManager.getActionDrinkSlots(actionTypeHrid);
-
-        // Only include drinks that are actually in stock — slotted-but-empty teas give no buff
-        const inventory = dataManager.getInventory() || [];
-        const drinks = (rawDrinks || []).filter(
-            (d) => d?.itemHrid && inventory.some((i) => i.itemHrid === d.itemHrid && (i.count || 0) > 0)
-        );
-
-        return {
-            equipment: loadoutSnapshot.getSnapshotForSkill(actionTypeHrid) ?? dataManager.getEquipment(),
-            drinks,
-        };
-    }
-
-    /**
      * Drink Calculator Utility
      * Calculates remaining drink time and queue coverage for non-combat skill panels.
      *
@@ -22795,7 +22660,7 @@
         if (!slots?.length) return [];
 
         const inventory = dataManager.getInventory() || [];
-        const { equipment } = resolveActionContext(actionTypeHrid);
+        const { equipment } = actionContext_js.resolveActionContext(actionTypeHrid);
         const itemDetailMap = gameData.itemDetailMap || {};
         const concentration = teaParser_js.getDrinkConcentration(equipment, itemDetailMap);
 
@@ -22842,7 +22707,7 @@
         if (!gameData) return 0;
 
         const skills = dataManager.getSkills();
-        const { equipment } = resolveActionContext(actionTypeHrid);
+        const { equipment } = actionContext_js.resolveActionContext(actionTypeHrid);
         if (!skills || !equipment) return 0;
 
         const queuedActions = dataManager.getCurrentActions();
@@ -25163,6 +25028,46 @@
         }
 
         /**
+         * The same rankings, with each row's displayed pace bounded by how fast its
+         * outputs actually trade.
+         *
+         * A decompose quoted at billions per hour on an essence that sells once a
+         * week is a real margin at a fictional pace, and a ranking sorts by pace.
+         * Rows are copied rather than edited — `rankAlchemyType`'s own results stay
+         * raw for anything else that asks it — and a bounded row carries the raw
+         * figure on `uncappedProfitPerHour` and the marker payload on
+         * `liquidityLimit`, which `renderTable` must always draw.
+         *
+         * @param {Array<Object>} rankings - From {@link calculateRankings}
+         * @returns {Promise<Array<Object>>} The rows, bounded where the market binds
+         */
+        async withLiquidityCaps(rankings) {
+            const bounded = [];
+            for (const entry of rankings || []) {
+                try {
+                    const capped = await liquidityCap_js.capProfitRate({
+                        goldPerHour: entry.profitPerHour,
+                        sells: liquidityCap_js.sellsFromProfitData(entry.profitData),
+                    });
+                    bounded.push(
+                        capped.capped
+                            ? {
+                                  ...entry,
+                                  profitPerHour: capped.goldPerHour,
+                                  uncappedProfitPerHour: entry.profitPerHour,
+                                  liquidityLimit: capped.limit,
+                              }
+                            : entry
+                    );
+                } catch (error) {
+                    console.error('[AlchemyBestItems] Bounding a row by market volume failed:', error);
+                    bounded.push(entry);
+                }
+            }
+            return bounded;
+        }
+
+        /**
          * Open the modal with rankings for the current alchemy type
          */
         async openModal() {
@@ -25174,7 +25079,7 @@
             }
 
             // Always recalculate on open so tea/gear changes are reflected
-            this.cachedRankings[this.currentType] = this.calculateRankings(this.currentType);
+            this.cachedRankings[this.currentType] = await this.withLiquidityCaps(this.calculateRankings(this.currentType));
 
             if (!this.modal) {
                 this.createModal();
@@ -25260,9 +25165,9 @@
                 padding: 4px 12px; border-radius: 4px; cursor: pointer;
                 border: 1px solid #555; font-size: 0.8rem; color: #fff;
             `;
-                tab.addEventListener('click', () => {
+                tab.addEventListener('click', async () => {
                     this.currentType = type;
-                    this.cachedRankings[type] = this.calculateRankings(type);
+                    this.cachedRankings[type] = await this.withLiquidityCaps(this.calculateRankings(type));
                     this.renderTable();
                 });
                 controls.appendChild(tab);
@@ -25545,11 +25450,14 @@
                 }
                 row.appendChild(catTd);
 
-                // Profit/hr
+                // Profit/hr — a volume-bounded figure always says so
                 const profitTd = document.createElement('td');
                 const profitVal = Math.round(item.profitPerHour);
                 profitTd.textContent = formatters_js.formatKMB(profitVal);
                 profitTd.style.cssText = `padding: 4px 8px; text-align: right; color: ${profitVal >= 0 ? '#4ade80' : '#f87171'};`;
+                if (item.liquidityLimit) {
+                    profitTd.insertAdjacentHTML('beforeend', liquidityCap_js.liquidityMarkerHtml(item.liquidityLimit, { compact: true }));
+                }
                 row.appendChild(profitTd);
 
                 // XP/hr
@@ -25982,428 +25890,6 @@
     }
 
     /**
-     * Consent gate for the adopt-once migration.
-     *
-     * Legacy account-wide data is never silently claimed by whichever character
-     * logs in first. The first time an adoptable value is found, one modal asks
-     * which character should inherit the pre-scoping data; until the user
-     * confirms, every legacy value stays where it is. The heuristics (game mode,
-     * test names, networth history) only choose which character the dialog
-     * preselects.
-     *
-     * The decision is stored account-wide under `adoptionTargetCharacterId` and
-     * can be reopened from the console via `Toolasha.debug.chooseDataOwner()`.
-     */
-
-    const DECISION_KEY = 'adoptionTargetCharacterId';
-
-    /** undefined = not read yet, null = undecided, string = chosen character id. */
-    let cachedDecision;
-
-    /** One prompt per session, shared by every concurrent readScoped call. */
-    let promptPromise = null;
-
-    /**
-     * The character chosen to inherit legacy data, or null while undecided.
-     * @returns {Promise<string|null>} Chosen character id
-     */
-    async function getAdoptionTargetId() {
-        if (cachedDecision === undefined) {
-            cachedDecision = await storage.get(DECISION_KEY, 'settings', null);
-        }
-        return cachedDecision;
-    }
-
-    /**
-     * Record the choice.
-     * @param {string} id - Character id that inherits legacy data
-     * @returns {Promise<void>}
-     */
-    async function setAdoptionTargetId(id) {
-        cachedDecision = id;
-        await storage.set(DECISION_KEY, id, 'settings', true);
-    }
-
-    /**
-     * Show the choose-a-character dialog (once per session).
-     *
-     * Fire-and-forget from data paths: callers must not await this before
-     * returning a fallback, or a modal would block feature initialization.
-     * @param {{recommendedId?: string|null}} [options] - Which character to preselect
-     * @returns {Promise<string|null>} The chosen id, or null for "not now"
-     */
-    function requestAdoptionConsent(options = {}) {
-        if (promptPromise) return promptPromise;
-        if (typeof document === 'undefined' || !document.body) return Promise.resolve(null);
-
-        promptPromise = (async () => {
-            try {
-                const names = (await storage.get('accountCharacterNames', 'settings', null)) || {};
-                const currentId = dataManager.getCurrentCharacterId();
-                const currentName = dataManager.getCurrentCharacterName?.() || '';
-                const known = { ...names };
-                if (currentId && !known[currentId]) known[currentId] = currentName || String(currentId);
-                const recommended = options.recommendedId || currentId;
-                const chosen = await showDialog(known, recommended, currentId);
-                if (chosen) await setAdoptionTargetId(chosen);
-                return chosen;
-            } catch (error) {
-                console.error('[AdoptionConsent] Prompt failed:', error);
-                return null;
-            }
-        })();
-        return promptPromise;
-    }
-
-    /**
-     * The dialog itself. Resolves with a character id or null for "not now".
-     * @param {Record<string, string>} characters - id → display name
-     * @param {string|null} recommendedId - Preselected id
-     * @param {string|null} currentId - The logged-in character, labeled as such
-     * @returns {Promise<string|null>} Choice
-     */
-    function showDialog(characters, recommendedId, currentId) {
-        return new Promise((resolve) => {
-            const overlay = document.createElement('div');
-            // Above every panel tier — this blocks a data migration, nothing may cover it
-            overlay.style.cssText =
-                'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:2147483600; ' +
-                'display:flex; align-items:center; justify-content:center;';
-
-            const ids = Object.keys(characters);
-            const rows = ids
-                .map((id) => {
-                    const checked = id === recommendedId ? ' checked' : '';
-                    const who = `${characters[id]}${id === currentId ? ' (this character)' : ''}`;
-                    return (
-                        `<label style="display:block; margin:4px 0; cursor:pointer;">` +
-                        `<input type="radio" name="mwi-adopt-target" value="${id}"${checked}> ${who}</label>`
-                    );
-                })
-                .join('');
-
-            const card = document.createElement('div');
-            card.style.cssText =
-                'background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:8px; ' +
-                'padding:16px 20px; max-width:420px; font-size:13px; line-height:1.5;';
-            card.innerHTML =
-                `<div style="font-weight:700; font-size:14px; margin-bottom:8px;">Toolasha — who owns the saved data?</div>` +
-                `<div style="color:#aaa; margin-bottom:10px;">Saved data from before per-character scoping was found ` +
-                `(watchlist, savings targets, trackers, panel state…). Choose which character should inherit it — ` +
-                `nothing moves until you confirm.</div>` +
-                rows +
-                `<div style="margin-top:12px; display:flex; gap:8px; justify-content:flex-end;">` +
-                `<button id="mwi-adopt-later" style="background:#333; color:#ccc; border:1px solid #555; border-radius:4px; padding:4px 12px; cursor:pointer;">Not now</button>` +
-                `<button id="mwi-adopt-confirm" style="background:#4a6fdc; color:#fff; border:none; border-radius:4px; padding:4px 12px; cursor:pointer;">Confirm</button>` +
-                `</div>` +
-                `<div style="color:#777; margin-top:8px; font-size:11px;">Applies as data is next read; reload to apply everywhere. ` +
-                `Reopen later with Toolasha.debug.chooseDataOwner().</div>`;
-
-            overlay.appendChild(card);
-            document.body.appendChild(overlay);
-
-            const done = (value) => {
-                overlay.remove();
-                resolve(value);
-            };
-            card.querySelector('#mwi-adopt-confirm').addEventListener('click', () => {
-                const picked = card.querySelector('input[name="mwi-adopt-target"]:checked');
-                done(picked ? picked.value : null);
-            });
-            card.querySelector('#mwi-adopt-later').addEventListener('click', () => done(null));
-        });
-    }
-
-    /**
-     * Append-only history, stored as records rather than as one array.
-     *
-     * ## The write amplification this exists to end
-     *
-     * A recorder that keeps its history in a single key does the same three things
-     * on every event: read the whole array, push one entry, write the whole array
-     * back. The cost of recording one loot drop is therefore the size of every loot
-     * drop already recorded, and it grows for as long as the player keeps playing —
-     * which is the shape of every quota failure this script has had. The loot log
-     * rewrote five hundred entries per `loot_log_updated`; the alchemy trackers
-     * rewrote every session ever, immediately, on every completed action.
-     *
-     * Splitting the array over several keys makes the write proportional to what
-     * changed instead of to what is kept. A new entry lands in one record; the other
-     * records are untouched, so IndexedDB never sees them.
-     *
-     * ## Chunks, not one key per entry
-     *
-     * A key per entry would make every write minimal, and would also put a thousand
-     * keys per character into a store whose soft budget is measured in hundreds (see
-     * `STORE_KEY_BUDGETS` in `core/storage.js`). Grouping entries by the hour, day or
-     * month they belong to keeps both numbers small: the record written is the
-     * current bucket, which holds the handful of entries recorded since the bucket
-     * opened, and the key count grows with calendar time rather than with events.
-     *
-     * ## What the callers keep
-     *
-     * Nothing above this changes shape. A recorder still holds its history as one
-     * array, still hands the whole array to `save()`, and still gets the whole array
-     * back from `load()`. The diff against the last known state is what turns a
-     * whole-array save into a one-record write, so the call sites did not have to
-     * learn about chunking to stop paying for it.
-     *
-     * ## Migration, and what happens when the disk is full
-     *
-     * The legacy single-array key is split on the first read and then deleted. If
-     * the split cannot be written — which on a full disk is exactly when it matters —
-     * the legacy key is left alone and the recorder keeps using it. A migration that
-     * bricked the history the moment storage filled up would be worse than the write
-     * amplification it was meant to fix.
-     */
-
-
-    /**
-     * The character ids a set of record keys names.
-     *
-     * Record keys are `<prefix>_<characterId>_<chunkId>`, so the id is the segment
-     * between the prefix and the next underscore. Character ids are alphanumeric
-     * (see `NETWORTH_SERIES_RE` in `utils/character-key.js`), which is what makes
-     * that split unambiguous.
-     *
-     * @param {Array<string>} keys - Keys from one store
-     * @param {string} prefix - The record prefix including its trailing underscore
-     * @returns {Array<string>} Character ids, in key order, deduplicated
-     */
-    function idsFromRecordKeys(keys, prefix) {
-        const ids = [];
-        const seen = new Set();
-        for (const key of keys || []) {
-            if (typeof key !== 'string' || !key.startsWith(prefix)) continue;
-            const rest = key.slice(prefix.length);
-            const end = rest.indexOf('_');
-            if (end <= 0) continue;
-            const id = rest.slice(0, end);
-            if (seen.has(id)) continue;
-            seen.add(id);
-            ids.push(id);
-        }
-        return ids;
-    }
-
-    /**
-     * Every record key in a store belonging to one character.
-     *
-     * @param {Array<string>} keys - Keys from one store
-     * @param {string} prefix - The record prefix, without its trailing underscore
-     * @param {string} charId - Whose records to pick out
-     * @returns {Array<string>} Matching keys, in chunk-id order
-     */
-    function recordKeysFor(keys, prefix, charId) {
-        const scoped = `${prefix}_${charId}_`;
-        return (keys || []).filter((key) => typeof key === 'string' && key.startsWith(scoped)).sort();
-    }
-
-    /**
-     * Per-character storage key helpers.
-     *
-     * Character-specific state stored under a bare key leaks between characters —
-     * the market cow's watchlist shows up on the iron cow. Every feature that
-     * persists per-character state should build its key through {@link characterKey}
-     * and read through {@link readScoped}, which also handles one-time adoption of
-     * the legacy global value.
-     *
-     * Adoption policy: a legacy global value almost always belongs to the account's
-     * main character. It is adopted (moved to the scoped key, legacy deleted) only
-     * by an adoption candidate — a non-ironcow character which, when several
-     * characters have networth history, owns the longest series. Other characters
-     * simply start clean and leave the legacy value in place for the main to claim.
-     */
-
-    const NETWORTH_SERIES_RE = /^networth_[0-9a-zA-Z]+$/;
-
-    /**
-     * The networth series after it was split into one record per month.
-     *
-     * A migrated character has no `networth_<id>` key at all, so the length
-     * comparison below would see nothing and let every character adopt — including
-     * the alts the policy exists to keep out.
-     */
-    const NETWORTH_RECORD_PREFIX = 'networthSeries';
-
-    /** Per-character memo of the adoption decision, reset only on reload. */
-    const adoptionDecisions = new Map();
-
-    /**
-     * A storage key scoped to the character now logged in.
-     *
-     * Uses the codebase's dominant `${base}_${charId}` idiom with a `'default'`
-     * fallback before login, so account-view suffix parsing keeps working.
-     * @param {string} base - The unscoped key
-     * @returns {string} `base_<characterId>`, or `base_default` before login
-     */
-    function characterKey(base) {
-        return `${base}_${dataManager.getCurrentCharacterId() || 'default'}`;
-    }
-
-    /**
-     * How many networth points one character has recorded, either way it is stored.
-     *
-     * The pre-migration single key wins where it exists: its presence is what says
-     * the split has not happened, so any records beside it are a half-finished
-     * migration rather than the series.
-     *
-     * @param {Array<string>} keys - Every key in the networth store
-     * @param {string} id - Whose series
-     * @returns {Promise<number>} Points recorded
-     */
-    async function networthSeriesLength(keys, id) {
-        const legacy = await storage.get(`networth_${id}`, 'networthHistory', null);
-        if (Array.isArray(legacy) && legacy.length > 0) return legacy.length;
-
-        let length = 0;
-        for (const key of recordKeysFor(keys, NETWORTH_RECORD_PREFIX, id)) {
-            const chunk = await storage.get(key, 'networthHistory', null);
-            if (Array.isArray(chunk)) length += chunk.length;
-        }
-        return length;
-    }
-
-    /**
-     * Whether the given character should inherit legacy (pre-scoping) global data.
-     *
-     * Iron cow characters never adopt — the legacy value was almost certainly
-     * written by the market character. When several characters have networth
-     * history, only the one with the longest series adopts. On any failure the
-     * check errs toward adopting, so a solo-character install migrates cleanly.
-     * @param {string} charId - The character considering adoption
-     * @returns {Promise<boolean>} True when this character may claim legacy data
-     */
-    async function isAdoptionCandidate(charId) {
-        if (adoptionDecisions.has(charId)) {
-            return adoptionDecisions.get(charId);
-        }
-
-        let decision = true;
-        try {
-            // Same signal MCS reads: character.gameMode. 'standard' is the market
-            // character; 'ironcow' and 'legacy_ironcow' never adopt.
-            const gameMode = dataManager.getCurrentCharacterGameMode();
-            const name =
-                typeof dataManager.getCurrentCharacterName === 'function'
-                    ? dataManager.getCurrentCharacterName() || ''
-                    : '';
-            if (typeof gameMode === 'string' && gameMode.includes('ironcow')) {
-                decision = false;
-            } else if (/test/i.test(name)) {
-                // A test character is never the main, whatever its history says.
-                decision = false;
-            } else {
-                const keys = await storage.getAllKeys('networthHistory');
-                const ids = new Set([
-                    ...keys
-                        .filter((key) => typeof key === 'string' && NETWORTH_SERIES_RE.test(key))
-                        .map((key) => key.slice('networth_'.length)),
-                    ...idsFromRecordKeys(keys, `${NETWORTH_RECORD_PREFIX}_`),
-                ]);
-
-                if (ids.size > 0 && !ids.has(charId)) {
-                    // Someone on this account has recorded history and this
-                    // character has none — it is not the main. Skipping the
-                    // comparison here is what once let a fresh alt adopt
-                    // everything just by logging in first.
-                    decision = false;
-                } else if (ids.size > 1) {
-                    let bestId = null;
-                    let bestLength = -1;
-                    for (const id of ids) {
-                        const length = await networthSeriesLength(keys, id);
-                        if (length > bestLength) {
-                            bestLength = length;
-                            bestId = id;
-                        }
-                    }
-                    decision = bestId === null || bestId === charId;
-                }
-            }
-        } catch (error) {
-            console.error('[CharacterKey] Adoption check failed, adopting by default:', error);
-            decision = true;
-        }
-
-        adoptionDecisions.set(charId, decision);
-        return decision;
-    }
-
-    /**
-     * Read a per-character key, migrating any legacy global value exactly once.
-     *
-     * Looks up `characterKey(base)` first. When absent and the legacy bare `base`
-     * key exists, either adopts it (moves it to this character's key and deletes
-     * the legacy copy — main character only, see module doc) or discards it
-     * (deletes the legacy copy and starts clean), per `options.migrate`.
-     *
-     * Discard is for state derived from one character's gear or sim results, where
-     * inheriting another character's data is worse than starting empty.
-     * @param {string} base - The unscoped key
-     * @param {string} [storeName] - Object store name (default: 'settings')
-     * @param {*} [defaultValue] - Value returned when neither key exists
-     * @param {{migrate?: 'adopt'|'discard'}} [options] - Legacy migration mode (default: 'adopt')
-     * @returns {Promise<*>} The stored value or default
-     */
-    async function readScoped(base, storeName = 'settings', defaultValue = null, options = {}) {
-        const { migrate = 'adopt' } = options;
-
-        const scopedKey = characterKey(base);
-        const scoped = await storage.get(scopedKey, storeName, null);
-        if (scoped !== null) {
-            return scoped;
-        }
-
-        const legacy = await storage.get(base, storeName, null);
-        if (legacy === null) {
-            return defaultValue;
-        }
-
-        if (migrate === 'discard') {
-            await storage.delete(base, storeName);
-            return defaultValue;
-        }
-
-        const charId = dataManager.getCurrentCharacterId();
-        if (!charId) {
-            return defaultValue;
-        }
-
-        // Adoption is user-confirmed, never automatic. The heuristics only pick
-        // which character the dialog preselects.
-        const targetId = await getAdoptionTargetId();
-        if (targetId === null) {
-            // Fire-and-forget: awaiting a modal here would hang feature init.
-            isAdoptionCandidate(charId).then(
-                (candidate) => requestAdoptionConsent({ recommendedId: candidate ? charId : null }),
-                () => requestAdoptionConsent({})
-            );
-            return defaultValue;
-        }
-        if (targetId !== charId) {
-            // Leave the legacy value in place for the chosen character to claim.
-            return defaultValue;
-        }
-
-        await storage.set(scopedKey, legacy, storeName, true);
-        await storage.delete(base, storeName);
-        return legacy;
-    }
-
-    /**
-     * Write a value under this character's scoped key.
-     * @param {string} base - The unscoped key
-     * @param {*} value - Value to store
-     * @param {string} [storeName] - Object store name (default: 'settings')
-     * @param {boolean} [immediate] - Skip write debouncing
-     * @returns {Promise<boolean>} Success status
-     */
-    async function writeScoped(base, value, storeName = 'settings', immediate = false) {
-        return storage.set(characterKey(base), value, storeName, immediate);
-    }
-
-    /**
      * Alchemy Item Pins
      *
      * Pin the items you alchemize to the front of the picker, per action.
@@ -26551,7 +26037,7 @@
 
             // Read here rather than at import, so a character switch — which
             // re-initialises the feature — picks up that character's own pins
-            this.pins = (await readScoped(STORAGE_KEY, 'settings', {}, { migrate: 'adopt' })) || {};
+            this.pins = (await characterKey_js.readScoped(STORAGE_KEY, 'settings', {}, { migrate: 'adopt' })) || {};
 
             this.styleEl = document.createElement('style');
             this.styleEl.id = STYLE_ID;
@@ -26693,7 +26179,7 @@
 
             this.pins = togglePin(this.pins, action, itemHrid);
             this.apply();
-            writeScoped(STORAGE_KEY, this.pins, 'settings').catch((error) => {
+            characterKey_js.writeScoped(STORAGE_KEY, this.pins, 'settings').catch((error) => {
                 console.error('[AlchemyItemPins] Saving pins failed:', error);
             });
         }
@@ -27211,7 +26697,7 @@
 
 
     function getLoadoutSnapshot() {
-        return window.Toolasha?.Combat?.loadoutSnapshot || loadoutSnapshot;
+        return bundleBridge_js.loadoutSnapshot() || loadoutSnapshot;
     }
 
     /**
@@ -28553,7 +28039,7 @@
         }
 
         _getItemName(hrid) {
-            const gameData = window.Toolasha?.Core?.dataManager?.getInitClientData?.();
+            const gameData = bundleBridge_js.dataManager()?.getInitClientData?.();
             return gameData?.itemDetailMap?.[hrid]?.name || null;
         }
 
@@ -30002,7 +29488,7 @@
         try {
             // 'discard' rather than 'adopt': there is no legacy global list to
             // inherit, and if one ever appears it belongs to whoever wrote it
-            const stored = await readScoped(GOALS_KEY, 'settings', [], { migrate: 'discard' });
+            const stored = await characterKey_js.readScoped(GOALS_KEY, 'settings', [], { migrate: 'discard' });
             if (!Array.isArray(stored)) return [];
             return stored.map((goal) => normalizeGoal(goal)).filter(Boolean);
         } catch (error) {
@@ -30022,7 +29508,7 @@
             .filter(Boolean)
             .slice(0, MAX_GOALS);
         try {
-            await writeScoped(GOALS_KEY, clean, 'settings');
+            await characterKey_js.writeScoped(GOALS_KEY, clean, 'settings');
         } catch (error) {
             console.error('[GoalPlanner] Saving goals failed:', error);
         }
@@ -30065,7 +29551,7 @@
      */
     async function loadSnapshot() {
         try {
-            const stored = await readScoped(SNAPSHOT_KEY, 'settings', null, { migrate: 'discard' });
+            const stored = await characterKey_js.readScoped(SNAPSHOT_KEY, 'settings', null, { migrate: 'discard' });
             if (!stored || !Array.isArray(stored.plans)) return null;
             return stored;
         } catch (error) {
@@ -30081,7 +29567,7 @@
      */
     async function saveSnapshot(plans) {
         try {
-            await writeScoped(SNAPSHOT_KEY, { plans: Array.isArray(plans) ? plans : [], computedAt: Date.now() });
+            await characterKey_js.writeScoped(SNAPSHOT_KEY, { plans: Array.isArray(plans) ? plans : [], computedAt: Date.now() });
         } catch (error) {
             console.error('[GoalPlanner] Saving the last plans failed:', error);
         }
@@ -30105,7 +29591,7 @@
      */
     async function loadCombatGear() {
         try {
-            const stored = await readScoped(COMBAT_GEAR_KEY, 'settings', null, { migrate: 'discard' });
+            const stored = await characterKey_js.readScoped(COMBAT_GEAR_KEY, 'settings', null, { migrate: 'discard' });
             return {
                 preferred: typeof stored?.preferred === 'string' ? stored.preferred : null,
                 baseline: stored?.baseline && Number.isFinite(stored.baseline.savedAt) ? stored.baseline : null,
@@ -30125,7 +29611,7 @@
         const current = await loadCombatGear();
         const next = { ...current, ...(patch || {}) };
         try {
-            await writeScoped(COMBAT_GEAR_KEY, next, 'settings');
+            await characterKey_js.writeScoped(COMBAT_GEAR_KEY, next, 'settings');
         } catch (error) {
             console.error('[GoalPlanner] Saving the combat gear record failed:', error);
         }
@@ -30234,7 +29720,7 @@
      * @returns {Object} The snapshot store
      */
     function loadouts() {
-        return (typeof window !== 'undefined' && window.Toolasha?.Combat?.loadoutSnapshot) || loadoutSnapshot;
+        return bundleBridge_js.loadoutSnapshot() || loadoutSnapshot;
     }
 
     /**
@@ -30609,6 +30095,11 @@
      */
     const cache = new Map();
 
+    /** Forget everything measured, for tests and for a hard refresh */
+    function resetLiquidityCache() {
+        cache.clear();
+    }
+
     /**
      * How many units of an item change hands in a day.
      *
@@ -30833,206 +30324,19 @@
         return { rates: bounded, measured };
     }
 
-    /**
-     * House Upgrade Cost Calculator
-     * Calculates material and coin costs for house room upgrades
-     */
-
-
-    class HouseCostCalculator {
-        constructor() {
-            this.isInitialized = false;
-        }
-
-        /**
-         * Initialize the calculator
-         */
-        async initialize() {
-            if (this.isInitialized) return;
-
-            // Ensure market data is loaded (check in-memory first to avoid storage reads)
-            if (!marketAPI.isLoaded()) {
-                await marketAPI.fetch();
-            }
-
-            this.isInitialized = true;
-        }
-
-        /**
-         * Get current level of a house room
-         * @param {string} houseRoomHrid - House room HRID (e.g., "/house_rooms/brewery")
-         * @returns {number} Current level (0-8)
-         */
-        getCurrentRoomLevel(houseRoomHrid) {
-            return dataManager.getHouseRoomLevel(houseRoomHrid);
-        }
-
-        /**
-         * Calculate cost for a single level upgrade
-         * @param {string} houseRoomHrid - House room HRID
-         * @param {number} targetLevel - Target level (1-8)
-         * @returns {Promise<Object>} Cost breakdown
-         */
-        async calculateLevelCost(houseRoomHrid, targetLevel) {
-            const initData = dataManager.getInitClientData();
-            if (!initData || !initData.houseRoomDetailMap) {
-                throw new Error('Game data not loaded');
-            }
-
-            const roomData = initData.houseRoomDetailMap[houseRoomHrid];
-            if (!roomData) {
-                throw new Error(`House room not found: ${houseRoomHrid}`);
-            }
-
-            const upgradeCosts = roomData.upgradeCostsMap[targetLevel];
-            if (!upgradeCosts) {
-                throw new Error(`No upgrade costs for level ${targetLevel}`);
-            }
-
-            // Calculate costs
-            let totalCoins = 0;
-            const materials = [];
-
-            for (const item of upgradeCosts) {
-                if (item.itemHrid === '/items/coin') {
-                    totalCoins = item.count;
-                } else {
-                    const marketPrice = await this.getItemMarketPrice(item.itemHrid);
-                    materials.push({
-                        itemHrid: item.itemHrid,
-                        count: item.count,
-                        marketPrice: marketPrice,
-                        totalValue: marketPrice * item.count,
-                    });
-                }
-            }
-
-            const totalMaterialValue = materials.reduce((sum, m) => sum + m.totalValue, 0);
-
-            return {
-                level: targetLevel,
-                coins: totalCoins,
-                materials: materials,
-                totalValue: totalCoins + totalMaterialValue,
-            };
-        }
-
-        /**
-         * Calculate cumulative cost from current level to target level
-         * @param {string} houseRoomHrid - House room HRID
-         * @param {number} currentLevel - Current level
-         * @param {number} targetLevel - Target level (currentLevel+1 to 8)
-         * @returns {Promise<Object>} Aggregated costs
-         */
-        async calculateCumulativeCost(houseRoomHrid, currentLevel, targetLevel) {
-            if (targetLevel <= currentLevel) {
-                throw new Error('Target level must be greater than current level');
-            }
-
-            if (targetLevel > 8) {
-                throw new Error('Maximum house level is 8');
-            }
-
-            let totalCoins = 0;
-            const materialMap = new Map(); // itemHrid -> {itemHrid, count, marketPrice, totalValue}
-
-            // Aggregate costs across all levels
-            for (let level = currentLevel + 1; level <= targetLevel; level++) {
-                const levelCost = await this.calculateLevelCost(houseRoomHrid, level);
-
-                totalCoins += levelCost.coins;
-
-                // Aggregate materials
-                for (const material of levelCost.materials) {
-                    if (materialMap.has(material.itemHrid)) {
-                        const existing = materialMap.get(material.itemHrid);
-                        existing.count += material.count;
-                        existing.totalValue += material.totalValue;
-                    } else {
-                        materialMap.set(material.itemHrid, { ...material });
-                    }
-                }
-            }
-
-            const materials = Array.from(materialMap.values());
-            const totalMaterialValue = materials.reduce((sum, m) => sum + m.totalValue, 0);
-
-            return {
-                fromLevel: currentLevel,
-                toLevel: targetLevel,
-                coins: totalCoins,
-                materials: materials,
-                totalValue: totalCoins + totalMaterialValue,
-            };
-        }
-
-        /**
-         * Get market price for an item (uses 'ask' price for buying materials)
-         * @param {string} itemHrid - Item HRID
-         * @returns {Promise<number>} Market price
-         */
-        async getItemMarketPrice(itemHrid) {
-            // Use 'ask' mode since house upgrades involve buying materials
-            const price = marketData_js.getItemPrice(itemHrid, { mode: 'ask' });
-
-            if (price === null || price === 0) {
-                // Fallback to vendor price from game data
-                const initData = dataManager.getInitClientData();
-                const itemData = initData?.itemDetailMap?.[itemHrid];
-                return itemData?.sellPrice || 0;
-            }
-
-            return price;
-        }
-
-        /**
-         * Get player's inventory count for an item
-         * @param {string} itemHrid - Item HRID
-         * @returns {number} Item count in inventory
-         */
-        getInventoryCount(itemHrid) {
-            const inventory = dataManager.getInventory();
-            if (!inventory) return 0;
-
-            // Only count items in inventory (not equipped) with no enhancement
-            // Enhanced items and equipped items cannot be used for house construction
-            const item = inventory.find(
-                (i) =>
-                    i.itemHrid === itemHrid &&
-                    i.itemLocationHrid === '/item_locations/inventory' &&
-                    (!i.enhancementLevel || i.enhancementLevel === 0)
-            );
-            return item ? item.count : 0;
-        }
-
-        /**
-         * Get item name from game data
-         * @param {string} itemHrid - Item HRID
-         * @returns {string} Item name
-         */
-        getItemName(itemHrid) {
-            if (itemHrid === '/items/coin') {
-                return 'Gold';
-            }
-
-            const initData = dataManager.getInitClientData();
-            const itemData = initData?.itemDetailMap?.[itemHrid];
-            return itemData?.name || 'Unknown Item';
-        }
-
-        /**
-         * Get house room name from game data
-         * @param {string} houseRoomHrid - House room HRID
-         * @returns {string} Room name
-         */
-        getRoomName(houseRoomHrid) {
-            const initData = dataManager.getInitClientData();
-            const roomData = initData?.houseRoomDetailMap?.[houseRoomHrid];
-            return roomData?.name || 'Unknown Room';
-        }
-    }
-
-    const houseCostCalculator = new HouseCostCalculator();
+    var marketLiquidity = {
+        LIQUIDITY_SHARE,
+        LIQUIDITY_HORIZON_DAYS,
+        LIQUIDITY_WINDOW_DAYS,
+        dailyVolume,
+        absorbablePerHour,
+        describeVelocity,
+        sellThrottle,
+        applySellLimit,
+        applyInputNote,
+        applyLiquidityLimits,
+        resetLiquidityCache,
+    };
 
     /**
      * The join between the game and the planner.
@@ -31054,7 +30358,7 @@
      * - buy versus craft — `crafting-plan-calculator.js`
      * - an enhancement run — `tooltip-enhancement.js`'s path optimiser, over the
      *   Markov chain in `utils/enhancement-calculator.js`
-     * - house upgrades — `features/house/house-cost-calculator.js`
+     * - house upgrades — `utils/house-cost-calculator.js`
      *
      * A planner that re-derived any of them would be a second opinion, and two
      * numbers for the same question is worse than one. The only arithmetic written
@@ -31756,7 +31060,7 @@
         if (!wanted.length) return context;
 
         try {
-            await houseCostCalculator.initialize();
+            await houseCostCalculator__namespace.initialize();
         } catch (error) {
             console.error('[GoalPlanner] Preparing the house calculator failed:', error);
         }
@@ -31769,10 +31073,10 @@
             const key = `${goal.roomHrid}|${fromLevel}|${toLevel}`;
             if (context._houseCosts.get(key)) continue;
             try {
-                const cost = await houseCostCalculator.calculateCumulativeCost(goal.roomHrid, fromLevel, toLevel);
+                const cost = await houseCostCalculator__namespace.calculateCumulativeCost(goal.roomHrid, fromLevel, toLevel);
                 const materials = (cost?.materials || []).map((material) => ({
                     ...material,
-                    name: houseCostCalculator.getItemName(material.itemHrid),
+                    name: houseCostCalculator__namespace.getItemName(material.itemHrid),
                 }));
                 context._houseCosts.set(key, { ...cost, materials });
             } catch (error) {
@@ -33140,6 +32444,7 @@
         drinkTimer: drinkTimer$1,
         skillingOptimizer,
         goalPlanner: goalPlannerPanel,
+        marketLiquidity,
     };
 
     // Console-driven debug tools, kept out of the feature namespaces because
@@ -33151,4 +32456,4 @@
 
     console.log('[Toolasha] Actions library loaded');
 
-})(Toolasha.Core.dataManager, Toolasha.Core.config, Toolasha.Core.domObserver, Toolasha.Utils.enhancementConfig, Toolasha.Utils.enhancementCalculator, Toolasha.Utils.profitConstants, Toolasha.Utils.formatters, Toolasha.Core.marketAPI, Toolasha.Utils.domObserverHelpers, Toolasha.Market.gatheringProfit, Toolasha.Market.productionProfit, Toolasha.Utils.uiComponents, Toolasha.Utils.actionPanelHelper, Toolasha.Utils.profitHelpers, Toolasha.Core.webSocketHook, Toolasha.Core.storage, Toolasha.Utils.scrollBuffValues, Toolasha.Utils.marketData, Toolasha.Utils.dom, Toolasha.Utils.timerRegistry, Toolasha.Utils.gameLookups, Toolasha.Utils.teaParser, Toolasha.Market.profitCalculator, Toolasha.Market.alchemyProfitCalculator, Toolasha.Utils.actionCalculator, Toolasha.Utils.efficiency, Toolasha.Utils.cleanupRegistry, Toolasha.Utils.buffParser, Toolasha.Utils.equipmentParser, Toolasha.Utils.experienceParser, Toolasha.Utils.reactInput, Toolasha.Utils.experienceCalculator, Toolasha.Utils.materialCalculator, Toolasha.Utils.marketplaceAutofill, Toolasha.Utils.marketplaceTabs, Toolasha.Utils.panelZIndex, Toolasha.Market.expectedValueCalculator, Toolasha.Utils.bonusRevenueCalculator, Toolasha.Sim.combatSimUI, Toolasha.Utils.toast, Toolasha.Utils.shoppingList, Toolasha.Utils.itemNavigation, Toolasha.Utils.floatingPanel, Toolasha.Utils.panelGeometry, Toolasha.Market.marketHistoryAPI, Toolasha.Market.marketHistoryData, Toolasha.Utils.overlayRows, Toolasha.Utils.overlayFormat);
+})(Toolasha.Core.dataManager, Toolasha.Core.config, Toolasha.Core.domObserver, Toolasha.Utils.enhancementConfig, Toolasha.Utils.enhancementCalculator, Toolasha.Utils.profitConstants, Toolasha.Utils.formatters, Toolasha.Core.marketAPI, Toolasha.Utils.domObserverHelpers, Toolasha.Market.gatheringProfit, Toolasha.Market.productionProfit, Toolasha.Utils.uiComponents, Toolasha.Utils.actionPanelHelper, Toolasha.Utils.profitHelpers, Toolasha.Core.webSocketHook, Toolasha.Core.storage, Toolasha.Utils.bundleBridge, Toolasha.Utils.scrollBuffValues, Toolasha.Utils.marketData, Toolasha.Utils.dom, Toolasha.Utils.timerRegistry, Toolasha.Utils.gameLookups, Toolasha.Utils.teaParser, Toolasha.Utils.numberParser, Toolasha.Market.profitCalculator, Toolasha.Market.alchemyProfitCalculator, Toolasha.Utils.actionCalculator, Toolasha.Utils.alchemyFees, Toolasha.Utils.efficiency, Toolasha.Utils.cleanupRegistry, Toolasha.Utils.buffParser, Toolasha.Utils.liquidityCap, Toolasha.Utils.equipmentParser, Toolasha.Utils.experienceParser, Toolasha.Utils.reactInput, Toolasha.Utils.experienceCalculator, Toolasha.Utils.materialCalculator, Toolasha.Utils.marketplaceAutofill, Toolasha.Utils.marketplaceTabs, Toolasha.Utils.panelZIndex, Toolasha.Market.expectedValueCalculator, Toolasha.Utils.bonusRevenueCalculator, Toolasha.Sim.combatSimUI, Toolasha.Utils.assetManifest, Toolasha.Utils.toast, Toolasha.Utils.actionContext, Toolasha.Utils.characterKey, Toolasha.Utils.shoppingList, Toolasha.Utils.itemNavigation, Toolasha.Utils.floatingPanel, Toolasha.Utils.panelGeometry, Toolasha.Market.marketHistoryAPI, Toolasha.Market.marketHistoryData, Toolasha.Utils.houseCostCalculator, Toolasha.Utils.overlayRows, Toolasha.Utils.overlayFormat);
