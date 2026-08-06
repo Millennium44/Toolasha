@@ -94,12 +94,16 @@ describe('pairing portraits with the tally', () => {
 });
 
 describe('what a meter says', () => {
-    test('the run alone is one line', () => {
+    test('the run alone still reserves the fight line, dashed', () => {
+        // Two lines whether or not this player has acted this fight: a meter
+        // that grows a line when they do gives five portraits three different
+        // heights, and shifts them all again at every fight boundary
         const meter = meterText({ name: 'A', damage: 98000, dps: 239.4 });
 
-        expect(meter.lines).toHaveLength(1);
-        expect(meter.lines[0]).toContain('239');
-        expect(meter.lines[0]).toContain('total');
+        expect(meter.lines).toHaveLength(2);
+        expect(meter.lines[0]).toBe('— cur');
+        expect(meter.lines[1]).toContain('239');
+        expect(meter.lines[1]).toContain('total');
     });
 
     test('with a fight in progress it is two, this fight first', () => {
@@ -116,8 +120,8 @@ describe('what a meter says', () => {
     test('too early for a rate reads as no rate, not as zero', () => {
         const meter = meterText({ name: 'A', damage: 120, dps: null });
 
-        expect(meter.lines[0]).toContain('—');
-        expect(meter.lines[0]).not.toContain('0 DPS');
+        expect(meter.lines[1]).toContain('—');
+        expect(meter.lines[1]).not.toContain('0 DPS');
         expect(meter.title).toContain('not yet long enough');
     });
 });
