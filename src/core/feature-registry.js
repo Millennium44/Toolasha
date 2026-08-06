@@ -43,9 +43,26 @@ async function initializeFeatures() {
             // initializers land in this try/catch even when the registry
             // entry forgot to set the async flag (awaiting sync undefined
             // is harmless).
+            //
+            // The timing is split on purpose. The old single wall-clock span
+            // around `await feature.initialize()` blamed a feature for time
+            // it merely *parked* in — a sync feature (e.g. autoAllButton) that
+            // happens to `await undefined` at the moment a heavy storage read
+            // resolves elsewhere would absorb that read's cost and top the
+            // "slowest features" list while doing nothing. `own` is the
+            // feature's synchronous work up to the point it returns/suspends;
+            // `total` still spans the await so a genuinely async initializer is
+            // not undercounted. A large gap between them means the cost is
+            // deferred work draining here, not this feature.
             const startedAt = performanceMonitor.sinceBoot();
-            await feature.initialize();
-            performanceMonitor.snapshot(`init:${feature.key}`, performanceMonitor.sinceBoot() - startedAt, startedAt);
+            const pending = feature.initialize();
+            const ownMs = performanceMonitor.sinceBoot() - startedAt;
+            await pending;
+            const totalMs = performanceMonitor.sinceBoot() - startedAt;
+            performanceMonitor.snapshot(`init:${feature.key}`, totalMs, startedAt);
+            if (totalMs - ownMs >= 1) {
+                performanceMonitor.snapshot(`init:${feature.key}:own`, ownMs, startedAt);
+            }
         } catch (error) {
             errors.push({
                 key: feature.key,

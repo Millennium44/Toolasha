@@ -45,13 +45,25 @@ export function gapsBetween(marks) {
  * @returns {Array<{name: string, ms: number, startedAt: number, endedAt: number}>}
  */
 export function initTimeline(snapshots) {
+    // `init:<key>:own` carries the feature's synchronous self-time; it is not
+    // a row of its own but an annotation on `init:<key>`, so fold those aside
+    // first and attach them, rather than letting them count as extra features.
+    const ownByKey = new Map();
+    for (const [name, entry] of snapshots || []) {
+        if (name.startsWith('init:') && name.endsWith(':own')) {
+            ownByKey.set(name.slice(0, -':own'.length), entry.duration);
+        }
+    }
+
     const rows = [];
     for (const [name, entry] of snapshots || []) {
         if (!name.startsWith('init:') && !name.startsWith('bg:')) continue;
+        if (name.endsWith(':own')) continue;
         const startedAt = entry.startedAt ?? 0;
         rows.push({
             name,
             ms: entry.duration,
+            ownMs: ownByKey.has(name) ? ownByKey.get(name) : null,
             startedAt,
             endedAt: startedAt + entry.duration,
             background: name.startsWith('bg:'),
@@ -138,9 +150,14 @@ export function formatReport({
         lines.push('Slowest features');
         lines.push('-'.repeat(60));
         for (const row of summary.slowest) {
+            // When a feature parked far more time in `await` than it spent on
+            // its own work, say so — that time is deferred work draining here,
+            // not this feature's cost.
+            const drain = Number.isFinite(row.ownMs) && row.ms - row.ownMs >= 1;
             lines.push(
                 `${ms(row.ms).padStart(9)}  ${row.name.padEnd(34)} started ${ms(row.startedAt)}` +
-                    (row.background ? '  (background)' : '')
+                    (row.background ? '  (background)' : '') +
+                    (drain ? `  (own ${ms(row.ownMs)}, ${ms(row.ms - row.ownMs)} waiting on other work)` : '')
             );
             for (const part of (spans.get(row.name) || []).slice().sort((a, b) => b.duration - a.duration)) {
                 lines.push(`${ms(part.duration).padStart(9)}      └ ${part.part}`);
