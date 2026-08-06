@@ -587,17 +587,22 @@ describe('the spectated trial fight', () => {
         expect(report.support.totals.damageTaken).toBeLessThan(1000);
     });
 
-    test('a tick that cannot name the attacker credits nobody', () => {
+    test('the lone unit in a tick owns it — the 1,405 is the tank\u2019s reflect', () => {
         // The capture's `pMap` entries carry no `atkCounter`, and the boss lost
-        // 1,405 health on one of them. The only player present was there because
-        // they were being *hit* — crediting them is the bug the party rule in
-        // `damage-attribution.js` exists to prevent, and a spectated stream has
-        // no roster message to make the "party of one" shortcut safe
+        // 1,405 health on a tick whose only player was being *hit*. This module
+        // once refused that tick as unattributable; the party recording that
+        // calibrated the hybrid rungs proved the refusal wrong — the server
+        // groups ticks by actor, the boss's own hit counter rose in the same
+        // breath, and health a boss loses while striking somebody is that
+        // somebody's thorns. Measured, and credited to the one unit present.
         replay();
 
         const report = guildTrialDamage.breakdown();
-        expect(report.totalDamage).toBe(0);
-        expect(report.players).toEqual([]);
+        expect(report.totalDamage).toBe(1_405);
+        expect(report.players).toHaveLength(1);
+        expect(report.players[0].index).toBe('1');
+        expect(report.players[0].measured).toBe(true);
+        // Still true, and still exported: no *player-side* counters were seen
         expect(report.splitFromCounters).toBe(false);
     });
 

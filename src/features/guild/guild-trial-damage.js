@@ -322,7 +322,7 @@ export function battleMonsterNames(data) {
  * @param {number} [input.seconds] - Seconds of fighting measured
  * @returns {{players: Array<Object>, totalDamage: number, partyDps: number|null}} Rows, biggest first
  */
-export function summariseTrialDamage({ tally = {}, names = {}, deaths = {}, seconds = 0, counted = null } = {}) {
+export function summariseTrialDamage({ tally = {}, names = {}, deaths = {}, seconds = 0 } = {}) {
     const measurable = seconds >= MIN_SECONDS;
     const totalDamage = Object.values(tally).reduce((sum, entry) => sum + (entry?.damage || 0), 0);
 
@@ -331,10 +331,11 @@ export function summariseTrialDamage({ tally = {}, names = {}, deaths = {}, seco
         return {
             index,
             name: names[index] || `Player ${Number(index) + 1}`,
-            // Whether this row's own counters were on the wire. The game streams
-            // action counters for one unit — yours — so a table can be measured
-            // for one row and estimated for the rest, and must say which is which
-            measured: counted ? counted.has(index) : null,
+            // Every tally row is measured off the stream: the server groups
+            // each tick by actor, so the attribution names its owner without
+            // needing that player's own counters — the boss's counters gate
+            // the hits and mark the crits for everybody
+            measured: true,
             damage: entry.damage || 0,
             hits: entry.hits || 0,
             crits: entry.crits || 0,
@@ -677,17 +678,20 @@ class GuildTrialDamage {
             // Before `noteActions`, exactly as the ordinary path does it: the hit
             // that lands on this tick was cast by what was prepared before it.
             //
-            // `soloFallback: false` is the one difference, and it is the whole
-            // safety of the split. In this client's own fights "only one
-            // character is known, so it was them" is sound because `new_battle`
-            // stated the party. Here there is no roster message: `pMap` is a
-            // delta and one index having appeared means one person *moved*. The
-            // capture shows exactly that trap — a tick where the boss lost 1,405
-            // health and the only player present was there because they were
-            // being hit. Crediting them would have been the whole boss's health
-            // on the tank's row.
+            // The server groups each tick by actor, so the attribution's
+            // presence rung measures every player here — the lone unit in a
+            // tick owns its action, reflect and damage-over-time included.
+            // (The 1,405-health tick this module once refused as "the tank was
+            // merely being hit" carried the boss's own hit counter rising: the
+            // boss struck the tank and bled on their thorns, and refusing it
+            // was the error.) `soloFallback: false` still holds — it gates the
+            // party-of-one rung, and no roster message states a party here.
             const events = attributeTick(data, this.state, { soloFallback: false });
-            foldEvents(this.tally, events);
+            // No non-damaging filter: `abilityHrid` streams for your own unit
+            // only, so every other player's action reads as idle — on this
+            // stream that means unlabeled, not idle, and the hit gate (the
+            // boss's own counter) already keeps non-hits out
+            foldEvents(this.tally, events, { filterNonDamaging: false });
             this._noteDeaths(pMap);
             foldSupportTick(this.support, pMap, this.state.actions, undefined, now);
             noteActions(this.state, pMap);
@@ -1034,7 +1038,6 @@ class GuildTrialDamage {
             names: this.names,
             deaths: this.deaths,
             seconds: this.seconds,
-            counted: this.countedSlots,
         });
         const support = summariseSupport(this.support, this.names, this.deaths);
 
@@ -1064,9 +1067,10 @@ class GuildTrialDamage {
             // The boss's tier-scaled sheet, per tier, for the export. Not a
             // loadout and never stored as one — see `isMonsterUnit`
             bossSheets: { ...this.bossSheets },
-            // Whether the players' own attack counters have been seen, which is
-            // what a per-player *damage* split needs. Without them the boss's
-            // lost health is still party damage, and still measured
+            // Whether any player's own attack counters have been seen. The
+            // split no longer depends on them — the presence rung measures
+            // every actor — but a row they confirm directly is worth naming,
+            // and the export keeps the fact either way
             splitFromCounters: this.spectator.playerActionTicks > 0,
             // Which slots the game streamed counters for. In every recording so
             // far that is exactly one — the viewer's own character

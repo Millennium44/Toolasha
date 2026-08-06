@@ -2811,7 +2811,7 @@ describe('renderTrialPlayers', () => {
         expect(html).not.toContain('no trial fight seen here');
     });
 
-    test('a watched fight that could not be split says exactly that', () => {
+    test('a watched fight with nothing attributed yet says exactly that', () => {
         const html = renderTrialPlayers({
             measured: false,
             source: 'spectated',
@@ -2819,10 +2819,10 @@ describe('renderTrialPlayers', () => {
             pool: { encounter: 'chameleon' },
         }).join('');
 
-        expect(html).toContain('watched, but unsplittable');
-        expect(html).toContain('no attack counters');
+        expect(html).toContain('watched, nothing attributed yet');
+        expect(html).toContain('fills in as hits land');
         // The support figures did arrive, and the line must not imply otherwise
-        expect(html).toContain('Damage taken, healing and mana came through');
+        expect(html).toContain('Damage taken, healing and mana come through');
     });
 
     test('a watched fight nothing has identified asks for one click', () => {

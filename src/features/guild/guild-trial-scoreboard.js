@@ -380,9 +380,9 @@ class GuildTrialScoreboard {
         if (!named.length) return '';
 
         return (
-            ` The game only streams action counters for your own character, so ${named.slice(0, 2).join(' and ')}` +
-            `${named.length > 2 ? ` and ${named.length - 2} more` : ''} ` +
-            `${named.length === 1 ? 'is' : 'are'} measured and the rest of the party is not.`
+            ` Each row is attributed off the ticks the server groups by actor;` +
+            ` ${named.slice(0, 2).join(' and ')}${named.length > 2 ? ` and ${named.length - 2} more` : ''}` +
+            ` ${named.length === 1 ? 'carries' : 'carry'} own attack counters that confirm it directly.`
         );
     }
 
@@ -508,15 +508,13 @@ class GuildTrialScoreboard {
                   `${estimate.unestimated.length > 8 ? `, +${estimate.unestimated.length - 8} more` : ''}.</div>`
                 : '';
 
-        // A watched fight whose players' attack counters never arrived: the boss's
-        // lost health is party damage and is real, but naming who dealt it is
-        // not something the stream said, and this refuses to invent it
+        // A watched fight with nothing attributed yet: between fights, or a
+        // view opened moments ago — the next boss hit fills the table in
         const unsplit =
-            !rows.length && !estimated && spectated && breakdown?.splitFromCounters === false
+            !rows.length && !estimated && spectated
                 ? `<div style="color:${DIM}; padding:6px 0; line-height:1.5;">` +
-                  'Watched, but the stream carried no attack counters for the players, so the party’s damage ' +
-                  'cannot be split between them. The tank-and-healer figures on the Healing tab come from the ' +
-                  'same ticks and are unaffected.</div>'
+                  'Watched, but no damage has been attributed yet — the split fills in as hits land on the ' +
+                  'boss. The tank-and-healer figures on the Healing tab come from the same ticks.</div>'
                 : '';
 
         const nothing =

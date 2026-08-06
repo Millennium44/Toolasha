@@ -257,27 +257,26 @@ describe('the panel', () => {
         expect(text()).not.toContain('Estimated from builds');
     });
 
-    test('only your own row is measured, and the panel says whose', () => {
-        // The game streams action counters for one unit — the viewer's own
-        // character — so a watched trial has one attributable row and the rest
-        // are folded in beside it. Saying "measured" over the table would be
-        // claiming the other twenty-nine
+    test('every row is measured, and the counter-confirmed one is named', () => {
+        // The server groups each tick by actor, so every row's damage is
+        // attributed off the stream. Your own unit additionally streams its
+        // attack counters, which confirm its rows directly — worth naming
+        // without calling anybody else's row a guess
         game.breakdown = breakdown({
             source: 'spectated',
             seconds: 60,
             countedNames: ['Player20'],
             players: [
                 { index: '19', name: 'Player20', damage: 600_000, deaths: 0, measured: true },
-                { index: '4', name: 'Player01', damage: 400_000, deaths: 0, measured: false },
+                { index: '4', name: 'Player01', damage: 400_000, deaths: 0, measured: true },
             ],
         });
         guildTrialScoreboard.open();
 
-        expect(text()).toContain('only streams action counters for your own character');
-        expect(text()).toContain('Player20');
-        expect(text()).toContain('is measured and the rest of the party is not');
-        // And the row that is not measured is marked on its own line
-        expect(text()).toContain('partial');
+        expect(text()).toContain('ticks the server groups by actor');
+        expect(text()).toContain('Player20 carries own attack counters');
+        // No row is second-class any more
+        expect(text()).not.toContain('partial');
     });
 
     test('a placeholder name is flagged as one', () => {
@@ -291,9 +290,9 @@ describe('the panel', () => {
         expect(text()).toContain('Player 3 is a placeholder');
     });
 
-    test('watched but unsplittable is its own message, not "nothing to show"', () => {
-        // The boss's lost health is party damage and is real; naming who dealt
-        // it needs attack counters the stream did not carry
+    test('watched with nothing attributed yet is its own message, not "nothing to show"', () => {
+        // Between fights, or a view opened moments ago: the stream is live and
+        // the table simply has not seen a hit land yet
         game.breakdown = {
             measured: false,
             source: 'spectated',
@@ -304,7 +303,7 @@ describe('the panel', () => {
         };
         guildTrialScoreboard.open();
 
-        expect(text()).toContain('no attack counters for the players');
+        expect(text()).toContain('no damage has been attributed yet');
         expect(text()).toContain('Healing tab come from the same ticks');
         expect(text()).not.toContain('Nothing to show yet');
     });

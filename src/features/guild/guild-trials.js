@@ -975,7 +975,7 @@ export function renderTrialPlayers(breakdown) {
         let value = 'open the fight view';
         if (breakdown.stale) value = 'last trial, not this one';
         else if (unidentified) value = 'click the boss to identify';
-        else if (watched) value = 'watched, but unsplittable';
+        else if (watched) value = 'watched, nothing attributed yet';
 
         let why =
             `${breakdown.reason}.\nOpen the In Progress fight view and this fills from the trial's own ` +
@@ -989,9 +989,9 @@ export function renderTrialPlayers(breakdown) {
                 'bar of its own.';
         } else if (watched) {
             why =
-                'The trial fight was streamed, but its ticks carried no attack counters for the players, ' +
-                'so the damage cannot be split between them. Damage taken, healing and mana came through ' +
-                'and are on the scoreboard.';
+                'The fight is streaming but no damage tick has been attributed yet — the per-player split ' +
+                'fills in as hits land on the boss. Damage taken, healing and mana come through the same ' +
+                'ticks and are on the scoreboard.';
         }
 
         // A line rather than silence: an empty space under a combat card is

@@ -1275,7 +1275,10 @@ export function skillingGearWarnings(playerDTOs, playerInfo, itemDetailMap = {})
     const warnings = [];
     for (const dto of playerDTOs || []) {
         const pieces = [];
-        for (const worn of Object.values(dto?.equipment || {})) {
+        for (const [slot, worn] of Object.entries(dto?.equipment || {})) {
+            // Tool slots have no combat equivalent — a Holy Alembic is always
+            // equipped and never displacing combat gear, so it is not a mistake
+            if (String(slot).endsWith('_tool')) continue;
             if (!worn?.hrid) continue;
             const detail = itemDetailMap[worn.hrid];
             if (!isSkillingGearItem(detail)) continue;
