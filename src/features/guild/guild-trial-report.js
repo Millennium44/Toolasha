@@ -29,6 +29,7 @@
  * a panel.
  */
 
+import { pastWeekLine } from './guild-trial-history.js';
 import { formatWithSeparator } from '../../utils/formatters.js';
 
 /** Longest player list a report will print before it summarises the tail */
@@ -124,6 +125,8 @@ export function playerLine(player, support, rank) {
  * @param {Object} input.breakdown - From `guildTrialDamage.breakdown()`
  * @param {Object} [input.shortfall] - `{remaining, total, unit}` for the tier in progress
  * @param {Object} [input.estimate] - From `estimateDamageSplit`, used when nothing was measured
+ * @param {Array<Object>} [input.pastWeeks] - Archived-cycle summaries from
+ *   `summariseArchivedCycle`, newest first; appended as a short tail when present
  * @returns {string} The report
  */
 export function buildGuildReport({
@@ -133,6 +136,7 @@ export function buildGuildReport({
     breakdown,
     shortfall,
     estimate = null,
+    pastWeeks = [],
 } = {}) {
     const players = breakdown?.players || [];
     const support = breakdown?.support?.players || [];
@@ -141,6 +145,11 @@ export function buildGuildReport({
     const headline = Number.isFinite(tiersCleared)
         ? `${trialName} — cleared ${tiersCleared} tier${tiersCleared === 1 ? '' : 's'}`
         : trialName;
+
+    // The archived cycles, one line each, at the very bottom of whichever shape
+    // the report takes — a guild judging this week's result wants last week's
+    // beside it, and this is the only place those figures can still be read
+    const history = (pastWeeks || []).length ? ['Past weeks:', ...pastWeeks.map((week) => pastWeekLine(week))] : [];
 
     if (!players.length) {
         const close = describeShortfall({ tier, ...(shortfall || {}) });
@@ -170,6 +179,7 @@ export function buildGuildReport({
                 lines.push(`No build captured, so not estimated · ${estimate.unestimated.join(', ')}`);
             }
             if (close) lines.push(close);
+            lines.push(...history);
             return lines.join('\n');
         }
 
@@ -178,7 +188,7 @@ export function buildGuildReport({
         const why =
             breakdown?.reason ||
             'nobody had the In Progress fight view open, which is what streams a trial’s own battle ticks';
-        return [headline, `Nothing was measured here — ${why}.`, ...(close ? [close] : [])].join('\n');
+        return [headline, `Nothing was measured here — ${why}.`, ...(close ? [close] : []), ...history].join('\n');
     }
 
     const lines = [headline];
@@ -216,6 +226,8 @@ export function buildGuildReport({
                   'somebody had the In Progress fight view open)'
             : '(attributed from this client’s own battle feed)'
     );
+
+    lines.push(...history);
 
     return lines.join('\n');
 }

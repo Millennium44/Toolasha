@@ -9,6 +9,12 @@ import dungeonTracker from './dungeon-tracker.js';
 import { markAsProfileLink } from '../chat/chat-profile-link.js';
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
+import {
+    DUNGEON_BATTLE_STARTED,
+    DUNGEON_BATTLE_ENDED,
+    DUNGEON_KEY_COUNTS,
+    DUNGEON_PARTY_FAILED_RE,
+} from '../../utils/game-text.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 
@@ -610,14 +616,14 @@ class DungeonTrackerChatAnnotations {
 
             // Check message relevance FIRST before parsing timestamp
             // Battle started message
-            if (text.includes('Battle started:')) {
+            if (text.includes(DUNGEON_BATTLE_STARTED)) {
                 const timestamp = this.getTimestampFromMessage(node);
                 if (!timestamp) {
                     console.warn('[Dungeon Tracker Debug] Battle started message has no timestamp:', text);
                     continue;
                 }
 
-                const dungeonName = text.split('Battle started:')[1]?.split(']')[0]?.trim();
+                const dungeonName = text.split(DUNGEON_BATTLE_STARTED)[1]?.split(']')[0]?.trim();
                 if (dungeonName) {
                     // Cache the dungeon name (survives chat scrolling)
                     this.lastSeenDungeonName = dungeonName;
@@ -633,7 +639,7 @@ class DungeonTrackerChatAnnotations {
                 // as a session boundary for the forward-scan pairing logic.
             }
             // Key counts message (warn if timestamp fails - these should always have timestamps)
-            else if (text.includes('Key counts:')) {
+            else if (text.includes(DUNGEON_KEY_COUNTS)) {
                 // Decorated before the timestamp/team checks, so the names are
                 // clickable even on a line those checks would drop
                 this.decorateKeyCountNames(node);
@@ -652,7 +658,7 @@ class DungeonTrackerChatAnnotations {
                 });
             }
             // Party failed message
-            else if (text.match(/Party failed on wave \d+/)) {
+            else if (text.match(DUNGEON_PARTY_FAILED_RE)) {
                 const timestamp = this.getTimestampFromMessage(node);
                 if (!timestamp) continue;
 
@@ -664,7 +670,7 @@ class DungeonTrackerChatAnnotations {
                 // Do NOT mark fail as processed — must persist as session context.
             }
             // Battle ended (canceled/fled)
-            else if (text.includes('Battle ended:')) {
+            else if (text.includes(DUNGEON_BATTLE_ENDED)) {
                 const timestamp = this.getTimestampFromMessage(node);
                 if (!timestamp) continue;
 

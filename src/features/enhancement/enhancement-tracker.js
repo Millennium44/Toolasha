@@ -18,6 +18,7 @@ import {
     validateSession,
     SessionState,
 } from './enhancement-session.js';
+import enhancementCalibration from '../insights/enhancement-calibration.js';
 import { saveSessions, loadSessions, saveCurrentSessionId, loadCurrentSessionId } from './enhancement-storage.js';
 import { calculateEnhancementPredictions } from './enhancement-xp.js';
 import { getEnhancementMaterialPrice } from './tooltip-enhancement.js';
@@ -210,6 +211,16 @@ class EnhancementTracker {
         if (session.state === SessionState.COMPLETED) {
             this.currentSessionId = null;
             await saveCurrentSessionId(null);
+
+            // The run just became one finished draw from the distribution its
+            // prediction quoted; the recorder declines anything that is not
+            // (no distribution stored, target not actually reached). Errors
+            // stay its problem — a calibration ledger must never break a run.
+            try {
+                await enhancementCalibration.recordCompletion(session);
+            } catch (error) {
+                console.error('[EnhancementTracker] Recording the calibration observation failed:', error);
+            }
         }
     }
 

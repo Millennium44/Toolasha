@@ -10,15 +10,27 @@
  * gap persistent once enough runs agree on it.
  *
  * Drawing is all this file does. The arithmetic is in `calibration-math.js`, and
- * the pairs come from `prediction-calibration.js`.
+ * the pairs come from `prediction-calibration.js` — including combat pairs,
+ * which `combat-calibration.js` writes into the same ledger. Enhancement runs
+ * come from `enhancement-calibration.js` and are drawn as percentiles of their
+ * predicted attempt distributions, never as rate deviations: one draw from a
+ * heavy-tailed spread has no honest "gap".
  */
 
+import { formatTailPercent, describeAttemptOutcome } from '../enhancement/attempt-percentile.js';
 import { formatKMB } from '../../utils/formatters.js';
-import { row, blank, ROW_COLORS, signedPercent } from '../../utils/overlay-format.js';
+import { row, blank, ROW_COLORS, signedPercent, shortDuration } from '../../utils/overlay-format.js';
 import { createPanel, panelCard, panelLine, panelNote } from '../../utils/simple-panel.js';
 import { registerRow } from '../../utils/overlay-rows.js';
 import { predictionCalibration } from './prediction-calibration.js';
-import { summarizeCalibration, dailySeries, deviationPercent, DEFAULT_GAP_PERCENT } from './calibration-math.js';
+import { enhancementCalibration } from './enhancement-calibration.js';
+import {
+    summarizeCalibration,
+    dailySeries,
+    deviationPercent,
+    median,
+    DEFAULT_GAP_PERCENT,
+} from './calibration-math.js';
 
 const ACCENT = '#7fd4c1';
 
@@ -57,11 +69,90 @@ function records() {
 }
 
 /**
+ * The enhancement observations, on the same terms.
+ * @returns {Array<Object>|null}
+ */
+function enhancementRecords() {
+    const cached = enhancementCalibration.getCachedRecords();
+    if (cached === null) enhancementCalibration.getRecords();
+    return cached;
+}
+
+/**
+ * A combat pair's forecast provenance, as a sentence for a tooltip.
+ * @param {Object} record - A combat record
+ * @returns {string}
+ */
+function combatProvenance(record) {
+    const age =
+        Number.isFinite(record.snapshotAgeMs) && record.snapshotAgeMs >= 0
+            ? `The sim forecast was ${shortDuration(record.snapshotAgeMs / 1000)} old when this run started.`
+            : 'The sim forecast is of unknown age.';
+    const gear =
+        record.fingerprintMatch === true
+            ? 'Gear matched the sim run.'
+            : record.fingerprintMatch === false
+              ? 'Gear DIFFERED from the sim run — the forecast is about another loadout.'
+              : 'Whether the gear matched the sim run could not be determined.';
+    return `${age}\n${gear}`;
+}
+
+/**
+ * A combat record's zone as a short label, e.g. `Rat Cave T1`.
+ * @param {Object} record - A combat record
+ * @returns {string}
+ */
+function combatZoneLabel(record) {
+    const name = titleCase((record.actionHrid || '').split('/').pop());
+    const tier = record.difficultyTier ?? 0;
+    return `${name} T${tier}`;
+}
+
+/**
+ * The combat group's honesty note.
+ *
+ * A combat pair's forecast is a saved sim run, and a saved run ages and
+ * assumes a loadout. That context must sit with the figures — a deviation
+ * measured against last month's gear is not a deviation, it is a change of
+ * subject — so the card says how old the forecasts were and how many pairs
+ * were played in gear the sim never saw.
+ *
+ * @param {HTMLElement} card - The combat group's card
+ * @param {Array<Object>} combatRecords - Every combat pair
+ */
+function drawCombatCaveats(card, combatRecords) {
+    if (!combatRecords.length) return;
+
+    const mismatched = combatRecords.filter((record) => record.fingerprintMatch === false).length;
+    const unknown = combatRecords.filter(
+        (record) => record.fingerprintMatch !== true && record.fingerprintMatch !== false
+    ).length;
+    const medianAge = median(combatRecords.map((record) => record.snapshotAgeMs).filter((v) => Number.isFinite(v)));
+
+    const parts = [];
+    if (medianAge !== null) parts.push(`snapshot ${shortDuration(medianAge / 1000)} old (median)`);
+    if (mismatched) parts.push(`${mismatched} of ${combatRecords.length} in different gear`);
+    if (unknown) parts.push(`${unknown} gear unknown`);
+
+    card.appendChild(
+        panelLine(
+            'Forecast: all-zones sim',
+            parts.join(' · ') || '—',
+            mismatched ? ROW_COLORS.bad : ROW_COLORS.dim,
+            'Combat forecasts come from the saved all-zones simulation, not a live calculator. ' +
+                'A pair measured against an aged snapshot or different gear says less about the sim ' +
+                'than about what changed since it ran.'
+        )
+    );
+}
+
+/**
  * One skill's verdict.
  * @param {HTMLElement} body - Where it goes
  * @param {Object} group - A group from `summarizeCalibration`
+ * @param {Array<Object>} all - Every record, for group-specific caveats
  */
-function drawGroup(body, group) {
+function drawGroup(body, group, all) {
     const gap = group.medianDeviation === null ? null : signedPercent(group.medianDeviation, DEFAULT_GAP_PERCENT);
     const card = panelCard(body, titleCase(group.actionType), group.flagged ? ROW_COLORS.bad : ACCENT);
 
@@ -84,6 +175,13 @@ function drawGroup(body, group) {
                 ROW_COLORS.bad,
                 `At least ${group.rated} runs agree the forecast is off by ${DEFAULT_GAP_PERCENT}% or more.`
             )
+        );
+    }
+
+    if (group.actionType === 'combat') {
+        drawCombatCaveats(
+            card,
+            (all || []).filter((record) => record.actionType === 'combat')
         );
     }
 }
@@ -122,12 +220,63 @@ function drawRecent(body, all) {
     for (const record of recent) {
         const deviation = deviationPercent(record.predicted, record.actual);
         const gap = deviation === null ? null : signedPercent(deviation, DEFAULT_GAP_PERCENT);
+        const isCombat = record.actionType === 'combat';
+        // A combat pair's provenance flag travels with the pair: a row measured
+        // against a stale or different-gear sim must not read like the others
+        const tooltip = isCombat
+            ? `${new Date(record.t).toLocaleString()}\n${combatProvenance(record)}`
+            : new Date(record.t).toLocaleString();
         card.appendChild(
             panelLine(
-                `${titleCase(record.actionType)} ×${record.actionCount}`,
-                `${perHour(record.predicted)} → ${perHour(record.actual)}  ${gap ? gap.text : ''}`,
+                isCombat ? combatZoneLabel(record) : `${titleCase(record.actionType)} ×${record.actionCount}`,
+                `${perHour(record.predicted)} → ${perHour(record.actual)}  ${gap ? gap.text : ''}` +
+                    (isCombat && record.fingerprintMatch !== true ? ' ⚠' : ''),
                 gap ? gap.color : ROW_COLORS.dim,
-                new Date(record.t).toLocaleString()
+                tooltip
+            )
+        );
+    }
+}
+
+/**
+ * Enhancement runs, each as a percentile of its own predicted distribution.
+ *
+ * Never drawn as predicted-vs-actual differences: one run against a heavy-
+ * tailed spread is only honest as "how often runs land here". The aggregate
+ * *is* meaningful — a calibrated chain scatters the percentiles evenly, so a
+ * median far from 50% across enough runs is the chain flattering itself — and
+ * that is the headline the card leads with.
+ *
+ * @param {HTMLElement} body - Where it goes
+ * @param {Array<Object>} observations - From `enhancement-calibration.js`
+ */
+function drawEnhancing(body, observations) {
+    if (!observations.length) return;
+
+    const card = panelCard(body, `Enhancing (${observations.length} runs)`, ACCENT);
+
+    const percentiles = observations.map((entry) => (1 - entry.tailProbability) * 100);
+    const midPercentile = median(percentiles);
+    card.appendChild(
+        panelLine(
+            'Median outcome percentile',
+            midPercentile === null ? '—' : `${Math.round(midPercentile)}%`,
+            ROW_COLORS.gold,
+            'Where finished runs land in the attempt distributions predicted for them. ' +
+                'A calibrated chain scatters these evenly around 50%; runs piling up high ' +
+                'means it promises fewer attempts than runs actually take.'
+        )
+    );
+
+    const recent = [...observations].sort((a, b) => (b.t || 0) - (a.t || 0)).slice(0, 8);
+    for (const entry of recent) {
+        const sentence = describeAttemptOutcome(entry.expectedAttempts, entry.observedAttempts, entry.tailProbability);
+        card.appendChild(
+            panelLine(
+                `${entry.itemName || entry.itemHrid} +${entry.targetLevel}`,
+                `${entry.observedAttempts} att · ${formatTailPercent(entry.tailProbability)} take ≥`,
+                ROW_COLORS.dim,
+                `${sentence}\n${new Date(entry.t).toLocaleString()}`
             )
         );
     }
@@ -140,37 +289,53 @@ export const calibrationPanel = createPanel({
     accent: ACCENT,
     draw: (body) => {
         const all = records();
-        if (all === null) {
+        const enhancing = enhancementRecords();
+        if (all === null || enhancing === null) {
             body.appendChild(panelNote('Reading history…'));
             return;
         }
-        if (!all.length) {
+        if (!all.length && !enhancing.length) {
             body.appendChild(panelNote('No finished runs measured yet.'));
             body.appendChild(
                 panelNote(
                     'A run is measured once a later action replaces it in the loot log, so the first pair appears ' +
-                        'after you switch actions.'
+                        'after you switch actions. Combat is paired when a session is archived, and enhancing when ' +
+                        'a session reaches its target.'
                 )
             );
             return;
         }
 
-        const summary = summarizeCalibration(all);
+        if (all.length) {
+            const summary = summarizeCalibration(all);
 
-        const overall = panelCard(body, `Overall (${summary.overall.samples} runs)`, ACCENT);
-        overall.appendChild(panelLine('Predicted', perHour(summary.overall.predictedMean), ROW_COLORS.dim));
-        overall.appendChild(panelLine('Actual', perHour(summary.overall.actualMean), ROW_COLORS.gold));
-        const overallGap =
-            summary.overall.medianDeviation === null
-                ? null
-                : signedPercent(summary.overall.medianDeviation, DEFAULT_GAP_PERCENT);
-        overall.appendChild(
-            panelLine('Deviation', overallGap ? overallGap.text : '—', overallGap ? overallGap.color : ROW_COLORS.dim)
-        );
+            const overall = panelCard(body, `Overall (${summary.overall.samples} runs)`, ACCENT);
+            overall.appendChild(panelLine('Predicted', perHour(summary.overall.predictedMean), ROW_COLORS.dim));
+            overall.appendChild(panelLine('Actual', perHour(summary.overall.actualMean), ROW_COLORS.gold));
+            const overallGap =
+                summary.overall.medianDeviation === null
+                    ? null
+                    : signedPercent(summary.overall.medianDeviation, DEFAULT_GAP_PERCENT);
+            overall.appendChild(
+                panelLine(
+                    'Deviation',
+                    overallGap ? overallGap.text : '—',
+                    overallGap ? overallGap.color : ROW_COLORS.dim
+                )
+            );
 
-        for (const group of summary.groups) drawGroup(body, group);
-        drawTrend(body, all);
-        drawRecent(body, all);
+            for (const group of summary.groups) drawGroup(body, group, all);
+        }
+
+        // Its own card rather than a group: an enhancement observation is a
+        // percentile, not a rate pair, and pushing it through the deviation
+        // arithmetic would be exactly the dishonesty it exists to avoid
+        drawEnhancing(body, enhancing);
+
+        if (all.length) {
+            drawTrend(body, all);
+            drawRecent(body, all);
+        }
     },
 });
 

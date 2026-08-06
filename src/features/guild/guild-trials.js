@@ -153,6 +153,7 @@ import {
     saveTrialRecord,
     tileKey,
 } from './guild-trials-store.js';
+import { FOREIGN_CYCLE_REASON, pastWeekLine, summariseArchivedCycle } from './guild-trial-history.js';
 
 /** Class every injected element carries, so cleanup is one query */
 const CSS_CLASS = 'mwi-trial-info';
@@ -1656,6 +1657,9 @@ class GuildTrials {
             // only a block whose trial has gone is removed. See `_placeBlock`.
             const drawn = new Set();
             if (!tiles.length) {
+                // No cards, but the archive still has last cycles' figures to
+                // show — a trial tab between weeks is exactly when they are asked for
+                if (this._renderHistory(root, now)) drawn.add('history');
                 this._reapBlocks(root, drawn);
                 return;
             }
@@ -1712,6 +1716,7 @@ class GuildTrials {
             if (this._renderPayout(root, trialsForPayout, tiles[0]?.element || null, bonuses)) {
                 drawn.add('payout');
             }
+            if (this._renderHistory(root, now, bonuses)) drawn.add('history');
             this._reapBlocks(root, drawn);
         } catch (error) {
             console.error('[GuildTrials] Drawing the trial panel failed:', error);
@@ -1849,6 +1854,9 @@ class GuildTrials {
                         total: analysis.total,
                         unit: analysis.kind === 'combat' ? 'HP' : 'work',
                     },
+                    // The archived cycles, already summarised, so the report's
+                    // "Past weeks:" tail needs neither the record nor the store
+                    pastWeeks: this._pastWeekSummaries(Date.now()),
                 });
             }
             return forecast;
@@ -1892,7 +1900,7 @@ class GuildTrials {
             guildName: this.guildName,
         });
         if (provenance === 'foreign') {
-            this.record = archiveCycle(this.record, 'belongs to another guild', now);
+            this.record = archiveCycle(this.record, FOREIGN_CYCLE_REASON, now);
             this.blockHtml.clear();
             return;
         }
@@ -2266,6 +2274,72 @@ class GuildTrials {
             participantTokens: projected.participantTokens,
         });
 
+        return true;
+    }
+
+    /**
+     * The week's archived cycles, as summaries the line printer takes.
+     *
+     * Newest first, because the question is "how did we do lately". The bonuses
+     * passed along are the guild's current ones — the token figure derived from
+     * them is marked as derived, and `summariseArchivedCycle` refuses to apply
+     * them to a cycle archived off another guild's record at all.
+     *
+     * @param {number} [now] - Clock
+     * @param {Object} [bonuses] - From {@link _payoutBonuses}; resolved here when omitted
+     * @returns {Array<Object>} One summary per archived cycle
+     */
+    _pastWeekSummaries(now = Date.now(), bonuses = null) {
+        const history = Array.isArray(this.record?.history) ? this.record.history : [];
+        if (!history.length) return [];
+
+        const resolved = bonuses || this._payoutBonuses();
+        return [...history].reverse().map((cycle) =>
+            summariseArchivedCycle(cycle, {
+                now,
+                buildersHallBonus: resolved.buildersHall.bonus,
+                treasuryBonus: resolved.treasury.bonus,
+            })
+        );
+    }
+
+    /**
+     * The "Past weeks" block: one compact line per archived cycle.
+     *
+     * The archive exists because the figures were real when they were taken and
+     * a player who wants last cycle's numbers has nowhere else to get them —
+     * and until this block, nowhere to read them either. Drawn under everything
+     * else on the tab, and not at all when there is no history: an empty header
+     * would be a promise about data that does not exist.
+     *
+     * @param {Element} root - The trials content element
+     * @param {number} [now] - Clock
+     * @param {Object} [bonuses] - From {@link _payoutBonuses}; resolved here when omitted
+     * @returns {boolean} Whether a history block is on screen
+     */
+    _renderHistory(root, now = Date.now(), bonuses = null) {
+        const summaries = this._pastWeekSummaries(now, bonuses);
+        if (!summaries.length) return false;
+
+        const rows = [
+            `<div style="color:${ACCENT}; font-weight:700; margin-bottom:2px;" ` +
+                'title="The last few finished cycles, kept when the week rolled over. Newest first. ' +
+                '&quot;—&quot; is a figure that never reached this client; a zero is a real result. ' +
+                'Token figures are derived from today’s building bonuses, which is what the ~ marks.">' +
+                'Past weeks</div>',
+        ];
+        for (const summary of summaries) {
+            const title = summary.reason ? ` title="Archived: ${String(summary.reason).replace(/"/g, '&quot;')}"` : '';
+            rows.push(`<div style="color:${DIM};"${title}>${pastWeekLine(summary)}</div>`);
+        }
+
+        this._placeBlock(root, 'history', {
+            html: rows.join(''),
+            style:
+                'margin:8px 0 4px; padding:8px 12px; background:rgba(0,0,0,0.25);' +
+                'border-radius:6px; font-size:12px; line-height:1.7;',
+            place: (block) => root.insertAdjacentElement('beforeend', block),
+        });
         return true;
     }
 

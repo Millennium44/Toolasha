@@ -2860,6 +2860,13 @@ export const settingsGroups = {
                 default: false,
                 help: 'Keys on the count of finished listings going up — an order that filled completely, or a cancelled one holding a refund. An order still partly filling is not counted, because collecting it achieves nothing. Same rule as the Marketplace badge filter, and works whether or not that filter is on.',
             },
+            notifications_marketListingUndercut: {
+                id: 'notifications_marketListingUndercut',
+                label: 'Notify when a market listing of yours is undercut',
+                type: 'checkbox',
+                default: false,
+                help: 'Compares each active sell listing of yours against the current best ask for that item and enhancement level, and each buy order against the best bid — a strictly better price than yours means you have been beaten; matching the best price is still competitive and says nothing. The figures come from the market data this script already holds, which can be up to 15 minutes old: the message carries the age of the figure it used, and data older than that — or an item with no cached price at all — is treated as unknown rather than as an undercut. Once per listing per undercut, re-arming when you reprice the listing or your price is the best again.',
+            },
             notifications_otherCharacterIdle: {
                 id: 'notifications_otherCharacterIdle',
                 label: 'Notify when another character has run out of queue',

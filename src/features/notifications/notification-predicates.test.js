@@ -15,6 +15,7 @@ import {
     newlyIdleCharacters,
     labyrinthRunState,
     newDeaths,
+    listingBeaten,
 } from './notification-predicates.js';
 
 describe('labyrinthRunState', () => {
@@ -173,6 +174,66 @@ describe('isQueueExhausted', () => {
     test('nothing to project from', () => {
         expect(isQueueExhausted(null, now)).toBe(false);
         expect(isQueueExhausted(snapshot({ timestamp: 0 }), now)).toBe(false);
+    });
+});
+
+describe('listingBeaten', () => {
+    const maxAge = 15 * 60 * 1000;
+    const fresh = 2 * 60 * 1000;
+    const sell = (overrides) => ({
+        armed: true,
+        isSell: true,
+        listingPrice: 280000,
+        bestPrice: 274000,
+        priceAgeMs: fresh,
+        maxPriceAgeMs: maxAge,
+        ...overrides,
+    });
+
+    test('a sell listing above the best ask is undercut, once', () => {
+        const first = listingBeaten(sell());
+        expect(first).toEqual({ fire: true, armed: false });
+
+        const second = listingBeaten(sell({ armed: first.armed }));
+        expect(second.fire).toBe(false);
+    });
+
+    test('holding the best ask is not being undercut, tied or outright', () => {
+        expect(listingBeaten(sell({ bestPrice: 280000 }))).toEqual({ fire: false, armed: true });
+        expect(listingBeaten(sell({ bestPrice: 290000 }))).toEqual({ fire: false, armed: true });
+    });
+
+    test('a buy order below the best bid is outbid; holding the best bid is not', () => {
+        expect(listingBeaten(sell({ isSell: false, bestPrice: 300000 })).fire).toBe(true);
+        expect(listingBeaten(sell({ isSell: false, bestPrice: 280000 })).fire).toBe(false);
+        expect(listingBeaten(sell({ isSell: false, bestPrice: 250000 })).fire).toBe(false);
+    });
+
+    test('becoming competitive again re-arms it, so the next undercut is news again', () => {
+        const undercut = listingBeaten(sell());
+        const resolved = listingBeaten(sell({ armed: undercut.armed, bestPrice: 285000 }));
+        expect(resolved).toEqual({ fire: false, armed: true });
+
+        expect(listingBeaten(sell({ armed: resolved.armed }))).toEqual({ fire: true, armed: false });
+    });
+
+    test('no cached price is unknown, not undercut, and leaves the state alone', () => {
+        expect(listingBeaten(sell({ bestPrice: null }))).toEqual({ fire: false, armed: true });
+        expect(listingBeaten(sell({ armed: false, bestPrice: null }))).toEqual({ fire: false, armed: false });
+    });
+
+    test('a figure older than the cache validity window proves nothing either way', () => {
+        expect(listingBeaten(sell({ priceAgeMs: maxAge + 1 }))).toEqual({ fire: false, armed: true });
+        expect(listingBeaten(sell({ armed: false, bestPrice: 285000, priceAgeMs: maxAge + 1 }))).toEqual({
+            fire: false,
+            armed: false,
+        });
+    });
+
+    test('an undatable figure is no figure at all', () => {
+        expect(listingBeaten(sell({ priceAgeMs: null })).fire).toBe(false);
+        expect(listingBeaten(sell({ priceAgeMs: NaN })).fire).toBe(false);
+        expect(listingBeaten(sell({ maxPriceAgeMs: 0 })).fire).toBe(false);
     });
 });
 

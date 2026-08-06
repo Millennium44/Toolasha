@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The trial record remembers, the sim gets audited, and silence gets alarms
+
+- **Past weeks return to the trials panel and guild report**: the four archived weekly cycles nothing ever read back now render as one line each — "Last week · combat T5 · skilling T6 · 1,800 pts · ~825 tokens each" — with failed weeks printing their zeros, unknowns as "—", tokens marked ~ (derived from today's building bonuses), and a week archived from another guild's era labelled rather than mixed in.
+- **The combat simulator is now calibrated against your own runs**: every archived combat session with a matching all-zones forecast writes a predicted-vs-measured pair into the calibration panel — tier-matched, gear-fingerprint-checked (unknown says "gear unknown", never "matched"), key costs on neither side since the sim charges none. The panel's combat group answers the question everything else stands on: is the sim optimistic about *your* build?
+- **Enhancement sessions get percentile verdicts**: "Predicted 41 attempts, took 63 — 8% of runs take that many or more", read off the same distribution the pre-run p10/p90 use so the two can never disagree. Hand-stopped sessions and predictions recorded without variance honestly decline a verdict.
+- **A notification when your listing is undercut** (default off): "Cheese sell listing undercut: ask now 274K (as of ~12m ago), your listing 280K" — buy orders included, one alert per listing with re-arm on recovery, price age always stated, ties count as competitive, and no data never counts as undercut.
+- **Eleven new selector canaries watch the DOM the script depends on**, each gated on a same-screen witness so absence is only ever reported where presence was owed — a game update now produces a health report naming what broke instead of features quietly drawing nothing. **Every load-bearing English game string moved to one constants file** with real-message fixtures pinning each. **The sim engine gained its golden run**: one seeded hour with kills, deaths, XP and damage pinned exactly, so no engine regression can slip through unnoticed again.
+
 ### Live combat learns seven more things, each its own switch
 
 - **Enemy tiles answer the questions a fight actually asks** (all optional, all default on, riding the Portrait DPS toggle): "dead ~8s" from remaining HP over the party's measured rate on that enemy; one "wave ~19s" countdown on the topmost tile summing the living wave (voided honestly if any enemy's HP is unknown); a red "hits for 210/s" — the enemy's own outgoing damage, which answers "can I show DPS for enemies" with a measurement; and "enrage 1:42" counting down where the monster's sheet carries a timer, amber under thirty seconds.

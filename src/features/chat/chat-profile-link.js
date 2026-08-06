@@ -25,17 +25,22 @@
 import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
 import { addStyles } from '../../utils/dom.js';
+import { PARTY_STATUS_PHRASES } from '../../utils/game-text.js';
 import { fillProfileCommand, VALID_PLAYER_NAME_RE } from '../../utils/profile-command.js';
 
 const NAME_CLASS = 'mwi-chat-profile-name';
 // "<Name> has <verb> …" announcements; names are single tokens in MWI
 export const ANNOUNCE_RE =
     /^\s*(?:\[[^\]]*\]\s*)?([A-Za-z0-9_]+) has (?:reached|obtained|found|completed|defeated|earned|achieved|unlocked|opened|crafted|caught|leveled|joined|left|added)\b/;
-// Party system lines: the leading name in exactly these four sentence shapes,
-// anchored at the end so "<Name> is ready to trade!" or any longer sentence is
-// never touched — only the party panel's own status messages match.
-export const PARTY_RE =
-    /^\s*(?:\[[^\]]*\]\s*)*([A-Za-z0-9_]+) (?:has joined the party\.|has left the party\.|is(?: not)? ready\.)$/;
+/** A phrase as a regex fragment: every character taken literally */
+const escapeForRegExp = (phrase) => phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+// Party system lines: the leading name in exactly the four sentence shapes the
+// party panel writes (game-text.js), anchored at the end so "<Name> is ready
+// to trade!" or any longer sentence is never touched — only the party panel's
+// own status messages match.
+export const PARTY_RE = new RegExp(
+    `^\\s*(?:\\[[^\\]]*\\]\\s*)*([A-Za-z0-9_]+) (?:${PARTY_STATUS_PHRASES.map(escapeForRegExp).join('|')})$`
+);
 // MWI player names are a single alphanumeric/underscore token — reject anything else
 // (spaces, punctuation, etc.) so a malformed name can't produce a broken /profile command.
 export const VALID_NAME_RE = VALID_PLAYER_NAME_RE;
