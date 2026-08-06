@@ -32,7 +32,12 @@ vi.mock('../../utils/overlay-rows.js', () => ({ registerRow: (definition) => tra
 vi.mock('./guild-member-skills.js', () => ({
     default: {
         progress: () => tracker.cycler,
-        openNext: () => {
+        nextBattleUnit: () => tracker.unit ?? null,
+        openNextUnit: () => {
+            tracker.openedUnits.push(tracker.unit?.name ?? null);
+            return tracker.unitResult ?? { opened: null, how: 'no-unit' };
+        },
+        openNextProfile: () => {
             tracker.opened.push(tracker.cycler.next?.name ?? null);
             return tracker.cyclerResult;
         },
@@ -57,6 +62,9 @@ tracker.cycler = { logged: 0, total: 0, next: null, stale: 0 };
 tracker.cyclerResult = { opened: null, how: 'done' };
 tracker.opened = [];
 tracker.redone = 0;
+tracker.unit = null;
+tracker.unitResult = null;
+tracker.openedUnits = [];
 
 const {
     drawProfileCycler,
@@ -90,7 +98,36 @@ describe('the profile cycler', () => {
         tracker.redone = 0;
         tracker.cycler = { logged: 2, total: 8, next: { name: 'Ada' }, stale: 0 };
         tracker.cyclerResult = { opened: 'Ada', how: 'row' };
+        tracker.unit = null;
+        tracker.unitResult = null;
+        tracker.openedUnits = [];
         document.body.innerHTML = '';
+    });
+
+    test('a fight on screen gets its own battle-info button, separate from profiles', () => {
+        // A profile carries skills but no combat sheet, so the two
+        // collections are separate tools — one button must never silently
+        // stand in for the other
+        tracker.unit = { name: 'Bo', el: document.createElement('div') };
+        tracker.unitResult = { opened: 'Bo', how: 'unit' };
+        const body = document.createElement('div');
+        drawProfileCycler(body);
+
+        const battle = body.querySelector('.mwi-battleinfo-cycler');
+        const profile = body.querySelector('.mwi-profile-cycler');
+        expect(battle.textContent).toContain('Bo’s battle info');
+        expect(profile.textContent).toContain('Ada’s profile');
+
+        battle.click();
+        expect(tracker.openedUnits).toEqual(['Bo']);
+        expect(tracker.opened).toEqual([]);
+        expect(body.textContent).toContain('Waiting for Bo’s battle info');
+    });
+
+    test('no fight on screen means no battle-info button at all', () => {
+        const body = document.createElement('div');
+        drawProfileCycler(body);
+        expect(body.querySelector('.mwi-battleinfo-cycler')).toBeNull();
     });
 
     test('shows how far along the roster it is, and who is next', () => {
@@ -384,6 +421,9 @@ describe('the panel and tile', () => {
         tracker.cyclerResult = { opened: null, how: 'done' };
         tracker.opened = [];
         tracker.redone = 0;
+        tracker.unit = null;
+        tracker.unitResult = null;
+        tracker.openedUnits = [];
         tracker.members = [
             { characterID: 'a', name: 'Alice' },
             { characterID: 'b', name: 'Bob' },

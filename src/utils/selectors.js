@@ -92,6 +92,12 @@ export const GAME = {
     // Combat
     COMBAT_UNIT: '[class*="CombatUnit_combatUnit"]',
     COMBAT_UNIT_NAME: '[class*="CombatUnit_name"]',
+    // Party members beside a full combat card are drawn as mini units — small
+    // clickable boxes with their own name line (guild trial fights draw the
+    // whole party this way next to the player's own card)
+    MINI_UNIT: '[class*="MiniUnit_miniUnit"]',
+    MINI_UNIT_NAME: '[class*="MiniUnit_name"]',
+    BATTLE_PANEL: '[class*="BattlePanel_battlePanel"]',
     BATTLE_MONSTERS_AREA: '[class*="BattlePanel_monstersArea"]',
 
     // Enhancement

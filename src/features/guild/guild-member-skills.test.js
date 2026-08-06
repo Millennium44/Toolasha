@@ -318,28 +318,60 @@ describe('per guild, and forgotten with the character', () => {
 
 describe('people in the battle come first', () => {
     /**
-     * A spectated fight: the game's grid with CombatUnit boxes, as the real
-     * DOM draws them (`BattlePanel_combatUnitGrid` → `CombatUnit_combatUnit`
-     * → `CombatUnit_name`).
-     * @param {Array<[string, string]>} units - [name, hp] pairs
+     * A full combat card, as the game draws the boss and the watcher's own
+     * character (`CombatUnit_combatUnit` → `CombatUnit_name`).
      */
-    function fightView(units, { boss = 'Trial Chameleon' } = {}) {
-        const view = document.createElement('div');
-        view.className = 'BattlePanel_combatUnitGrid__2hTAM';
-        const rows = boss ? [[boss, '454,807/618,000'], ...units] : units;
-        for (const [name, hp] of rows) {
-            const box = document.createElement('div');
-            box.className = 'CombatUnit_combatUnit__1m3XT';
-            const nameEl = document.createElement('div');
-            nameEl.className = 'CombatUnit_name__1SlO1';
-            nameEl.textContent = name;
-            const hpEl = document.createElement('div');
-            hpEl.textContent = hp;
-            box.append(nameEl, hpEl);
-            view.appendChild(box);
-        }
-        document.body.appendChild(view);
-        return view;
+    function combatUnitBox(name, hp) {
+        const box = document.createElement('div');
+        box.className = 'CombatUnit_combatUnit__1m3XT';
+        const nameEl = document.createElement('div');
+        nameEl.className = 'CombatUnit_name__1SlO1';
+        nameEl.textContent = name;
+        const hpEl = document.createElement('div');
+        hpEl.textContent = hp;
+        box.append(nameEl, hpEl);
+        return box;
+    }
+
+    /**
+     * A party member's small clickable box (`MiniUnit_miniUnit` →
+     * `MiniUnit_name`), as the game draws everyone but the watcher.
+     */
+    function miniUnitBox(name) {
+        const box = document.createElement('div');
+        box.className = 'MiniUnit_miniUnit__379cK MiniUnit_combat__1xZ5M MiniUnit_clickable__FpDS0';
+        const nameEl = document.createElement('div');
+        nameEl.className = 'MiniUnit_name__3Rczb';
+        nameEl.textContent = name;
+        box.appendChild(nameEl);
+        return box;
+    }
+
+    /**
+     * A spectated fight, structured as the real DOM draws it: one battle
+     * panel holding a players area (own card + mini-unit column) and a
+     * monsters grid (the boss).
+     * @param {Array<[string, string]>} units - [name, hp] pairs, drawn as mini units
+     */
+    function fightView(units, { boss = 'Trial Chameleon', self = null } = {}) {
+        const panel = document.createElement('div');
+        panel.className = 'BattlePanel_battlePanel__1yPCP';
+
+        const players = document.createElement('div');
+        players.className = 'MiniUnitGrid_miniUnitGrid__3lJDa';
+        if (self) players.appendChild(combatUnitBox(self, '2,946/2,946'));
+        const column = document.createElement('div');
+        column.className = 'MiniUnitGrid_miniUnitColumn__1LwWg';
+        for (const [name] of units) column.appendChild(miniUnitBox(name));
+        players.appendChild(column);
+
+        const monsters = document.createElement('div');
+        monsters.className = 'BattlePanel_combatUnitGrid__2hTAM';
+        if (boss) monsters.appendChild(combatUnitBox(boss, '454,807/618,000'));
+
+        panel.append(players, monsters);
+        document.body.appendChild(panel);
+        return panel;
     }
 
     test('finds roster members by their unit boxes, and the boss never', () => {
@@ -359,19 +391,27 @@ describe('people in the battle come first', () => {
 
     test('names our own panels draw into the grid are never offered', () => {
         // The trial payout and damage panels are injected as children of the
-        // game's battle grid and carry every roster name as text. A fight
-        // where the game draws only the boss (a spectated trial does exactly
-        // this) must offer nobody — the first version matched its own
-        // panel's names and offered clicks that could never open anything
-        const grid = fightView([]);
+        // game's monsters grid and carry every roster name as text. Bare
+        // text is not a unit — the first version matched its own panel's
+        // names and offered clicks that could never open anything
+        const arena = fightView([]);
         const panel = document.createElement('div');
         panel.className = 'mwi-trial-info';
         const row = document.createElement('div');
         row.textContent = 'Ada';
         panel.appendChild(row);
-        grid.appendChild(panel);
+        arena.querySelector('[class*="combatUnitGrid"]').appendChild(panel);
         expect(findBattleUnits(game.members)).toEqual([]);
         expect(guildMemberSkills.nextBattleUnit(now)).toBeNull();
+    });
+
+    test('the watcher’s own full card and a text-truncated mini unit both resolve', () => {
+        // The players area draws the watcher as a full CombatUnit card and
+        // the rest as mini units; a name line the game truncated in text
+        // ("SarinTe…") still identifies its member when the prefix is unique
+        fightView([['SarinTe…', '']], { self: 'Ada' });
+        const units = findBattleUnits([{ name: 'Ada' }, { name: 'SarinTest' }]);
+        expect(units.map((u) => u.name).sort()).toEqual(['Ada', 'SarinTest']);
     });
 
     test('a dead unit is clicked like anyone else', () => {
@@ -379,6 +419,25 @@ describe('people in the battle come first', () => {
         // unit without abilities simply has none
         fightView([['Ada', '0/1,923']]);
         expect(guildMemberSkills.nextBattleUnit(now)?.name).toBe('Ada');
+    });
+
+    test('the unit tool and the profile tool are separable', () => {
+        // A profile carries skills but no combat sheet, so the roster view
+        // offers them as two buttons — each must work without the other
+        fightView([['Bo', '2,612/2,612']]);
+
+        expect(guildMemberSkills.openNextUnit(now)).toMatchObject({ opened: 'Bo', how: 'unit' });
+
+        const profile = guildMemberSkills.openNextProfile(now);
+        expect(profile.opened).toBe('Ada');
+        expect(profile.how).not.toBe('unit');
+
+        // With no fight on screen the unit tool says so instead of walking
+        document.body.innerHTML = '';
+        expect(guildMemberSkills.openNextUnit(now + REQUEST_TIMEOUT_MS + 1)).toMatchObject({
+            opened: null,
+            how: 'no-unit',
+        });
     });
 
     test('openNext clicks the alive unit before walking the roster', () => {

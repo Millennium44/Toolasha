@@ -272,17 +272,43 @@ export function drawProfileCycler(body, capture = guildMemberSkills) {
         return card;
     }
 
+    const status = panelNote('');
+    status.style.display = 'none';
+
+    // The battle-info collection is its own tool, not a fallback of the
+    // profile walk: a unit's popup is the only source of a combat stat sheet,
+    // a profile carries skills but no sheet, and letting one button silently
+    // degrade into the other collected the wrong thing while looking done.
+    // Only drawn while a fight on screen actually offers a clickable unit.
+    const unit = capture.nextBattleUnit?.();
+    if (unit?.el) {
+        const battleButton = document.createElement('button');
+        battleButton.className = 'mwi-battleinfo-cycler';
+        battleButton.textContent = `Open ${unit.name}\u2019s battle info`;
+        battleButton.style.cssText =
+            'width:100%; margin:4px 0 0; padding:4px 8px; border-radius:4px; font-size:11px; cursor:pointer;' +
+            `background:transparent; border:1px solid ${ACCENT}; color:${ACCENT};`;
+        battleButton.title =
+            'Opens one fighting member\u2019s Battle Info popup per click, so the game sends their combat ' +
+            'stat sheet. Only on offer while a fight is on screen \u2014 a profile cannot carry a combat sheet.';
+        battleButton.addEventListener('click', () => {
+            const result = capture.openNextUnit?.();
+            status.style.display = '';
+            status.style.color = ROW_COLORS.dim;
+            if (result?.how === 'unit') {
+                status.textContent = `Waiting for ${result.opened}\u2019s battle info\u2026`;
+                battleButton.textContent = `Asked for ${result.opened}\u2026`;
+            } else {
+                status.textContent = 'No fighting member is due right now.';
+            }
+        });
+        card.appendChild(battleButton);
+    }
+
     const button = document.createElement('button');
     button.className = 'mwi-profile-cycler';
-    // A fight on screen outranks the roster walk: the unit's popup is the only
-    // source of a combat sheet, and it is only on offer while the fight is
-    const unit = capture.nextBattleUnit?.();
-    button.textContent = unit?.el
-        ? `Open ${unit.name}\u2019s battle info`
-        : state.next
-          ? `Open ${state.next.name}\u2019s profile`
-          : 'Every member logged';
-    button.disabled = !unit?.el && !state.next;
+    button.textContent = state.next ? `Open ${state.next.name}\u2019s profile` : 'Every member logged';
+    button.disabled = !state.next;
     button.style.cssText =
         'width:100%; margin:4px 0; padding:4px 8px; border-radius:4px; font-size:11px;' +
         `cursor:${state.next ? 'pointer' : 'default'}; background:transparent;` +
@@ -292,13 +318,10 @@ export function drawProfileCycler(body, capture = guildMemberSkills) {
         'Opens one member\u2019s profile per click, so the game sends their skill levels and this can keep ' +
         'them. Nothing is opened automatically.\n' +
         'A profile carries every skill level, which is what the skilling forecast needs; combat stat sheets ' +
-        'come from fighting beside somebody instead.';
-
-    const status = panelNote('');
-    status.style.display = 'none';
+        'come only from the battle-info button during a fight.';
 
     button.addEventListener('click', () => {
-        const result = capture.openNext?.();
+        const result = capture.openNextProfile?.();
         status.style.display = '';
 
         if (result?.how === 'no-chat') {
@@ -312,10 +335,7 @@ export function drawProfileCycler(body, capture = guildMemberSkills) {
         }
 
         status.style.color = ROW_COLORS.dim;
-        if (result?.how === 'unit') {
-            status.textContent = `Waiting for ${result.opened}’s battle info…`;
-            button.textContent = `Asked for ${result.opened}…`;
-        } else if (result?.how === 'chat') {
+        if (result?.how === 'chat') {
             status.textContent = `Press Enter in chat to open ${result.opened}.`;
             button.textContent = `Asked for ${result.opened}…`;
         } else if (result?.opened) {
