@@ -23,8 +23,8 @@ biggest changes since forking, in rough order of how much they change the game:
   swaps, supply-aware planning (torches/shrouds/beacons from the actual run),
   skip-level finding, house rooms per fight, and skilling-sim candidates scoped to
   the skill you're simming.
-- **Per-character everything** — settings, panels, histories, market state and sim
-  state are scoped per character, with consent-gated adoption of legacy data and
+- **Per-character everything** — market state, sim state, histories, and panel
+  layouts scoped per character, with consent-gated adoption of legacy data and
   repair tools. No more iron cow reading the market cow's books.
 - **Cross-device sync** — your whole Toolasha database carried between browsers
   through one private GitHub gist you own: gzip-compressed, optionally AES-256
@@ -37,7 +37,7 @@ biggest changes since forking, in rough order of how much they change the game:
   attribution from the fight you're watching, tier read off the bar as it fills),
   and trials pace/ETA/payout math.
 - **Overlay redesign** — curated tile defaults, bundled presets, activity
-  auto-switching, tiles that open their panels, and full mobile support: a
+  auto-switching, tiles that open their panels, and made more mobile-friendly: a
   floating launcher on every screen and layouts that re-flow to the width they're
   given without touching your desktop arrangement.
 - **Mobile support throughout** — panels clamp to the viewport, close buttons stay
