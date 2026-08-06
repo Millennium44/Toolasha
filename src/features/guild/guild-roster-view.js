@@ -303,6 +303,14 @@ export function drawProfileCycler(body, capture = guildMemberSkills) {
             }
         });
         card.appendChild(battleButton);
+    } else if (capture.anyBattleUnits?.()) {
+        // A fight is on screen but nobody is due — an absent button reads as
+        // broken, so the freshness that hid it is said out loud instead
+        card.appendChild(
+            panelNote(
+                'Everyone in the fight has a fresh combat sheet — the battle-info button returns when one goes stale.'
+            )
+        );
     }
 
     const button = document.createElement('button');
