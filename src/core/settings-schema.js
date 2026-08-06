@@ -2897,6 +2897,15 @@ export const settingsGroups = {
                 default: false,
                 help: 'Compares each active sell listing of yours against the current best ask for that item and enhancement level, and each buy order against the best bid — a strictly better price than yours means you have been beaten; matching the best price is still competitive and says nothing. The figures come from the market data this script already holds, which can be up to 15 minutes old: the message carries the age of the figure it used, and data older than that — or an item with no cached price at all — is treated as unknown rather than as an undercut. Once per listing per undercut, re-arming when you reprice the listing or your price is the best again.',
             },
+            notifications_marketListingUndercut_refreshMinutes: {
+                id: 'notifications_marketListingUndercut_refreshMinutes',
+                label: 'Undercut alerts: re-fetch market snapshot every (minutes)',
+                type: 'number',
+                default: 5,
+                min: 1,
+                max: 15,
+                help: 'While undercut alerts are on, re-fetch the market snapshot this often (minutes). One fetch covers every listing and refreshes prices everywhere in the script. The game publishes this file periodically, so very short intervals mostly re-fetch unchanged data. A value at or above the 15-minute cache means no extra refresh — the normal cache stands. Only has an effect while "Notify when a market listing of yours is undercut" is on.',
+            },
             notifications_otherCharacterIdle: {
                 id: 'notifications_otherCharacterIdle',
                 label: 'Notify when another character has run out of queue',

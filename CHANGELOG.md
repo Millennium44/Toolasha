@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Undercut alerts stop missing undercuts you didn't watch happen
+
+- **A configurable market refresh, on while undercut alerts are**: the alert compared your listings against a snapshot that went stale after startup — nothing re-fetched it, and the only fresh per-item price arrived when you opened the item yourself, so a competitor who undercut you hours ago kept showing you as "still best." A new "re-fetch market snapshot every (minutes)" setting under the undercut toggle (default 5, 1–15) forces the bulk snapshot to refresh on a timer; each refresh re-runs the undercut check against current prices, so a snapshot-only undercut on an item you never opened is finally caught. One fetch covers every listing, and because the whole script reads the same snapshot, every price surface — profit panels, net worth, the advisor — gets fresher numbers for free while it runs. An in-flight guard skips overlapping ticks, a one-minute floor keeps the cadence courteous, and the timer stops when the alert is off.
+
 ### The combat profit panel leads with the live rate again
 
 - **The sim's forecast moves out of the headline**: the top card is back to the live measured profit rate alone; the last all-zones sim's figure for the zone ("sim said here — …/day · simulated") now sits in its own dim card at the foot of the panel, present for the comparison but no longer competing with the number the panel is for.
