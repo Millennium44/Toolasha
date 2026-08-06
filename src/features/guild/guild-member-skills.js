@@ -71,11 +71,32 @@ export const UNIT_FRESH_MS = 15 * 60 * 1000;
 /**
  * The name a combat unit box wears, from the game's own name line.
  *
- * @param {Element} box - A `CombatUnit_combatUnit` element
+ * @param {Element} box - A `CombatUnit_combatUnit` or `MiniUnit_miniUnit` element
  * @returns {string} The unit's display name, trimmed
  */
 function unitName(box) {
-    return (box.querySelector(GAME.COMBAT_UNIT_NAME)?.textContent || '').trim();
+    return (box.querySelector(`${GAME.COMBAT_UNIT_NAME}, ${GAME.MINI_UNIT_NAME}`)?.textContent || '').trim();
+}
+
+/**
+ * Which roster member a unit's name line identifies, if any.
+ *
+ * Name lines usually carry the full name and let CSS do the ellipsizing, but a
+ * text-truncated one ("SarinTe…") still identifies its member when exactly one
+ * roster name carries that prefix.
+ *
+ * @param {string} text - The name line's text
+ * @param {Map<string, string>} wanted - lowercased name → display name
+ * @returns {string|null} The member's display name
+ */
+function matchRosterName(text, wanted) {
+    const shown = text.trim().toLowerCase();
+    if (wanted.has(shown)) return wanted.get(shown);
+
+    const truncated = shown.match(/^(.{2,}?)(?:…|\.{3})$/);
+    if (!truncated) return null;
+    const matches = [...wanted.entries()].filter(([key]) => key.startsWith(truncated[1]));
+    return matches.length === 1 ? matches[0][1] : null;
 }
 
 /**
@@ -89,15 +110,16 @@ function unitName(box) {
  *
  * Matching the game's own unit classes is what keeps this honest. The first
  * version walked bare text leaves and climbed to "the smallest ancestor with a
- * health reading" — and in a spectated trial fight the game draws only the
- * boss as a unit, players carry no health text, so the climb sailed up to the
- * whole battle grid; worse, the names it matched were the ones this script's
- * own damage panel draws into that same grid, so the button offered clicks
- * that could never open anything. Now a unit has to be a real CombatUnit box,
- * in the same grid as the trial boss, wearing a roster member's name —
- * anything else (our injected panels, the skilling instance's inert member
- * cards, the boss itself) is not a unit, and a fight that draws no player
- * units honestly offers nobody.
+ * health reading", which sailed up to the whole battle grid and matched names
+ * this script's own damage panel had drawn there — clicks that could never
+ * open anything. The real structure (read off the live DOM with the script
+ * disabled): the boss is a `CombatUnit` in the monsters grid, the watching
+ * player's own character is a full `CombatUnit` card in the players area, and
+ * the rest of the party are small `MiniUnit_clickable` boxes beside it, each
+ * wearing its name in a `MiniUnit_name` line. So a unit has to be one of
+ * those two box kinds, inside the boss's own battle panel, wearing a roster
+ * member's name — anything else (our injected panels, the skilling instance's
+ * inert member cards, the boss itself) is not a unit.
  *
  * @param {Array} members - Roster, `{name}` each
  * @param {Document|Element|null} [root] - Injectable for tests
@@ -112,16 +134,20 @@ export function findBattleUnits(members, root = typeof document === 'undefined' 
     }
     if (!wanted.size) return [];
 
-    // The trial boss anchors the fight: only units sharing its grid count.
-    // The boss's own name is matched on its CombatUnit name line, so text our
-    // panels draw ("Trial payout", "Trial damage") can never anchor anything.
+    // The trial boss anchors the fight. Its name is read off its CombatUnit
+    // name line, so text our panels draw ("Trial payout", "Trial damage") can
+    // never anchor anything.
     const boss = [...root.querySelectorAll(GAME.COMBAT_UNIT)].find((box) => /^trial\s+\S/i.test(unitName(box)));
-    if (!boss?.parentElement) return [];
+    if (!boss) return [];
+    // Players live in a sibling area of the monsters grid, so the search runs
+    // over the whole battle panel around the boss, not the boss's own grid
+    const arena = boss.closest(GAME.BATTLE_PANEL) || boss.parentElement;
+    if (!arena) return [];
 
     const units = [];
     const taken = new Set();
-    for (const box of boss.parentElement.querySelectorAll(GAME.COMBAT_UNIT)) {
-        const name = wanted.get(unitName(box).toLowerCase());
+    for (const box of arena.querySelectorAll(`${GAME.COMBAT_UNIT}, ${GAME.MINI_UNIT}`)) {
+        const name = matchRosterName(unitName(box), wanted);
         if (!name || taken.has(name)) continue;
         taken.add(name);
         units.push({ name, el: box });
@@ -406,18 +432,34 @@ class GuildMemberSkills {
         return null;
     }
 
-    openNext(now = Date.now()) {
+    /**
+     * Click the next due battle unit, if a fight on screen offers one.
+     *
+     * Its own tool on purpose: the unit's popup is the only source of a
+     * combat stat sheet (`battle_unit_fetched`), and a profile carries
+     * skills but no sheet — the two collections must not stand in for each
+     * other.
+     *
+     * @param {number} [now] - Clock
+     * @returns {Object} `{opened, how: 'unit'|'no-unit', logged, total}`
+     */
+    openNextUnit(now = Date.now()) {
         const state = this.progress(now);
-
-        // People in the fight first: a battle on screen is the only time a
-        // combat sheet can be asked for, and it matters more than the roster
         const unit = this.nextBattleUnit(now);
-        if (unit?.el) {
-            this.unitRequests[unit.name.toLowerCase()] = now;
-            unit.el.click();
-            return { opened: unit.name, how: 'unit', logged: state.logged, total: state.total };
-        }
+        if (!unit?.el) return { opened: null, how: 'no-unit', logged: state.logged, total: state.total };
+        this.unitRequests[unit.name.toLowerCase()] = now;
+        unit.el.click();
+        return { opened: unit.name, how: 'unit', logged: state.logged, total: state.total };
+    }
 
+    /**
+     * Open the next due member's profile, for their skill levels.
+     *
+     * @param {number} [now] - Clock
+     * @returns {Object} `{opened, how: 'row'|'chat'|'no-chat'|'done', logged, total}`
+     */
+    openNextProfile(now = Date.now()) {
+        const state = this.progress(now);
         if (!state.next) return { opened: null, how: 'done', logged: state.logged, total: state.total };
 
         const name = state.next.name;
@@ -439,6 +481,13 @@ class GuildMemberSkills {
 
         this.requests[name.toLowerCase()] = now;
         return result(this._fillProfileCommand(name, input) ? 'chat' : 'no-chat');
+    }
+
+    openNext(now = Date.now()) {
+        // People in the fight first: a battle on screen is the only time a
+        // combat sheet can be asked for, and it matters more than the roster
+        const unit = this.openNextUnit(now);
+        return unit.how === 'unit' ? unit : this.openNextProfile(now);
     }
 
     /**
