@@ -67,6 +67,7 @@ const {
     contributionShares,
     projectGuildXP,
     buildRoster,
+    memberLabel,
     guildRosterPanel,
     registerGuildRosterRow,
     WINDOW_7D,
@@ -323,6 +324,57 @@ describe('buildRoster', () => {
     });
 });
 
+describe('a member who has left the guild', () => {
+    // Reported live from a 107-member guild: "Gone quiet (2)" listed
+    // "#9349 · —/h today vs 348/h this week" — somebody who left, still holding
+    // last week's rate, doing nothing today because they were gone, and headed
+    // with an internal id because they had been dropped from the member list
+    const departed = {
+        now,
+        meta: { a: { name: 'Alice' } },
+        series: {
+            a: series([
+                [160, 0],
+                [24, 6000],
+                [1, 6500],
+            ]),
+            9349: series([
+                [160, 0],
+                [48, 9000],
+                [1, 9000],
+            ]),
+        },
+    };
+
+    test('is not on the roster at all, however much history they left behind', () => {
+        const roster = buildRoster(departed);
+
+        expect(roster.map((member) => member.characterID)).toEqual(['a']);
+        expect(roster.some((member) => member.quiet)).toBe(false);
+    });
+
+    test('and does not count towards anybody’s share', () => {
+        // Their nine thousand XP was diluting everyone else's contribution
+        const roster = buildRoster(departed);
+        expect(roster[0].share7d).toBeCloseTo(100, 6);
+    });
+
+    test('an empty member list is “not known yet”, not “nobody is here”', () => {
+        // Before any roster message has arrived, the history stands in — which
+        // is what it did before, and losing the whole panel would be worse
+        const roster = buildRoster({ ...departed, meta: {} });
+        expect(roster).toHaveLength(2);
+    });
+
+    test('a member with no name is said to have none, never numbered', () => {
+        const roster = buildRoster({ now, meta: { 9349: {} }, series: { 9349: series([[1, 10]]) } });
+
+        expect(roster[0].name).toBeNull();
+        expect(memberLabel(roster[0])).toBe('Unnamed member');
+        expect(memberLabel(roster[0])).not.toContain('9349');
+    });
+});
+
 describe('the panel and tile', () => {
     beforeEach(() => {
         vi.useFakeTimers();
@@ -369,6 +421,26 @@ describe('the panel and tile', () => {
         expect(text).toContain('Bob');
         expect(text).toContain('Gone quiet (1)');
         expect(text).toContain('Projected in 7d');
+    });
+
+    test('a departed member is drawn nowhere, not even in Gone quiet', () => {
+        // The live report: "Gone quiet (2)" listing "#9349 · —/h today vs 348/h
+        // this week" — a member who had left, still holding last week's rate
+        tracker.series = {
+            ...tracker.series,
+            9349: series([
+                [160, 0],
+                [48, 9000],
+                [1, 9000],
+            ]),
+        };
+        guildRosterPanel.show({ remember: false });
+        const text = guildRosterPanel.panel.textContent;
+
+        expect(text).not.toContain('9349');
+        // Bob is the one genuinely quiet member, and the count is his alone
+        expect(text).toContain('Gone quiet (1)');
+        expect(text).toContain('Contribution (2 of 2 measured)');
     });
 
     test('says so plainly when there is no guild yet', () => {

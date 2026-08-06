@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Departed members stop haunting the roster
+
+- **A member who left the guild no longer sits in "Gone quiet" forever**: the roster walked the XP _history_ — every character ever sampled, never pruned — so someone who left kept their weekly rate, earned nothing (being gone), and read as permanently idle, headed by a bare "#9349" since their name left with them. The current member list now decides who gets a row; history is consulted only for people on it; an empty list means "not known yet", not "nobody's here". Stored history self-heals on login (an early or empty roster message prunes nothing — a message that arrived early must not delete the guild), live roster messages shed departures only when they carry most of the known guild, and a member the roster doesn't name renders as "Unnamed member", never a numeric tag.
+
 ### The wire speaks: five trial message types the game was sending all along
 
 - **`new_guild_battle` fires at every tier and states everything** this feature spent three rounds inferring: the full roster with names (the tick indexes map straight into it — 30 of 30 named, no placeholders), the tier boundary (baselines drop on the stated boundary, and exact per-tier durations record), the encounter (from the monster hrids, no fight view needed), and the tier-scaled boss sheet filed automatically — which confirms the HP rule on arrival: 330,000 × 1.30 = 429,000 with 30 players.

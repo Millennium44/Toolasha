@@ -133,14 +133,32 @@ export function projectGuildXP(currentXP, xpPerHour, hours) {
 /**
  * The roster, ranked by what each member did this week.
  *
+ * ## Who is on it
+ *
+ * The **current** roster, and that is a correction. This walked the *history*
+ * map — every character ever sampled — which never forgets, so a member who left
+ * the guild kept their weekly rate, did nothing all day because they were gone,
+ * and sat in "Gone quiet" permanently. They had no metadata either, having been
+ * dropped from the member list when they left, so the row was headed with the
+ * only thing left to head it with: `#9349`.
+ *
+ * Both defects are one defect. The member list the tracker rebuilds on every
+ * roster message *is* the statement of who is in the guild, so it decides who
+ * gets a row and the history is only consulted for the people on it.
+ *
+ * Before any roster message has arrived the list is empty, and an empty list is
+ * "not known yet" rather than "nobody is in this guild" — so the history stands
+ * in, exactly as it did, until the game says otherwise.
+ *
  * @param {Object} input - Everything this needs, so it can be tested without the tracker
  * @param {Object<string, Array<{t: number, xp: number}>>} input.series - characterID → samples
- * @param {Object<string, {name: string}>} input.meta - characterID → metadata
+ * @param {Object<string, {name: string}>} input.meta - characterID → metadata, and the roster
  * @param {number} [input.now] - Clock
- * @returns {Array<Object>} One row per member, best 7-day share first
+ * @returns {Array<Object>} One row per current member, best 7-day share first
  */
 export function buildRoster({ series, meta = {}, now = Date.now() }) {
-    const ids = Object.keys(series || {});
+    const current = Object.keys(meta || {});
+    const ids = current.length ? current : Object.keys(series || {});
 
     const rows = ids.map((characterID) => {
         const samples = series[characterID] || [];
@@ -151,7 +169,10 @@ export function buildRoster({ series, meta = {}, now = Date.now() }) {
 
         return {
             characterID,
-            name: meta[characterID]?.name || `#${characterID}`,
+            // Never a `#id`. A numeric tag where a name belongs reads as a
+            // member whose name is a number, and every row that ever showed one
+            // was a member who should not have been on the list at all
+            name: meta[characterID]?.name || null,
             samples: samples.length,
             delta: week ? week.delta : null,
             delta7d: week ? week.delta : null,
@@ -172,6 +193,21 @@ export function buildRoster({ series, meta = {}, now = Date.now() }) {
     });
 
     return rows.sort((a, b) => (b.share7d ?? 0) - (a.share7d ?? 0) || (b.totalXP ?? 0) - (a.totalXP ?? 0));
+}
+
+/**
+ * What to head a member's row with when their name was never captured.
+ *
+ * Withheld rather than faked. The tracker learns a name from the same message
+ * that says somebody is in the guild, so a member on the list with no name is a
+ * message this script could not read — which is worth saying, and is not worth
+ * printing an internal id for. `#9349` is not a name and nobody can act on it.
+ *
+ * @param {Object} member - A row from {@link buildRoster}
+ * @returns {string} Something a person can read
+ */
+export function memberLabel(member) {
+    return member?.name || 'Unnamed member';
 }
 
 /**
@@ -416,7 +452,7 @@ export const guildRosterPanel = createPanel({
             for (const member of quiet) {
                 card.appendChild(
                     panelLine(
-                        member.name,
+                        memberLabel(member),
                         `${xp(member.dayRate)}/h today vs ${xp(member.weekRate)}/h this week`,
                         ROW_COLORS.bad
                     )
@@ -435,7 +471,7 @@ export const guildRosterPanel = createPanel({
         for (const member of contributing) {
             card.appendChild(
                 panelLine(
-                    `${member.name}${member.quiet ? ' ·' : ''}`,
+                    `${memberLabel(member)}${member.quiet ? ' ·' : ''}`,
                     `${percent(member.share7d)} 7d · ${percent(member.share30d)} 30d · ${xp(member.delta7d)} XP`,
                     member.quiet ? ROW_COLORS.bad : ROW_COLORS.gold,
                     `${member.samples} samples recorded.\nShares are of the XP actually observed, not of career totals.`
