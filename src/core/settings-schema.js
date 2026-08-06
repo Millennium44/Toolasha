@@ -38,7 +38,7 @@ export const settingsGroups = {
                 id: 'whatsNew_newDefaultsOff',
                 label: 'New settings start turned off',
                 type: 'checkbox',
-                default: true,
+                default: false,
                 help:
                     'When an update introduces a new on-by-default switch, keep it off until you turn it on ' +
                     'yourself. Numbers and dropdowns keep their defaults — only behaviour switches are held back.',
@@ -1161,7 +1161,7 @@ export const settingsGroups = {
                 id: 'market_visibleItemCountOpacity',
                 label: 'Market: Opacity for items not in inventory',
                 type: 'slider',
-                default: 0.6,
+                default: 0.25,
                 min: 0,
                 max: 1,
                 step: 0.05,
