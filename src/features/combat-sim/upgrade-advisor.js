@@ -1856,7 +1856,7 @@ const SKILLING_METRIC_BUFF_TYPES = new Set([
  * @param {string} shrineHrid - e.g. '/guild_shrines/force'
  * @returns {string} e.g. 'Force'
  */
-function shrineName(shrineHrid) {
+export function shrineName(shrineHrid) {
     const slug =
         String(shrineHrid || '')
             .split('/')
@@ -2892,7 +2892,7 @@ export function explainUpgradeCost(candidate, gameData) {
  * Run the full upgrade analysis: baseline sim + one sim per candidate.
  * @param {Object} params - { playerDTOs, playerIndex, zoneHrid, difficultyTier, hours, communityBuffs, upgradeModes,
  *   upgradeMode, abilityLevelType, abilityTargetLevel, skipBackSlot, combatLevelTargets, charmTier,
- *   houseTargetLevel, houseTargets, guildShrineTargetLevel, optimizeFood, signatureSwapsOnly }
+ *   houseTargetLevel, houseTargets, guildShrineTargetLevel, guildShrineTargets, optimizeFood, signatureSwapsOnly }
  * @param {Function} onProgress - Called with { current, total, description }
  * @param {Object} [options] - { abortSignal: () => boolean }
  * @returns {Promise<Object>} { baseline, results: [{candidate, cost, metrics, deltas, goldPer}], food }
@@ -2916,6 +2916,7 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
         houseTargetLevel = 0,
         houseTargets = null,
         guildShrineTargetLevel = 0,
+        guildShrineTargets = null,
         communityBuffTargetLevel = 0,
         optimizeFood = false,
         signatureSwapsOnly = false,
@@ -2948,7 +2949,7 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
             houseTargets,
             communityBuffs,
             guildShrineTargetLevel,
-            { signatureSwapsOnly, communityBuffTargetLevel }
+            { signatureSwapsOnly, communityBuffTargetLevel, guildShrineTargets }
         )
     );
     // Candidates the caller asked for by name, alongside whatever the mode
