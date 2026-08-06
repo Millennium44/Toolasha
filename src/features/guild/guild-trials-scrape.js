@@ -302,6 +302,20 @@ export function parseWordyDurationMs(text) {
 }
 
 /**
+ * Text that must never be read as a countdown, however clock-shaped it is.
+ *
+ * A decimal ("Work Time 3.14s"), a percentage ("Success Rate 60.8%"), a time
+ * of day ("Thu 09:00 AM" — which a colon-clock parser reads as *nine minutes*)
+ * or a weekday disqualify the whole line. Exported because the status-row
+ * shortcut in `guild-trials.js` needs the same refusal: the Trials tab's
+ * header is "Skilling Trial - In Progress Thu 09:00 AM", and reading it as a
+ * nine-minute deadline made the pace walk one tier further than the real
+ * 5m53s allowed — "15 tiers → T15" on the Trials tab against a correct
+ * "14 tiers → T14" on In Progress, at the same moment.
+ */
+export const NOT_A_CLOCK_RE = /\d+\.\d|%|\b(?:am|pm)\b|\b(?:mon|tue|wed|thu|fri|sat|sun)/i;
+
+/**
  * The trial countdown, found anywhere on the tab.
  *
  * `GuildPanel_eventStatusRow` is as unverified as the tab container was, and it
@@ -347,12 +361,11 @@ export function findTrialClockMs(root, maxMs) {
 
     const plausible = (value) => Number.isFinite(value) && value > 0 && value <= maxMs;
     const labelled = TRIAL_CLOCK_LABEL_RE;
-    const notAClock = /\d+\.\d|%|\b(?:am|pm)\b|\b(?:mon|tue|wed|thu|fri|sat|sun)/i;
 
     // [labelled units, bare units, labelled colon, bare colon]
     const ranked = [null, null, null, null];
     for (const line of textLines(root)) {
-        if (line.includes('/') || notAClock.test(line)) continue;
+        if (line.includes('/') || NOT_A_CLOCK_RE.test(line)) continue;
 
         const wordy = parseWordyDurationMs(line);
         const value = plausible(wordy) ? wordy : parseClockMs(line);
@@ -984,6 +997,14 @@ export function classifyReadings(history, kind) {
     // The boss's health is the first bar and the second is its mana, which is
     // not a pool and is not sampled for anything
     if (kind === 'combat') return { bossIndex: 0, poolIndex: null };
+
+    // A skilling card carries exactly one bar, and it is the pool by
+    // construction — movement cannot reclassify it. Reading it by movement
+    // mislabelled the one moment continuity matters most: across a tier clear
+    // the pool *falls* (a reset onto the next tier's target), the lone bar was
+    // then classified as a boss, and the analysis dropped the bar — target,
+    // tier and all — right as the next tier began.
+    if (width === 1) return { bossIndex: null, poolIndex: 0 };
 
     let bossIndex = null;
     let poolIndex = null;

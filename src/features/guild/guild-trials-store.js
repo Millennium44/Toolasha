@@ -269,6 +269,17 @@ export function recordTileSample(record, tile, at) {
         // never the analysis, and the panel said "tier not known yet" over a
         // stream that was stating the tier several times a second.
         liveTier: Number.isFinite(tile?.socketTier) ? tile.socketTier : existing.liveTier,
+        // …and the pool target it was stated with, written as a pair: the
+        // statement expires the moment the bar's target moves on to the next
+        // tier's, and without this a `liveTier` persisted early in a trial
+        // outranked the bar for the rest of the hour — "Banked 8 tiers" over a
+        // bar only T15 produces. An update that states a tier without a pool
+        // clears the target rather than inheriting one from another tier.
+        liveTierTarget: Number.isFinite(tile?.socketTier)
+            ? Number.isFinite(tile?.socketTierTarget)
+                ? tile.socketTierTarget
+                : null
+            : existing.liveTierTarget,
         // Both come off the Trials tab and are absent from the In Progress one,
         // so a card that does not carry them must not erase what the other tab
         // already said
@@ -373,7 +384,11 @@ export function mergeTrialRecords(base, incoming) {
             personalByTier: { ...(staler.personalByTier || {}), ...(fresher.personalByTier || {}) },
             level: Number.isFinite(fresher.level) ? fresher.level : existing.level,
             tier: Number.isFinite(fresher.tier) ? fresher.tier : existing.tier,
+            // Both halves of the socket statement travel together: a liveTier
+            // paired with another record's target would defeat the staleness
+            // check that the pairing exists for
             liveTier: Number.isFinite(fresher.liveTier) ? fresher.liveTier : staler.liveTier,
+            liveTierTarget: Number.isFinite(fresher.liveTier) ? fresher.liveTierTarget : staler.liveTierTarget,
             // Carried across rather than dropped. Both come off the Trials tab
             // and only ever off the Trials tab, and the merge that runs when the
             // guild's name arrives happens on a record built from whichever tab

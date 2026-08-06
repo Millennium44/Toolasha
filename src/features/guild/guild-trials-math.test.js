@@ -420,6 +420,27 @@ describe('the tier a work target identifies', () => {
         expect(tierFromWorkTarget({ target: 49_920, baseWork: 40_000, participants: 0 })).toBeNull();
     });
 
+    test('the combat ladder identifies the tier from the boss health maximum', () => {
+        // Trial Chameleon, base 550,000: the T1 boss with 4 signed up reads
+        // 572,000 = 550,000 × (110/110) × 1.04, and the recorded T2 with 3
+        // signed up read 618,000 = 550,000 × (120/110) × 1.03
+        expect(tierFromWorkTarget({ target: 572_000, baseWork: 550_000, participants: 4, kind: 'combat' })).toBe(1);
+        expect(tierFromWorkTarget({ target: 618_000, baseWork: 550_000, participants: 3, kind: 'combat' })).toBe(2);
+        // …and back out to the same base
+        expect(baseWorkFromObservations([{ tier: 1, total: 572_000 }], 4, 'combat')).toBeCloseTo(550_000, 6);
+        expect(baseWorkFromObservations([{ tier: 2, total: 618_000 }], 3, 'combat')).toBeCloseTo(550_000, 6);
+    });
+
+    test('the combat pool bar identifies the tier with no participant factor at all', () => {
+        // The fight view's second bar, observed live: 547,970/550,000 at T1
+        // became 597,970/600,000 at T2 — exactly 110 → 120 on a 5,000-per-unit
+        // base, unscaled by the party
+        expect(tierFromWorkTarget({ target: 550_000, baseWork: 550_000, participants: 0, kind: 'combat' })).toBe(1);
+        expect(tierFromWorkTarget({ target: 600_000, baseWork: 550_000, participants: 0, kind: 'combat' })).toBe(2);
+        // A combat target that fits no tier is refused the same way
+        expect(tierFromWorkTarget({ target: 580_000, baseWork: 550_000, participants: 0, kind: 'combat' })).toBeNull();
+    });
+
     test('unusable input is null', () => {
         expect(tierFromWorkTarget({ target: 0, baseWork: 40_000, participants: 4 })).toBeNull();
         expect(tierFromWorkTarget({ target: 49_920, baseWork: 0, participants: 4 })).toBeNull();
@@ -919,6 +940,38 @@ describe('the points ladder, across three guilds', () => {
         expect(projection.guildPoints).toBe(1222);
         // Half the base at the Treasury's +10%, paid once at the end
         expect(projection.eligibleTokens).toBeCloseTo(0.5 * 1100 * 1.1, 6);
+    });
+
+    test('a card older than the banked count is topped up the ladder’s steps', () => {
+        // The live figures: the crafting card was last read at T8 stating
+        // 1,080 pts, and fourteen tiers stood banked by the time the payout
+        // rendered — which showed the stale 1,080 against a Trials tab
+        // stating 1,800. Six tiers × 100 base × 1.2 tops it up exactly.
+        const banked = trialBankedBasePoints({
+            type: 'skilling',
+            bankedTiers: 14,
+            pointsByTier: { 8: 1080 },
+            buildersHallBonus: 0.2,
+        });
+
+        expect(banked.basePoints).toBeCloseTo(1_500, 9);
+        expect(banked.guildPoints).toBeCloseTo(1_800, 9);
+        // Part card, part ladder — and the caption machinery says so
+        expect(banked.source).toBe('mixed');
+        expect(banked.interpretation).toBe('cumulative');
+    });
+
+    test('a card at the banked count is used exactly as stated, as before', () => {
+        const banked = trialBankedBasePoints({
+            type: 'skilling',
+            bankedTiers: 8,
+            pointsByTier: { 8: 1080 },
+            buildersHallBonus: 0.2,
+        });
+
+        expect(banked.basePoints).toBeCloseTo(900, 9);
+        expect(banked.guildPoints).toBe(1080);
+        expect(banked.source).toBe('game');
     });
 });
 

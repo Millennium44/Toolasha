@@ -236,7 +236,7 @@ describe('the panel', () => {
         document.querySelector('[data-tab="healing"]').click();
 
         expect(text()).toContain('No healing has been watched');
-        expect(text()).toContain('fight view is open');
+        expect(text()).toContain('fight view has been opened');
         // A build cannot predict healing, so there is no estimate to offer here
         expect(text()).not.toContain('Estimated from builds');
     });
@@ -253,7 +253,9 @@ describe('the panel', () => {
         guildTrialScoreboard.open();
 
         expect(text()).toContain('Measured from the trial fight — 45s watched');
-        expect(text()).toContain('closing it pauses these');
+        // Observed live: the stream keeps flowing while other tabs are browsed,
+        // so the caption claims the gap rule rather than an open-view rule
+        expect(text()).toContain('a gap in the stream pauses these');
         expect(text()).not.toContain('Estimated from builds');
     });
 

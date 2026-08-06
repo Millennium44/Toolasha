@@ -573,13 +573,27 @@ export function trialBankedBasePoints({ type, bankedTiers, pointsByTier = {}, bu
     // tokens are paid on base. The ladder is exact at every tier and is used
     // instead; the card still supplies the Guild Points, which are what the
     // guild's own announcement will state.
+    //
+    // A card figure is also a statement *about the tier it was read at*, and
+    // the trial may have banked further since: a card quoted at T8 while
+    // fourteen tiers stand banked is six tiers out of date, not the trial's
+    // total. Observed live — "Guild Points banked 1,080" against a Trials tab
+    // stating 1,800 — once the tier could advance without the card being
+    // re-read. The ladder's own per-tier steps top the quoted figure up to the
+    // banked count, which reproduces the refreshed card exactly: 1,080 + 6 ×
+    // 100 × 1.2 = 1,800.
     const midTrialUpgrade = interpretation === 'mid-trial-upgrade';
+    let topUp = 0;
+    for (let tier = quotedAt.tier + 1; tier <= banked; tier += 1) {
+        topUp += tierMarginalPoints(type, tier) ?? 0;
+    }
+
     return {
-        basePoints: midTrialUpgrade ? reading.ladderCumulative : reading.basePoints,
-        guildPoints: reading.statedPoints,
-        // The base came from the ladder in the upgrade case, and a caption that
-        // says "from the cards" would be overstating it
-        source: midTrialUpgrade ? 'mixed' : 'game',
+        basePoints: (midTrialUpgrade ? reading.ladderCumulative : reading.basePoints) + topUp,
+        guildPoints: reading.statedPoints + topUp * scale,
+        // The base came from the ladder in the upgrade and top-up cases, and a
+        // caption that says "from the cards" would be overstating it
+        source: midTrialUpgrade || topUp > 0 ? 'mixed' : 'game',
         interpretation,
         bonusKnown,
         needsBuildersHall: false,
@@ -626,24 +640,53 @@ export function tierPoolWork({ baseWork, tier, participants = 0 } = {}) {
 }
 
 /**
- * The first tier's work, backed out of any tier that has been observed.
+ * How much of a tier's total each kind's ladder puts on tier `t`, relative to
+ * the first tier.
+ *
+ * `shape(1)` is 1 for both kinds, so a "base" is always *the first tier's
+ * total before participants* whichever ladder it came from:
+ *
+ * - **Skilling**: `1 + 0.1 × (t − 1)` — the pool rule.
+ * - **Combat**: `(100 + 10t) / 110` — the boss-health rule, `(10 + level)/110`
+ *   with `level = 100 + 10 × (t − 1)`, confirmed to the unit on a recorded run
+ *   (618,000 → 669,500 is exactly 120 → 130).
+ *
+ * @param {'skilling'|'combat'} kind - Which ladder
+ * @returns {Function|null} `(tier) => factor`, or null for a kind with no ladder
+ */
+function ladderShape(kind) {
+    if (kind === 'skilling') return (tier) => 1 + SKILLING_TIER_STEP * (tier - 1);
+    if (kind === 'combat') {
+        const atFirstTier = TRIAL_START_LEVEL + TRIAL_LEVEL_STEP;
+        return (tier) => (TRIAL_START_LEVEL + TRIAL_LEVEL_STEP * tier) / atFirstTier;
+    }
+    return null;
+}
+
+/**
+ * The first tier's total, backed out of any tier that has been observed.
  *
  * A trial joined at tier three still knows what tier one needed, because the
  * step between tiers is known — so one reading anywhere on the ladder gives the
- * whole of it.
+ * whole of it. Works for both kinds: a skilling pool backs out the skill's base
+ * work, a combat health bar the encounter's first-tier health (572,000 at T1
+ * with 4 signed up backs out Trial Chameleon's 550,000 exactly).
  *
- * @param {Array<{tier: number, total: number}>} observations - Pool sizes seen
+ * @param {Array<{tier: number, total: number}>} observations - Pool or health totals seen
  * @param {number} [participants] - Members signed up
- * @returns {number|null} The first tier's work, or null with nothing to derive from
+ * @param {'skilling'|'combat'} [kind] - Which ladder the totals sit on
+ * @returns {number|null} The first tier's total, or null with nothing to derive from
  */
-export function baseWorkFromObservations(observations, participants = 0) {
+export function baseWorkFromObservations(observations, participants = 0, kind = 'skilling') {
     const byParty = 1 + PARTICIPANT_SCALE_STEP * Math.max(0, Number(participants) || 0);
+    const shape = ladderShape(kind);
+    if (!shape) return null;
 
     for (const observation of observations || []) {
         const tier = Number(observation?.tier);
         const total = Number(observation?.total);
         if (!Number.isFinite(tier) || tier < 1 || !Number.isFinite(total) || total <= 0) continue;
-        return total / byParty / (1 + SKILLING_TIER_STEP * (tier - 1));
+        return total / byParty / shape(tier);
     }
     return null;
 }
@@ -678,13 +721,8 @@ export function baseWorkFromObservations(observations, participants = 0) {
 export function exactTierTotal({ kind, anchors = [], tier } = {}) {
     if (!Number.isFinite(tier) || tier < 1 || tier > TRIAL_MAX_TIER) return null;
 
-    // Each kind's scaling factor, up to a constant that cancels in the ratio
-    const shape =
-        kind === 'skilling'
-            ? (t) => 1 + SKILLING_TIER_STEP * (t - 1)
-            : kind === 'combat'
-              ? (t) => TRIAL_START_LEVEL + TRIAL_LEVEL_STEP * t
-              : null;
+    // Each kind's scaling factor; any common constant cancels in the ratio
+    const shape = ladderShape(kind);
     if (!shape) return null;
 
     const usable = (anchors || []).filter(
@@ -713,24 +751,30 @@ export function exactTierTotal({ kind, anchors = [], tier } = {}) {
 export const WORK_LADDER_TIER_TOLERANCE = 0.05;
 
 /**
- * Which tier a skilling trial is on, from nothing but its bar's target.
+ * Which tier a trial is on, from nothing but its bar's target.
  *
- * The In Progress tab's card carries the pool and no tier, and the pool's
- * *target* identifies the tier uniquely once the skill's base work is known:
- * `target = base × (1 + 0.1 × (tier − 1)) × (1 + 0.01 × participants)`, so
- * `tier = 1 + (target / (base × (1 + 0.01 × participants)) − 1) / 0.1`. The
- * crafting base of 40,000 is confirmed across two guilds — 49,920 with 4
- * participants at T3 and 88,920 with 17 at T10 both back out to it exactly.
+ * The In Progress tab's card carries the bar and no tier, and the bar's
+ * *target* identifies the tier uniquely once the first tier's total is known —
+ * on either ladder:
+ *
+ * - **Skilling**: `target = base × (1 + 0.1 × (tier − 1)) × (1 + 0.01 × p)`,
+ *   so `tier = 1 + (target / (base × (1 + 0.01 × p)) − 1) / 0.1`. The crafting
+ *   base of 40,000 is confirmed across two guilds — 49,920 with 4 participants
+ *   at T3 and 88,920 with 17 at T10 both back out to it exactly.
+ * - **Combat**: the health bar's maximum is `base × ((100 + 10 × tier) / 110)
+ *   × (1 + 0.01 × p)`, so `tier = 11 × ratio − 10`. Trial Chameleon's 572,000
+ *   with 4 signed up is exactly the 550,000 base at T1.
  *
  * Accepted only when the arithmetic lands within
  * {@link WORK_LADDER_TIER_TOLERANCE} of a whole tier on the ladder; anything
  * else returns null and the tier stays honestly unknown.
  *
  * @param {Object} input - Inputs
- * @param {number} input.target - The bar's target (`targetWorkValue` / the `/ max`)
- * @param {number} input.baseWork - The skill's first-tier work, before participants
+ * @param {number} input.target - The bar's target (`targetWorkValue`, or the boss health maximum)
+ * @param {number} input.baseWork - The first tier's total, before participants
  * @param {number} [input.participants] - Members signed up
  * @param {number} [input.tolerance] - How far from a whole tier is still that tier
+ * @param {'skilling'|'combat'} [input.kind] - Which ladder the target sits on
  * @returns {number|null} The tier, or null when the target fits no tier
  */
 export function tierFromWorkTarget({
@@ -738,12 +782,18 @@ export function tierFromWorkTarget({
     baseWork,
     participants = 0,
     tolerance = WORK_LADDER_TIER_TOLERANCE,
+    kind = 'skilling',
 } = {}) {
     if (!Number.isFinite(target) || target <= 0) return null;
     if (!Number.isFinite(baseWork) || baseWork <= 0) return null;
 
     const byParty = 1 + PARTICIPANT_SCALE_STEP * Math.max(0, Number(participants) || 0);
-    const exactTier = 1 + (target / (baseWork * byParty) - 1) / SKILLING_TIER_STEP;
+    const ratio = target / (baseWork * byParty);
+    // The closed-form inverse of `ladderShape`, per kind
+    const exactTier =
+        kind === 'combat'
+            ? ((TRIAL_START_LEVEL + TRIAL_LEVEL_STEP) * ratio - TRIAL_START_LEVEL) / TRIAL_LEVEL_STEP
+            : 1 + (ratio - 1) / SKILLING_TIER_STEP;
     const tier = Math.round(exactTier);
 
     if (Math.abs(exactTier - tier) > tolerance) return null;

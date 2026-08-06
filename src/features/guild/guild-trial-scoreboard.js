@@ -493,8 +493,9 @@ class GuildTrialScoreboard {
               ? `<div style="color:${GOOD}; font-size:11px; font-weight:600; line-height:1.5;">` +
                 `Measured from the trial fight — ${Math.round(breakdown?.seconds || 0)}s watched.</div>` +
                 `<div style="color:${DIM}; font-size:10px; line-height:1.5; margin-bottom:6px;">` +
-                'Folded from the stream the In Progress fight view subscribes to. Only the stretch the view ' +
-                'was open for is counted, so closing it pauses these rather than ending them.' +
+                'Folded from the stream the In Progress fight view subscribes to. Once started, the stream ' +
+                'often keeps flowing while other tabs are open — every tick received is counted, and a gap ' +
+                'in the stream pauses these rather than ending them.' +
                 this._ownRowNote(breakdown) +
                 this._namingNote(breakdown) +
                 '</div>'

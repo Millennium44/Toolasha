@@ -1949,8 +1949,29 @@ describe('the panel, end to end', () => {
         fire(root);
 
         expect(guildTrials.record.tiles['skilling::crafting'].liveTier).toBe(3);
+        // …paired with the pool it was stated for, so it can expire when the
+        // bar's target moves on to the next tier's
+        expect(guildTrials.record.tiles['skilling::crafting'].liveTierTarget).toBe(49_920);
         expect(text()).not.toContain('tier not seen yet');
         expect(text()).toContain('2 tiers');
+    });
+
+    test('a spectated combat trial’s stated tier persists the same way', async () => {
+        // `new_battle.tier` rides on the watched pool; it used to reach only
+        // the observation filing, and the combat card said "tier not seen yet"
+        // through a fight whose tier was on the wire
+        game.breakdown = {
+            pool: { current: 476_238, max: 572_000, tier: 2, at: now, encounter: 'chameleon' },
+        };
+        const root = buildTab([{ name: 'Trial Chameleon', level: '', bar: '' }]);
+        root.querySelectorAll('[class*="ProgressBar_text"]').forEach((el) => el.remove());
+        fire(root);
+
+        const tile = guildTrials.record.tiles['combat::trial chameleon'];
+        expect(tile.liveTier).toBe(2);
+        expect(tile.liveTierTarget).toBe(572_000);
+        expect(text()).not.toContain('tier not seen yet');
+        expect(text()).toContain('1 tier');
     });
 
     test('a card the game is drawing a bar on keeps its own numbers', async () => {
@@ -2329,6 +2350,67 @@ describe('the two trial tabs, as the game draws them', () => {
         expect(document.body.textContent).not.toContain('tier not seen yet');
         expect(document.body.textContent).toContain('6 tiers');
     });
+
+    test('the In Progress tab stays correct on its own as tiers clear under it', async () => {
+        // The user's requirement, verbatim: correct continuously, with no
+        // Trials-tab visit — including after a tier clears while the tab sits
+        // open. The bar's target moving from T14's to T15's is the whole
+        // signal, and it is enough.
+        trialsFeature.cleanup();
+        game.store = {
+            guildTrialsWorkBases: {
+                alchemy: { baseWork: 40_000, tier: 7, target: 65_280, participants: 2, learnedAt: now },
+            },
+        };
+        game.members = [
+            {
+                characterID: '1',
+                signupWeekStartAt: game.currentWeek,
+                signedUpSkillingTrialHrid: '/guild_trials/alchemy',
+            },
+            {
+                characterID: '2',
+                signupWeekStartAt: game.currentWeek,
+                signedUpSkillingTrialHrid: '/guild_trials/alchemy',
+            },
+        ];
+        await trialsFeature.initialize();
+
+        // T14's pool with 2 signed up: 40,000 × 2.3 × 1.02
+        buildInProgressTab('90,000 / 93,840');
+        fire();
+        expect(document.body.textContent).toContain('13 tiers');
+
+        // The tier clears while the tab sits open: the bar resets onto T15's
+        // target, 40,000 × 2.4 × 1.02
+        vi.setSystemTime(now + 5_000);
+        buildInProgressTab('1,200 / 97,920');
+        fire();
+
+        expect(document.body.textContent).toContain('14 tiers');
+        expect(document.body.textContent).not.toContain('13 tiers');
+        // And both pools were filed under the tier their own target names
+        expect(guildTrials.record.tiles['skilling::alchemy'].tiers).toContainEqual({ tier: 14, total: 93_840 });
+        expect(guildTrials.record.tiles['skilling::alchemy'].tiers).toContainEqual({ tier: 15, total: 97_920 });
+    });
+
+    test('a status row carrying a time of day is not a nine-minute countdown', () => {
+        // "Skilling Trial - In Progress Thu 09:00 AM" — 09:00 read as a clock
+        // gave the Trials tab a nine-minute deadline against a tile clock of
+        // 5m53s, and the pace walked one tier further than the hour allowed:
+        // "15 tiers → T15" there against a correct "14 tiers → T14" on the
+        // refreshed In Progress view, at the same moment.
+        document.body.innerHTML = '';
+        const root = document.createElement('div');
+        root.className = 'GuildPanel_trialsContent__a';
+        root.innerHTML =
+            '<div class="GuildPanel_eventStatusRow__b">Skilling Trial - In Progress Thu 09:00 AM</div>' +
+            '<div class="GuildPanel_tile__c"><div class="GuildPanel_tileName__d">Crafting</div>' +
+            '<div class="GuildPanel_tileSummary__e">Lv.230</div><div class="GuildPanel_clock__f">5m 53s</div></div>';
+        document.body.appendChild(root);
+
+        expect(guildTrials._timeLeftMs(root)).toBe(5 * 60_000 + 53_000);
+    });
 });
 
 describe('zero is a claim, and usually the wrong one', () => {
@@ -2613,6 +2695,198 @@ describe('the tier from the bar alone', () => {
 
         expect(html).toContain('at least 3 tiers → T3');
         expect(html).toContain('ladder past that tier is not known');
+    });
+});
+
+describe('the rungs go stale at different speeds', () => {
+    // Live evidence, one moment, two tabs: the In Progress bar read
+    // 17,353/99,840 — a target only T15 produces — while the panel said
+    // "Banked 8 tiers", "Next tier work (T10)" and a payout of 1,080 against a
+    // Trials tab stating T14, 1,800 pts and "Banked 14 tiers". A liveTier of 9
+    // and a badge of 8, both true earlier in the hour, outranked the bar in
+    // front of the player until a Trials-tab visit rewrote the badge.
+    const staleRecord = (extra = {}) => ({
+        name: 'Crafting',
+        kind: 'skilling',
+        tier: null,
+        samples: [
+            { t: now, readings: [{ current: 15_613, max: 99_840 }] },
+            { t: now + 10_000, readings: [{ current: 17_353, max: 99_840 }] },
+        ],
+        tiers: [],
+        ...extra,
+    });
+
+    test('a socket tier is only believed for the pool it was stated with', () => {
+        // liveTier 9 arrived with T9's 74,880; the bar has since moved on
+        const analysis = analyseTrial(
+            staleRecord({ liveTier: 9, liveTierTarget: 74_880, tiers: [{ tier: 9, total: 74_880 }] }),
+            { participants: 4, phase: 'live', workBase: 40_000 }
+        );
+
+        expect(analysis.tier).toBe(15);
+        expect(analysis.tierSource).toBe('work-ladder');
+        expect(analysis.tiersClearedSoFar).toBe(14);
+    });
+
+    test('and still believed while the target matches', () => {
+        const analysis = analyseTrial(
+            {
+                ...staleRecord({ liveTier: 9, liveTierTarget: 74_880 }),
+                samples: [{ t: now, readings: [{ current: 10_000, max: 74_880 }] }],
+            },
+            { participants: 4, phase: 'live' }
+        );
+
+        expect(analysis.tier).toBe(9);
+        expect(analysis.tierSource).toBe('socket');
+    });
+
+    test('the live regression, end to end: badge, socket and payout all heal off the bar', () => {
+        const analysis = analyseTrial(
+            staleRecord({
+                tier: 8,
+                points: 1080,
+                pointsByTier: { 8: 1080 },
+                liveTier: 9,
+                liveTierTarget: 74_880,
+                tiers: [{ tier: 9, total: 74_880 }],
+            }),
+            {
+                participants: 4,
+                phase: 'live',
+                timeLeftMs: 4 * 60_000 + 12_000,
+                buildersHallBonus: 0.2,
+                workBase: 40_000,
+            }
+        );
+
+        // The bar wins: 99,840 = 40,000 × 2.4 × 1.04 is T15 and nothing else
+        expect(analysis.tier).toBe(15);
+        expect(analysis.tierSource).toBe('work-ladder');
+        expect(analysis.tiersClearedSoFar).toBe(14);
+        // The payout heals with it: the T8 card topped up six ladder steps
+        expect(analysis.points.basePoints).toBeCloseTo(1_500, 9);
+        expect(analysis.points.guildPoints).toBeCloseTo(1_800, 9);
+        // And the next tier states T16 off the live anchor: 99,840 × 2.5/2.4
+        expect(analysis.next.tier).toBe(16);
+        expect(analysis.next.total).toBeCloseTo(104_000, 6);
+        // 82,487 left at 174 work/s is 7.9 minutes against 4m12s: no clear
+        // fits, so the pace is the fourteen banked — as the corrected view read
+        expect(analysis.rate * 1000).toBeCloseTo(174, 9);
+        expect(analysis.pace.tiersCleared).toBe(14);
+
+        const html = renderTrialBlock(analysis, 4, { measured: false, reason: 'none' }, { phase: 'live' });
+        expect(html).toContain('14 tiers');
+        expect(html).not.toContain('8 tiers');
+    });
+
+    test('the record’s own observations recover the base when the store has none', () => {
+        const analysis = analyseTrial(staleRecord({ tiers: [{ tier: 9, total: 74_880 }] }), {
+            participants: 4,
+            phase: 'live',
+        });
+
+        expect(analysis.tier).toBe(15);
+        expect(analysis.tierSource).toBe('work-ladder');
+    });
+
+    test('a tier-1 observation cannot smuggle the first-tier rule in as arithmetic', () => {
+        // The first-tier rule files (1, target); a base derived from that very
+        // observation would "confirm" tier 1 by construction
+        const analysis = analyseTrial(
+            {
+                ...staleRecord({ tiers: [{ tier: 1, total: 49_920 }] }),
+                samples: [{ t: now, readings: [{ current: 1_000, max: 49_920 }] }],
+            },
+            { participants: 4, phase: 'live' }
+        );
+
+        expect(analysis.tierSource).toBe('first-tier-rule');
+        expect(analysis.tier).toBe(1);
+    });
+
+    test('a fresh badge agreeing with the ladder keeps its label', () => {
+        const analysis = analyseTrial(staleRecord({ tier: 14, points: 1800, pointsByTier: { 14: 1800 } }), {
+            participants: 4,
+            phase: 'live',
+            buildersHallBonus: 0.2,
+            workBase: 40_000,
+        });
+
+        expect(analysis.tier).toBe(15);
+        expect(analysis.tierSource).toBe('card');
+    });
+});
+
+describe('the combat tier from the card alone', () => {
+    // The spectated Trial Chameleon that never learned its tier: the fight
+    // view's bars read 476,238/572,000 (boss health, participant-scaled) and
+    // 547,970/550,000 (the tier's own pool, level-scaled only) while the card
+    // said "tier not seen yet" throughout.
+    const fight = (extra = {}) => ({
+        name: 'Trial Chameleon',
+        kind: 'combat',
+        tier: null,
+        samples: [
+            {
+                t: now,
+                readings: [
+                    { current: 500_000, max: 572_000 },
+                    { current: 547_000, max: 550_000 },
+                ],
+            },
+            {
+                t: now + 10_000,
+                readings: [
+                    { current: 476_238, max: 572_000 },
+                    { current: 547_970, max: 550_000 },
+                ],
+            },
+        ],
+        tiers: [],
+        ...extra,
+    });
+
+    test('the pool bar identifies the tier with no participant count needed', () => {
+        // A wrong participant count is handed in on purpose: the second bar
+        // carries no participant factor, so it cannot be led astray by one
+        const analysis = analyseTrial(fight(), { participants: 17, phase: 'live', workBase: 550_000 });
+
+        expect(analysis.tier).toBe(1);
+        expect(analysis.tierSource).toBe('work-ladder');
+        expect(analysis.tiersClearedSoFar).toBe(0);
+    });
+
+    test('the boss health anchors it too, when the pool bar is absent', () => {
+        const oneBar = {
+            ...fight(),
+            samples: [{ t: now, readings: [{ current: 476_238, max: 572_000 }] }],
+        };
+        const analysis = analyseTrial(oneBar, { participants: 4, phase: 'live', workBase: 550_000 });
+
+        expect(analysis.tier).toBe(1);
+        expect(analysis.tierSource).toBe('work-ladder');
+    });
+
+    test('the spectated stream’s stated tier persists like the skilling socket’s', () => {
+        const analysis = analyseTrial(fight({ liveTier: 2, liveTierTarget: 572_000 }), {
+            participants: 4,
+            phase: 'live',
+        });
+
+        // 572,000 is still the bar in hand, so the statement holds
+        expect(analysis.tier).toBe(2);
+        expect(analysis.tierSource).toBe('socket');
+        expect(analysis.tiersClearedSoFar).toBe(1);
+    });
+
+    test('the combat caption names the boss’s health rather than a work total', () => {
+        const analysis = analyseTrial(fight(), { participants: 4, phase: 'live', workBase: 550_000 });
+        const html = renderTrialBlock(analysis, 4, { measured: false, reason: 'none' }, { phase: 'live' });
+
+        expect(html).toContain('derived from the boss’s full health');
+        expect(html).not.toContain('tier not seen yet');
     });
 });
 
@@ -3094,6 +3368,27 @@ describe('renderTrialPlayers', () => {
         expect(html).toContain('Moo');
         expect(html).toContain('2✝');
         expect(html).toContain('3 fights');
+    });
+
+    test('a long name shares its row with its figures instead of pushing them off it', () => {
+        // Reported from a fight-view screenshot: "Orven 273 dmg/s · 38%" held
+        // one line while "MillenniumTest" dropped its figures onto a second —
+        // the row builder stacked any name longer than a label. The injected
+        // panel can be as narrow as a 108px combat-unit cell, so the name
+        // ellipsizes on its own row rather than stacking, and the full name
+        // moves into the tooltip where a cut one can be read back.
+        const longName = {
+            ...breakdown,
+            players: [{ ...breakdown.players[0], name: 'MillenniumTest' }],
+        };
+        const html = renderTrialPlayers(longName).join('');
+        const row = html.split('</div>').find((part) => part.includes('MillenniumTest'));
+
+        // A flex pair, never the stacked caption form
+        expect(row).toContain('justify-content:space-between');
+        expect(row).toContain('text-overflow:ellipsis');
+        // The full name survives in the tooltip even when the row cuts it
+        expect(html).toMatch(/title="MillenniumTest — /);
     });
 
     test('nothing measured is an instruction, not an apology', () => {
