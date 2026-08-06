@@ -374,6 +374,40 @@ export function summariseTrialDamage({ tally = {}, names = {}, deaths = {}, seco
 }
 
 /**
+ * How much of the party the per-player split actually covers.
+ *
+ * A spectated trial names its attacker by *presence* — the lone player changing
+ * in a tick where the boss lost health — because `guild_battle_updated` does not
+ * stream other players' attack counters (their `atkCounter` is absent, so
+ * `splitFromCounters` is false). That rung only fires on a tick with exactly one
+ * player in it, so a member who never had such a tick this window — always
+ * sharing a tick, or never appearing at all — earns no row at all. The result is
+ * honest but partial: three names summing to 100% under a party of seven, where
+ * the four missing did not do nothing, they merely never landed a hit this
+ * client could split out.
+ *
+ * This states the coverage so the display can say "3 of 7" rather than implying
+ * the party is three people. `party` is the size the game stated (the roster the
+ * ladders scale by); `attributed` is how many earned a damage row; `partial` is
+ * true only when the party size is known and fewer than all of it is covered.
+ * `counterConfirmed` is how many rows a player's *own* counters confirmed
+ * directly — the viewer's, in every recording so far — which is zero on a stream
+ * that carried none.
+ *
+ * @param {Object} breakdown - From {@link GuildTrialDamage#breakdown}
+ * @returns {{party: number|null, attributed: number, counterConfirmed: number, partial: boolean}}
+ */
+export function attributionCoverage(breakdown) {
+    const stated = Number(breakdown?.participants);
+    const rostered = Object.keys(breakdown?.roster || {}).length;
+    const party = Number.isFinite(stated) && stated > 0 ? stated : rostered || null;
+    const attributed = (breakdown?.players || []).filter((player) => (player?.damage || 0) > 0).length;
+    const counterConfirmed = (breakdown?.countedNames || []).length;
+    const partial = Boolean(party && attributed > 0 && attributed < party);
+    return { party, attributed, counterConfirmed, partial };
+}
+
+/**
  * Fold one tally row into another, numerically.
  *
  * The rows are numbers all the way down — `damage`, `hits`, and the nested

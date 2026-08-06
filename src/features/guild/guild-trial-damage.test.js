@@ -55,6 +55,7 @@ vi.mock('./guild-loadout-capture.js', () => ({
 }));
 
 const {
+    attributionCoverage,
     battleMonsterNames,
     encounterOf,
     estimateDamageSplit,
@@ -230,6 +231,69 @@ describe('summariseTrialDamage', () => {
         const summary = summariseTrialDamage({ tally: { 0: { damage: 0, hits: 0, crits: 0, misses: 0 } } });
         expect(summary.players[0].accuracy).toBeNull();
         expect(summary.players[0].critRate).toBeNull();
+    });
+});
+
+describe('attributionCoverage', () => {
+    test('three names under a party of seven is partial, and says how partial', () => {
+        // The export that prompted this: a spectated Chameleon with seven on the
+        // roster, three of whom earned a damage row because the stream carried no
+        // other player's counters and only a lone-present tick could be split
+        const coverage = attributionCoverage({
+            participants: 7,
+            roster: { 0: {}, 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {} },
+            players: [
+                { name: 'BOOB', damage: 7783 },
+                { name: 'RICK', damage: 6933 },
+                { name: 'NPD', damage: 5181 },
+            ],
+            countedNames: [],
+        });
+        expect(coverage).toEqual({ party: 7, attributed: 3, counterConfirmed: 0, partial: true });
+    });
+
+    test('a full party is not partial', () => {
+        const coverage = attributionCoverage({
+            participants: 2,
+            players: [
+                { name: 'Tib', damage: 600 },
+                { name: 'Moo', damage: 400 },
+            ],
+            countedNames: ['Tib'],
+        });
+        expect(coverage.partial).toBe(false);
+        expect(coverage.counterConfirmed).toBe(1);
+    });
+
+    test('a party of unknown size cannot claim coverage, so it is not partial', () => {
+        const coverage = attributionCoverage({
+            participants: null,
+            roster: {},
+            players: [{ name: 'BOOB', damage: 7783 }],
+        });
+        expect(coverage.party).toBeNull();
+        expect(coverage.partial).toBe(false);
+    });
+
+    test('the roster stands in when the party size was never stated', () => {
+        const coverage = attributionCoverage({
+            roster: { 0: {}, 1: {}, 2: {}, 3: {} },
+            players: [{ name: 'BOOB', damage: 7783 }],
+        });
+        expect(coverage.party).toBe(4);
+        expect(coverage.partial).toBe(true);
+    });
+
+    test('a row with no damage is not counted as attributed', () => {
+        const coverage = attributionCoverage({
+            participants: 3,
+            players: [
+                { name: 'BOOB', damage: 7783 },
+                { name: 'Ghost', damage: 0 },
+            ],
+        });
+        expect(coverage.attributed).toBe(1);
+        expect(coverage.partial).toBe(true);
     });
 });
 

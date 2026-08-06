@@ -121,6 +121,33 @@ describe('buildGuildReport', () => {
         expect(report).toContain('this client’s own battle feed');
     });
 
+    test('says how much of the party the split covers when it is only a part', () => {
+        // A spectated Chameleon: seven on the roster, three with a damage row.
+        // Pasted into guild chat, the three summing to 100% must not read as a
+        // claim the other four did nothing
+        const report = buildGuildReport({
+            trialName: 'Trial Chameleon',
+            tiersCleared: 11,
+            breakdown: breakdown({
+                source: 'spectated',
+                participants: 7,
+                roster: { 0: {}, 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {} },
+            }),
+        });
+
+        expect(report).toContain('Only 2 of 7 attributed');
+        expect(report).toContain('lower bound');
+        for (const line of report.split('\n')) expect(line.length).toBeLessThanOrEqual(120);
+    });
+
+    test('a fully attributed party carries no coverage caveat', () => {
+        const report = buildGuildReport({
+            trialName: 'Trial Chameleon',
+            breakdown: breakdown({ source: 'spectated', participants: 2 }),
+        });
+        expect(report).not.toContain('attributed —');
+    });
+
     test('carries no markup and no long lines', () => {
         const report = buildGuildReport({ trialName: 'Trial Chameleon', tiersCleared: 3, breakdown: breakdown() });
 

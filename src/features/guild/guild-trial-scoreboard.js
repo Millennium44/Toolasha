@@ -41,7 +41,11 @@
 
 import { formatKMB, formatWithSeparator } from '../../utils/formatters.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
-import guildTrialDamage, { estimateDamageSplit, SPECTATED_TRIAL_NOTE } from './guild-trial-damage.js';
+import guildTrialDamage, {
+    attributionCoverage,
+    estimateDamageSplit,
+    SPECTATED_TRIAL_NOTE,
+} from './guild-trial-damage.js';
 import { guildLoadoutCapture } from './guild-loadout-capture.js';
 import { guildTrialRecorder } from './guild-trial-recorder.js';
 import { buildGuildReport } from './guild-trial-report.js';
@@ -172,6 +176,19 @@ export function scoreboardText(breakdown, tab = 'damage', estimate = null) {
             (row.perSecond === null ? '' : ` (${formatWithSeparator(Math.round(row.perSecond))}/s`) +
             (row.share === null ? ')' : `, ${row.share.toFixed(1)}%)`)
     );
+
+    // Damage summing to 100% across a subset of the party reads as the whole
+    // party unless it says otherwise — a spectated split only names the players
+    // who had a tick of their own, so "3 of 7" is stated here too
+    if (tab === 'damage') {
+        const coverage = attributionCoverage(breakdown);
+        if (coverage.partial) {
+            lines.push(
+                `${coverage.attributed} of ${coverage.party} players attributed — shares are of that damage, ` +
+                    'and the party rate is a lower bound; the rest fill in as their hits land alone on the boss.'
+            );
+        }
+    }
 
     if (tab === 'healing') {
         const regen = breakdown?.support?.regenHealing || 0;
@@ -415,6 +432,31 @@ class GuildTrialScoreboard {
     }
 
     /**
+     * How much of the party the split covers, when it is only a part.
+     *
+     * A spectated split names its attacker by presence — the lone player who
+     * changed on a tick the boss lost health — because the stream carries no
+     * other player's attack counters. A member who never had a tick of their
+     * own earns no row, so three names at 100% can sit under a party of seven.
+     * Saying "3 of 7" is what keeps that from reading as a claim the party is
+     * three people. Silent when the whole party is covered, or its size is
+     * unknown.
+     *
+     * @param {Object} breakdown - From `guildTrialDamage.breakdown()`
+     * @returns {string} A sentence, or an empty string
+     */
+    _coverageNote(breakdown) {
+        const coverage = attributionCoverage(breakdown);
+        if (!coverage.partial) return '';
+
+        return (
+            ` ${coverage.attributed} of ${coverage.party} players had a tick that could be split out this` +
+            ` window; the shares are of that attributed damage and the party rate is a lower bound, with the` +
+            ` rest filling in as their hits land alone on the boss.`
+        );
+    }
+
+    /**
      * The per-player split as the builds predict it.
      *
      * Rebuilt on every draw rather than cached: a build captured mid-trial has to
@@ -505,6 +547,7 @@ class GuildTrialScoreboard {
                 'in the stream pauses these rather than ending them.' +
                 this._ownRowNote(breakdown) +
                 this._namingNote(breakdown) +
+                this._coverageNote(breakdown) +
                 '</div>'
               : `<div style="color:${DIM}; font-size:10px; line-height:1.5; margin-bottom:6px;">` +
                 'Attributed off this client’s own battle feed.</div>';
