@@ -11,6 +11,7 @@
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 import { getSettingDefinition } from '../../core/settings-schema.js';
+import marketAPI from '../../api/marketplace.js';
 
 const NOW = new Date('2026-01-01T12:00:00Z').getTime();
 
@@ -24,6 +25,9 @@ const game = vi.hoisted(() => ({
     dmHandlers: {},
     priceListeners: [],
     notified: [],
+    // How a forced refresh behaves; default just re-notifies subscribers, as the
+    // real fetch() does on success. Tests override this to reshape the snapshot.
+    fetchImpl: null,
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -59,6 +63,7 @@ vi.mock('../../api/marketplace.js', () => ({
         off: (callback) => {
             game.priceListeners = game.priceListeners.filter((cb) => cb !== callback);
         },
+        fetch: vi.fn((forceFetch) => game.fetchImpl(forceFetch)),
     },
 }));
 vi.mock('./notification-service.js', () => ({
@@ -70,7 +75,7 @@ vi.mock('./notification-service.js', () => ({
     },
 }));
 
-const { default: marketUndercutAlerts, MASTER_SETTING } = await import('./market-undercut-alerts.js');
+const { default: marketUndercutAlerts, MASTER_SETTING, REFRESH_SETTING } = await import('./market-undercut-alerts.js');
 
 /** An active sell listing of yours, unless overridden */
 function listing(overrides = {}) {
@@ -106,6 +111,13 @@ describe('market undercut alerts', () => {
         game.dmHandlers = {};
         game.priceListeners = [];
         game.notified = [];
+        // A forced refresh, by default, just re-notifies subscribers — the real
+        // fetch() calls notifyListeners() on success. Runs synchronously so a
+        // faked-timer tick fully re-runs the undercut check before returning.
+        game.fetchImpl = async () => {
+            game.priceListeners.forEach((cb) => cb());
+        };
+        marketAPI.fetch.mockClear();
         marketUndercutAlerts.disable();
         await marketUndercutAlerts.initialize();
     });
@@ -319,6 +331,110 @@ describe('market undercut alerts', () => {
         expect(game.priceListeners).toHaveLength(0);
         expect(marketUndercutAlerts.listingStates.size).toBe(0);
     });
+
+    // The active refresh is the whole point of this feature's newer half: without
+    // it, nothing calls fetch() after startup, the bulk snapshot goes stale, and
+    // an undercut on an item the player never opened reads as "still best". These
+    // re-initialize with the refresh setting on, since the shared beforeEach wires
+    // the feature up with the refresh interval unset (so no timer).
+    describe('active snapshot refresh', () => {
+        /** Re-wire the feature with the active refresh set to `minutes`. */
+        async function initWithRefresh(minutes) {
+            marketUndercutAlerts.disable();
+            game.settings[REFRESH_SETTING] = minutes;
+            marketAPI.fetch.mockClear();
+            await marketUndercutAlerts.initialize();
+        }
+
+        test('an undercut against a stale snapshot is finally caught on the next refresh', async () => {
+            // The player holds the best ask in the snapshot the script currently
+            // has, and has never opened this item, so no fresher order-book patch
+            // exists — the comparison must read the snapshot itself.
+            game.listings = [listing()]; // sell at 280K
+            setPrice('/items/cheese', 0, 285000, 270000, 5 * 60 * 1000); // 5m-old, ask above theirs
+            check();
+            expect(game.notified).toHaveLength(0); // reads as still-best
+
+            await initWithRefresh(5);
+            // The refreshed snapshot shows a competitor now cheaper than the listing
+            game.fetchImpl = async () => {
+                game.prices['/items/cheese:0'] = { ask: 274000, bid: 270000 };
+                game.lastFetchTimestamp = Date.now();
+                game.priceListeners.forEach((cb) => cb());
+            };
+
+            await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+
+            expect(marketAPI.fetch).toHaveBeenCalledWith(true);
+            expect(game.notified).toHaveLength(1);
+            expect(game.notified[0].message).toContain('sell listing undercut');
+        });
+
+        test('the refresh forces a whole-snapshot fetch once per interval', async () => {
+            await initWithRefresh(2);
+
+            await vi.advanceTimersByTimeAsync(2 * 60 * 1000);
+            await vi.advanceTimersByTimeAsync(2 * 60 * 1000);
+
+            expect(marketAPI.fetch).toHaveBeenCalledTimes(2);
+            marketAPI.fetch.mock.calls.forEach((args) => expect(args[0]).toBe(true));
+        });
+
+        test('no timer runs while the feature itself is off', async () => {
+            marketUndercutAlerts.disable();
+            game.settings[MASTER_SETTING] = false;
+            game.settings[REFRESH_SETTING] = 5;
+            marketAPI.fetch.mockClear();
+            await marketUndercutAlerts.initialize();
+
+            await vi.advanceTimersByTimeAsync(30 * 60 * 1000);
+
+            expect(marketAPI.fetch).not.toHaveBeenCalled();
+        });
+
+        test('an interval of zero means no active refresh — the lazy cache stands', async () => {
+            await initWithRefresh(0);
+
+            await vi.advanceTimersByTimeAsync(30 * 60 * 1000);
+
+            expect(marketAPI.fetch).not.toHaveBeenCalled();
+        });
+
+        test('an interval at or above the 15-minute cache means no active refresh', async () => {
+            await initWithRefresh(15);
+
+            await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
+
+            expect(marketAPI.fetch).not.toHaveBeenCalled();
+        });
+
+        test('a tick is skipped while the previous refresh is still in flight', async () => {
+            let releaseFetch;
+            game.fetchImpl = () =>
+                new Promise((resolve) => {
+                    releaseFetch = resolve;
+                });
+            await initWithRefresh(1);
+
+            await vi.advanceTimersByTimeAsync(60 * 1000); // tick 1 starts, never settles
+            await vi.advanceTimersByTimeAsync(60 * 1000); // tick 2 must skip the in-flight fetch
+
+            expect(marketAPI.fetch).toHaveBeenCalledTimes(1);
+
+            releaseFetch();
+        });
+
+        test('disable clears the refresh timer', async () => {
+            await initWithRefresh(5);
+            await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+            expect(marketAPI.fetch).toHaveBeenCalledTimes(1);
+
+            marketUndercutAlerts.disable();
+            await vi.advanceTimersByTimeAsync(30 * 60 * 1000);
+
+            expect(marketAPI.fetch).toHaveBeenCalledTimes(1); // no ticks after teardown
+        });
+    });
 });
 
 describe('settings schema backs the undercut alert', () => {
@@ -328,5 +444,17 @@ describe('settings schema backs the undercut alert', () => {
         expect(definition.type).toBe('checkbox');
         expect(definition.default).toBe(false);
         expect(definition.help).toMatch(/15 minutes/i);
+    });
+
+    test('the active-refresh interval setting is a 1–15 minute number that defaults to 5', () => {
+        const definition = getSettingDefinition(REFRESH_SETTING);
+        expect(definition).toBeTruthy();
+        expect(definition.type).toBe('number');
+        expect(definition.default).toBe(5);
+        expect(definition.min).toBe(1);
+        expect(definition.max).toBe(15);
+        // Its dependency on the undercut toggle is expressed the way the other
+        // notification sub-options express theirs: named in the help text.
+        expect(definition.help).toMatch(/undercut/i);
     });
 });
