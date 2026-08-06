@@ -3633,47 +3633,44 @@ Full audit of the codebase; every finding adversarially verified before fixing.
 
 ## [2.90.0](https://github.com/Millennium44/Toolasha/compare/v2.89.0...v2.90.0) (2026-08-06)
 
-
 ### Features
 
-* add attribution comparison harness with counter-based referee ([6bb9134](https://github.com/Millennium44/Toolasha/commit/6bb9134981df537a9e79827b35be186fac00372f))
-* cycler clicks battle units first, skipping the dead ([f5a9072](https://github.com/Millennium44/Toolasha/commit/f5a9072b054aa02bfa27c5335b4d9ff59237d01c))
-* executable bundle-sharing check, house-cost dedup, bundle bridge ([2f374bb](https://github.com/Millennium44/Toolasha/commit/2f374bb99e85471f0ac03e7d7784e2b833ddcf83))
-* hybrid attribution, trial split measured, tool-slot lint fix, book tooltip ([6cefb28](https://github.com/Millennium44/Toolasha/commit/6cefb282d73fded2518c833440989d2b18b5d979))
-* integrate the five guild-trial wire messages ([822ae88](https://github.com/Millennium44/Toolasha/commit/822ae883b6d32c253f80ae1bfba24dffc87cd06c))
-* liquidity cap on alchemy, action, and all-zones profit displays ([ab99bea](https://github.com/Millennium44/Toolasha/commit/ab99beab94ecc27b17d1cc5ac0b93ba97ebfbda1))
-* profile links, chest-luck profit option, warming-up tile, solo compare ([9188678](https://github.com/Millennium44/Toolasha/commit/9188678330688b9e3b9cd1422e3e31d246955c6f))
-* read sim-accuracy exports in the attribution comparison ([198f3ed](https://github.com/Millennium44/Toolasha/commit/198f3ed428332424e67895c70b5a37ce6039afc2))
-* seven optional live-combat readouts on portraits, tiles and the tracker ([9fef83b](https://github.com/Millennium44/Toolasha/commit/9fef83b91820541a99d5452c1a83f3165a75d47d))
-* sim summary units, party lint, entry keys in tracker, chest key button ([e74aac7](https://github.com/Millennium44/Toolasha/commit/e74aac72a6da054bb15ad1c59c91ba123c544860))
-* sim-vs-measured line, live party lint, archived session picker ([047769d](https://github.com/Millennium44/Toolasha/commit/047769d53615c9b7fb8cd628232f64f8158fb68a))
-* spectated guild battles are measured via guild_battle_updated ([664c583](https://github.com/Millennium44/Toolasha/commit/664c583524df34ca01d7764efc11c4539c421aee))
-* trade ledger, gathering drop luck, csv exports; panels work in flight ([9342b31](https://github.com/Millennium44/Toolasha/commit/9342b3124a9ecb28544ac2365e2a495ea9d33dbe))
-* trial history, sim calibration, undercut alerts, canaries, golden run ([2cd8cb4](https://github.com/Millennium44/Toolasha/commit/2cd8cb49d1fcd61b0f6e064e071ca37929694629))
-
+- add attribution comparison harness with counter-based referee ([6bb9134](https://github.com/Millennium44/Toolasha/commit/6bb9134981df537a9e79827b35be186fac00372f))
+- cycler clicks battle units first, skipping the dead ([f5a9072](https://github.com/Millennium44/Toolasha/commit/f5a9072b054aa02bfa27c5335b4d9ff59237d01c))
+- executable bundle-sharing check, house-cost dedup, bundle bridge ([2f374bb](https://github.com/Millennium44/Toolasha/commit/2f374bb99e85471f0ac03e7d7784e2b833ddcf83))
+- hybrid attribution, trial split measured, tool-slot lint fix, book tooltip ([6cefb28](https://github.com/Millennium44/Toolasha/commit/6cefb282d73fded2518c833440989d2b18b5d979))
+- integrate the five guild-trial wire messages ([822ae88](https://github.com/Millennium44/Toolasha/commit/822ae883b6d32c253f80ae1bfba24dffc87cd06c))
+- liquidity cap on alchemy, action, and all-zones profit displays ([ab99bea](https://github.com/Millennium44/Toolasha/commit/ab99beab94ecc27b17d1cc5ac0b93ba97ebfbda1))
+- profile links, chest-luck profit option, warming-up tile, solo compare ([9188678](https://github.com/Millennium44/Toolasha/commit/9188678330688b9e3b9cd1422e3e31d246955c6f))
+- read sim-accuracy exports in the attribution comparison ([198f3ed](https://github.com/Millennium44/Toolasha/commit/198f3ed428332424e67895c70b5a37ce6039afc2))
+- seven optional live-combat readouts on portraits, tiles and the tracker ([9fef83b](https://github.com/Millennium44/Toolasha/commit/9fef83b91820541a99d5452c1a83f3165a75d47d))
+- sim summary units, party lint, entry keys in tracker, chest key button ([e74aac7](https://github.com/Millennium44/Toolasha/commit/e74aac72a6da054bb15ad1c59c91ba123c544860))
+- sim-vs-measured line, live party lint, archived session picker ([047769d](https://github.com/Millennium44/Toolasha/commit/047769d53615c9b7fb8cd628232f64f8158fb68a))
+- spectated guild battles are measured via guild_battle_updated ([664c583](https://github.com/Millennium44/Toolasha/commit/664c583524df34ca01d7764efc11c4539c421aee))
+- trade ledger, gathering drop luck, csv exports; panels work in flight ([9342b31](https://github.com/Millennium44/Toolasha/commit/9342b3124a9ecb28544ac2365e2a495ea9d33dbe))
+- trial history, sim calibration, undercut alerts, canaries, golden run ([2cd8cb4](https://github.com/Millennium44/Toolasha/commit/2cd8cb49d1fcd61b0f6e064e071ca37929694629))
 
 ### Bug Fixes
 
-* a canceled battle start no longer records a phantom dungeon run ([5f518cd](https://github.com/Millennium44/Toolasha/commit/5f518cd9091cb6b642502d3e9ecb16f618cec6e0))
-* auto-record arms on live readings, manual sessions never self-stop, T1 by rule ([8e0a171](https://github.com/Millennium44/Toolasha/commit/8e0a1710a57ae585fc177e7168ab10ad1555adac))
-* badge counts banked tiers, derived skilling ladder, forecast walks the hour ([d2177d8](https://github.com/Millennium44/Toolasha/commit/d2177d86e9d66152d713c3d91faa6653bbcc2bdd))
-* battle units only match inside the fight's own subtree ([5cdbcd9](https://github.com/Millennium44/Toolasha/commit/5cdbcd965c04fbe7f121935ea75160e8a2edeb02))
-* capture-confirmed cycler, measured success decline, per-kind phases, no walls ([f2d6326](https://github.com/Millennium44/Toolasha/commit/f2d6326c00c87d44086ed74c9f3e6f2bb5821d78))
-* chest-value adjustment reads the treasure ledger, not drop counts ([88fb2f8](https://github.com/Millennium44/Toolasha/commit/88fb2f8d79b2391d6dbc0f9c602d638057b4a39f))
-* dead units are clicked like anyone else ([44e973d](https://github.com/Millennium44/Toolasha/commit/44e973d402e7c13e9c02f928efbcde0839fc7db9))
-* deaths ride the support table, pinned revive-at-tier test ([0f819c1](https://github.com/Millennium44/Toolasha/commit/0f819c1f1fb497885f781399a366de40abac7919))
-* mid-trial-upgrade cards use the exact ladder base for tokens ([012eb12](https://github.com/Millennium44/Toolasha/commit/012eb120c2dc3ae23d38704c193804de0be43bc7))
-* notice boards purge from records, ladders locked with mid-trial upgrades ([0870b12](https://github.com/Millennium44/Toolasha/commit/0870b123750adf2b00e084a75ddf1124a5b28158))
-* pace arrow matches its count, completed overrides phase, split is an estimate ([17f48cc](https://github.com/Millennium44/Toolasha/commit/17f48ccdb789efe2f90c38e7edee07996690f5dc))
-* portrait dps meters keep one height so party frames stop shifting ([9e964be](https://github.com/Millennium44/Toolasha/commit/9e964be9f47155281f4dc5ebfd3fac672a86c297))
-* price ability level-ups from live experience, not the level floor ([cc8507a](https://github.com/Millennium44/Toolasha/commit/cc8507a3e42c63881fe9cfdbf021b2a79115a4b2))
-* roster rows come from the current member list, not the XP history ([06c34d9](https://github.com/Millennium44/Toolasha/commit/06c34d92c034eece49ca22603b74566f1adf03ca))
-* spectated pool attaches to the watched encounter, wipes are outcomes ([dc0153f](https://github.com/Millennium44/Toolasha/commit/dc0153fac54fbaa99f1e0a7bb009672b17a33eab))
-
+- a canceled battle start no longer records a phantom dungeon run ([5f518cd](https://github.com/Millennium44/Toolasha/commit/5f518cd9091cb6b642502d3e9ecb16f618cec6e0))
+- auto-record arms on live readings, manual sessions never self-stop, T1 by rule ([8e0a171](https://github.com/Millennium44/Toolasha/commit/8e0a1710a57ae585fc177e7168ab10ad1555adac))
+- badge counts banked tiers, derived skilling ladder, forecast walks the hour ([d2177d8](https://github.com/Millennium44/Toolasha/commit/d2177d86e9d66152d713c3d91faa6653bbcc2bdd))
+- battle units only match inside the fight's own subtree ([5cdbcd9](https://github.com/Millennium44/Toolasha/commit/5cdbcd965c04fbe7f121935ea75160e8a2edeb02))
+- capture-confirmed cycler, measured success decline, per-kind phases, no walls ([f2d6326](https://github.com/Millennium44/Toolasha/commit/f2d6326c00c87d44086ed74c9f3e6f2bb5821d78))
+- chest-value adjustment reads the treasure ledger, not drop counts ([88fb2f8](https://github.com/Millennium44/Toolasha/commit/88fb2f8d79b2391d6dbc0f9c602d638057b4a39f))
+- dead units are clicked like anyone else ([44e973d](https://github.com/Millennium44/Toolasha/commit/44e973d402e7c13e9c02f928efbcde0839fc7db9))
+- deaths ride the support table, pinned revive-at-tier test ([0f819c1](https://github.com/Millennium44/Toolasha/commit/0f819c1f1fb497885f781399a366de40abac7919))
+- mid-trial-upgrade cards use the exact ladder base for tokens ([012eb12](https://github.com/Millennium44/Toolasha/commit/012eb120c2dc3ae23d38704c193804de0be43bc7))
+- notice boards purge from records, ladders locked with mid-trial upgrades ([0870b12](https://github.com/Millennium44/Toolasha/commit/0870b123750adf2b00e084a75ddf1124a5b28158))
+- pace arrow matches its count, completed overrides phase, split is an estimate ([17f48cc](https://github.com/Millennium44/Toolasha/commit/17f48ccdb789efe2f90c38e7edee07996690f5dc))
+- portrait dps meters keep one height so party frames stop shifting ([9e964be](https://github.com/Millennium44/Toolasha/commit/9e964be9f47155281f4dc5ebfd3fac672a86c297))
+- price ability level-ups from live experience, not the level floor ([cc8507a](https://github.com/Millennium44/Toolasha/commit/cc8507a3e42c63881fe9cfdbf021b2a79115a4b2))
+- roster rows come from the current member list, not the XP history ([06c34d9](https://github.com/Millennium44/Toolasha/commit/06c34d92c034eece49ca22603b74566f1adf03ca))
+- spectated pool attaches to the watched encounter, wipes are outcomes ([dc0153f](https://github.com/Millennium44/Toolasha/commit/dc0153fac54fbaa99f1e0a7bb009672b17a33eab))
 
 ### Miscellaneous Chores
 
-* raise bundle ceiling to 3.5MiB now the sharing check guards duplication ([5b2fc5e](https://github.com/Millennium44/Toolasha/commit/5b2fc5eac1e20c68ee92197b4a67cfad3e480f93))
+- raise bundle ceiling to 3.5MiB now the sharing check guards duplication ([5b2fc5e](https://github.com/Millennium44/Toolasha/commit/5b2fc5eac1e20c68ee92197b4a67cfad3e480f93))
 
 ## [2.89.0](https://github.com/Millennium44/Toolasha/compare/v2.88.0...v2.89.0) (2026-08-05)
 
