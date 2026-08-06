@@ -45,6 +45,17 @@ let enemyTally = {};
 /** Wave name → encounters, damage, range */
 let waves = {};
 
+/**
+ * This fight only: monster slot → damage dealt to the party.
+ *
+ * The mirror of the damage tracker's per-battle enemy fold, and keyed by slot
+ * for the same reason — an enemy tile is a slot, and two of the same monster
+ * are two different threats. Only a hit the attribution ladder pinned to
+ * exactly one slot lands here: a hit with two candidates would have to go on
+ * both tiles or an arbitrary one, and either is a wrong number.
+ */
+let battleTaken = { enemies: {}, seconds: 0 };
+
 /** Player index → display name, from `new_battle` */
 let names = {};
 
@@ -78,6 +89,13 @@ let battleId = null;
 /** Below this the per-second figures are one swing's luck rather than a rate */
 const MIN_SECONDS = 5;
 
+/**
+ * The same idea for a single fight, but far shorter — the same floor the
+ * damage tracker uses for its per-battle rates, for the same reason: a fight
+ * lasts seconds, and waiting five of them would leave most fights rateless.
+ */
+const MIN_BATTLE_SECONDS = 1;
+
 /** A tick further from the last than this is a new session, not a long swing */
 const MAX_TICK_GAP_MS = 2000;
 
@@ -87,10 +105,29 @@ export function resetDamageTaken() {
     tally = {};
     enemyTally = {};
     waves = {};
+    battleTaken = { enemies: {}, seconds: 0 };
     encounters = 0;
     seconds = 0;
     lastTickAt = 0;
     startedAt = Date.now();
+}
+
+/**
+ * What each enemy slot is doing to the party in the fight on screen.
+ *
+ * @returns {{seconds: number, enemies: Object}} Keyed by slot, each
+ *   `{damage, dps}`. `dps` is null until there is enough of a fight to divide
+ *   by. A slot the ladder could never pin a hit to is simply absent.
+ */
+export function battleTakenBreakdown() {
+    const measurable = battleTaken.seconds >= MIN_BATTLE_SECONDS;
+
+    const enemies = {};
+    for (const [index, damage] of Object.entries(battleTaken.enemies)) {
+        enemies[index] = { damage, dps: measurable ? damage / battleTaken.seconds : null };
+    }
+
+    return { seconds: battleTaken.seconds, enemies };
 }
 
 /**
@@ -214,6 +251,10 @@ export default {
                     if (name) monsters[index] = name;
                 }
 
+                // The fight on screen is a new one, and last fight's slots
+                // were different monsters
+                battleTaken = { enemies: {}, seconds: 0 };
+
                 currentWave = waveKey(data?.monsters, monsterName);
                 if (currentWave) {
                     const wave = (waves[currentWave] ||= { encounters: 0, damage: 0, min: null, max: null });
@@ -234,6 +275,11 @@ export default {
                 if (data?.battleId !== battleId) {
                     battleId = data?.battleId;
                     state = newTakenState();
+                    // A reload mid-fight never saw this battle's `new_battle`,
+                    // so this is the only boundary that clears the per-fight
+                    // fold for it. After a normal battle start it clears a map
+                    // that is already empty, which is harmless.
+                    battleTaken = { enemies: {}, seconds: 0 };
                 }
 
                 // A page reloaded mid-fight never saw this battle's `new_battle`,
@@ -245,6 +291,18 @@ export default {
                 const events = attributeIncoming(data, state);
                 foldTaken(tally, events);
                 foldTakenByEnemy(enemyTally, events, (index) => monsters[index] || null);
+
+                // The same hits again, by slot and for this fight only —
+                // what an enemy tile can carry. Only a hit with exactly one
+                // candidate slot is filed; "either of the two Eyes" is a fine
+                // answer for a name and no answer at all for a tile.
+                for (const event of events) {
+                    if (event.isDeath || event.isRegen || event.isMiss) continue;
+                    if (!Array.isArray(event.monsters) || event.monsters.length !== 1) continue;
+
+                    const slot = event.monsters[0];
+                    battleTaken.enemies[slot] = (battleTaken.enemies[slot] || 0) + event.damage;
+                }
 
                 const wave = currentWave ? waves[currentWave] : null;
                 if (wave) {
@@ -259,7 +317,10 @@ export default {
                 // Only the gap between two ticks of one run is time spent
                 // fighting; the first tick after a break contributes none
                 const gap = now - lastTickAt;
-                if (lastTickAt && gap > 0 && gap < MAX_TICK_GAP_MS) seconds += gap / 1000;
+                if (lastTickAt && gap > 0 && gap < MAX_TICK_GAP_MS) {
+                    seconds += gap / 1000;
+                    battleTaken.seconds += gap / 1000;
+                }
                 lastTickAt = now;
             } catch (error) {
                 console.error('[DamageTakenTracker] Reading a combat tick failed:', error);

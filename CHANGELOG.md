@@ -6,6 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Live combat learns seven more things, each its own switch
+
+- **Enemy tiles answer the questions a fight actually asks** (all optional, all default on, riding the Portrait DPS toggle): "dead ~8s" from remaining HP over the party's measured rate on that enemy; one "wave ~19s" countdown on the topmost tile summing the living wave (voided honestly if any enemy's HP is unknown); a red "hits for 210/s" — the enemy's own outgoing damage, which answers "can I show DPS for enemies" with a measurement; and "enrage 1:42" counting down where the monster's sheet carries a timer, amber under thirty seconds.
+- **Player meters carry survival, not just output**: "taken 220/s · net −35/s" (red when bleeding), "94% hit · 31% crit" once twenty swings back it, and "mana ~40s" only when actually draining toward empty within the minute — measured net of refills over a rolling window, because the mana tracker's per-cast costs are a different question.
+- **The dungeon tracker paces the run**: "pace +6% vs your avg" against your stored runs of the same dungeon and tier, only after three completed waves, colored by which way it's going.
+- The equal-height rule holds throughout: any line one tile has earned renders dashed on the rest, so the party frames never shuffle. Attribution stays honest — a hit that could belong to either of two identical monsters counts in the session total and shows on neither tile.
+
 ### The portrait meters stop jostling the party
 
 - **Every player's DPS meter is two lines, always** — the current-fight line is reserved and reads "— cur" until that player acts, instead of appearing when they do. Five portraits used to sit at three different heights and re-shuffle at every fight boundary; now the frames hold still.

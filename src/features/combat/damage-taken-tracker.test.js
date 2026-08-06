@@ -137,3 +137,87 @@ describe('a session that began mid-fight', () => {
         expect(tracker.takenBreakdown().waves).toEqual([]);
     });
 });
+
+/**
+ * The per-fight, per-slot fold behind the enemy tiles' outgoing line.
+ *
+ * The session tally already answers "what is hurting the party" by name; a
+ * tile is a slot in this fight, and the cases worth testing are the two ways a
+ * slot figure could lie — a hit two monsters could have landed filed on one of
+ * their tiles, and last fight's damage worn by this fight's monster.
+ */
+describe('what each slot is doing to the party this fight', () => {
+    beforeEach(() => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-08-03T01:00:00Z'));
+    });
+
+    afterEach(() => vi.useRealTimers());
+
+    test('a hit pinned to one slot lands on that slot, with a rate', () => {
+        listeners.new_battle({
+            players: { 0: { name: 'You' } },
+            monsters: { 0: { name: 'Eye', hrid: '/monsters/eye' } },
+        });
+
+        tick({ 0: { hp: 500, dmg: 0 } }, { 0: { hp: 2000 } });
+        vi.setSystemTime(Date.now() + 1000);
+        tick({ 0: { hp: 420, dmg: 1 } }, { 0: { hp: 2000 } });
+
+        const fight = tracker.battleTakenBreakdown();
+        expect(fight.enemies['0'].damage).toBe(80);
+        expect(fight.enemies['0'].dps).toBeCloseTo(80);
+    });
+
+    test('a hit either of two monsters could have landed goes on neither tile', () => {
+        // "An Eye hit you" is a fine answer for a name and no answer at all
+        // for a tile — filing it on one of them would move damage between
+        // tiles and then be read as evidence about which monster is dangerous
+        listeners.new_battle({
+            players: { 0: { name: 'You' } },
+            monsters: { 0: { name: 'Eye' }, 1: { name: 'Eye' } },
+        });
+
+        // Both monsters attack on the same tick: two candidates
+        tick({ 0: { hp: 500, dmg: 0 } }, { 0: { hp: 2000 }, 1: { hp: 2000 } });
+        vi.setSystemTime(Date.now() + 1000);
+        tick({ 0: { hp: 420, dmg: 1 } }, { 0: { hp: 2000 }, 1: { hp: 2000 } });
+
+        expect(tracker.battleTakenBreakdown().enemies).toEqual({});
+        // The session tally still counts it — the name was unambiguous
+        expect(tracker.takenBreakdown().enemies[0].damage).toBe(80);
+    });
+
+    test('a new battle starts the fold from nothing', () => {
+        listeners.new_battle({
+            players: { 0: { name: 'You' } },
+            monsters: { 0: { name: 'Eye' } },
+        });
+        tick({ 0: { hp: 500, dmg: 0 } }, { 0: { hp: 2000 } });
+        vi.setSystemTime(Date.now() + 1000);
+        tick({ 0: { hp: 420, dmg: 1 } }, { 0: { hp: 2000 } });
+        expect(tracker.battleTakenBreakdown().enemies['0'].damage).toBe(80);
+
+        // Last fight's slot 0 was a different monster
+        listeners.new_battle({
+            players: { 0: { name: 'You' } },
+            monsters: { 0: { name: 'Veyes' } },
+        });
+        expect(tracker.battleTakenBreakdown().enemies).toEqual({});
+    });
+
+    test('too little of a fight gives damage and no rate', () => {
+        listeners.new_battle({
+            players: { 0: { name: 'You' } },
+            monsters: { 0: { name: 'Eye' } },
+        });
+
+        tick({ 0: { hp: 500, dmg: 0 } }, { 0: { hp: 2000 } });
+        vi.setSystemTime(Date.now() + 200);
+        tick({ 0: { hp: 460, dmg: 1 } }, { 0: { hp: 2000 } });
+
+        const fight = tracker.battleTakenBreakdown();
+        expect(fight.enemies['0'].damage).toBe(40);
+        expect(fight.enemies['0'].dps).toBeNull();
+    });
+});

@@ -40,6 +40,7 @@ import {
     foldEnemies,
 } from '../../utils/damage-attribution.js';
 import combatStatsDataCollector from '../combat-stats/combat-stats-data-collector.js';
+import { pushManaSample } from './combat-estimates.js';
 import { recoverMonsterNames } from '../../utils/battle-panel-monsters.js';
 
 /** The counters this tick is measured against */
@@ -73,13 +74,42 @@ let enemyTally = {};
 let battle = { players: {}, enemies: {}, seconds: 0 };
 
 /**
- * Monster index → `{name, maxHP}`, from `new_battle`.
+ * Monster index → `{name, enrageAt}`, from `new_battle`.
  *
  * Rebuilt every battle, because an index is a slot in this fight rather than an
  * identity — slot 0 is a rat now and a wolf in ninety seconds, and a stale map
- * credits one monster's damage to the other.
+ * credits one monster's damage to the other. `enrageAt` is when the monster
+ * enrages (ms since epoch), from its sheet's `enrageTimerDuration` anchored at
+ * `spawnTime`; null when the sheet carries neither.
  */
 let monsters = {};
+
+/**
+ * Monster slot → its latest reported health, for time-to-kill.
+ *
+ * Seeded from `new_battle` — the one message that states every monster's
+ * health at once — and then kept current from each tick's `mMap`, which is a
+ * delta and only mentions the monsters the server touched. A slot never
+ * reported is null, and stays null rather than being guessed at full.
+ */
+let battleHP = {};
+
+/**
+ * Whether `battleHP` was just seeded by a `new_battle` that the next tick's
+ * battle-id change is about to announce. Without this flag the first tick of
+ * every battle would wipe the seed it just received; without the *wipe*, a
+ * reload that never saw `new_battle` would show last battle's health bars on
+ * this battle's monsters.
+ */
+let battleSeeded = false;
+
+/**
+ * Player index → recent `{at, mana}` readings, for the mana runway.
+ *
+ * Kept across battles on purpose: a drain is only visible over a stretch
+ * longer than one fight. Reset with the session, like the tally.
+ */
+let manaSeries = {};
 
 /** Monster name → its full health bar, which is what a kill is worth */
 let monsterHealth = {};
@@ -135,17 +165,34 @@ export function resetDamageTracker() {
     tally = {};
     enemyTally = {};
     battle = { players: {}, enemies: {}, seconds: 0 };
+    battleHP = {};
+    manaSeries = {};
     seconds = 0;
     lastTickAt = 0;
     startedAt = Date.now();
 }
 
 /**
+ * Each player's recent mana readings, for the runway estimate.
+ *
+ * @returns {Object} Player index → array of `{at, mana}`, oldest first
+ */
+export function manaSamples() {
+    return manaSeries;
+}
+
+/**
  * What has happened in the fight on screen right now.
  *
- * @returns {{seconds: number, players: Object, enemies: Object}} Keyed by slot,
- *   each `{name, damage, dps}`. `dps` is null until there is enough of a fight
- *   to divide by — a different thing from zero, and it must not be drawn as one.
+ * Enemies cover every slot the battle has named or reported — not only the
+ * ones already hit — so a tile can carry a health figure before the party has
+ * touched its monster. `hp`, `maxHP` and `enrageAt` are null when the payload
+ * never stated them.
+ *
+ * @returns {{seconds: number, players: Object, enemies: Object}} Keyed by slot;
+ *   players are `{name, damage, dps}`, enemies add `hp`, `maxHP` and
+ *   `enrageAt`. `dps` is null until there is enough of a fight to divide by —
+ *   a different thing from zero, and it must not be drawn as one.
  */
 export function battleBreakdown() {
     const measurable = battle.seconds >= MIN_BATTLE_SECONDS;
@@ -157,8 +204,18 @@ export function battleBreakdown() {
     }
 
     const enemies = {};
-    for (const [index, damage] of Object.entries(battle.enemies)) {
-        enemies[index] = { name: monsters[index]?.name || null, damage, dps: rate(damage) };
+    const slots = new Set([...Object.keys(battle.enemies), ...Object.keys(battleHP), ...Object.keys(monsters)]);
+    for (const index of slots) {
+        const damage = battle.enemies[index] || 0;
+        const name = monsters[index]?.name || null;
+        enemies[index] = {
+            name,
+            damage,
+            dps: rate(damage),
+            hp: battleHP[index] ?? null,
+            maxHP: name ? (monsterHealth[name] ?? null) : null,
+            enrageAt: monsters[index]?.enrageAt ?? null,
+        };
     }
 
     return { seconds: battle.seconds, players, enemies };
@@ -380,6 +437,8 @@ export default {
                 // The fight on screen is a new one, so what was on the portraits
                 // belongs to the last one
                 battle = { players: {}, enemies: {}, seconds: 0 };
+                battleHP = {};
+                battleSeeded = true;
 
                 // Rebuilt rather than merged: an index is a slot in this fight,
                 // and last fight's slot 0 was a different monster
@@ -389,7 +448,25 @@ export default {
                     if (!name) continue;
 
                     const maxHP = Number(monster?.combatDetails?.maxHitpoints ?? monster?.maxHitpoints);
-                    monsters[index] = { name };
+
+                    // The enrage clock, where the sheet states one: a duration
+                    // in nanoseconds anchored at the spawn. Either half missing
+                    // means no countdown rather than a guessed one.
+                    const enrageMs = Number(monster?.enrageTimerDuration) / 1e6 || null;
+                    const spawnMs = Date.parse(monster?.spawnTime ?? '');
+                    monsters[index] = {
+                        name,
+                        enrageAt: enrageMs && Number.isFinite(spawnMs) ? spawnMs + enrageMs : null,
+                    };
+
+                    // Stated current health, never assumed full — a weakened
+                    // spawn is a real thing and inventing the difference would
+                    // overstate the time to kill
+                    const hp = Number(
+                        monster?.currentHitpoints ?? monster?.combatDetails?.currentHitpoints ?? monster?.cHP
+                    );
+                    if (Number.isFinite(hp)) battleHP[index] = hp;
+
                     // The largest seen, since a weakened spawn would understate
                     // what killing one is worth
                     if (Number.isFinite(maxHP) && maxHP > (monsterHealth[name] || 0)) monsterHealth[name] = maxHP;
@@ -410,6 +487,14 @@ export default {
                     state.monstersHP = {};
                     state.dmgCounter = {};
                     state.critCounter = {};
+
+                    // The health map is per battle too, but `new_battle` has
+                    // usually just rebuilt it for exactly this battle, and
+                    // wiping that seed would blank every bar until its monster
+                    // was next mentioned. Only a battle nothing announced — a
+                    // reload mid-run — starts from nothing.
+                    if (!battleSeeded) battleHP = {};
+                    battleSeeded = false;
                 }
 
                 // A reload mid-fight never saw this battle's `new_battle`, so
@@ -426,6 +511,21 @@ export default {
                 }
 
                 noteMonsterHealth(data?.mMap);
+
+                // The latest health per slot, for time-to-kill. Read before
+                // attribution so a killing blow shows the bar at zero rather
+                // than where it was a tick ago.
+                for (const [index, monster] of Object.entries(data?.mMap || {})) {
+                    const hp = Number(monster?.currentHitpoints ?? monster?.cHP);
+                    if (Number.isFinite(hp)) battleHP[index] = hp;
+                }
+
+                // Each player's mana reading, for the runway. The series keeps
+                // its own window; nothing here decides what a drain is.
+                for (const [index, player] of Object.entries(data?.pMap || {})) {
+                    const mana = Number(player?.cMP);
+                    if (Number.isFinite(mana)) pushManaSample((manaSeries[index] ||= []), now, mana);
+                }
 
                 const events = attributeTick(data, state);
                 const nameOf = (index) => monsters[index]?.name || null;
@@ -482,6 +582,7 @@ export default {
         names = {};
         monsters = {};
         monsterHealth = {};
+        battleSeeded = false;
         announced = false;
         resetDamageTracker();
     },
