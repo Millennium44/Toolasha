@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Thin markets stop lying in the rankings
+
+- **The liquidity cap the goal planner already obeyed now governs every profit surface**: alchemy rankings, the action-bar and pinned-page profit lines, and the combat sim's all-zones table (its Score and best-profit badge included) all cap a method's gold rate by what the market has actually absorbed — marked "limited by market volume (~1/week)" with the limiting item named, never silently. Unknown history stays unbounded (a dead price server must not zero everything); measured-zero bounds to zero. Underlying calculators, the planner, net worth, EV, and the calibration loop keep raw figures — the cap is a truth about display and ranking, switchable off with one setting.
+
 ### The panels compare, lint, and remember
 
 - **The profit panel quotes the sim on the zone you're in**: "sim said here — 24.0M/day · simulated Aug 5" beside the measured figure, only when the last all-zones run holds this zone at this tier, tooltip carrying the snapshot's age and that the sim knows nothing about this run.

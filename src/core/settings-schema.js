@@ -1397,6 +1397,13 @@ export const settingsGroups = {
                 options: ['ask', 'bid'],
                 help: 'Whether to use ask (instant buy) or bid (patient buy) prices when valuing dungeon keys in tooltips, networth, and combat income calculations.',
             },
+            profitCalc_liquidityCap: {
+                id: 'profitCalc_liquidityCap',
+                label: 'Profit: Cap displayed rates by market volume',
+                type: 'checkbox',
+                default: true,
+                help: 'Bounds displayed and ranked profit/hr figures (alchemy Best Items, action-bar profit, pinned actions, the all-zones combat table) by how fast each method’s outputs actually trade, using the pooled market history — a method producing more per hour than the market absorbs cannot realize its quoted rate. Capped figures carry a "vol-capped" marker naming the limiting item. Needs the Market price history panel setting to have data; with it off, nothing is bounded. Turn this off to see raw rates.',
+            },
             profitCalc_customPriceOverrides: {
                 id: 'profitCalc_customPriceOverrides',
                 label: 'Custom price overrides',

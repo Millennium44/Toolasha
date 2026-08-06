@@ -71,6 +71,10 @@ import * as marketplaceAutofill from '../utils/marketplace-autofill.js';
 import * as shoppingList from '../utils/shopping-list.js';
 import * as scrollBuffValues from '../utils/scroll-buff-values.js';
 import * as toast from '../utils/toast.js';
+// The display-side market-volume cap, shared so the actions and sim bundles
+// apply the same bound (see utils/liquidity-cap.js). Needs a matching
+// utilsExternalGlobals entry in rollup.config.js to be deduplicated.
+import * as liquidityCap from '../utils/liquidity-cap.js';
 
 // Export to global namespace
 const toolashaRoot = window.Toolasha || {};
@@ -146,6 +150,7 @@ toolashaRoot.Utils = {
     shoppingList,
     scrollBuffValues,
     toast,
+    liquidityCap,
 };
 
 console.log('[Toolasha] Utils library loaded');

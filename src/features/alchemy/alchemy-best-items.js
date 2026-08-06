@@ -16,6 +16,7 @@ import { formatKMB, formatWithSeparator, formatPercentage } from '../../utils/fo
 import assetManifest from '../../utils/asset-manifest.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
+import { capProfitRate, sellsFromProfitData, liquidityMarkerHtml } from '../../utils/liquidity-cap.js';
 import { ALCHEMY_TYPES, rankAlchemyType, getAlchemyBaseXP, calcXpPerAction } from './alchemy-rankings.js';
 
 // Re-exported because this module is where both helpers were first written and
@@ -185,6 +186,46 @@ class AlchemyBestItems {
     }
 
     /**
+     * The same rankings, with each row's displayed pace bounded by how fast its
+     * outputs actually trade.
+     *
+     * A decompose quoted at billions per hour on an essence that sells once a
+     * week is a real margin at a fictional pace, and a ranking sorts by pace.
+     * Rows are copied rather than edited — `rankAlchemyType`'s own results stay
+     * raw for anything else that asks it — and a bounded row carries the raw
+     * figure on `uncappedProfitPerHour` and the marker payload on
+     * `liquidityLimit`, which `renderTable` must always draw.
+     *
+     * @param {Array<Object>} rankings - From {@link calculateRankings}
+     * @returns {Promise<Array<Object>>} The rows, bounded where the market binds
+     */
+    async withLiquidityCaps(rankings) {
+        const bounded = [];
+        for (const entry of rankings || []) {
+            try {
+                const capped = await capProfitRate({
+                    goldPerHour: entry.profitPerHour,
+                    sells: sellsFromProfitData(entry.profitData),
+                });
+                bounded.push(
+                    capped.capped
+                        ? {
+                              ...entry,
+                              profitPerHour: capped.goldPerHour,
+                              uncappedProfitPerHour: entry.profitPerHour,
+                              liquidityLimit: capped.limit,
+                          }
+                        : entry
+                );
+            } catch (error) {
+                console.error('[AlchemyBestItems] Bounding a row by market volume failed:', error);
+                bounded.push(entry);
+            }
+        }
+        return bounded;
+    }
+
+    /**
      * Open the modal with rankings for the current alchemy type
      */
     async openModal() {
@@ -196,7 +237,7 @@ class AlchemyBestItems {
         }
 
         // Always recalculate on open so tea/gear changes are reflected
-        this.cachedRankings[this.currentType] = this.calculateRankings(this.currentType);
+        this.cachedRankings[this.currentType] = await this.withLiquidityCaps(this.calculateRankings(this.currentType));
 
         if (!this.modal) {
             this.createModal();
@@ -282,9 +323,9 @@ class AlchemyBestItems {
                 padding: 4px 12px; border-radius: 4px; cursor: pointer;
                 border: 1px solid #555; font-size: 0.8rem; color: #fff;
             `;
-            tab.addEventListener('click', () => {
+            tab.addEventListener('click', async () => {
                 this.currentType = type;
-                this.cachedRankings[type] = this.calculateRankings(type);
+                this.cachedRankings[type] = await this.withLiquidityCaps(this.calculateRankings(type));
                 this.renderTable();
             });
             controls.appendChild(tab);
@@ -567,11 +608,14 @@ class AlchemyBestItems {
             }
             row.appendChild(catTd);
 
-            // Profit/hr
+            // Profit/hr — a volume-bounded figure always says so
             const profitTd = document.createElement('td');
             const profitVal = Math.round(item.profitPerHour);
             profitTd.textContent = formatKMB(profitVal);
             profitTd.style.cssText = `padding: 4px 8px; text-align: right; color: ${profitVal >= 0 ? '#4ade80' : '#f87171'};`;
+            if (item.liquidityLimit) {
+                profitTd.insertAdjacentHTML('beforeend', liquidityMarkerHtml(item.liquidityLimit, { compact: true }));
+            }
             row.appendChild(profitTd);
 
             // XP/hr

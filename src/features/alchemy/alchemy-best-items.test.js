@@ -78,6 +78,46 @@ vi.mock('../../utils/marketplace-tabs.js', () => ({
     navigateToMarketplace: vi.fn(),
 }));
 
+/**
+ * The market-volume cap, as a per-item throttle map. The real arithmetic lives
+ * in utils/liquidity-cap.js and is tested there; what this file has to prove
+ * is the wiring — a capped figure reaches the ranking and the drawn cell, and
+ * the marker is never dropped.
+ */
+const liquidity = vi.hoisted(() => ({ throttleByItem: {} }));
+
+vi.mock('../../utils/liquidity-cap.js', () => ({
+    sellsFromProfitData: (profitData) =>
+        (profitData?.dropRevenues || [])
+            .filter((drop) => drop?.itemHrid && !drop.isSelfReturn)
+            .map((drop) => ({
+                itemHrid: drop.itemHrid,
+                name: drop.itemName || null,
+                unitsPerHour: drop.dropsPerHour || 0,
+            })),
+    capProfitRate: async ({ goldPerHour, sells }) => {
+        for (const sold of sells || []) {
+            const throttle = liquidity.throttleByItem[sold.itemHrid];
+            if (throttle !== undefined && throttle < 1) {
+                return {
+                    goldPerHour: goldPerHour * throttle,
+                    capped: true,
+                    limit: {
+                        kind: 'volume',
+                        note: 'limited by market volume (~1/week)',
+                        detail: `${sold.name || sold.itemHrid} trades ~1/week, and you are not the only seller.`,
+                        itemHrid: sold.itemHrid,
+                        throttle,
+                    },
+                };
+            }
+        }
+        return { goldPerHour, capped: false, limit: null };
+    },
+    liquidityMarkerHtml: (limit, { compact = false } = {}) =>
+        limit ? `<span title="${limit.note} — ${limit.detail}">${compact ? 'vol-capped' : limit.note}</span>` : '',
+}));
+
 const { default: bestItems, getAlchemyBaseXP, calcXpPerAction } = await import('./alchemy-best-items.js');
 
 /**
@@ -101,6 +141,7 @@ beforeEach(() => {
     game.skills = [];
     market.prices = {};
     experience.totalMultiplier = 1;
+    liquidity.throttleByItem = {};
     calculator.coinify.mockReset().mockReturnValue(profit());
     calculator.decompose.mockReset().mockReturnValue(profit());
     calculator.transmute.mockReset().mockReturnValue(profit());
@@ -502,6 +543,97 @@ describe('renderTable filtering and sorting', () => {
     test('drawing before the panel exists is a no-op, not a crash', () => {
         bestItems.modal = null;
         expect(() => bestItems.renderTable()).not.toThrow();
+    });
+});
+
+describe('the market-volume cap on the ranking', () => {
+    beforeEach(() => {
+        game.initClientData = {
+            itemDetailMap: {
+                '/items/charm': { name: 'Charm', itemLevel: 10, alchemyDetail: { isCoinifiable: true } },
+                '/items/cheese': { name: 'Cheese', itemLevel: 10, alchemyDetail: { isCoinifiable: true } },
+            },
+        };
+        calculator.coinify.mockImplementation((hrid) =>
+            hrid === '/items/charm'
+                ? profit({
+                      profitPerHour: 1_000_000_000,
+                      dropRevenues: [
+                          { itemHrid: '/items/charm', itemName: 'Charm', dropsPerHour: 10, isSelfReturn: true },
+                          { itemHrid: '/items/essence', itemName: 'Tailoring Essence', dropsPerHour: 500 },
+                      ],
+                  })
+                : profit({
+                      profitPerHour: 500_000,
+                      dropRevenues: [{ itemHrid: '/items/milk', itemName: 'Milk', dropsPerHour: 400 }],
+                  })
+        );
+    });
+
+    /** Rank, bound and draw, the way openModal does */
+    async function draw() {
+        bestItems.cachedRankings.coinify = await bestItems.withLiquidityCaps(bestItems.calculateRankings('coinify'));
+        bestItems.createModal();
+        bestItems.currentType = 'coinify';
+        bestItems.renderTable();
+    }
+
+    /** @returns {Array<Element>} the drawn body rows */
+    const drawnRows = () => Array.from(bestItems.modal.querySelectorAll('tbody tr'));
+
+    test('a thin-market row is ranked at its capped figure, below an honest one', async () => {
+        // 1B/hr through an essence the market takes 1/10,000th of → 100K,
+        // which must now lose to the 500K cheese
+        liquidity.throttleByItem['/items/essence'] = 0.0001;
+
+        await draw();
+
+        const names = drawnRows().map((tr) => tr.children[1].textContent);
+        expect(names).toEqual(['Cheese', 'Charm']);
+        // The capped figure is what the cell shows — 1B × 0.0001 = 100K
+        expect(drawnRows()[1].children[4].textContent).toContain('100.0K');
+    });
+
+    test('and the drawn cell carries the marker, tooltip naming the limiting item', async () => {
+        liquidity.throttleByItem['/items/essence'] = 0.0001;
+
+        await draw();
+
+        const cappedCell = drawnRows()[1].children[4];
+        expect(cappedCell.innerHTML).toContain('vol-capped');
+        expect(cappedCell.querySelector('span[title]').title).toContain('limited by market volume (~1/week)');
+        expect(cappedCell.querySelector('span[title]').title).toContain('Tailoring Essence');
+
+        // The liquid row is not accused of anything
+        expect(drawnRows()[0].children[4].innerHTML).not.toContain('vol-capped');
+    });
+
+    test('the raw figure survives on the row for anything that wants to say both', async () => {
+        liquidity.throttleByItem['/items/essence'] = 0.0001;
+
+        const bounded = await bestItems.withLiquidityCaps(bestItems.calculateRankings('coinify'));
+        const charm = bounded.find((row) => row.itemHrid === '/items/charm');
+
+        expect(charm.profitPerHour).toBeCloseTo(100_000, 6);
+        expect(charm.uncappedProfitPerHour).toBe(1_000_000_000);
+        expect(charm.liquidityLimit.itemHrid).toBe('/items/essence');
+    });
+
+    test('a liquid market leaves the ranking exactly as calculated, unmarked', async () => {
+        await draw();
+
+        const names = drawnRows().map((tr) => tr.children[1].textContent);
+        expect(names).toEqual(['Charm', 'Cheese']);
+        expect(bestItems.modal.querySelector('[data-mwi-best-table]').innerHTML).not.toContain('vol-capped');
+    });
+
+    test('the rows the ranking module handed over are never edited in place', async () => {
+        liquidity.throttleByItem['/items/essence'] = 0.0001;
+
+        const raw = bestItems.calculateRankings('coinify');
+        await bestItems.withLiquidityCaps(raw);
+
+        expect(raw.find((row) => row.itemHrid === '/items/charm').profitPerHour).toBe(1_000_000_000);
     });
 });
 

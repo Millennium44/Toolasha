@@ -36,6 +36,7 @@ const coreExternalGlobals = new Map([
 
 const utilsExternalGlobals = new Map([
     [normalize(join(__dirname, 'src/utils/formatters.js')), 'Toolasha.Utils.formatters'],
+    [normalize(join(__dirname, 'src/utils/liquidity-cap.js')), 'Toolasha.Utils.liquidityCap'],
     [normalize(join(__dirname, 'src/utils/efficiency.js')), 'Toolasha.Utils.efficiency'],
     [normalize(join(__dirname, 'src/utils/profit-helpers.js')), 'Toolasha.Utils.profitHelpers'],
     [normalize(join(__dirname, 'src/utils/profit-constants.js')), 'Toolasha.Utils.profitConstants'],
