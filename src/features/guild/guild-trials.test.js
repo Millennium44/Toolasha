@@ -3043,6 +3043,12 @@ describe('the payout block, audited', () => {
         expect(text()).not.toContain('needs checking');
         // The card is what the guild is paid, unchanged
         expect(text()).toContain('Guild Points banked1,222');
+        // …but the tokens are paid on *base*, and dividing 1,222 by today's
+        // +12% recovers 1,091 where the tier actually banked 1,100. Half of
+        // 1,100 at the Treasury's +10% is 605; the division would have said 600
+        expect(text()).toContain('Tokens, every eligible member605');
+        // And the banked row's tooltip says where the base came from
+        expect(document.body.innerHTML).toContain('banked across a Builder’s Hall upgrade');
     });
 
     test('with no building level anywhere, the bonus is read back out of the cards', () => {
