@@ -1,11 +1,11 @@
 /**
  * Toolasha UI Library
  * UI enhancements, tasks, skills, and misc features
- * Version: 2.90.0
+ * Version: 2.91.0
  * License: CC-BY-NC-SA-4.0
  */
 
-(function (config, dataManager, domObserver, formatters_js, timerRegistry_js, domObserverHelpers_js, dom_js, storage, panelZIndex_js, floatingPanel_js, panelGeometry_js, characterKey_js, overlayRows_js, opanelConfig_js, choiceDialog_js, mobile_js, overlayLayout_js, settingsSchema_js, toast_js, bundleBridge_js, houseCostCalculator, overlayFormat_js, marketplaceTabs_js, marketData_js, roomSkills_js, marketAPI, numberParser_js, pricingHelper_js, webSocketHook, simplePanel_js, damageAttribution_js, combatDPS, combatStatsDataCollector, combatStatsCalculator_js, damageTracker_js, damageTakenTracker_js, battlePanelMonsters_js, spawnExpectation_js, combatDropModel_js, allZonesSnapshot_js, partyLint_js, csvExport_js, itemNavigation_js, efficiency_js, guildCreditPricing_js, adoptionConsent_js, gameText_js, performanceMonitor, backgroundWork_js, profileCommand_js, progressEta_js, reactInput_js, actionPanelHelper_js, expectedValueCalculator, gatheringProfit_js, productionProfit_js, profitHelpers_js, selectors_js, actionCalculator_js, equipmentParser_js, profitConstants_js, combatSimRunner_js, combatSimAdapter_js, assetManifest, gameLookups_js, chunkedHistory_js, skillProgress_js, skillHistory_js, deferredLoad_js, combatLevel_js, experienceParser_js, dropLuck_js, marketplaceAutofill_js, cleanupRegistry_js, settingsStorage, scrollBuffValues_js, enhancementConfig_js, chestTally_js, chestImport_js, tokenValuation_js, materialCalculator_js, alchemyFees_js, enhancementCalculator_js, teaParser_js, combatSimUI, tableColumns_js, consumableTarget_js, consumableForecast_js, keyLedger_js, orderBook_js, shoppingList_js, alchemyProfitCalculator, buffParser_js) {
+(function (config, dataManager, domObserver, formatters_js, timerRegistry_js, domObserverHelpers_js, dom_js, storage, panelZIndex_js, floatingPanel_js, panelGeometry_js, characterKey_js, overlayRows_js, opanelConfig_js, choiceDialog_js, mobile_js, overlayLayout_js, settingsSchema_js, toast_js, bundleBridge_js, houseCostCalculator, overlayFormat_js, marketplaceTabs_js, marketData_js, roomSkills_js, marketAPI, numberParser_js, pricingHelper_js, webSocketHook, simplePanel_js, damageAttribution_js, combatDPS, combatStatsDataCollector, combatStatsCalculator_js, damageTracker_js, damageTakenTracker_js, battlePanelMonsters_js, spawnExpectation_js, combatDropModel_js, allZonesSnapshot_js, partyLint_js, csvExport_js, itemNavigation_js, efficiency_js, guildCreditPricing_js, adoptionConsent_js, gameText_js, performanceMonitor, backgroundWork_js, profileCommand_js, selectors_js, progressEta_js, reactInput_js, actionPanelHelper_js, expectedValueCalculator, gatheringProfit_js, productionProfit_js, profitHelpers_js, actionCalculator_js, equipmentParser_js, profitConstants_js, combatSimRunner_js, combatSimAdapter_js, assetManifest, gameLookups_js, chunkedHistory_js, skillProgress_js, skillHistory_js, deferredLoad_js, combatLevel_js, experienceParser_js, dropLuck_js, marketplaceAutofill_js, cleanupRegistry_js, settingsStorage, scrollBuffValues_js, enhancementConfig_js, chestTally_js, chestImport_js, tokenValuation_js, materialCalculator_js, alchemyFees_js, enhancementCalculator_js, teaParser_js, combatSimUI, tableColumns_js, consumableTarget_js, consumableForecast_js, keyLedger_js, orderBook_js, shoppingList_js, alchemyProfitCalculator, buffParser_js) {
     'use strict';
 
     function _interopNamespaceDefault(e) {
@@ -9646,9 +9646,14 @@
      * Nothing is drawn unless the snapshot holds exactly this zone and tier — a
      * neighbouring tier's figure would be a comparison of nothing.
      *
-     * @param {HTMLElement} card_ - The summary card, appended to
+     * It sits at the foot of the panel, in its own dim card, not in the headline:
+     * the number the panel is *for* is the live measured rate, and a simulated
+     * figure from another day should not compete with it for the eye.
+     *
+     * @param {HTMLElement} body - The panel body; a small card is added only when
+     *   there is a forecast to show
      */
-    function drawSimHere(card_) {
+    function drawSimHere(body) {
         const action = dataManager
             .getCurrentActions?.()
             ?.find((entry) => entry.actionHrid?.startsWith('/actions/combat/') && !entry.isDone);
@@ -9657,6 +9662,7 @@
         const row = allZonesSnapshot_js.zoneFromSnapshot(cachedSnapshot(), action.actionHrid, action.difficultyTier || 0);
         if (!row) return;
 
+        const card_ = card$1(body);
         const perDay = row.profitPerHour * 24;
         const dated = row.savedAt ? new Date(row.savedAt).toLocaleDateString() : null;
         const ageDays = row.savedAt ? Math.max(0, Math.round((Date.now() - row.savedAt) / 86_400_000)) : null;
@@ -11232,9 +11238,6 @@
             equation.appendChild(piece(`${formatters_js.formatKMB(total)}/day`, overlayFormat_js.ROW_COLORS.gold));
             summary.append(equation, note(`${headline.title} · ${formatters_js.formatKMB(total / 24)}/hr`));
 
-            // The forecast for this very zone, when the last all-zones sim ran it
-            drawSimHere(summary);
-
             // Before the four cases, since "who is being paid" is a coarser question
             // than "which price to sell at" and answering it changes what you do next
             drawPartyProfit(body, profitView.mode, tax);
@@ -11255,6 +11258,10 @@
             );
 
             body.appendChild(taxCard(stats));
+
+            // The last all-zones sim's forecast for this zone, kept to the foot of
+            // the panel so it never competes with the live rate at the top
+            drawSimHere(body);
         },
     });
 
@@ -14541,11 +14548,16 @@ ${starCSS}
      *
      * The guide gives the *shape* of tier scaling ("higher tiers need more work")
      * but not the curve, and the curve is not in any client data this script can
-     * read. So it is measured: {@link estimateGrowthPerTier} fits a per-tier growth
-     * factor to whatever tier totals have actually been observed this week, and
-     * every projection that needs the next tier's size goes through it. With fewer
-     * than two observed tiers there is no fit, the helpers return null, and the
-     * panel says it does not know rather than inventing a curve.
+     * read. It has since been pinned down for both trial kinds, exactly, from
+     * observations the rules reproduce to the unit: a skilling tier's pool is the
+     * first tier's work plus a tenth of it per tier ({@link SKILLING_TIER_STEP}),
+     * and a combat tier's boss health scales with `10 + level` (see
+     * `guild-trial-forecast.js`). Both are *ratios* between tiers, so a single
+     * observed tier anchors the whole ladder — {@link exactTierTotal} — and the
+     * fitted growth factor ({@link estimateGrowthPerTier}) survives only as the
+     * fallback for a trial whose kind somehow escapes both rules. With no anchor
+     * and no fit the helpers return null, and the panel says it does not know
+     * rather than inventing a curve.
      *
      * The 1%-per-participant part *is* exact, and is applied separately
      * ({@link participantScale}) so a caller can show the next tier's cost with the
@@ -15056,13 +15068,27 @@ ${starCSS}
         // tokens are paid on base. The ladder is exact at every tier and is used
         // instead; the card still supplies the Guild Points, which are what the
         // guild's own announcement will state.
+        //
+        // A card figure is also a statement *about the tier it was read at*, and
+        // the trial may have banked further since: a card quoted at T8 while
+        // fourteen tiers stand banked is six tiers out of date, not the trial's
+        // total. Observed live — "Guild Points banked 1,080" against a Trials tab
+        // stating 1,800 — once the tier could advance without the card being
+        // re-read. The ladder's own per-tier steps top the quoted figure up to the
+        // banked count, which reproduces the refreshed card exactly: 1,080 + 6 ×
+        // 100 × 1.2 = 1,800.
         const midTrialUpgrade = interpretation === 'mid-trial-upgrade';
+        let topUp = 0;
+        for (let tier = quotedAt.tier + 1; tier <= banked; tier += 1) {
+            topUp += tierMarginalPoints(type, tier) ?? 0;
+        }
+
         return {
-            basePoints: midTrialUpgrade ? reading.ladderCumulative : reading.basePoints,
-            guildPoints: reading.statedPoints,
-            // The base came from the ladder in the upgrade case, and a caption that
-            // says "from the cards" would be overstating it
-            source: midTrialUpgrade ? 'mixed' : 'game',
+            basePoints: (midTrialUpgrade ? reading.ladderCumulative : reading.basePoints) + topUp,
+            guildPoints: reading.statedPoints + topUp * scale,
+            // The base came from the ladder in the upgrade and top-up cases, and a
+            // caption that says "from the cards" would be overstating it
+            source: midTrialUpgrade || topUp > 0 ? 'mixed' : 'game',
             interpretation,
             bonusKnown,
             needsBuildersHall: false,
@@ -15109,26 +15135,224 @@ ${starCSS}
     }
 
     /**
-     * The first tier's work, backed out of any tier that has been observed.
+     * How much of a tier's total each kind's ladder puts on tier `t`, relative to
+     * the first tier.
+     *
+     * `shape(1)` is 1 for both kinds, so a "base" is always *the first tier's
+     * total before participants* whichever ladder it came from:
+     *
+     * - **Skilling**: `1 + 0.1 × (t − 1)` — the pool rule.
+     * - **Combat**: `(100 + 10t) / 110` — the boss-health rule, `(10 + level)/110`
+     *   with `level = 100 + 10 × (t − 1)`, confirmed to the unit on a recorded run
+     *   (618,000 → 669,500 is exactly 120 → 130).
+     *
+     * @param {'skilling'|'combat'} kind - Which ladder
+     * @returns {Function|null} `(tier) => factor`, or null for a kind with no ladder
+     */
+    function ladderShape(kind) {
+        if (kind === 'skilling') return (tier) => 1 + SKILLING_TIER_STEP * (tier - 1);
+        if (kind === 'combat') {
+            const atFirstTier = TRIAL_START_LEVEL + TRIAL_LEVEL_STEP;
+            return (tier) => (TRIAL_START_LEVEL + TRIAL_LEVEL_STEP * tier) / atFirstTier;
+        }
+        return null;
+    }
+
+    /**
+     * The first tier's total, backed out of any tier that has been observed.
      *
      * A trial joined at tier three still knows what tier one needed, because the
      * step between tiers is known — so one reading anywhere on the ladder gives the
-     * whole of it.
+     * whole of it. Works for both kinds: a skilling pool backs out the skill's base
+     * work, a combat health bar the encounter's first-tier health (572,000 at T1
+     * with 4 signed up backs out Trial Chameleon's 550,000 exactly).
      *
-     * @param {Array<{tier: number, total: number}>} observations - Pool sizes seen
+     * @param {Array<{tier: number, total: number}>} observations - Pool or health totals seen
      * @param {number} [participants] - Members signed up
-     * @returns {number|null} The first tier's work, or null with nothing to derive from
+     * @param {'skilling'|'combat'} [kind] - Which ladder the totals sit on
+     * @returns {number|null} The first tier's total, or null with nothing to derive from
      */
-    function baseWorkFromObservations(observations, participants = 0) {
+    function baseWorkFromObservations(observations, participants = 0, kind = 'skilling') {
         const byParty = 1 + PARTICIPANT_SCALE_STEP * Math.max(0, Number(participants) || 0);
+        const shape = ladderShape(kind);
+        if (!shape) return null;
 
         for (const observation of observations || []) {
             const tier = Number(observation?.tier);
             const total = Number(observation?.total);
             if (!Number.isFinite(tier) || tier < 1 || !Number.isFinite(total) || total <= 0) continue;
-            return total / byParty / (1 + SKILLING_TIER_STEP * (tier - 1));
+            return total / byParty / shape(tier);
         }
         return null;
+    }
+
+    /**
+     * A tier's total from any known tier's total, by the exact ladder.
+     *
+     * Both trial kinds scale along a curve this codebase has already pinned down
+     * exactly, and both curves are *ratios* between tiers — so one observed
+     * `{tier, total}` anchor is enough to state every other tier, with no fitting:
+     *
+     * - **Skilling**: a pool is `base × (1 + 0.1 × (tier − 1)) × (1 + 0.01 ×
+     *   participants)` (see {@link tierPoolWork}). The participant factor is common
+     *   to every tier, so it cancels in the ratio and never needs to be known here.
+     * - **Combat**: boss health scales with `10 + level` — the `(10 + level)/110`
+     *   rule `guild-trial-forecast.js` derived and confirmed on two live tiers to
+     *   the unit (618,000 → 669,500 is exactly 120 → 130). With `level = 100 +
+     *   10 × (tier − 1)` that factor is `100 + 10 × tier`, and the `/110` cancels.
+     *
+     * The *nearest* anchor is used, as {@link projectTierTotal} does, so an anchor
+     * actually observed at the asked-for tier is returned unchanged. This is what
+     * the pace walk and the next-tier row now run on: the geometric fit it replaces
+     * needed two observed tiers before it would say anything, and overshot even
+     * then — a linear ladder read through a geometric fit drifts on every step.
+     *
+     * @param {Object} input - Inputs
+     * @param {'skilling'|'combat'} input.kind - Which ladder
+     * @param {Array<{tier: number, total: number}>} input.anchors - Tier totals known, any order
+     * @param {number} input.tier - The tier wanted
+     * @returns {number|null} The tier's total, or null without a usable anchor or ladder
+     */
+    function exactTierTotal({ kind, anchors = [], tier } = {}) {
+        if (!Number.isFinite(tier) || tier < 1 || tier > TRIAL_MAX_TIER) return null;
+
+        // Each kind's scaling factor; any common constant cancels in the ratio
+        const shape = ladderShape(kind);
+        if (!shape) return null;
+
+        const usable = (anchors || []).filter(
+            (anchor) =>
+                Number.isFinite(anchor?.tier) &&
+                anchor.tier >= 1 &&
+                anchor.tier <= TRIAL_MAX_TIER &&
+                Number(anchor?.total) > 0
+        );
+        if (!usable.length) return null;
+
+        const anchor = usable.reduce((best, candidate) =>
+            Math.abs(candidate.tier - tier) < Math.abs(best.tier - tier) ? candidate : best
+        );
+        return (Number(anchor.total) * shape(tier)) / shape(anchor.tier);
+    }
+
+    /**
+     * How close to a whole tier a work-target reading has to land to be believed.
+     *
+     * Tight on purpose. The inputs to {@link tierFromWorkTarget} are a learned base
+     * and a participant count, and a participant count that is off by one moves the
+     * derived tier by roughly 0.1 — so a tolerance below half of that rejects a
+     * miscounted party instead of stating a wrong tier with confidence.
+     */
+    const WORK_LADDER_TIER_TOLERANCE = 0.05;
+
+    /**
+     * Which tier a trial is on, from nothing but its bar's target.
+     *
+     * The In Progress tab's card carries the bar and no tier, and the bar's
+     * *target* identifies the tier uniquely once the first tier's total is known —
+     * on either ladder:
+     *
+     * - **Skilling**: `target = base × (1 + 0.1 × (tier − 1)) × (1 + 0.01 × p)`,
+     *   so `tier = 1 + (target / (base × (1 + 0.01 × p)) − 1) / 0.1`. The crafting
+     *   base of 40,000 is confirmed across two guilds — 49,920 with 4 participants
+     *   at T3 and 88,920 with 17 at T10 both back out to it exactly.
+     * - **Combat**: the health bar's maximum is `base × ((100 + 10 × tier) / 110)
+     *   × (1 + 0.01 × p)`, so `tier = 11 × ratio − 10`. Trial Chameleon's 572,000
+     *   with 4 signed up is exactly the 550,000 base at T1.
+     *
+     * Accepted only when the arithmetic lands within
+     * {@link WORK_LADDER_TIER_TOLERANCE} of a whole tier on the ladder. A skilling
+     * target that fails gets one more chance with the party size treated as the
+     * unknown it often is — the In Progress tab states no sign-up count — via the
+     * joint search in {@link solveWorkLadder}; anything else returns null and the
+     * tier stays honestly unknown.
+     *
+     * @param {Object} input - Inputs
+     * @param {number} input.target - The bar's target (`targetWorkValue`, or the boss health maximum)
+     * @param {number} input.baseWork - The first tier's total, before participants
+     * @param {number} [input.participants] - Members signed up
+     * @param {number} [input.tolerance] - How far from a whole tier is still that tier
+     * @param {'skilling'|'combat'} [input.kind] - Which ladder the target sits on
+     * @returns {number|null} The tier, or null when the target fits no tier
+     */
+    function tierFromWorkTarget({
+        target,
+        baseWork,
+        participants = 0,
+        tolerance = WORK_LADDER_TIER_TOLERANCE,
+        kind = 'skilling',
+    } = {}) {
+        if (!Number.isFinite(target) || target <= 0) return null;
+        if (!Number.isFinite(baseWork) || baseWork <= 0) return null;
+
+        const byParty = 1 + PARTICIPANT_SCALE_STEP * Math.max(0, Number(participants) || 0);
+        const ratio = target / (baseWork * byParty);
+        // The closed-form inverse of `ladderShape`, per kind
+        const exactTier =
+            kind === 'combat'
+                ? ((TRIAL_START_LEVEL + TRIAL_LEVEL_STEP) * ratio - TRIAL_START_LEVEL) / TRIAL_LEVEL_STEP
+                : 1 + (ratio - 1) / SKILLING_TIER_STEP;
+        const tier = Math.round(exactTier);
+
+        if (Math.abs(exactTier - tier) <= tolerance && tier >= 1 && tier <= TRIAL_MAX_TIER) return tier;
+
+        // The participant count may be the thing that is wrong — unknown on the In
+        // Progress tab, or stale off an old sign-up reading — and for a skilling
+        // trial the target still factors: see {@link solveWorkLadder}
+        if (kind !== 'skilling') return null;
+        return solveWorkLadder({ target, baseWork })?.tier ?? null;
+    }
+
+    /**
+     * The most participants a trial is searched against.
+     *
+     * Sign-up slots are capped by the Encampment buildings well below this; the
+     * bound exists so the joint search cannot wander into absurd party sizes, and
+     * a generous bound only ever makes the answer *more* conservative — an extra
+     * candidate fit turns a unique answer into an honest unknown.
+     */
+    const MAX_TRIAL_PARTICIPANTS = 50;
+
+    /**
+     * The tier **and** the party size, from nothing but a skilling bar's target.
+     *
+     * The In Progress tab carries no sign-up count, so a mid-trial join there had
+     * a base and a target and still could not use them — `target = base ×
+     * (1 + 0.1 × (t − 1)) × (1 + 0.01 × p)` has two unknowns. But both are small
+     * integers, and the product usually factors uniquely: the live case, 51,360 on
+     * a 40,000 base, is 1.284 = 1.2 × 1.07 — tier 3 with 7 signed up — and no
+     * other `(t, p)` on either ladder produces it. Every candidate tier's implied
+     * party size is rounded and verified against the target exactly (±1 for the
+     * game's rounding); one surviving pair is an identification, and two or more
+     * is an honest null — 52,800 is 1.1 × 1.2 and 1.2 × 1.1 alike, and nothing
+     * may pick between them.
+     *
+     * The true `(t, p)` always reproduces its own target exactly, so it is always
+     * among the fits: a unique fit is therefore the right one, never a guess that
+     * happened to land.
+     *
+     * @param {Object} input - Inputs
+     * @param {number} input.target - The bar's target
+     * @param {number} input.baseWork - The skill's first-tier work
+     * @param {number} [input.maxParticipants] - Largest party size searched
+     * @param {number} [input.toleranceHp] - How far off the exact product a target may round
+     * @returns {{tier: number, participants: number}|null} The unique solution, or null
+     */
+    function solveWorkLadder({ target, baseWork, maxParticipants = MAX_TRIAL_PARTICIPANTS, toleranceHp = 1 } = {}) {
+        if (!Number.isFinite(target) || target <= 0) return null;
+        if (!Number.isFinite(baseWork) || baseWork <= 0) return null;
+
+        const fits = [];
+        for (let tier = 1; tier <= TRIAL_MAX_TIER; tier += 1) {
+            const byTier = 1 + SKILLING_TIER_STEP * (tier - 1);
+            const participants = Math.round((target / (baseWork * byTier) - 1) / PARTICIPANT_SCALE_STEP);
+            if (participants < 1 || participants > maxParticipants) continue;
+
+            const predicted = baseWork * byTier * (1 + PARTICIPANT_SCALE_STEP * participants);
+            if (Math.abs(predicted - target) <= toleranceHp) fits.push({ tier, participants });
+        }
+
+        return fits.length === 1 ? fits[0] : null;
     }
 
     /**
@@ -15951,6 +16175,20 @@ ${starCSS}
     }
 
     /**
+     * Text that must never be read as a countdown, however clock-shaped it is.
+     *
+     * A decimal ("Work Time 3.14s"), a percentage ("Success Rate 60.8%"), a time
+     * of day ("Thu 09:00 AM" — which a colon-clock parser reads as *nine minutes*)
+     * or a weekday disqualify the whole line. Exported because the status-row
+     * shortcut in `guild-trials.js` needs the same refusal: the Trials tab's
+     * header is "Skilling Trial - In Progress Thu 09:00 AM", and reading it as a
+     * nine-minute deadline made the pace walk one tier further than the real
+     * 5m53s allowed — "15 tiers → T15" on the Trials tab against a correct
+     * "14 tiers → T14" on In Progress, at the same moment.
+     */
+    const NOT_A_CLOCK_RE = /\d+\.\d|%|\b(?:am|pm)\b|\b(?:mon|tue|wed|thu|fri|sat|sun)/i;
+
+    /**
      * The trial countdown, found anywhere on the tab.
      *
      * `GuildPanel_eventStatusRow` is as unverified as the tab container was, and it
@@ -15996,12 +16234,11 @@ ${starCSS}
 
         const plausible = (value) => Number.isFinite(value) && value > 0 && value <= maxMs;
         const labelled = gameText_js.TRIAL_CLOCK_LABEL_RE;
-        const notAClock = /\d+\.\d|%|\b(?:am|pm)\b|\b(?:mon|tue|wed|thu|fri|sat|sun)/i;
 
         // [labelled units, bare units, labelled colon, bare colon]
         const ranked = [null, null, null, null];
         for (const line of textLines(root)) {
-            if (line.includes('/') || notAClock.test(line)) continue;
+            if (line.includes('/') || NOT_A_CLOCK_RE.test(line)) continue;
 
             const wordy = parseWordyDurationMs(line);
             const value = plausible(wordy) ? wordy : parseClockMs(line);
@@ -16474,7 +16711,13 @@ ${starCSS}
             // A stated tier beats a derived one, and is available on a card that
             // carries no level at all. `textLines` skips this script's own elements,
             // so the `T<n>` badge `guild-credit-value.js` writes into the level line
-            // is never read back as if the game had said it
+            // is never read back as if the game had said it — confirmed against a
+            // with-Toolasha-disabled screenshot: the game's own trial card prints
+            // **no tier badge at all**, only "Crafting Lv.210, 1,664 pts". The
+            // level is therefore the card rung's real ground truth, and
+            // `tierFromLevel(level)` counts tiers *banked*: Lv.210 sits beside
+            // 1,664 pts, which is the twelve-tier base of 1,300 at a +28% hall
+            // exactly — a whole number of 2% steps at no other banked count.
             const statedTier = lines.map(parseTrialTier).find((candidate) => candidate !== null) ?? null;
 
             tiles.push({
@@ -16606,6 +16849,14 @@ ${starCSS}
         // The boss's health is the first bar and the second is its mana, which is
         // not a pool and is not sampled for anything
         if (kind === 'combat') return { bossIndex: 0, poolIndex: null };
+
+        // A skilling card carries exactly one bar, and it is the pool by
+        // construction — movement cannot reclassify it. Reading it by movement
+        // mislabelled the one moment continuity matters most: across a tier clear
+        // the pool *falls* (a reset onto the next tier's target), the lone bar was
+        // then classified as a boss, and the analysis dropped the bar — target,
+        // tier and all — right as the next tier began.
+        if (width === 1) return { bossIndex: null, poolIndex: 0 };
 
         let bossIndex = null;
         let poolIndex = null;
@@ -16748,15 +16999,23 @@ ${starCSS}
     /**
      * Storage key for a character's record of what it has seen.
      *
-     * Keyed by the *viewing* character rather than by guild, following
-     * `guildShrineLevels`: an alt in another guild has seen different people, and a
-     * shared key would show one guild's builds under the other's roster.
+     * Keyed by the *viewing* character AND their guild, once the guild is known.
+     * Per character because an alt in another guild has seen different people; per
+     * guild because one character *changes* guild — reported live: "Seen loadouts"
+     * still listed the previous guild's Cream and ICMeow beside the new guild's
+     * fighters, eighteen hours after the switch. Each guild's sightings keep their
+     * own key, so nothing is deleted on a switch and nothing bleeds across one.
+     * Before the guild's name has arrived the character-only key stands, exactly
+     * as the trial record's `default` key does, and the capture adopts onto the
+     * guild key when the name lands.
      *
      * @param {string|number|null} characterId - Viewing character id
+     * @param {string|null} [guildName] - The character's guild, when known
      * @returns {string} Storage key
      */
-    function guildLoadoutsStorageKey(characterId) {
-        return `${LOADOUT_KEY_PREFIX}_${characterId ?? 'default'}`;
+    function guildLoadoutsStorageKey(characterId, guildName = null) {
+        const base = `${LOADOUT_KEY_PREFIX}_${characterId ?? 'default'}`;
+        return guildName ? `${base}_${guildName}` : base;
     }
 
     /**
@@ -17012,11 +17271,12 @@ ${starCSS}
     /**
      * Read a character's record of the loadouts it has seen.
      * @param {string|number|null} characterId - Viewing character id
+     * @param {string|null} [guildName] - The character's guild, when known
      * @returns {Promise<Object>} The record, or an empty one
      */
-    async function loadLoadouts(characterId) {
+    async function loadLoadouts(characterId, guildName = null) {
         try {
-            const record = await storage.get(guildLoadoutsStorageKey(characterId), LOADOUT_STORE, null);
+            const record = await storage.get(guildLoadoutsStorageKey(characterId, guildName), LOADOUT_STORE, null);
             if (!record || typeof record !== 'object') return { players: {}, updatedAt: 0 };
             return { players: record.players || {}, updatedAt: record.updatedAt || 0 };
         } catch (error) {
@@ -17029,12 +17289,13 @@ ${starCSS}
      * Write a character's record.
      * @param {string|number|null} characterId - Viewing character id
      * @param {Object} record - The record
+     * @param {string|null} [guildName] - The character's guild, when known
      * @returns {Promise<boolean>} True when the write was queued
      */
-    async function saveLoadouts(characterId, record) {
+    async function saveLoadouts(characterId, record, guildName = null) {
         try {
             if (!Object.keys(record?.players || {}).length) return false;
-            await storage.set(guildLoadoutsStorageKey(characterId), record, LOADOUT_STORE);
+            await storage.set(guildLoadoutsStorageKey(characterId, guildName), record, LOADOUT_STORE);
             return true;
         } catch (error) {
             console.error('[GuildLoadouts] Failed to save seen loadouts:', error);
@@ -17169,6 +17430,10 @@ ${starCSS}
             this.initialized = false;
             this.record = { players: {}, updatedAt: 0 };
             this.characterId = null;
+            /** The guild the record is keyed by; null before the name has arrived */
+            this.guildName = null;
+            /** When this session began, so pre-adoption sightings can be told apart */
+            this.startedAt = 0;
             this.unregister = [];
             this.timers = timerRegistry_js.createTimerRegistry();
             this.lastSocketAt = 0;
@@ -17194,7 +17459,8 @@ ${starCSS}
             this.initialized = true;
 
             this.characterId = dataManager.getCurrentCharacterId?.() ?? null;
-            this.record = await loadLoadouts(this.characterId);
+            this.startedAt = Date.now();
+            this.record = await loadLoadouts(this.characterId, this.guildName);
 
             // Self-heal on the way in. Clicking the boss in a trial's fight view
             // fetched its sheet exactly as clicking a member does, and it was filed
@@ -17205,7 +17471,7 @@ ${starCSS}
             if (cleaned.purged.length) {
                 console.warn('[GuildLoadoutCapture] Dropping stored monster sheets:', cleaned.purged.join(', '));
                 this.record = cleaned.record;
-                await saveLoadouts(this.characterId, this.record);
+                await saveLoadouts(this.characterId, this.record, this.guildName);
             }
 
             this.onUnitFetched = (message) => this._onUnitFetched(message);
@@ -17234,6 +17500,60 @@ ${starCSS}
             this.timers.clearAll();
             this.saveQueued = false;
             this.initialized = false;
+        }
+
+        /**
+         * Move the record onto the guild's own key, once the guild is known.
+         *
+         * The same lazy adoption the trial record does, for the same reason: the
+         * guild's name arrives on socket traffic after this initialises. Three
+         * cases, in the order a switched character hits them:
+         *
+         * - **The guild key already holds a record.** It is this guild's own
+         *   history and it wins outright; only sightings captured *this session*
+         *   (which happened in this guild, whatever key held them) are folded in.
+         *   The character-only record is deliberately not — it may span guilds,
+         *   which is the reported leak: Cream and ICMeow from the guild the
+         *   character left, listed beside the new guild's fighters.
+         * - **The guild key is empty.** The character-only record adopts onto it
+         *   once — the common case of a character who never switches, whose whole
+         *   history belongs to this one guild.
+         * - **`null`** simply forgets which guild the record is keyed by, for a
+         *   character switch; the next name to arrive re-adopts.
+         *
+         * @param {string|null} name - The guild's name, or null to forget
+         * @returns {Promise<void>}
+         */
+        async setGuildName(name) {
+            try {
+                if (!name) {
+                    this.guildName = null;
+                    return;
+                }
+                if (name === this.guildName) return;
+
+                const held = this.record;
+                const before = this.guildName;
+                const stored = await loadLoadouts(this.characterId, name);
+                // A switch may have happened while the read was in flight
+                if (this.guildName !== before) return;
+
+                if (Object.keys(stored.players || {}).length) {
+                    this.record = stored;
+                    for (const player of loadoutList(held)) {
+                        if (Number.isFinite(player?.at) && player.at >= this.startedAt) {
+                            this.record = foldLoadout(this.record, player);
+                        }
+                    }
+                }
+                // else: the character-only record adopts wholesale — `this.record`
+                // already holds it
+
+                this.guildName = name;
+                this._queueSave();
+            } catch (error) {
+                console.error('[GuildLoadouts] Adopting the guild key failed:', error);
+            }
         }
 
         /** @returns {Array<Object>} Every snapshot held, most recently seen first */
@@ -17302,6 +17622,9 @@ ${starCSS}
             const characterId = dataManager.getCurrentCharacterId?.() ?? null;
             if (characterId !== this.characterId) {
                 this.characterId = characterId;
+                // The arriving character's guild is not knowable yet; the trials
+                // feature re-states it and the record re-adopts then
+                this.guildName = null;
                 this.record = { players: {}, updatedAt: 0 };
                 this._adopt(characterId, loadout);
                 return;
@@ -17337,7 +17660,7 @@ ${starCSS}
             this.timers.registerTimeout(
                 setTimeout(async () => {
                     this.saveQueued = false;
-                    await saveLoadouts(this.characterId, this.record);
+                    await saveLoadouts(this.characterId, this.record, this.guildName);
                 }, SAVE_DEBOUNCE_MS)
             );
         }
@@ -17838,6 +18161,16 @@ ${starCSS}
         if (tier === null) return nothing('the tier is not known — open the Trials tab once');
         if (timeLeftMs === null) return nothing('no clock on the tab, so there is no hour to spend');
 
+        // The bar in hand anchors the ladder, exactly as the pace walk anchors it:
+        // its tier label has been through the analysis' full rung ladder, where a
+        // stored observation's label is a badge inference that goes stale. The
+        // stored observations still serve a record with no live bar.
+        const liveAnchor =
+            Number.isFinite(analysis.tier) && Number.isFinite(analysis.total) && analysis.total > 0
+                ? [{ tier: analysis.tier, total: analysis.total }]
+                : null;
+        const observations = liveAnchor || analysis.tiers || [];
+
         if (analysis.kind === 'skilling') {
             const rate = Number.isFinite(analysis.rate) ? analysis.rate * 1000 : null;
             if (!rate) return nothing('a skilling trial can only be projected from a measured fill rate');
@@ -17846,7 +18179,7 @@ ${starCSS}
                 tier,
                 rate,
                 timeLeftMs,
-                observations: analysis.tiers || [],
+                observations,
                 remainingInTier: analysis.remaining,
                 participants,
                 decline: successDecline(analysis.personalByTier),
@@ -17883,8 +18216,12 @@ ${starCSS}
             timeLeftMs,
             participants,
             remainingInTier: analysis.remaining,
+            // Only the tier actually in front of the party is "observed": a combat
+            // record's stored observations mix the health and pool bars' ladders
+            // under inferred labels, and a wrong total here prices a tier the walk
+            // then spends real projected minutes on
             observedTotal: (candidate) =>
-                (analysis.tiers || []).find((entry) => entry.tier === candidate && entry.total > 0)?.total ?? null,
+                observations.find((entry) => entry.tier === candidate && entry.total > 0)?.total ?? null,
         });
         if (!walk) return nothing('nothing to project from');
 
@@ -17959,6 +18296,35 @@ ${starCSS}
      * containing "heal" — with a small name fallback for a client that has not
      * loaded. Buff abilities are found the same way, from effects that carry
      * `buffs`.
+     *
+     * ## Regeneration is not a failure to attribute, and it stopped being reported as one
+     *
+     * A watched trial with the party near full health showed "0 party hps" over
+     * "22.7K unattributed" for the whole fight — a bucket that reads like the
+     * attribution failing, when most of it was the trial's own flat regeneration
+     * (the guide replaces food and drinks with it) plus on-cast heal procs like
+     * Blooming Trident's Bloom, which no healing-ability stream will ever label.
+     * Two refinements, each with the same no-guessing discipline:
+     *
+     * - **Regeneration identifies itself by its shape.** A regen tick heals every
+     *   below-full unit by the same *fraction of its own maximum* — no cast heal
+     *   scales per-recipient-max — so a multi-unit rise at one uniform small
+     *   fraction, across units with different maxima, is regeneration and teaches
+     *   the fraction ({@link splitRegenRises}). Once learned, a lone rise of that
+     *   exact size (or a smaller one that tops its unit to full) is regeneration
+     *   too. Units sharing one maximum cannot distinguish a flat party heal from
+     *   regen, so nothing is learned from them.
+     * - **A lone caster owns the rises their tick carries.** The server groups
+     *   each tick by actor — the fact the damage side's presence rung is built on
+     *   — so when exactly one player cast an *ability* on a tick and the
+     *   non-regeneration rises land beside it, they are that cast's effect: a
+     *   heal, a leech, or an on-cast proc. Auto-attacks do not qualify (procs
+     *   like Bloom fire "on ability cast"), and several casters on one tick still
+     *   separate nothing.
+     *
+     * What remains after both is genuinely unattributed and is labelled with what
+     * it most likely is: overlapping heals, or a proc from a caster whose
+     * counters this stream does not carry.
      */
 
 
@@ -18004,9 +18370,23 @@ ${starCSS}
     }
 
     /**
+     * The largest fraction of a unit's maximum health a regen tick may be.
+     *
+     * The trial's stated regeneration is a few percent; a tenth is generous
+     * headroom, and anything above it is a heal whatever its shape — a cap so a
+     * party-wide burst heal that happens to land uniform can never teach itself in
+     * as "regeneration".
+     */
+    const REGEN_FRACTION_CAP = 0.1;
+
+    /** How far off the exact fraction a rise may round and still be regen, in HP */
+    const REGEN_ROUNDING_HP = 1;
+
+    /**
      * A fresh support state.
      * @returns {{players: Object, lastHP: Object, lastMP: Object, lastAtk: Object, emptySince: Object,
-     *   unattributedHealing: number, abilityKindsKnown: boolean}} State
+     *   unattributedHealing: number, regenHealing: number, regenFraction: number|null,
+     *   abilityKindsKnown: boolean}} State
      */
     function newSupportState() {
         return {
@@ -18016,6 +18396,8 @@ ${starCSS}
             lastAtk: {},
             emptySince: {},
             unattributedHealing: 0,
+            regenHealing: 0,
+            regenFraction: null,
             abilityKindsKnown: true,
         };
     }
@@ -18047,6 +18429,42 @@ ${starCSS}
     }
 
     /**
+     * Fold one support row into another, field by field.
+     *
+     * For banking a wave's rows under player names when the wave ends — the slots
+     * re-deal at every tier, so index-keyed rows are only meaningful within one
+     * wave. Almost everything sums; the two exceptions are the fields that are not
+     * counters: `lowestHealthFraction` is the *worst moment* and keeps the minimum,
+     * and `outOfMana` is live state — the row being folded in is the fresher and
+     * its value stands. Neither input is mutated.
+     *
+     * @param {Object|null} target - The row folded into, or null to start one
+     * @param {Object} row - The row to fold in
+     * @returns {Object} A new row holding both
+     */
+    function foldSupportRow(target, row) {
+        const merged = { ...emptyRow(), ...(target || {}) };
+        for (const [key, value] of Object.entries(row || {})) {
+            if (key === 'lowestHealthFraction') {
+                if (value !== null && Number.isFinite(value)) {
+                    merged.lowestHealthFraction =
+                        merged.lowestHealthFraction === null ? value : Math.min(merged.lowestHealthFraction, value);
+                }
+            } else if (key === 'outOfMana') {
+                merged.outOfMana = Boolean(value);
+            } else if (key === 'castsByAbility') {
+                merged.castsByAbility = { ...merged.castsByAbility };
+                for (const [ability, casts] of Object.entries(value || {})) {
+                    merged.castsByAbility[ability] = (merged.castsByAbility[ability] || 0) + casts;
+                }
+            } else if (typeof value === 'number') {
+                merged[key] = (merged[key] || 0) + value;
+            }
+        }
+        return merged;
+    }
+
+    /**
      * Fold one tick's `pMap` into the support tally.
      *
      * Mutates `state`, in the shape the rest of the trials feature already uses for
@@ -18068,6 +18486,7 @@ ${starCSS}
         if (!entries.length) return;
 
         const healers = [];
+        const casters = [];
         const risesThisTick = [];
 
         for (const [index, player] of entries) {
@@ -18075,19 +18494,22 @@ ${starCSS}
 
             const health = Number(player?.cHP);
             if (Number.isFinite(health)) {
+                const max = Number(player?.mHP);
                 const before = state.lastHP[index];
                 if (before !== undefined) {
                     const change = health - before;
                     if (change > 0) {
                         row.healingReceived += change;
-                        risesThisTick.push({ index, amount: change });
+                        // Health and maximum ride along so the regen classifier can
+                        // ask "is this the same fraction of *this* unit's maximum,
+                        // or a top-up to full"
+                        risesThisTick.push({ index, amount: change, health, max: Number.isFinite(max) ? max : null });
                     } else if (change < 0) {
                         row.damageTaken += -change;
                     }
                 }
                 state.lastHP[index] = health;
 
-                const max = Number(player?.mHP);
                 if (Number.isFinite(max) && max > 0) {
                     const fraction = Math.max(0, health) / max;
                     row.lowestHealthFraction =
@@ -18137,6 +18559,9 @@ ${starCSS}
                     row.casts += 1;
                     if (action !== 'idle' && action !== 'auto') {
                         row.castsByAbility[action] = (row.castsByAbility[action] || 0) + 1;
+                        // A real ability, whatever it does — the on-cast proc rung
+                        // below wants the actor, and procs fire "on ability cast"
+                        casters.push(index);
                     }
                     if (kind.heals) {
                         row.healCasts += 1;
@@ -18157,9 +18582,87 @@ ${starCSS}
         if (healers.length === 1) {
             const row = (state.players[healers[0]] ||= emptyRow());
             row.healingDone += restored;
-        } else {
-            state.unattributedHealing += restored;
+            return;
         }
+
+        // No lone healer. Take the regeneration out first — it identifies itself
+        // by its shape — and give what is left to a lone ability caster whose tick
+        // this is, before anything lands in the unattributed bucket.
+        const { regen, rest } = splitRegenRises(state, risesThisTick);
+        state.regenHealing += regen.reduce((sum, rise) => sum + rise.amount, 0);
+
+        const remainder = rest.reduce((sum, rise) => sum + rise.amount, 0);
+        if (remainder <= 0) return;
+
+        if (casters.length === 1) {
+            // The server groups a tick by actor, so a lone cast beside these rises
+            // is what caused them — a heal, a leech, or an on-cast proc like
+            // Blooming Trident's Bloom, which lands on the lowest-health ally and
+            // never labels itself as a healing ability
+            const row = (state.players[casters[0]] ||= emptyRow());
+            row.healingDone += remainder;
+        } else {
+            state.unattributedHealing += remainder;
+        }
+    }
+
+    /**
+     * Which of a tick's health rises are the trial's own regeneration.
+     *
+     * Regeneration is the one heal with a *shape*: every below-full unit rises by
+     * the same fraction of its own maximum, on one tick. No cast heal does that —
+     * heals are flat amounts from the caster's power — so a uniform-fraction wave
+     * across units with **different** maxima both classifies itself and teaches
+     * the fraction, which then classifies lone rises (a unit alone below full is a
+     * one-riser regen tick) and clamped ones (a rise that tops the unit to full
+     * with less than a full regen tick missing).
+     *
+     * The discipline is the file's usual one, twice over: units sharing one
+     * maximum could equally be a flat party heal, so nothing is learned from
+     * them; and a fraction above {@link REGEN_FRACTION_CAP} is a heal whatever its
+     * uniformity, so a big burst can never teach itself in.
+     *
+     * Mutates `state.regenFraction` when a wave teaches it; classification uses
+     * the learned fraction thereafter.
+     *
+     * @param {Object} state - From {@link newSupportState}
+     * @param {Array<{index: string, amount: number, health: number, max: number|null}>} rises - This tick's rises
+     * @returns {{regen: Array<Object>, rest: Array<Object>}} The split
+     */
+    function splitRegenRises(state, rises) {
+        const usable = (rises || []).filter((rise) => Number.isFinite(rise?.max) && rise.max > 0 && rise.amount > 0);
+        const rest = (rises || []).filter((rise) => !usable.includes(rise));
+
+        if (!usable.length) return { regen: [], rest: [...(rises || [])] };
+
+        const fits = (rise, fraction) => {
+            const full = fraction * rise.max;
+            // The exact per-max size, give or take the game's rounding…
+            if (Math.abs(rise.amount - full) <= REGEN_ROUNDING_HP) return true;
+            // …or a smaller rise that tops the unit to full, when less than one
+            // regen tick was missing
+            return rise.health === rise.max && rise.amount <= full + REGEN_ROUNDING_HP;
+        };
+
+        // A wave teaches the fraction: two or more unclamped risers, different
+        // maxima, one fraction between them
+        const unclamped = usable.filter((rise) => rise.health < rise.max);
+        if (unclamped.length >= 2 && new Set(unclamped.map((rise) => rise.max)).size >= 2) {
+            const fraction = unclamped[0].amount / unclamped[0].max;
+            const uniform =
+                fraction > 0 && fraction <= REGEN_FRACTION_CAP && unclamped.every((rise) => fits(rise, fraction));
+            if (uniform) state.regenFraction = fraction;
+        }
+
+        const fraction = state.regenFraction;
+        if (!Number.isFinite(fraction) || fraction <= 0) return { regen: [], rest: [...(rises || [])] };
+
+        const regen = [];
+        for (const rise of usable) {
+            if (fits(rise, fraction)) regen.push(rise);
+            else rest.push(rise);
+        }
+        return { regen, rest };
     }
 
     /**
@@ -18195,6 +18698,11 @@ ${starCSS}
                 manaOuts: sum('manaOuts'),
             },
             unattributedHealing: state?.unattributedHealing || 0,
+            // The trial's own flat regeneration, identified by its shape — kept
+            // apart from `unattributedHealing` because "the game healed everyone"
+            // and "somebody's heal could not be credited" are different claims
+            regenHealing: state?.regenHealing || 0,
+            regenFraction: Number.isFinite(state?.regenFraction) ? state.regenFraction : null,
             abilityKindsKnown: state?.abilityKindsKnown !== false,
         };
     }
@@ -18212,7 +18720,14 @@ ${starCSS}
         return {
             damageTaken: 'measured — health falling, per player, per tick',
             healingReceived: 'measured — health rising, per player, per tick',
-            healingDone: 'attributed only when exactly one player cast a heal on the tick; the rest is unattributed',
+            healingDone:
+                'attributed when exactly one player cast a heal on the tick, or when a lone ability cast ' +
+                'sits beside rises that are not regeneration-shaped (the tick is grouped by actor, so those ' +
+                'are that cast’s effect — a heal, a leech, or an on-cast proc); anything else is unattributed',
+            regenHealing:
+                'classified by shape — every below-full unit rising by one uniform fraction of its own ' +
+                'maximum on one tick is the trial’s flat regeneration, and the learned fraction then ' +
+                'classifies lone and clamped-to-full rises too. Never attributed to a player',
             manaSpent: 'measured — mana falling, per player, per tick',
             casts: 'measured — the attack counter rising, labelled with the ability being prepared',
             manaOuts:
@@ -18280,6 +18795,28 @@ ${starCSS}
      *
      * It slotted in as an argument rather than a rewrite, which is what the list
      * shape was for.
+     *
+     * ## The portraits are not slot-ordered in the spectate view, and that mislabelled damage
+     *
+     * Reported live, after a page refresh dropped the roster: the leaderboard
+     * showed the watcher's own name **twice** — "MillenniumTest 161/s" and
+     * "MillenniumTest 113/s" — while a real member vanished from it entirely. The
+     * spectate fight view draws only the *watcher's own* unit as a full
+     * `CombatUnit`; the rest of the party are `MiniUnit` lines. So the portrait
+     * list was one name long — the watcher's — and reading it positionally handed
+     * that name to whichever slot happened to be index 0, while the watcher's real
+     * slot earned the same name from their own captured build. Two rules close it:
+     *
+     * - **Positional portraits only when they cover the party.** A portrait list
+     *   shorter than the party is not in slot order for anybody.
+     * - **One name, one unit.** The watcher's own name may only bind to the slot
+     *   their own attack counters confirm, and any resolution pass ends by
+     *   enforcing injectivity outright — a duplicate name demotes the weaker claim
+     *   to a placeholder rather than letting two rows wear it.
+     *
+     * The mini-unit names still earn their keep as a *set*: they say who is in the
+     * party without saying where, and when exactly one unit is unnamed and exactly
+     * one on-screen name unclaimed, the pairing is forced rather than guessed.
      */
 
     /** A party tile in the fight view; the class names carry a build hash */
@@ -18287,6 +18824,9 @@ ${starCSS}
 
     /** The name inside one */
     const UNIT_NAME = '[class*="CombatUnit_name"]';
+
+    /** A party member drawn small — everyone but the watcher, in the spectate view */
+    const MINI_UNIT_NAME = '[class*="MiniUnit_name"]';
 
     /** Where the party's tiles live, as opposed to the monsters' */
     const PLAYERS_AREA = '[class*="BattlePanel_playersArea"]';
@@ -18310,6 +18850,33 @@ ${starCSS}
         if (!area) return [];
 
         return [...area.querySelectorAll(UNIT)].map((unit) => unit.querySelector(UNIT_NAME)?.textContent?.trim() || '');
+    }
+
+    /**
+     * Everyone the fight view names in the party, as a set with no positions.
+     *
+     * The spectate view draws the watcher's own unit as a full `CombatUnit` and
+     * the rest of the party as `MiniUnit` lines, and the two lists cannot be
+     * interleaved back into slot order — which is exactly the mistake the
+     * positional portrait rung made. What the combined list *can* say is who is in
+     * the party: {@link resolveUnitNames} uses it for the forced last pairing, and
+     * for nothing positional.
+     *
+     * @param {Document|Element} [root] - Where to look; the document by default
+     * @returns {string[]} Distinct names, in no particular order
+     */
+    function fightViewPartyNames(root = typeof document === 'undefined' ? null : document) {
+        if (!root || typeof root.querySelector !== 'function') return [];
+
+        const area = root.querySelector(PLAYERS_AREA);
+        if (!area) return [];
+
+        const names = [];
+        for (const el of area.querySelectorAll(`${UNIT_NAME}, ${MINI_UNIT_NAME}`)) {
+            const name = el.textContent?.trim();
+            if (name && !names.includes(name)) names.push(name);
+        }
+        return names;
     }
 
     /**
@@ -18433,20 +19000,82 @@ ${starCSS}
         return hits.length === 1 ? hits[0] : null;
     }
 
+    /** How much each naming source is worth, when two of them claim one name */
+    const SOURCE_RANK = { placeholder: 0, elimination: 1, vitals: 2, portrait: 3, own: 4, roster: 5 };
+
+    /**
+     * A placeholder entry for a slot.
+     * @param {string} index - The slot
+     * @returns {{name: string, source: 'placeholder'}} The entry
+     */
+    function placeholderFor(index) {
+        const slot = Number(index);
+        return { name: `Player ${Number.isInteger(slot) ? slot + 1 : index}`, source: 'placeholder' };
+    }
+
     /**
      * Name every unit in a tick, and say how each name was arrived at.
+     *
+     * Beyond the source ladder, two invariants hold whatever the sources say — both
+     * earned by the duplicate-name incident in the module note:
+     *
+     * - **The watcher's own name binds only to the watcher's own slot.** `own` is
+     *   the slot their attack counters confirm (the stream carries counters for
+     *   exactly one unit — theirs); a portrait, a build or a held name claiming
+     *   that name anywhere else is structurally the spectate view's own-unit tile
+     *   read positionally, and is refused. The roster is exempt: it is the game
+     *   stating the slot outright.
+     * - **One name, one unit.** After resolution, a name held by two slots keeps
+     *   its highest-ranked claim and the rest fall back to placeholders — a row
+     *   with a placeholder is recoverable; damage filed under the wrong member is
+     *   not.
+     *
+     * `partyNames` — the fight view's un-positioned name set — closes the last
+     * gap: when it covers the party exactly and precisely one slot is unnamed and
+     * one name unclaimed, the pairing is forced by injectivity rather than
+     * guessed.
      *
      * @param {Object} input - Inputs
      * @param {Object} input.pMap - The tick's players
      * @param {Object} [input.roster] - From {@link rosterFromBattle}; the game's own answer
-     * @param {string[]} [input.portraits] - From {@link fightViewNames}
+     * @param {string[]} [input.portraits] - From {@link fightViewNames}; positional, so only
+     *   believed when the list covers the whole party
+     * @param {string[]} [input.partyNames] - From {@link fightViewPartyNames}; a set, never positional
      * @param {Array<Object>} [input.loadouts] - Snapshots from `guild-loadout-capture.js`
      * @param {Object} [input.known] - Names already resolved, index → `{name, source}`
-     * @returns {Object<string, {name: string, source: 'roster'|'portrait'|'vitals'|'placeholder',
-     *   characterId?: number|null}>} Per index
+     * @param {{slot: string|number|null, name: string|null, characterId?: number|null}|null} [input.own] -
+     *   The watcher: the slot their own counters confirm, and their character's name
+     * @returns {Object<string, {name: string, source: 'roster'|'own'|'portrait'|'vitals'|'elimination'|'placeholder',
+     *   characterId?: number|null}>} Per index; may also carry corrections for slots outside this
+     *   tick whose held name lost an injectivity contest
      */
-    function resolveUnitNames({ pMap = {}, roster = {}, portraits = [], loadouts = [], known = {} } = {}) {
+    function resolveUnitNames({
+        pMap = {},
+        roster = {},
+        portraits = [],
+        partyNames = [],
+        loadouts = [],
+        known = {},
+        own = null,
+    } = {}) {
         const resolved = {};
+        const indexes = new Set([...Object.keys(known || {}), ...Object.keys(pMap || {})]);
+        const ownName = String(own?.name || '').trim();
+        const ownSlot = own?.slot === undefined || own?.slot === null ? null : String(own.slot);
+
+        // Positional reading is only sound when the portraits cover the party: the
+        // spectate view draws one CombatUnit — the watcher — and a one-name list
+        // read positionally is how their name landed on somebody else's slot
+        const positional = (portraits || []).length >= indexes.size ? portraits : [];
+
+        // Whether a source may put this name on this slot. The watcher's own name
+        // is the poisoned one — the spectate view draws their tile whatever slot
+        // they hold — so it binds only where their own counters say they are.
+        const allowed = (index, name, source) => {
+            if (!ownName || String(name || '').toLowerCase() !== ownName.toLowerCase()) return true;
+            if (source === 'roster') return true;
+            return ownSlot !== null && String(index) === ownSlot;
+        };
 
         for (const [index, unit] of Object.entries(pMap || {})) {
             // The roster is positional and stated by the game, so it outranks
@@ -18457,28 +19086,79 @@ ${starCSS}
                 continue;
             }
 
+            // The watcher's own slot, confirmed by their own attack counters
+            if (ownName && ownSlot !== null && String(index) === ownSlot) {
+                resolved[index] = { name: ownName, source: 'own', characterId: own?.characterId ?? null };
+                continue;
+            }
+
             // A name already read off a portrait is not re-derived every tick; the
-            // fight view closes and the identification must not close with it
+            // fight view closes and the identification must not close with it. A
+            // held claim of the watcher's name on the wrong slot is the incident
+            // this file now exists to prevent, and is dropped rather than kept.
             const held = known[index];
-            if (held && held.source !== 'placeholder') {
+            if (held && held.source !== 'placeholder' && allowed(index, held.name, held.source)) {
                 resolved[index] = held;
                 continue;
             }
 
             const slot = Number(index);
-            const portrait = Number.isInteger(slot) && slot >= 0 && slot < portraits.length ? portraits[slot] : '';
-            if (portrait) {
+            const portrait = Number.isInteger(slot) && slot >= 0 && slot < positional.length ? positional[slot] : '';
+            if (portrait && allowed(index, portrait, 'portrait')) {
                 resolved[index] = { name: portrait, source: 'portrait' };
                 continue;
             }
 
             const matched = matchByVitals(unit, loadouts);
-            if (matched) {
+            if (matched && allowed(index, matched.name, 'vitals')) {
                 resolved[index] = { name: matched.name, source: 'vitals' };
                 continue;
             }
 
-            resolved[index] = { name: `Player ${Number.isInteger(slot) ? slot + 1 : index}`, source: 'placeholder' };
+            resolved[index] = placeholderFor(index);
+        }
+
+        // ── One name, one unit ──────────────────────────────────────────────────
+        // Across everything now believed — this tick's answers over the stored
+        // ones — a duplicated name keeps its best-ranked claim and the rest are
+        // demoted. A demoted *stored* slot is included in the output so the caller
+        // overwrites the stale mislabel rather than keeping it.
+        const combined = { ...(known || {}), ...resolved };
+        const byName = new Map();
+        for (const [index, entry] of Object.entries(combined)) {
+            if (!entry?.name || entry.source === 'placeholder') continue;
+            const key = entry.name.toLowerCase();
+            if (!byName.has(key)) byName.set(key, []);
+            byName.get(key).push(index);
+        }
+        for (const holders of byName.values()) {
+            if (holders.length < 2) continue;
+            holders.sort(
+                (a, b) =>
+                    (SOURCE_RANK[combined[b].source] ?? 0) - (SOURCE_RANK[combined[a].source] ?? 0) || Number(a) - Number(b)
+            );
+            for (const loser of holders.slice(1)) {
+                resolved[loser] = placeholderFor(loser);
+                combined[loser] = resolved[loser];
+            }
+        }
+
+        // ── The forced last pairing ─────────────────────────────────────────────
+        // The fight view's name set covers the party exactly, one slot is unnamed
+        // and one name unclaimed: injectivity leaves a single arrangement, which
+        // is an identification rather than a guess.
+        const pool = [...new Set((partyNames || []).map((name) => String(name || '').trim()).filter(Boolean))];
+        if (pool.length && pool.length === indexes.size) {
+            const claimed = new Set(
+                Object.values(combined)
+                    .filter((entry) => entry?.name && entry.source !== 'placeholder')
+                    .map((entry) => entry.name.toLowerCase())
+            );
+            const unclaimed = pool.filter((name) => !claimed.has(name.toLowerCase()));
+            const unresolved = [...indexes].filter((index) => !combined[index] || combined[index].source === 'placeholder');
+            if (unclaimed.length === 1 && unresolved.length === 1) {
+                resolved[unresolved[0]] = { name: unclaimed[0], source: 'elimination' };
+            }
         }
 
         return resolved;
@@ -18504,6 +19184,927 @@ ${starCSS}
             of: entries.length,
             placeholders,
             bySource,
+        };
+    }
+
+    /**
+     * What the trial panel has to remember.
+     *
+     * Two separate problems, kept in one place because both are "state the panel
+     * needs and cannot compute".
+     *
+     * ## Rate samples
+     *
+     * A fill rate or a DPS reading needs two observations spread over real time, and
+     * the guild panel is a tab a player flicks through. Keeping samples only in
+     * memory meant every visit to the tab started from nothing and showed "measuring
+     * …" for as long as the player was willing to sit and stare at it. They are
+     * written down instead, keyed by guild name — following the `guildXP_<name>`
+     * precedent in `guild-xp-tracker.js`, because trial state belongs to the guild
+     * and not to whichever alt happened to look at it — and thrown away when the
+     * week rolls over, since last week's trials are a different ladder.
+     *
+     * ## Building bonuses
+     *
+     * Guild Points and token payouts both scale with a building level (Builders Hall
+     * and the Treasury respectively), and those levels are only on the wire when
+     * guild traffic carries them — the same problem `guild-shrine-store.js` solves
+     * for shrines, and it is already solving it here: `guildBuildingLevelMap` is
+     * captured and persisted by the data manager, so the level survives the session
+     * it was seen in.
+     *
+     * The *bonus per level* is read three ways, in order. A manual override in
+     * settings wins, for the player who knows their own guild's numbers. Then the
+     * client's own detail map, if it turns out to publish one — the hrid spellings
+     * and the map name have not been verified against a live client, so every lookup
+     * there is a probe: several plausible map names, matched by shape. Failing both,
+     * the confirmed rule: 2% per level, read off the in-game Build dialog, which
+     * shows "Level 10 → Level 11, Guild Points: +20% → +22%" for the Builders Hall
+     * and the same pattern for the Treasury.
+     *
+     * Only a building whose *level* never reached the client is reported as unknown,
+     * and only then does the panel fall back to un-bonused figures with a note.
+     */
+
+
+    /** Object store the records live in — shared with the guild XP history */
+    const STORE_NAME$a = 'guildHistory';
+
+    /** Key prefix; the guild name is appended, as `guildXP_<name>` does */
+    const KEY_PREFIX$2 = 'guildTrials';
+
+    /**
+     * Storage key for a guild's trial record.
+     *
+     * By guild name where it is known, because trial state belongs to the guild and
+     * not to whichever alt happened to look at it — two characters in one guild are
+     * two views of the same trial.
+     *
+     * Before the name is known the key falls back to the **character**, not to a
+     * single shared bucket. That bucket was reported as a data leak and it is
+     * exactly one: switching characters in the same tab left the previous guild's
+     * finished trial on screen — "Guild Points banked 2,880" against a guild whose
+     * own header read 0 — because both characters wrote to and read from
+     * `guildTrials_default`. A per-character fallback cannot collide that way, and
+     * the moment the guild's name arrives the record is merged onto the guild's key
+     * as before.
+     *
+     * @param {string|null} guildName - Guild name, or null before it is known
+     * @param {string|number|null} [characterId] - The viewing character, for the fallback key
+     * @returns {string} Storage key
+     */
+    function guildTrialsStorageKey(guildName, characterId = null) {
+        if (guildName) return `${KEY_PREFIX$2}_${guildName}`;
+        return characterId === null || characterId === undefined
+            ? `${KEY_PREFIX$2}_default`
+            : `${KEY_PREFIX$2}_char_${characterId}`;
+    }
+
+    /**
+     * An empty record for a week.
+     * @param {number} weekStart - Week start, in ms
+     * @param {Object} [provenance] - `{guildId, guildName}` the record belongs to
+     * @returns {{weekStart: number, tiles: Object, guildId: string|null, guildName: string|null}} Fresh record
+     */
+    function emptyRecord(weekStart, { guildId = null, guildName = null } = {}) {
+        return { weekStart, tiles: {}, guildId, guildName, history: [] };
+    }
+
+    /**
+     * Whether a stored record can possibly belong to the guild now on screen.
+     *
+     * The reported failure this exists for: a character switched inside one tab
+     * wrote the previous guild's trial into the shared fallback key, that record was
+     * then adopted onto the *new* guild's own key, and every build since has
+     * faithfully rendered a finished trial from a guild the player had left —
+     * "banked 2,880" against a guild whose own header read 0. Keying the storage
+     * correctly stops it happening again and does nothing at all about the copy
+     * already on disk. Provenance is what lets the code throw that copy away.
+     *
+     * Three answers, and the third is the one that matters. A record that names a
+     * different guild is `'foreign'` and is discarded outright. One that names this
+     * guild is `'own'`. One that names no guild at all was written before this
+     * field existed — `'unknown'`, which is not enough to discard on by itself but
+     * is enough to *believe the game over the record* when the two disagree; see
+     * the lifecycle check in `guild-trials.js`.
+     *
+     * @param {Object|null} record - A stored record
+     * @param {Object} [context] - `{guildId, guildName}` as currently known
+     * @returns {'own'|'foreign'|'unknown'} What the record's provenance says
+     */
+    function recordProvenance(record, { guildId = null, guildName = null } = {}) {
+        const storedId = record?.guildId ?? null;
+        const storedName = record?.guildName ?? null;
+        if (!storedId && !storedName) return 'unknown';
+
+        if (storedId && guildId) return String(storedId) === String(guildId) ? 'own' : 'foreign';
+        if (storedName && guildName) {
+            return String(storedName).toLowerCase() === String(guildName).toLowerCase() ? 'own' : 'foreign';
+        }
+
+        // The record knows which guild it belongs to and the page has not said yet.
+        // Not foreign — that would throw away a correct record on every cold load
+        // before the socket has spoken
+        return 'unknown';
+    }
+
+    /**
+     * Put this week's tiles away and start the next cycle empty.
+     *
+     * Archived rather than deleted: the figures were real when they were taken, and
+     * a player who wants last cycle's numbers has nowhere else to get them. Bounded
+     * to {@link MAX_ARCHIVED_CYCLES}, oldest dropped first.
+     *
+     * @param {Object} record - The record (not mutated)
+     * @param {string} reason - Why the cycle was closed, for the archive entry
+     * @param {number} [at] - Clock
+     * @returns {Object} The record with its tiles moved into `history`
+     */
+    function archiveCycle(record, reason, at = Date.now()) {
+        const tiles = record?.tiles && typeof record.tiles === 'object' ? record.tiles : {};
+        const history = Array.isArray(record?.history) ? [...record.history] : [];
+
+        if (Object.keys(tiles).length) {
+            history.push({ archivedAt: at, reason, weekStart: record?.weekStart ?? null, tiles });
+        }
+
+        return {
+            ...record,
+            weekStart: record?.weekStart ?? trialWeekStart(at),
+            tiles: {},
+            history: history.slice(-4),
+        };
+    }
+
+    /**
+     * The key a tile's history is stored under.
+     *
+     * Name plus kind rather than name alone: two trials could in principle share a
+     * name across the skilling and combat halves of a week, and a merged history
+     * would fit a growth curve across two different ladders.
+     *
+     * @param {{name: string, kind: string}} tile - A scraped tile
+     * @returns {string} Stable key
+     */
+    function tileKey(tile) {
+        return `${tile?.kind || 'unknown'}::${String(tile?.name || '')
+        .trim()
+        .toLowerCase()}`;
+    }
+
+    /**
+     * Fold a scraped tile into a record, in place on a copy.
+     *
+     * Three things are written: the sample itself, the tile's identity, and — when
+     * the tile is showing a total for a tier that has not been seen before — a tier
+     * observation, which is what the growth fit is later built from. Repeat samples
+     * with an identical timestamp are dropped, because the panel's observer fires
+     * several times for one React render and a zero-span pair reads as an infinite
+     * rate.
+     *
+     * **A card with nothing moving on it updates the identity and adds no sample.**
+     * That is what makes the two trial tabs add up. The Trials tab's card carries
+     * the level, the tier, what the trial is worth and how many members signed up,
+     * and no progress bar at all; the In Progress tab's card carries the reading and
+     * neither a level nor a tier. Both write here under the same key, and a sample
+     * with an empty `readings` array would be worse than useless — `ratePerMs` would
+     * fit a rate across a series with holes in it, and the overlay tile would report
+     * a trial as freshly read when all that was seen was its sign-up sheet.
+     *
+     * @param {Object} record - Existing record (not mutated)
+     * @param {Object} tile - A tile from `readTrialTiles`
+     * @param {number} at - Sample time, in ms
+     * @returns {Object} The updated record
+     */
+    function recordTileSample(record, tile, at) {
+        const weekStart = record?.weekStart ?? trialWeekStart(at);
+        const tiles = { ...(record?.tiles || {}) };
+        const key = tileKey(tile);
+        const existing = tiles[key] || { name: tile?.name || '', kind: tile?.kind || 'skilling', samples: [], tiers: [] };
+
+        const readings = tile?.readings || [];
+        const samples = existing.samples.filter((sample) => sample?.t !== at);
+        if (readings.length) samples.push({ t: at, readings: readings.map((reading) => ({ ...reading })) });
+        samples.sort((a, b) => a.t - b.t);
+
+        // The tier the reading belongs to may have come from the *other* tab: the In
+        // Progress card carries a total and no tier, the Trials card carries a tier
+        // and no total, and a tier observation needs both. Taking the tier already
+        // on the record is what lets the growth curve be fitted at all — requiring
+        // one card to carry both means no observation is ever recorded.
+        const tier = Number.isFinite(tile?.tier) ? tile.tier : existing.tier;
+
+        // Which tier the *reading* belongs to, which is not the tier the card is
+        // badged with. The badge counts tiers finished, so a live pool on a card
+        // badged T2 is T3's pool — filing it under the badge put two different
+        // tiers' pool sizes under one number and broke the ladder that is fitted
+        // from them. The caller says so explicitly rather than this file guessing.
+        const observationTier = Number.isFinite(tile?.readingTier) ? tile.readingTier : tier;
+
+        // Which tier the footer's stats describe. Stated by the caller when it can —
+        // the stats are read on a live card, a card between tiers and a completed
+        // card alike, and only the first of those has a reading tier at all. Riding
+        // on `observationTier` meant a skilling trial's whole run of Success Rate
+        // readings landed in the flat `personal` and nothing in `personalByTier`.
+        const personalTier = Number.isFinite(tile?.personalTier) ? tile.personalTier : observationTier;
+        const tiers = [...(existing.tiers || [])];
+        if (Number.isFinite(observationTier)) {
+            for (const reading of readings) {
+                if (!(reading.max > 0)) continue;
+                const seen = tiers.find((entry) => entry.tier === observationTier && entry.total === reading.max);
+                if (!seen) tiers.push({ tier: observationTier, total: reading.max });
+            }
+        }
+
+        // What the game itself says clearing this tier is worth, kept per tier as the
+        // trial climbs. The ladder in `guild-trials-math.js` derives the same figure
+        // from the guide's prose, and where the two disagree this one is right — but
+        // only a card that carried *both* a tier and a points line can be filed, so
+        // the tier here is the tile's own rather than the record's carried-over one.
+        // Attaching the In Progress tab's reading to a stale tier is tolerable for a
+        // total that is checked against movement; attaching a points figure to the
+        // wrong tier would silently corrupt the payout.
+        const pointsByTier = { ...(existing.pointsByTier || {}) };
+        if (Number.isFinite(tile?.tier) && Number.isFinite(tile?.points)) {
+            pointsByTier[tile.tier] = tile.points;
+        }
+
+        tiles[key] = {
+            name: tile?.name || existing.name,
+            kind: tile?.kind || existing.kind,
+            level: Number.isFinite(tile?.level) ? tile.level : existing.level,
+            tier: Number.isFinite(tile?.tier) ? tile.tier : existing.tier,
+            // The tier the socket stated for the trial *in progress*
+            // (`guild_skilling_updated.tier`), kept apart from `tier` because the
+            // two count different things: the badge counts tiers finished. Without
+            // this the socket's own statement reached the observation filing and
+            // never the analysis, and the panel said "tier not known yet" over a
+            // stream that was stating the tier several times a second.
+            liveTier: Number.isFinite(tile?.socketTier) ? tile.socketTier : existing.liveTier,
+            // …and the pool target it was stated with, written as a pair: the
+            // statement expires the moment the bar's target moves on to the next
+            // tier's, and without this a `liveTier` persisted early in a trial
+            // outranked the bar for the rest of the hour — "Banked 8 tiers" over a
+            // bar only T15 produces. An update that states a tier without a pool
+            // clears the target rather than inheriting one from another tier.
+            liveTierTarget: Number.isFinite(tile?.socketTier)
+                ? Number.isFinite(tile?.socketTierTarget)
+                    ? tile.socketTierTarget
+                    : null
+                : existing.liveTierTarget,
+            // Both come off the Trials tab and are absent from the In Progress one,
+            // so a card that does not carry them must not erase what the other tab
+            // already said
+            points: Number.isFinite(tile?.points) ? tile.points : existing.points,
+            // Sticky: a finished trial does not become unfinished, and the In
+            // Progress card that carries the reading does not carry the word
+            completed: Boolean(tile?.completed) || Boolean(existing.completed),
+            // The player's own action stats, from the In Progress footer. Merged
+            // rather than replaced: the footer shows what it shows, and a redraw
+            // that omits one stat is not the stat going away
+            personal: { ...(existing.personal || {}), ...(tile?.personal || {}) },
+            // …and kept per tier as well, because they are not constant across one:
+            // the same character's success rate fell eight points a tier through a
+            // watched trial, which is a thing the forecast has to model rather than
+            // a reading it can overwrite
+            personalByTier: {
+                ...(existing.personalByTier || {}),
+                ...(Number.isFinite(personalTier) && tile?.personal && Object.keys(tile.personal).length
+                    ? { [personalTier]: { ...(existing.personalByTier?.[personalTier] || {}), ...tile.personal } }
+                    : {}),
+            },
+            signups: tile?.signups || existing.signups || null,
+            pointsByTier,
+            samples: samples.slice(-800),
+            tiers,
+        };
+
+        // Everything else on the record is carried through: a sample must not strip
+        // the provenance stamp or the archived cycles off it, which is a thing this
+        // returned-a-fresh-object shape did quietly for both
+        return { ...(record || {}), weekStart, tiles };
+    }
+
+    /**
+     * Fold two records for the same week into one.
+     *
+     * Needed because the guild's name arrives *after* this feature starts. The
+     * record is keyed by guild name following the `guildXP_<name>` precedent, but
+     * `guildXPTracker` has usually not seen the guild yet when the trials feature
+     * initialises, so the first samples of a session are written under `default`.
+     * When the real name turns up there are then two records — this session's under
+     * `default` and previous sessions' under the name — and picking either one
+     * throws away readings that were correctly taken. So they are merged.
+     *
+     * Samples are unioned by timestamp, which is exactly right: two records of the
+     * same trial are two views of one series, a repeated timestamp is the same
+     * observation seen twice, and `ratePerMs` wants them in order. Records from
+     * different weeks are not merged at all — the newer week wins whole, because
+     * last week's trials are a different ladder and splicing them together would
+     * fit a growth curve across both.
+     *
+     * @param {Object|null} base - The stored record
+     * @param {Object|null} incoming - The record in hand
+     * @returns {Object} One record
+     */
+    function mergeTrialRecords(base, incoming) {
+        const baseWeek = Number.isFinite(base?.weekStart) ? base.weekStart : null;
+        const incomingWeek = Number.isFinite(incoming?.weekStart) ? incoming.weekStart : null;
+
+        if (baseWeek === null) return incoming ? { weekStart: incomingWeek, tiles: incoming.tiles || {} } : emptyRecord(0);
+        if (incomingWeek === null) return { weekStart: baseWeek, tiles: base.tiles || {} };
+        if (baseWeek !== incomingWeek) {
+            const newer = baseWeek > incomingWeek ? base : incoming;
+            return { weekStart: newer.weekStart, tiles: newer.tiles || {} };
+        }
+
+        const provenance = {
+            guildId: base.guildId ?? incoming.guildId ?? null,
+            guildName: base.guildName ?? incoming.guildName ?? null,
+            history: [...(base.history || []), ...(incoming.history || [])].slice(-4),
+        };
+        const tiles = { ...(base.tiles || {}) };
+        for (const [key, tile] of Object.entries(incoming.tiles || {})) {
+            const existing = tiles[key];
+            if (!existing) {
+                tiles[key] = tile;
+                continue;
+            }
+
+            const byTime = new Map();
+            for (const sample of [...(existing.samples || []), ...(tile.samples || [])]) {
+                if (Number.isFinite(sample?.t)) byTime.set(sample.t, sample);
+            }
+            const samples = [...byTime.values()].sort((a, b) => a.t - b.t).slice(-800);
+
+            const tiers = [...(existing.tiers || [])];
+            for (const entry of tile.tiers || []) {
+                if (!tiers.some((seen) => seen.tier === entry.tier && seen.total === entry.total)) tiers.push(entry);
+            }
+
+            // The newer record's identity wins: a tile that has moved on a tier is
+            // describing the trial as it is now
+            const newest = (record) => record.samples?.[record.samples.length - 1]?.t ?? 0;
+            const fresher = newest(tile) >= newest(existing) ? tile : existing;
+            const staler = fresher === tile ? existing : tile;
+
+            tiles[key] = {
+                name: fresher.name || existing.name,
+                kind: fresher.kind || existing.kind,
+                completed: Boolean(existing.completed) || Boolean(tile.completed),
+                personal: { ...(staler.personal || {}), ...(fresher.personal || {}) },
+                personalByTier: { ...(staler.personalByTier || {}), ...(fresher.personalByTier || {}) },
+                level: Number.isFinite(fresher.level) ? fresher.level : existing.level,
+                tier: Number.isFinite(fresher.tier) ? fresher.tier : existing.tier,
+                // Both halves of the socket statement travel together: a liveTier
+                // paired with another record's target would defeat the staleness
+                // check that the pairing exists for
+                liveTier: Number.isFinite(fresher.liveTier) ? fresher.liveTier : staler.liveTier,
+                liveTierTarget: Number.isFinite(fresher.liveTier) ? fresher.liveTierTarget : staler.liveTierTarget,
+                // Carried across rather than dropped. Both come off the Trials tab
+                // and only ever off the Trials tab, and the merge that runs when the
+                // guild's name arrives happens on a record built from whichever tab
+                // was open — so dropping them here erased the sign-up count and the
+                // game's stated points on the first render of every session, which
+                // is exactly the data the payout block was found showing as zero.
+                points: Number.isFinite(fresher.points) ? fresher.points : staler.points,
+                signups: fresher.signups || staler.signups || null,
+                pointsByTier: { ...(staler.pointsByTier || {}), ...(fresher.pointsByTier || {}) },
+                samples,
+                tiers,
+            };
+        }
+
+        return { weekStart: baseWeek, tiles, ...provenance };
+    }
+
+    /**
+     * Read a guild's record, discarding one from a previous week.
+     * @param {string|null} guildName - Guild name
+     * @param {number} [now] - Clock, in ms
+     * @param {string|number|null} [characterId] - The viewing character, for the fallback key
+     * @returns {Promise<Object>} The record, or a fresh one
+     */
+    async function loadTrialRecord(guildName, now = Date.now(), characterId = null, { guildId = null } = {}) {
+        const weekStart = trialWeekStart(now);
+        const fresh = () => emptyRecord(weekStart, { guildId, guildName });
+
+        try {
+            const record = await storage.get(guildTrialsStorageKey(guildName, characterId), STORE_NAME$a, null);
+            if (!record || typeof record !== 'object') return fresh();
+
+            // A record from a previous week is last week's ladder, not this one's
+            if (record.weekStart !== weekStart) return fresh();
+
+            // A record that names another guild cannot be this guild's, whatever key
+            // it was filed under — which is exactly how the reported one survived
+            if (recordProvenance(record, { guildId, guildName }) === 'foreign') {
+                console.warn('[GuildTrialsStore] Discarding a trial record belonging to another guild');
+                return fresh();
+            }
+
+            // Self-heal on the way in. What is already stored was written by an
+            // older build with a looser card filter, and a filter fixed today does
+            // nothing about a notice board that is already on disk being sampled,
+            // exported and paid out every week from now on
+            const cleaned = purgeJunkTiles({
+                weekStart: record.weekStart,
+                tiles: record.tiles || {},
+                history: Array.isArray(record.history) ? record.history : [],
+                guildId: record.guildId ?? guildId,
+                guildName: record.guildName ?? guildName,
+            });
+
+            if (cleaned.purged.length) {
+                console.warn('[GuildTrialsStore] Dropping stored tiles that are not trials:', cleaned.purged.join(', '));
+                await saveTrialRecord(guildName, cleaned.record, characterId, { guildId });
+            }
+            return cleaned.record;
+        } catch (error) {
+            console.error('[GuildTrialsStore] Failed to load trial samples:', error);
+            return fresh();
+        }
+    }
+
+    /**
+     * Delete the legacy shared record.
+     *
+     * `guildTrials_default` was one bucket for every character in the tab, which is
+     * the bug two of these fixes exist for. Nothing writes to it any more; this
+     * removes what is left so it cannot be adopted onto a guild's key by an older
+     * build's leftovers.
+     *
+     * @returns {Promise<boolean>} True when the key was removed or already absent
+     */
+    async function purgeLegacyTrialRecord() {
+        try {
+            await storage.delete(`${KEY_PREFIX$2}_default`, STORE_NAME$a);
+            return true;
+        } catch (error) {
+            console.error('[GuildTrialsStore] Failed to purge the legacy trial record:', error);
+            return false;
+        }
+    }
+
+    /**
+     * How a stored tile is shown not to be a trial.
+     *
+     * The rules the scrape now applies at read time, applied again to what is
+     * already written down. A guild's **notice board** became a tile on a live
+     * client — key
+     * `skilling::[braille art]\nWelcome to Milkmaxxing!\n\nJOIN DISCORD: …`, 987
+     * characters of it — because two Discord channel ids in the text have exactly
+     * the shape of a progress bar:
+     *
+     * ```
+     * https://discord.com/channels/1309080597314011148/1525897111936438314
+     * ```
+     *
+     * It was then sampled every five seconds, the Overview tab's guild statistics
+     * were attached to it as the player's own action stats, and it was live enough
+     * to start the recorder — the session in that export reads `startedBy:
+     * "tab-reading"`. None of that is fixed by a filter that only runs on new cards.
+     *
+     * @param {Object} tile - A stored tile
+     * @param {string} key - The key it is filed under
+     * @returns {boolean} True when it must not be kept
+     */
+    function isJunkTile(tile, key = '') {
+        const name = String(tile?.name ?? '');
+        if (!isTrialName(name)) return true;
+        // The key is derived from the name, so a key the name would not produce is a
+        // record written before the name was checked at all
+        if (/[\r\n]/.test(String(key)) || String(key).length > MAX_TRIAL_NAME_CHARS + 16) return true;
+
+        return (tile?.samples || []).some((sample) =>
+            (sample?.readings || []).some((reading) => !isPlausibleReading(reading?.current, reading?.max))
+        );
+    }
+
+    /**
+     * Drop stored tiles that are not trials, and say which went.
+     *
+     * The same one-time, self-healing shape the monster-loadout purge uses: the
+     * record comes back untouched — the same object — when there is nothing to
+     * purge, so a caller can tell whether a write is needed.
+     *
+     * `history` is cleaned too. An archived cycle carrying a notice board is an
+     * export full of it and a payout computed from it, a week after the fact.
+     *
+     * @param {Object|null} record - A stored record
+     * @returns {{record: Object|null, purged: string[]}} The clean record and what left
+     */
+    function purgeJunkTiles(record) {
+        if (!record || typeof record !== 'object') return { record, purged: [] };
+
+        const purged = [];
+        const clean = (tiles) => {
+            const kept = {};
+            for (const [key, tile] of Object.entries(tiles || {})) {
+                if (isJunkTile(tile, key)) {
+                    // One short line of it, so a log line stays a log line
+                    purged.push(
+                        `${String(tile?.name ?? key)
+                        .slice(0, 40)
+                        .replace(/\s+/g, ' ')}…`
+                    );
+                    continue;
+                }
+                kept[key] = tile;
+            }
+            return kept;
+        };
+
+        const tiles = clean(record.tiles);
+        const history = Array.isArray(record.history)
+            ? record.history.map((cycle) => (cycle?.tiles ? { ...cycle, tiles: clean(cycle.tiles) } : cycle))
+            : record.history;
+
+        if (!purged.length) return { record, purged };
+        return { record: { ...record, tiles, history }, purged };
+    }
+
+    /**
+     * Delete every trial record and session this script has stored.
+     *
+     * The escape hatch. Everything above heals itself on the next render, and this
+     * is here for the case where it does not — one call, no arguments, and the
+     * feature rebuilds from the panel within a sampler tick.
+     *
+     * Only the trial keys: `guildHistory` is shared with the guild XP history, which
+     * is months of data and nothing to do with trials.
+     *
+     * @returns {Promise<{removed: string[]}>} Which keys went
+     */
+    async function clearTrialStorage() {
+        const removed = [];
+        try {
+            const keys = await storage.getAllKeys(STORE_NAME$a);
+            for (const key of keys || []) {
+                const name = String(key);
+                if (!name.startsWith(KEY_PREFIX$2) && !name.startsWith('guildTrialSession')) continue;
+                await storage.delete(name, STORE_NAME$a);
+                removed.push(name);
+            }
+        } catch (error) {
+            console.error('[GuildTrialsStore] Failed to clear trial storage:', error);
+        }
+        return { removed };
+    }
+
+    /**
+     * Write a guild's record.
+     * @param {string|null} guildName - Guild name
+     * @param {Object} record - The record
+     * @param {string|number|null} [characterId] - The viewing character, for the fallback key
+     * @returns {Promise<boolean>} True when the write was queued
+     */
+    async function saveTrialRecord(guildName, record, characterId = null, { guildId = null } = {}) {
+        try {
+            // Stamped on the way out, so the next session can tell whose it is
+            const stamped = {
+                ...record,
+                guildId: record?.guildId ?? guildId ?? null,
+                guildName: record?.guildName ?? guildName ?? null,
+            };
+            await storage.set(guildTrialsStorageKey(guildName, characterId), stamped, STORE_NAME$a);
+            return true;
+        } catch (error) {
+            console.error('[GuildTrialsStore] Failed to save trial samples:', error);
+            return false;
+        }
+    }
+
+    // ─── Learned work bases ─────────────────────────────────────────────────────
+
+    /**
+     * The key the learned per-skill work bases live under.
+     *
+     * Deliberately **not** scoped by guild or character, unlike the trial records
+     * above, and the exception is earned rather than an oversight: a skill's base
+     * work is a property of the game's ladder, not of anyone's guild. The crafting
+     * base of 40,000 is confirmed across two different guilds — 49,920 with 4
+     * participants at T3 in one, 88,920 with 17 at T10 in another, both exactly
+     * `40,000 × (1 + 0.1 × (tier − 1)) × (1 + 0.01 × participants)` — so a base
+     * learned watching one guild's trial is precisely what identifies the tier in
+     * the next guild's. Scoping it would relearn a constant per guild and leave a
+     * mid-trial join blind in every guild the player had not taught it in yet.
+     *
+     * Still under the `guildTrials` prefix, so {@link clearTrialStorage} — the
+     * escape hatch — takes it with everything else.
+     */
+    const WORK_BASES_KEY = `${KEY_PREFIX$2}WorkBases`;
+
+    /**
+     * The learned first-tier work per skill.
+     * @returns {Promise<Object<string, {baseWork: number, tier: number, target: number,
+     *   participants: number, learnedAt: number}>>} Skill key (`crafting`) → what was learned
+     */
+    async function loadWorkBases() {
+        try {
+            const held = await storage.get(WORK_BASES_KEY, STORE_NAME$a, null);
+            return held && typeof held === 'object' && !Array.isArray(held) ? held : {};
+        } catch (error) {
+            console.error('[GuildTrialsStore] Failed to load the learned work bases:', error);
+            return {};
+        }
+    }
+
+    /**
+     * Write the learned work bases down.
+     * @param {Object} bases - The map {@link loadWorkBases} returns
+     * @returns {Promise<boolean>} True when the write was queued
+     */
+    async function saveWorkBases(bases) {
+        try {
+            await storage.set(WORK_BASES_KEY, bases || {}, STORE_NAME$a);
+            return true;
+        } catch (error) {
+            console.error('[GuildTrialsStore] Failed to save the learned work bases:', error);
+            return false;
+        }
+    }
+
+    // ─── The spectated fight's roster ───────────────────────────────────────────
+
+    /**
+     * The key the last-seen trial fight roster lives under.
+     *
+     * `new_guild_battle` states the party in slot order — the join every
+     * spectated tick's `pMap` indexes into — and it fires once per tier and never
+     * again. A page refresh mid-tier therefore lost every name until the next
+     * tier began: "Player 2" and "Player 3" on a leaderboard whose names had been
+     * on the wire minutes earlier. The roster is written down with the battle id
+     * it belongs to, and a refreshed session adopts it back the moment the stream
+     * shows the same battle id — the id is the guard, so another fight's roster
+     * can never be borrowed.
+     *
+     * Under the `guildTrials` prefix, so {@link clearTrialStorage} takes it too.
+     */
+    const ROSTER_KEY = `${KEY_PREFIX$2}Roster`;
+
+    /**
+     * The last trial fight roster written down.
+     * @returns {Promise<{battleId: *, roster: Object, at: number}|null>} The entry, or null
+     */
+    async function loadTrialRoster() {
+        try {
+            const held = await storage.get(ROSTER_KEY, STORE_NAME$a, null);
+            if (!held || typeof held !== 'object') return null;
+            if (!held.roster || typeof held.roster !== 'object') return null;
+            return held;
+        } catch (error) {
+            console.error('[GuildTrialsStore] Failed to load the trial roster:', error);
+            return null;
+        }
+    }
+
+    /**
+     * Write a trial fight's roster down, keyed to its battle.
+     * @param {{battleId: *, roster: Object, at: number}} entry - The roster and whose fight it is
+     * @returns {Promise<boolean>} True when the write was queued
+     */
+    async function saveTrialRoster(entry) {
+        try {
+            await storage.set(ROSTER_KEY, entry, STORE_NAME$a);
+            return true;
+        } catch (error) {
+            console.error('[GuildTrialsStore] Failed to save the trial roster:', error);
+            return false;
+        }
+    }
+
+    /** The buildings whose levels change a payout, and how their hrids are spelled */
+    const BUILDING_PATTERNS = {
+        buildersHall: /buildershall/,
+        treasury: /treasury/};
+
+    /** Client-data maps that might describe guild buildings, most likely first */
+    const DETAIL_MAP_KEYS = ['guildBuildingDetailMap', 'guildBuildingDetailDict', 'guildShrineDetailMap'];
+
+    /**
+     * The per-level fields the game's own building entries carry.
+     *
+     * Read out of `initClientData` by the player and confirmed against the two
+     * upgrade popups this file already quotes: the Builder's Hall entry carries
+     * `guildPointsBonusPerLevel: 0.02` and the Treasury `guildTokenBonusPerLevel:
+     * 0.02`. Each entry carries only its own, so "whichever of these is present" is
+     * unambiguous and no caller has to say which building it is holding.
+     *
+     * Reading them beats the constant: it is the same number today, and it is
+     * whatever the number becomes after a rebalance.
+     */
+    const PER_LEVEL_FIELDS = ['guildPointsBonusPerLevel', 'guildTokenBonusPerLevel', 'guildExperienceBonusPerLevel'];
+
+    /** Remembered once found: `initClientData` is large and its shape does not change mid-session */
+    let detailMapKey = null;
+
+    /**
+     * An hrid reduced to its comparable letters.
+     * @param {string} hrid - An hrid
+     * @returns {string} Lowercase letters only
+     */
+    function normaliseHrid(hrid) {
+        return String(hrid || '')
+            .toLowerCase()
+            .replace(/[^a-z]/g, '');
+    }
+
+    /**
+     * Find the hrid a building is spelled with, from whatever the guild has built.
+     * @param {Object} levelMap - `guildBuildingLevelMap`
+     * @param {RegExp} pattern - One of {@link BUILDING_PATTERNS}
+     * @returns {string|null} The hrid, or null when the guild has no such building
+     */
+    function findBuildingHrid(levelMap, pattern) {
+        for (const hrid of Object.keys(levelMap || {})) {
+            if (pattern.test(normaliseHrid(hrid))) return hrid;
+        }
+        return null;
+    }
+
+    /**
+     * The bonus a building's detail entry grants at a level.
+     *
+     * Reads the buff shape the rest of the codebase already reads — `ratioBoost`
+     * plus `(level - 1) × ratioBoostLevelBonus`, as `combat-sim-adapter.js`
+     * resolves shrine buffs — and falls back to a flat `bonusPerLevel` field for a
+     * detail entry that carries one instead. Anything else returns null.
+     *
+     * @param {Object} detail - A guild building detail entry
+     * @param {number} level - Built level
+     * @returns {number|null} Bonus as a fraction, or null when the entry says nothing usable
+     */
+    function buildingBonusFromDetail(detail, level) {
+        if (!detail || !Number.isFinite(level) || level <= 0) return null;
+
+        // The game's own per-level figure first, where the entry carries one
+        for (const field of PER_LEVEL_FIELDS) {
+            const perLevel = Number(detail[field]);
+            if (Number.isFinite(perLevel)) return perLevel * level;
+        }
+
+        const buffs = Array.isArray(detail.buffs) ? detail.buffs : [];
+        for (const buff of buffs) {
+            const base = Number(buff?.ratioBoost);
+            const perLevel = Number(buff?.ratioBoostLevelBonus);
+            if (Number.isFinite(base) || Number.isFinite(perLevel)) {
+                return (Number.isFinite(base) ? base : 0) + (level - 1) * (Number.isFinite(perLevel) ? perLevel : 0);
+            }
+        }
+
+        const perLevel = Number(detail.bonusPerLevel ?? detail.ratioBoostLevelBonus);
+        if (Number.isFinite(perLevel)) return perLevel * level;
+
+        return null;
+    }
+
+    /**
+     * Everything known about one payout-relevant building.
+     *
+     * `source` is what the panel needs to caption itself: `'manual'` when the player
+     * typed the number in, `'client'` when the game's own detail map described the
+     * building, `'formula'` when the level is known and the confirmed
+     * 2%-per-level rule was applied to it, and `'unknown'` when not even the level
+     * is — in which case `bonus` is null and the caller must show un-bonused figures
+     * rather than treat it as zero.
+     *
+     * @param {Object} input - Inputs
+     * @param {RegExp} input.pattern - Which building
+     * @param {number|null} input.override - Manual bonus as a percentage, or null
+     * @param {Object} [input.levelMap] - `guildBuildingLevelMap`; read from the data manager when omitted
+     * @param {Object} [input.detailMap] - Building detail map; probed from client data when omitted
+     * @returns {{hrid: string|null, level: number, bonus: number|null, source: string,
+     *   rules: {bonusPerLevel: number, maxLevel: number, source: string}}} What is known
+     */
+    function readBuildingBonus({ pattern, override = null, levelMap, detailMap }) {
+        const levels = levelMap || dataManager.guildBuildingLevelMap || {};
+        const details = detailMap || probeBuildingDetailMap();
+
+        const rules = readBuildingRules(pattern, { levelMap: levels, detailMap: details });
+        const hrid = findBuildingHrid(levels, pattern);
+        // Clamped to the building's own cap — 20 in the game's data — so anything
+        // higher on the wire is bad data, not a level to trust or to extrapolate the
+        // per-level rule past.
+        const level = hrid ? Math.min(Number(levels[hrid]) || 0, rules.maxLevel) : 0;
+
+        if (Number.isFinite(override) && override > 0) {
+            return { hrid, level, bonus: override / 100, source: 'manual', rules };
+        }
+
+        const bonus = hrid ? buildingBonusFromDetail(details?.[hrid], level) : null;
+        if (Number.isFinite(bonus)) return { hrid, level, bonus, source: 'client', rules };
+
+        // The level is the hard part; once it is in hand the multiplier is arithmetic
+        if (level > 0) return { hrid, level, bonus: level * rules.bonusPerLevel, source: 'formula', rules };
+
+        return { hrid, level, bonus: null, source: 'unknown', rules };
+    }
+
+    /**
+     * The client-data map describing guild buildings, whichever it is called.
+     * @returns {Object} The map, or an empty object
+     */
+    function probeBuildingDetailMap() {
+        const clientData = dataManager.getInitClientData?.() || {};
+
+        if (detailMapKey && isBuildingDetailMap(clientData[detailMapKey])) return clientData[detailMapKey];
+
+        for (const key of DETAIL_MAP_KEYS) {
+            const candidate = clientData[key];
+            if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
+                detailMapKey = key;
+                return candidate;
+            }
+        }
+
+        // Named guesses exhausted. Rather than give up on a map that is provably
+        // there — the player read it out of `initClientData` — find it by what it
+        // contains: entries keyed `/guild_buildings/<name>` carrying the per-level
+        // fields above. A renamed map then costs nothing.
+        for (const [key, value] of Object.entries(clientData)) {
+            if (!isBuildingDetailMap(value)) continue;
+            detailMapKey = key;
+            return value;
+        }
+
+        return {};
+    }
+
+    /**
+     * Whether a client-data value looks like the guild building detail map.
+     * @param {*} value - A candidate
+     * @returns {boolean} True when it is one
+     */
+    function isBuildingDetailMap(value) {
+        if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+
+        for (const [hrid, entry] of Object.entries(value)) {
+            if (!entry || typeof entry !== 'object') continue;
+            if (PER_LEVEL_FIELDS.some((field) => Number.isFinite(Number(entry[field])))) return true;
+            if (/^\/guild_buildings?\//.test(hrid) && Number.isFinite(Number(entry.maxLevel))) return true;
+        }
+        return false;
+    }
+
+    /**
+     * The rules a building runs on, from the game's own data where it has them.
+     *
+     * Both figures are confirmed twice over — `guildPointsBonusPerLevel: 0.02` and
+     * `maxLevel: 20` in client data, and the upgrade popups that quote the same
+     * numbers back — so this is not a probe for something unverified. It exists so
+     * that a rebalance changes the panel rather than making it quietly wrong, and it
+     * falls back to the constants when there is no client data to read, which is the
+     * state every test and every pre-login moment is in.
+     *
+     * @param {RegExp} pattern - One of {@link BUILDING_PATTERNS}
+     * @param {Object} [options] - Overrides, for tests
+     * @param {Object} [options.levelMap] - `guildBuildingLevelMap`
+     * @param {Object} [options.detailMap] - Building detail map
+     * @returns {{bonusPerLevel: number, maxLevel: number, source: 'client'|'constant'}} The rules
+     */
+    function readBuildingRules(pattern, { levelMap, detailMap } = {}) {
+        const levels = levelMap || dataManager.guildBuildingLevelMap || {};
+        const details = detailMap || probeBuildingDetailMap();
+
+        // By level map first, because that is the spelling this guild's own data
+        // uses; by the detail map's own keys when the guild has never built one
+        const hrid = findBuildingHrid(levels, pattern) || findBuildingHrid(details, pattern) || null;
+        const entry = hrid ? details?.[hrid] : null;
+
+        const perLevel = PER_LEVEL_FIELDS.map((field) => Number(entry?.[field])).find((value) => Number.isFinite(value));
+        const maxLevel = Number(entry?.maxLevel);
+
+        return {
+            bonusPerLevel: Number.isFinite(perLevel) ? perLevel : BUILDING_BONUS_PER_LEVEL,
+            maxLevel: Number.isFinite(maxLevel) && maxLevel > 0 ? maxLevel : GUILD_BUILDING_MAX_LEVEL,
+            source: Number.isFinite(perLevel) ? 'client' : 'constant',
+        };
+    }
+
+    /**
+     * Both payout bonuses, with their provenance.
+     * @param {Object} [options] - Overrides, for tests
+     * @param {Object} [options.levelMap] - `guildBuildingLevelMap`
+     * @param {Object} [options.detailMap] - Building detail map
+     * @param {Function} [options.getSetting] - Settings reader
+     * @returns {{buildersHall: Object, treasury: Object}} Bonus info per building
+     */
+    function readPayoutBonuses({ levelMap, detailMap, getSetting } = {}) {
+        const read = getSetting || ((key, fallback) => config.getSettingValue?.(key, fallback) ?? fallback);
+        return {
+            buildersHall: readBuildingBonus({
+                pattern: BUILDING_PATTERNS.buildersHall,
+                override: Number(read('guildTrialsBuildersHallBonus', 0)),
+                levelMap,
+                detailMap,
+            }),
+            treasury: readBuildingBonus({
+                pattern: BUILDING_PATTERNS.treasury,
+                override: Number(read('guildTrialsTreasuryBonus', 0)),
+                levelMap,
+                detailMap,
+            }),
         };
     }
 
@@ -18576,9 +20177,11 @@ ${starCSS}
      *
      * ### What that costs, and what it does not
      *
-     * - **Only while somebody watches.** Close the fight view and the stream stops.
-     *   The measurement covers the watched stretch and every caption says so; the
-     *   recorder's session gaps already model exactly this.
+     * - **Only after somebody watches.** Opening the fight view is what starts the
+     *   stream — and, observed live, the stream then keeps flowing while other game
+     *   tabs are browsed rather than stopping the moment the view closes. Every
+     *   tick that arrives is counted: the measurement is the stream as received,
+     *   gaps and all, and the recorder's session gaps model the gaps.
      * - **Units are indexes.** `pMap` is `{"1": …}` with no roster on it, so names
      *   come from `guild-trial-units.js` — the fight view's own portraits first, the
      *   captured builds' maximum health and mana second, and a placeholder when
@@ -18605,14 +20208,20 @@ ${starCSS}
      *
      * This used to say the fight did not exist — that trial combat was simulated and
      * no measurement was possible. A wire capture disproved it: the fight is a real
-     * server-run battle and `guild_battle_updated` streams it to anyone with the
-     * fight view open. The condition is not "impossible", it is "while watching",
-     * and that is a very different thing to tell a player, because they can act on
-     * it.
+     * server-run battle and `guild_battle_updated` streams it to anyone who opens
+     * the fight view. The condition is not "impossible", it is "once watched", and
+     * that is a very different thing to tell a player, because they can act on it.
+     *
+     * "Once watched" rather than "while watching", and the difference was reported
+     * as a contradiction: the figures kept accruing while the player browsed other
+     * game tabs, against a caption claiming only the open-view stretch counted. The
+     * behaviour is the honest half — the ticks really do keep arriving after the
+     * view is left, and they are real measurements — so the words now match it.
      */
     const SPECTATED_TRIAL_NOTE =
-        'a trial fight runs on the game’s own server and streams to this client only while the In Progress fight ' +
-        'view is open — so what is measured is the stretch somebody was watching';
+        'a trial fight runs on the game’s own server and streams to this client once the In Progress fight view ' +
+        'has been opened — the stream often keeps flowing while other tabs are browsed, and every tick that ' +
+        'arrives is counted';
 
     /** The stream that carries a spectated trial fight */
     const GUILD_BATTLE_MESSAGE = 'guild_battle_updated';
@@ -18851,6 +20460,122 @@ ${starCSS}
         };
     }
 
+    /**
+     * How much of the party the per-player split actually covers.
+     *
+     * A spectated trial names its attacker by *presence* — the lone player changing
+     * in a tick where the boss lost health — because `guild_battle_updated` does not
+     * stream other players' attack counters (their `atkCounter` is absent, so
+     * `splitFromCounters` is false). That rung only fires on a tick with exactly one
+     * player in it, so a member who never had such a tick this window — always
+     * sharing a tick, or never appearing at all — earns no row at all. The result is
+     * honest but partial: three names summing to 100% under a party of seven, where
+     * the four missing did not do nothing, they merely never landed a hit this
+     * client could split out.
+     *
+     * This states the coverage so the display can say "3 of 7" rather than implying
+     * the party is three people. `party` is the size the game stated (the roster the
+     * ladders scale by); `attributed` is how many earned a damage row; `partial` is
+     * true only when the party size is known and fewer than all of it is covered.
+     * `counterConfirmed` is how many rows a player's *own* counters confirmed
+     * directly — the viewer's, in every recording so far — which is zero on a stream
+     * that carried none.
+     *
+     * @param {Object} breakdown - From {@link GuildTrialDamage#breakdown}
+     * @returns {{party: number|null, attributed: number, counterConfirmed: number, partial: boolean}}
+     */
+    function attributionCoverage(breakdown) {
+        const stated = Number(breakdown?.participants);
+        const rostered = Object.keys(breakdown?.roster || {}).length;
+        const party = Number.isFinite(stated) && stated > 0 ? stated : rostered || null;
+        const attributed = (breakdown?.players || []).filter((player) => (player?.damage || 0) > 0).length;
+        const counterConfirmed = (breakdown?.countedNames || []).length;
+        const partial = Boolean(party && attributed > 0 && attributed < party);
+        return { party, attributed, counterConfirmed, partial };
+    }
+
+    /**
+     * Fold one tally row into another, numerically.
+     *
+     * The rows are numbers all the way down — `damage`, `hits`, and the nested
+     * `byAbility`/`byEnemy` maps of the same shape — so a recursive numeric sum is
+     * the whole of it. `target` is copied, never mutated: banked history must be
+     * immutable, and a helper that quietly mutated it would defeat the reason it
+     * exists.
+     *
+     * @param {Object|null} target - The row folded into, or null to start one
+     * @param {Object} row - The row to fold in
+     * @returns {Object} A new row holding both
+     */
+    function foldTallyRow(target, row) {
+        const merged = { ...(target || {}) };
+        for (const [key, value] of Object.entries(row || {})) {
+            if (typeof value === 'number') merged[key] = (merged[key] || 0) + value;
+            else if (value && typeof value === 'object') merged[key] = foldTallyRow(merged[key], value);
+        }
+        return merged;
+    }
+
+    /**
+     * The whole trial's figures, merged by NAME across wave boundaries.
+     *
+     * The live tallies are keyed by actor index, and an index is only meaningful
+     * within one wave: `new_guild_battle` re-states `players[]` at every tier and
+     * the ordering is not stable. Displaying a trial-long index-keyed tally under
+     * the *current* wave's names is what made per-name totals swap at a tier
+     * rollover — NPD "lost" 132K to whoever inherited their slot. So each wave's
+     * figures are banked under the names its slots held when it ended, and this
+     * merges the banked history with the live wave for display. A slot that never
+     * earned a name banks under its placeholder, and placeholders from different
+     * waves merge — an unknown is an unknown either way.
+     *
+     * @param {Object} input - Inputs
+     * @param {Object} [input.bankedTally] - Name → tally row, from ended waves
+     * @param {Object} [input.bankedDeaths] - Name → deaths, from ended waves
+     * @param {Object} [input.bankedSupport] - Name → support row, from ended waves
+     * @param {Object} [input.tally] - Index → tally row, the live wave
+     * @param {Object} [input.names] - Index → display name, the live wave
+     * @param {Object} [input.deaths] - Index → deaths, the live wave
+     * @param {Object} [input.supportPlayers] - Index → support row, the live wave
+     * @returns {{tally: Object, deaths: Object, support: Object, names: Object}} Everything keyed by name
+     */
+    function mergeWaveTallies({
+        bankedTally = {},
+        bankedDeaths = {},
+        bankedSupport = {},
+        tally = {},
+        names = {},
+        deaths = {},
+        supportPlayers = {},
+    } = {}) {
+        const nameOf = (index) => names[index] || `Player ${Number(index) + 1}`;
+        const merged = { tally: {}, deaths: {}, support: {}, names: {} };
+        const claim = (name) => {
+            merged.names[name] = name;
+            return name;
+        };
+
+        for (const [name, row] of Object.entries(bankedTally)) merged.tally[claim(name)] = foldTallyRow(null, row);
+        for (const [index, row] of Object.entries(tally)) {
+            const name = claim(nameOf(index));
+            merged.tally[name] = foldTallyRow(merged.tally[name], row);
+        }
+
+        for (const [name, count] of Object.entries(bankedDeaths)) merged.deaths[claim(name)] = count;
+        for (const [index, count] of Object.entries(deaths)) {
+            const name = claim(nameOf(index));
+            merged.deaths[name] = (merged.deaths[name] || 0) + count;
+        }
+
+        for (const [name, row] of Object.entries(bankedSupport)) merged.support[claim(name)] = foldSupportRow(null, row);
+        for (const [index, row] of Object.entries(supportPlayers)) {
+            const name = claim(nameOf(index));
+            merged.support[name] = foldSupportRow(merged.support[name], row);
+        }
+
+        return merged;
+    }
+
     class GuildTrialDamage {
         constructor() {
             this.initialized = false;
@@ -18858,6 +20583,12 @@ ${starCSS}
             this.onBattleUpdated = null;
             /** Names of this week's combat trial cards, pushed in by the trials feature */
             this.trialNames = [];
+            /**
+             * The persisted `{battleId, roster, at}` a refreshed session reads
+             * back. Survives {@link reset} on purpose: the battle id is what says
+             * whether it may be used, not this module's lifecycle.
+             */
+            this.storedRoster = null;
             this.reset();
         }
 
@@ -18868,6 +20599,14 @@ ${starCSS}
             this.tally = {};
             this.names = {};
             this.deaths = {};
+            /**
+             * Ended waves' figures, keyed by NAME and immutable once written —
+             * see {@link _bankCurrentWave}. The live index-keyed maps above cover
+             * only the wave in progress.
+             */
+            this.bankedTally = {};
+            this.bankedDeaths = {};
+            this.bankedSupport = {};
             this.playersHP = {};
             this.seconds = 0;
             this.lastTickAt = 0;
@@ -18961,6 +20700,10 @@ ${starCSS}
             if (this.initialized) return;
             this.initialized = true;
 
+            // Read back the roster a previous page-load wrote down, so a refresh
+            // mid-tier does not lose every name until the next tier restates them
+            this._restoreStoredRoster();
+
             this.onNewBattle = (data) => this._onNewBattle(data);
             this.onBattleUpdated = (data) => this._onBattleUpdated(data);
             this.onGuildBattle = (data) => this._onGuildBattleTick(data);
@@ -19045,6 +20788,17 @@ ${starCSS}
                     for (const [index, entry] of Object.entries(roster)) {
                         this.unitNames[index] = { name: entry.name, source: 'roster', characterId: entry.characterId };
                         this.names[index] = entry.name;
+                    }
+                    // …and written down with the battle it belongs to. This message
+                    // fires once per tier and never again, so a page refresh
+                    // mid-tier used to lose every name — "Player 2" on a
+                    // leaderboard whose roster had been on the wire minutes before
+                    // Keyed by battle AND tier: the slots re-deal per tier, so a
+                    // roster adopted across tiers would re-create the very
+                    // mislabelling the per-wave re-deal exists to prevent
+                    if (battleId) {
+                        this.storedRoster = { battleId, tier, roster, at: now };
+                        saveTrialRoster(this.storedRoster).catch(() => {});
                     }
                 }
 
@@ -19166,6 +20920,9 @@ ${starCSS}
                 const mMap = data.mMap || {};
 
                 this._identifyEncounter();
+                // A session that missed the tier's opening message — a refresh —
+                // reads the persisted roster back, gated on the battle id matching
+                if (!Object.keys(this.roster).length) this._adoptStoredRoster(battleId, tier);
                 this._nameUnits(pMap);
                 this._readPool(mMap, tier, now);
 
@@ -19282,12 +21039,41 @@ ${starCSS}
         _newSpectatedWave(battleId, tier, at) {
             const newFight = battleId !== this.guildBattleId;
 
+            // The wave that just ended is banked under the names its slots held —
+            // BEFORE anything below re-deals them. Observed live at a tier
+            // rollover: per-name totals *swapped* (NPD lost 132K to whoever
+            // inherited their slot), because the trial-long tally is index-keyed
+            // and `new_guild_battle` re-states `players[]` per tier in an order
+            // that is not stable. Banked history is by name and immutable; a name
+            // correction may relabel the live wave's slots, never the past.
+            this._bankCurrentWave();
+
             this.state.monstersHP = {};
             this.state.dmgCounter = {};
             this.state.critCounter = {};
+            // The counter baselines, actions and party keys are all per-slot, and
+            // the slots have just been re-dealt: a new wave's counters compared
+            // against another player's baselines mis-swing the first tick
+            this.state.playersAtk = {};
+            this.state.playersMP = {};
+            this.state.actions = {};
+            this.state.party = {};
+            this.state.lastSwing = null;
             this.support.lastHP = {};
             this.support.lastMP = {};
             this.playersHP = {};
+
+            // Every wave re-deals the slots — a tier change included, which the
+            // rule this replaces ("the same thirty people fight every tier")
+            // learned the hard way: the *people* are the same, the *ordering* is
+            // not. The names come back on the wave's own `new_guild_battle`
+            // roster, or through the resolver's rungs for a wave without one.
+            this.roster = {};
+            this.unitNames = {};
+            this.names = {};
+            // …and the own-unit binding re-confirms per wave, by counters, rather
+            // than carrying an index across a re-deal
+            this.countedSlots = new Set();
 
             if (newFight) {
                 // A different battle is a different encounter until something says
@@ -19295,9 +21081,6 @@ ${starCSS}
                 // gets filed under Hedgehog
                 this.spectatedBossName = null;
                 this.encounter = null;
-                // …and a different battle is a different roster. A tier change is
-                // not: the same thirty people fight every tier of one trial
-                this.roster = {};
             }
 
             this.guildBattleId = battleId;
@@ -19309,6 +21092,39 @@ ${starCSS}
             if (newFight) this.lastTickAt = 0;
             this.pool = null;
             this.spectator.lastAt = at;
+        }
+
+        /**
+         * Bank the live wave's figures under the names its slots hold now.
+         *
+         * Called at every wave boundary, before the slots re-deal. Once banked, a
+         * name's history is immutable: later corrections apply to the live wave's
+         * slots only, and can never transplant past damage between names. A slot
+         * that never earned a name banks under its placeholder — an unknown then,
+         * an unknown forever, which is the honest end of it.
+         */
+        _bankCurrentWave() {
+            const nameOf = (index) => this.names[index] || `Player ${Number(index) + 1}`;
+
+            for (const [index, row] of Object.entries(this.tally)) {
+                const name = nameOf(index);
+                this.bankedTally[name] = foldTallyRow(this.bankedTally[name], row);
+            }
+            for (const [index, count] of Object.entries(this.deaths)) {
+                if (!(count > 0)) continue;
+                const name = nameOf(index);
+                this.bankedDeaths[name] = (this.bankedDeaths[name] || 0) + count;
+            }
+            for (const [index, row] of Object.entries(this.support.players || {})) {
+                const name = nameOf(index);
+                this.bankedSupport[name] = foldSupportRow(this.bankedSupport[name], row);
+            }
+
+            this.tally = {};
+            this.deaths = {};
+            this.support.players = {};
+            this.support.lastAtk = {};
+            this.support.emptySince = {};
         }
 
         /**
@@ -19352,16 +21168,70 @@ ${starCSS}
         }
 
         /**
+         * Read the persisted roster back at startup.
+         *
+         * Fire-and-forget from {@link initialize}; nothing waits on it, and a tick
+         * that beats the read simply resolves names without it and better on the
+         * next one.
+         */
+        async _restoreStoredRoster() {
+            try {
+                const held = await loadTrialRoster();
+                if (held) this.storedRoster = held;
+            } catch (error) {
+                console.error('[GuildTrialDamage] Restoring the trial roster failed:', error);
+            }
+        }
+
+        /**
+         * Adopt the persisted roster, when it is provably this fight's.
+         *
+         * The battle id and the tier are the whole gate, together: the id says
+         * this trial, and the tier says this *deal* of the slots — `players[]` is
+         * re-stated per tier in an order that is not stable, so a roster from
+         * another tier names the wrong slots as surely as another battle's would.
+         * Anything else, including an entry with no id, stays unused. The age
+         * bound is belt and braces: a trial runs an hour, so an older entry is
+         * another trial's even if an id were ever reused.
+         *
+         * @param {*} battleId - The battle the current stream belongs to
+         * @param {number|null} tier - The tier it states
+         */
+        _adoptStoredRoster(battleId, tier) {
+            const held = this.storedRoster;
+            if (!held || !battleId || String(held.battleId) !== String(battleId)) return;
+            if ((held.tier ?? null) !== (tier ?? null)) return;
+            if (Number.isFinite(held.at) && Date.now() - held.at > TRIAL_ACTIVE_MS) return;
+
+            const roster = held.roster && typeof held.roster === 'object' ? held.roster : {};
+            if (!Object.keys(roster).length) return;
+
+            this.roster = { ...roster };
+            for (const [index, entry] of Object.entries(this.roster)) {
+                if (!entry?.name) continue;
+                this.unitNames[index] = { name: entry.name, source: 'roster', characterId: entry.characterId ?? null };
+                this.names[index] = entry.name;
+            }
+            if (!this.participants) this.participants = Object.keys(this.roster).length;
+        }
+
+        /**
          * Put names to the tick's unit indexes.
          * @param {Object} pMap - The tick's players
          */
         _nameUnits(pMap) {
+            // The one slot the stream carries attack counters for is the watcher's
+            // own unit — the only slot their own name may bind to
+            const ownSlot = this.countedSlots.size === 1 ? [...this.countedSlots][0] : null;
+
             const resolved = resolveUnitNames({
                 pMap,
                 roster: this.roster,
                 portraits: fightViewNames(),
+                partyNames: fightViewPartyNames(),
                 loadouts: guildLoadoutCapture.seen?.() || [],
                 known: this.unitNames,
+                own: { slot: ownSlot, name: dataManager.getCurrentCharacterName?.() || null },
             });
 
             for (const [index, entry] of Object.entries(resolved)) {
@@ -19429,6 +21299,11 @@ ${starCSS}
                 this.encounter = verdict.encounter;
                 if (!this.startedAt) this.startedAt = Date.now();
                 this.fights += 1;
+
+                // The fight that just ended banks under its own names before the
+                // roster below re-deals the slots — the same immutability rule the
+                // spectated path enforces at every wave
+                this._bankCurrentWave();
 
                 const players = data?.players || {};
                 damageAttribution_js.noteActions(this.state, players);
@@ -19527,13 +21402,24 @@ ${starCSS}
             // and a DPS table under a live trial card that is actually last week's
             // is worse than no table
             const stale = ageMs !== null && ageMs > TRIAL_ACTIVE_MS;
-            const summary = summariseTrialDamage({
+            // The banked waves and the live one, merged by name — the only key
+            // that survives the per-tier slot re-deal. See `mergeWaveTallies`.
+            const merged = mergeWaveTallies({
+                bankedTally: this.bankedTally,
+                bankedDeaths: this.bankedDeaths,
+                bankedSupport: this.bankedSupport,
                 tally: this.tally,
                 names: this.names,
                 deaths: this.deaths,
+                supportPlayers: this.support.players,
+            });
+            const summary = summariseTrialDamage({
+                tally: merged.tally,
+                names: merged.names,
+                deaths: merged.deaths,
                 seconds: this.seconds,
             });
-            const support = summariseSupport(this.support, this.names, this.deaths);
+            const support = summariseSupport({ ...this.support, players: merged.support }, merged.names, merged.deaths);
 
             return {
                 measured: !stale && summary.players.length > 0,
@@ -19883,7 +21769,7 @@ ${starCSS}
      */
 
 
-    const STORE_NAME$a = 'guildHistory';
+    const STORE_NAME$9 = 'guildHistory';
     /** The guild leaderboard's own refresh cadence, as the panel states */
     const LEADERBOARD_REFRESH_MS = 20 * 60 * 1000;
     const WINDOW_10M$2 = 10 * 60 * 1000;
@@ -20281,14 +22167,14 @@ ${starCSS}
 
             // Load persisted histories
             const endLoad = performanceMonitor.startSpan('bg:guildXPTracker', 'load history');
-            this.guildXPHistory = await storage.get(`guildXP_${guildName}`, STORE_NAME$a, {});
+            this.guildXPHistory = await storage.get(`guildXP_${guildName}`, STORE_NAME$9, {});
             // Histories recorded before repeats were rejected end in two identical
             // readings, which reads as a rate of zero. Heal them on the way in.
             for (const [name, arr] of Object.entries(this.guildXPHistory)) {
                 this.guildXPHistory[name] = dropFlatRepeats(arr);
             }
             if (this.ownGuildID) {
-                this.memberXPHistory = await storage.get(`memberXP_${this.ownGuildID}`, STORE_NAME$a, {});
+                this.memberXPHistory = await storage.get(`memberXP_${this.ownGuildID}`, STORE_NAME$9, {});
                 // Self-heal on the way in. The history map never forgets anybody it
                 // has ever sampled, so a member who left the guild kept their weekly
                 // rate, did nothing all day because they were gone, and sat in the
@@ -20303,7 +22189,7 @@ ${starCSS}
                             `no longer in the guild: ${departed.slice(0, 8).join(', ')}` +
                             `${departed.length > 8 ? `, +${departed.length - 8} more` : ''}`
                     );
-                    storage.set(`memberXP_${this.ownGuildID}`, this.memberXPHistory, STORE_NAME$a);
+                    storage.set(`memberXP_${this.ownGuildID}`, this.memberXPHistory, STORE_NAME$9);
                 }
             }
             endLoad();
@@ -20331,9 +22217,9 @@ ${starCSS}
             // the actual write is milliseconds, and flushAll on unload covers the
             // tab closing before the timer lands.
             const endSave = performanceMonitor.startSpan('bg:guildXPTracker', 'queue save');
-            storage.set(`guildXP_${guildName}`, this.guildXPHistory, STORE_NAME$a);
+            storage.set(`guildXP_${guildName}`, this.guildXPHistory, STORE_NAME$9);
             if (this.ownGuildID) {
-                storage.set(`memberXP_${this.ownGuildID}`, this.memberXPHistory, STORE_NAME$a);
+                storage.set(`memberXP_${this.ownGuildID}`, this.memberXPHistory, STORE_NAME$9);
             }
             endSave();
         }
@@ -20370,7 +22256,7 @@ ${starCSS}
 
             const t = Date.now();
             pushXP$2(this.guildXPHistory[name], { t, xp: guild.experience });
-            storage.set(`guildXP_${name}`, this.guildXPHistory, STORE_NAME$a);
+            storage.set(`guildXP_${name}`, this.guildXPHistory, STORE_NAME$9);
         }
 
         /**
@@ -20389,7 +22275,7 @@ ${starCSS}
 
             if (newGuildID && this.ownGuildID && newGuildID !== this.ownGuildID) {
                 // Guild switched — clear stale member data and load fresh from storage
-                this.memberXPHistory = await storage.get(`memberXP_${newGuildID}`, STORE_NAME$a, {});
+                this.memberXPHistory = await storage.get(`memberXP_${newGuildID}`, STORE_NAME$9, {});
                 this.memberMeta = {};
             }
 
@@ -20446,7 +22332,7 @@ ${starCSS}
             }
 
             if (this.ownGuildID) {
-                storage.set(`memberXP_${this.ownGuildID}`, this.memberXPHistory, STORE_NAME$a);
+                storage.set(`memberXP_${this.ownGuildID}`, this.memberXPHistory, STORE_NAME$9);
             }
         }
 
@@ -20488,7 +22374,7 @@ ${starCSS}
             }
 
             if (this.ownGuildName) {
-                storage.set(`guildXP_${this.ownGuildName}`, this.guildXPHistory, STORE_NAME$a);
+                storage.set(`guildXP_${this.ownGuildName}`, this.guildXPHistory, STORE_NAME$9);
             }
         }
 
@@ -20713,7 +22599,7 @@ ${starCSS}
         async resetMemberData() {
             if (!this.ownGuildID) return;
             this.memberXPHistory = {};
-            await storage.set(`memberXP_${this.ownGuildID}`, {}, STORE_NAME$a);
+            await storage.set(`memberXP_${this.ownGuildID}`, {}, STORE_NAME$9);
         }
 
         /**
@@ -20781,10 +22667,10 @@ ${starCSS}
 
 
     /** Object store the captures live in — shared with the rest of the guild history */
-    const STORE_NAME$9 = 'guildHistory';
+    const STORE_NAME$8 = 'guildHistory';
 
     /** Key prefix; the guild name is appended, as the trial record's key is */
-    const KEY_PREFIX$2 = 'guildMemberSkills';
+    const KEY_PREFIX$1 = 'guildMemberSkills';
 
     /** A capture older than this is offered for refreshing */
     const STALE_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
@@ -20810,53 +22696,61 @@ ${starCSS}
     const UNIT_FRESH_MS = 15 * 60 * 1000;
 
     /**
-     * The subtree the spectated fight is drawn in, found by its boss.
+     * The name a combat unit box wears, from the game's own name line.
      *
-     * The In Progress tab draws the skilling instance and the combat fight side by
-     * side, and the skilling panel's participant units are inert — clicking one
-     * opens nothing, which is how the button came to offer somebody who was off
-     * foraging while a fight was on screen. The one thing only the fight view has
-     * is the encounter itself, so the boss's own "Trial …" name is the anchor: the
-     * fight is the smallest subtree holding both the boss and at least one roster
-     * member.
-     *
-     * @param {Map<string, string>} wanted - lowercased name → display name
-     * @param {Document|Element} root - Where to look
-     * @returns {Element|null} The fight subtree, or null when no fight is on screen
+     * @param {Element} box - A `CombatUnit_combatUnit` or `MiniUnit_miniUnit` element
+     * @returns {string} The unit's display name, trimmed
      */
-    function findFightArea(wanted, root) {
-        for (const leaf of root.querySelectorAll('div, span')) {
-            if (leaf.childElementCount) continue;
-            if (!/^trial\s+\S/i.test((leaf.textContent || '').trim())) continue;
+    function unitName(box) {
+        return (box.querySelector(`${selectors_js.GAME.COMBAT_UNIT_NAME}, ${selectors_js.GAME.MINI_UNIT_NAME}`)?.textContent || '').trim();
+    }
 
-            let area = leaf;
-            for (let up = 0; up < 8 && area.parentElement; up += 1) {
-                area = area.parentElement;
-                for (const inner of area.querySelectorAll('div, span')) {
-                    if (inner.childElementCount) continue;
-                    if (wanted.has((inner.textContent || '').trim().toLowerCase())) return area;
-                }
-            }
-        }
-        return null;
+    /**
+     * Which roster member a unit's name line identifies, if any.
+     *
+     * Name lines usually carry the full name and let CSS do the ellipsizing, but a
+     * text-truncated one ("SarinTe…") still identifies its member when exactly one
+     * roster name carries that prefix.
+     *
+     * @param {string} text - The name line's text
+     * @param {Map<string, string>} wanted - lowercased name → display name
+     * @returns {string|null} The member's display name
+     */
+    function matchRosterName(text, wanted) {
+        const shown = text.trim().toLowerCase();
+        if (wanted.has(shown)) return wanted.get(shown);
+
+        const truncated = shown.match(/^(.{2,}?)(?:…|\.{3})$/);
+        if (!truncated) return null;
+        const matches = [...wanted.entries()].filter(([key]) => key.startsWith(truncated[1]));
+        return matches.length === 1 ? matches[0][1] : null;
     }
 
     /**
      * Player unit boxes in a spectated guild fight, matched to roster names.
      *
-     * The fight view draws each participant as a small box: the member's name as
-     * its own text line with an `n/m` health reading nearby. Clicking the box opens
-     * the game's Battle Info popup, which is what makes the game send that member's
-     * stat sheet (`battle_unit_fetched`) — the only source a combat loadout has;
-     * `/profile` carries skills but no sheet. The boss is drawn the same way but is
-     * not a member, so only roster names are matched and it can never be offered.
+     * The game draws every combatant as a `CombatUnit_combatUnit` box wearing its
+     * name in a `CombatUnit_name` line. Clicking the box opens the game's Battle
+     * Info popup, which is what makes the game send that member's stat sheet
+     * (`battle_unit_fetched`) — the only source a combat loadout has; `/profile`
+     * carries skills but no sheet.
      *
-     * Only units inside the fight's own subtree count — see {@link findFightArea};
-     * the skilling panel beside it draws members too, and those boxes are inert.
+     * Matching the game's own unit classes is what keeps this honest. The first
+     * version walked bare text leaves and climbed to "the smallest ancestor with a
+     * health reading", which sailed up to the whole battle grid and matched names
+     * this script's own damage panel had drawn there — clicks that could never
+     * open anything. The real structure (read off the live DOM with the script
+     * disabled): the boss is a `CombatUnit` in the monsters grid, the watching
+     * player's own character is a full `CombatUnit` card in the players area, and
+     * the rest of the party are small `MiniUnit_clickable` boxes beside it, each
+     * wearing its name in a `MiniUnit_name` line. So a unit has to be one of
+     * those two box kinds, inside the boss's own battle panel, wearing a roster
+     * member's name — anything else (our injected panels, the skilling instance's
+     * inert member cards, the boss itself) is not a unit.
      *
      * @param {Array} members - Roster, `{name}` each
      * @param {Document|Element|null} [root] - Injectable for tests
-     * @returns {Array<{name: string, el: Element, dead: boolean}>} Clickable units
+     * @returns {Array<{name: string, el: Element}>} Clickable units
      */
     function findBattleUnits(members, root = typeof document === 'undefined' ? null : document) {
         if (!root) return [];
@@ -20867,26 +22761,23 @@ ${starCSS}
         }
         if (!wanted.size) return [];
 
-        const fight = findFightArea(wanted, root);
-        if (!fight) return [];
+        // The trial boss anchors the fight. Its name is read off its CombatUnit
+        // name line, so text our panels draw ("Trial payout", "Trial damage") can
+        // never anchor anything.
+        const boss = [...root.querySelectorAll(selectors_js.GAME.COMBAT_UNIT)].find((box) => /^trial\s+\S/i.test(unitName(box)));
+        if (!boss) return [];
+        // Players live in a sibling area of the monsters grid, so the search runs
+        // over the whole battle panel around the boss, not the boss's own grid
+        const arena = boss.closest(selectors_js.GAME.BATTLE_PANEL) || boss.parentElement;
+        if (!arena) return [];
 
         const units = [];
         const taken = new Set();
-        for (const leaf of fight.querySelectorAll('div, span')) {
-            if (leaf.childElementCount) continue;
-            const name = wanted.get((leaf.textContent || '').trim().toLowerCase());
+        for (const box of arena.querySelectorAll(`${selectors_js.GAME.COMBAT_UNIT}, ${selectors_js.GAME.MINI_UNIT}`)) {
+            const name = matchRosterName(unitName(box), wanted);
             if (!name || taken.has(name)) continue;
-
-            // The unit is the smallest ancestor that also shows a health reading —
-            // climbing further would grab the whole grid, whose click means nothing
-            let box = leaf;
-            for (let up = 0; up < 4 && box.parentElement; up += 1) {
-                box = box.parentElement;
-                if (!/\d[\d,]*\s*\/\s*\d[\d,]*/.test(box.textContent || '')) continue;
-                taken.add(name);
-                units.push({ name, el: box });
-                break;
-            }
+            taken.add(name);
+            units.push({ name, el: box });
         }
         return units;
     }
@@ -20897,7 +22788,7 @@ ${starCSS}
      * @returns {string} Storage key
      */
     function memberSkillsStorageKey(guildName) {
-        return `${KEY_PREFIX$2}_${guildName || 'default'}`;
+        return `${KEY_PREFIX$1}_${guildName || 'default'}`;
     }
 
     /**
@@ -21043,7 +22934,7 @@ ${starCSS}
         /** @returns {Promise<Object>} The captures, read back from storage */
         async load() {
             try {
-                const stored = await storage.get(memberSkillsStorageKey(this.guildName), STORE_NAME$9, null);
+                const stored = await storage.get(memberSkillsStorageKey(this.guildName), STORE_NAME$8, null);
                 this.captures = stored && typeof stored === 'object' ? stored : {};
             } catch (error) {
                 console.error('[GuildMemberSkills] Failed to read captured profiles:', error);
@@ -21063,7 +22954,7 @@ ${starCSS}
 
                 this.captures = { ...this.captures, [capture.name.toLowerCase()]: capture };
                 storage
-                    .set(memberSkillsStorageKey(this.guildName), this.captures, STORE_NAME$9)
+                    .set(memberSkillsStorageKey(this.guildName), this.captures, STORE_NAME$8)
                     .catch((error) => console.error('[GuildMemberSkills] Failed to store a profile:', error));
             } catch (error) {
                 console.error('[GuildMemberSkills] Reading an opened profile failed:', error);
@@ -21168,18 +23059,48 @@ ${starCSS}
             return null;
         }
 
-        openNext(now = Date.now()) {
+        /**
+         * Whether a fight on screen draws any clickable roster units at all.
+         *
+         * Distinct from {@link nextBattleUnit} being null, which also happens
+         * when every fighter's sheet is fresh — the roster panel uses the
+         * difference to say "everyone is fresh" instead of drawing nothing.
+         *
+         * @returns {boolean} True when the fight view offers units
+         */
+        anyBattleUnits() {
+            const members = guildXPTracker.getMemberList?.() || [];
+            return findBattleUnits(members).length > 0;
+        }
+
+        /**
+         * Click the next due battle unit, if a fight on screen offers one.
+         *
+         * Its own tool on purpose: the unit's popup is the only source of a
+         * combat stat sheet (`battle_unit_fetched`), and a profile carries
+         * skills but no sheet — the two collections must not stand in for each
+         * other.
+         *
+         * @param {number} [now] - Clock
+         * @returns {Object} `{opened, how: 'unit'|'no-unit', logged, total}`
+         */
+        openNextUnit(now = Date.now()) {
             const state = this.progress(now);
-
-            // People in the fight first: a battle on screen is the only time a
-            // combat sheet can be asked for, and it matters more than the roster
             const unit = this.nextBattleUnit(now);
-            if (unit?.el) {
-                this.unitRequests[unit.name.toLowerCase()] = now;
-                unit.el.click();
-                return { opened: unit.name, how: 'unit', logged: state.logged, total: state.total };
-            }
+            if (!unit?.el) return { opened: null, how: 'no-unit', logged: state.logged, total: state.total };
+            this.unitRequests[unit.name.toLowerCase()] = now;
+            unit.el.click();
+            return { opened: unit.name, how: 'unit', logged: state.logged, total: state.total };
+        }
 
+        /**
+         * Open the next due member's profile, for their skill levels.
+         *
+         * @param {number} [now] - Clock
+         * @returns {Object} `{opened, how: 'row'|'chat'|'no-chat'|'done', logged, total}`
+         */
+        openNextProfile(now = Date.now()) {
+            const state = this.progress(now);
             if (!state.next) return { opened: null, how: 'done', logged: state.logged, total: state.total };
 
             const name = state.next.name;
@@ -21201,6 +23122,13 @@ ${starCSS}
 
             this.requests[name.toLowerCase()] = now;
             return result(this._fillProfileCommand(name, input) ? 'chat' : 'no-chat');
+        }
+
+        openNext(now = Date.now()) {
+            // People in the fight first: a battle on screen is the only time a
+            // combat sheet can be asked for, and it matters more than the roster
+            const unit = this.openNextUnit(now);
+            return unit.how === 'unit' ? unit : this.openNextProfile(now);
         }
 
         /**
@@ -21265,805 +23193,6 @@ ${starCSS}
     }
 
     const guildMemberSkills = new GuildMemberSkills();
-
-    /**
-     * What the trial panel has to remember.
-     *
-     * Two separate problems, kept in one place because both are "state the panel
-     * needs and cannot compute".
-     *
-     * ## Rate samples
-     *
-     * A fill rate or a DPS reading needs two observations spread over real time, and
-     * the guild panel is a tab a player flicks through. Keeping samples only in
-     * memory meant every visit to the tab started from nothing and showed "measuring
-     * …" for as long as the player was willing to sit and stare at it. They are
-     * written down instead, keyed by guild name — following the `guildXP_<name>`
-     * precedent in `guild-xp-tracker.js`, because trial state belongs to the guild
-     * and not to whichever alt happened to look at it — and thrown away when the
-     * week rolls over, since last week's trials are a different ladder.
-     *
-     * ## Building bonuses
-     *
-     * Guild Points and token payouts both scale with a building level (Builders Hall
-     * and the Treasury respectively), and those levels are only on the wire when
-     * guild traffic carries them — the same problem `guild-shrine-store.js` solves
-     * for shrines, and it is already solving it here: `guildBuildingLevelMap` is
-     * captured and persisted by the data manager, so the level survives the session
-     * it was seen in.
-     *
-     * The *bonus per level* is read three ways, in order. A manual override in
-     * settings wins, for the player who knows their own guild's numbers. Then the
-     * client's own detail map, if it turns out to publish one — the hrid spellings
-     * and the map name have not been verified against a live client, so every lookup
-     * there is a probe: several plausible map names, matched by shape. Failing both,
-     * the confirmed rule: 2% per level, read off the in-game Build dialog, which
-     * shows "Level 10 → Level 11, Guild Points: +20% → +22%" for the Builders Hall
-     * and the same pattern for the Treasury.
-     *
-     * Only a building whose *level* never reached the client is reported as unknown,
-     * and only then does the panel fall back to un-bonused figures with a note.
-     */
-
-
-    /** Object store the records live in — shared with the guild XP history */
-    const STORE_NAME$8 = 'guildHistory';
-
-    /** Key prefix; the guild name is appended, as `guildXP_<name>` does */
-    const KEY_PREFIX$1 = 'guildTrials';
-
-    /**
-     * Storage key for a guild's trial record.
-     *
-     * By guild name where it is known, because trial state belongs to the guild and
-     * not to whichever alt happened to look at it — two characters in one guild are
-     * two views of the same trial.
-     *
-     * Before the name is known the key falls back to the **character**, not to a
-     * single shared bucket. That bucket was reported as a data leak and it is
-     * exactly one: switching characters in the same tab left the previous guild's
-     * finished trial on screen — "Guild Points banked 2,880" against a guild whose
-     * own header read 0 — because both characters wrote to and read from
-     * `guildTrials_default`. A per-character fallback cannot collide that way, and
-     * the moment the guild's name arrives the record is merged onto the guild's key
-     * as before.
-     *
-     * @param {string|null} guildName - Guild name, or null before it is known
-     * @param {string|number|null} [characterId] - The viewing character, for the fallback key
-     * @returns {string} Storage key
-     */
-    function guildTrialsStorageKey(guildName, characterId = null) {
-        if (guildName) return `${KEY_PREFIX$1}_${guildName}`;
-        return characterId === null || characterId === undefined
-            ? `${KEY_PREFIX$1}_default`
-            : `${KEY_PREFIX$1}_char_${characterId}`;
-    }
-
-    /**
-     * An empty record for a week.
-     * @param {number} weekStart - Week start, in ms
-     * @param {Object} [provenance] - `{guildId, guildName}` the record belongs to
-     * @returns {{weekStart: number, tiles: Object, guildId: string|null, guildName: string|null}} Fresh record
-     */
-    function emptyRecord(weekStart, { guildId = null, guildName = null } = {}) {
-        return { weekStart, tiles: {}, guildId, guildName, history: [] };
-    }
-
-    /**
-     * Whether a stored record can possibly belong to the guild now on screen.
-     *
-     * The reported failure this exists for: a character switched inside one tab
-     * wrote the previous guild's trial into the shared fallback key, that record was
-     * then adopted onto the *new* guild's own key, and every build since has
-     * faithfully rendered a finished trial from a guild the player had left —
-     * "banked 2,880" against a guild whose own header read 0. Keying the storage
-     * correctly stops it happening again and does nothing at all about the copy
-     * already on disk. Provenance is what lets the code throw that copy away.
-     *
-     * Three answers, and the third is the one that matters. A record that names a
-     * different guild is `'foreign'` and is discarded outright. One that names this
-     * guild is `'own'`. One that names no guild at all was written before this
-     * field existed — `'unknown'`, which is not enough to discard on by itself but
-     * is enough to *believe the game over the record* when the two disagree; see
-     * the lifecycle check in `guild-trials.js`.
-     *
-     * @param {Object|null} record - A stored record
-     * @param {Object} [context] - `{guildId, guildName}` as currently known
-     * @returns {'own'|'foreign'|'unknown'} What the record's provenance says
-     */
-    function recordProvenance(record, { guildId = null, guildName = null } = {}) {
-        const storedId = record?.guildId ?? null;
-        const storedName = record?.guildName ?? null;
-        if (!storedId && !storedName) return 'unknown';
-
-        if (storedId && guildId) return String(storedId) === String(guildId) ? 'own' : 'foreign';
-        if (storedName && guildName) {
-            return String(storedName).toLowerCase() === String(guildName).toLowerCase() ? 'own' : 'foreign';
-        }
-
-        // The record knows which guild it belongs to and the page has not said yet.
-        // Not foreign — that would throw away a correct record on every cold load
-        // before the socket has spoken
-        return 'unknown';
-    }
-
-    /**
-     * Put this week's tiles away and start the next cycle empty.
-     *
-     * Archived rather than deleted: the figures were real when they were taken, and
-     * a player who wants last cycle's numbers has nowhere else to get them. Bounded
-     * to {@link MAX_ARCHIVED_CYCLES}, oldest dropped first.
-     *
-     * @param {Object} record - The record (not mutated)
-     * @param {string} reason - Why the cycle was closed, for the archive entry
-     * @param {number} [at] - Clock
-     * @returns {Object} The record with its tiles moved into `history`
-     */
-    function archiveCycle(record, reason, at = Date.now()) {
-        const tiles = record?.tiles && typeof record.tiles === 'object' ? record.tiles : {};
-        const history = Array.isArray(record?.history) ? [...record.history] : [];
-
-        if (Object.keys(tiles).length) {
-            history.push({ archivedAt: at, reason, weekStart: record?.weekStart ?? null, tiles });
-        }
-
-        return {
-            ...record,
-            weekStart: record?.weekStart ?? trialWeekStart(at),
-            tiles: {},
-            history: history.slice(-4),
-        };
-    }
-
-    /**
-     * The key a tile's history is stored under.
-     *
-     * Name plus kind rather than name alone: two trials could in principle share a
-     * name across the skilling and combat halves of a week, and a merged history
-     * would fit a growth curve across two different ladders.
-     *
-     * @param {{name: string, kind: string}} tile - A scraped tile
-     * @returns {string} Stable key
-     */
-    function tileKey(tile) {
-        return `${tile?.kind || 'unknown'}::${String(tile?.name || '')
-        .trim()
-        .toLowerCase()}`;
-    }
-
-    /**
-     * Fold a scraped tile into a record, in place on a copy.
-     *
-     * Three things are written: the sample itself, the tile's identity, and — when
-     * the tile is showing a total for a tier that has not been seen before — a tier
-     * observation, which is what the growth fit is later built from. Repeat samples
-     * with an identical timestamp are dropped, because the panel's observer fires
-     * several times for one React render and a zero-span pair reads as an infinite
-     * rate.
-     *
-     * **A card with nothing moving on it updates the identity and adds no sample.**
-     * That is what makes the two trial tabs add up. The Trials tab's card carries
-     * the level, the tier, what the trial is worth and how many members signed up,
-     * and no progress bar at all; the In Progress tab's card carries the reading and
-     * neither a level nor a tier. Both write here under the same key, and a sample
-     * with an empty `readings` array would be worse than useless — `ratePerMs` would
-     * fit a rate across a series with holes in it, and the overlay tile would report
-     * a trial as freshly read when all that was seen was its sign-up sheet.
-     *
-     * @param {Object} record - Existing record (not mutated)
-     * @param {Object} tile - A tile from `readTrialTiles`
-     * @param {number} at - Sample time, in ms
-     * @returns {Object} The updated record
-     */
-    function recordTileSample(record, tile, at) {
-        const weekStart = record?.weekStart ?? trialWeekStart(at);
-        const tiles = { ...(record?.tiles || {}) };
-        const key = tileKey(tile);
-        const existing = tiles[key] || { name: tile?.name || '', kind: tile?.kind || 'skilling', samples: [], tiers: [] };
-
-        const readings = tile?.readings || [];
-        const samples = existing.samples.filter((sample) => sample?.t !== at);
-        if (readings.length) samples.push({ t: at, readings: readings.map((reading) => ({ ...reading })) });
-        samples.sort((a, b) => a.t - b.t);
-
-        // The tier the reading belongs to may have come from the *other* tab: the In
-        // Progress card carries a total and no tier, the Trials card carries a tier
-        // and no total, and a tier observation needs both. Taking the tier already
-        // on the record is what lets the growth curve be fitted at all — requiring
-        // one card to carry both means no observation is ever recorded.
-        const tier = Number.isFinite(tile?.tier) ? tile.tier : existing.tier;
-
-        // Which tier the *reading* belongs to, which is not the tier the card is
-        // badged with. The badge counts tiers finished, so a live pool on a card
-        // badged T2 is T3's pool — filing it under the badge put two different
-        // tiers' pool sizes under one number and broke the ladder that is fitted
-        // from them. The caller says so explicitly rather than this file guessing.
-        const observationTier = Number.isFinite(tile?.readingTier) ? tile.readingTier : tier;
-
-        // Which tier the footer's stats describe. Stated by the caller when it can —
-        // the stats are read on a live card, a card between tiers and a completed
-        // card alike, and only the first of those has a reading tier at all. Riding
-        // on `observationTier` meant a skilling trial's whole run of Success Rate
-        // readings landed in the flat `personal` and nothing in `personalByTier`.
-        const personalTier = Number.isFinite(tile?.personalTier) ? tile.personalTier : observationTier;
-        const tiers = [...(existing.tiers || [])];
-        if (Number.isFinite(observationTier)) {
-            for (const reading of readings) {
-                if (!(reading.max > 0)) continue;
-                const seen = tiers.find((entry) => entry.tier === observationTier && entry.total === reading.max);
-                if (!seen) tiers.push({ tier: observationTier, total: reading.max });
-            }
-        }
-
-        // What the game itself says clearing this tier is worth, kept per tier as the
-        // trial climbs. The ladder in `guild-trials-math.js` derives the same figure
-        // from the guide's prose, and where the two disagree this one is right — but
-        // only a card that carried *both* a tier and a points line can be filed, so
-        // the tier here is the tile's own rather than the record's carried-over one.
-        // Attaching the In Progress tab's reading to a stale tier is tolerable for a
-        // total that is checked against movement; attaching a points figure to the
-        // wrong tier would silently corrupt the payout.
-        const pointsByTier = { ...(existing.pointsByTier || {}) };
-        if (Number.isFinite(tile?.tier) && Number.isFinite(tile?.points)) {
-            pointsByTier[tile.tier] = tile.points;
-        }
-
-        tiles[key] = {
-            name: tile?.name || existing.name,
-            kind: tile?.kind || existing.kind,
-            level: Number.isFinite(tile?.level) ? tile.level : existing.level,
-            tier: Number.isFinite(tile?.tier) ? tile.tier : existing.tier,
-            // Both come off the Trials tab and are absent from the In Progress one,
-            // so a card that does not carry them must not erase what the other tab
-            // already said
-            points: Number.isFinite(tile?.points) ? tile.points : existing.points,
-            // Sticky: a finished trial does not become unfinished, and the In
-            // Progress card that carries the reading does not carry the word
-            completed: Boolean(tile?.completed) || Boolean(existing.completed),
-            // The player's own action stats, from the In Progress footer. Merged
-            // rather than replaced: the footer shows what it shows, and a redraw
-            // that omits one stat is not the stat going away
-            personal: { ...(existing.personal || {}), ...(tile?.personal || {}) },
-            // …and kept per tier as well, because they are not constant across one:
-            // the same character's success rate fell eight points a tier through a
-            // watched trial, which is a thing the forecast has to model rather than
-            // a reading it can overwrite
-            personalByTier: {
-                ...(existing.personalByTier || {}),
-                ...(Number.isFinite(personalTier) && tile?.personal && Object.keys(tile.personal).length
-                    ? { [personalTier]: { ...(existing.personalByTier?.[personalTier] || {}), ...tile.personal } }
-                    : {}),
-            },
-            signups: tile?.signups || existing.signups || null,
-            pointsByTier,
-            samples: samples.slice(-800),
-            tiers,
-        };
-
-        // Everything else on the record is carried through: a sample must not strip
-        // the provenance stamp or the archived cycles off it, which is a thing this
-        // returned-a-fresh-object shape did quietly for both
-        return { ...(record || {}), weekStart, tiles };
-    }
-
-    /**
-     * Fold two records for the same week into one.
-     *
-     * Needed because the guild's name arrives *after* this feature starts. The
-     * record is keyed by guild name following the `guildXP_<name>` precedent, but
-     * `guildXPTracker` has usually not seen the guild yet when the trials feature
-     * initialises, so the first samples of a session are written under `default`.
-     * When the real name turns up there are then two records — this session's under
-     * `default` and previous sessions' under the name — and picking either one
-     * throws away readings that were correctly taken. So they are merged.
-     *
-     * Samples are unioned by timestamp, which is exactly right: two records of the
-     * same trial are two views of one series, a repeated timestamp is the same
-     * observation seen twice, and `ratePerMs` wants them in order. Records from
-     * different weeks are not merged at all — the newer week wins whole, because
-     * last week's trials are a different ladder and splicing them together would
-     * fit a growth curve across both.
-     *
-     * @param {Object|null} base - The stored record
-     * @param {Object|null} incoming - The record in hand
-     * @returns {Object} One record
-     */
-    function mergeTrialRecords(base, incoming) {
-        const baseWeek = Number.isFinite(base?.weekStart) ? base.weekStart : null;
-        const incomingWeek = Number.isFinite(incoming?.weekStart) ? incoming.weekStart : null;
-
-        if (baseWeek === null) return incoming ? { weekStart: incomingWeek, tiles: incoming.tiles || {} } : emptyRecord(0);
-        if (incomingWeek === null) return { weekStart: baseWeek, tiles: base.tiles || {} };
-        if (baseWeek !== incomingWeek) {
-            const newer = baseWeek > incomingWeek ? base : incoming;
-            return { weekStart: newer.weekStart, tiles: newer.tiles || {} };
-        }
-
-        const provenance = {
-            guildId: base.guildId ?? incoming.guildId ?? null,
-            guildName: base.guildName ?? incoming.guildName ?? null,
-            history: [...(base.history || []), ...(incoming.history || [])].slice(-4),
-        };
-        const tiles = { ...(base.tiles || {}) };
-        for (const [key, tile] of Object.entries(incoming.tiles || {})) {
-            const existing = tiles[key];
-            if (!existing) {
-                tiles[key] = tile;
-                continue;
-            }
-
-            const byTime = new Map();
-            for (const sample of [...(existing.samples || []), ...(tile.samples || [])]) {
-                if (Number.isFinite(sample?.t)) byTime.set(sample.t, sample);
-            }
-            const samples = [...byTime.values()].sort((a, b) => a.t - b.t).slice(-800);
-
-            const tiers = [...(existing.tiers || [])];
-            for (const entry of tile.tiers || []) {
-                if (!tiers.some((seen) => seen.tier === entry.tier && seen.total === entry.total)) tiers.push(entry);
-            }
-
-            // The newer record's identity wins: a tile that has moved on a tier is
-            // describing the trial as it is now
-            const newest = (record) => record.samples?.[record.samples.length - 1]?.t ?? 0;
-            const fresher = newest(tile) >= newest(existing) ? tile : existing;
-            const staler = fresher === tile ? existing : tile;
-
-            tiles[key] = {
-                name: fresher.name || existing.name,
-                kind: fresher.kind || existing.kind,
-                completed: Boolean(existing.completed) || Boolean(tile.completed),
-                personal: { ...(staler.personal || {}), ...(fresher.personal || {}) },
-                personalByTier: { ...(staler.personalByTier || {}), ...(fresher.personalByTier || {}) },
-                level: Number.isFinite(fresher.level) ? fresher.level : existing.level,
-                tier: Number.isFinite(fresher.tier) ? fresher.tier : existing.tier,
-                // Carried across rather than dropped. Both come off the Trials tab
-                // and only ever off the Trials tab, and the merge that runs when the
-                // guild's name arrives happens on a record built from whichever tab
-                // was open — so dropping them here erased the sign-up count and the
-                // game's stated points on the first render of every session, which
-                // is exactly the data the payout block was found showing as zero.
-                points: Number.isFinite(fresher.points) ? fresher.points : staler.points,
-                signups: fresher.signups || staler.signups || null,
-                pointsByTier: { ...(staler.pointsByTier || {}), ...(fresher.pointsByTier || {}) },
-                samples,
-                tiers,
-            };
-        }
-
-        return { weekStart: baseWeek, tiles, ...provenance };
-    }
-
-    /**
-     * Read a guild's record, discarding one from a previous week.
-     * @param {string|null} guildName - Guild name
-     * @param {number} [now] - Clock, in ms
-     * @param {string|number|null} [characterId] - The viewing character, for the fallback key
-     * @returns {Promise<Object>} The record, or a fresh one
-     */
-    async function loadTrialRecord(guildName, now = Date.now(), characterId = null, { guildId = null } = {}) {
-        const weekStart = trialWeekStart(now);
-        const fresh = () => emptyRecord(weekStart, { guildId, guildName });
-
-        try {
-            const record = await storage.get(guildTrialsStorageKey(guildName, characterId), STORE_NAME$8, null);
-            if (!record || typeof record !== 'object') return fresh();
-
-            // A record from a previous week is last week's ladder, not this one's
-            if (record.weekStart !== weekStart) return fresh();
-
-            // A record that names another guild cannot be this guild's, whatever key
-            // it was filed under — which is exactly how the reported one survived
-            if (recordProvenance(record, { guildId, guildName }) === 'foreign') {
-                console.warn('[GuildTrialsStore] Discarding a trial record belonging to another guild');
-                return fresh();
-            }
-
-            // Self-heal on the way in. What is already stored was written by an
-            // older build with a looser card filter, and a filter fixed today does
-            // nothing about a notice board that is already on disk being sampled,
-            // exported and paid out every week from now on
-            const cleaned = purgeJunkTiles({
-                weekStart: record.weekStart,
-                tiles: record.tiles || {},
-                history: Array.isArray(record.history) ? record.history : [],
-                guildId: record.guildId ?? guildId,
-                guildName: record.guildName ?? guildName,
-            });
-
-            if (cleaned.purged.length) {
-                console.warn('[GuildTrialsStore] Dropping stored tiles that are not trials:', cleaned.purged.join(', '));
-                await saveTrialRecord(guildName, cleaned.record, characterId, { guildId });
-            }
-            return cleaned.record;
-        } catch (error) {
-            console.error('[GuildTrialsStore] Failed to load trial samples:', error);
-            return fresh();
-        }
-    }
-
-    /**
-     * Delete the legacy shared record.
-     *
-     * `guildTrials_default` was one bucket for every character in the tab, which is
-     * the bug two of these fixes exist for. Nothing writes to it any more; this
-     * removes what is left so it cannot be adopted onto a guild's key by an older
-     * build's leftovers.
-     *
-     * @returns {Promise<boolean>} True when the key was removed or already absent
-     */
-    async function purgeLegacyTrialRecord() {
-        try {
-            await storage.delete(`${KEY_PREFIX$1}_default`, STORE_NAME$8);
-            return true;
-        } catch (error) {
-            console.error('[GuildTrialsStore] Failed to purge the legacy trial record:', error);
-            return false;
-        }
-    }
-
-    /**
-     * How a stored tile is shown not to be a trial.
-     *
-     * The rules the scrape now applies at read time, applied again to what is
-     * already written down. A guild's **notice board** became a tile on a live
-     * client — key
-     * `skilling::[braille art]\nWelcome to Milkmaxxing!\n\nJOIN DISCORD: …`, 987
-     * characters of it — because two Discord channel ids in the text have exactly
-     * the shape of a progress bar:
-     *
-     * ```
-     * https://discord.com/channels/1309080597314011148/1525897111936438314
-     * ```
-     *
-     * It was then sampled every five seconds, the Overview tab's guild statistics
-     * were attached to it as the player's own action stats, and it was live enough
-     * to start the recorder — the session in that export reads `startedBy:
-     * "tab-reading"`. None of that is fixed by a filter that only runs on new cards.
-     *
-     * @param {Object} tile - A stored tile
-     * @param {string} key - The key it is filed under
-     * @returns {boolean} True when it must not be kept
-     */
-    function isJunkTile(tile, key = '') {
-        const name = String(tile?.name ?? '');
-        if (!isTrialName(name)) return true;
-        // The key is derived from the name, so a key the name would not produce is a
-        // record written before the name was checked at all
-        if (/[\r\n]/.test(String(key)) || String(key).length > MAX_TRIAL_NAME_CHARS + 16) return true;
-
-        return (tile?.samples || []).some((sample) =>
-            (sample?.readings || []).some((reading) => !isPlausibleReading(reading?.current, reading?.max))
-        );
-    }
-
-    /**
-     * Drop stored tiles that are not trials, and say which went.
-     *
-     * The same one-time, self-healing shape the monster-loadout purge uses: the
-     * record comes back untouched — the same object — when there is nothing to
-     * purge, so a caller can tell whether a write is needed.
-     *
-     * `history` is cleaned too. An archived cycle carrying a notice board is an
-     * export full of it and a payout computed from it, a week after the fact.
-     *
-     * @param {Object|null} record - A stored record
-     * @returns {{record: Object|null, purged: string[]}} The clean record and what left
-     */
-    function purgeJunkTiles(record) {
-        if (!record || typeof record !== 'object') return { record, purged: [] };
-
-        const purged = [];
-        const clean = (tiles) => {
-            const kept = {};
-            for (const [key, tile] of Object.entries(tiles || {})) {
-                if (isJunkTile(tile, key)) {
-                    // One short line of it, so a log line stays a log line
-                    purged.push(
-                        `${String(tile?.name ?? key)
-                        .slice(0, 40)
-                        .replace(/\s+/g, ' ')}…`
-                    );
-                    continue;
-                }
-                kept[key] = tile;
-            }
-            return kept;
-        };
-
-        const tiles = clean(record.tiles);
-        const history = Array.isArray(record.history)
-            ? record.history.map((cycle) => (cycle?.tiles ? { ...cycle, tiles: clean(cycle.tiles) } : cycle))
-            : record.history;
-
-        if (!purged.length) return { record, purged };
-        return { record: { ...record, tiles, history }, purged };
-    }
-
-    /**
-     * Delete every trial record and session this script has stored.
-     *
-     * The escape hatch. Everything above heals itself on the next render, and this
-     * is here for the case where it does not — one call, no arguments, and the
-     * feature rebuilds from the panel within a sampler tick.
-     *
-     * Only the trial keys: `guildHistory` is shared with the guild XP history, which
-     * is months of data and nothing to do with trials.
-     *
-     * @returns {Promise<{removed: string[]}>} Which keys went
-     */
-    async function clearTrialStorage() {
-        const removed = [];
-        try {
-            const keys = await storage.getAllKeys(STORE_NAME$8);
-            for (const key of keys || []) {
-                const name = String(key);
-                if (!name.startsWith(KEY_PREFIX$1) && !name.startsWith('guildTrialSession')) continue;
-                await storage.delete(name, STORE_NAME$8);
-                removed.push(name);
-            }
-        } catch (error) {
-            console.error('[GuildTrialsStore] Failed to clear trial storage:', error);
-        }
-        return { removed };
-    }
-
-    /**
-     * Write a guild's record.
-     * @param {string|null} guildName - Guild name
-     * @param {Object} record - The record
-     * @param {string|number|null} [characterId] - The viewing character, for the fallback key
-     * @returns {Promise<boolean>} True when the write was queued
-     */
-    async function saveTrialRecord(guildName, record, characterId = null, { guildId = null } = {}) {
-        try {
-            // Stamped on the way out, so the next session can tell whose it is
-            const stamped = {
-                ...record,
-                guildId: record?.guildId ?? guildId ?? null,
-                guildName: record?.guildName ?? guildName ?? null,
-            };
-            await storage.set(guildTrialsStorageKey(guildName, characterId), stamped, STORE_NAME$8);
-            return true;
-        } catch (error) {
-            console.error('[GuildTrialsStore] Failed to save trial samples:', error);
-            return false;
-        }
-    }
-
-    /** The buildings whose levels change a payout, and how their hrids are spelled */
-    const BUILDING_PATTERNS = {
-        buildersHall: /buildershall/,
-        treasury: /treasury/};
-
-    /** Client-data maps that might describe guild buildings, most likely first */
-    const DETAIL_MAP_KEYS = ['guildBuildingDetailMap', 'guildBuildingDetailDict', 'guildShrineDetailMap'];
-
-    /**
-     * The per-level fields the game's own building entries carry.
-     *
-     * Read out of `initClientData` by the player and confirmed against the two
-     * upgrade popups this file already quotes: the Builder's Hall entry carries
-     * `guildPointsBonusPerLevel: 0.02` and the Treasury `guildTokenBonusPerLevel:
-     * 0.02`. Each entry carries only its own, so "whichever of these is present" is
-     * unambiguous and no caller has to say which building it is holding.
-     *
-     * Reading them beats the constant: it is the same number today, and it is
-     * whatever the number becomes after a rebalance.
-     */
-    const PER_LEVEL_FIELDS = ['guildPointsBonusPerLevel', 'guildTokenBonusPerLevel', 'guildExperienceBonusPerLevel'];
-
-    /** Remembered once found: `initClientData` is large and its shape does not change mid-session */
-    let detailMapKey = null;
-
-    /**
-     * An hrid reduced to its comparable letters.
-     * @param {string} hrid - An hrid
-     * @returns {string} Lowercase letters only
-     */
-    function normaliseHrid(hrid) {
-        return String(hrid || '')
-            .toLowerCase()
-            .replace(/[^a-z]/g, '');
-    }
-
-    /**
-     * Find the hrid a building is spelled with, from whatever the guild has built.
-     * @param {Object} levelMap - `guildBuildingLevelMap`
-     * @param {RegExp} pattern - One of {@link BUILDING_PATTERNS}
-     * @returns {string|null} The hrid, or null when the guild has no such building
-     */
-    function findBuildingHrid(levelMap, pattern) {
-        for (const hrid of Object.keys(levelMap || {})) {
-            if (pattern.test(normaliseHrid(hrid))) return hrid;
-        }
-        return null;
-    }
-
-    /**
-     * The bonus a building's detail entry grants at a level.
-     *
-     * Reads the buff shape the rest of the codebase already reads — `ratioBoost`
-     * plus `(level - 1) × ratioBoostLevelBonus`, as `combat-sim-adapter.js`
-     * resolves shrine buffs — and falls back to a flat `bonusPerLevel` field for a
-     * detail entry that carries one instead. Anything else returns null.
-     *
-     * @param {Object} detail - A guild building detail entry
-     * @param {number} level - Built level
-     * @returns {number|null} Bonus as a fraction, or null when the entry says nothing usable
-     */
-    function buildingBonusFromDetail(detail, level) {
-        if (!detail || !Number.isFinite(level) || level <= 0) return null;
-
-        // The game's own per-level figure first, where the entry carries one
-        for (const field of PER_LEVEL_FIELDS) {
-            const perLevel = Number(detail[field]);
-            if (Number.isFinite(perLevel)) return perLevel * level;
-        }
-
-        const buffs = Array.isArray(detail.buffs) ? detail.buffs : [];
-        for (const buff of buffs) {
-            const base = Number(buff?.ratioBoost);
-            const perLevel = Number(buff?.ratioBoostLevelBonus);
-            if (Number.isFinite(base) || Number.isFinite(perLevel)) {
-                return (Number.isFinite(base) ? base : 0) + (level - 1) * (Number.isFinite(perLevel) ? perLevel : 0);
-            }
-        }
-
-        const perLevel = Number(detail.bonusPerLevel ?? detail.ratioBoostLevelBonus);
-        if (Number.isFinite(perLevel)) return perLevel * level;
-
-        return null;
-    }
-
-    /**
-     * Everything known about one payout-relevant building.
-     *
-     * `source` is what the panel needs to caption itself: `'manual'` when the player
-     * typed the number in, `'client'` when the game's own detail map described the
-     * building, `'formula'` when the level is known and the confirmed
-     * 2%-per-level rule was applied to it, and `'unknown'` when not even the level
-     * is — in which case `bonus` is null and the caller must show un-bonused figures
-     * rather than treat it as zero.
-     *
-     * @param {Object} input - Inputs
-     * @param {RegExp} input.pattern - Which building
-     * @param {number|null} input.override - Manual bonus as a percentage, or null
-     * @param {Object} [input.levelMap] - `guildBuildingLevelMap`; read from the data manager when omitted
-     * @param {Object} [input.detailMap] - Building detail map; probed from client data when omitted
-     * @returns {{hrid: string|null, level: number, bonus: number|null, source: string,
-     *   rules: {bonusPerLevel: number, maxLevel: number, source: string}}} What is known
-     */
-    function readBuildingBonus({ pattern, override = null, levelMap, detailMap }) {
-        const levels = levelMap || dataManager.guildBuildingLevelMap || {};
-        const details = detailMap || probeBuildingDetailMap();
-
-        const rules = readBuildingRules(pattern, { levelMap: levels, detailMap: details });
-        const hrid = findBuildingHrid(levels, pattern);
-        // Clamped to the building's own cap — 20 in the game's data — so anything
-        // higher on the wire is bad data, not a level to trust or to extrapolate the
-        // per-level rule past.
-        const level = hrid ? Math.min(Number(levels[hrid]) || 0, rules.maxLevel) : 0;
-
-        if (Number.isFinite(override) && override > 0) {
-            return { hrid, level, bonus: override / 100, source: 'manual', rules };
-        }
-
-        const bonus = hrid ? buildingBonusFromDetail(details?.[hrid], level) : null;
-        if (Number.isFinite(bonus)) return { hrid, level, bonus, source: 'client', rules };
-
-        // The level is the hard part; once it is in hand the multiplier is arithmetic
-        if (level > 0) return { hrid, level, bonus: level * rules.bonusPerLevel, source: 'formula', rules };
-
-        return { hrid, level, bonus: null, source: 'unknown', rules };
-    }
-
-    /**
-     * The client-data map describing guild buildings, whichever it is called.
-     * @returns {Object} The map, or an empty object
-     */
-    function probeBuildingDetailMap() {
-        const clientData = dataManager.getInitClientData?.() || {};
-
-        if (detailMapKey && isBuildingDetailMap(clientData[detailMapKey])) return clientData[detailMapKey];
-
-        for (const key of DETAIL_MAP_KEYS) {
-            const candidate = clientData[key];
-            if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
-                detailMapKey = key;
-                return candidate;
-            }
-        }
-
-        // Named guesses exhausted. Rather than give up on a map that is provably
-        // there — the player read it out of `initClientData` — find it by what it
-        // contains: entries keyed `/guild_buildings/<name>` carrying the per-level
-        // fields above. A renamed map then costs nothing.
-        for (const [key, value] of Object.entries(clientData)) {
-            if (!isBuildingDetailMap(value)) continue;
-            detailMapKey = key;
-            return value;
-        }
-
-        return {};
-    }
-
-    /**
-     * Whether a client-data value looks like the guild building detail map.
-     * @param {*} value - A candidate
-     * @returns {boolean} True when it is one
-     */
-    function isBuildingDetailMap(value) {
-        if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-
-        for (const [hrid, entry] of Object.entries(value)) {
-            if (!entry || typeof entry !== 'object') continue;
-            if (PER_LEVEL_FIELDS.some((field) => Number.isFinite(Number(entry[field])))) return true;
-            if (/^\/guild_buildings?\//.test(hrid) && Number.isFinite(Number(entry.maxLevel))) return true;
-        }
-        return false;
-    }
-
-    /**
-     * The rules a building runs on, from the game's own data where it has them.
-     *
-     * Both figures are confirmed twice over — `guildPointsBonusPerLevel: 0.02` and
-     * `maxLevel: 20` in client data, and the upgrade popups that quote the same
-     * numbers back — so this is not a probe for something unverified. It exists so
-     * that a rebalance changes the panel rather than making it quietly wrong, and it
-     * falls back to the constants when there is no client data to read, which is the
-     * state every test and every pre-login moment is in.
-     *
-     * @param {RegExp} pattern - One of {@link BUILDING_PATTERNS}
-     * @param {Object} [options] - Overrides, for tests
-     * @param {Object} [options.levelMap] - `guildBuildingLevelMap`
-     * @param {Object} [options.detailMap] - Building detail map
-     * @returns {{bonusPerLevel: number, maxLevel: number, source: 'client'|'constant'}} The rules
-     */
-    function readBuildingRules(pattern, { levelMap, detailMap } = {}) {
-        const levels = levelMap || dataManager.guildBuildingLevelMap || {};
-        const details = detailMap || probeBuildingDetailMap();
-
-        // By level map first, because that is the spelling this guild's own data
-        // uses; by the detail map's own keys when the guild has never built one
-        const hrid = findBuildingHrid(levels, pattern) || findBuildingHrid(details, pattern) || null;
-        const entry = hrid ? details?.[hrid] : null;
-
-        const perLevel = PER_LEVEL_FIELDS.map((field) => Number(entry?.[field])).find((value) => Number.isFinite(value));
-        const maxLevel = Number(entry?.maxLevel);
-
-        return {
-            bonusPerLevel: Number.isFinite(perLevel) ? perLevel : BUILDING_BONUS_PER_LEVEL,
-            maxLevel: Number.isFinite(maxLevel) && maxLevel > 0 ? maxLevel : GUILD_BUILDING_MAX_LEVEL,
-            source: Number.isFinite(perLevel) ? 'client' : 'constant',
-        };
-    }
-
-    /**
-     * Both payout bonuses, with their provenance.
-     * @param {Object} [options] - Overrides, for tests
-     * @param {Object} [options.levelMap] - `guildBuildingLevelMap`
-     * @param {Object} [options.detailMap] - Building detail map
-     * @param {Function} [options.getSetting] - Settings reader
-     * @returns {{buildersHall: Object, treasury: Object}} Bonus info per building
-     */
-    function readPayoutBonuses({ levelMap, detailMap, getSetting } = {}) {
-        const read = getSetting || ((key, fallback) => config.getSettingValue?.(key, fallback) ?? fallback);
-        return {
-            buildersHall: readBuildingBonus({
-                pattern: BUILDING_PATTERNS.buildersHall,
-                override: Number(read('guildTrialsBuildersHallBonus', 0)),
-                levelMap,
-                detailMap,
-            }),
-            treasury: readBuildingBonus({
-                pattern: BUILDING_PATTERNS.treasury,
-                override: Number(read('guildTrialsTreasuryBonus', 0)),
-                levelMap,
-                detailMap,
-            }),
-        };
-    }
 
     /**
      * Recording a trial while it happens, without being asked twice.
@@ -22926,6 +24055,18 @@ ${starCSS}
             lines.push(`…and ${players.length - ranked.length} more`);
         }
 
+        // A spectated split names its attacker by presence, so a member who never
+        // had a tick of their own earns no line — three names summing to 100% under
+        // a party of seven is honest but partial, and a guild reading it should
+        // know the other four are not people who did nothing
+        const coverage = attributionCoverage(breakdown);
+        if (coverage.partial) {
+            lines.push(
+                `(Only ${coverage.attributed} of ${coverage.party} attributed — shares are of that damage; ` +
+                    'the total is a lower bound.)'
+            );
+        }
+
         const healed = breakdown?.support?.totals?.healingDone || 0;
         const unattributed = breakdown?.support?.unattributedHealing || 0;
         if (healed > 0 || unattributed > 0) {
@@ -23121,11 +24262,31 @@ ${starCSS}
                 (row.share === null ? ')' : `, ${row.share.toFixed(1)}%)`)
         );
 
-        const unattributed = breakdown?.support?.unattributedHealing || 0;
-        if (tab === 'healing' && unattributed > 0) {
-            lines.push(
-                `Unattributed: ${formatters_js.formatWithSeparator(Math.round(unattributed))} (regeneration, or two healers at once)`
-            );
+        // Damage summing to 100% across a subset of the party reads as the whole
+        // party unless it says otherwise — a spectated split only names the players
+        // who had a tick of their own, so "3 of 7" is stated here too
+        if (tab === 'damage') {
+            const coverage = attributionCoverage(breakdown);
+            if (coverage.partial) {
+                lines.push(
+                    `${coverage.attributed} of ${coverage.party} players attributed — shares are of that damage, ` +
+                        'and the party rate is a lower bound; the rest fill in as their hits land alone on the boss.'
+                );
+            }
+        }
+
+        if (tab === 'healing') {
+            const regen = breakdown?.support?.regenHealing || 0;
+            if (regen > 0) {
+                lines.push(`Regeneration: ${formatters_js.formatWithSeparator(Math.round(regen))} (the trial’s flat regen, nobody’s)`);
+            }
+            const unattributed = breakdown?.support?.unattributedHealing || 0;
+            if (unattributed > 0) {
+                lines.push(
+                    `Unattributed: ${formatters_js.formatWithSeparator(Math.round(unattributed))} ` +
+                        '(overlapping heals, or an on-cast proc from a player without streamed counters)'
+                );
+            }
         }
 
         return [header, ...lines].join('\n');
@@ -23356,6 +24517,31 @@ ${starCSS}
         }
 
         /**
+         * How much of the party the split covers, when it is only a part.
+         *
+         * A spectated split names its attacker by presence — the lone player who
+         * changed on a tick the boss lost health — because the stream carries no
+         * other player's attack counters. A member who never had a tick of their
+         * own earns no row, so three names at 100% can sit under a party of seven.
+         * Saying "3 of 7" is what keeps that from reading as a claim the party is
+         * three people. Silent when the whole party is covered, or its size is
+         * unknown.
+         *
+         * @param {Object} breakdown - From `guildTrialDamage.breakdown()`
+         * @returns {string} A sentence, or an empty string
+         */
+        _coverageNote(breakdown) {
+            const coverage = attributionCoverage(breakdown);
+            if (!coverage.partial) return '';
+
+            return (
+                ` ${coverage.attributed} of ${coverage.party} players had a tick that could be split out this` +
+                ` window; the shares are of that attributed damage and the party rate is a lower bound, with the` +
+                ` rest filling in as their hits land alone on the boss.`
+            );
+        }
+
+        /**
          * The per-player split as the builds predict it.
          *
          * Rebuilt on every draw rather than cached: a build captured mid-trial has to
@@ -23441,10 +24627,12 @@ ${starCSS}
                   ? `<div style="color:${GOOD$1}; font-size:11px; font-weight:600; line-height:1.5;">` +
                     `Measured from the trial fight — ${Math.round(breakdown?.seconds || 0)}s watched.</div>` +
                     `<div style="color:${DIM$1}; font-size:10px; line-height:1.5; margin-bottom:6px;">` +
-                    'Folded from the stream the In Progress fight view subscribes to. Only the stretch the view ' +
-                    'was open for is counted, so closing it pauses these rather than ending them.' +
+                    'Folded from the stream the In Progress fight view subscribes to. Once started, the stream ' +
+                    'often keeps flowing while other tabs are open — every tick received is counted, and a gap ' +
+                    'in the stream pauses these rather than ending them.' +
                     this._ownRowNote(breakdown) +
                     this._namingNote(breakdown) +
+                    this._coverageNote(breakdown) +
                     '</div>'
                   : `<div style="color:${DIM$1}; font-size:10px; line-height:1.5; margin-bottom:6px;">` +
                     'Attributed off this client’s own battle feed.</div>';
@@ -23469,9 +24657,10 @@ ${starCSS}
                 `<div style="color:${DIM$1}; padding:6px 0; line-height:1.5;">` +
                 (healing
                     ? spectated
-                        ? 'Watched, but no heal could be attributed: a rise in health is only credited when exactly ' +
-                          'one player cast a heal on that tick. Anything else is kept as unattributed rather than ' +
-                          'assigned to whoever looked likely.'
+                        ? 'Watched, but no heal could be attributed: a rise in health is only credited when the tick ' +
+                          'names its actor — a lone heal cast, or a lone ability cast whose non-regeneration rises ' +
+                          'are then that cast’s effect. Regeneration is set aside by its shape, and anything else is ' +
+                          'kept as unattributed rather than assigned to whoever looked likely.'
                         : `No healing has been watched — ${SPECTATED_TRIAL_NOTE}. ` +
                           'Open it during a trial and this fills from the same ticks the damage does; a build ' +
                           'cannot be used to guess healing, so there is no estimate to show meanwhile.'
@@ -23495,11 +24684,26 @@ ${starCSS}
                         .join('') + unestimated
                   : unsplit || nothing;
 
+            // Regeneration and unattributed are different claims and get different
+            // lines: "the game healed everyone" is not a failure to attribute, and
+            // lumping the two together read as one — "0 party hps" over a bucket
+            // that was mostly the trial's own flat regen
             const unattributed = breakdown?.support?.unattributedHealing || 0;
+            const regen = breakdown?.support?.regenHealing || 0;
             const footnote =
-                healing && unattributed > 0
+                healing && (unattributed > 0 || regen > 0)
                     ? `<div style="color:${DIM$1}; font-size:10px; margin-top:4px;">` +
-                      `${formatters_js.formatKMB(Math.round(unattributed))} unattributed — regeneration, or two healers on one tick.</div>`
+                      (regen > 0
+                          ? `${formatters_js.formatKMB(Math.round(regen))} regeneration — the trial’s own flat regen, ` +
+                            'identified by its uniform per-unit size and credited to nobody.'
+                          : '') +
+                      (regen > 0 && unattributed > 0 ? ' ' : '') +
+                      (unattributed > 0
+                          ? `${formatters_js.formatKMB(Math.round(unattributed))} unattributed — nothing on those ticks names a ` +
+                            'caster: overlapping heals, or an on-cast proc (a Blooming Trident’s Bloom, say) from a ' +
+                            'player whose counters this stream does not carry.'
+                          : '') +
+                      '</div>'
                     : '';
 
             const forecast = this.forecast;
@@ -24178,10 +25382,19 @@ ${starCSS}
      * are persisted: a player who checks the tab twice a minute should not restart
      * the measurement each time.
      *
-     * **Tier growth is fitted.** Projecting the tier after the current one needs the
-     * curve the totals grow along, which is likewise not in client data. It is
-     * fitted from the tiers this trial has actually shown — so it appears only once
-     * a second tier has been seen, and says so until then.
+     * **Tier growth is exact, anchored on one observation.** Projecting the tier
+     * after the current one needs the curve the totals grow along, which is not in
+     * client data — but both kinds' curves are now known exactly (`exactTierTotal`:
+     * a tenth of the first tier's work per skilling tier, `10 + level` for a combat
+     * boss), and they are ratios, so the bar in hand anchors the whole ladder. The
+     * fitted growth factor survives only as a fallback.
+     *
+     * **A skilling tier can be known from its bar alone.** The bar's target is
+     * `base × (1 + 0.1 × (tier − 1)) × (1 + 0.01 × participants)`, and the base is
+     * learned per skill the first time a stated tier, the target and the
+     * participant count are on screen together — after which a mid-trial join on
+     * the In Progress tab, which carries no tier at all, still knows which tier it
+     * is watching (`tierFromWorkTarget`, `tierSource: 'work-ladder'`).
      *
      * **Tiers cleared is inferred from the tier on screen.** A trial starts at tier
      * 1 and climbs one at a time, so a trial showing tier 7 has banked six. This is
@@ -24268,10 +25481,54 @@ ${starCSS}
      */
     const SPECTATED_POOL_FRESH_MS = 10_000;
 
+    /**
+     * How old a bar reading may be and still teach a skill's base work.
+     *
+     * The record's last target survives tab switches, and a tier that cleared
+     * while the tab was shut would pair the *old* target with the *new* badge —
+     * a wrong base learned once states wrong tiers with confidence from then on.
+     * Fifteen seconds matches the skilling stream's own freshness window.
+     */
+    const WORK_BASE_LEARN_FRESH_MS = 15_000;
+
     const ACCENT$3 = '#8fd3ff';
     const DIM = '#9ca3af';
     const GOOD = '#4ade80';
     const WARN = '#f0a830';
+
+    /**
+     * First-tier totals confirmed by direct observation, as cold-start seeds.
+     *
+     * The learned store answers first and overrides these; the seeds exist because
+     * the store cannot cross a browser profile — the user's second account, in a
+     * second browser, mid-joined a trial and had base and bar in front of it with
+     * no way to connect them ("tier not known yet" over a bar reading 8,276/51,360
+     * = 40,000 × 1.2 × 1.07 exactly). Each entry is backed by observations this
+     * codebase already carries:
+     *
+     * - **crafting 40,000** — two guilds and an export: 49,920 = ×1.2×1.04 (T3,
+     *   4 signed), 88,920 = ×1.9×1.17 (T10, 17 signed), and a full T2–T15 ladder
+     *   41,600 × (1 + 0.1(t−1)) in the recorded week.
+     * - **foraging 40,000** — a live trial watched through 40,800 / 44,880 /
+     *   48,960 with 2 signed up.
+     * - **alchemy 40,000** — a live card at 65,280 = ×1.6×1.02 (T7, 2 signed).
+     * - **Trial Chameleon 550,000** — the pool bar's own ladder 550,000 / 600,000
+     *   / 650,000 / 700,000 = (100 + 10t) × 5,000, with the HP bar exactly ×1.04
+     *   beside it in a 4-participant guild and ×1.03 in a 3-participant one.
+     * - **Trial Badger 330,000** — a `new_guild_battle` sheet: 429,000 with 30 in
+     *   the trial, 330,000 × 1.3 exactly.
+     *
+     * Every observed skilling base has been 40,000 so far, but only the observed
+     * skills are seeded: a wrong seed states wrong tiers with confidence, and an
+     * unseeded skill merely learns on its first stated-tier moment as before.
+     */
+    const DEFAULT_WORK_BASES = {
+        crafting: 40_000,
+        foraging: 40_000,
+        alchemy: 40_000,
+        'trial chameleon': 550_000,
+        'trial badger': 330_000,
+    };
 
     /**
      * Everything derivable about one trial, from its stored samples.
@@ -24285,14 +25542,16 @@ ${starCSS}
      * @param {number|null} [options.timeLeftMs] - Active time left in the trial
      * @param {number|null} [options.buildersHallBonus] - Builders Hall bonus fraction, for reading the card's points
      * @param {string|null} [options.phase] - `scheduled`, `live` or `completed`, for the first-tier rule
+     * @param {number|null} [options.workBase] - The skill's learned first-tier work, for the work-ladder tier rung
      * @returns {{kind: string, tier: number|null, level: number|null, tiersClearedSoFar: number,
      *   rate: number|null, rateNote: string|null, remaining: number|null, total: number|null,
      *   etaMs: number|null, growthPerTier: number|null, next: Object|null, pace: Object|null,
-     *   samples: number, timeLeftMs: number|null}} Analysis
+     *   samples: number, timeLeftMs: number|null, tiers: Array<{tier: number, total: number}>,
+     *   personalByTier: Object}} Analysis
      */
     function analyseTrial(
         record,
-        { participants = 0, timeLeftMs = null, buildersHallBonus = null, phase = null } = {}
+        { participants = 0, timeLeftMs = null, buildersHallBonus = null, phase = null, workBase = null } = {}
     ) {
         const samples = Array.isArray(record?.samples) ? record.samples : [];
         const kind = record?.kind === 'combat' ? 'combat' : 'skilling';
@@ -24338,17 +25597,121 @@ ${starCSS}
         const statedZero = record?.points === 0;
         const earned = statedPoints || record?.points > 0 || (completed && !statedZero);
         const assumeFirst = phase === 'live' && badge === null && !earned;
-
-        // The tier being fought, which is what a rate, a pace and a forecast are about
-        const tier = badge !== null ? (completed || !earned ? badge : badge + 1) : assumeFirst ? FIRST_TIER : null;
-        // What it has finished, which is what the payout is about
-        const bankedTiers = badge !== null && earned ? badge : 0;
         const observations = Array.isArray(record?.tiers) ? record.tiers : [];
 
         const history = samples.map((sample) => sample?.readings || []);
         const { bossIndex, poolIndex } = classifyReadings(history, kind);
         const index = kind === 'combat' ? bossIndex : poolIndex;
         const direction = kind === 'combat' ? -1 : 1;
+
+        // Read ahead of the tier because the tier may now be derived *from* it: the
+        // bar's target is the one thing the In Progress card does carry
+        const latest = index === null ? null : samples[samples.length - 1]?.readings?.[index] || null;
+        const total = Number.isFinite(latest?.max) ? latest.max : null;
+        const remaining = latest ? (direction === -1 ? latest.current : Math.max(0, latest.max - latest.current)) : null;
+
+        // The tier being fought, which is what a rate, a pace and a forecast are
+        // about — from the best of four rungs, each labelled so a caption can say
+        // where the number came from:
+        //
+        // 1. **The badge** ('card'), read as the comment above explains it.
+        // 2. **The socket** ('socket'): `guild_skilling_updated.tier` states the
+        //    tier in progress outright, and the store keeps it as `liveTier`.
+        // 3. **The work ladder** ('work-ladder'): the bar's target identifies the
+        //    tier once the skill's base work is known — see `tierFromWorkTarget`.
+        //    This is what makes a mid-trial join on the In Progress tab knowable
+        //    without ever opening the Trials tab.
+        // 4. **The first-tier rule** ('first-tier-rule'), as before.
+        //
+        // ## The rungs go stale at different speeds, and that decides who wins
+        //
+        // Live evidence, one moment, two tabs: the In Progress bar read
+        // 17,353/99,840 — a target only T15 produces — while the panel said
+        // "Banked 8 tiers" and "Next tier work (T10)". A `liveTier` of 9, stated
+        // hours earlier when the trial genuinely was on tier 9, had been persisted
+        // and never invalidated, and the rung order let it outrank the bar in
+        // front of the player until a Trials-tab visit rewrote the badge.
+        //
+        // So staleness is now handled twice over:
+        //
+        // - A socket-stated tier is only believed **for the pool it was stated
+        //   with**. The update carries `targetWorkValue`, the store keeps it as
+        //   `liveTierTarget`, and the moment the bar's target no longer matches,
+        //   the statement is about a tier that has since cleared and is dropped.
+        // - Tiers only climb, so the winner is the **largest** valid rung — the
+        //   badge and the socket can lag but never lead, and the work ladder reads
+        //   the bar as it is *now*. Ties go to the stated sources over the derived
+        //   one.
+        //
+        // The work ladder no longer needs the learned store to have spoken: any
+        // correctly-filed tier observation from this trial backs the base out
+        // (`baseWorkFromObservations`), so a record that once knew its tier keeps
+        // knowing it as later tiers clear with the tab sitting open.
+        const fromBadge = badge !== null ? (completed || !earned ? badge : badge + 1) : null;
+
+        const socketTarget = Number.isFinite(record?.liveTierTarget) ? record.liveTierTarget : null;
+        const socketStale = socketTarget !== null && Number.isFinite(total) && total !== socketTarget;
+        const fromSocket = !completed && !socketStale && Number.isFinite(record?.liveTier) ? record.liveTier : null;
+
+        // Only an observation above the first tier may seed the fallback base: a
+        // tier-1 observation may be the first-tier rule's own filing, and a base
+        // derived from it "confirms" tier 1 by construction — an assumption
+        // relabelled as arithmetic. Combat records file both of a card's bars as
+        // observations and the two sit on differently-scaled ladders, so the
+        // observation fallback is a skilling-only shortcut; a combat base comes
+        // from the learned store.
+        const anchoredObservations = observations.filter((observation) => Number(observation?.tier) >= 2);
+        const ladderBase =
+            Number.isFinite(workBase) && workBase > 0
+                ? workBase
+                : kind === 'skilling'
+                  ? baseWorkFromObservations(anchoredObservations, participants, kind)
+                  : null;
+
+        // A combat card's *second* bar is the cleaner tier anchor: it is the
+        // tier's own pool, scaling purely with the tier's level — observed live as
+        // 547,970/550,000 at T1 becoming 597,970/600,000 at T2, exactly 110 → 120
+        // on a 5,000-per-unit base, with no participant factor to get right. The
+        // boss health (first bar) carries the 1%-per-participant scale and backs
+        // out the *same* base, so it still identifies the tier when the second bar
+        // is absent, at the cost of needing the participant count.
+        const combatPoolTarget =
+            kind === 'combat' && Number.isFinite(samples[samples.length - 1]?.readings?.[1]?.max)
+                ? samples[samples.length - 1].readings[1].max
+                : null;
+        const fromWorkLadder = !completed
+            ? ((combatPoolTarget !== null
+                  ? tierFromWorkTarget({ target: combatPoolTarget, baseWork: ladderBase, participants: 0, kind })
+                  : null) ?? tierFromWorkTarget({ target: total, baseWork: ladderBase, participants, kind }))
+            : null;
+
+        let tier = null;
+        let tierSource = null;
+        for (const [candidate, source] of [
+            [fromBadge, 'card'],
+            [fromSocket, 'socket'],
+            [fromWorkLadder, 'work-ladder'],
+        ]) {
+            if (candidate === null || (tier !== null && candidate <= tier)) continue;
+            tier = candidate;
+            tierSource = source;
+        }
+        if (tier === null && assumeFirst && !(Number.isFinite(ladderBase) && Number.isFinite(total))) {
+            // The first-tier rule stands down when the work ladder has actively
+            // contradicted it: a known base and a target that fits no tier is not
+            // a trial provably on tier one, whatever the rule would like to assume
+            tier = FIRST_TIER;
+            tierSource = 'first-tier-rule';
+        }
+
+        // What it has finished, which is what the payout is about. A trial climbs
+        // one tier at a time from the first, so a stated or derived tier in
+        // progress banks everything below it — that is how "Banked 2 tiers" is
+        // known on a mid-trial join whose cards were never on screen.
+        let bankedTiers = badge !== null && earned ? badge : 0;
+        if ((tierSource === 'socket' || tierSource === 'work-ladder') && Number.isFinite(tier)) {
+            bankedTiers = Math.max(bankedTiers, tier - 1);
+        }
 
         // Everything downstream of the tier — what is banked, what the payout is
         // worth, whether a pace can be walked — is unavailable rather than zero when
@@ -24364,9 +25727,9 @@ ${starCSS}
             kind,
             tier,
             tierKnown,
-            // Where the tier came from, so a caption can say "assumed" rather than
-            // implying the panel stated it
-            tierSource: badge !== null ? 'card' : assumeFirst ? 'first-tier-rule' : null,
+            // Where the tier came from, so a caption can say "assumed" or "derived
+            // from the tier's work total" rather than implying the panel stated it
+            tierSource,
             completed,
             // The card's own "840 pts", where it has been seen. It is Guild Points
             // rather than base points — see `trialBankedBasePoints` — so the Builders
@@ -24390,6 +25753,18 @@ ${starCSS}
             next: null,
             pace: null,
             samples: samples.length,
+            // The record's tier observations and per-tier personal stats, carried
+            // through because the forecast reads them off the analysis. It always
+            // did — `analysis.tiers` and `analysis.personalByTier` — and neither
+            // field existed, so the skilling forecast walked with no ladder at
+            // all: its first step past the current tier found nothing, broke with
+            // 'unknown-next-tier', and "On pace for 13 tiers → T13" was a walk of
+            // exactly one tier presented as the hour's verdict — on both tabs,
+            // because a live forecast suppresses the exact-ladder pace row. The
+            // success-decline model starved the same way, silently.
+            tiers: observations,
+            personalByTier:
+                record?.personalByTier && typeof record.personalByTier === 'object' ? record.personalByTier : {},
             // Carried through so the block can tell "no pace because no clock" from
             // "no pace because no rate yet" — they read identically on screen and
             // only one of them is something the player can do anything about
@@ -24397,10 +25772,6 @@ ${starCSS}
         };
 
         if (index === null) return base;
-
-        const latest = samples[samples.length - 1]?.readings?.[index] || null;
-        const total = Number.isFinite(latest?.max) ? latest.max : null;
-        const remaining = latest ? (direction === -1 ? latest.current : Math.max(0, latest.max - latest.current)) : null;
 
         const growthPerTier = base.growthPerTier;
 
@@ -24435,30 +25806,43 @@ ${starCSS}
             rate = ratePerMs(series, direction);
         }
 
-        // The next tier's size. For a skilling trial the ladder is now derived from
-        // the rule the observed pools reproduce exactly, so a preview no longer
-        // waits for a second tier to be seen
-        const derivedNext =
-            kind === 'skilling' && Number.isFinite(tier)
-                ? tierPoolWork({
-                      baseWork: baseWorkFromObservations(observations, participants),
-                      tier: tier + 1,
-                      participants,
-                  })
-                : null;
-        const fitted = Number.isFinite(tier) ? nextTierPreview({ observations, currentTier: tier, participants }) : null;
-        const next =
-            fitted ||
-            (Number.isFinite(derivedNext) && tier + 1 <= TRIAL_MAX_TIER
-                ? {
-                      tier: tier + 1,
-                      level: levelFromTier(tier + 1),
-                      total: derivedNext,
-                      participantPenalty: participantScale(participants) - 1,
-                      growthPerTier: null,
-                  }
-                : null);
+        // The bar in hand is the one anchor whose tier label has been through the
+        // full rung ladder above, and one anchor is all the exact ladder needs —
+        // so when it exists it anchors *alone*. The stored observations' tier
+        // labels are inference-quality: a stale badge files the same total under
+        // two or three successive tiers (the recorded week holds exactly that),
+        // and a misfiled observation that lands on a projected tier outvotes
+        // everything through the nearest-anchor rule. Observed live: "Next tier
+        // work (T11) 77.3K" under a bar whose own target read 85,600 — a ladder
+        // that only climbs, priced downhill by a T9 target filed at T11. The
+        // observations still anchor a record with no live bar, which is the case
+        // they exist for.
+        const liveAnchor = Number.isFinite(tier) && Number.isFinite(total) && total > 0 ? { tier, total } : null;
+        const anchors = liveAnchor ? [liveAnchor] : observations;
 
+        // The next tier's size, off the exact ladder first — both kinds' curves are
+        // known exactly, so a preview no longer waits for a fit — with the fitted
+        // growth kept only as the fallback for a trial neither rule covers
+        const exactNext =
+            Number.isFinite(tier) && tier + 1 <= TRIAL_MAX_TIER ? exactTierTotal({ kind, anchors, tier: tier + 1 }) : null;
+        const next = Number.isFinite(exactNext)
+            ? {
+                  tier: tier + 1,
+                  level: levelFromTier(tier + 1),
+                  total: exactNext,
+                  participantPenalty: participantScale(participants) - 1,
+                  growthPerTier: null,
+              }
+            : Number.isFinite(tier)
+              ? nextTierPreview({ observations, currentTier: tier, participants })
+              : null;
+
+        // The pace walks the same ladder the next-tier row states, so the two can
+        // never disagree. The fitted-growth walk this replaces starved with fewer
+        // than two observed tiers: it stopped after the tier in hand with
+        // `limitedBy: 'unknown-next-tier'`, and "2 banked + the tier in hand" was
+        // then presented as a time verdict — a live trial that cleared far past T3
+        // had been captioned "On pace for 3 tiers → T3".
         const pace =
             Number.isFinite(tier) && Number.isFinite(remaining) && Number.isFinite(timeLeftMs)
                 ? projectPace({
@@ -24466,7 +25850,9 @@ ${starCSS}
                       remainingInTier: remaining,
                       rate,
                       timeLeftMs,
-                      totalForTier: (candidate) => projectTierTotal({ observations, tier: candidate, growthPerTier }),
+                      totalForTier: (candidate) =>
+                          exactTierTotal({ kind, anchors, tier: candidate }) ??
+                          projectTierTotal({ observations, tier: candidate, growthPerTier }),
                       tiersAlreadyCleared: base.tiersClearedSoFar,
                   })
                 : null;
@@ -24671,16 +26057,19 @@ ${starCSS}
             );
         }
 
-        // The value never wraps — a figure split from its unit is unreadable — and
-        // the label wraps instead of being cut. Between them that is the whole of
-        // the narrow-block problem: the unit stays with its number, and "On pace
-        // for" becomes two lines rather than "On…".
+        // Neither side ever breaks mid-word — a figure split from its unit is
+        // unreadable, and a label wrapped mid-phrase floats a word between rows:
+        // "Party DPS | 737 dmg/s" rendered as "Party  737 dmg/s" over an orphaned
+        // "DPS", which was reported. So the label holds one line too, and when the
+        // row genuinely cannot fit both, the *whole value* wraps under the label
+        // as its own right-aligned line — still a legible pair, never a shuffle.
         return (
-            `<div style="display:flex; justify-content:space-between; align-items:baseline; gap:8px;"${tip}>` +
-            `<span style="color:${DIM}; flex:1 1 auto; min-width:4em; overflow-wrap:normal; ` +
-            `word-break:normal; hyphens:none;">${label}</span>` +
+            `<div style="display:flex; flex-wrap:wrap; justify-content:space-between; align-items:baseline; ` +
+            `gap:2px 8px;"${tip}>` +
+            `<span style="color:${DIM}; flex:1 1 auto; overflow-wrap:normal; ` +
+            `word-break:normal; hyphens:none; white-space:nowrap;">${label}</span>` +
             `<span style="color:${color}; font-weight:600; text-align:right; white-space:nowrap; ` +
-            `flex:0 0 auto;">${text}</span></div>`
+            `flex:0 0 auto; margin-left:auto;">${text}</span></div>`
         );
     }
 
@@ -24708,6 +26097,41 @@ ${starCSS}
             value: gold ? `${count} (${gold.text})` : count,
             title: gold ? `${baseTitle} ${gold.title}` : baseTitle,
         };
+    }
+
+    /**
+     * Where the tier figure came from, as a caption sentence.
+     *
+     * The tier drives everything on the block — the pace, the ladder, the banked
+     * count — and three of its four sources are inference rather than something the
+     * game wrote on this card. A caption that implies the panel stated it is
+     * claiming more than is known, so each rung says what it is.
+     *
+     * @param {Object} analysis - From {@link analyseTrial}
+     * @returns {string} A sentence to append to a tooltip, or an empty string
+     */
+    function tierProvenance(analysis) {
+        if (analysis.tierSource === 'work-ladder') {
+            if (analysis.kind === 'combat') {
+                return (
+                    ' The tier is derived from the boss’s full health: the health bar’s maximum ' +
+                    'uniquely identifies the tier once the encounter’s base health is known, and ' +
+                    'this encounter’s has been learned from an earlier reading.'
+                );
+            }
+            return (
+                ' The tier is derived from the tier’s work total: the bar’s target uniquely ' +
+                'identifies the tier once the skill’s base work is known, and this skill’s has ' +
+                'been learned from an earlier reading.'
+            );
+        }
+        if (analysis.tierSource === 'socket') {
+            return ' The tier was stated outright by the game’s own trial update on the socket.';
+        }
+        if (analysis.tierSource === 'first-tier-rule') {
+            return ' The tier is assumed: every trial starts at tier 1, and nothing has said otherwise.';
+        }
+        return '';
     }
 
     /**
@@ -24753,7 +26177,7 @@ ${starCSS}
                 'Banked',
                 `nothing yet — tier ${analysis.tier} in progress`,
                 DIM,
-                'A trial starts at tier 1, so nothing is banked until the first tier completes.'
+                'A trial starts at tier 1, so nothing is banked until the first tier completes.' + tierProvenance(analysis)
             );
         }
 
@@ -24766,9 +26190,13 @@ ${starCSS}
                 ? 'This trial is over, so the tier on the card is the tier it reached — and the points it ' +
                       'states are the ladder’s total for exactly that many tiers, which is what makes this ' +
                       'figure exact rather than inferred.'
-                : 'The tier on the card counts what this trial has *finished* — it read T1 after the first ' +
-                      'tier cleared and T2 after the second, while the pool on screen was the next one along. ' +
-                      'So the tier being fought is one past the badge.'
+                : analysis.tierSource === 'card'
+                  ? 'The tier on the card counts what this trial has *finished* — it read T1 after the first ' +
+                    'tier cleared and T2 after the second, while the pool on screen was the next one along. ' +
+                    'So the tier being fought is one past the badge.'
+                  : 'A trial climbs one tier at a time from the first, so everything below the tier in ' +
+                    'progress is banked.' +
+                    tierProvenance(analysis)
         );
     }
 
@@ -24959,11 +26387,15 @@ ${starCSS}
             const projected = analysis.pace.tiersCleared;
             const level = levelFromTier(projected);
             const tiers = `${projected} tier${projected === 1 ? '' : 's'}`;
+            const target = projected ? ` → T${projected}${level ? ` (Lv.${level})` : ''}` : '';
 
-            if (analysis.pace.limitedBy === 'unknown-next-tier') return `${tiers} (next tier's size unknown)`;
+            // A walk cut short by an unknown ladder is a floor, never a verdict: it
+            // used to render "3 tiers → T3" for a walk that had merely run out of
+            // ladder to climb, and the trial then cleared far past T3
+            if (analysis.pace.limitedBy === 'unknown-next-tier') return `at least ${tiers}${target}`;
             // Nothing finished is nothing to point at
             if (!projected) return tiers;
-            return `${tiers} → T${projected}${level ? ` (Lv.${level})` : ''}`;
+            return `${tiers}${target}`;
         };
 
         if (analysis.pace && (!forecast || forecast.tier === null || slowdown)) {
@@ -24974,6 +26406,10 @@ ${starCSS}
                     analysis.pace.limitedBy === 'ladder' ? GOOD : WARN,
                     'The rate measured now, held flat for the rest of the hour. A tier only counts when it fits ' +
                         'whole.' +
+                        (analysis.pace.limitedBy === 'unknown-next-tier'
+                            ? '\nThe ladder past that tier is not known yet, so the walk stopped there — “at ' +
+                              'least”, because the real pace may be higher.'
+                            : '') +
                         (slowdown ? '\nThis one ignores the slowdown below, which is why it is the higher of the two.' : '')
                 )
             );
@@ -25028,14 +26464,17 @@ ${starCSS}
                     DIM,
                     (analysis.next.growthPerTier
                         ? `Fitted from the tiers seen this week (×${analysis.next.growthPerTier.toFixed(2)} per tier). `
-                        : 'Derived: each tier adds a tenth of the first tier’s work, which is what the pools ' +
-                          'observed on a live trial do exactly. ') +
+                        : analysis.kind === 'combat'
+                          ? 'Derived: boss health scales with the tier’s level, a rule the recorded tiers ' +
+                            'reproduce exactly, anchored on the total this trial has actually shown. '
+                          : 'Derived: each tier adds a tenth of the first tier’s work, which is what the pools ' +
+                            'observed on a live trial do exactly, anchored on the total this trial has shown. ') +
                         `${participants} participant${participants === 1 ? '' : 's'} already add ` +
                         `+${Math.round(analysis.next.participantPenalty * 100)}% to it.`
                 )
             );
         } else if (Number.isFinite(analysis.tier) && analysis.tier < TRIAL_MAX_TIER) {
-            rows.push(line$1('Next tier', 'needs a second tier to fit the curve', DIM));
+            rows.push(line$1('Next tier', 'needs one tier’s total to anchor the ladder', DIM));
         }
 
         rows.push(bankedRow(analysis));
@@ -25043,6 +26482,49 @@ ${starCSS}
         if (analysis.kind === 'combat') rows.push(...renderTrialPlayers(breakdown));
 
         return rows.join('');
+    }
+
+    /**
+     * The damage breakdown as one tile may wear it.
+     *
+     * There is one measurement and, on a two-combat week, two combat cards — and
+     * the whole breakdown used to land on both: Trial Hedgehog's panel showed
+     * "Per player · 2 fights · watched" with the Chameleon fight's exact rows,
+     * on a card reading "0 pts, not started". The measurement names the encounter
+     * it watched, so a tile of any other encounter — or a skilling tile, whose
+     * fill rate must never be compared against a fight's DPS — wears a scoped-out
+     * copy: the identity facts stay, the measured figures and rows do not, and
+     * the empty state says whose fight is actually being watched.
+     *
+     * A breakdown with no encounter of its own is passed through untouched: it
+     * has not been identified yet, and "click the boss to identify" is already the
+     * honest caption for that.
+     *
+     * @param {string} name - The tile's trial name
+     * @param {Object} [breakdown] - From `guildTrialDamage.breakdown()`
+     * @returns {Object} The breakdown this tile may show
+     */
+    function breakdownFor(name, breakdown = guildTrialDamage.breakdown()) {
+        if (!breakdown || !breakdown.encounter) return breakdown;
+
+        const encounter = encounterOf(name);
+        if (encounter === breakdown.encounter) return breakdown;
+
+        return {
+            ...breakdown,
+            measured: false,
+            measuredSupport: false,
+            players: [],
+            totalDamage: 0,
+            partyDps: null,
+            pool: null,
+            source: null,
+            stale: false,
+            support: { ...(breakdown.support || {}), players: [] },
+            reason:
+                `the watched fight is ${breakdown.bossName || breakdown.encounter}’s — ` +
+                'no fights watched for this encounter',
+        };
     }
 
     /**
@@ -25094,19 +26576,40 @@ ${starCSS}
             return [line$1('Per player', value, DIM, why)];
         }
 
+        // How much of the party these rows actually cover. A spectated split names
+        // its attacker by presence, so a member who never had a tick of their own
+        // earns no row — three names at 100% under a party of seven is honest but
+        // partial, and a header that says "3 of 7" is the difference between that
+        // and a claim the party is three people
+        const coverage = attributionCoverage(breakdown);
         const rows = [
             `<div style="margin-top:4px; color:${ACCENT$3}; font-weight:600;">` +
                 `Per player · ${breakdown.fights} fight${breakdown.fights === 1 ? '' : 's'}` +
+                `${coverage.partial ? ` · ${coverage.attributed} of ${coverage.party}` : ''}` +
                 `${breakdown.source === 'spectated' ? ' · watched' : ''}</div>`,
         ];
+        if (coverage.partial) {
+            rows.push(
+                `<div style="color:${DIM}; font-size:9px; line-height:1.4;" title="A spectated split names its ` +
+                    `attacker by which lone player changed on a tick the boss lost health; the other ` +
+                    `${coverage.party - coverage.attributed} of ${coverage.party} never had such a tick this window. ` +
+                    `Shares are of the attributed damage, and the party rate is a lower bound — the rest fill in as ` +
+                    `their hits land alone on the boss.">shares of the ${coverage.attributed} attributed; ` +
+                    `${coverage.party - coverage.attributed} not yet split out</div>`
+            );
+        }
 
         for (const player of breakdown.players) {
             const share = Number.isFinite(player.share) ? `${player.share.toFixed(0)}%` : '—';
-            const dps = player.dps === null ? 'measuring…' : `${num(player.dps)} dmg/s`;
+            // No unit on the figure: the header names what this list is, the
+            // tooltip has it in full, and in a 108px fight-view cell every saved
+            // pixel is name — "B… 1.5K dmg/s · 36%" was the reported result of
+            // spending them on a unit
+            const dps = player.dps === null ? 'measuring…' : `${num(player.dps)}/s`;
             const deaths = player.deaths > 0 ? ` · ${player.deaths}✝` : '';
 
             rows.push(
-                line$1(
+                playerRow(
                     player.name,
                     `${dps} · ${share}${deaths}`,
                     player.deaths > 0 ? WARN : GOOD,
@@ -25120,6 +26623,37 @@ ${starCSS}
         }
 
         return rows;
+    }
+
+    /**
+     * One player's row: name left, figures right, always one line.
+     *
+     * Not {@link line}, on purpose. That helper stacks a long *label* into a
+     * full-width caption, which is right for "Next tier work (T3)" and wrong for a
+     * roster: "MillenniumTest" is fourteen characters, so its figures dropped onto
+     * a second line while "Orven" beside it kept one, and the list read as a
+     * ragged mix of one- and two-line entries. And the column can be genuinely
+     * tiny — the fight-view injection lands in a 108px grid cell — so the row is a
+     * size down from the block and the name ellipsizes as tightly as it must. A
+     * cut name is acceptable here and nowhere else: the tooltip opens with the
+     * full name, and the figures are what the row is for.
+     *
+     * @param {string} name - The player
+     * @param {string} value - Their figures
+     * @param {string} color - Value colour
+     * @param {string} title - Tooltip; the full name is prepended, for when the row cuts it
+     * @returns {string} HTML
+     */
+    function playerRow(name, value, color, title) {
+        const full = `${name} — ${title}`;
+        return (
+            `<div style="display:flex; justify-content:space-between; align-items:baseline; gap:4px; ` +
+            `font-size:10px;" title="${full.replace(/"/g, '&quot;')}">` +
+            `<span style="color:${DIM}; flex:1 1 auto; min-width:5ch; overflow:hidden; text-overflow:ellipsis; ` +
+            `white-space:nowrap;">${name}</span>` +
+            `<span style="color:${color}; font-weight:600; text-align:right; white-space:nowrap; ` +
+            `flex:0 0 auto;">${value}</span></div>`
+        );
     }
 
     /**
@@ -25239,7 +26773,11 @@ ${starCSS}
             }
             block.style.width = '100%';
             block.style.flexBasis = '100%';
-            if (name) block.insertAdjacentHTML('afterbegin', trialBlockHeading(name));
+            // Placement can run again on the same block when a remount strands it,
+            // and a heading per placement is a stutter of headings
+            if (name && !block.querySelector('.mwi-trial-block-heading')) {
+                block.insertAdjacentHTML('afterbegin', trialBlockHeading(name));
+            }
             container.insertAdjacentElement('afterend', block);
             return 'after-container';
         };
@@ -25278,7 +26816,36 @@ ${starCSS}
      * @returns {string} HTML
      */
     function trialBlockHeading(name) {
-        return `<div style="color:${ACCENT$3}; font-weight:600; margin-bottom:2px;">${name}</div>`;
+        return (
+            `<div class="mwi-trial-block-heading" style="color:${ACCENT$3}; font-weight:600; ` +
+            `margin-bottom:2px;">${name}</div>`
+        );
+    }
+
+    /**
+     * Whether a block still sits where its card's placement put it.
+     *
+     * Every placement {@link placeTrialBlock} makes leaves the block adjacent to
+     * the card or to the card's container — so "still anchored" is a cheap
+     * adjacency test, and failing it means the game has moved on underneath: React
+     * re-parents cards as a fresh panel settles, and tears the boss card down and
+     * remounts it at every wave boundary. Both were reported as the same symptom —
+     * the readout drifting to the bottom of the view on first render, and the
+     * panel order flipping to [payout][DPS][boss card] after a tier cleared,
+     * because the remounted card arrived *after* the block that was placed beside
+     * its predecessor.
+     *
+     * @param {Element} block - The injected block
+     * @param {Element} anchor - The card it belongs beside
+     * @returns {boolean} True while the placement still holds
+     */
+    function blockNearAnchor(block, anchor) {
+        if (!anchor?.isConnected) return true; // nothing to re-anchor against
+        return (
+            anchor.nextElementSibling === block ||
+            anchor.parentElement?.nextElementSibling === block ||
+            anchor.contains(block)
+        );
     }
 
     class GuildTrials {
@@ -25303,10 +26870,18 @@ ${starCSS}
             this.awaitingCharacter = false;
             /** Block key → the markup last drawn into it, so an unchanged pass touches nothing */
             this.blockHtml = new Map();
+            /** When the record last went to storage; writes run at the sampling cadence, not the render one */
+            this.lastRecordSaveAt = 0;
             /** Where the cycle was last seen to be: scheduled, live or completed */
             this.phase = null;
             /** The last combat forecast, for the per-player panel to echo */
             this.lastForecast = null;
+            /**
+             * Learned first-tier work per skill, `{crafting: {baseWork, …}}`.
+             * Game-wide rather than per guild — the base is the ladder's, confirmed
+             * across guilds — so a character switch does not drop it.
+             */
+            this.workBases = {};
             /** The spectated pool this render is working from, and its encounter */
             this.watchedPool = null;
             /** How strong a claim the card that owns the guild-report context has */
@@ -25393,13 +26968,21 @@ ${starCSS}
             this.characterId = dataManager.getCurrentCharacterId?.() ?? null;
             this.guildName = this._resolveGuildName();
             guildTrialRecorder.setGuildName(this.guildName);
-            const stored = await loadTrialRecord(this.guildName, Date.now(), this.characterId, {
-                guildId: this._guildId(),
-            });
+            // Three independent storage reads, awaited together rather than one
+            // after another: serially they were three IndexedDB round trips before
+            // the first panel could carry stored samples, which is a visible slice
+            // of the reported lag on load
+            const [stored, storedBases] = await Promise.all([
+                loadTrialRecord(this.guildName, Date.now(), this.characterId, { guildId: this._guildId() }),
+                loadWorkBases(),
+                guildLoadoutCapture.initialize(),
+            ]);
             this.record = mergeTrialRecords(stored, this.record);
             this._publishTrialNames();
 
-            await guildLoadoutCapture.initialize();
+            // Merged under whatever a tick learned while the read was in flight, so
+            // a base observed seconds after startup is not thrown away by the load
+            this.workBases = { ...storedBases, ...this.workBases };
         }
 
         /**
@@ -25461,6 +27044,7 @@ ${starCSS}
                 this.socketGuildName = null;
                 this.characterId = newId;
                 this.adopting = false;
+                this.lastRecordSaveAt = 0;
                 // The switch message arrives *before* the arriving character's own
                 // data does, so for a moment every source of a guild name still
                 // holds the departing one's. Adopting then would file the new
@@ -25480,6 +27064,7 @@ ${starCSS}
                 guildTrialDamage.reset?.();
                 guildTrialRecorder.forget?.();
                 guildTrialRecorder.setGuildName?.(null);
+                guildLoadoutCapture.setGuildName?.(null)?.catch?.(() => {});
                 guildTrialAlerts.reset?.();
                 guildMemberSkills.forget?.();
                 this.phase = null;
@@ -25578,6 +27163,7 @@ ${starCSS}
                 this.guildName = name;
                 guildTrialRecorder.setGuildName(name);
                 guildMemberSkills.setGuildName(name).catch(() => {});
+                guildLoadoutCapture.setGuildName?.(name)?.catch?.(() => {});
                 await saveTrialRecord(name, this.record, this.characterId, { guildId: this._guildId() });
             } catch (error) {
                 console.error('[GuildTrials] Moving the record onto the guild key failed:', error);
@@ -25654,6 +27240,9 @@ ${starCSS}
                 // is about — and is asked once per card rather than once per render
                 this.watchedPool = watched;
                 this.contextRank = 0;
+                // Needed inside the sampling loop as well as the drawing one: the
+                // work-ladder tier filing wants a participant count
+                const counts = participantCounts();
                 for (const tile of tiles) {
                     const withPersonal = this._withSocketSkilling(
                         this._withSpectatedPool(tile === owner ? { ...tile, personal } : tile, watched),
@@ -25664,6 +27253,13 @@ ${starCSS}
                     // all — which is what the growth fit needs them filed under
                     const held = this.record.tiles?.[tileKey(tile)];
                     const badge = Number.isFinite(withPersonal.tier) ? withPersonal.tier : held?.tier;
+                    // Whether the badge has anything banked behind it: an earned
+                    // badge counts tiers finished, so the pool on screen is one
+                    // past it; an unearned badge names the tier in progress itself
+                    const banked =
+                        withPersonal.points > 0 ||
+                        held?.points > 0 ||
+                        Object.values(held?.pointsByTier || {}).some((points) => Number(points) > 0);
 
                     // Which tier a live reading belongs to. The badge counts tiers
                     // *finished*, so the pool on screen is the next one along; with
@@ -25671,13 +27267,20 @@ ${starCSS}
                     const tilePhase = this._phaseFor(status, withPersonal, held);
                     let readingTier = null;
                     if (tilePhase === 'live' && withPersonal.readings.length) {
-                        // The stream states the tier outright. Nothing else does —
-                        // the badge counts tiers *finished*, so every other route to
-                        // this number is the badge plus one and an assumption
+                        // The stream states the tier outright; failing that, the
+                        // bar's own target identifies it once the skill's base work
+                        // is known — the target moves the moment a tier clears,
+                        // where a badge goes stale until the Trials tab is reopened
+                        const ladderTier = this._workLadderTier(withPersonal, held, counts);
                         if (Number.isFinite(withPersonal.socketTier)) readingTier = withPersonal.socketTier;
                         else if (Number.isFinite(withPersonal.spectatedTier)) readingTier = withPersonal.spectatedTier;
-                        else if (Number.isFinite(badge)) readingTier = badge + 1;
-                        else if (!(withPersonal.points > 0) && !Object.keys(held?.pointsByTier || {}).length) {
+                        else if (ladderTier !== null) readingTier = ladderTier;
+                        else if (Number.isFinite(badge)) readingTier = badge + (banked ? 1 : 0);
+                        else if (this._workBase(withPersonal) === null && !banked && !(held?.tiers || []).length) {
+                            // Nothing has ever placed this trial on the ladder —
+                            // only then may the first-tier rule file the reading.
+                            // With a base or an observation in hand and no match
+                            // above, filing T1 would contradict the ladder.
                             readingTier = FIRST_TIER;
                         }
                     }
@@ -25706,7 +27309,13 @@ ${starCSS}
 
                     this.record = recordTileSample(this.record, sampled, now);
                 }
-                if (tiles.length) {
+                // Persisted at the sampling cadence, never the render cadence: the
+                // observer fires on every React burst and this used to write the
+                // full record — hundreds of samples per tile — to IndexedDB on
+                // each one. Five seconds of samples is the most a crash can lose,
+                // which is the sampling interval's own promise anyway.
+                if (tiles.length && now - this.lastRecordSaveAt >= SAMPLE_MS$2) {
+                    this.lastRecordSaveAt = now;
                     saveTrialRecord(this.guildName, this.record, this.characterId, { guildId: this._guildId() });
                 }
 
@@ -25758,9 +27367,30 @@ ${starCSS}
                     return;
                 }
 
-                const counts = participantCounts();
                 const timeLeftMs = this._timeLeftMs(root);
                 const bonuses = this._payoutBonuses();
+
+                // One analysis per (tile, phase) per pass. The payout loop below
+                // used to re-derive the very same figures from the very same
+                // record — and an analysis walks up to 800 samples, so every tick
+                // and every observer burst paid for the whole arithmetic twice.
+                const analyses = new Map();
+                const analysisFor = (key, record, participants, phase) => {
+                    const cacheKey = `${key}|${phase ?? ''}|${participants}`;
+                    if (!analyses.has(cacheKey)) {
+                        analyses.set(
+                            cacheKey,
+                            analyseTrial(record, {
+                                participants,
+                                timeLeftMs,
+                                buildersHallBonus: bonuses.buildersHall.bonus,
+                                phase,
+                                workBase: this._workBase(record),
+                            })
+                        );
+                    }
+                    return analyses.get(cacheKey);
+                };
 
                 for (const tile of tiles) {
                     const record = this.record.tiles[tileKey(tile)];
@@ -25772,17 +27402,19 @@ ${starCSS}
                     const hrid = matchTrialHrid(tile.name, Object.keys(counts));
                     const participants = record.signups?.signed ?? (hrid ? counts[hrid] : 0);
                     const tilePhase = this._phaseFor(status, tile, record);
-                    const analysis = analyseTrial(record, {
-                        participants,
-                        timeLeftMs,
-                        buildersHallBonus: bonuses.buildersHall.bonus,
-                        phase: tilePhase,
-                    });
+                    const analysis = analysisFor(tileKey(tile), record, participants, tilePhase);
+                    this._learnWorkBase(tile, record, analysis, participants, now);
 
                     const key = `tile:${tileKey(tile)}`;
                     drawn.add(key);
                     this._placeBlock(root, key, {
-                        html: renderTrialBlock(analysis, participants, undefined, {
+                        // The card the block belongs beside, for the re-anchoring
+                        // check below — the game tears cards down and remounts
+                        // them at wave boundaries
+                        anchored: (block) => blockNearAnchor(block, tile.element),
+                        // Scoped to this tile's encounter: one measurement must
+                        // not dress every combat card
+                        html: renderTrialBlock(analysis, participants, breakdownFor(tile.name), {
                             participating: ownParticipation(tile.name),
                             phase: tilePhase,
                             startsInMs: status?.startsInMs ?? null,
@@ -25805,7 +27437,7 @@ ${starCSS}
                 // they were read — the two tabs were otherwise drawing the same
                 // "Trial payout" title over different totals, because each summed
                 // only the cards it could see.
-                const trialsForPayout = this._payoutTrials(status, counts, timeLeftMs, bonuses);
+                const trialsForPayout = this._payoutTrials(status, counts, analysisFor);
 
                 if (this._renderPayout(root, trialsForPayout, tiles[0]?.element || null, bonuses)) {
                     drawn.add('payout');
@@ -25830,24 +27462,18 @@ ${starCSS}
          *
          * @param {Object} status - From `readTrialStatus`
          * @param {Object} counts - Sign-ups per trial hrid
-         * @param {number|null} timeLeftMs - Active time left
-         * @param {Object} bonuses - From {@link _payoutBonuses}
+         * @param {Function} analysisFor - The render pass's shared, memoised analyser
          * @returns {Array<Object>} One entry per trial the record knows
          */
-        _payoutTrials(status, counts, timeLeftMs, bonuses) {
+        _payoutTrials(status, counts, analysisFor) {
             const trials = [];
 
-            for (const record of Object.values(this.record?.tiles || {})) {
+            for (const [key, record] of Object.entries(this.record?.tiles || {})) {
                 if (!record?.name) continue;
 
                 const hrid = matchTrialHrid(record.name, Object.keys(counts));
                 const participants = record.signups?.signed ?? (hrid ? counts[hrid] : 0);
-                const analysis = analyseTrial(record, {
-                    participants,
-                    timeLeftMs,
-                    buildersHallBonus: bonuses.buildersHall.bonus,
-                    phase: this._phaseFor(status, record),
-                });
+                const analysis = analysisFor(key, record, participants, this._phaseFor(status, record));
 
                 trials.push({
                     name: record.name,
@@ -25890,7 +27516,13 @@ ${starCSS}
             if (tile?.completed || record?.completed) return 'completed';
 
             const phase = status?.phase || null;
-            if (!phase) return null;
+            // No status header at all is the everyday state of the In Progress tab
+            // — the header lives on the Trials tab — and treating it as no phase
+            // starved everything downstream that asks "is this live": the
+            // first-tier rule never fired, and a live pool's readings were filed
+            // under the record's stale badge instead of the tier being fought. A
+            // bar on a card that nothing has declared over is a trial running.
+            if (!phase) return tile?.readings?.length ? 'live' : null;
             // A header that does not name a kind is the old, single-trial case
             if (!status.kind || status.kind === tile.kind) return phase;
 
@@ -25910,7 +27542,9 @@ ${starCSS}
          */
         _forecast(tile, analysis, participants) {
             try {
-                const breakdown = guildTrialDamage.breakdown?.();
+                // Scoped exactly as the block is: a Hedgehog forecast must not run
+                // on the Chameleon fight's measured DPS
+                const breakdown = breakdownFor(tile.name, guildTrialDamage.breakdown?.());
                 // The card's own bar first: it covers everybody in the trial, where
                 // the attributed figure covers only the fights this client was in
                 const measuredDps =
@@ -26056,7 +27690,7 @@ ${starCSS}
          * @param {Object} spec - `{html, style, place, onBuild}`; `place` inserts a fresh block
          * @returns {Element} The block
          */
-        _placeBlock(root, key, { html, style, place, onBuild }) {
+        _placeBlock(root, key, { html, style, place, onBuild, anchored }) {
             const existing = root.querySelector(`.${CSS_CLASS}[data-mwi-block="${key}"]`);
 
             // Compared against what this drew last time rather than against the
@@ -26066,6 +27700,16 @@ ${starCSS}
             const unchanged = this.blockHtml.get(key) === html;
 
             if (existing) {
+                // The game's own nodes move underneath a block that was placed
+                // correctly: cards re-parent as a fresh panel settles, and the
+                // boss card remounts at every wave boundary — leaving the block
+                // where the old node used to be, which is how the readout ended up
+                // below the payout and how the panel order flipped after a tier
+                // cleared. Each block states what "still anchored" means for it,
+                // and a block that is not is re-placed against the current DOM.
+                if (anchored && !anchored(existing)) {
+                    withScrollKept(root, () => place(existing));
+                }
                 if (!unchanged) {
                     existing.innerHTML = html;
                     this.blockHtml.set(key, html);
@@ -26128,7 +27772,15 @@ ${starCSS}
          */
         _timeLeftMs(root) {
             const statusRow = root.querySelector('[class*="GuildPanel_eventStatusRow"]');
-            const fromStatus = parseClockMs(statusRow?.textContent || '');
+            const statusText = statusRow?.textContent || '';
+            // The same refusals the clock finder applies, because the status row
+            // earns none of them for free: the Trials tab's header is "Skilling
+            // Trial - In Progress Thu 09:00 AM", and 09:00 parses as a nine-minute
+            // countdown — which made the pace walk one tier further than the tile's
+            // real 5m53s allowed, on that tab only. A bar reading ("15 / 60") is
+            // refused for the same reason it is in `findTrialClockMs`.
+            const fromStatus =
+                statusText.includes('/') || NOT_A_CLOCK_RE.test(statusText) ? null : parseClockMs(statusText);
             if (fromStatus !== null) return Math.min(fromStatus, TRIAL_ACTIVE_MS);
 
             return findTrialClockMs(root, TRIAL_ACTIVE_MS);
@@ -26343,6 +27995,16 @@ ${starCSS}
             // put it. The buttons are appended after, since they carry listeners
             // that markup cannot
             this._placeBlock(root, 'payout', {
+                // The payout's own placement rule, as a check: under the status
+                // row when there is one, else directly above the first card — so a
+                // boss card remounting after it can never leave the payout
+                // stranded mid-list
+                anchored: (block) => {
+                    const statusRow = root.querySelector('[class*="GuildPanel_eventStatusRow"]');
+                    if (statusRow) return statusRow.nextElementSibling === block;
+                    if (firstTile?.isConnected) return block.nextElementSibling === firstTile;
+                    return root.firstElementChild === block;
+                },
                 html: rows.join('') + this._controlsHTML(),
                 style:
                     'margin:8px 0 4px; padding:8px 12px; background:rgba(0,0,0,0.25);' +
@@ -26591,7 +28253,14 @@ ${starCSS}
             // The pool, to the unit. A card the game is already drawing a bar on
             // keeps its own numbers, so the two sources cannot disagree on screen
             if (update.reading && !tile.readings?.length) next.readings = [{ ...update.reading }];
-            if (Number.isFinite(update.tier)) next.socketTier = update.tier;
+            if (Number.isFinite(update.tier)) {
+                next.socketTier = update.tier;
+                // The pool the tier was stated with. A stated tier is only good
+                // for as long as this is the bar's target — the target changes the
+                // moment a tier clears, and a `liveTier` kept past that point is
+                // the previous tier's answer wearing this one's label
+                next.socketTierTarget = Number.isFinite(update.reading?.max) ? update.reading.max : null;
+            }
 
             // The per-tier personal figures, which is what the DOM footer was read
             // for — and these come with their tier attached rather than inferred
@@ -26599,6 +28268,138 @@ ${starCSS}
                 next.personal = { ...(tile.personal || {}), ...update.personal };
             }
             return next;
+        }
+
+        /**
+         * The learned first-tier total for a tile's skill or encounter.
+         *
+         * Keyed by the trial as the card names it — `Crafting` and the socket's
+         * `/guild_skilling/crafting` both lower-case to `crafting`, and a combat
+         * card's `Trial Chameleon` keys as itself. For a skilling trial the figure
+         * is the skill's first-tier work; for combat it is the encounter's
+         * first-tier boss health (Trial Chameleon's 550,000).
+         *
+         * @param {{kind: string, name: string}} tile - A card or a tile record
+         * @returns {number|null} The base total, or null when it has not been learned
+         */
+        _workBase(tile) {
+            if (tile?.kind !== 'skilling' && tile?.kind !== 'combat') return null;
+            const key = String(tile?.name || '')
+                .trim()
+                .toLowerCase();
+            const base = this.workBases[key]?.baseWork ?? DEFAULT_WORK_BASES[key];
+            return Number.isFinite(base) && base > 0 ? base : null;
+        }
+
+        /**
+         * The tier a live skilling bar's own target identifies, if it does.
+         *
+         * The participant count is resolved the way the drawing loop resolves it —
+         * the card's own sign-up figure first, the tracker's sign-up sheet
+         * otherwise — because the work formula needs the same count the analysis
+         * uses everywhere else. The base is the learned one where the store has
+         * it, and otherwise backed out of this trial's own filed observations, the
+         * same way `analyseTrial` resolves it — so a record that once filed a tier
+         * correctly keeps filing later tiers correctly as they clear.
+         *
+         * @param {Object} tile - The card, with any socket reading already folded in
+         * @param {Object|null} held - The tile's stored record
+         * @param {Object} counts - Sign-ups per trial hrid, from `participantCounts`
+         * @returns {number|null} The tier, or null when the target fits no tier
+         */
+        _workLadderTier(tile, held, counts) {
+            const kind = tile?.kind === 'combat' ? 'combat' : tile?.kind === 'skilling' ? 'skilling' : null;
+            if (!kind) return null;
+
+            const hrid = matchTrialHrid(tile.name, Object.keys(counts || {}));
+            const participants = tile.signups?.signed ?? held?.signups?.signed ?? (hrid ? counts[hrid] : 0);
+            // Tier-1 observations are excluded for the same reason `analyseTrial`
+            // excludes them: they may be the first-tier rule's own filings — and
+            // the observation fallback is skilling-only there for the same reason
+            // it is here: a combat record's observations mix both bars' ladders
+            const stated = (held?.tiers || []).filter((observation) => Number(observation?.tier) >= 2);
+            const baseWork =
+                this._workBase(tile) ?? (kind === 'skilling' ? baseWorkFromObservations(stated, participants, kind) : null);
+            if (!Number.isFinite(baseWork) || baseWork <= 0) return null;
+
+            // A combat card's second bar is the tier's own level-scaled pool and
+            // needs no participant count; the first bar (boss health, participant-
+            // scaled) is the fallback anchor, as in `analyseTrial`
+            const poolTarget = kind === 'combat' && Number.isFinite(tile.readings?.[1]?.max) ? tile.readings[1].max : null;
+            const fromPool =
+                poolTarget !== null ? tierFromWorkTarget({ target: poolTarget, baseWork, participants: 0, kind }) : null;
+            return fromPool ?? tierFromWorkTarget({ target: tile.readings?.[0]?.max, baseWork, participants, kind });
+        }
+
+        /**
+         * Learn a trial's first-tier total, the moment all three inputs line up.
+         *
+         * The tier, the bar's target and the participant count are each on screen
+         * at different times, and only a moment that has all three can state the
+         * base — `target / (shape(tier) × (1 + 0.01 × p))`, on either kind's
+         * ladder. Once learned it identifies the tier from the bar alone — which
+         * is what lets a mid-trial join on the In Progress tab know its tier
+         * without ever opening the Trials tab. A skilling trial learns its skill's
+         * base work; a combat trial learns its encounter's first-tier boss health.
+         *
+         * Guards, because a wrong base states wrong tiers with confidence:
+         *
+         * - Only a tier the game stated ('card', 'socket') teaches; the assumed and
+         *   the derived rungs must never feed themselves.
+         * - Only a *fresh* reading teaches. The record's last target survives tab
+         *   switches, and a tier that cleared while the tab was shut would pair the
+         *   old target with the new badge.
+         * - A base already in hand that explains the current target at any whole
+         *   tier is kept: relearning on a stale badge is how a constant drifts.
+         *
+         * @param {Object} tile - The card
+         * @param {Object} record - Its stored record
+         * @param {Object} analysis - From `analyseTrial`
+         * @param {number} participants - The count the analysis used
+         * @param {number} now - Clock
+         */
+        _learnWorkBase(tile, record, analysis, participants, now) {
+            try {
+                const kind = tile.kind === 'combat' ? 'combat' : tile.kind === 'skilling' ? 'skilling' : null;
+                if (!kind) return;
+                if (analysis.tierSource !== 'card' && analysis.tierSource !== 'socket') return;
+                if (!Number.isFinite(analysis.tier)) return;
+
+                const lastSample = record?.samples?.[record.samples.length - 1];
+                if (!Number.isFinite(lastSample?.t) || now - lastSample.t > WORK_BASE_LEARN_FRESH_MS) return;
+
+                // A combat card's second bar teaches with no participant count at
+                // all — it is the tier's level-scaled pool. The first bar (or a
+                // skilling bar) is participant-scaled and needs the count.
+                const poolTarget = kind === 'combat' ? Number(lastSample?.readings?.[1]?.max) : NaN;
+                const usingPool = Number.isFinite(poolTarget) && poolTarget > 0;
+                const target = usingPool ? poolTarget : analysis.total;
+                if (!Number.isFinite(target)) return;
+                if (!usingPool && !(participants > 0)) return;
+                const scaledBy = usingPool ? 0 : participants;
+
+                const key = String(tile.name || '')
+                    .trim()
+                    .toLowerCase();
+                const held = this.workBases[key]?.baseWork;
+                if (
+                    Number.isFinite(held) &&
+                    tierFromWorkTarget({ target, baseWork: held, participants: scaledBy, kind }) !== null
+                ) {
+                    return;
+                }
+
+                const baseWork = baseWorkFromObservations([{ tier: analysis.tier, total: target }], scaledBy, kind);
+                if (!Number.isFinite(baseWork) || baseWork <= 0) return;
+
+                this.workBases = {
+                    ...this.workBases,
+                    [key]: { baseWork, tier: analysis.tier, target: analysis.total, participants, learnedAt: now },
+                };
+                saveWorkBases(this.workBases).catch(() => {});
+            } catch (error) {
+                console.error('[GuildTrials] Learning a work base failed:', error);
+            }
         }
 
         /**
@@ -26645,6 +28446,16 @@ ${starCSS}
                 ...tile,
                 readings: [{ current: pool.current, max: pool.max }],
                 spectatedTier: Number.isFinite(pool.tier) ? pool.tier : null,
+                // The stream states the tier the same way the skilling socket does
+                // (`new_battle.tier`), and it is persisted the same way — as
+                // `liveTier`, paired with the boss health it was stated for, so it
+                // expires the moment a cleared tier moves the bar's maximum on.
+                // Without this a spectated combat trial's stated tier reached the
+                // observation filing and never the analysis, and the card read
+                // "tier not seen yet" through a fight whose tier was on the wire.
+                ...(Number.isFinite(pool.tier)
+                    ? { socketTier: pool.tier, socketTierTarget: Number.isFinite(pool.max) ? pool.max : null }
+                    : {}),
             };
         }
 
@@ -26704,6 +28515,9 @@ ${starCSS}
             guildLoadoutCapture.cleanup();
             this.blockHtml.clear();
             document.querySelectorAll(`.${CSS_CLASS}`).forEach((el) => el.remove());
+            // In-memory only: the persisted copy stays, and the next initialize
+            // reads it back
+            this.workBases = {};
             this.initialized = false;
         }
     }
@@ -27361,9 +29175,14 @@ ${starCSS}
 
 
     const NAME_CLASS = 'mwi-chat-profile-name';
-    // "<Name> has <verb> …" announcements; names are single tokens in MWI
+    // "<Name> has <verb> …" announcements; names are single tokens in MWI.
+    // The `(?!Guild has\b)` guard skips the guild-wide broadcast "Guild has reached
+    // level N!" — "Guild" is the guild there, not a player, so it must not become a
+    // /profile link. Only the exact token "Guild" before " has" is excluded, so a
+    // player named "GuildMaster" still links. Add more reserved subjects to the
+    // lookahead as `(?!(?:Guild|Other) has\b)` if the game grows them.
     const ANNOUNCE_RE =
-        /^\s*(?:\[[^\]]*\]\s*)?([A-Za-z0-9_]+) has (?:reached|obtained|found|completed|defeated|earned|achieved|unlocked|opened|crafted|caught|leveled|joined|left|added)\b/;
+        /^\s*(?:\[[^\]]*\]\s*)?(?!Guild has\b)([A-Za-z0-9_]+) has (?:reached|obtained|found|completed|defeated|earned|achieved|unlocked|opened|crafted|caught|leveled|joined|left|added)\b/;
     /** A phrase as a regex fragment: every character taken literally */
     const escapeForRegExp = (phrase) => phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     // Party system lines: the leading name in exactly the four sentence shapes the
@@ -47430,13 +49249,25 @@ ${starCSS}
      * @returns {Array<{name: string, ms: number, startedAt: number, endedAt: number}>}
      */
     function initTimeline(snapshots) {
+        // `init:<key>:own` carries the feature's synchronous self-time; it is not
+        // a row of its own but an annotation on `init:<key>`, so fold those aside
+        // first and attach them, rather than letting them count as extra features.
+        const ownByKey = new Map();
+        for (const [name, entry] of snapshots || []) {
+            if (name.startsWith('init:') && name.endsWith(':own')) {
+                ownByKey.set(name.slice(0, -':own'.length), entry.duration);
+            }
+        }
+
         const rows = [];
         for (const [name, entry] of snapshots || []) {
             if (!name.startsWith('init:') && !name.startsWith('bg:')) continue;
+            if (name.endsWith(':own')) continue;
             const startedAt = entry.startedAt ?? 0;
             rows.push({
                 name,
                 ms: entry.duration,
+                ownMs: ownByKey.has(name) ? ownByKey.get(name) : null,
                 startedAt,
                 endedAt: startedAt + entry.duration,
                 background: name.startsWith('bg:'),
@@ -47523,9 +49354,14 @@ ${starCSS}
             lines.push('Slowest features');
             lines.push('-'.repeat(60));
             for (const row of summary.slowest) {
+                // When a feature parked far more time in `await` than it spent on
+                // its own work, say so — that time is deferred work draining here,
+                // not this feature's cost.
+                const drain = Number.isFinite(row.ownMs) && row.ms - row.ownMs >= 1;
                 lines.push(
                     `${ms(row.ms).padStart(9)}  ${row.name.padEnd(34)} started ${ms(row.startedAt)}` +
-                        (row.background ? '  (background)' : '')
+                        (row.background ? '  (background)' : '') +
+                        (drain ? `  (own ${ms(row.ownMs)}, ${ms(row.ms - row.ownMs)} waiting on other work)` : '')
                 );
                 for (const part of (spans.get(row.name) || []).slice().sort((a, b) => b.duration - a.duration)) {
                     lines.push(`${ms(part.duration).padStart(9)}      └ ${part.part}`);
@@ -51827,12 +53663,12 @@ ${starCSS}
      * trap. This is the same set of settings `All Off` writes, and the snapshot the
      * two share means `Restore` undoes either one.
      *
-     * ## Why "Everything on" is the schema defaults
+     * ## Why "Defaults" is the schema defaults, not every switch true
      *
-     * Not "every switch true" — several switches are hides and warnings that start
-     * off on purpose, and turning them all on would be a configuration nobody has
-     * ever run. "Everything on" means the way the script behaves out of the box,
-     * which is what a person dismissing the first-run question is asking to keep.
+     * Several switches are hides and warnings that start off on purpose, and
+     * turning them all on would be a configuration nobody has ever run. "Defaults"
+     * means the way the script behaves out of the box, which is what a person
+     * dismissing the first-run question is asking to keep.
      */
 
 
@@ -52078,8 +53914,8 @@ ${starCSS}
         },
         {
             id: DEFAULT_PRESET_ID,
-            label: 'Everything on',
-            description: 'Every feature at its shipped default — how Toolasha behaves with nothing turned off.',
+            label: 'Defaults',
+            description: 'Every feature reset to its shipped default — how Toolasha behaves out of the box.',
             useDefaults: true,
         },
     ];
@@ -52247,7 +54083,7 @@ ${starCSS}
      * Settings already holding the wanted value are skipped: every `setSetting`
      * persists the entire settings map, so writing three hundred of them at boot to
      * change none of them is three hundred pointless round trips through IndexedDB
-     * — and "Everything on" on a fresh install is exactly that case.
+     * — and "Defaults" on a fresh install is exactly that case.
      *
      * @param {Object<string, boolean>} values - id → value
      * @returns {string[]} The ids that were actually written
@@ -55983,7 +57819,7 @@ ${starCSS}
         return overrides;
     }
 
-    var forkChangelog = "## Unreleased — branch `claude/mcs-ingest`\n\n### Release housekeeping\n\n- **The userscript header catches up to 2.90.0**: the release PR merged before the version-sync automation could stamp it, so the 2.90.0 build shipped labelled `@version 2.89.0` and update checkers never saw a new version. Headers, README, and the runtime version string now say 2.90.0, and a corrected build replaces the mislabelled one on the releases branch.\n- **The CI bundle ceiling moves to 3.5 MiB**: its duplication-guard job now belongs to the import-graph check that runs on every production build and catches the real failure exactly; the ceiling remains as a sanity backstop.\n\n### The silent failure modes get their alarms, and two calculators become one\n\n- **The bundle-sharing rule is now executable**: the production build walks the real import graph and fails loudly on any shared util silently duplicated across bundles — the works-in-dev, broken-in-production bug class, made a build error. Its first run found 30 violations, among them live bugs: consent and character caches existing once per bundle in six bundles, duplicated savings state, and a performance monitor whose cross-bundle calls had been landing on undefined in production builds. All fixed or allowlisted with written justification; bundles came out smaller.\n- **One house-cost calculator instead of two disagreeing ones**: the survivors' pricing chain (override/ask → bid → vendor floor) settles both disputes — a live bid beats the vendor floor, and a material with no book counts at the vendor floor instead of being dropped. Net worth, score, affordability, the Houses panel, and the goal planner now quote the same number for the same room; figures can shift slightly where materials had no listings, which is the point.\n- **Every cross-bundle reach-through now goes through one bridge**: ~36 `window.Toolasha` sites collected behind 32 named, null-safe, documented accessors — greppable, testable (a dynamic test proves every accessor survives the namespace being absent), and enumerable instead of scattered.\n\n### Thin markets stop lying in the rankings\n\n- **The liquidity cap the goal planner already obeyed now governs every profit surface**: alchemy rankings, the action-bar and pinned-page profit lines, and the combat sim's all-zones table (its Score and best-profit badge included) all cap a method's gold rate by what the market has actually absorbed — marked \"limited by market volume (~1/week)\" with the limiting item named, never silently. Unknown history stays unbounded (a dead price server must not zero everything); measured-zero bounds to zero. Underlying calculators, the planner, net worth, EV, and the calibration loop keep raw figures — the cap is a truth about display and ranking, switchable off with one setting.\n\n### The panels compare, lint, and remember\n\n- **The profit panel quotes the sim on the zone you're in**: \"sim said here — 24.0M/day · simulated Aug 5\" beside the measured figure, only when the last all-zones run holds this zone at this tier, tooltip carrying the snapshot's age and that the sim knows nothing about this run.\n- **Party lint went live**: the duplicate-aura warning now fires on the party you're actually fighting in (every player's equipped abilities arrive on `new_battle`), rendered amber at the top of the DPS panel. The gear check covers only your own character — the wire carries nobody else's wearables, and the block says so instead of linting stale profile snapshots. Default-on setting.\n- **The Combat Statistics popup opens archived sessions**: a picker (\"Aug 5 · 6h 12m · Chimerical Den · party of 5\") renders any archived run through the same arithmetic as the live view, clearly bannered as an archived session at today's prices, with Live one click away.\n\n### A ledger for flips, luck for foragers, and spreadsheets for everyone\n\n- **A trading ledger measures what flipping actually earns**: every fill on your own listings is recorded (detected as filled-quantity deltas against observed baselines — a first sighting never invents a fill, a cancel after a partial fill still counts, offline fills surface on login), sell proceeds net of the 2% tax, and a \"Ledger\" tab beside Market History shows realized profit per item and per week on an average-cost basis — a sale with no recorded purchase shows revenue with cost \"—\", never a fake 100% margin. CSV export included; recording is a default-on setting.\n- **Gathering and production runs get the drop-luck verdict combat has**: \"Drop luck: 73rd percentile — 27 runs in 100 beat it\" under every loot-log entry's Expected line, computed by the exact FFT machinery so a rare-drop-dominated session is judged by its lumps rather than a bell curve. Historical entries get it too; essence and rare-find tables sit outside the verdict on both sides, since the log can't see the find bonuses that drive them.\n- **CSV export lands on the four history panels that had none**: dungeon run history (per run: timestamp, dungeon, tier, duration, team, key counts), the treasure tracker (two files — chest summary and per-item detail, because one file of alternating shapes can't be pivoted), the loot log (per item per session, priced as the panel prices), and the combat session archive (per session with per-player banked figures). Raw numbers, ISO timestamps, buttons only when there are rows.\n\n### The trial record remembers, the sim gets audited, and silence gets alarms\n\n- **Past weeks return to the trials panel and guild report**: the four archived weekly cycles nothing ever read back now render as one line each — \"Last week · combat T5 · skilling T6 · 1,800 pts · ~825 tokens each\" — with failed weeks printing their zeros, unknowns as \"—\", tokens marked ~ (derived from today's building bonuses), and a week archived from another guild's era labelled rather than mixed in.\n- **The combat simulator is now calibrated against your own runs**: every archived combat session with a matching all-zones forecast writes a predicted-vs-measured pair into the calibration panel — tier-matched, gear-fingerprint-checked (unknown says \"gear unknown\", never \"matched\"), key costs on neither side since the sim charges none. The panel's combat group answers the question everything else stands on: is the sim optimistic about _your_ build?\n- **Enhancement sessions get percentile verdicts**: \"Predicted 41 attempts, took 63 — 8% of runs take that many or more\", read off the same distribution the pre-run p10/p90 use so the two can never disagree. Hand-stopped sessions and predictions recorded without variance honestly decline a verdict.\n- **A notification when your listing is undercut** (default off): \"Cheese sell listing undercut: ask now 274K (as of ~12m ago), your listing 280K\" — buy orders included, one alert per listing with re-arm on recovery, price age always stated, ties count as competitive, and no data never counts as undercut.\n- **Eleven new selector canaries watch the DOM the script depends on**, each gated on a same-screen witness so absence is only ever reported where presence was owed — a game update now produces a health report naming what broke instead of features quietly drawing nothing. **Every load-bearing English game string moved to one constants file** with real-message fixtures pinning each. **The sim engine gained its golden run**: one seeded hour with kills, deaths, XP and damage pinned exactly, so no engine regression can slip through unnoticed again.\n\n### Live combat learns seven more things, each its own switch\n\n- **Enemy tiles answer the questions a fight actually asks** (all optional, all default on, riding the Portrait DPS toggle): \"dead ~8s\" from remaining HP over the party's measured rate on that enemy; one \"wave ~19s\" countdown on the topmost tile summing the living wave (voided honestly if any enemy's HP is unknown); a red \"hits for 210/s\" — the enemy's own outgoing damage, which answers \"can I show DPS for enemies\" with a measurement; and \"enrage 1:42\" counting down where the monster's sheet carries a timer, amber under thirty seconds.\n- **Player meters carry survival, not just output**: \"taken 220/s · net −35/s\" (red when bleeding), \"94% hit · 31% crit\" once twenty swings back it, and \"mana ~40s\" only when actually draining toward empty within the minute — measured net of refills over a rolling window, because the mana tracker's per-cast costs are a different question.\n- **The dungeon tracker paces the run**: \"pace +6% vs your avg\" against your stored runs of the same dungeon and tier, only after three completed waves, colored by which way it's going.\n- The equal-height rule holds throughout: any line one tile has earned renders dashed on the rest, so the party frames never shuffle. Attribution stays honest — a hit that could belong to either of two identical monsters counts in the session total and shows on neither tile.\n\n### The portrait meters stop jostling the party\n\n- **Every player's DPS meter is two lines, always** — the current-fight line is reserved and reads \"— cur\" until that player acts, instead of appearing when they do. Five portraits used to sit at three different heights and re-shuffle at every fight boundary; now the frames hold still.\n\n### Every player name opens a profile, and the dungeon knows its worth\n\n- **Player names are clickable wherever a dungeon shows them**: the key-counts chat line, the party system messages (\"has joined\", \"has left\", \"is ready\", \"is not ready\" — end-anchored, so the phrase mid-sentence never matches), the run history's team headers (a name click doesn't toggle the group), and the overlay DPS rows (double-click still opens the panel). One click fills `/profile <name>` in chat, ready to send — the same trick the guild cycler uses, now a shared util.\n- **Your measured treasure rate can price your chests** (default off): with the new setting on, dungeon profit estimates value the regular chest at your own treasure rate — what your recorded openings actually returned against the drop table's expectation, both at today's prices, straight from the treasure tracker's ledger. Never silently (every adjusted figure carries a `*` and names the measurement: \"Chimerical Chest EV adjusted by your measured −7.4% return (5,490 opened)\"), never on thin evidence (under 300 openings the estimate stays unadjusted), and never beyond scope (refinement chests, net worth, and tooltips keep the table value). First shipped reading chest-drop _counts_ instead — corrected the same day to the opening ledger, which is what \"my treasure rate\" meant.\n- **A dungeon run's first minutes stop screaming red**: until the first chest drops, the profit tile dims instead of alarming and says \"no chest yet\" — keys are charged when chests drop and revenue arrives the same way, so the early loss is consumable burn, not a verdict.\n- **The profit panel compares the dungeon to your best solo zone**: a \"vs best solo (sim)\" line under the per-player card, from the last all-zones sim run — named, dated, and marked simulated, so a measured number never stands beside an unmarked guess.\n\n### A canceled battle start is not a run\n\n- **The dungeon tracker no longer records phantom runs from failed ready-checks.** The game posts \"Key counts\" and then \"Battle ended\" a second apart when a start is canceled; the tracker heard the first and not the second, so the canceled start stayed armed as a run's beginning and the next key count — minutes of party-forming later — read as its completion (one recorded \"15:47 run\" was two canceled starts with a member swap in between). A Battle-ended message now disarms any run with zero waves completed; fights with waves banked stay with the action feed, which already tells an early exit from a completion.\n\n### Hybrid attribution: thorns and DoT damage go to their owners\n\n- **The damage attribution learned what the party recording proved**: the server groups each battle tick by actor, so a lone player in a tick owns its damage — their reflect when the monster struck them in the same breath, their damage-over-time effect when nothing about them moved at all. The counter rungs stay first (they carry misses, crits and the per-ability split), the \"last swinger\" fallback now only catches multi-player ticks nothing can split, and a mana drop must be unique to name a caster. Replaying the five-player recording that exposed it: misattributed damage falls from 22,789 (5.7%, stolen from the tank and the DoT caster) to zero — 100% of counter-decidable damage lands on the right row.\n- **The trial scoreboard measures every player now, not just you.** The spectated stream runs through the same attribution, so a watched trial fills a measured per-player damage table for all thirty — the boss's own counters gate the hits and mark the crits for everybody, and your own unit's counters confirm its rows directly. The \"no attack counters, split estimated from builds\" era is over; captions across the trial panel, scoreboard and report now say so. The 1,405-health tick the module once refused as unattributable is credited for what it was: the tank's thorns.\n\n### Party lint ignores tools, and ability books answer three more questions\n\n- **Tool slots are exempt from the skilling-gear warning** — a Holy Alembic has no combat equivalent and displaces nothing; the lint now only flags skilling pieces sitting in real combat slots.\n- **The ability book tooltip now answers what you'd actually ask holding one**: which saved loadouts slot the ability (by name — the \"can I coinify these\" check), what level the books on hand would reach (\"Books held: 7 → Lv 39\"), and what the level already reached would cost to buy fresh today, in books and coin.\n\n### The sim summary reads in the units a player plans in\n\n- **XP/day → XP/hr** — the same unit the XP section and every zone ranking already use, so the tile reads against them directly. **Dungeons/hr → Avg clear** — the pace a session is planned around is how long one run takes, not a fractional rate. Success, Profit/day and Deaths/day stay as they were.\n- **A loaded party gets linted before its numbers are read**: an amber block right under the Summary calls out members wearing skilling gear (\"Mazo has skilling gear equipped: Foraging Shears\" — detected from the item's own stats, so hybrid pieces are never flagged) and duplicated auras (\"Fierce Aura is equipped by Irokez and Tib — auras do not stack\" — detected from the ability data's party-wide buff shape, not a name list). Solo runs are never linted, and the warnings travel with each history entry.\n\n### Entry keys are consumables, and chests point at their keys\n\n- **The consumables tracker now carries the dungeon's entry key** for the tracked character: held count from inventory, per-day burn measured from the session's own chest drops (one key per regular chest — the same arithmetic the combat stats price keys with), two-sided cost/day, buy-for-target and a \"lasts\" countdown, competing for the limiting-consumable highlight like any coffee. Outside a dungeon, or before the first chest has dropped, the panel is honest: no row, or a row with \"—\" rates and the held count.\n- **Keyed chests offer their key**: the chest popup (\"Open 0 (Keys: 0)\") gains a \"Buy Keys on Marketplace\" button that jumps straight to the key's listing — driven by the game data (an item whose `_key` sibling exists), so every keyed chest gets it and nothing else does.\n\n### Ability book counts respect the experience already earned\n\n- **The Upgrade tab priced every ability level-up from the floor of its current level**, re-buying the books already read: an ability 57% into its level was quoted a level's worth of extra books (Berserk 65→70 read 140.6M where the true remainder was 128.5M — the Ability Books panel had it right all along). Level-ups now price from the equipped ability's live experience, exactly as swaps already priced from the owned book's, and the ranking, repay time, and every Gold/0.01% column tighten with it. The floor remains the fallback for a book with no experience recorded or one that disagrees about its level.\n\n### An attribution referee, ahead of any verdict on the presence method\n\n- **`npm run compare <recording.json>` replays a combat recording through two attribution methods side by side**: Toolasha's counter-pairing engine and a faithful reimplementation of KikiMeter's presence method (being in `pMap` is the attribution; ambiguous ticks split equally). Totals can never separate them — both conserve the team total by construction — so every disagreement tick is adjudicated from signals neither verdict used: a credited player who provably swung confirms their method, a credited player who was only being hit refutes it, and bleed ticks are set apart as unarbitrable. The report also tests the presence method's foundational claim directly — on every tick where a hit landed, was a provable swinger actually present? Accepts Toolasha combat recordings, sim-accuracy exports (the segments carry the raw payloads), and raw websocket captures alike. Analysis tooling only; nothing in the userscript changes.\n\n### Departed members stop haunting the roster\n\n- **A member who left the guild no longer sits in \"Gone quiet\" forever**: the roster walked the XP _history_ — every character ever sampled, never pruned — so someone who left kept their weekly rate, earned nothing (being gone), and read as permanently idle, headed by a bare \"#9349\" since their name left with them. The current member list now decides who gets a row; history is consulted only for people on it; an empty list means \"not known yet\", not \"nobody's here\". Stored history self-heals on login (an early or empty roster message prunes nothing — a message that arrived early must not delete the guild), live roster messages shed departures only when they carry most of the known guild, and a member the roster doesn't name renders as \"Unnamed member\", never a numeric tag.\n\n### The wire speaks: five trial message types the game was sending all along\n\n- **`new_guild_battle` fires at every tier and states everything** this feature spent three rounds inferring: the full roster with names (the tick indexes map straight into it — 30 of 30 named, no placeholders), the tier boundary (baselines drop on the stated boundary, and exact per-tier durations record), the encounter (from the monster hrids, no fight view needed), and the tier-scaled boss sheet filed automatically — which confirms the HP rule on arrival: 330,000 × 1.30 = 429,000 with 30 players.\n- **Your own damage is measured** — the game streams action counters for your own character only, and the scoreboard now says so per row: your figure is real, the rest of the party stays estimated from builds.\n- **Skilling goes socket-fed**: `guild_skilling_updated` carries the pool (76,000 × 1.17 = 88,920, the rule again), the stated tier, participation by character ID, and your personal success rate/efficiency/action time — recorded per tier with no DOM footer needed. Cards the game draws a bar on keep their own numbers.\n- **The game announces trial ends**: `end_guild_skilling` states the final banked tier outright (9 while 10 was running — confirming the semantics this feature reasoned its way to), `end_guild_battle` marks the combat hour's end, and the recorder treats the hour as done only when every card on screen has been declared over.\n- All five types join the dedup skip-list — the skilling tick's first 100 characters end exactly where its progress figure begins, so an hour would have collapsed to one tick. Whether these messages are broadcast or view-scoped is unknowable from the capture, so each is a bonus signal and every DOM path remains as fallback. The recording's roster, ticks, and end messages are fixtured verbatim.\n\n### Mixed-bonus cards contribute their true base to the token sum\n\n- A card banked across a Builder's Hall upgrade divides cleanly by neither bonus, so its base points now come from the exact ladder (1,100 at T10) instead of the slightly-low division ";
+    var forkChangelog = "## Unreleased — branch `claude/mcs-ingest`\n\n### Labyrinth pathing reveals more of the floor on ties\n\n- **Equal-cost routes now prefer the one that uncovers the most unknown rooms**: the path planner minimises shrouds, then grafts every chest reachable without an extra shroud, then minimises torches — but when several routes tied on all of that, it fell back to Dijkstra's arbitrary wall-hugging pick. It now breaks that tie toward the route that reveals the most currently-unknown rooms, via a bonus scaled below a single torch so it can never trade a torch or a shroud for a reveal — the shroud/chest/length result is unchanged, only the choice between otherwise-equal routes.\n\n### \"Guild\" is no longer turned into a /profile link\n\n- **The guild-wide broadcast \"Guild has reached level N!\" stays plain text**: it matched the \"&lt;name&gt; has …\" announcement shape, so \"Guild\" was being made a clickable `/profile Guild` link even though it is the guild, not a player. That exact token is now excluded from announcement linking, in both the main chat and the pop-out chat window. Real names are untouched — a player called \"GuildMaster\" still links.\n\n### Selector canary stops false-alarming on alchemy and enhancing panels\n\n- **The \"Skill action panel (name)\" canary no longer cries \"game update?\" on alchemy/enhancing screens**: it reported the action-name selector missing whenever an alchemy or enhancing detail panel was open, because those panels reuse the shared `SkillActionDetail` wrapper but draw no name heading. The name check now gates on the regular (gathering/production/crafting) component, which always carries the name — so those screens are sat out, while a genuine rename of the name class on a standard panel still trips it. The name selector itself was never broken; the ~13 features that read the action name were unaffected.\n\n### First run: returning users can keep their settings\n\n- **The welcome dialog for returning users now leads with \"Keep my current settings\"**: someone opening a build that added settings their previous version never had used to get a two-button \"Keep everything as it was / Turn the new things on\" prompt. It now offers \"Keep my current settings\" (the primary, default choice) alongside the Essentials, Combat, Market & trading and Defaults presets. Keeping — or dismissing the dialog — changes nothing and holds new on-by-default features off, so \"no change\" really means no change; picking a preset replaces the current settings and is undoable with Restore in the Toolasha tab. Fresh installs are unchanged.\n\n### Preset renamed: \"Everything on\" → \"Defaults\"\n\n- **The preset bar's \"Everything on\" button is now \"Defaults\"**: its tooltip already said \"every feature at its shipped default,\" which contradicted a label that read as \"turn everything on.\" It applies the schema defaults (several hides and warnings ship off on purpose), so \"Defaults\" is what it actually does. Behaviour is unchanged — only the label, its description, and the internal comments were reworded.\n\n### Portrait DPS extras are now opt-in\n\n- **The seven Portrait DPS sub-readouts default OFF**: time-to-kill, wave-clear countdown, mana runway, damage-taken/net-sustain, hit & crit rate, enemy outgoing damage, and the enrage countdown now start unchecked. They were defaulting on while their own parent toggle (\"Show each character's damage on their battle portrait\") defaults off, so switching the parent on flooded the portraits with every extra at once — the very clutter the parent's help text warns about. Turning Portrait DPS on now shows just the DPS and total-damage figure; each extra is opt-in.\n\n### Undercut alerts stop missing undercuts you didn't watch happen\n\n- **A configurable market refresh, on while undercut alerts are**: the alert compared your listings against a snapshot that went stale after startup — nothing re-fetched it, and the only fresh per-item price arrived when you opened the item yourself, so a competitor who undercut you hours ago kept showing you as \"still best.\" A new \"re-fetch market snapshot every (minutes)\" setting under the undercut toggle (default 5, 1–15) forces the bulk snapshot to refresh on a timer; each refresh re-runs the undercut check against current prices, so a snapshot-only undercut on an item you never opened is finally caught. One fetch covers every listing, and because the whole script reads the same snapshot, every price surface — profit panels, net worth, the advisor — gets fresher numbers for free while it runs. An in-flight guard skips overlapping ticks, a one-minute floor keeps the cadence courteous, and the timer stops when the alert is off.\n\n### The combat profit panel leads with the live rate again\n\n- **The sim's forecast moves out of the headline**: the top card is back to the live measured profit rate alone; the last all-zones sim's figure for the zone (\"sim said here — …/day · simulated\") now sits in its own dim card at the foot of the panel, present for the comparison but no longer competing with the number the panel is for.\n\n### The combat sim's Guild Shrine gets per-shrine targets\n\n- **A \"Targets\" grid on the Combat Simulator's Guild Shrine upgrade, matching the Lab Sim's**: instead of one uniform level for every combat shrine, you can now set a target level per shrine — each priced from its current level up to its target and capped at its own max, shrines already maxed shown disabled. It reuses the analyzer's existing per-shrine input (the uniform level still governs when the grid is closed), and mirrors the sim's own House-targets control so it behaves identically.\n\n### The trial DPS split says how much of the party it actually covers\n\n- **\"Per player · 3 of 7 · watched\" instead of implying three people did everything**: on a spectated stream with no player attack counters, a member's damage is only attributable when they had a solo moment aligned with a boss-damage tick, so a short watch can credit only some of the party — and the panel used to present those rows as the whole story, shares summing to 100%, with nothing said about the four members who never got a cleanly-split hit. The under-card list, the scoreboard panel, the \"Copy stats\" text, and the guild report now state the coverage: shares are of the attributed damage, the total is a lower bound, and the missing members didn't do nothing. A fully-covered party shows no caveat. This also explains the shifting percentages a viewer sees early in a tier — the split fills in as hits land; no one's banked total ever decreases.\n\n### The per-player readout stays on its own tile, its panels stop drifting, and the panel does less work\n\n- **A watched fight's per-player DPS no longer dresses every tile**: the Chameleon's rows were being drawn under the Hedgehog card (and cross-checked against skilling pools), because one measurement was handed to every tile. Each tile now shows only the encounter it was measured from; the others say \"no fights watched for this encounter\" rather than borrowing someone else's numbers.\n- **The trial panels re-anchor instead of drifting**: React re-parenting the boss card — on first mount and again when a tier clears — used to strand the DPS block below the payout panel or flip the panel order. Each block now re-places itself against the game's own nodes whenever it comes loose, with scroll kept, so the first render and every tier rollover hold the intended layout.\n- **The panel recomputes and writes less**: the trial analysis ran twice per tile each pass and is now memoized per pass; the full-record IndexedDB write is throttled to the sampling window instead of firing on every observer burst; and the three storage reads at startup now run together instead of one after another.\n\n### The startup freeze on an enhanced inventory is gone\n\n- **Pricing a +20 inventory no longer stalls the main thread for a second**: with the inventory panel on screen at load, the badge manager priced every item in one uninterrupted pass, and each high-enhancement piece runs the enhancement-cost path (100+ ms apiece cold) — a dozen of them froze the page for ~1.2s and, because the work was fired without `await`, the startup trace pinned the blame on whatever unrelated feature happened to be mid-`await` at the time. The pricing loop now yields to the browser every 8ms, turning one long freeze into short slices; every item is still priced with the same values, just spread so the page stays responsive and the rest of startup proceeds behind it.\n\n### Startup traces stop blaming the wrong feature\n\n- **A feature that only parked in `await` is no longer named the slow one**: the startup trace timed each feature as wall-clock around its initializer, so a trivial synchronous feature that happened to `await` at the moment a heavy storage read resolved absorbed that read's cost and topped the \"slowest features\" list. The trace now splits each feature's own synchronous work from time spent waiting, and labels the latter \"waiting on other work\" — so the next trace points at the real cost instead of the messenger.\n\n### Damage totals stop swapping bodies at tier rollovers\n\n- **Per-player totals are banked by name at every wave boundary**: the trial-long tallies were keyed by actor slot, and the game re-deals the slots at every tier — so at a rollover, NPD's 156K could land under whoever inherited their index while they showed 24K (observed live). Each wave's damage, deaths, and support figures now fold into an immutable by-name bank before anything re-deals; live maps are per-wave only, attribution baselines reset with them, and the own-unit binding re-confirms by counters every wave. A never-named slot banks under its placeholder — an unknown then is an unknown forever, never someone else's credit. Regression test pins two waves with reversed slot orderings to exact, monotonically non-decreasing per-name totals.\n- **Loadout sightings are guild-scoped**: switching a character's guild no longer haunts the new roster with the old guild's people — each guild's sightings live under their own key (nothing is deleted on a switch), and the \"Seen loadouts\" panel filters to the current roster with an honest count of hidden outsiders.\n- **Levels stop printing floating-point tails**: \"Lv.151.60000000000002\" renders as \"Lv.151.6\".\n- **Narrow DPS rows keep a readable name**: the per-player value drops its unit (the header carries it), and the name is guaranteed at least five characters even in the 108-pixel cell.\n\n### The In Progress tab stops trusting stale answers — and combat trials learn their tier\n\n- **A stated tier is only believed for the pool it was stated with**: the live view once showed \"Banked 8 tiers / Next tier T10\" against a bar only T15 produces, because a socket-stated tier from hours earlier was persisted and never invalidated. Stated tiers now carry the bar target they were stated for and die the moment the bar moves on; among the surviving rungs the largest wins, since tiers only climb — the badge and socket can lag but never lead the bar in front of the player.\n- **Combat trials identify their tier from the boss card's own bars**: the second bar is the tier's pool, scaling purely with the tier level (observed live: 550,000 → 600,000 is exactly 110 → 120 at 5,000 per point, no participant factor), and the spectated fight's stated tier is persisted under the same staleness contract. \"Tier not known yet\" on a combat card should now be rare and short-lived.\n- **Banked points top up along the ladder**: a card-quoted total from tier 8 no longer masquerades as the trial's total after six more tiers banked — the ladder's marginal steps are added (1,080 + 6×120 = 1,800, matching the live view exactly).\n- **The pace clock stops reading \"Thu 09:00 AM\" as nine minutes**: the status row's schedule text slipped past the clock parser's guards, inflating time-left by ~50% and making one more tier \"fit\" — the off-by-one between the two tabs' pace lines. The same refusals now guard every clock source.\n- **A tier clearing under an open tab keeps continuity**: the pool bar's reset onto the next tier's larger target was being misread as a boss bar and dropped; one bar on a skilling card is now the pool by construction, so the observation files under the new tier and the analysis rolls forward without a visit anywhere.\n- **The per-player DPS rows survive narrow columns**: name and figures always share one row (ellipsized name, full name in the tooltip), and the header's label/value pairs no longer wrap mid-label.\n- **The spectate caption tells the truth**: ticks keep arriving and counting while other game tabs are browsed — the note now says so, instead of claiming only on-view stretches count.\n\n### The pace projection stops dying after one tier\n\n- **\"On pace for 13 tiers → T13\" with twenty-six minutes left is gone**: the figure both tabs show is the _forecast_ row, and the forecast had been starving since it was written — it read two fields the analysis never returned, so its ladder broke after exactly one tier and quietly printed the current tier as the ceiling (the missing fields also silently starved the success-decline model). The analysis now hands them over, and the forecast anchors its ladder on the live bar — the one label-verified anchor — the same discipline the pace walk uses, with stored observations as fallback only. The screenshot case now projects 17 tiers → T17, limited by time, on both tabs.\n- **A misfiled observation can no longer outprice the bar in hand**: exact-ladder pricing prefers the live bar's anchor outright, so a stale observation filed at the wrong tier can't drag the next tier's total below the current one.\n- **The card's level is the tier's ground truth, verified**: the game prints only \"Lv.N\" and points on a trial card (the T-chip is Toolasha's own rendering, excluded from scraping), and level → tiers banked is pinned by the card's own points arithmetic in a test.\n\n### The damage tracker keeps its names, heals honestly, and a fresh character knows the tier cold\n\n- **A refresh no longer forgets who is fighting**: the party roster arrives once per tier on `new_guild_battle`, so a mid-fight refresh used to fall back to \"Player 2 / Player 3\" placeholders until the next tier. The roster is now persisted keyed to its battle id and re-adopted on the first tick after a reload — and only for the same battle, never borrowed from another.\n- **One name, one unit**: the spectate view draws only the watcher as a full combat card, and the positional name list handed the watcher's name to a second slot — the leaderboard showed MillenniumTest twice with SarinTest missing (reproduced verbatim from the user's export). Names are now claimed by rank (roster > own-counter-confirmed > portrait > vitals > elimination), duplicates demote to placeholders, stored slots heal mid-fight, and when exactly one slot and one name remain the pairing is forced.\n- **Regeneration stops masquerading as failed attribution**: a multi-unit HP rise at one uniform fraction of each unit's own maximum classifies itself as regen (and teaches the fraction for lone risers), shown as its own \"regeneration\" figure credited to nobody; and a lone ability caster now owns their tick's non-regen heals — which is exactly how a Blooming Trident's Bloom proc attributes, since it fires on ability cast and never labels itself.\n- **A brand-new character mid-joining a trial knows the tier from the bar alone**: the work-target arithmetic now solves tier and participant count jointly as an integer problem (51,360 factors uniquely as T3 × 7 participants) — needed because the In Progress tab states no sign-up count — and known first-tier bases ship as seeded defaults (crafting/foraging/alchemy 40,000; combat per encounter: Chameleon 550,000, Badger 330,000), with learned values overriding. Ambiguous targets stay honestly unknown.\n\n### The battle-info button finds the real units — and becomes its own tool\n\n- **The profile cycler matches the game's own unit boxes now**: it used to walk bare text and climb to \"the smallest ancestor with a health reading\", which sailed up to the whole battle grid and matched names this script's own damage panel had drawn there — clicks that could never open anything. Mapped live against the real DOM (script disabled): the boss is a `CombatUnit` in the monsters grid, the watcher's own character is a full `CombatUnit` card in the players area, and the rest of the party are small clickable `MiniUnit` boxes beside it. Units are now matched by those classes inside the boss's battle panel, with a text-truncated name line (\"SarinTe…\") still resolving by unique roster prefix.\n- **Battle info and profiles are separate buttons now**: a profile carries skills but no combat stat sheet, so the one button that silently degraded from \"battle info\" into \"profile\" was collecting the wrong thing while looking done. The battle-info button appears only while a fight on screen offers a clickable unit; the profile button walks the roster for skill levels, and each says plainly what it is asking for.\n- **The `/profile` chat fill survives a renamed input container**: the chat-input lookup now falls back to the chat panel itself when the inner container's class stops matching, keeping every clickable player name working.\n- **A fight where everyone is fresh says so**: when every fighter's combat sheet was captured within the last fifteen minutes, the battle-info button used to vanish without explanation — it now leaves a note saying everyone is fresh and the button returns when a sheet goes stale.\n\n### The trials panel knows its tier immediately, and the pace projection stops lowballing\n\n- **The In Progress tab now identifies the tier on its own**: the live tab draws no status header, so the panel used to sit on \"tier not known yet\" until you visited the Trials tab. The tier now comes from a four-rung ladder — the card's badge, the socket's stated tier (now actually persisted instead of dropped on the floor), the work-target arithmetic (a skilling bar's target uniquely identifies its tier once the skill's base work is known — the crafting base of 40,000 is confirmed exact across two guilds), and the first-tier rule last. Each rung labels itself in the panel caption.\n- **Pace projections walk the exact ladder instead of a fitted curve**: both trial kinds scale by known ratios — skilling pools by `1 + 0.1×(tier−1)`, combat boss health by `100 + 10×tier` — so a single observed tier anchors every other tier's total exactly. The old geometric fit needed two observed tiers before it would say anything (mid-join with one tier seen, it stopped the walk and printed \"3 tiers → T3\" when the true pace was ~T18) and drifted even with two. When the next tier genuinely can't be priced, the caption now says \"at least N tiers\" instead of presenting the floor as the estimate.\n- **Live pool observations file under the tier being fought, not the stale badge**: a pool sampled mid-tier used to be recorded against the last banked tier, poisoning the learned base (the \"59.0K next tier\" figure reproduced exactly from that misfiling). Skill work bases are learned once from a stated-tier reading and shared across guilds, since the base is the game's constant, not the guild's.\n\n### Release housekeeping\n\n- **GreasyFork's version history will show real release notes**: the release workflow now writes the version's actual changelog section into the userscript commit on the `releases` branch — titled with the version, no attribution trailers, and the libraries commit no longer touches the userscript — so GreasyFork's changelog stops reading \"chore(main): release X\" and lists what changed instead.\n- **The userscript header catches up to 2.90.0**: the release PR merged before the version-sync automation could stamp it, so the 2.90.0 build shipped labelled `@version 2.89.0` and update checkers never saw a new version. Headers, README, and the runtime version string now say 2.90.0, and a corrected build replaces the mislabell";
 
     /**
      * What's New — the once-per-update popup, and the conservative-defaults policy.
@@ -56099,9 +57935,18 @@ ${starCSS}
         /**
          * The one-time choice for someone arriving with another build's settings.
          *
-         * Awaited before features initialise, deliberately: "keep everything as it
-         * was" is only true if the new features never run — a feature switched off
-         * after startup has already announced itself. The page underneath is the
+         * A returning user already has opinions saved, so the safe answer is to
+         * touch nothing — "Keep my current settings" is the default and the primary
+         * button. The presets follow it, for the person who would rather start from
+         * a known configuration than reconcile a fork's worth of new switches by
+         * hand. The two kinds of answer are not symmetric, and the message says so:
+         * keeping changes nothing, whereas a preset overwrites what is there — which
+         * is why `applyPreset` snapshots first, so Restore in the Toolasha tab can
+         * walk it back.
+         *
+         * Awaited before features initialise, deliberately: "keep my current
+         * settings" is only true if the new features never run — a feature switched
+         * off after startup has already announced itself. The page underneath is the
          * game, which works fine while this waits; closing the dialog counts as
          * keeping things as they were, because the person who dismisses a dialog
          * unread is exactly the person who did not ask for new behaviour.
@@ -56118,23 +57963,47 @@ ${starCSS}
                 message:
                     `This build has ${inherited.length} setting${inherited.length === 1 ? '' : 's'} that did not exist ` +
                     `in the version your settings came from. ${conservative.length} of them switch new behaviour on by ` +
-                    'default.\n\nEither way, the full list follows with a switch for each — nothing here is final.',
+                    'default.\n\n' +
+                    'Keeping your settings changes nothing. A preset replaces your current settings — you can undo it ' +
+                    'later with Restore in the Toolasha tab.',
                 choices: [
-                    { value: 'keep', label: 'Keep everything as it was' },
-                    { value: 'enable', label: 'Turn the new things on', tone: 'primary' },
+                    {
+                        value: 'keepCurrent',
+                        label: 'Keep my current settings',
+                        tone: 'primary',
+                        hint:
+                            'Change nothing — leave every setting exactly where it is now. New features stay off ' +
+                            'until you turn them on.',
+                    },
+                    ...SETTING_PRESETS.map((preset) => ({
+                        value: preset.id,
+                        label: preset.label,
+                        hint: preset.description,
+                    })),
                 ],
             });
-            // Dismissal counts as keeping things as they were: the person who
-            // closes a dialog unread is exactly the person who did not ask for new
-            // behaviour
-            const keepAsIs = answer !== 'enable';
 
-            let turnedOff = new Set();
-            if (keepAsIs) {
-                config.setSetting('whatsNew_newDefaultsOff', true);
-                for (const id of conservative) config.setSetting(id, false);
-                turnedOff = new Set(conservative);
+            // A real preset id — and only a real preset id — takes the preset path.
+            // `keepCurrent` and dismissal (null) both fall through to the safe path,
+            // because the user asked for either "no change" or nothing at all.
+            const chosenPreset = getPreset(answer);
+            if (chosenPreset) {
+                await applyPreset(chosenPreset.id);
+                this._pending = {
+                    headline: `Switched to ${current.fork} ${current.version} — ${chosenPreset.label} preset`,
+                    forkChanged: true,
+                    newIds: [],
+                    turnedOff: new Set(),
+                };
+                return;
             }
+
+            // The safe path: keep every current value, and hold the conservative
+            // policy so genuinely-new on-by-default switches stay off until asked
+            // for. Dismissal lands here too — the person who closes a dialog unread
+            // is exactly the person who least wants their config touched.
+            config.setSetting('whatsNew_newDefaultsOff', true);
+            for (const id of conservative) config.setSetting(id, false);
 
             // The full popup still follows after startup, live switches and all —
             // the choice was wholesale, and the list is where it gets refined
@@ -56142,7 +58011,7 @@ ${starCSS}
                 headline: `Switched to ${current.fork} ${current.version}`,
                 forkChanged: true,
                 newIds: inherited,
-                turnedOff,
+                turnedOff: new Set(conservative),
             };
         }
 
@@ -56158,7 +58027,7 @@ ${starCSS}
          * Awaited before features initialise for the same reason the inherited-
          * settings question is: a feature switched off after startup has already
          * run once. Dismissing the dialog — Escape, or clicking away — is the same
-         * as choosing "Everything on", which is what a fresh install would have
+         * as choosing "Defaults", which is what a fresh install would have
          * done anyway, so nothing here can leave a person stuck.
          *
          * @param {{fork: string, version: string}} current - This build
@@ -70024,6 +71893,9 @@ ${starCSS}
     /** Master switch; nothing below it is consulted while this is off */
     const MASTER_SETTING = 'notifications_marketListingUndercut';
 
+    /** How often, in minutes, to actively re-fetch the market snapshot while alerts are on */
+    const REFRESH_SETTING = 'notifications_marketListingUndercut_refreshMinutes';
+
     /** The status HRID the server puts on a listing that is still on the board */
     const ACTIVE_STATUS = '/market_listing_status/active';
 
@@ -70033,6 +71905,10 @@ ${starCSS}
             this.listingStates = new Map();
             this.unregisterHandlers = [];
             this.characterSwitchingHandler = null;
+            /** Holds the active-refresh interval so cleanup can clear it */
+            this.timers = timerRegistry_js.createTimerRegistry();
+            /** True while a forced refresh is in flight, so an overlapping tick is skipped */
+            this.refreshInFlight = false;
         }
 
         /**
@@ -70068,6 +71944,84 @@ ${starCSS}
                 this.disable();
             };
             dataManager.on('character_switching', this.characterSwitchingHandler);
+
+            this.startActiveRefresh();
+        }
+
+        /**
+         * Actively re-fetch the market snapshot on a timer while alerts are on.
+         *
+         * Without this, nothing calls `marketAPI.fetch()` after startup, so the bulk
+         * snapshot goes stale and the only fresh per-item price is the order-book
+         * patch that lands when the player opens an item's view. An undercut that
+         * happened hours ago against an item never opened would then read as "still
+         * best" against the stale snapshot. Forcing a periodic refresh is the same
+         * fetch the lazy 15-minute cache would eventually do, just sooner — and
+         * `marketAPI.fetch()` notifies its listeners on success, so the undercut
+         * `check()` (subscribed above) re-runs against the fresh figures with no
+         * extra wiring, as does every other feature that reads `getPrice()`.
+         *
+         * `marketplace.json` is the game's own published file and one fetch covers
+         * every listing, so this stays a courteous cadence: the 1-minute floor is
+         * deliberate and a value at or above the cache means no extra fetch at all.
+         */
+        startActiveRefresh() {
+            const minutes = this.resolveRefreshMinutes();
+            if (minutes === null) {
+                // Off, or at/above the cache window — the normal cache stands
+                return;
+            }
+
+            const intervalMs = minutes * 60 * 1000;
+            const intervalId = setInterval(() => {
+                this.refreshSnapshot();
+            }, intervalMs);
+            this.timers.registerInterval(intervalId);
+        }
+
+        /**
+         * The refresh interval in whole minutes, or null when active refresh is off.
+         *
+         * Off means: 0 or blank, a value that does not resolve to a positive number,
+         * or a value at or above the 15-minute cache window (where a forced fetch
+         * buys nothing the lazy cache would not already do). The 1-minute floor is
+         * never crossed — a sub-minute cadence would be impolite to the game's own
+         * static file, which one fetch reads in full.
+         *
+         * @returns {number|null} Whole minutes to wait between fetches, or null if off
+         */
+        resolveRefreshMinutes() {
+            const raw = config.getSetting(REFRESH_SETTING, 0);
+            const minutes = Math.floor(Number(raw));
+            if (!Number.isFinite(minutes) || minutes < 1) {
+                return null;
+            }
+
+            const cacheMinutes = marketAPI.CACHE_DURATION / (60 * 1000);
+            if (minutes >= cacheMinutes) {
+                return null;
+            }
+
+            return minutes;
+        }
+
+        /**
+         * Force one whole-snapshot refresh, skipping the tick if one is still in flight.
+         */
+        async refreshSnapshot() {
+            if (this.refreshInFlight) {
+                // A previous fetch has not settled; do not stack a second one
+                return;
+            }
+
+            this.refreshInFlight = true;
+            try {
+                await marketAPI.fetch(true);
+            } catch (error) {
+                console.error('[MarketUndercutAlerts] Active market refresh failed:', error);
+            } finally {
+                this.refreshInFlight = false;
+            }
         }
 
         /**
@@ -70193,6 +72147,8 @@ ${starCSS}
             this.unregisterHandlers.forEach((unregister) => unregister());
             this.unregisterHandlers = [];
             this.listingStates.clear();
+            this.timers.clearAll();
+            this.refreshInFlight = false;
         }
     }
 
@@ -75143,4 +77099,4 @@ ${starCSS}
 
     console.log('[Toolasha] UI library loaded');
 
-})(Toolasha.Core.config, Toolasha.Core.dataManager, Toolasha.Core.domObserver, Toolasha.Utils.formatters, Toolasha.Utils.timerRegistry, Toolasha.Utils.domObserverHelpers, Toolasha.Utils.dom, Toolasha.Core.storage, Toolasha.Utils.panelZIndex, Toolasha.Utils.floatingPanel, Toolasha.Utils.panelGeometry, Toolasha.Utils.characterKey, Toolasha.Utils.overlayRows, Toolasha.Utils.opanelConfig, Toolasha.Utils.choiceDialog, Toolasha.Utils.mobile, Toolasha.Utils.overlayLayout, Toolasha.Core, Toolasha.Utils.toast, Toolasha.Utils.bundleBridge, Toolasha.Utils.houseCostCalculator, Toolasha.Utils.overlayFormat, Toolasha.Utils.marketplaceTabs, Toolasha.Utils.marketData, Toolasha.Utils.roomSkills, Toolasha.Core.marketAPI, Toolasha.Utils.numberParser, Toolasha.Utils.pricingHelper, Toolasha.Core.webSocketHook, Toolasha.Utils.simplePanel, Toolasha.Utils.damageAttribution, Toolasha.Combat.combatDPS, Toolasha.Combat.combatStatsDataCollector, Toolasha.Combat.combatStatsCalculator, Toolasha.Combat.damageTracker, Toolasha.Combat.damageTakenTracker, Toolasha.Utils.battlePanelMonsters, Toolasha.Utils.spawnExpectation, Toolasha.Utils.combatDropModel, Toolasha.Utils.allZonesSnapshot, Toolasha.Utils.partyLint, Toolasha.Utils.csvExport, Toolasha.Utils.itemNavigation, Toolasha.Utils.efficiency, Toolasha.Utils.guildCreditPricing, Toolasha.Utils.adoptionConsent, Toolasha.Utils.gameText, Toolasha.Core.performanceMonitor, Toolasha.Utils.backgroundWork, Toolasha.Utils.profileCommand, Toolasha.Utils.progressEta, Toolasha.Utils.reactInput, Toolasha.Utils.actionPanelHelper, Toolasha.Market.expectedValueCalculator, Toolasha.Market.gatheringProfit, Toolasha.Market.productionProfit, Toolasha.Utils.profitHelpers, Toolasha.Utils.selectors, Toolasha.Utils.actionCalculator, Toolasha.Utils.equipmentParser, Toolasha.Utils.profitConstants, Toolasha.Sim.combatSimRunner, Toolasha.Sim.combatSimAdapter, Toolasha.Utils.assetManifest, Toolasha.Utils.gameLookups, Toolasha.Utils.chunkedHistory, Toolasha.Utils.skillProgress, Toolasha.Utils.skillHistory, Toolasha.Utils.deferredLoad, Toolasha.Utils.combatLevel, Toolasha.Utils.experienceParser, Toolasha.Utils.dropLuck, Toolasha.Utils.marketplaceAutofill, Toolasha.Utils.cleanupRegistry, Toolasha.Core.settingsStorage, Toolasha.Utils.scrollBuffValues, Toolasha.Utils.enhancementConfig, Toolasha.Utils.chestTally, Toolasha.Utils.chestImport, Toolasha.Utils.tokenValuation, Toolasha.Utils.materialCalculator, Toolasha.Utils.alchemyFees, Toolasha.Utils.enhancementCalculator, Toolasha.Utils.teaParser, Toolasha.Sim.combatSimUI, Toolasha.Utils.tableColumns, Toolasha.Utils.consumableTarget, Toolasha.Utils.consumableForecast, Toolasha.Utils.keyLedger, Toolasha.Utils.orderBook, Toolasha.Utils.shoppingList, Toolasha.Market.alchemyProfitCalculator, Toolasha.Utils.buffParser);
+})(Toolasha.Core.config, Toolasha.Core.dataManager, Toolasha.Core.domObserver, Toolasha.Utils.formatters, Toolasha.Utils.timerRegistry, Toolasha.Utils.domObserverHelpers, Toolasha.Utils.dom, Toolasha.Core.storage, Toolasha.Utils.panelZIndex, Toolasha.Utils.floatingPanel, Toolasha.Utils.panelGeometry, Toolasha.Utils.characterKey, Toolasha.Utils.overlayRows, Toolasha.Utils.opanelConfig, Toolasha.Utils.choiceDialog, Toolasha.Utils.mobile, Toolasha.Utils.overlayLayout, Toolasha.Core, Toolasha.Utils.toast, Toolasha.Utils.bundleBridge, Toolasha.Utils.houseCostCalculator, Toolasha.Utils.overlayFormat, Toolasha.Utils.marketplaceTabs, Toolasha.Utils.marketData, Toolasha.Utils.roomSkills, Toolasha.Core.marketAPI, Toolasha.Utils.numberParser, Toolasha.Utils.pricingHelper, Toolasha.Core.webSocketHook, Toolasha.Utils.simplePanel, Toolasha.Utils.damageAttribution, Toolasha.Combat.combatDPS, Toolasha.Combat.combatStatsDataCollector, Toolasha.Combat.combatStatsCalculator, Toolasha.Combat.damageTracker, Toolasha.Combat.damageTakenTracker, Toolasha.Utils.battlePanelMonsters, Toolasha.Utils.spawnExpectation, Toolasha.Utils.combatDropModel, Toolasha.Utils.allZonesSnapshot, Toolasha.Utils.partyLint, Toolasha.Utils.csvExport, Toolasha.Utils.itemNavigation, Toolasha.Utils.efficiency, Toolasha.Utils.guildCreditPricing, Toolasha.Utils.adoptionConsent, Toolasha.Utils.gameText, Toolasha.Core.performanceMonitor, Toolasha.Utils.backgroundWork, Toolasha.Utils.profileCommand, Toolasha.Utils.selectors, Toolasha.Utils.progressEta, Toolasha.Utils.reactInput, Toolasha.Utils.actionPanelHelper, Toolasha.Market.expectedValueCalculator, Toolasha.Market.gatheringProfit, Toolasha.Market.productionProfit, Toolasha.Utils.profitHelpers, Toolasha.Utils.actionCalculator, Toolasha.Utils.equipmentParser, Toolasha.Utils.profitConstants, Toolasha.Sim.combatSimRunner, Toolasha.Sim.combatSimAdapter, Toolasha.Utils.assetManifest, Toolasha.Utils.gameLookups, Toolasha.Utils.chunkedHistory, Toolasha.Utils.skillProgress, Toolasha.Utils.skillHistory, Toolasha.Utils.deferredLoad, Toolasha.Utils.combatLevel, Toolasha.Utils.experienceParser, Toolasha.Utils.dropLuck, Toolasha.Utils.marketplaceAutofill, Toolasha.Utils.cleanupRegistry, Toolasha.Core.settingsStorage, Toolasha.Utils.scrollBuffValues, Toolasha.Utils.enhancementConfig, Toolasha.Utils.chestTally, Toolasha.Utils.chestImport, Toolasha.Utils.tokenValuation, Toolasha.Utils.materialCalculator, Toolasha.Utils.alchemyFees, Toolasha.Utils.enhancementCalculator, Toolasha.Utils.teaParser, Toolasha.Sim.combatSimUI, Toolasha.Utils.tableColumns, Toolasha.Utils.consumableTarget, Toolasha.Utils.consumableForecast, Toolasha.Utils.keyLedger, Toolasha.Utils.orderBook, Toolasha.Utils.shoppingList, Toolasha.Market.alchemyProfitCalculator, Toolasha.Utils.buffParser);

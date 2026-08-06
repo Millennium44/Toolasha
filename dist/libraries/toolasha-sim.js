@@ -1,11 +1,11 @@
 /**
  * Toolasha Combat Simulator Library
  * The battle engine, shared by every feature that simulates a fight
- * Version: 2.90.0
+ * Version: 2.91.0
  * License: CC-BY-NC-SA-4.0
  */
 
-(function (config, domObserver, dataManager, marketAPI, tokenValuation_js, marketData_js, profitHelpers_js, evWorkerManager_js, storage, webSocketHook, timerRegistry_js, chunkedHistory_js, gameLookups_js, materialCalculator_js, abilityCostCalculator_js, formatters_js, overlayFormat_js, marketplaceTabs_js, simplePanel_js, overlayRows_js, roomSkills_js, bundleBridge_js, equipmentSavings_js, characterKey_js, panelZIndex_js, floatingPanel_js, panelGeometry_js, watchlist_js, dropSources_js, enhancementCalculator_js, enhancementConfig_js, profitConstants_js, teaParser_js, numberParser_js, dungeonKeys_js, domObserverHelpers_js, marketplaceAutofill_js, allZonesSnapshot_js, liquidityCap_js, partyLint_js, progressEta_js, csvExport_js, dungeonLevelGap_js, mobile_js, equipmentParser_js, combatLevel_js, guildCreditPricing_js) {
+(function (config, domObserver, dataManager, marketAPI, tokenValuation_js, marketData_js, profitHelpers_js, evWorkerManager_js, storage, webSocketHook, timerRegistry_js, chunkedHistory_js, gameLookups_js, materialCalculator_js, abilityCostCalculator_js, formatters_js, overlayFormat_js, marketplaceTabs_js, simplePanel_js, overlayRows_js, roomSkills_js, bundleBridge_js, equipmentSavings_js, characterKey_js, panelZIndex_js, floatingPanel_js, panelGeometry_js, watchlist_js, dropSources_js, enhancementCalculator_js, enhancementConfig_js, profitConstants_js, teaParser_js, numberParser_js, dungeonKeys_js, domObserverHelpers_js, backgroundWork_js, marketplaceAutofill_js, allZonesSnapshot_js, liquidityCap_js, partyLint_js, progressEta_js, csvExport_js, dungeonLevelGap_js, mobile_js, equipmentParser_js, combatLevel_js, guildCreditPricing_js) {
     'use strict';
 
     /**
@@ -5514,6 +5514,13 @@
      */
 
 
+    // How long the per-item pricing loop may run before handing the thread back.
+    // High-enhancement equipment runs calculateEnhancementPath (100+ ms per +20
+    // piece with a cold cache), so a large enhanced inventory would otherwise price
+    // every item in one uninterrupted macrotask — a ~1.2s main-thread freeze during
+    // startup. 8ms keeps a frame's worth of work per slice.
+    const RENDER_TIME_BUDGET_MS = 8;
+
     /**
      * InventoryBadgeManager class manages all inventory item badges from multiple features
      */
@@ -5812,7 +5819,19 @@
                 '/items/pirate_token',
             ]);
 
+            let sliceStart = performance.now();
+
             for (const itemElem of itemElems) {
+                // Cooperative time-slicing: hand the thread back once a slice runs
+                // long so the expensive enhancement-cost path below cannot freeze the
+                // page in one contiguous macrotask (see RENDER_TIME_BUDGET_MS). Every
+                // item is still priced — the work is spread, not skipped — so the
+                // dataset every consumer reads ends up exactly as it would have.
+                if (performance.now() - sliceStart > RENDER_TIME_BUDGET_MS) {
+                    await backgroundWork_js.yieldToEventLoop();
+                    sliceStart = performance.now();
+                }
+
                 // Get item HRID from SVG aria-label
                 const svg = itemElem.querySelector('svg');
                 if (!svg) continue;
@@ -16940,9 +16959,15 @@
      * greedily whenever they can be reached without an extra shroud — a chest is
      * always worth extra torches, never an extra shroud.
      *
+     * Finally, among routes that tie on all of the above, the one that uncovers the
+     * most unknown rooms wins, via a bounded sub-torch bonus (below) — so it only
+     * ever separates otherwise-equal routes and never trades a torch or a shroud
+     * for a reveal. This replaces Dijkstra's arbitrary wall-hugging pick between
+     * equal-length paths with one that opens up more of the floor.
+     *
      * Pure function so the routing logic is testable without DOM or sims.
      * @param {Array<Object|null>} tiles - Flat grid, null = wall; entries carry
-     *   { cleared, isEntrance, needsShroud, isTreasure, isExit }
+     *   { cleared, isEntrance, needsShroud, isTreasure, isExit, isUnknown }
      * @param {number} cols - Grid width
      * @returns {Object|null} { route: Set<number>, chests: Set<number>, shrouds,
      *   torches, target } or null when there is no start/exit/route
@@ -16968,14 +16993,32 @@
             return out;
         };
 
-        // Entering a tile costs shrouds*W + 1 torch when uncleared; cleared
-        // tiles, the entrance, and tiles already on the route are free. Walls
-        // are impassable.
+        // Reveal tie-break: among routes tying on shrouds and torches, prefer the
+        // one that uncovers the most unknown rooms rather than Dijkstra's arbitrary
+        // wall-hugging pick. Entering a room reveals the unknown rooms next to it
+        // (and the room itself when it is the unknown one), so each earns a bonus
+        // scaled below a single torch: the most a whole route can earn is
+        // (5 tiles) × epsilon < 1, so the bonus never overturns a torch or shroud
+        // and only decides between otherwise-equal routes. The per-tile sum can
+        // count an unknown adjacent to two route tiles more than once — harmless
+        // for a tie-break.
+        const revealEpsilon = 1 / (5 * tiles.length + 1);
+        const revealScore = (idx) => {
+            let score = tiles[idx]?.isUnknown ? 1 : 0;
+            for (const nb of neighbors(idx)) {
+                if (tiles[nb]?.isUnknown) score++;
+            }
+            return score;
+        };
+
+        // Entering a tile costs shrouds*W + 1 torch when uncleared, less the reveal
+        // tie-break bonus; cleared tiles, the entrance, and tiles already on the
+        // route are free. Walls are impassable.
         const enterCost = (idx, routeSet) => {
             const t = tiles[idx];
             if (!t) return null;
             if (t.cleared || t.isEntrance || routeSet.has(idx)) return 0;
-            return (t.needsShroud ? PATH_SHROUD_WEIGHT : 0) + 1;
+            return (t.needsShroud ? PATH_SHROUD_WEIGHT : 0) + 1 - revealEpsilon * revealScore(idx);
         };
 
         const dijkstra = (sourceIndices, routeSet) => {
@@ -27133,7 +27176,7 @@
      * Run the full upgrade analysis: baseline sim + one sim per candidate.
      * @param {Object} params - { playerDTOs, playerIndex, zoneHrid, difficultyTier, hours, communityBuffs, upgradeModes,
      *   upgradeMode, abilityLevelType, abilityTargetLevel, skipBackSlot, combatLevelTargets, charmTier,
-     *   houseTargetLevel, houseTargets, guildShrineTargetLevel, optimizeFood, signatureSwapsOnly }
+     *   houseTargetLevel, houseTargets, guildShrineTargetLevel, guildShrineTargets, optimizeFood, signatureSwapsOnly }
      * @param {Function} onProgress - Called with { current, total, description }
      * @param {Object} [options] - { abortSignal: () => boolean }
      * @returns {Promise<Object>} { baseline, results: [{candidate, cost, metrics, deltas, goldPer}], food }
@@ -27157,6 +27200,7 @@
             houseTargetLevel = 0,
             houseTargets = null,
             guildShrineTargetLevel = 0,
+            guildShrineTargets = null,
             communityBuffTargetLevel = 0,
             optimizeFood = false,
             signatureSwapsOnly = false,
@@ -27189,7 +27233,7 @@
                 houseTargets,
                 communityBuffs,
                 guildShrineTargetLevel,
-                { signatureSwapsOnly, communityBuffTargetLevel }
+                { signatureSwapsOnly, communityBuffTargetLevel, guildShrineTargets }
             )
         );
         // Candidates the caller asked for by name, alongside whatever the mode
@@ -33828,6 +33872,7 @@
             <input id="mwi-csim-shrine-target-level" type="number" min="1" max="100" placeholder="+1" style="
                 width:48px; text-align:center; ${CHIP_INPUT_STYLE$1}"
                 title="Target level to buy every combat shrine buff up to. Cost is every level from where the buff is now to this one; the improvement is measured at this one. Leave blank to evaluate one level up.">
+            <button id="mwi-csim-shrine-targets-toggle" title="Set a target level per shrine instead of one number for all of them" style="${CHIP_BUTTON_STYLE$1}">Targets</button>
         </span>`,
         community_buff: `
         <span id="mwi-csim-community-group" data-mode-options="community_buff" style="display:none; align-items:center; gap:4px;">
@@ -34434,10 +34479,23 @@
                 ACCENT_BTN_BORDER$1 +
                 ';';
 
+            // Per-shrine target levels for guild_shrine mode (hidden until toggled;
+            // inputs built from the combat shrines in game data when opened), on the
+            // same terms as the House grid: one Lv box asks five shrines sitting at
+            // five different levels for the same absolute level, which was a no-op
+            // for anything already past it and a several-level purchase for the rest
+            const shrineTargetsGrid = document.createElement('div');
+            shrineTargetsGrid.id = 'mwi-csim-shrine-targets';
+            shrineTargetsGrid.style.cssText =
+                'display:none; padding:4px 14px 8px; flex-shrink:0; gap:8px 14px; flex-wrap:wrap; align-items:center; border-left:3px solid ' +
+                ACCENT_BTN_BORDER$1 +
+                ';';
+
             upgradeContent.appendChild(upgradeControls);
             upgradeContent.appendChild(combatTargets);
             upgradeContent.appendChild(abilityTargetsGrid);
             upgradeContent.appendChild(houseTargetsGrid);
+            upgradeContent.appendChild(shrineTargetsGrid);
             upgradeContent.appendChild(upgradeProgress);
             upgradeContent.appendChild(upgradeResults);
 
@@ -34538,6 +34596,14 @@
                 grid.style.display = opening ? 'flex' : 'none';
                 if (opening) {
                     this._buildHouseTargets();
+                }
+            });
+            this.panel.querySelector('#mwi-csim-shrine-targets-toggle').addEventListener('click', () => {
+                const grid = this.panel.querySelector('#mwi-csim-shrine-targets');
+                const opening = grid.style.display === 'none';
+                grid.style.display = opening ? 'flex' : 'none';
+                if (opening) {
+                    this._buildShrineTargets();
                 }
             });
             this.panel.querySelector('#mwi-csim-upgrade-level-type').addEventListener('change', (e) => {
@@ -38126,6 +38192,10 @@
             if (!modes.has('house')) {
                 this.panel.querySelector('#mwi-csim-house-targets').style.display = 'none';
             }
+
+            if (!modes.has('guild_shrine')) {
+                this.panel.querySelector('#mwi-csim-shrine-targets').style.display = 'none';
+            }
         }
 
         /**
@@ -38194,6 +38264,85 @@
                 const value = parseInt(input.value);
                 if (Number.isFinite(value) && value > 0) {
                     targets[input.dataset.houseTarget] = Math.min(8, value);
+                }
+            });
+            return Object.keys(targets).length > 0 ? targets : null;
+        }
+
+        /**
+         * Build the per-shrine target inputs from the combat guild shrines in game
+         * data, prefilled to the uniform shrine Lv value (or one level up).
+         *
+         * Mirrors `_buildHouseTargets`: combat shrines only (this tab ranks combat
+         * outcomes, and a skilling shrine has no column it could move), each capped
+         * at its own maximum, a shrine already at its max shown disabled.
+         * @private
+         */
+        _buildShrineTargets() {
+            const grid = this.panel.querySelector('#mwi-csim-shrine-targets');
+            if (!grid) return;
+
+            const detailMap = getGuildBuffDetailMap();
+            const playerIndex = parseInt(this.panel.querySelector('#mwi-csim-upgrade-player')?.value) || 0;
+            const editedDTOs = this._editor?.getEditedDTOs();
+            const dto = editedDTOs ? Object.values(editedDTOs)[playerIndex] : null;
+            const uniform = Math.min(
+                MAX_GUILD_SHRINE_LEVEL,
+                Math.max(0, parseInt(this.panel.querySelector('#mwi-csim-shrine-target-level')?.value) || 0)
+            );
+
+            const shrines = Object.entries(detailMap)
+                .filter(([, detail]) => Boolean(detail?.isCombat))
+                .map(([buffHrid, detail]) => ({
+                    buffHrid,
+                    name: shrineName(detail.shrineHrid || buffHrid),
+                    level: Math.max(0, Math.floor(Number(dto?.guildShrineLevels?.[buffHrid]) || 0)),
+                    maxLevel: Math.min(MAX_GUILD_SHRINE_LEVEL, guildBuffMaxLevel(detail) || MAX_GUILD_SHRINE_LEVEL),
+                }))
+                .sort((a, b) => a.name.localeCompare(b.name));
+
+            if (shrines.length === 0) {
+                grid.innerHTML =
+                    '<span style="color:#666; font-size:11px;">No combat guild shrine reached the client — join a ' +
+                    'guild, or open the shrine screen once, so the levels are known.</span>';
+                return;
+            }
+
+            grid.innerHTML =
+                '<span style="color:#666; font-size:11px; flex-basis:100%;"><b>Guild Shrine</b> target levels (blank ' +
+                'or ≤ current level skips the shrine; used instead of the Lv value while open):</span>' +
+                shrines
+                    .map(
+                        (shrine) => `
+                <span style="display:inline-flex; align-items:center; gap:4px;">
+                    <label style="color:#888; font-size:11px;">${shrine.name} (${shrine.level})</label>
+                    <input type="number" min="1" max="${shrine.maxLevel}" data-shrine-target="${shrine.buffHrid}"
+                        value="${
+                            shrine.level >= shrine.maxLevel
+                                ? ''
+                                : Math.min(shrine.maxLevel, Math.max(uniform, shrine.level + 1))
+                        }"
+                        ${shrine.level >= shrine.maxLevel ? 'disabled title="Already at max level"' : ''} style="
+                        width:44px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
+                        border-radius:3px; padding:2px 4px; font-size:11px; text-align:center;">
+                </span>`
+                    )
+                    .join('');
+        }
+
+        /**
+         * Per-shrine target levels, or null when the grid is closed.
+         * @returns {Object|null} buffHrid → target level
+         * @private
+         */
+        _getShrineTargets() {
+            const grid = this.panel.querySelector('#mwi-csim-shrine-targets');
+            if (!grid || grid.style.display === 'none') return null;
+            const targets = {};
+            grid.querySelectorAll('[data-shrine-target]').forEach((input) => {
+                const value = parseInt(input.value);
+                if (Number.isFinite(value) && value > 0) {
+                    targets[input.dataset.shrineTarget] = Math.min(MAX_GUILD_SHRINE_LEVEL, value);
                 }
             });
             return Object.keys(targets).length > 0 ? targets : null;
@@ -38352,6 +38501,10 @@
                 const guildShrineTargetLevel = upgradeModes.includes('guild_shrine')
                     ? Math.max(0, parseInt(this.panel.querySelector('#mwi-csim-shrine-target-level')?.value) || 0)
                     : 0;
+                // Per-shrine grid, when open, overrides the uniform Lv above — the
+                // advisor's `guildShrineTargets` takes precedence over the single
+                // number, exactly as the House grid overrides the House Lv value
+                const guildShrineTargets = upgradeModes.includes('guild_shrine') ? this._getShrineTargets() : null;
                 // Blank means one level up here too — and a level is not a purchase
                 // either way, so this only changes what gets simulated
                 const communityBuffTargetLevel = upgradeModes.includes('community_buff')
@@ -38386,6 +38539,7 @@
                         houseTargetLevel,
                         houseTargets,
                         guildShrineTargetLevel,
+                        guildShrineTargets,
                         communityBuffTargetLevel,
                         signatureSwapsOnly,
                     },
@@ -47154,4 +47308,4 @@
 
     console.log('[Toolasha] Sim library loaded');
 
-})(Toolasha.Core.config, Toolasha.Core.domObserver, Toolasha.Core.dataManager, Toolasha.Core.marketAPI, Toolasha.Utils.tokenValuation, Toolasha.Utils.marketData, Toolasha.Utils.profitHelpers, Toolasha.Utils.evWorkerManager, Toolasha.Core.storage, Toolasha.Core.webSocketHook, Toolasha.Utils.timerRegistry, Toolasha.Utils.chunkedHistory, Toolasha.Utils.gameLookups, Toolasha.Utils.materialCalculator, Toolasha.Utils.abilityCalc, Toolasha.Utils.formatters, Toolasha.Utils.overlayFormat, Toolasha.Utils.marketplaceTabs, Toolasha.Utils.simplePanel, Toolasha.Utils.overlayRows, Toolasha.Utils.roomSkills, Toolasha.Utils.bundleBridge, Toolasha.Utils.equipmentSavings, Toolasha.Utils.characterKey, Toolasha.Utils.panelZIndex, Toolasha.Utils.floatingPanel, Toolasha.Utils.panelGeometry, Toolasha.Utils.watchlist, Toolasha.Utils.dropSources, Toolasha.Utils.enhancementCalculator, Toolasha.Utils.enhancementConfig, Toolasha.Utils.profitConstants, Toolasha.Utils.teaParser, Toolasha.Utils.numberParser, Toolasha.Utils.dungeonKeys, Toolasha.Utils.domObserverHelpers, Toolasha.Utils.marketplaceAutofill, Toolasha.Utils.allZonesSnapshot, Toolasha.Utils.liquidityCap, Toolasha.Utils.partyLint, Toolasha.Utils.progressEta, Toolasha.Utils.csvExport, Toolasha.Utils.dungeonLevelGap, Toolasha.Utils.mobile, Toolasha.Utils.equipmentParser, Toolasha.Utils.combatLevel, Toolasha.Utils.guildCreditPricing);
+})(Toolasha.Core.config, Toolasha.Core.domObserver, Toolasha.Core.dataManager, Toolasha.Core.marketAPI, Toolasha.Utils.tokenValuation, Toolasha.Utils.marketData, Toolasha.Utils.profitHelpers, Toolasha.Utils.evWorkerManager, Toolasha.Core.storage, Toolasha.Core.webSocketHook, Toolasha.Utils.timerRegistry, Toolasha.Utils.chunkedHistory, Toolasha.Utils.gameLookups, Toolasha.Utils.materialCalculator, Toolasha.Utils.abilityCalc, Toolasha.Utils.formatters, Toolasha.Utils.overlayFormat, Toolasha.Utils.marketplaceTabs, Toolasha.Utils.simplePanel, Toolasha.Utils.overlayRows, Toolasha.Utils.roomSkills, Toolasha.Utils.bundleBridge, Toolasha.Utils.equipmentSavings, Toolasha.Utils.characterKey, Toolasha.Utils.panelZIndex, Toolasha.Utils.floatingPanel, Toolasha.Utils.panelGeometry, Toolasha.Utils.watchlist, Toolasha.Utils.dropSources, Toolasha.Utils.enhancementCalculator, Toolasha.Utils.enhancementConfig, Toolasha.Utils.profitConstants, Toolasha.Utils.teaParser, Toolasha.Utils.numberParser, Toolasha.Utils.dungeonKeys, Toolasha.Utils.domObserverHelpers, Toolasha.Utils.backgroundWork, Toolasha.Utils.marketplaceAutofill, Toolasha.Utils.allZonesSnapshot, Toolasha.Utils.liquidityCap, Toolasha.Utils.partyLint, Toolasha.Utils.progressEta, Toolasha.Utils.csvExport, Toolasha.Utils.dungeonLevelGap, Toolasha.Utils.mobile, Toolasha.Utils.equipmentParser, Toolasha.Utils.combatLevel, Toolasha.Utils.guildCreditPricing);

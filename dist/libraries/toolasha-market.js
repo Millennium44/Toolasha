@@ -1,11 +1,11 @@
 /**
  * Toolasha Market Library
  * Market, inventory, and economy features
- * Version: 2.90.0
+ * Version: 2.91.0
  * License: CC-BY-NC-SA-4.0
  */
 
-(function (config, dataManager, domObserver, marketAPI, houseEfficiency_js, efficiency_js, bonusRevenueCalculator_js, enhancementCalculator_js, enhancementConfig_js, profitConstants_js, formatters_js, marketData_js, teaParser_js, numberParser_js, profitHelpers_js, buffParser_js, alchemyFees_js, equipmentParser_js, actionCalculator_js, tokenValuation_js, evWorkerManager_js, abilityCostCalculator_js, dom, dungeonKeys_js, materialCalculator_js, gameLookups_js, timerRegistry_js, storage, characterKey_js, cleanupRegistry_js, domObserverHelpers_js, marketplaceTabs_js, reactInput_js, panelZIndex_js, floatingPanel_js, panelGeometry_js, overlayFormat_js, watchlist_js, dropSources_js, overlayRows_js, webSocketHook, bundleBridge_js, toast_js, mobile_js, gameServer_js, enhancementMultipliers_js, performanceMonitor, backgroundWork_js, houseCostCalculator_js, networthWorkerManager_js, guildCreditPricing_js, chunkedHistory_js, marketplaceAutofill_js, skillHistory_js, abilityBooks_js, deferredLoad_js, simplePanel_js, settingsStorage, chestTally_js, choiceDialog_js, chestImport_js, csvExport_js, roomSkills_js, equipmentSavings_js) {
+(function (config, dataManager, domObserver, marketAPI, houseEfficiency_js, efficiency_js, bonusRevenueCalculator_js, enhancementCalculator_js, enhancementConfig_js, profitConstants_js, formatters_js, marketData_js, teaParser_js, numberParser_js, profitHelpers_js, buffParser_js, alchemyFees_js, equipmentParser_js, actionCalculator_js, tokenValuation_js, evWorkerManager_js, abilityCostCalculator_js, dom, dungeonKeys_js, materialCalculator_js, gameLookups_js, timerRegistry_js, storage, characterKey_js, cleanupRegistry_js, domObserverHelpers_js, marketplaceTabs_js, reactInput_js, panelZIndex_js, floatingPanel_js, panelGeometry_js, overlayFormat_js, watchlist_js, dropSources_js, overlayRows_js, backgroundWork_js, webSocketHook, bundleBridge_js, toast_js, mobile_js, gameServer_js, enhancementMultipliers_js, performanceMonitor, houseCostCalculator_js, networthWorkerManager_js, guildCreditPricing_js, chunkedHistory_js, marketplaceAutofill_js, skillHistory_js, abilityBooks_js, deferredLoad_js, simplePanel_js, settingsStorage, chestTally_js, choiceDialog_js, chestImport_js, csvExport_js, roomSkills_js, equipmentSavings_js) {
     'use strict';
 
     function _interopNamespaceDefault(e) {
@@ -15886,6 +15886,13 @@
      */
 
 
+    // How long the per-item pricing loop may run before handing the thread back.
+    // High-enhancement equipment runs calculateEnhancementPath (100+ ms per +20
+    // piece with a cold cache), so a large enhanced inventory would otherwise price
+    // every item in one uninterrupted macrotask — a ~1.2s main-thread freeze during
+    // startup. 8ms keeps a frame's worth of work per slice.
+    const RENDER_TIME_BUDGET_MS = 8;
+
     /**
      * InventoryBadgeManager class manages all inventory item badges from multiple features
      */
@@ -16184,7 +16191,19 @@
                 '/items/pirate_token',
             ]);
 
+            let sliceStart = performance.now();
+
             for (const itemElem of itemElems) {
+                // Cooperative time-slicing: hand the thread back once a slice runs
+                // long so the expensive enhancement-cost path below cannot freeze the
+                // page in one contiguous macrotask (see RENDER_TIME_BUDGET_MS). Every
+                // item is still priced — the work is spread, not skipped — so the
+                // dataset every consumer reads ends up exactly as it would have.
+                if (performance.now() - sliceStart > RENDER_TIME_BUDGET_MS) {
+                    await backgroundWork_js.yieldToEventLoop();
+                    sliceStart = performance.now();
+                }
+
                 // Get item HRID from SVG aria-label
                 const svg = itemElem.querySelector('svg');
                 if (!svg) continue;
@@ -43134,4 +43153,4 @@
 
     console.log('[Toolasha] Market library loaded');
 
-})(Toolasha.Core.config, Toolasha.Core.dataManager, Toolasha.Core.domObserver, Toolasha.Core.marketAPI, Toolasha.Utils.houseEfficiency, Toolasha.Utils.efficiency, Toolasha.Utils.bonusRevenueCalculator, Toolasha.Utils.enhancementCalculator, Toolasha.Utils.enhancementConfig, Toolasha.Utils.profitConstants, Toolasha.Utils.formatters, Toolasha.Utils.marketData, Toolasha.Utils.teaParser, Toolasha.Utils.numberParser, Toolasha.Utils.profitHelpers, Toolasha.Utils.buffParser, Toolasha.Utils.alchemyFees, Toolasha.Utils.equipmentParser, Toolasha.Utils.actionCalculator, Toolasha.Utils.tokenValuation, Toolasha.Utils.evWorkerManager, Toolasha.Utils.abilityCalc, Toolasha.Utils.dom, Toolasha.Utils.dungeonKeys, Toolasha.Utils.materialCalculator, Toolasha.Utils.gameLookups, Toolasha.Utils.timerRegistry, Toolasha.Core.storage, Toolasha.Utils.characterKey, Toolasha.Utils.cleanupRegistry, Toolasha.Utils.domObserverHelpers, Toolasha.Utils.marketplaceTabs, Toolasha.Utils.reactInput, Toolasha.Utils.panelZIndex, Toolasha.Utils.floatingPanel, Toolasha.Utils.panelGeometry, Toolasha.Utils.overlayFormat, Toolasha.Utils.watchlist, Toolasha.Utils.dropSources, Toolasha.Utils.overlayRows, Toolasha.Core.webSocketHook, Toolasha.Utils.bundleBridge, Toolasha.Utils.toast, Toolasha.Utils.mobile, Toolasha.Utils.gameServer, Toolasha.Utils.enhancementMultipliers, Toolasha.Core.performanceMonitor, Toolasha.Utils.backgroundWork, Toolasha.Utils.houseCostCalculator, Toolasha.Utils.networthWorkerManager, Toolasha.Utils.guildCreditPricing, Toolasha.Utils.chunkedHistory, Toolasha.Utils.marketplaceAutofill, Toolasha.Utils.skillHistory, Toolasha.Utils.abilityBooks, Toolasha.Utils.deferredLoad, Toolasha.Utils.simplePanel, Toolasha.Core.settingsStorage, Toolasha.Utils.chestTally, Toolasha.Utils.choiceDialog, Toolasha.Utils.chestImport, Toolasha.Utils.csvExport, Toolasha.Utils.roomSkills, Toolasha.Utils.equipmentSavings);
+})(Toolasha.Core.config, Toolasha.Core.dataManager, Toolasha.Core.domObserver, Toolasha.Core.marketAPI, Toolasha.Utils.houseEfficiency, Toolasha.Utils.efficiency, Toolasha.Utils.bonusRevenueCalculator, Toolasha.Utils.enhancementCalculator, Toolasha.Utils.enhancementConfig, Toolasha.Utils.profitConstants, Toolasha.Utils.formatters, Toolasha.Utils.marketData, Toolasha.Utils.teaParser, Toolasha.Utils.numberParser, Toolasha.Utils.profitHelpers, Toolasha.Utils.buffParser, Toolasha.Utils.alchemyFees, Toolasha.Utils.equipmentParser, Toolasha.Utils.actionCalculator, Toolasha.Utils.tokenValuation, Toolasha.Utils.evWorkerManager, Toolasha.Utils.abilityCalc, Toolasha.Utils.dom, Toolasha.Utils.dungeonKeys, Toolasha.Utils.materialCalculator, Toolasha.Utils.gameLookups, Toolasha.Utils.timerRegistry, Toolasha.Core.storage, Toolasha.Utils.characterKey, Toolasha.Utils.cleanupRegistry, Toolasha.Utils.domObserverHelpers, Toolasha.Utils.marketplaceTabs, Toolasha.Utils.reactInput, Toolasha.Utils.panelZIndex, Toolasha.Utils.floatingPanel, Toolasha.Utils.panelGeometry, Toolasha.Utils.overlayFormat, Toolasha.Utils.watchlist, Toolasha.Utils.dropSources, Toolasha.Utils.overlayRows, Toolasha.Utils.backgroundWork, Toolasha.Core.webSocketHook, Toolasha.Utils.bundleBridge, Toolasha.Utils.toast, Toolasha.Utils.mobile, Toolasha.Utils.gameServer, Toolasha.Utils.enhancementMultipliers, Toolasha.Core.performanceMonitor, Toolasha.Utils.houseCostCalculator, Toolasha.Utils.networthWorkerManager, Toolasha.Utils.guildCreditPricing, Toolasha.Utils.chunkedHistory, Toolasha.Utils.marketplaceAutofill, Toolasha.Utils.skillHistory, Toolasha.Utils.abilityBooks, Toolasha.Utils.deferredLoad, Toolasha.Utils.simplePanel, Toolasha.Core.settingsStorage, Toolasha.Utils.chestTally, Toolasha.Utils.choiceDialog, Toolasha.Utils.chestImport, Toolasha.Utils.csvExport, Toolasha.Utils.roomSkills, Toolasha.Utils.equipmentSavings);

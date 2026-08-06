@@ -1,7 +1,7 @@
 /**
  * Toolasha Core Library
  * Core infrastructure and API clients
- * Version: 2.90.0
+ * Version: 2.91.0
  * License: CC-BY-NC-SA-4.0
  */
 
@@ -2969,49 +2969,49 @@
                     id: 'portraitDps_timeToKill',
                     label: 'Portrait DPS: Time-to-kill on enemy tiles',
                     type: 'checkbox',
-                    default: true,
+                    default: false,
                     help: 'Adds "dead ~8s" to each enemy tile — its remaining health over the rate it is being hit at. Dashed until the fight has both a health reading and a rate; nothing is ever extrapolated from a guess',
                 },
                 portraitDps_waveClear: {
                     id: 'portraitDps_waveClear',
                     label: 'Portrait DPS: Wave-clear countdown',
                     type: 'checkbox',
-                    default: true,
+                    default: false,
                     help: 'One "wave ~19s" figure on the topmost enemy tile: every living enemy\'s remaining health over the party\'s combined rate. Dashed until every health bar is known and a rate exists — a countdown that silently excluded a monster would lie',
                 },
                 portraitDps_manaRunway: {
                     id: 'portraitDps_manaRunway',
                     label: 'Portrait DPS: Mana runway per player',
                     type: 'checkbox',
-                    default: true,
+                    default: false,
                     help: 'Adds "mana ~40s" to a player\'s meter when their mana is draining and under a minute from empty, measured net of regeneration and refills. Steady or rising mana shows a dash — there is nothing to warn about',
                 },
                 portraitDps_sustain: {
                     id: 'portraitDps_sustain',
                     label: 'Portrait DPS: Damage taken and net sustain per player',
                     type: 'checkbox',
-                    default: true,
+                    default: false,
                     help: 'Adds "taken 220/s" from the incoming-damage tracker, and "net −35/s" where regeneration is measurable — red when the net is negative, which is the reading that says a zone is not survivable',
                 },
                 portraitDps_accuracy: {
                     id: 'portraitDps_accuracy',
                     label: 'Portrait DPS: Hit and crit rate per player',
                     type: 'checkbox',
-                    default: true,
+                    default: false,
                     help: 'Adds "94% hit · 31% crit" to each player\'s meter once 20 swings back it. Fewer swings show a dash rather than one fight\'s luck dressed up as a rate',
                 },
                 portraitDps_enemyOutgoing: {
                     id: 'portraitDps_enemyOutgoing',
                     label: 'Portrait DPS: Enemy outgoing damage',
                     type: 'checkbox',
-                    default: true,
+                    default: false,
                     help: 'A red "hits for 210/s" line on each enemy tile — what that enemy is doing to the party this fight, from the incoming-damage split. Dashed until a hit can be pinned to that enemy',
                 },
                 portraitDps_enrage: {
                     id: 'portraitDps_enrage',
                     label: 'Portrait DPS: Enrage countdown on enemy tiles',
                     type: 'checkbox',
-                    default: true,
+                    default: false,
                     help: 'Adds "enrage 1:42" counting down when the monster\'s sheet carries an enrage timer and spawn time, amber under 30 seconds. Monsters whose sheet states no timer show a dash',
                 },
                 dungeonPace: {
@@ -3883,6 +3883,15 @@
                     type: 'checkbox',
                     default: false,
                     help: 'Compares each active sell listing of yours against the current best ask for that item and enhancement level, and each buy order against the best bid — a strictly better price than yours means you have been beaten; matching the best price is still competitive and says nothing. The figures come from the market data this script already holds, which can be up to 15 minutes old: the message carries the age of the figure it used, and data older than that — or an item with no cached price at all — is treated as unknown rather than as an undercut. Once per listing per undercut, re-arming when you reprice the listing or your price is the best again.',
+                },
+                notifications_marketListingUndercut_refreshMinutes: {
+                    id: 'notifications_marketListingUndercut_refreshMinutes',
+                    label: 'Undercut alerts: re-fetch market snapshot every (minutes)',
+                    type: 'number',
+                    default: 5,
+                    min: 1,
+                    max: 15,
+                    help: 'While undercut alerts are on, re-fetch the market snapshot this often (minutes). One fetch covers every listing and refreshes prices everywhere in the script. The game publishes this file periodically, so very short intervals mostly re-fetch unchanged data. A value at or above the 15-minute cache means no extra refresh — the normal cache stands. Only has an effect while "Notify when a market listing of yours is undercut" is on.',
                 },
                 notifications_otherCharacterIdle: {
                     id: 'notifications_otherCharacterIdle',
@@ -8871,9 +8880,26 @@
                 // initializers land in this try/catch even when the registry
                 // entry forgot to set the async flag (awaiting sync undefined
                 // is harmless).
+                //
+                // The timing is split on purpose. The old single wall-clock span
+                // around `await feature.initialize()` blamed a feature for time
+                // it merely *parked* in — a sync feature (e.g. autoAllButton) that
+                // happens to `await undefined` at the moment a heavy storage read
+                // resolves elsewhere would absorb that read's cost and top the
+                // "slowest features" list while doing nothing. `own` is the
+                // feature's synchronous work up to the point it returns/suspends;
+                // `total` still spans the await so a genuinely async initializer is
+                // not undercounted. A large gap between them means the cost is
+                // deferred work draining here, not this feature.
                 const startedAt = performanceMonitor.sinceBoot();
-                await feature.initialize();
-                performanceMonitor.snapshot(`init:${feature.key}`, performanceMonitor.sinceBoot() - startedAt, startedAt);
+                const pending = feature.initialize();
+                const ownMs = performanceMonitor.sinceBoot() - startedAt;
+                await pending;
+                const totalMs = performanceMonitor.sinceBoot() - startedAt;
+                performanceMonitor.snapshot(`init:${feature.key}`, totalMs, startedAt);
+                if (totalMs - ownMs >= 1) {
+                    performanceMonitor.snapshot(`init:${feature.key}:own`, ownMs, startedAt);
+                }
             } catch (error) {
                 errors.push({
                     key: feature.key,

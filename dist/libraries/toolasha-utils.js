@@ -1,7 +1,7 @@
 /**
  * Toolasha Utils Library
  * All utility modules
- * Version: 2.90.0
+ * Version: 2.91.0
  * License: CC-BY-NC-SA-4.0
  */
 
@@ -8522,6 +8522,9 @@ self.onmessage = function (e) {
 
         // Skill Action Detail
         SKILL_ACTION_DETAIL: '[class*="SkillActionDetail_skillActionDetail"]',
+        // Only the gathering/production/crafting detail panel; the alchemy and
+        // enhancing variants share the SKILL_ACTION_DETAIL wrapper but draw no name.
+        SKILL_ACTION_DETAIL_REGULAR: '[class*="SkillActionDetail_regularComponent"]',
         SKILL_ACTION_NAME: '[class*="SkillActionDetail_name"]',
         SKILL_ACTION_ITEM_REQUIREMENTS: '[class*="SkillActionDetail_itemRequirements"]',
         ENHANCING_COMPONENT: 'div[class*="SkillActionDetail_enhancingComponent"]',
@@ -8586,6 +8589,13 @@ self.onmessage = function (e) {
 
         // Combat
         COMBAT_UNIT: '[class*="CombatUnit_combatUnit"]',
+        COMBAT_UNIT_NAME: '[class*="CombatUnit_name"]',
+        // Party members beside a full combat card are drawn as mini units — small
+        // clickable boxes with their own name line (guild trial fights draw the
+        // whole party this way next to the player's own card)
+        MINI_UNIT: '[class*="MiniUnit_miniUnit"]',
+        MINI_UNIT_NAME: '[class*="MiniUnit_name"]',
+        BATTLE_PANEL: '[class*="BattlePanel_battlePanel"]',
         BATTLE_MONSTERS_AREA: '[class*="BattlePanel_monstersArea"]',
 
         // Enhancement
@@ -20275,9 +20285,28 @@ self.onmessage = function (e) {
         }
     }
 
+    /**
+     * Hand the main thread back to the event loop.
+     *
+     * A long synchronous loop — pricing an entire enhanced inventory, say — freezes
+     * the page for as long as it runs. Awaiting this between slices turns one long
+     * blocking macrotask into several short ones, so the browser gets to paint,
+     * handle input, and let other awaited work (feature init behind it) proceed.
+     *
+     * A macrotask (`setTimeout`) rather than a microtask on purpose: a microtask
+     * runs before the browser paints or handles input, which is the freeze this is
+     * meant to break, not defer.
+     *
+     * @returns {Promise<void>}
+     */
+    function yieldToEventLoop() {
+        return new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
     var backgroundWork = /*#__PURE__*/Object.freeze({
         __proto__: null,
-        runInBackground: runInBackground
+        runInBackground: runInBackground,
+        yieldToEventLoop: yieldToEventLoop
     });
 
     /**
@@ -22758,7 +22787,13 @@ self.onmessage = function (e) {
      */
     function findChatInput() {
         if (typeof document === 'undefined') return null;
-        const input = document.querySelector('[class*="Chat_chatInputContainer"] input');
+        // The input container's class is first choice; the panel-level fallbacks
+        // survive the game renaming the inner container. A collapsed chat matches
+        // nothing on any rung, and null is the honest answer there.
+        const input =
+            document.querySelector('[class*="Chat_chatInputContainer"] input') ||
+            document.querySelector('[class*="Chat_chat__"] input') ||
+            document.querySelector('[class*="GamePage_chatPanel"] input');
         if (!input) return null;
 
         const visible = input.offsetParent !== null || (input.getClientRects?.().length ?? 0) > 0;
