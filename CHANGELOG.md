@@ -6,6 +6,16 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The sim summary reads in the units a player plans in
+
+- **XP/day → XP/hr** — the same unit the XP section and every zone ranking already use, so the tile reads against them directly. **Dungeons/hr → Avg clear** — the pace a session is planned around is how long one run takes, not a fractional rate. Success, Profit/day and Deaths/day stay as they were.
+- **A loaded party gets linted before its numbers are read**: an amber block right under the Summary calls out members wearing skilling gear ("Mazo has skilling gear equipped: Foraging Shears" — detected from the item's own stats, so hybrid pieces are never flagged) and duplicated auras ("Fierce Aura is equipped by Irokez and Tib — auras do not stack" — detected from the ability data's party-wide buff shape, not a name list). Solo runs are never linted, and the warnings travel with each history entry.
+
+### Entry keys are consumables, and chests point at their keys
+
+- **The consumables tracker now carries the dungeon's entry key** for the tracked character: held count from inventory, per-day burn measured from the session's own chest drops (one key per regular chest — the same arithmetic the combat stats price keys with), two-sided cost/day, buy-for-target and a "lasts" countdown, competing for the limiting-consumable highlight like any coffee. Outside a dungeon, or before the first chest has dropped, the panel is honest: no row, or a row with "—" rates and the held count.
+- **Keyed chests offer their key**: the chest popup ("Open 0 (Keys: 0)") gains a "Buy Keys on Marketplace" button that jumps straight to the key's listing — driven by the game data (an item whose `_key` sibling exists), so every keyed chest gets it and nothing else does.
+
 ### Ability book counts respect the experience already earned
 
 - **The Upgrade tab priced every ability level-up from the floor of its current level**, re-buying the books already read: an ability 57% into its level was quoted a level's worth of extra books (Berserk 65→70 read 140.6M where the true remainder was 128.5M — the Ability Books panel had it right all along). Level-ups now price from the equipped ability's live experience, exactly as swaps already priced from the owned book's, and the ranking, repay time, and every Gold/0.01% column tighten with it. The floor remains the fallback for a book with no experience recorded or one that disagrees about its level.

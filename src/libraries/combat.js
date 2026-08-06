@@ -52,6 +52,7 @@ import manaTracker from '../features/combat/mana-tracker.js';
 import * as damageTracker from '../features/combat/damage-tracker.js';
 import * as damageTakenTracker from '../features/combat/damage-taken-tracker.js';
 import abilityDictionaryButton from '../features/abilities/ability-dictionary-button.js';
+import chestKeyMarketButton from '../features/inventory/chest-key-market-button.js';
 
 // Profile (combat score)
 import combatScore from '../features/profile/combat-score.js';
@@ -110,6 +111,7 @@ toolashaRoot.Combat = {
     damageTracker,
     damageTakenTracker,
     abilityDictionaryButton,
+    chestKeyMarketButton,
     combatScore,
     characterCardButton,
     combatSim,

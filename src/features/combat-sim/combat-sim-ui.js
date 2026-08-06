@@ -16,7 +16,7 @@ import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } fro
 import { makeDraggable } from '../../utils/floating-panel.js';
 import { restoreGeometry, saveGeometry, saveOpenState, reopenIfLeftOpen } from '../../utils/panel-geometry.js';
 import { characterKey, readScoped, writeScoped } from '../../utils/character-key.js';
-import { formatWithSeparator, formatKMB, parseKMB } from '../../utils/formatters.js';
+import { formatWithSeparator, formatKMB, parseKMB, timeReadable } from '../../utils/formatters.js';
 import { createEtaTracker } from '../../utils/progress-eta.js';
 import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
 import {
@@ -1206,6 +1206,147 @@ export function wireUpgradeRowActions(container, logPrefix = 'CombatSimUI') {
 }
 
 /**
+ * Is this equipment piece skilling gear — a piece that contributes nothing to combat?
+ *
+ * Read off the item's own stats rather than a name list, the same way
+ * `skilling-gear-candidates.js` scopes gear to a skill: skilling tools and
+ * outfits carry a nonzero value in `equipmentDetail.noncombatStats` and no
+ * nonzero value in `equipmentDetail.combatStats`. A Philosopher's Necklace,
+ * which carries both, is not flagged — it does work in combat; a piece with
+ * neither is not flagged either, because "no stats" is not the same claim as
+ * "skilling gear".
+ *
+ * @param {Object} itemDetail - From `itemDetailMap`
+ * @returns {boolean}
+ */
+export function isSkillingGearItem(itemDetail) {
+    const equipment = itemDetail?.equipmentDetail;
+    if (!equipment) return false;
+    const hasValue = (stats) => Object.values(stats || {}).some((value) => Number(value) !== 0);
+    return hasValue(equipment.noncombatStats) && !hasValue(equipment.combatStats);
+}
+
+/**
+ * Is this ability an aura — a special ability whose buffs land on the whole party?
+ *
+ * Read off the ability data rather than the hrid: the engine treats exactly
+ * this shape as party-wide (`processAbilityBuffEffect` walks every living ally
+ * for a `/ability_effect_types/buff` effect with `targetType 'allAllies'`), so
+ * anything matching it is an aura in the only sense that matters here — and a
+ * special ability that only buffs its caster (Invincible, Vampirism) is not.
+ *
+ * @param {Object} abilityDetail - From `abilityDetailMap`
+ * @returns {boolean}
+ */
+export function isAuraAbility(abilityDetail) {
+    if (!abilityDetail?.isSpecialAbility) return false;
+    return (abilityDetail.abilityEffects || []).some(
+        (effect) =>
+            effect?.effectType === '/ability_effect_types/buff' &&
+            effect?.targetType === 'allAllies' &&
+            Array.isArray(effect?.buffs) &&
+            effect.buffs.length > 0
+    );
+}
+
+/**
+ * The name a party warning calls a member by.
+ * @param {Object} dto - Player DTO
+ * @param {Array<Object>} playerInfo - `[{ hrid, name }]` as the sim loads it
+ * @returns {string}
+ */
+function partyMemberName(dto, playerInfo) {
+    const entry = (playerInfo || []).find((info) => info?.hrid === dto?.hrid);
+    return entry?.name || dto?.hrid || 'Unknown player';
+}
+
+/**
+ * Party members wearing gear that does nothing in combat.
+ *
+ * One warning per offending member, naming every piece at once — five separate
+ * lines about one person's outfit would read as five problems.
+ *
+ * @param {Array<Object>} playerDTOs - Player DTOs (`equipment` keyed by slot)
+ * @param {Array<Object>} playerInfo - `[{ hrid, name }]`
+ * @param {Object} itemDetailMap - Game data
+ * @returns {Array<string>} Human-readable warnings
+ */
+export function skillingGearWarnings(playerDTOs, playerInfo, itemDetailMap = {}) {
+    const warnings = [];
+    for (const dto of playerDTOs || []) {
+        const pieces = [];
+        for (const worn of Object.values(dto?.equipment || {})) {
+            if (!worn?.hrid) continue;
+            const detail = itemDetailMap[worn.hrid];
+            if (!isSkillingGearItem(detail)) continue;
+            pieces.push(detail.name || worn.hrid.split('/').pop());
+        }
+        if (pieces.length > 0) {
+            warnings.push(`${partyMemberName(dto, playerInfo)} has skilling gear equipped: ${pieces.join(', ')}`);
+        }
+    }
+    return warnings;
+}
+
+/**
+ * Auras equipped by more than one party member.
+ *
+ * Two copies of the same aura are one aura: the buff reaches every ally from
+ * whoever casts it, keyed by its unique hrid, so the second copy adds nothing
+ * and costs its wearer the special slot.
+ *
+ * @param {Array<Object>} playerDTOs - Player DTOs (`abilities` array of slots)
+ * @param {Array<Object>} playerInfo - `[{ hrid, name }]`
+ * @param {Object} abilityDetailMap - Game data
+ * @returns {Array<string>} Human-readable warnings, one per duplicated aura
+ */
+export function duplicateAuraWarnings(playerDTOs, playerInfo, abilityDetailMap = {}) {
+    const wearersByAura = new Map();
+    for (const dto of playerDTOs || []) {
+        const seen = new Set();
+        for (const ability of dto?.abilities || []) {
+            if (!ability?.hrid || seen.has(ability.hrid)) continue;
+            seen.add(ability.hrid);
+            if (!isAuraAbility(abilityDetailMap[ability.hrid])) continue;
+            const wearers = wearersByAura.get(ability.hrid) || [];
+            wearers.push(partyMemberName(dto, playerInfo));
+            wearersByAura.set(ability.hrid, wearers);
+        }
+    }
+
+    const warnings = [];
+    for (const [auraHrid, wearers] of wearersByAura) {
+        if (wearers.length < 2) continue;
+        const auraName = abilityDetailMap[auraHrid]?.name || auraHrid.split('/').pop();
+        const names =
+            wearers.length === 2
+                ? wearers.join(' and ')
+                : `${wearers.slice(0, -1).join(', ')} and ${wearers[wearers.length - 1]}`;
+        warnings.push(`${auraName} is equipped by ${names} — auras do not stack`);
+    }
+    return warnings;
+}
+
+/**
+ * Every loadout mistake worth flagging on a loaded party, as readable strings.
+ *
+ * Only for actual parties: solo, both checks are moot — one copy of an aura is
+ * the correct number, and gear is the player's own screen looking back at them.
+ *
+ * @param {Array<Object>} playerDTOs - Player DTOs as the sim will run them
+ * @param {Array<Object>} playerInfo - `[{ hrid, name }]`
+ * @param {Object} gameData - Payload from `buildGameDataPayload`
+ * @returns {Array<string>} Warnings, empty when there is nothing to say
+ */
+export function partyLintWarnings(playerDTOs, playerInfo, gameData) {
+    if (!Array.isArray(playerDTOs) || playerDTOs.length < 2) return [];
+    return [
+        ...skillingGearWarnings(playerDTOs, playerInfo, gameData?.itemDetailMap || {}),
+        ...duplicateAuraWarnings(playerDTOs, playerInfo, gameData?.abilityDetailMap || {}),
+    ];
+}
+
+/**
  * Sort result rows by a computed key, treating Infinity as "worst" so unknown
  * values land at the end rather than dominating the comparison.
  * @param {Array<Object>} rows - Result rows
@@ -1425,6 +1566,7 @@ class CombatSimUI {
         this._lastSimResult = null;
         this._lastSimHours = null;
         this._lastGameData = null;
+        this._lastPartyWarnings = [];
         // Session history for multi-scenario comparison
         this._simHistory = [];
         this._comparisonIndex = null;
@@ -3215,6 +3357,10 @@ class CombatSimUI {
         this._playerInfo = playerInfo;
         this._activePlayerTab = selfHrid;
 
+        // Loadout lint: mistakes a party would want called out before reading
+        // any of the numbers they distort
+        this._lastPartyWarnings = partyLintWarnings(playerDTOs, playerInfo, gameData);
+
         const communityBuffs = getCommunityBuffs();
 
         // Show party info
@@ -3288,6 +3434,7 @@ class CombatSimUI {
                 hours,
                 gameData,
                 metrics: null, // Filled by _displayResults
+                partyWarnings: this._lastPartyWarnings,
                 timestamp: Date.now(),
             };
 
@@ -3519,11 +3666,13 @@ class CombatSimUI {
      */
     _displayResults(simResult, hours, gameData) {
         // If an active detail index is set, show that history entry's details instead
+        let partyWarnings = this._lastPartyWarnings || [];
         if (this._activeDetailIndex !== null && this._simHistory[this._activeDetailIndex]) {
             const entry = this._simHistory[this._activeDetailIndex];
             simResult = entry.simResult;
             hours = entry.hours;
             gameData = entry.gameData;
+            partyWarnings = entry.partyWarnings || [];
         }
 
         const container = this.panel.querySelector('#mwi-csim-results');
@@ -3560,6 +3709,19 @@ class CombatSimUI {
         // run. It is stitched in at this marker afterwards rather than
         // recomputed, so the tiles and the tables can never disagree.
         html += RESULTS_SUMMARY_SLOT;
+
+        // Party loadout lint, directly under the summary: a warning about the
+        // inputs belongs beside the headline numbers it distorts. Same amber
+        // treatment as the engine's own warnings above.
+        if (partyWarnings.length > 0) {
+            html +=
+                `<div style="margin-bottom:10px; padding:6px 8px; border:1px solid #6b5a1f; ` +
+                `background:rgba(255,200,60,0.08); border-radius:4px; font-size:11px; color:#e8c66c;">`;
+            for (const warning of partyWarnings) {
+                html += `<div>&#9888; ${warning}</div>`;
+            }
+            html += '</div>';
+        }
 
         // History panel (above everything)
         if (this._simHistory.length > 0) {
@@ -4339,9 +4501,11 @@ class CombatSimUI {
      * tables still hold the working; this holds the conclusions, and takes them
      * from the same variables the tables printed rather than recomputing.
      *
-     * Per-day is the headline unit rather than per-hour: nobody fights a zone
-     * for an hour, and it is the number a player compares against the other
-     * things they could be doing with a day.
+     * Profit and deaths are quoted per day: nobody fights a zone for an hour,
+     * and a day is the unit a player weighs against the other things they
+     * could be doing. XP is per hour, the same unit the XP section below and
+     * every zone ranking use, so the tile can be read against them directly;
+     * a dungeon's pace reads best as the average length of one clear.
      *
      * @param {Object} data - Values already computed by `_displayResults`
      * @returns {string} HTML for the summary block
@@ -4402,24 +4566,18 @@ class CombatSimUI {
         );
         tiles.push(
             tile(
-                'XP/day',
-                `${formatKMB(Math.round(xpPerHr * 24))}` +
-                    this._formatDelta(xpPerHr * 24, prevXpPerHr === null ? null : prevXpPerHr * 24, true, true)
+                'XP/hr',
+                `${formatKMB(Math.round(xpPerHr))}` + this._formatDelta(xpPerHr, prevXpPerHr ?? null, true, true)
             )
         );
 
-        // Dungeons are entered, not encountered, so the rate a player watches is
-        // completions — encounters inside a run are a wave count, not a pace
+        // Dungeons are entered, not encountered — the pace a player plans a
+        // session around is how long one clear takes, not a wave count
         if (simResult.isDungeon) {
-            const completedPerHr = (simResult.dungeonsCompleted || 0) / hours;
-            const attempts = (simResult.dungeonsCompleted || 0) + (simResult.dungeonsFailed || 0);
-            tiles.push(tile('Dungeons/hr', this._formatRate(completedPerHr)));
-            tiles.push(
-                tile(
-                    'Success',
-                    attempts > 0 ? `${(((simResult.dungeonsCompleted || 0) / attempts) * 100).toFixed(1)}%` : '—'
-                )
-            );
+            const completed = simResult.dungeonsCompleted || 0;
+            const attempts = completed + (simResult.dungeonsFailed || 0);
+            tiles.push(tile('Avg clear', completed > 0 ? timeReadable((hours * 3600) / completed) : '—'));
+            tiles.push(tile('Success', attempts > 0 ? `${((completed / attempts) * 100).toFixed(1)}%` : '—'));
         } else {
             tiles.push(
                 tile(
@@ -4710,6 +4868,7 @@ class CombatSimUI {
         this._lastSimResult = null;
         this._lastSimHours = null;
         this._lastGameData = null;
+        this._lastPartyWarnings = [];
 
         const container = this.panel?.querySelector('#mwi-csim-results');
         if (container) {
@@ -4765,6 +4924,7 @@ class CombatSimUI {
             this._lastSimResult = null;
             this._lastSimHours = null;
             this._lastGameData = null;
+            this._lastPartyWarnings = [];
             const container = this.panel?.querySelector('#mwi-csim-results');
             if (container) container.style.display = 'none';
             return;
@@ -5246,6 +5406,7 @@ class CombatSimUI {
         this._lastSimResult = null;
         this._lastSimHours = null;
         this._lastGameData = null;
+        this._lastPartyWarnings = [];
         this._simHistory = [];
         this._comparisonIndex = null;
         this._comparisonBaseline = null;

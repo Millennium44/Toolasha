@@ -281,6 +281,11 @@ const {
     visibleAllZonesSkillColumns,
     scoreAllZoneRows,
     bestAllZoneRows,
+    isSkillingGearItem,
+    isAuraAbility,
+    skillingGearWarnings,
+    duplicateAuraWarnings,
+    partyLintWarnings,
 } = await import('./combat-sim-ui.js');
 
 /** A result row shaped like the upgrade advisor's output. */
@@ -1714,7 +1719,7 @@ describe('the summary at the top of the Results tab', () => {
 
         expect(shown).toContain('Summary');
         expect(shown).toContain('Profit/day');
-        expect(shown).toContain('XP/day');
+        expect(shown).toContain('XP/hr');
         expect(shown).toContain('Kills/hr');
         expect(shown).toContain('Deaths/day');
         // Up top is the whole point: burying it under Overview would be the bug
@@ -1735,24 +1740,32 @@ describe('the summary at the top of the Results tab', () => {
         expect(shown).toContain('Costs 4.8K/day');
     });
 
-    test('XP/day is the same total the XP section adds up, times a day', () => {
-        // 1500 xp/hr → 36.0K a day, with the two skills named beside it
+    test('XP/hr is the same total the XP section adds up', () => {
+        // 1500 xp/hr on the tile, with the two skills still named per day beside it
         const shown = showFight().textContent;
 
-        expect(shown).toContain('36.0K');
+        expect(shown).toContain('XP/hr1.5K');
         expect(shown).toContain('Attack 24.0K');
         expect(shown).toContain('Stamina 12.0K');
     });
 
-    test('a dungeon is summarised on completions rather than on encounters', () => {
+    test('a dungeon is summarised on the average clear rather than on encounters', () => {
+        // 6 clears in an hour is one every ten minutes
         const shown = showFight(
             oneHourFight({ isDungeon: true, dungeonsCompleted: 6, dungeonsFailed: 2, maxWaveReached: 9 })
         ).textContent;
 
-        expect(shown).toContain('Dungeons/hr');
+        expect(shown).toContain('Avg clear0h 10m 00s');
         expect(shown).toContain('Success');
         expect(shown).toContain('75.0%');
         expect(shown).not.toContain('Kills/hr');
+    });
+
+    test('a dungeon that never completes shows no clear time rather than an infinity', () => {
+        const shown = showFight(oneHourFight({ isDungeon: true, dungeonsCompleted: 0, dungeonsFailed: 4 })).textContent;
+
+        expect(shown).toContain('Avg clear—');
+        expect(shown).toContain('0.0%');
     });
 
     test('deaths are a daily figure, because the hourly one rounds to never', () => {
@@ -1763,6 +1776,186 @@ describe('the summary at the top of the Results tab', () => {
         expect(shown).toContain('Deaths/day0.5');
         // The hourly figure is still down in Overview for anyone who wants it
         expect(shown).toContain('Deaths/hr0.02');
+    });
+
+    test('party lint warnings render in amber directly under the summary', () => {
+        ui._lastPartyWarnings = ['Mazo has skilling gear equipped: Foraging Shears'];
+        const shown = showFight().textContent;
+
+        expect(shown).toContain('Mazo has skilling gear equipped: Foraging Shears');
+        expect(shown.indexOf('Summary')).toBeLessThan(shown.indexOf('Mazo has skilling gear'));
+    });
+
+    test('and are absent entirely when there is nothing to warn about', () => {
+        ui._lastPartyWarnings = [];
+        const shown = showFight().textContent;
+
+        expect(shown).not.toContain('skilling gear');
+        expect(shown).not.toContain('auras do not stack');
+    });
+});
+
+/**
+ * Game data for the party lint: a skilling tool, a combat sword, a real aura,
+ * a self-only special and a plain damage ability — the shapes the detectors
+ * have to tell apart.
+ */
+const LINT_GAME_DATA = {
+    itemDetailMap: {
+        '/items/foraging_shears': {
+            name: 'Foraging Shears',
+            equipmentDetail: {
+                type: '/equipment_types/foraging_tool',
+                combatStats: { attackInterval: 0 },
+                noncombatStats: { foragingSpeed: 0.3 },
+            },
+        },
+        '/items/vampiric_sword': {
+            name: 'Vampiric Sword',
+            equipmentDetail: {
+                type: '/equipment_types/main_hand',
+                combatStats: { attackInterval: 3e9, lifeSteal: 0.05 },
+                noncombatStats: { foragingSpeed: 0 },
+            },
+        },
+    },
+    abilityDetailMap: {
+        '/abilities/fierce_aura': {
+            name: 'Fierce Aura',
+            isSpecialAbility: true,
+            abilityEffects: [
+                {
+                    targetType: 'allAllies',
+                    effectType: '/ability_effect_types/buff',
+                    buffs: [{ uniqueHrid: '/buff_uniques/fierce_aura' }],
+                },
+            ],
+        },
+        '/abilities/vampirism': {
+            name: 'Vampirism',
+            isSpecialAbility: true,
+            abilityEffects: [
+                {
+                    targetType: 'self',
+                    effectType: '/ability_effect_types/buff',
+                    buffs: [{ uniqueHrid: '/buff_uniques/vampirism' }],
+                },
+            ],
+        },
+        '/abilities/sweep': {
+            name: 'Sweep',
+            isSpecialAbility: false,
+            abilityEffects: [{ targetType: 'enemy', effectType: '/ability_effect_types/damage', buffs: null }],
+        },
+    },
+};
+
+const LINT_INFO = [
+    { hrid: 'player1', name: 'Mazo' },
+    { hrid: 'player2', name: 'Irokez' },
+    { hrid: 'player3', name: 'Tib' },
+];
+
+/** A party member DTO with just the fields the lint reads. */
+function partyMember(hrid, { equipment = {}, abilities = [] } = {}) {
+    return { hrid, equipment, abilities };
+}
+
+describe('linting a loaded party', () => {
+    test('a member wearing skilling gear is named, with the piece', () => {
+        const party = [
+            partyMember('player1', {
+                equipment: {
+                    '/equipment_types/foraging_tool': { hrid: '/items/foraging_shears', enhancementLevel: 5 },
+                    '/equipment_types/main_hand': { hrid: '/items/vampiric_sword', enhancementLevel: 8 },
+                },
+            }),
+            partyMember('player2'),
+        ];
+
+        const warnings = skillingGearWarnings(party, LINT_INFO, LINT_GAME_DATA.itemDetailMap);
+
+        expect(warnings).toEqual(['Mazo has skilling gear equipped: Foraging Shears']);
+    });
+
+    test('a party in clean combat gear is not flagged', () => {
+        const party = [
+            partyMember('player1', {
+                equipment: { '/equipment_types/main_hand': { hrid: '/items/vampiric_sword', enhancementLevel: 8 } },
+            }),
+            partyMember('player2', {
+                equipment: { '/equipment_types/main_hand': { hrid: '/items/vampiric_sword', enhancementLevel: 2 } },
+            }),
+        ];
+
+        expect(skillingGearWarnings(party, LINT_INFO, LINT_GAME_DATA.itemDetailMap)).toEqual([]);
+    });
+
+    test('the same aura on two members is one warning naming both', () => {
+        const party = [
+            partyMember('player1', { abilities: [{ hrid: '/abilities/fierce_aura', level: 40 }, null, null] }),
+            partyMember('player2', { abilities: [{ hrid: '/abilities/fierce_aura', level: 55 }, null, null] }),
+        ];
+
+        const warnings = duplicateAuraWarnings(party, LINT_INFO, LINT_GAME_DATA.abilityDetailMap);
+
+        expect(warnings).toEqual(['Fierce Aura is equipped by Mazo and Irokez — auras do not stack']);
+    });
+
+    test('one aura on one member is the correct number and says nothing', () => {
+        const party = [
+            partyMember('player1', { abilities: [{ hrid: '/abilities/fierce_aura', level: 40 }, null, null] }),
+            partyMember('player2', { abilities: [{ hrid: '/abilities/sweep', level: 60 }, null, null] }),
+        ];
+
+        expect(duplicateAuraWarnings(party, LINT_INFO, LINT_GAME_DATA.abilityDetailMap)).toEqual([]);
+    });
+
+    test('a self-only special on two members is not an aura and is left alone', () => {
+        // Vampirism buffs only its caster, so two copies really are two buffs
+        const party = [
+            partyMember('player1', { abilities: [{ hrid: '/abilities/vampirism', level: 40 }] }),
+            partyMember('player2', { abilities: [{ hrid: '/abilities/vampirism', level: 55 }] }),
+        ];
+
+        expect(duplicateAuraWarnings(party, LINT_INFO, LINT_GAME_DATA.abilityDetailMap)).toEqual([]);
+    });
+
+    test('a solo run produces no warnings at all, whatever is equipped', () => {
+        const solo = [
+            partyMember('player1', {
+                equipment: { '/equipment_types/foraging_tool': { hrid: '/items/foraging_shears' } },
+                abilities: [{ hrid: '/abilities/fierce_aura', level: 40 }],
+            }),
+        ];
+
+        expect(partyLintWarnings(solo, LINT_INFO, LINT_GAME_DATA)).toEqual([]);
+    });
+
+    test('a party collects both kinds of warning through one call', () => {
+        const party = [
+            partyMember('player1', {
+                equipment: { '/equipment_types/foraging_tool': { hrid: '/items/foraging_shears' } },
+                abilities: [{ hrid: '/abilities/fierce_aura', level: 40 }],
+            }),
+            partyMember('player2', { abilities: [{ hrid: '/abilities/fierce_aura', level: 55 }] }),
+            partyMember('player3', { abilities: [{ hrid: '/abilities/fierce_aura', level: 12 }] }),
+        ];
+
+        expect(partyLintWarnings(party, LINT_INFO, LINT_GAME_DATA)).toEqual([
+            'Mazo has skilling gear equipped: Foraging Shears',
+            'Fierce Aura is equipped by Mazo, Irokez and Tib — auras do not stack',
+        ]);
+    });
+
+    test('the predicates read the stats, not the names', () => {
+        expect(isSkillingGearItem(LINT_GAME_DATA.itemDetailMap['/items/foraging_shears'])).toBe(true);
+        expect(isSkillingGearItem(LINT_GAME_DATA.itemDetailMap['/items/vampiric_sword'])).toBe(false);
+        expect(isSkillingGearItem(undefined)).toBe(false);
+        expect(isAuraAbility(LINT_GAME_DATA.abilityDetailMap['/abilities/fierce_aura'])).toBe(true);
+        expect(isAuraAbility(LINT_GAME_DATA.abilityDetailMap['/abilities/vampirism'])).toBe(false);
+        expect(isAuraAbility(LINT_GAME_DATA.abilityDetailMap['/abilities/sweep'])).toBe(false);
+        expect(isAuraAbility(undefined)).toBe(false);
     });
 });
 
