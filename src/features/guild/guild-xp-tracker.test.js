@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest';
-import { pushXP, dropFlatRepeats, calcStats, guildLevelFromXP } from './guild-xp-tracker.js';
+import { pushXP, dropFlatRepeats, calcStats, guildLevelFromXP, pruneDepartedMembers } from './guild-xp-tracker.js';
 
 const MIN = 60 * 1000;
 
@@ -94,5 +94,36 @@ describe('guildLevelFromXP', () => {
 
     test('a missing total is level 1 rather than a crash', () => {
         expect(guildLevelFromXP(undefined).level).toBe(1);
+    });
+});
+
+describe('pruneDepartedMembers', () => {
+    // The member history map never forgets, so somebody who left the guild kept
+    // their weekly rate and sat in the roster's "Gone quiet" list permanently
+    test('drops whoever the roster no longer lists, and says who', () => {
+        const history = { 101: [{ t: 1, xp: 5 }], 9349: [{ t: 1, xp: 9000 }] };
+
+        expect(pruneDepartedMembers(history, ['101'])).toEqual(['9349']);
+        expect(Object.keys(history)).toEqual(['101']);
+    });
+
+    test('ids compare as strings, whichever way they arrived', () => {
+        const history = { 101: [{ t: 1, xp: 5 }] };
+        expect(pruneDepartedMembers(history, [101])).toEqual([]);
+        expect(Object.keys(history)).toEqual(['101']);
+    });
+
+    test('an empty roster is not knowledge, and empties nothing', () => {
+        // A message that arrived early, or one this script could not read, must
+        // not be allowed to delete the guild
+        const history = { 101: [{ t: 1, xp: 5 }] };
+        expect(pruneDepartedMembers(history, [])).toEqual([]);
+        expect(pruneDepartedMembers(history, null)).toEqual([]);
+        expect(Object.keys(history)).toEqual(['101']);
+    });
+
+    test('nothing stored is nothing to drop', () => {
+        expect(pruneDepartedMembers(null, ['1'])).toEqual([]);
+        expect(pruneDepartedMembers({}, ['1'])).toEqual([]);
     });
 });
