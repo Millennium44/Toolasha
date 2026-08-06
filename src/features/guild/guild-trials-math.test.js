@@ -968,6 +968,29 @@ describe('the points ladder, across three guilds', () => {
         expect(projection.eligibleTokens).toBeCloseTo(0.5 * 1100 * 1.1, 6);
     });
 
+    test('the game’s own card confirms the level maps to tiers banked', () => {
+        // With Toolasha disabled the trial card reads "Crafting Lv.210, 1,664
+        // pts" and nothing else — the tier chip beside the level is this
+        // script's own rendering. The points settle what the level means:
+        // 1,664 is the twelve-tier base of 1,300 at a +28% Builder's Hall
+        // exactly — a whole number of 2% steps at no other banked count — and
+        // tierFromLevel(210) is 12. So the level names the tier *banked*, and
+        // the tier in progress is one past it, exactly as the badge rule reads.
+        expect(tierFromLevel(210)).toBe(12);
+        expect(trialBasePoints('skilling', 12)).toBe(1_300);
+        expect(1_664 / 1_300).toBeCloseTo(1.28, 12);
+        expect(
+            interpretCardPoints({ type: 'skilling', tier: 12, statedPoints: 1_664, buildersHallBonus: 0.28 })
+                .interpretation
+        ).toBe('cumulative');
+        // The alternative reading — Lv.210 as eleven banked — needs a hall
+        // bonus that is not a whole number of levels, and is refused
+        expect((1_664 / trialBasePoints('skilling', 11) - 1) / 0.02).not.toBeCloseTo(
+            Math.round((1_664 / trialBasePoints('skilling', 11) - 1) / 0.02),
+            2
+        );
+    });
+
     test('a card older than the banked count is topped up the ladder’s steps', () => {
         // The live figures: the crafting card was last read at T8 stating
         // 1,080 pts, and fourteen tiers stood banked by the time the payout

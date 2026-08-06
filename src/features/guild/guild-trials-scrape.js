@@ -865,7 +865,13 @@ export function readTrialTiles(root) {
         // A stated tier beats a derived one, and is available on a card that
         // carries no level at all. `textLines` skips this script's own elements,
         // so the `T<n>` badge `guild-credit-value.js` writes into the level line
-        // is never read back as if the game had said it
+        // is never read back as if the game had said it — confirmed against a
+        // with-Toolasha-disabled screenshot: the game's own trial card prints
+        // **no tier badge at all**, only "Crafting Lv.210, 1,664 pts". The
+        // level is therefore the card rung's real ground truth, and
+        // `tierFromLevel(level)` counts tiers *banked*: Lv.210 sits beside
+        // 1,664 pts, which is the twelve-tier base of 1,300 at a +28% hall
+        // exactly — a whole number of 2% steps at no other banked count.
         const statedTier = lines.map(parseTrialTier).find((candidate) => candidate !== null) ?? null;
 
         tiles.push({

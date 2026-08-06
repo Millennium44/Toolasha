@@ -499,6 +499,16 @@ export function forecastTrial({
     if (tier === null) return nothing('the tier is not known — open the Trials tab once');
     if (timeLeftMs === null) return nothing('no clock on the tab, so there is no hour to spend');
 
+    // The bar in hand anchors the ladder, exactly as the pace walk anchors it:
+    // its tier label has been through the analysis' full rung ladder, where a
+    // stored observation's label is a badge inference that goes stale. The
+    // stored observations still serve a record with no live bar.
+    const liveAnchor =
+        Number.isFinite(analysis.tier) && Number.isFinite(analysis.total) && analysis.total > 0
+            ? [{ tier: analysis.tier, total: analysis.total }]
+            : null;
+    const observations = liveAnchor || analysis.tiers || [];
+
     if (analysis.kind === 'skilling') {
         const rate = Number.isFinite(analysis.rate) ? analysis.rate * 1000 : null;
         if (!rate) return nothing('a skilling trial can only be projected from a measured fill rate');
@@ -507,7 +517,7 @@ export function forecastTrial({
             tier,
             rate,
             timeLeftMs,
-            observations: analysis.tiers || [],
+            observations,
             remainingInTier: analysis.remaining,
             participants,
             decline: successDecline(analysis.personalByTier),
@@ -544,8 +554,12 @@ export function forecastTrial({
         timeLeftMs,
         participants,
         remainingInTier: analysis.remaining,
+        // Only the tier actually in front of the party is "observed": a combat
+        // record's stored observations mix the health and pool bars' ladders
+        // under inferred labels, and a wrong total here prices a tier the walk
+        // then spends real projected minutes on
         observedTotal: (candidate) =>
-            (analysis.tiers || []).find((entry) => entry.tier === candidate && entry.total > 0)?.total ?? null,
+            observations.find((entry) => entry.tier === candidate && entry.total > 0)?.total ?? null,
     });
     if (!walk) return nothing('nothing to project from');
 
