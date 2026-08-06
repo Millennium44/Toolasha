@@ -361,12 +361,15 @@ describe('the acting ability, tick by tick', () => {
     });
 });
 
-describe('the party-of-one rung, and when it must not be used', () => {
-    test('a spectated tick will not credit the only unit that moved', () => {
+describe('the presence rung, and the party-of-one rung below it', () => {
+    test('a spectated tick credits the only unit in it — that is whose action it is', () => {
         // From the guild trial capture: the boss lost 1,405 health on a tick
-        // whose only `pMap` entry was there because it was *being hit*. There is
-        // no roster message on that stream, so "one person is known, so it was
-        // them" is not a fact — it is the delta having shown one person
+        // whose only `pMap` entry was being hit at the time. This used to be
+        // refused as "the delta showed one person, not one person acting" —
+        // and the party recording proved that reading wrong: the server groups
+        // each tick by actor, the boss's own hit counter rose in the same
+        // breath, and health a boss loses while striking somebody is that
+        // somebody's reflect
         const state = newAttributionState();
         const tick = (hp, dmg) => ({
             pMap: { 1: { cHP: 2612, mHP: 2612, cMP: 2180 } },
@@ -377,7 +380,34 @@ describe('the party-of-one rung, and when it must not be used', () => {
         noteActions(state, tick(454_807, 301).pMap);
         const events = attributeTick(tick(453_402, 302), state, { soloFallback: false });
 
-        expect(events).toEqual([]);
+        expect(events).toHaveLength(1);
+        expect(events[0]).toMatchObject({ playerIndex: '1', amount: 1_405 });
+    });
+
+    test('a lone player with nothing changed about them owns the tick too', () => {
+        // Their DoT ticking is why the server put them in the delta at all
+        const state = newAttributionState();
+        const before = { pMap: { 2: { cHP: 900, cMP: 400 } }, mMap: { 0: { cHP: 5_000, dmgCounter: 7 } } };
+        attributeTick(before, state, { soloFallback: false });
+        noteActions(state, before.pMap);
+
+        const events = attributeTick(
+            { pMap: { 2: { cHP: 900, cMP: 400 } }, mMap: { 0: { cHP: 4_800, dmgCounter: 8 } } },
+            state,
+            { soloFallback: false }
+        );
+
+        expect(events).toHaveLength(1);
+        expect(events[0]).toMatchObject({ playerIndex: '2', amount: 200 });
+    });
+
+    test('two mana drops on one tick separate nobody', () => {
+        // Synchronized builds cast on the same tick; "whoever iterated last"
+        // is key order, not attribution — the tick falls through
+        const state = newAttributionState();
+        findCaster({ 0: { cMP: 100 }, 1: { cMP: 100 } }, state);
+
+        expect(findCaster({ 0: { cMP: 80 }, 1: { cMP: 70 } }, state)).toBeNull();
     });
 
     test('this client’s own solo fight still credits its one character', () => {

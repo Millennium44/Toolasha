@@ -7,10 +7,13 @@
  * ## The two engines
  *
  * **Ours** (`damage-attribution.js`): a hit is a monster's `dmgCounter` rising,
- * and the attacker is named by the counters — the player whose `atkCounter`
- * rose, then the unique mana-spender, then the last player to swing. It refuses
- * bleed ticks (health falling with no counter) and refuses to guess when nobody
- * can be identified.
+ * and the attacker is named by the counters first — the player whose
+ * `atkCounter` rose — then by presence (a lone player in the tick owns its
+ * action: their reflect, their DoT), then the unique mana-spender, then the
+ * last player to swing. It refuses bleed ticks (health falling with no
+ * counter) and refuses to guess a multi-player tick nothing can split. The
+ * presence rung was adopted *from* the method under comparison, after the
+ * referee below proved it right on every counter-decidable tick.
  *
  * **Presence** (KikiMeter v3, reimplemented faithfully here): the server is
  * claimed to group each `battle_updated` by actor, so *being in `pMap` is the

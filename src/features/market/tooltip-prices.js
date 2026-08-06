@@ -28,6 +28,7 @@ import {
     isAbbreviationEnabled,
 } from '../../utils/formatters.js';
 import { getItemPrices } from '../../utils/market-data.js';
+import { explainAbilityCost } from '../../utils/ability-cost-calculator.js';
 import { resolveItemPrice, calculatePriceAfterTax } from '../../utils/profit-helpers.js';
 import { MARKET_TAX, COWBELL_BAG_HRID, COWBELL_BAG_TAX } from '../../utils/profit-constants.js';
 import dom from '../../utils/dom.js';
@@ -58,6 +59,23 @@ function getItemsSpriteUrl() {
 function formatTooltipPrice(num) {
     const useKMB = isAbbreviationEnabled();
     return useKMB ? networthFormatter(num) : numberFormatter(num);
+}
+
+/**
+ * The highest level a cumulative experience total has reached.
+ *
+ * @param {number[]} table - The game's cumulative `levelExperienceTable`
+ * @param {number} experience - A cumulative experience total
+ * @returns {number|null} The level, or null without a table to read
+ */
+function levelAtExperience(table, experience) {
+    if (!Array.isArray(table)) return null;
+    let reached = 0;
+    for (let level = 1; level < Math.min(table.length, 201); level++) {
+        if (table[level] <= experience) reached = level;
+        else break;
+    }
+    return reached;
 }
 
 /**
@@ -1245,7 +1263,8 @@ class TooltipPrices {
     /**
      * Get ability status for an ability book
      * @param {string} itemHrid - Item HRID (e.g., /items/ice_shield)
-     * @returns {Object|null} {learned, level, xp, xpToNext, percentToNext, abilityName} or null
+     * @returns {Object|null} {learned, level, xp, xpToNext, percentToNext, abilityName,
+     *   loadouts, heldBooks, levelWithHeld, freshCost} or null
      */
     getAbilityStatus(itemHrid) {
         const characterData = dataManager.characterData;
@@ -1265,14 +1284,34 @@ class TooltipPrices {
             return null;
         }
 
+        // Which saved loadouts slot this ability, by name — the answer to "can
+        // I coinify these books, or does something still use it"
+        const loadouts = [];
+        for (const loadout of Object.values(characterData.characterLoadoutMap || {})) {
+            if (!loadout?.name) continue;
+            if (Object.values(loadout.abilityMap || {}).includes(abilityHrid)) loadouts.push(loadout.name);
+        }
+
+        // What reading every held copy would reach, from where the ability is
+        const heldBooks = (dataManager.getInventory?.() || [])
+            .filter((item) => item?.itemHrid === itemHrid && item?.itemLocationHrid === '/item_locations/inventory')
+            .reduce((sum, item) => sum + (Number(item.count) || 0), 0);
+        const xpPerBook = Number(gameData.itemDetailMap?.[itemHrid]?.abilityBookDetail?.experienceGain) || 0;
+
         // Check if player has this ability
         const ability = characterData.characterAbilities?.find((a) => a.abilityHrid === abilityHrid);
 
         if (!ability) {
-            // Not learned
+            // Not learned. The first held book teaches; the rest level.
             return {
                 learned: false,
                 abilityName: abilityDetails.name,
+                loadouts,
+                heldBooks,
+                levelWithHeld:
+                    heldBooks > 0
+                        ? levelAtExperience(gameData.levelExperienceTable, (heldBooks - 1) * xpPerBook)
+                        : null,
             };
         }
 
@@ -1315,6 +1354,15 @@ class TooltipPrices {
             xpToNext,
             percentToNext,
             abilityName: abilityDetails.name,
+            loadouts,
+            heldBooks,
+            levelWithHeld:
+                heldBooks > 0 && xpPerBook > 0
+                    ? levelAtExperience(levelXpTable, currentXp + heldBooks * xpPerBook)
+                    : null,
+            // What the level already reached would cost to buy today, from
+            // nothing — the books to learn and level it, at the book's price
+            freshCost: explainAbilityCost(abilityHrid, currentLevel),
         };
     }
 
@@ -1344,10 +1392,20 @@ class TooltipPrices {
 
         let html = '';
 
+        // What reading every held copy would reach, said the same way for a
+        // learned book and an unlearned one
+        const heldLine =
+            abilityStatus.heldBooks > 0 && abilityStatus.levelWithHeld !== null
+                ? `<div>Books held: ${numberFormatter(abilityStatus.heldBooks)} \u2192 Lv ${abilityStatus.levelWithHeld}</div>`
+                : '';
+
         if (!abilityStatus.learned) {
             // Not learned
             html += `<div style="color: ${config.COLOR_TOOLTIP_LOSS}; font-weight: 600;">`;
             html += `\u26A0 Unlearned</div>`;
+            if (heldLine) {
+                html += `<div style="margin-top: 4px; margin-left: 8px; font-size: 0.9em;">${heldLine}</div>`;
+            }
         } else {
             // Learned
             html += `<div style="color: ${config.COLOR_TOOLTIP_INFO}; font-weight: 600;">`;
@@ -1364,7 +1422,26 @@ class TooltipPrices {
                 html += `<div style="opacity: 0.7;">XP to Next: ${numberFormatter(abilityStatus.xpToNext)}</div>`;
             }
 
+            html += heldLine;
+
+            // What the level already reached would cost to buy today \u2014 the
+            // sunk value a "should I coinify these" decision weighs
+            const fresh = abilityStatus.freshCost;
+            if (fresh?.total > 0) {
+                html +=
+                    `<div style="opacity: 0.7;">Fresh to Lv ${abilityStatus.level}: ` +
+                    `${formatTooltipPrice(Math.round(fresh.total))} (${numberFormatter(Math.ceil(fresh.books))} books)</div>`;
+            }
+
             html += '</div>';
+        }
+
+        // Named rather than counted: "in 2 loadouts" still makes you open the
+        // loadouts tab to find out which two
+        if (abilityStatus.loadouts?.length) {
+            html +=
+                `<div style="margin-top: 4px; color: ${config.COLOR_TOOLTIP_INFO}; font-size: 0.9em;">` +
+                `In loadouts: ${abilityStatus.loadouts.join(', ')}</div>`;
         }
 
         statusDiv.innerHTML = html;

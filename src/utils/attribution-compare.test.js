@@ -96,25 +96,24 @@ describe('compareRecording', () => {
         expect(report.grouping).toMatchObject({ hitTicks: 1, swungNow: 1 });
     });
 
-    it('flags the aggro-tank tick presence credits and the counters refute', () => {
+    it('agrees with presence on the reflect tick, which the hybrid rung adopted', () => {
         const report = compareRecording([
             newBattle(),
             warmup(),
             // The archer swings and lands
             tick({ 0: { cHP: 1000, cMP: 500, atkCounter: 1 } }, { 0: { cHP: 9900, dmgCounter: 1 } }),
-            // Four ticks later the tank — alone in the payload because they are
-            // being hit — coincides with a hit landing on the monster. Presence
-            // credits the tank; the counters say the tank never swung.
+            // Four ticks later the tank — alone in the payload, being hit —
+            // coincides with a hit landing on the monster: thorns. Both engines
+            // credit the tank now; the referee still records the tick's shape.
             tick({ 1: { cHP: 900, cMP: 800 } }, { 0: { cHP: 9900, dmgCounter: 1 } }),
             tick({ 1: { cHP: 900, cMP: 800 } }, { 0: { cHP: 9900, dmgCounter: 1 } }),
             tick({ 1: { cHP: 900, cMP: 800 } }, { 0: { cHP: 9900, dmgCounter: 1 } }),
             tick({ 2: { cHP: 1400, cMP: 300, dmgCounter: 1 } }, { 0: { cHP: 9750, dmgCounter: 2 } }),
         ]);
 
-        expect(report.classes['single-conflict']).toEqual({ ticks: 1, damage: 150 });
-        expect(report.adjudication.presenceVictim).toEqual({ ticks: 1, damage: 150 });
-        // Ours fell back to the last swinger; presence credited the victim
-        expect(report.players['0'].ours).toBe(250);
+        expect(report.classes.agree).toEqual({ ticks: 2, damage: 250 });
+        expect(report.players['0'].ours).toBe(100);
+        expect(report.players['2'].ours).toBe(150);
         expect(report.players['2'].presence).toBe(150);
         expect(report.grouping.victimOnly).toBe(1);
     });
@@ -152,9 +151,10 @@ describe('compareRecording', () => {
     it('reports the tick ours cannot attribute at all', () => {
         const report = compareRecording([
             newBattle(),
-            // A hit lands before anyone has provably swung: ours has no caster
-            // and credits nobody; presence credits the lone player present
-            tick({ 1: { cHP: 900, cMP: 800 } }, { 0: { cHP: 9900, dmgCounter: 1 } }),
+            warmup(),
+            // Two players present, a hit lands, nobody swung, nobody alone,
+            // no mana moved: ours refuses; presence splits it evenly
+            tick({ 0: { cHP: 1000, cMP: 500 }, 1: { cHP: 900, cMP: 800 } }, { 0: { cHP: 9900, dmgCounter: 1 } }),
         ]);
 
         expect(report.classes['ours-orphan']).toEqual({ ticks: 1, damage: 100 });

@@ -1810,6 +1810,14 @@ const LINT_GAME_DATA = {
                 noncombatStats: { foragingSpeed: 0.3 },
             },
         },
+        '/items/foragers_top': {
+            name: "Forager's Top",
+            equipmentDetail: {
+                type: '/equipment_types/body',
+                combatStats: {},
+                noncombatStats: { foragingExperience: 0.1 },
+            },
+        },
         '/items/vampiric_sword': {
             name: 'Vampiric Sword',
             equipmentDetail: {
@@ -1862,11 +1870,14 @@ function partyMember(hrid, { equipment = {}, abilities = [] } = {}) {
 }
 
 describe('linting a loaded party', () => {
-    test('a member wearing skilling gear is named, with the piece', () => {
+    test('a member wearing skilling gear in a combat slot is named, tools are not', () => {
+        // The shears live in a tool slot, which has no combat equivalent and is
+        // always occupied — never a mistake. The top displaces real armour.
         const party = [
             partyMember('player1', {
                 equipment: {
                     '/equipment_types/foraging_tool': { hrid: '/items/foraging_shears', enhancementLevel: 5 },
+                    '/equipment_types/body': { hrid: '/items/foragers_top', enhancementLevel: 3 },
                     '/equipment_types/main_hand': { hrid: '/items/vampiric_sword', enhancementLevel: 8 },
                 },
             }),
@@ -1875,7 +1886,7 @@ describe('linting a loaded party', () => {
 
         const warnings = skillingGearWarnings(party, LINT_INFO, LINT_GAME_DATA.itemDetailMap);
 
-        expect(warnings).toEqual(['Mazo has skilling gear equipped: Foraging Shears']);
+        expect(warnings).toEqual(["Mazo has skilling gear equipped: Forager's Top"]);
     });
 
     test('a party in clean combat gear is not flagged', () => {
@@ -1935,7 +1946,7 @@ describe('linting a loaded party', () => {
     test('a party collects both kinds of warning through one call', () => {
         const party = [
             partyMember('player1', {
-                equipment: { '/equipment_types/foraging_tool': { hrid: '/items/foraging_shears' } },
+                equipment: { '/equipment_types/body': { hrid: '/items/foragers_top' } },
                 abilities: [{ hrid: '/abilities/fierce_aura', level: 40 }],
             }),
             partyMember('player2', { abilities: [{ hrid: '/abilities/fierce_aura', level: 55 }] }),
@@ -1943,7 +1954,7 @@ describe('linting a loaded party', () => {
         ];
 
         expect(partyLintWarnings(party, LINT_INFO, LINT_GAME_DATA)).toEqual([
-            'Mazo has skilling gear equipped: Foraging Shears',
+            "Mazo has skilling gear equipped: Forager's Top",
             'Fierce Aura is equipped by Mazo, Irokez and Tib — auras do not stack',
         ]);
     });

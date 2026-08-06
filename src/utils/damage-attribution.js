@@ -9,29 +9,40 @@
  *
  * ## An attack counter identifies the attacker
  *
- * Each player carries `atkCounter`, and it goes up when they attack. Across two
- * recorded runs it rose on **every** tick that dealt damage — sixty-nine of
- * sixty-nine — which makes it the join between a player and a monster's lost
- * health.
+ * Each player carries `atkCounter`, and it goes up when they attack. On a
+ * five-player recording it decided 89% of all damage exactly — the join
+ * between a player and a monster's lost health, and the one signal that also
+ * expresses misses, crits and the per-ability split.
  *
- * It replaced mana, which was the original answer and a weaker one: only an
- * ability costs mana, so `cMP` falling identified the actor on eight of those
- * sixty-nine ticks. Mana is kept below the counter, for a payload that carries
- * no counter and for the tick where two people act at once and one of them cast.
+ * ## Presence is the attribution when no counter moved
  *
- * **In a party of two this changed nothing**, and it took five to show why it
- * mattered. `pMap` is a delta exactly as `mMap` is, so a character who did
- * nothing is not in the tick, and with two people "the only one here must be
- * them" is usually right — the old and new rules pick the same character on all
- * 137 damage ticks of a recorded pair.
+ * The server groups each `battle_updated` by **actor**: the player in a tick's
+ * `pMap` is the one whose action the tick reports — their swing's damage,
+ * their damage-over-time effect ticking, their thorns firing. So when nobody's
+ * counter rose and exactly one player is in the tick, the damage is theirs.
  *
- * With five, one person tanks. The character a tick is about is then very often
- * the one being **hit**, not the one attacking: on 82 of 440 damage ticks the
- * lone character in the tick was there because their own health and damage
- * counter had moved. Crediting them handed 8,500 points of other people's
- * damage to whoever was holding aggro. That rung is now "the last character to
- * swing", because a swing and its damage are not always in the same tick —
- * 76 of those 82 had somebody else swinging one real tick earlier.
+ * This module used to believe the opposite, and the correction is worth
+ * keeping on record. On that five-player recording, 82 of 440 damage ticks
+ * had the lone character present because their own health and damage counter
+ * had moved — being *hit*, not attacking — and crediting them looked like
+ * handing 8,500 points of other people's damage to whoever held aggro. So the
+ * fallback became "the last character to swing". Adjudicating the same
+ * recording against the counters showed the diagnosis was wrong: every one of
+ * those ticks also carried the **monster's own attack counter rising** — the
+ * monster attacked, the tank was hit, and the health the monster lost in the
+ * same breath was the tank's **thorns**. The last-swinger fallback was not
+ * protecting the tank's teammates; it was stealing the tank's reflect, 5.7%
+ * of the party's damage, tick by provable tick. The remaining lone-present
+ * ticks were players present with *nothing* changed about them while the
+ * monster took a counted hit — their DoT ticking, which is itself the
+ * actor-grouping stated as plainly as a payload can state it.
+ *
+ * Mana sits below both: only an ability costs mana, so a **unique** `cMP` drop
+ * still separates the caster out of a crowd. Unique, not last-of-several —
+ * with synchronized builds two casts land on the same tick, and "whoever
+ * iterated last wins" is an iteration-order artifact, not an attribution.
+ * The last swinger remains as the final fallback for the multi-player tick
+ * nothing else can split.
  *
  * ## Every payload arrives twice
  *
@@ -119,11 +130,11 @@ export function noteActions(state, players) {
  * @param {Object} pMap - This tick's players
  * @param {Object} state - From `newAttributionState`, mutated
  * @param {Object} [options] - `{soloFallback}`; see below
- * @param {boolean} [options.soloFallback] - Whether "only one character is known, so it was them"
- *   may be used. True for this client's own fights, where the party is genuinely known from
- *   `new_battle`. **False for a spectated guild trial**, where `pMap` is the only roster there is
- *   and a delta that has so far shown one person means one person has *moved*, not that one person
- *   is there — crediting them would hand the whole boss's health to whoever was being hit
+ * @param {boolean} [options.soloFallback] - Whether "the party has one member, so it was them"
+ *   may be used on a tick that names nobody at all. True for this client's own fights, where
+ *   the party is genuinely known from `new_battle`; false for a spectated guild trial, where
+ *   there is no party statement and the rung would fire off whichever slot happened to appear
+ *   first. The presence rung above it is unaffected — it reads this tick's own payload
  * @returns {string|null} The player index, or null when nobody can be identified
  */
 export function findCaster(pMap, state, { soloFallback = true } = {}) {
@@ -158,22 +169,26 @@ export function findCaster(pMap, state, { soloFallback = true } = {}) {
         return swung[0];
     }
 
-    // Two people acting at once. Mana at least separates a cast from a swing,
-    // which is the older and worse answer rather than no answer.
-    if (spent.length) return spent[spent.length - 1];
+    // The delta names the actor. A tick's `pMap` carries the player whose
+    // action this tick reports, so a lone entry with no counter movement is a
+    // DoT ticking or thorns firing — theirs either way. Adjudicated against
+    // the counters on a five-player recording: this rung was right on every
+    // tick the counters could decide, and the last-swinger fallback it
+    // replaces was provably wrong on 5.7% of the party's damage.
+    if (indices.length === 1) return indices[0];
 
-    // Nobody else it could have been. This is the rung that carries a solo run
-    // on a payload with no attack counter at all — and the one rung a spectated
-    // trial must not use, because there the party is not known.
-    if (soloFallback) {
-        const party = Object.keys(state.party);
-        if (party.length === 1) return party[0];
-        if (!party.length && indices.length === 1) return indices[0];
+    // Several people at once. A unique mana drop separates the caster; two
+    // drops on one tick separate nothing, and "whoever iterated last" is an
+    // artifact of key order, not an attribution.
+    if (spent.length === 1) return spent[0];
+
+    // A tick that names nobody at all, in a fight whose party is one person.
+    if (soloFallback && Object.keys(state.party).length === 1) {
+        return Object.keys(state.party)[0];
     }
 
-    // The last character to swing. A swing and the damage it does are not always
-    // in the same tick — see the note above — and the person the tick *is* about
-    // is usually the one being hit, which is who this used to credit.
+    // The last character to swing — the final fallback for a multi-player
+    // tick nothing above could split.
     return state.lastSwing;
 }
 
