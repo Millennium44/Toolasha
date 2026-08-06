@@ -236,10 +236,10 @@ describe('what a preset resolves to', () => {
         expect(values.combatSim).toBe(false);
     });
 
-    test('"Everything on" is the shipped defaults, not every switch true', () => {
+    test('"Defaults" is the shipped defaults, not every switch true', () => {
         const values = resolvePresetValues(getPreset(DEFAULT_PRESET_ID));
         expect(values).toEqual(defaultCheckboxValues());
-        // hideGuildBadge ships off; "everything on" must not mean hiding things
+        // hideGuildBadge ships off; "Defaults" must not mean hiding things
         expect(values.hideGuildBadge).toBe(false);
         expect(values.actionBar_enabled).toBe(true);
     });
@@ -282,7 +282,7 @@ describe('applying a preset', () => {
 
     test('it leaves settings that already hold the wanted value alone', async () => {
         // Every setSetting persists the whole map; on a fresh install
-        // "Everything on" is already true and should cost nothing
+        // "Defaults" is already true and should cost nothing
         await applyPreset(DEFAULT_PRESET_ID);
         expect(mocks.written).toEqual([]);
     });
