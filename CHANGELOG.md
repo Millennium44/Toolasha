@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Portrait DPS extras are now opt-in
+
+- **The seven Portrait DPS sub-readouts default OFF**: time-to-kill, wave-clear countdown, mana runway, damage-taken/net-sustain, hit & crit rate, enemy outgoing damage, and the enrage countdown now start unchecked. They were defaulting on while their own parent toggle ("Show each character's damage on their battle portrait") defaults off, so switching the parent on flooded the portraits with every extra at once — the very clutter the parent's help text warns about. Turning Portrait DPS on now shows just the DPS and total-damage figure; each extra is opt-in.
+
 ### Undercut alerts stop missing undercuts you didn't watch happen
 
 - **A configurable market refresh, on while undercut alerts are**: the alert compared your listings against a snapshot that went stale after startup — nothing re-fetched it, and the only fresh per-item price arrived when you opened the item yourself, so a competitor who undercut you hours ago kept showing you as "still best." A new "re-fetch market snapshot every (minutes)" setting under the undercut toggle (default 5, 1–15) forces the bulk snapshot to refresh on a timer; each refresh re-runs the undercut check against current prices, so a snapshot-only undercut on an item you never opened is finally caught. One fetch covers every listing, and because the whole script reads the same snapshot, every price surface — profit panels, net worth, the advisor — gets fresher numbers for free while it runs. An in-flight guard skips overlapping ticks, a one-minute floor keeps the cadence courteous, and the timer stops when the alert is off.
