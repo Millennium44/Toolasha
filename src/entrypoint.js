@@ -671,6 +671,13 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'chestKeyMarketButton',
+            name: 'Chest Key Market Button',
+            category: 'Combat',
+            module: Combat.chestKeyMarketButton,
+            async: false,
+        },
+        {
             key: 'zoneIndices',
             name: 'Zone Indices',
             category: 'Combat',

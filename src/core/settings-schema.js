@@ -1733,6 +1733,13 @@ export const settingsGroups = {
                 default: true,
                 help: "Adds an Open Item Dictionary button to the popup shown when clicking an ability, opening that ability's book entry.",
             },
+            chestKeyMarketButton: {
+                id: 'chestKeyMarketButton',
+                label: 'Chests: Add Buy Keys on Marketplace to chest menus',
+                type: 'checkbox',
+                default: true,
+                help: 'Adds a button to the popup shown when clicking a keyed chest, opening its key on the marketplace.',
+            },
             characterCard: {
                 id: 'characterCard',
                 label: 'Profile panel: Show View Card button',
