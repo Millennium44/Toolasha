@@ -7,17 +7,32 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import marketAPI from '../../api/marketplace.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
-import { measuredChestLuck } from '../combat/combat-drop-luck.js';
 import { DUNGEON_CHEST_ENTRY_KEYS, DUNGEON_CHEST_CHEST_KEYS } from '../../utils/dungeon-keys.js';
 import { describeKeyCost, getKeyPricingMode } from '../../utils/key-cost.js';
 
 /**
- * How the player's own measured chest luck should scale one dungeon chest's EV.
+ * Below this many openings a treasure reading is luck, not a rate.
  *
- * Only when the `dropLuck_profitAdjust` setting is on, only for the regular
- * dungeon chests a completion pays (never other openables), and only when the
- * measurement rests on a sample worth trusting — `measuredChestLuck` returns
- * null otherwise, and the estimate stays at the drop-table expectation.
+ * The adjustment exists to capture persistent effects — a level gap, a build —
+ * and at a few hundred openings the sampling noise on the return falls under
+ * the size of the effects worth adjusting for.
+ */
+export const MIN_OPENED_FOR_PROFIT_ADJUST = 300;
+
+/**
+ * How the player's own measured treasure rate should scale one dungeon chest's EV.
+ *
+ * The measurement is the treasure tracker's ledger — what actually came out of
+ * this chest kind across every recorded opening, against the drop table's
+ * expectation, both at today's prices. Only when the `dropLuck_profitAdjust`
+ * setting is on, only for the regular dungeon chests a completion pays (never
+ * other openables), and only when at least {@link MIN_OPENED_FOR_PROFIT_ADJUST}
+ * openings back the reading — otherwise null, and the estimate stays at the
+ * drop-table expectation.
+ *
+ * The tracker is reached through the global rather than imported: it lives in
+ * the market bundle, this calculator is carried by others, and a second copy
+ * of the tracker would be a second, empty ledger.
  *
  * @param {string} itemHrid - The loot item
  * @returns {{ratio: number, chests: number}|null} Null when no adjustment applies
@@ -25,7 +40,10 @@ import { describeKeyCost, getKeyPricingMode } from '../../utils/key-cost.js';
 function chestLuckAdjustment(itemHrid) {
     if (!DUNGEON_CHEST_ENTRY_KEYS[itemHrid]) return null;
     if (!config.getSetting('dropLuck_profitAdjust')) return null;
-    return measuredChestLuck(itemHrid);
+
+    const measured = globalThis.window?.Toolasha?.Market?.treasureTracker?.measuredReturn?.(itemHrid);
+    if (!measured || !(measured.opened >= MIN_OPENED_FOR_PROFIT_ADJUST)) return null;
+    return { ratio: measured.ratio, chests: measured.opened };
 }
 
 /**
@@ -37,13 +55,13 @@ function chestLuckAdjustment(itemHrid) {
  *
  * @param {{itemName: string, ratio: number, chests: number}} adjustment - One
  *   entry from `chestLuckAdjustments`
- * @returns {string} e.g. "Chimerical Chest EV adjusted by your measured -7.4% (5,490 chests)"
+ * @returns {string} e.g. "Chimerical Chest EV adjusted by your measured -7.4% return (5,490 opened)"
  */
 export function describeLuckAdjustment(adjustment) {
     const percent = (adjustment.ratio - 1) * 100;
     const signed = `${percent >= 0 ? '+' : ''}${percent.toFixed(1)}%`;
     const chests = Math.round(adjustment.chests).toLocaleString('en-US');
-    return `${adjustment.itemName} EV adjusted by your measured ${signed} (${chests} chests)`;
+    return `${adjustment.itemName} EV adjusted by your measured ${signed} return (${chests} opened)`;
 }
 
 /**

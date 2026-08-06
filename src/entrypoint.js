@@ -758,7 +758,7 @@ function registerFeatures() {
             category: 'Combat',
             // `.default` because the global is the module namespace — see
             // the note in libraries/combat.js
-            module: Combat.combatDropLuck.default,
+            module: Combat.combatDropLuck,
             async: false,
         },
         {

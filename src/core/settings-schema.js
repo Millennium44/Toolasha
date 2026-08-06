@@ -1918,10 +1918,10 @@ export const settingsGroups = {
             },
             dropLuck_profitAdjust: {
                 id: 'dropLuck_profitAdjust',
-                label: 'Dungeon profit: adjust chest value by my measured luck',
+                label: 'Dungeon profit: value chests at my measured treasure rate',
                 type: 'checkbox',
                 default: false,
-                help: "Scales a dungeon chest's expected value in profit estimates by your measured chest yield against what the drop table owed — useful when a level gap keeps your yield persistently off expectation. Only applies once a few hundred chests back the measurement, and every adjusted figure is marked (*) with the measurement in its tooltip",
+                help: "Scales a dungeon chest's expected value in profit estimates by your own treasure rate for that chest — what your recorded openings actually returned against the drop table's expectation, both at today's prices. Only applies once a few hundred openings back the measurement, and every adjusted figure is marked (*) with the measurement in its tooltip",
             },
             combatDps: {
                 id: 'combatDps',
