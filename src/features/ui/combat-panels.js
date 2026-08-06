@@ -46,7 +46,8 @@ import { restoreGeometry, saveGeometry, saveOpenState, reopenIfLeftOpen } from '
 import { ROW_COLORS } from '../../utils/overlay-format.js';
 import { getItemPrices } from '../../utils/market-data.js';
 import { expectedKills, killComparison } from '../../utils/expected-kills.js';
-import { loadAllZonesSnapshot, bestSoloZone } from '../../utils/all-zones-snapshot.js';
+import { loadAllZonesSnapshot, bestSoloZone, zoneFromSnapshot } from '../../utils/all-zones-snapshot.js';
+import { partyLintWarnings, battleLintInputs } from '../../utils/party-lint.js';
 
 const REFRESH_MS = 2000;
 
@@ -194,6 +195,22 @@ function drawPartyProfit(body, mode, tax) {
 let soloSnapshot;
 
 /**
+ * The cached snapshot, kicking off the one load on the first ask.
+ * @returns {Object|null} The snapshot, or null until the load lands
+ */
+function cachedSnapshot() {
+    if (soloSnapshot === undefined) {
+        soloSnapshot = null;
+        loadAllZonesSnapshot()
+            .then((snapshot) => {
+                soloSnapshot = snapshot;
+            })
+            .catch(() => {});
+    }
+    return soloSnapshot;
+}
+
+/**
  * What the same hours would earn solo, next to what the dungeon is measuring.
  *
  * The opportunity-cost line: your best solo zone's simulated profit against
@@ -208,17 +225,8 @@ let soloSnapshot;
  * @param {number} tax - The MooPass share subtracted from each profit figure
  */
 function drawSoloComparison(card_, party, mode, tax) {
-    if (soloSnapshot === undefined) {
-        soloSnapshot = null;
-        loadAllZonesSnapshot()
-            .then((snapshot) => {
-                soloSnapshot = snapshot;
-            })
-            .catch(() => {});
-    }
-
     const isDungeonZone = (zoneHrid) => dataManager.getActionDetails?.(zoneHrid)?.combatZoneInfo?.isDungeon === true;
-    const best = bestSoloZone(soloSnapshot, { isDungeonZone });
+    const best = bestSoloZone(cachedSnapshot(), { isDungeonZone });
     if (!best) return;
 
     const you = party.find((player) => player.isCurrentPlayer);
@@ -240,6 +248,46 @@ function drawSoloComparison(card_, party, mode, tax) {
             'about this run, and a snapshot from older gear understates what solo would earn now.'
     );
     card_.appendChild(line_);
+}
+
+/**
+ * What the sim promised for the very zone being measured.
+ *
+ * Beside the measured revenue, the last all-zones run's figure for this zone
+ * at this tier — the one comparison that says whether the run is living up to
+ * its forecast. Same honesty rules as the solo line: dated, marked simulated,
+ * and the tooltip says outright that the sim knows nothing about this run.
+ * Nothing is drawn unless the snapshot holds exactly this zone and tier — a
+ * neighbouring tier's figure would be a comparison of nothing.
+ *
+ * @param {HTMLElement} card_ - The summary card, appended to
+ */
+function drawSimHere(card_) {
+    const action = dataManager
+        .getCurrentActions?.()
+        ?.find((entry) => entry.actionHrid?.startsWith('/actions/combat/') && !entry.isDone);
+    if (!action) return;
+
+    const row = zoneFromSnapshot(cachedSnapshot(), action.actionHrid, action.difficultyTier || 0);
+    if (!row) return;
+
+    const perDay = row.profitPerHour * 24;
+    const dated = row.savedAt ? new Date(row.savedAt).toLocaleDateString() : null;
+    const ageDays = row.savedAt ? Math.max(0, Math.round((Date.now() - row.savedAt) / 86_400_000)) : null;
+
+    card_.appendChild(
+        line(
+            'sim said here',
+            `${formatKMB(perDay)}/day · simulated${dated ? ` ${dated}` : ', undated'}`,
+            COLORS.textDim,
+            `The last all-zones sim's figure for ${row.zoneName}` +
+                (row.difficultyTier ? ` at tier ${row.difficultyTier}` : '') +
+                (dated ? `, from a run saved ${dated}` : ', from an undated run') +
+                (ageDays !== null ? ` — ${ageDays === 0 ? 'today' : `${ageDays} day${ageDays === 1 ? '' : 's'} ago`}` : '') +
+                '. A simulated figure beside a measured one: the sim knows nothing about this run, its party or ' +
+                'its luck, and a snapshot from older gear or prices does not describe today.'
+        )
+    );
 }
 
 /**
@@ -788,6 +836,60 @@ function enemyTile(enemy) {
     return tile;
 }
 
+/**
+ * Loadout mistakes in the party on screen, as the sim lints a loaded one.
+ *
+ * The same two checks the Combat Sim runs before a party simulation — skilling
+ * gear in a combat slot, the same aura equipped twice — fired on the live
+ * roster instead of a loaded one. `new_battle` carries every player's equipped
+ * kit whole, so the aura check covers the whole party; it carries nobody's
+ * wearables, so the gear check covers only the current player, whose equipment
+ * the client tracks itself — and the block says so rather than staying quiet
+ * about four unchecked loadouts. Parties of one draw nothing: solo, both
+ * checks are moot.
+ *
+ * Same amber treatment as the sim's own warnings block, because it is the same
+ * warning about the same mistake.
+ *
+ * @param {HTMLElement} body - Where it goes
+ */
+function drawPartyLint(body) {
+    if (!config.getSetting('partyLint_live', true)) return;
+
+    const battle = dataManager.battleData;
+    if (!Array.isArray(battle?.players) || battle.players.length < 2) return;
+
+    const clientData = dataManager.getInitClientData?.() || {};
+    const { playerDTOs, playerInfo } = battleLintInputs(battle, {
+        currentCharacterId: dataManager.getCurrentCharacterId?.(),
+        ownEquipment: [...(dataManager.characterEquipment?.values?.() || [])],
+        itemDetailMap: clientData.itemDetailMap || {},
+    });
+
+    const warnings = partyLintWarnings(playerDTOs, playerInfo, clientData);
+    if (!warnings.length) return;
+
+    const block = document.createElement('div');
+    Object.assign(block.style, {
+        border: '1px solid #6b5a1f',
+        background: 'rgba(255, 200, 60, 0.08)',
+        borderRadius: '4px',
+        padding: '6px 8px',
+        fontSize: '11px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '2px',
+    });
+    for (const warning of warnings) block.appendChild(note(`⚠ ${warning}`, '#e8c66c'));
+    block.appendChild(
+        note(
+            'The battle payload carries abilities for the whole party but equipment for nobody, so gear is ' +
+                'checked for you only.'
+        )
+    );
+    body.appendChild(block);
+}
+
 export const dpsPanel = new CombatPanel({
     id: 'dpsPanel',
     title: 'DPs',
@@ -859,6 +961,9 @@ export const dpsPanel = new CombatPanel({
             piece(timeReadable(Math.round(breakdown.seconds)), COLORS.textDim)
         );
         body.appendChild(heading);
+
+        // Mistakes that distort every number below, called out before them
+        drawPartyLint(body);
 
         if (!breakdown.players.length) {
             body.appendChild(
@@ -1738,6 +1843,9 @@ export const profitPanel = new CombatPanel({
         if (tax || profitView.costsOn) equation.appendChild(piece(' = ', COLORS.textDim));
         equation.appendChild(piece(`${formatKMB(total)}/day`, ROW_COLORS.gold));
         summary.append(equation, note(`${headline.title} · ${formatKMB(total / 24)}/hr`));
+
+        // The forecast for this very zone, when the last all-zones sim ran it
+        drawSimHere(summary);
 
         // Before the four cases, since "who is being paid" is a coarser question
         // than "which price to sell at" and answering it changes what you do next

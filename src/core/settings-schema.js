@@ -615,6 +615,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'Saves loot log entries and displays older entries below current ones in the loot log panel',
             },
+            lootLogDropLuck: {
+                id: 'lootLogDropLuck',
+                label: 'Loot Log: Drop luck percentile for gathering runs',
+                type: 'checkbox',
+                default: true,
+                help: "Places a run's drop value in the distribution of everything those actions could have paid — 50 is typical, 5 means nineteen runs in twenty do better. Only for actions with their own drop table (gathering); combat has its own verdict and production rolls nothing",
+            },
         },
     },
 
@@ -1237,6 +1244,13 @@ export const settingsGroups = {
                 ],
                 help: 'Instant: Compare to instant buy/sell prices. Orders: Compare to buy/sell orders.',
             },
+            market_tradeLedger: {
+                id: 'market_tradeLedger',
+                label: 'Market: Record trade ledger (realized flip profit)',
+                type: 'checkbox',
+                default: true,
+                help: 'Passively records every fill on your own listings (partial fills included) and adds a "Ledger" tab to the marketplace showing per-item realized profit — sells matched against your average recorded buy cost, proceeds net of the 2% market tax — with weekly totals and CSV export.',
+            },
             market_listingPricePrecision: {
                 id: 'market_listingPricePrecision',
                 label: 'Market: Listing price decimal precision',
@@ -1689,6 +1703,13 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'Damage taken against health regenerated, broken out per monster and per wave with hit ranges. Feeds the Deaths panel behind the deaths/hr tile',
+            },
+            partyLint_live: {
+                id: 'partyLint_live',
+                label: 'Party lint: Flag loadout mistakes in the live party',
+                type: 'checkbox',
+                default: true,
+                help: 'The same checks the Combat Sim runs before a party simulation — skilling gear in a combat slot, the same aura equipped twice — fired on the party you are actually fighting with, as an amber block in the Damage panel. Auras are checked for everyone; gear only for you, since the battle payload carries no one’s equipment. Parties of 2+ only',
             },
             combatRecorder_autoStart: {
                 id: 'combatRecorder_autoStart',

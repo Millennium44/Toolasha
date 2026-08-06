@@ -19,7 +19,11 @@ vi.mock('./dungeon-tracker-storage.js', () => ({
 vi.mock('../../core/storage.js', () => ({ default: { setJSON: vi.fn(async () => true) } }));
 vi.mock('../../utils/formatters.js', () => ({ formatDateTime: () => '04/08 10:00' }));
 
-const DungeonTrackerUIHistory = (await import('./dungeon-tracker-ui-history.js')).default;
+const {
+    default: DungeonTrackerUIHistory,
+    buildRunHistoryRows,
+    DUNGEON_RUN_CSV_COLUMNS,
+} = await import('./dungeon-tracker-ui-history.js');
 
 /** A fresh panel state, the shape dungeon-tracker-ui-state.js hands over. */
 function freshState(groupBy = 'team') {
@@ -116,6 +120,79 @@ describe('team group headers', () => {
 
         expect(runList.textContent).toContain('Solo Runs');
         expect(runList.querySelector('.mwi-dt-player-name')).toBeNull();
+    });
+});
+
+describe('the CSV export', () => {
+    test('no runs is no rows, not a header-only file pretending otherwise', () => {
+        expect(buildRunHistoryRows([])).toEqual([]);
+        expect(buildRunHistoryRows(null)).toEqual([]);
+    });
+
+    test('one row per run, timestamps ISO, duration in seconds, key counts flattened', () => {
+        const runs = [
+            {
+                timestamp: '2026-08-04T10:00:00.000Z',
+                dungeonName: 'Chimerical Den',
+                tier: 1,
+                duration: 300_000,
+                team: ['Aster', 'Player11'],
+                teamKey: 'Aster,Player11',
+                keyCountsMap: { Player11: 3, Aster: 2 },
+            },
+            // A legacy websocket-recorded run: totalTime instead of duration,
+            // no team array, no tier, no key counts
+            { timestamp: '2026-08-03T09:30:00.000Z', dungeonName: 'Pirate Cove', totalTime: 240_000 },
+        ];
+
+        expect(buildRunHistoryRows(runs)).toEqual([
+            {
+                timestamp: '2026-08-04T10:00:00.000Z',
+                dungeon: 'Chimerical Den',
+                tier: 1,
+                durationSeconds: 300,
+                team: 'Aster, Player11',
+                teamSize: 2,
+                keyCounts: 'Aster: 2; Player11: 3',
+            },
+            {
+                timestamp: '2026-08-03T09:30:00.000Z',
+                dungeon: 'Pirate Cove',
+                tier: null,
+                durationSeconds: 240,
+                team: 'Solo',
+                teamSize: 1,
+                keyCounts: '',
+            },
+        ]);
+    });
+
+    test('every column names a field the rows carry', () => {
+        const [row] = buildRunHistoryRows([run('Aster,Player11')]);
+        for (const column of DUNGEON_RUN_CSV_COLUMNS) {
+            expect(row).toHaveProperty(column.key);
+        }
+    });
+
+    test('the export bar carries a button wired to the runs it was built over', () => {
+        const history = new DungeonTrackerUIHistory(freshState('team'), (ms) => `${ms}ms`);
+        const bar = history.csvExportBar([run('Aster,Player11')]);
+
+        expect(bar.dataset.csvExport).toBe('dungeon-runs');
+        expect(bar.querySelector('button').textContent).toBe('Export CSV');
+    });
+
+    test('an empty history renders no export button at all', async () => {
+        // getAllRuns is mocked to [], which is the empty-history case
+        const history = new DungeonTrackerUIHistory(freshState('team'), (ms) => `${ms}ms`);
+        const container = document.createElement('div');
+        container.innerHTML = '<div id="mwi-dt-run-list"></div>';
+        document.body.appendChild(container);
+
+        await history.update(container);
+
+        expect(container.textContent).toContain('No runs yet');
+        expect(container.querySelector('[data-csv-export]')).toBeNull();
     });
 });
 

@@ -3,7 +3,7 @@ import { describe, test, expect, vi, beforeEach } from 'vitest';
 import dataManager from '../../core/data-manager.js';
 import { getItemPrices } from '../../utils/market-data.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
-import { LootLogStats } from './loot-log-stats.js';
+import { LootLogStats, buildLootLogRows, LOOT_LOG_CSV_COLUMNS } from './loot-log-stats.js';
 
 vi.mock('../../core/config.js', () => ({
     default: {
@@ -123,5 +123,164 @@ describe('LootLogStats.calculateExpectedRunValue', () => {
 
         expect(stats.calculateExpectedRunValue('/actions/foraging/x', 10)).toBeNull();
         expect(getItemPrices).not.toHaveBeenCalled();
+    });
+});
+
+describe('LootLogStats.getModelPrice', () => {
+    let stats;
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        expectedValueCalculator.isInitialized = false;
+        stats = new LootLogStats();
+    });
+
+    test('coins are face value without a market lookup', () => {
+        expect(stats.getModelPrice('/items/coin')).toBe(1);
+        expect(getItemPrices).not.toHaveBeenCalled();
+    });
+
+    test('openable containers use expected value when the calculator is ready', () => {
+        expectedValueCalculator.isInitialized = true;
+        dataManager.getItemDetails.mockReturnValue({ isOpenable: true });
+        expectedValueCalculator.calculateExpectedValue.mockReturnValue({ expectedValue: 500 });
+
+        expect(stats.getModelPrice('/items/chest')).toBe(500);
+        expect(getItemPrices).not.toHaveBeenCalled();
+    });
+
+    test('everything else is the market ask, and no ask is null rather than zero', () => {
+        dataManager.getItemDetails.mockReturnValue({});
+        getItemPrices.mockReturnValue({ ask: 120, bid: 100 });
+        expect(stats.getModelPrice('/items/log')).toBe(120);
+
+        getItemPrices.mockReturnValue(null);
+        expect(stats.getModelPrice('/items/unlisted')).toBeNull();
+    });
+});
+
+describe('LootLogStats.buildLuckReading', () => {
+    let stats;
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        expectedValueCalculator.isInitialized = false;
+        stats = new LootLogStats();
+    });
+
+    test('no drops or no drop table (production, combat, alchemy) is no reading', () => {
+        expect(stats.buildLuckReading(null)).toBeNull();
+        expect(stats.buildLuckReading({ actionHrid: '/actions/cooking/donut', actionCount: 5 })).toBeNull();
+
+        dataManager.getActionDetails.mockReturnValue({});
+        expect(stats.buildLuckReading({ actionHrid: '/actions/cooking/donut', actionCount: 5, drops: {} })).toBeNull();
+    });
+
+    test('binds the entry to the model: session from the drop table, income from modelled drops only', () => {
+        dataManager.getActionDetails.mockReturnValue({
+            dropTable: [{ itemHrid: '/items/log', dropRate: 1, minCount: 1, maxCount: 1 }],
+        });
+        dataManager.getItemDetails.mockReturnValue({});
+        getItemPrices.mockReturnValue({ ask: 40, bid: 30 });
+
+        const reading = stats.buildLuckReading({
+            actionHrid: '/actions/woodcutting/tree',
+            actionCount: 10,
+            // The essence is real loot but outside the modelled table, so it
+            // must not count toward the income the distribution judges
+            drops: { '/items/log': 9, '/items/essence': 2 },
+        });
+
+        expect(reading.session.actionCount).toBe(10);
+        expect(reading.session.drops).toEqual([
+            { itemHrid: '/items/log', minCount: 1, maxCount: 1, dropRate: 1, price: 40 },
+        ]);
+        expect(reading.income).toBe(9 * 40);
+    });
+});
+
+describe('buildLootLogRows, the CSV export', () => {
+    const resolve = {
+        itemInfo: (hrid) => {
+            if (hrid === '/items/coin') return { name: 'Coins', askPerItem: 1, bidPerItem: 1 };
+            if (hrid === '/items/log') return { name: 'Log', askPerItem: 40, bidPerItem: 30 };
+            return { name: hrid.split('/').pop(), askPerItem: 0, bidPerItem: 0 };
+        },
+        actionName: (hrid) => (hrid === '/actions/woodcutting/tree' ? 'Tree' : 'Unknown'),
+    };
+
+    test('no sessions is no rows', () => {
+        expect(buildLootLogRows([], resolve)).toEqual([]);
+        expect(buildLootLogRows(null, resolve)).toEqual([]);
+    });
+
+    test('one row per item per session, ISO start, values at the resolved prices', () => {
+        const entries = [
+            {
+                startTime: '2026-08-04T10:00:00Z',
+                actionHrid: '/actions/woodcutting/tree',
+                actionCount: 100,
+                // An enhancement-levelled drop prices as its base item
+                drops: { '/items/log': 250, '/items/coin': 900, '/items/rare_thing::3': 1 },
+            },
+        ];
+
+        expect(buildLootLogRows(entries, resolve)).toEqual([
+            {
+                sessionStart: '2026-08-04T10:00:00.000Z',
+                action: 'Tree',
+                actionHrid: '/actions/woodcutting/tree',
+                item: 'Log',
+                itemHrid: '/items/log',
+                quantity: 250,
+                askValue: 250 * 40,
+                bidValue: 250 * 30,
+            },
+            {
+                sessionStart: '2026-08-04T10:00:00.000Z',
+                action: 'Tree',
+                actionHrid: '/actions/woodcutting/tree',
+                item: 'Coins',
+                itemHrid: '/items/coin',
+                quantity: 900,
+                askValue: 900,
+                bidValue: 900,
+            },
+            {
+                sessionStart: '2026-08-04T10:00:00.000Z',
+                action: 'Tree',
+                actionHrid: '/actions/woodcutting/tree',
+                item: 'rare_thing',
+                itemHrid: '/items/rare_thing',
+                quantity: 1,
+                askValue: 0,
+                bidValue: 0,
+            },
+        ]);
+    });
+
+    test('enhancing sessions are skipped, as the panel skips drawing them', () => {
+        const entries = [
+            { startTime: '2026-08-04T10:00:00Z', actionHrid: '/actions/enhancing/enhance', drops: { '/items/log': 5 } },
+            { startTime: '2026-08-04T11:00:00Z', actionHrid: null, drops: null },
+        ];
+
+        expect(buildLootLogRows(entries, resolve)).toEqual([]);
+    });
+
+    test('every column names a field the rows carry', () => {
+        const [row] = buildLootLogRows(
+            [
+                {
+                    startTime: '2026-08-04T10:00:00Z',
+                    actionHrid: '/actions/woodcutting/tree',
+                    drops: { '/items/log': 1 },
+                },
+            ],
+            resolve
+        );
+        for (const column of LOOT_LOG_CSV_COLUMNS) {
+            expect(row).toHaveProperty(column.key);
+        }
     });
 });
