@@ -450,6 +450,15 @@ describe('classifyReadings', () => {
         expect(classifyReadings(history, 'skilling')).toEqual({ bossIndex: null, poolIndex: 0 });
     });
 
+    test('a skilling pool that fell is a tier reset, not a boss', () => {
+        // Across a tier clear the pool resets onto the next tier's target, so
+        // its lone bar *falls* — and reading that by movement dropped the bar
+        // from the analysis right as the next tier began. One bar on a
+        // skilling card is the pool by construction.
+        const history = [sample([90_000, 93_840]), sample([1_200, 97_920])];
+        expect(classifyReadings(history, 'skilling')).toEqual({ bossIndex: null, poolIndex: 0 });
+    });
+
     test('nothing to classify', () => {
         expect(classifyReadings([], 'combat')).toEqual({ bossIndex: null, poolIndex: null });
         expect(classifyReadings(undefined, 'skilling')).toEqual({ bossIndex: null, poolIndex: null });

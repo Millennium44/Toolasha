@@ -140,6 +140,7 @@ import { forecastTrial } from './guild-trial-forecast.js';
 import guildTrialAlerts from '../notifications/guild-trial-alerts.js';
 import { describeGuildTokenGold } from './guild-token-value.js';
 import {
+    NOT_A_CLOCK_RE,
     classifyReadings,
     findTrialClockMs,
     findTrialsRoot,
@@ -286,31 +287,87 @@ export function analyseTrial(
     //
     // 1. **The badge** ('card'), read as the comment above explains it.
     // 2. **The socket** ('socket'): `guild_skilling_updated.tier` states the
-    //    tier in progress outright, and the store keeps it as `liveTier`. It
-    //    used to feed only the observation filing, never this — so the panel
-    //    said "tier not known yet" over a stream stating the tier every second.
-    //    Both count climbs; where both exist the larger is the fresher.
+    //    tier in progress outright, and the store keeps it as `liveTier`.
     // 3. **The work ladder** ('work-ladder'): the bar's target identifies the
-    //    tier once the skill's base work has been learned — see
-    //    `tierFromWorkTarget`. This is what makes a mid-trial join on the In
-    //    Progress tab knowable without ever opening the Trials tab.
+    //    tier once the skill's base work is known — see `tierFromWorkTarget`.
+    //    This is what makes a mid-trial join on the In Progress tab knowable
+    //    without ever opening the Trials tab.
     // 4. **The first-tier rule** ('first-tier-rule'), as before.
+    //
+    // ## The rungs go stale at different speeds, and that decides who wins
+    //
+    // Live evidence, one moment, two tabs: the In Progress bar read
+    // 17,353/99,840 — a target only T15 produces — while the panel said
+    // "Banked 8 tiers" and "Next tier work (T10)". A `liveTier` of 9, stated
+    // hours earlier when the trial genuinely was on tier 9, had been persisted
+    // and never invalidated, and the rung order let it outrank the bar in
+    // front of the player until a Trials-tab visit rewrote the badge.
+    //
+    // So staleness is now handled twice over:
+    //
+    // - A socket-stated tier is only believed **for the pool it was stated
+    //   with**. The update carries `targetWorkValue`, the store keeps it as
+    //   `liveTierTarget`, and the moment the bar's target no longer matches,
+    //   the statement is about a tier that has since cleared and is dropped.
+    // - Tiers only climb, so the winner is the **largest** valid rung — the
+    //   badge and the socket can lag but never lead, and the work ladder reads
+    //   the bar as it is *now*. Ties go to the stated sources over the derived
+    //   one.
+    //
+    // The work ladder no longer needs the learned store to have spoken: any
+    // correctly-filed tier observation from this trial backs the base out
+    // (`baseWorkFromObservations`), so a record that once knew its tier keeps
+    // knowing it as later tiers clear with the tab sitting open.
     const fromBadge = badge !== null ? (completed || !earned ? badge : badge + 1) : null;
-    const fromSocket = !completed && Number.isFinite(record?.liveTier) ? record.liveTier : null;
-    const fromWorkLadder =
-        !completed && kind === 'skilling' && fromBadge === null && fromSocket === null
-            ? tierFromWorkTarget({ target: total, baseWork: workBase, participants })
+
+    const socketTarget = Number.isFinite(record?.liveTierTarget) ? record.liveTierTarget : null;
+    const socketStale = socketTarget !== null && Number.isFinite(total) && total !== socketTarget;
+    const fromSocket = !completed && !socketStale && Number.isFinite(record?.liveTier) ? record.liveTier : null;
+
+    // Only an observation above the first tier may seed the fallback base: a
+    // tier-1 observation may be the first-tier rule's own filing, and a base
+    // derived from it "confirms" tier 1 by construction — an assumption
+    // relabelled as arithmetic. Combat records file both of a card's bars as
+    // observations and the two sit on differently-scaled ladders, so the
+    // observation fallback is a skilling-only shortcut; a combat base comes
+    // from the learned store.
+    const anchoredObservations = observations.filter((observation) => Number(observation?.tier) >= 2);
+    const ladderBase =
+        Number.isFinite(workBase) && workBase > 0
+            ? workBase
+            : kind === 'skilling'
+              ? baseWorkFromObservations(anchoredObservations, participants, kind)
+              : null;
+
+    // A combat card's *second* bar is the cleaner tier anchor: it is the
+    // tier's own pool, scaling purely with the tier's level — observed live as
+    // 547,970/550,000 at T1 becoming 597,970/600,000 at T2, exactly 110 → 120
+    // on a 5,000-per-unit base, with no participant factor to get right. The
+    // boss health (first bar) carries the 1%-per-participant scale and backs
+    // out the *same* base, so it still identifies the tier when the second bar
+    // is absent, at the cost of needing the participant count.
+    const combatPoolTarget =
+        kind === 'combat' && Number.isFinite(samples[samples.length - 1]?.readings?.[1]?.max)
+            ? samples[samples.length - 1].readings[1].max
             : null;
+    const fromWorkLadder = !completed
+        ? ((combatPoolTarget !== null
+              ? tierFromWorkTarget({ target: combatPoolTarget, baseWork: ladderBase, participants: 0, kind })
+              : null) ?? tierFromWorkTarget({ target: total, baseWork: ladderBase, participants, kind }))
+        : null;
 
     let tier = null;
     let tierSource = null;
-    if (fromBadge !== null || fromSocket !== null) {
-        tier = Math.max(fromBadge ?? -Infinity, fromSocket ?? -Infinity);
-        tierSource = fromBadge !== null && tier === fromBadge ? 'card' : 'socket';
-    } else if (fromWorkLadder !== null) {
-        tier = fromWorkLadder;
-        tierSource = 'work-ladder';
-    } else if (assumeFirst && !(kind === 'skilling' && Number.isFinite(workBase) && Number.isFinite(total))) {
+    for (const [candidate, source] of [
+        [fromBadge, 'card'],
+        [fromSocket, 'socket'],
+        [fromWorkLadder, 'work-ladder'],
+    ]) {
+        if (candidate === null || (tier !== null && candidate <= tier)) continue;
+        tier = candidate;
+        tierSource = source;
+    }
+    if (tier === null && assumeFirst && !(Number.isFinite(ladderBase) && Number.isFinite(total))) {
         // The first-tier rule stands down when the work ladder has actively
         // contradicted it: a known base and a target that fits no tier is not
         // a trial provably on tier one, whatever the rule would like to assume
@@ -654,16 +711,19 @@ function line(label, value, color = '#e8ecf5', title = '') {
         );
     }
 
-    // The value never wraps — a figure split from its unit is unreadable — and
-    // the label wraps instead of being cut. Between them that is the whole of
-    // the narrow-block problem: the unit stays with its number, and "On pace
-    // for" becomes two lines rather than "On…".
+    // Neither side ever breaks mid-word — a figure split from its unit is
+    // unreadable, and a label wrapped mid-phrase floats a word between rows:
+    // "Party DPS | 737 dmg/s" rendered as "Party  737 dmg/s" over an orphaned
+    // "DPS", which was reported. So the label holds one line too, and when the
+    // row genuinely cannot fit both, the *whole value* wraps under the label
+    // as its own right-aligned line — still a legible pair, never a shuffle.
     return (
-        `<div style="display:flex; justify-content:space-between; align-items:baseline; gap:8px;"${tip}>` +
-        `<span style="color:${DIM}; flex:1 1 auto; min-width:4em; overflow-wrap:normal; ` +
-        `word-break:normal; hyphens:none;">${label}</span>` +
+        `<div style="display:flex; flex-wrap:wrap; justify-content:space-between; align-items:baseline; ` +
+        `gap:2px 8px;"${tip}>` +
+        `<span style="color:${DIM}; flex:1 1 auto; overflow-wrap:normal; ` +
+        `word-break:normal; hyphens:none; white-space:nowrap;">${label}</span>` +
         `<span style="color:${color}; font-weight:600; text-align:right; white-space:nowrap; ` +
-        `flex:0 0 auto;">${text}</span></div>`
+        `flex:0 0 auto; margin-left:auto;">${text}</span></div>`
     );
 }
 
@@ -706,6 +766,13 @@ export function tokenPayoutLine(tokens, baseTitle) {
  */
 function tierProvenance(analysis) {
     if (analysis.tierSource === 'work-ladder') {
+        if (analysis.kind === 'combat') {
+            return (
+                ' The tier is derived from the boss’s full health: the health bar’s maximum ' +
+                'uniquely identifies the tier once the encounter’s base health is known, and ' +
+                'this encounter’s has been learned from an earlier reading.'
+            );
+        }
         return (
             ' The tier is derived from the tier’s work total: the bar’s target uniquely ' +
             'identifies the tier once the skill’s base work is known, and this skill’s has ' +
@@ -1132,7 +1199,7 @@ export function renderTrialPlayers(breakdown) {
         const deaths = player.deaths > 0 ? ` · ${player.deaths}✝` : '';
 
         rows.push(
-            line(
+            playerRow(
                 player.name,
                 `${dps} · ${share}${deaths}`,
                 player.deaths > 0 ? WARN : GOOD,
@@ -1146,6 +1213,37 @@ export function renderTrialPlayers(breakdown) {
     }
 
     return rows;
+}
+
+/**
+ * One player's row: name left, figures right, always one line.
+ *
+ * Not {@link line}, on purpose. That helper stacks a long *label* into a
+ * full-width caption, which is right for "Next tier work (T3)" and wrong for a
+ * roster: "MillenniumTest" is fourteen characters, so its figures dropped onto
+ * a second line while "Orven" beside it kept one, and the list read as a
+ * ragged mix of one- and two-line entries. And the column can be genuinely
+ * tiny — the fight-view injection lands in a 108px grid cell — so the row is a
+ * size down from the block and the name ellipsizes as tightly as it must. A
+ * cut name is acceptable here and nowhere else: the tooltip opens with the
+ * full name, and the figures are what the row is for.
+ *
+ * @param {string} name - The player
+ * @param {string} value - Their figures
+ * @param {string} color - Value colour
+ * @param {string} title - Tooltip; the full name is prepended, for when the row cuts it
+ * @returns {string} HTML
+ */
+function playerRow(name, value, color, title) {
+    const full = `${name} — ${title}`;
+    return (
+        `<div style="display:flex; justify-content:space-between; align-items:baseline; gap:4px; ` +
+        `font-size:10px;" title="${full.replace(/"/g, '&quot;')}">` +
+        `<span style="color:${DIM}; flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; ` +
+        `white-space:nowrap;">${name}</span>` +
+        `<span style="color:${color}; font-weight:600; text-align:right; white-space:nowrap; ` +
+        `flex:0 0 auto;">${value}</span></div>`
+    );
 }
 
 /**
@@ -1726,7 +1824,11 @@ class GuildTrials {
                     else if (Number.isFinite(withPersonal.spectatedTier)) readingTier = withPersonal.spectatedTier;
                     else if (ladderTier !== null) readingTier = ladderTier;
                     else if (Number.isFinite(badge)) readingTier = badge + (banked ? 1 : 0);
-                    else if (this._workBase(withPersonal) === null && !banked) {
+                    else if (this._workBase(withPersonal) === null && !banked && !(held?.tiers || []).length) {
+                        // Nothing has ever placed this trial on the ladder —
+                        // only then may the first-tier rule file the reading.
+                        // With a base or an observation in hand and no match
+                        // above, filing T1 would contradict the ladder.
                         readingTier = FIRST_TIER;
                     }
                 }
@@ -2185,7 +2287,15 @@ class GuildTrials {
      */
     _timeLeftMs(root) {
         const statusRow = root.querySelector('[class*="GuildPanel_eventStatusRow"]');
-        const fromStatus = parseClockMs(statusRow?.textContent || '');
+        const statusText = statusRow?.textContent || '';
+        // The same refusals the clock finder applies, because the status row
+        // earns none of them for free: the Trials tab's header is "Skilling
+        // Trial - In Progress Thu 09:00 AM", and 09:00 parses as a nine-minute
+        // countdown — which made the pace walk one tier further than the tile's
+        // real 5m53s allowed, on that tab only. A bar reading ("15 / 60") is
+        // refused for the same reason it is in `findTrialClockMs`.
+        const fromStatus =
+            statusText.includes('/') || NOT_A_CLOCK_RE.test(statusText) ? null : parseClockMs(statusText);
         if (fromStatus !== null) return Math.min(fromStatus, TRIAL_ACTIVE_MS);
 
         return findTrialClockMs(root, TRIAL_ACTIVE_MS);
@@ -2648,7 +2758,14 @@ class GuildTrials {
         // The pool, to the unit. A card the game is already drawing a bar on
         // keeps its own numbers, so the two sources cannot disagree on screen
         if (update.reading && !tile.readings?.length) next.readings = [{ ...update.reading }];
-        if (Number.isFinite(update.tier)) next.socketTier = update.tier;
+        if (Number.isFinite(update.tier)) {
+            next.socketTier = update.tier;
+            // The pool the tier was stated with. A stated tier is only good
+            // for as long as this is the bar's target — the target changes the
+            // moment a tier clears, and a `liveTier` kept past that point is
+            // the previous tier's answer wearing this one's label
+            next.socketTierTarget = Number.isFinite(update.reading?.max) ? update.reading.max : null;
+        }
 
         // The per-tier personal figures, which is what the DOM footer was read
         // for — and these come with their tier attached rather than inferred
@@ -2659,17 +2776,19 @@ class GuildTrials {
     }
 
     /**
-     * The learned first-tier work for a tile's skill, if one is in hand.
+     * The learned first-tier total for a tile's skill or encounter.
      *
-     * Keyed by the skill as the card names it — `Crafting` and the socket's
-     * `/guild_skilling/crafting` both lower-case to `crafting` — and only a
-     * skilling trial has one at all.
+     * Keyed by the trial as the card names it — `Crafting` and the socket's
+     * `/guild_skilling/crafting` both lower-case to `crafting`, and a combat
+     * card's `Trial Chameleon` keys as itself. For a skilling trial the figure
+     * is the skill's first-tier work; for combat it is the encounter's
+     * first-tier boss health (Trial Chameleon's 550,000).
      *
      * @param {{kind: string, name: string}} tile - A card or a tile record
-     * @returns {number|null} The base work, or null when it has not been learned
+     * @returns {number|null} The base total, or null when it has not been learned
      */
     _workBase(tile) {
-        if (tile?.kind !== 'skilling') return null;
+        if (tile?.kind !== 'skilling' && tile?.kind !== 'combat') return null;
         const key = String(tile?.name || '')
             .trim()
             .toLowerCase();
@@ -2683,7 +2802,10 @@ class GuildTrials {
      * The participant count is resolved the way the drawing loop resolves it —
      * the card's own sign-up figure first, the tracker's sign-up sheet
      * otherwise — because the work formula needs the same count the analysis
-     * uses everywhere else.
+     * uses everywhere else. The base is the learned one where the store has
+     * it, and otherwise backed out of this trial's own filed observations, the
+     * same way `analyseTrial` resolves it — so a record that once filed a tier
+     * correctly keeps filing later tiers correctly as they clear.
      *
      * @param {Object} tile - The card, with any socket reading already folded in
      * @param {Object|null} held - The tile's stored record
@@ -2691,24 +2813,39 @@ class GuildTrials {
      * @returns {number|null} The tier, or null when the target fits no tier
      */
     _workLadderTier(tile, held, counts) {
-        const baseWork = this._workBase(tile);
-        if (baseWork === null) return null;
+        const kind = tile?.kind === 'combat' ? 'combat' : tile?.kind === 'skilling' ? 'skilling' : null;
+        if (!kind) return null;
 
-        const target = tile.readings?.[0]?.max;
         const hrid = matchTrialHrid(tile.name, Object.keys(counts || {}));
         const participants = tile.signups?.signed ?? held?.signups?.signed ?? (hrid ? counts[hrid] : 0);
-        return tierFromWorkTarget({ target, baseWork, participants });
+        // Tier-1 observations are excluded for the same reason `analyseTrial`
+        // excludes them: they may be the first-tier rule's own filings — and
+        // the observation fallback is skilling-only there for the same reason
+        // it is here: a combat record's observations mix both bars' ladders
+        const stated = (held?.tiers || []).filter((observation) => Number(observation?.tier) >= 2);
+        const baseWork =
+            this._workBase(tile) ?? (kind === 'skilling' ? baseWorkFromObservations(stated, participants, kind) : null);
+        if (!Number.isFinite(baseWork) || baseWork <= 0) return null;
+
+        // A combat card's second bar is the tier's own level-scaled pool and
+        // needs no participant count; the first bar (boss health, participant-
+        // scaled) is the fallback anchor, as in `analyseTrial`
+        const poolTarget = kind === 'combat' && Number.isFinite(tile.readings?.[1]?.max) ? tile.readings[1].max : null;
+        const fromPool =
+            poolTarget !== null ? tierFromWorkTarget({ target: poolTarget, baseWork, participants: 0, kind }) : null;
+        return fromPool ?? tierFromWorkTarget({ target: tile.readings?.[0]?.max, baseWork, participants, kind });
     }
 
     /**
-     * Learn a skill's first-tier work, the moment all three inputs line up.
+     * Learn a trial's first-tier total, the moment all three inputs line up.
      *
      * The tier, the bar's target and the participant count are each on screen
      * at different times, and only a moment that has all three can state the
-     * base: `base = target / ((1 + 0.1 × (tier − 1)) × (1 + 0.01 × p))`. Once
-     * learned it identifies the tier from the bar alone — which is what lets a
-     * mid-trial join on the In Progress tab know its tier without ever opening
-     * the Trials tab.
+     * base — `target / (shape(tier) × (1 + 0.01 × p))`, on either kind's
+     * ladder. Once learned it identifies the tier from the bar alone — which
+     * is what lets a mid-trial join on the In Progress tab know its tier
+     * without ever opening the Trials tab. A skilling trial learns its skill's
+     * base work; a combat trial learns its encounter's first-tier boss health.
      *
      * Guards, because a wrong base states wrong tiers with confidence:
      *
@@ -2728,12 +2865,23 @@ class GuildTrials {
      */
     _learnWorkBase(tile, record, analysis, participants, now) {
         try {
-            if (tile.kind !== 'skilling' || !(participants > 0)) return;
+            const kind = tile.kind === 'combat' ? 'combat' : tile.kind === 'skilling' ? 'skilling' : null;
+            if (!kind) return;
             if (analysis.tierSource !== 'card' && analysis.tierSource !== 'socket') return;
-            if (!Number.isFinite(analysis.tier) || !Number.isFinite(analysis.total)) return;
+            if (!Number.isFinite(analysis.tier)) return;
 
-            const lastSampleAt = record?.samples?.[record.samples.length - 1]?.t;
-            if (!Number.isFinite(lastSampleAt) || now - lastSampleAt > WORK_BASE_LEARN_FRESH_MS) return;
+            const lastSample = record?.samples?.[record.samples.length - 1];
+            if (!Number.isFinite(lastSample?.t) || now - lastSample.t > WORK_BASE_LEARN_FRESH_MS) return;
+
+            // A combat card's second bar teaches with no participant count at
+            // all — it is the tier's level-scaled pool. The first bar (or a
+            // skilling bar) is participant-scaled and needs the count.
+            const poolTarget = kind === 'combat' ? Number(lastSample?.readings?.[1]?.max) : NaN;
+            const usingPool = Number.isFinite(poolTarget) && poolTarget > 0;
+            const target = usingPool ? poolTarget : analysis.total;
+            if (!Number.isFinite(target)) return;
+            if (!usingPool && !(participants > 0)) return;
+            const scaledBy = usingPool ? 0 : participants;
 
             const key = String(tile.name || '')
                 .trim()
@@ -2741,12 +2889,12 @@ class GuildTrials {
             const held = this.workBases[key]?.baseWork;
             if (
                 Number.isFinite(held) &&
-                tierFromWorkTarget({ target: analysis.total, baseWork: held, participants }) !== null
+                tierFromWorkTarget({ target, baseWork: held, participants: scaledBy, kind }) !== null
             ) {
                 return;
             }
 
-            const baseWork = baseWorkFromObservations([{ tier: analysis.tier, total: analysis.total }], participants);
+            const baseWork = baseWorkFromObservations([{ tier: analysis.tier, total: target }], scaledBy, kind);
             if (!Number.isFinite(baseWork) || baseWork <= 0) return;
 
             this.workBases = {
@@ -2803,6 +2951,16 @@ class GuildTrials {
             ...tile,
             readings: [{ current: pool.current, max: pool.max }],
             spectatedTier: Number.isFinite(pool.tier) ? pool.tier : null,
+            // The stream states the tier the same way the skilling socket does
+            // (`new_battle.tier`), and it is persisted the same way — as
+            // `liveTier`, paired with the boss health it was stated for, so it
+            // expires the moment a cleared tier moves the bar's maximum on.
+            // Without this a spectated combat trial's stated tier reached the
+            // observation filing and never the analysis, and the card read
+            // "tier not seen yet" through a fight whose tier was on the wire.
+            ...(Number.isFinite(pool.tier)
+                ? { socketTier: pool.tier, socketTierTarget: Number.isFinite(pool.max) ? pool.max : null }
+                : {}),
         };
     }
 

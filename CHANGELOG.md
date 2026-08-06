@@ -6,6 +6,16 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The In Progress tab stops trusting stale answers — and combat trials learn their tier
+
+- **A stated tier is only believed for the pool it was stated with**: the live view once showed "Banked 8 tiers / Next tier T10" against a bar only T15 produces, because a socket-stated tier from hours earlier was persisted and never invalidated. Stated tiers now carry the bar target they were stated for and die the moment the bar moves on; among the surviving rungs the largest wins, since tiers only climb — the badge and socket can lag but never lead the bar in front of the player.
+- **Combat trials identify their tier from the boss card's own bars**: the second bar is the tier's pool, scaling purely with the tier level (observed live: 550,000 → 600,000 is exactly 110 → 120 at 5,000 per point, no participant factor), and the spectated fight's stated tier is persisted under the same staleness contract. "Tier not known yet" on a combat card should now be rare and short-lived.
+- **Banked points top up along the ladder**: a card-quoted total from tier 8 no longer masquerades as the trial's total after six more tiers banked — the ladder's marginal steps are added (1,080 + 6×120 = 1,800, matching the live view exactly).
+- **The pace clock stops reading "Thu 09:00 AM" as nine minutes**: the status row's schedule text slipped past the clock parser's guards, inflating time-left by ~50% and making one more tier "fit" — the off-by-one between the two tabs' pace lines. The same refusals now guard every clock source.
+- **A tier clearing under an open tab keeps continuity**: the pool bar's reset onto the next tier's larger target was being misread as a boss bar and dropped; one bar on a skilling card is now the pool by construction, so the observation files under the new tier and the analysis rolls forward without a visit anywhere.
+- **The per-player DPS rows survive narrow columns**: name and figures always share one row (ellipsized name, full name in the tooltip), and the header's label/value pairs no longer wrap mid-label.
+- **The spectate caption tells the truth**: ticks keep arriving and counting while other game tabs are browsed — the note now says so, instead of claiming only on-view stretches count.
+
 ### The battle-info button stops offering clicks that open nothing
 
 - **The profile cycler matches the game's own unit boxes now**: it used to walk bare text and climb to "the smallest ancestor with a health reading", which in a spectated trial fight — where the game draws only the boss as a unit — sailed up to the whole battle grid, matching names this script's own damage panel had drawn there. Diagnosed live with the user: every "unit" resolved to the same 704×511 grid, and clicking it opened nothing. A unit now has to be a real `CombatUnit` box in the boss's grid wearing a roster name, so a fight that draws no player units honestly falls back to the `/profile` route instead of pretending.

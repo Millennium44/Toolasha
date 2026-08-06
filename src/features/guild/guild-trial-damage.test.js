@@ -484,12 +484,15 @@ describe('estimateDamageSplit', () => {
 
 describe('the reason a split is never measured', () => {
     test('says the mechanic rather than implying a fight was missed', () => {
-        expect(SPECTATED_TRIAL_NOTE).toContain('fight view is open');
+        expect(SPECTATED_TRIAL_NOTE).toContain('fight view has been opened');
+        // Observed live: the stream keeps flowing while other tabs are
+        // browsed, so the note must not claim only an open-view stretch counts
+        expect(SPECTATED_TRIAL_NOTE).toContain('keeps flowing');
         expect(SPECTATED_TRIAL_NOTE).not.toContain('simulated');
 
         const verdict = isTrialBattle({ monsterNames: ['Granite Golem'], trialNames: ['Trial Chameleon'] });
         expect(verdict.isTrial).toBe(false);
-        expect(verdict.reason).toContain('fight view is open');
+        expect(verdict.reason).toContain('fight view');
         // And still carries what the payload called them, for the next report
         expect(verdict.reason).toContain('Granite Golem');
     });

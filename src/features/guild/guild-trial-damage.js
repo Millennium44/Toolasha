@@ -67,9 +67,11 @@
  *
  * ### What that costs, and what it does not
  *
- * - **Only while somebody watches.** Close the fight view and the stream stops.
- *   The measurement covers the watched stretch and every caption says so; the
- *   recorder's session gaps already model exactly this.
+ * - **Only after somebody watches.** Opening the fight view is what starts the
+ *   stream — and, observed live, the stream then keeps flowing while other game
+ *   tabs are browsed rather than stopping the moment the view closes. Every
+ *   tick that arrives is counted: the measurement is the stream as received,
+ *   gaps and all, and the recorder's session gaps model the gaps.
  * - **Units are indexes.** `pMap` is `{"1": …}` with no roster on it, so names
  *   come from `guild-trial-units.js` — the fight view's own portraits first, the
  *   captured builds' maximum health and mana second, and a placeholder when
@@ -111,14 +113,20 @@ export const MIN_SECONDS = 5;
  *
  * This used to say the fight did not exist — that trial combat was simulated and
  * no measurement was possible. A wire capture disproved it: the fight is a real
- * server-run battle and `guild_battle_updated` streams it to anyone with the
- * fight view open. The condition is not "impossible", it is "while watching",
- * and that is a very different thing to tell a player, because they can act on
- * it.
+ * server-run battle and `guild_battle_updated` streams it to anyone who opens
+ * the fight view. The condition is not "impossible", it is "once watched", and
+ * that is a very different thing to tell a player, because they can act on it.
+ *
+ * "Once watched" rather than "while watching", and the difference was reported
+ * as a contradiction: the figures kept accruing while the player browsed other
+ * game tabs, against a caption claiming only the open-view stretch counted. The
+ * behaviour is the honest half — the ticks really do keep arriving after the
+ * view is left, and they are real measurements — so the words now match it.
  */
 export const SPECTATED_TRIAL_NOTE =
-    'a trial fight runs on the game’s own server and streams to this client only while the In Progress fight ' +
-    'view is open — so what is measured is the stretch somebody was watching';
+    'a trial fight runs on the game’s own server and streams to this client once the In Progress fight view ' +
+    'has been opened — the stream often keeps flowing while other tabs are browsed, and every tick that ' +
+    'arrives is counted';
 
 /** The stream that carries a spectated trial fight */
 export const GUILD_BATTLE_MESSAGE = 'guild_battle_updated';
