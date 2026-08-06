@@ -95,7 +95,13 @@ import { attributeTick, foldEvents, newAttributionState, noteActions } from '../
 import { guildLoadoutCapture } from './guild-loadout-capture.js';
 import { isMonsterUnit } from './guild-loadouts.js';
 import { autoAttackDps } from './guild-trial-forecast.js';
-import { foldSupportTick, newSupportState, summariseSupport, supportCoverage } from './guild-trial-support.js';
+import {
+    foldSupportRow,
+    foldSupportTick,
+    newSupportState,
+    summariseSupport,
+    supportCoverage,
+} from './guild-trial-support.js';
 import {
     fightViewBossNames,
     fightViewNames,
@@ -367,6 +373,88 @@ export function summariseTrialDamage({ tally = {}, names = {}, deaths = {}, seco
     };
 }
 
+/**
+ * Fold one tally row into another, numerically.
+ *
+ * The rows are numbers all the way down — `damage`, `hits`, and the nested
+ * `byAbility`/`byEnemy` maps of the same shape — so a recursive numeric sum is
+ * the whole of it. `target` is copied, never mutated: banked history must be
+ * immutable, and a helper that quietly mutated it would defeat the reason it
+ * exists.
+ *
+ * @param {Object|null} target - The row folded into, or null to start one
+ * @param {Object} row - The row to fold in
+ * @returns {Object} A new row holding both
+ */
+export function foldTallyRow(target, row) {
+    const merged = { ...(target || {}) };
+    for (const [key, value] of Object.entries(row || {})) {
+        if (typeof value === 'number') merged[key] = (merged[key] || 0) + value;
+        else if (value && typeof value === 'object') merged[key] = foldTallyRow(merged[key], value);
+    }
+    return merged;
+}
+
+/**
+ * The whole trial's figures, merged by NAME across wave boundaries.
+ *
+ * The live tallies are keyed by actor index, and an index is only meaningful
+ * within one wave: `new_guild_battle` re-states `players[]` at every tier and
+ * the ordering is not stable. Displaying a trial-long index-keyed tally under
+ * the *current* wave's names is what made per-name totals swap at a tier
+ * rollover — NPD "lost" 132K to whoever inherited their slot. So each wave's
+ * figures are banked under the names its slots held when it ended, and this
+ * merges the banked history with the live wave for display. A slot that never
+ * earned a name banks under its placeholder, and placeholders from different
+ * waves merge — an unknown is an unknown either way.
+ *
+ * @param {Object} input - Inputs
+ * @param {Object} [input.bankedTally] - Name → tally row, from ended waves
+ * @param {Object} [input.bankedDeaths] - Name → deaths, from ended waves
+ * @param {Object} [input.bankedSupport] - Name → support row, from ended waves
+ * @param {Object} [input.tally] - Index → tally row, the live wave
+ * @param {Object} [input.names] - Index → display name, the live wave
+ * @param {Object} [input.deaths] - Index → deaths, the live wave
+ * @param {Object} [input.supportPlayers] - Index → support row, the live wave
+ * @returns {{tally: Object, deaths: Object, support: Object, names: Object}} Everything keyed by name
+ */
+export function mergeWaveTallies({
+    bankedTally = {},
+    bankedDeaths = {},
+    bankedSupport = {},
+    tally = {},
+    names = {},
+    deaths = {},
+    supportPlayers = {},
+} = {}) {
+    const nameOf = (index) => names[index] || `Player ${Number(index) + 1}`;
+    const merged = { tally: {}, deaths: {}, support: {}, names: {} };
+    const claim = (name) => {
+        merged.names[name] = name;
+        return name;
+    };
+
+    for (const [name, row] of Object.entries(bankedTally)) merged.tally[claim(name)] = foldTallyRow(null, row);
+    for (const [index, row] of Object.entries(tally)) {
+        const name = claim(nameOf(index));
+        merged.tally[name] = foldTallyRow(merged.tally[name], row);
+    }
+
+    for (const [name, count] of Object.entries(bankedDeaths)) merged.deaths[claim(name)] = count;
+    for (const [index, count] of Object.entries(deaths)) {
+        const name = claim(nameOf(index));
+        merged.deaths[name] = (merged.deaths[name] || 0) + count;
+    }
+
+    for (const [name, row] of Object.entries(bankedSupport)) merged.support[claim(name)] = foldSupportRow(null, row);
+    for (const [index, row] of Object.entries(supportPlayers)) {
+        const name = claim(nameOf(index));
+        merged.support[name] = foldSupportRow(merged.support[name], row);
+    }
+
+    return merged;
+}
+
 class GuildTrialDamage {
     constructor() {
         this.initialized = false;
@@ -390,6 +478,14 @@ class GuildTrialDamage {
         this.tally = {};
         this.names = {};
         this.deaths = {};
+        /**
+         * Ended waves' figures, keyed by NAME and immutable once written —
+         * see {@link _bankCurrentWave}. The live index-keyed maps above cover
+         * only the wave in progress.
+         */
+        this.bankedTally = {};
+        this.bankedDeaths = {};
+        this.bankedSupport = {};
         this.playersHP = {};
         this.seconds = 0;
         this.lastTickAt = 0;
@@ -576,8 +672,11 @@ class GuildTrialDamage {
                 // fires once per tier and never again, so a page refresh
                 // mid-tier used to lose every name — "Player 2" on a
                 // leaderboard whose roster had been on the wire minutes before
+                // Keyed by battle AND tier: the slots re-deal per tier, so a
+                // roster adopted across tiers would re-create the very
+                // mislabelling the per-wave re-deal exists to prevent
                 if (battleId) {
-                    this.storedRoster = { battleId, roster, at: now };
+                    this.storedRoster = { battleId, tier, roster, at: now };
                     saveTrialRoster(this.storedRoster).catch(() => {});
                 }
             }
@@ -702,7 +801,7 @@ class GuildTrialDamage {
             this._identifyEncounter();
             // A session that missed the tier's opening message — a refresh —
             // reads the persisted roster back, gated on the battle id matching
-            if (!Object.keys(this.roster).length) this._adoptStoredRoster(battleId);
+            if (!Object.keys(this.roster).length) this._adoptStoredRoster(battleId, tier);
             this._nameUnits(pMap);
             this._readPool(mMap, tier, now);
 
@@ -819,12 +918,41 @@ class GuildTrialDamage {
     _newSpectatedWave(battleId, tier, at) {
         const newFight = battleId !== this.guildBattleId;
 
+        // The wave that just ended is banked under the names its slots held —
+        // BEFORE anything below re-deals them. Observed live at a tier
+        // rollover: per-name totals *swapped* (NPD lost 132K to whoever
+        // inherited their slot), because the trial-long tally is index-keyed
+        // and `new_guild_battle` re-states `players[]` per tier in an order
+        // that is not stable. Banked history is by name and immutable; a name
+        // correction may relabel the live wave's slots, never the past.
+        this._bankCurrentWave();
+
         this.state.monstersHP = {};
         this.state.dmgCounter = {};
         this.state.critCounter = {};
+        // The counter baselines, actions and party keys are all per-slot, and
+        // the slots have just been re-dealt: a new wave's counters compared
+        // against another player's baselines mis-swing the first tick
+        this.state.playersAtk = {};
+        this.state.playersMP = {};
+        this.state.actions = {};
+        this.state.party = {};
+        this.state.lastSwing = null;
         this.support.lastHP = {};
         this.support.lastMP = {};
         this.playersHP = {};
+
+        // Every wave re-deals the slots — a tier change included, which the
+        // rule this replaces ("the same thirty people fight every tier")
+        // learned the hard way: the *people* are the same, the *ordering* is
+        // not. The names come back on the wave's own `new_guild_battle`
+        // roster, or through the resolver's rungs for a wave without one.
+        this.roster = {};
+        this.unitNames = {};
+        this.names = {};
+        // …and the own-unit binding re-confirms per wave, by counters, rather
+        // than carrying an index across a re-deal
+        this.countedSlots = new Set();
 
         if (newFight) {
             // A different battle is a different encounter until something says
@@ -832,9 +960,6 @@ class GuildTrialDamage {
             // gets filed under Hedgehog
             this.spectatedBossName = null;
             this.encounter = null;
-            // …and a different battle is a different roster. A tier change is
-            // not: the same thirty people fight every tier of one trial
-            this.roster = {};
         }
 
         this.guildBattleId = battleId;
@@ -846,6 +971,39 @@ class GuildTrialDamage {
         if (newFight) this.lastTickAt = 0;
         this.pool = null;
         this.spectator.lastAt = at;
+    }
+
+    /**
+     * Bank the live wave's figures under the names its slots hold now.
+     *
+     * Called at every wave boundary, before the slots re-deal. Once banked, a
+     * name's history is immutable: later corrections apply to the live wave's
+     * slots only, and can never transplant past damage between names. A slot
+     * that never earned a name banks under its placeholder — an unknown then,
+     * an unknown forever, which is the honest end of it.
+     */
+    _bankCurrentWave() {
+        const nameOf = (index) => this.names[index] || `Player ${Number(index) + 1}`;
+
+        for (const [index, row] of Object.entries(this.tally)) {
+            const name = nameOf(index);
+            this.bankedTally[name] = foldTallyRow(this.bankedTally[name], row);
+        }
+        for (const [index, count] of Object.entries(this.deaths)) {
+            if (!(count > 0)) continue;
+            const name = nameOf(index);
+            this.bankedDeaths[name] = (this.bankedDeaths[name] || 0) + count;
+        }
+        for (const [index, row] of Object.entries(this.support.players || {})) {
+            const name = nameOf(index);
+            this.bankedSupport[name] = foldSupportRow(this.bankedSupport[name], row);
+        }
+
+        this.tally = {};
+        this.deaths = {};
+        this.support.players = {};
+        this.support.lastAtk = {};
+        this.support.emptySince = {};
     }
 
     /**
@@ -907,18 +1065,21 @@ class GuildTrialDamage {
     /**
      * Adopt the persisted roster, when it is provably this fight's.
      *
-     * The battle id is the whole gate: `new_guild_battle` and every spectated
-     * tick carry the same id across a trial's tiers, so an id match says the
-     * stored roster names exactly these slots — and anything else, including a
-     * roster with no id at all, stays unused. The age bound is belt and
-     * braces: a trial runs an hour, so an older entry is another trial's even
-     * if an id were ever reused.
+     * The battle id and the tier are the whole gate, together: the id says
+     * this trial, and the tier says this *deal* of the slots — `players[]` is
+     * re-stated per tier in an order that is not stable, so a roster from
+     * another tier names the wrong slots as surely as another battle's would.
+     * Anything else, including an entry with no id, stays unused. The age
+     * bound is belt and braces: a trial runs an hour, so an older entry is
+     * another trial's even if an id were ever reused.
      *
      * @param {*} battleId - The battle the current stream belongs to
+     * @param {number|null} tier - The tier it states
      */
-    _adoptStoredRoster(battleId) {
+    _adoptStoredRoster(battleId, tier) {
         const held = this.storedRoster;
         if (!held || !battleId || String(held.battleId) !== String(battleId)) return;
+        if ((held.tier ?? null) !== (tier ?? null)) return;
         if (Number.isFinite(held.at) && Date.now() - held.at > TRIAL_ACTIVE_MS) return;
 
         const roster = held.roster && typeof held.roster === 'object' ? held.roster : {};
@@ -1018,6 +1179,11 @@ class GuildTrialDamage {
             if (!this.startedAt) this.startedAt = Date.now();
             this.fights += 1;
 
+            // The fight that just ended banks under its own names before the
+            // roster below re-deals the slots — the same immutability rule the
+            // spectated path enforces at every wave
+            this._bankCurrentWave();
+
             const players = data?.players || {};
             noteActions(this.state, players);
 
@@ -1115,13 +1281,24 @@ class GuildTrialDamage {
         // and a DPS table under a live trial card that is actually last week's
         // is worse than no table
         const stale = ageMs !== null && ageMs > TRIAL_ACTIVE_MS;
-        const summary = summariseTrialDamage({
+        // The banked waves and the live one, merged by name — the only key
+        // that survives the per-tier slot re-deal. See `mergeWaveTallies`.
+        const merged = mergeWaveTallies({
+            bankedTally: this.bankedTally,
+            bankedDeaths: this.bankedDeaths,
+            bankedSupport: this.bankedSupport,
             tally: this.tally,
             names: this.names,
             deaths: this.deaths,
+            supportPlayers: this.support.players,
+        });
+        const summary = summariseTrialDamage({
+            tally: merged.tally,
+            names: merged.names,
+            deaths: merged.deaths,
             seconds: this.seconds,
         });
-        const support = summariseSupport(this.support, this.names, this.deaths);
+        const support = summariseSupport({ ...this.support, players: merged.support }, merged.names, merged.deaths);
 
         return {
             measured: !stale && summary.players.length > 0,

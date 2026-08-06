@@ -262,3 +262,76 @@ describe('two owners', () => {
         expect(game.wsHandlers.battle_unit_fetched).toBeUndefined();
     });
 });
+
+describe('guild scoping', () => {
+    beforeEach(async () => {
+        game.store = {};
+        game.characterId = 'char-1';
+        game.clientData = {};
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-08-04T12:00:00Z'));
+        guildLoadoutCapture.cleanup();
+        guildLoadoutCapture.record = { players: {}, updatedAt: 0 };
+        guildLoadoutCapture.guildName = null;
+        guildLoadoutCapture.lastSocketAt = 0;
+        await guildLoadoutCapture.initialize();
+    });
+
+    afterEach(() => {
+        guildLoadoutCapture.cleanup();
+        guildLoadoutCapture.guildName = null;
+        document.body.innerHTML = '';
+        vi.useRealTimers();
+    });
+
+    const sheet = (name) => ({
+        unit: {
+            character: { id: `id-${name}`, name },
+            combatDetails: { combatLevel: 150, maxHitpoints: 100, combatStats: {} },
+            combatAbilities: [],
+        },
+    });
+
+    test('the character-only record adopts onto the guild key once, when the guild has none', async () => {
+        game.wsHandlers.battle_unit_fetched(sheet('Tib'));
+        await guildLoadoutCapture.setGuildName('Testmaxxing');
+        await vi.advanceTimersByTimeAsync(2000);
+
+        expect(game.store[guildLoadoutsStorageKey('char-1', 'Testmaxxing')].players.tib).toBeDefined();
+    });
+
+    test('a guild with its own record does not inherit another guild’s people', async () => {
+        // The reported leak, exactly: Cream and ICMeow, seen in the guild this
+        // character left, listed beside the new guild's fighters
+        game.store[guildLoadoutsStorageKey('char-1', 'NewGuild')] = {
+            players: { rick: { name: 'Rick', rows: [], at: 5 } },
+            updatedAt: 5,
+        };
+        guildLoadoutCapture.record = {
+            players: {
+                cream: { name: 'Cream', rows: [], at: 1 },
+                icmeow: { name: 'ICMeow', rows: [], at: 1 },
+            },
+            updatedAt: 1,
+        };
+        await guildLoadoutCapture.setGuildName('NewGuild');
+
+        const names = guildLoadoutCapture.seen().map((player) => player.name);
+        expect(names).toContain('Rick');
+        expect(names).not.toContain('Cream');
+        expect(names).not.toContain('ICMeow');
+    });
+
+    test('sightings captured this session survive the adoption — they happened in this guild', async () => {
+        game.store[guildLoadoutsStorageKey('char-1', 'NewGuild')] = {
+            players: { rick: { name: 'Rick', rows: [], at: 5 } },
+            updatedAt: 5,
+        };
+        game.wsHandlers.battle_unit_fetched(sheet('Fresh'));
+        await guildLoadoutCapture.setGuildName('NewGuild');
+
+        const names = guildLoadoutCapture.seen().map((player) => player.name);
+        expect(names).toContain('Rick');
+        expect(names).toContain('Fresh');
+    });
+});
