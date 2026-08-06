@@ -7,17 +7,25 @@
  * DOM query worth pinning against real elements.
  */
 
-import { describe, test, expect, beforeEach, vi } from 'vitest';
+import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
-const mocks = vi.hoisted(() => ({ initData: null, prices: {} }));
+const mocks = vi.hoisted(() => ({
+    initData: null,
+    prices: {},
+    inventory: [],
+    priceBatch: new Map(),
+    yieldSpy: null,
+}));
 
 vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: () => () => {} } }));
 vi.mock('../../core/config.js', () => ({
     default: { getSetting: () => false, getSettingValue: (key, fallback) => fallback, isFeatureEnabled: () => false },
 }));
-vi.mock('../../api/marketplace.js', () => ({ default: { getPricesBatch: () => new Map(), getPrice: () => null } }));
+vi.mock('../../api/marketplace.js', () => ({
+    default: { getPricesBatch: () => mocks.priceBatch, getPrice: () => null },
+}));
 vi.mock('../../core/data-manager.js', () => ({
-    default: { getInitClientData: () => mocks.initData, getInventory: () => [] },
+    default: { getInitClientData: () => mocks.initData, getInventory: () => mocks.inventory },
 }));
 vi.mock('../enhancement/tooltip-enhancement.js', () => ({ calculateEnhancementPath: () => null }));
 vi.mock('../../utils/enhancement-config.js', () => ({ getEnhancingParams: () => ({}) }));
@@ -27,12 +35,18 @@ vi.mock('../../utils/market-data.js', () => ({ getItemPrice: (hrid) => mocks.pri
 vi.mock('../../utils/number-parser.js', () => ({ parseItemCount: (text) => parseInt(text, 10) || 0 }));
 vi.mock('../../utils/dungeon-keys.js', () => ({ DUNGEON_CHEST_CHEST_KEYS: {} }));
 vi.mock('../../utils/dom-observer-helpers.js', () => ({ createMutationWatcher: () => () => {} }));
+vi.mock('../../utils/background-work.js', () => ({
+    yieldToEventLoop: (mocks.yieldSpy = vi.fn(() => Promise.resolve())),
+}));
 
 const { default: inventoryBadgeManager } = await import('./inventory-badge-manager.js');
 
 beforeEach(() => {
     mocks.initData = { itemDetailMap: {} };
     mocks.prices = {};
+    mocks.inventory = [];
+    mocks.priceBatch = new Map();
+    mocks.yieldSpy.mockClear();
     inventoryBadgeManager.nameToHridMap = null;
 });
 
@@ -129,5 +143,74 @@ describe('itemHasBadges', () => {
         const el = document.createElement('div');
         el.innerHTML = '<div class="something-else"></div>';
         expect(inventoryBadgeManager.itemHasBadges(el)).toBe(false);
+    });
+});
+
+describe('calculateItemPrices time-slicing', () => {
+    /**
+     * A single inventory item element shaped the way the pricing loop reads it:
+     * an SVG carrying the item's display name and a stack-count node.
+     * @param {string} name - Display name matched back to an HRID
+     * @param {number} count - Stack size
+     * @returns {HTMLElement} The item container
+     */
+    function itemEl(name, count) {
+        const el = document.createElement('div');
+        el.className = 'Item_itemContainer';
+        const svg = document.createElement('svg');
+        svg.setAttribute('aria-label', name);
+        el.appendChild(svg);
+        const countEl = document.createElement('div');
+        countEl.className = 'Item_count';
+        countEl.textContent = String(count);
+        el.appendChild(countEl);
+        return el;
+    }
+
+    beforeEach(() => {
+        mocks.initData = { itemDetailMap: { '/items/cheese': { name: 'Cheese' } } };
+        mocks.inventory = [
+            { itemHrid: '/items/cheese', itemLocationHrid: '/item_locations/inventory', count: 5, enhancementLevel: 0 },
+        ];
+        mocks.priceBatch = new Map([['/items/cheese:0', { ask: 100, bid: 90 }]]);
+    });
+
+    afterEach(() => {
+        vi.restoreAllMocks();
+    });
+
+    test('prices every item and hands the thread back once per slice that runs long', async () => {
+        // Force every iteration over the budget so the loop yields deterministically
+        vi.spyOn(performance, 'now').mockImplementation(
+            (() => {
+                let t = 0;
+                return () => (t += 100);
+            })()
+        );
+
+        const items = [itemEl('Cheese', 5), itemEl('Cheese', 5), itemEl('Cheese', 5)];
+        await inventoryBadgeManager.calculateItemPrices(items, mocks.inventory, new Map());
+
+        // Every item still gets its full dataset — the work is spread, not skipped
+        for (const el of items) {
+            expect(el.dataset.askPrice).toBe('100');
+            expect(el.dataset.bidPrice).toBe('90');
+            expect(el.dataset.askValue).toBe('500');
+            expect(el.dataset.bidValue).toBe('450');
+        }
+
+        // One yield per item, since each slice was forced over budget
+        expect(mocks.yieldSpy).toHaveBeenCalledTimes(items.length);
+    });
+
+    test('does not yield when the whole loop fits inside one budget', async () => {
+        // A clock that never advances: no slice ever exceeds the budget
+        vi.spyOn(performance, 'now').mockReturnValue(0);
+
+        const items = [itemEl('Cheese', 5), itemEl('Cheese', 5)];
+        await inventoryBadgeManager.calculateItemPrices(items, mocks.inventory, new Map());
+
+        expect(items[0].dataset.askValue).toBe('500');
+        expect(mocks.yieldSpy).not.toHaveBeenCalled();
     });
 });

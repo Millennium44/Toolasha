@@ -58,3 +58,21 @@ export async function runInBackground(name, work) {
         performanceMonitor.snapshot(`bg:${name}`, performanceMonitor.sinceBoot() - startedAt, startedAt);
     }
 }
+
+/**
+ * Hand the main thread back to the event loop.
+ *
+ * A long synchronous loop — pricing an entire enhanced inventory, say — freezes
+ * the page for as long as it runs. Awaiting this between slices turns one long
+ * blocking macrotask into several short ones, so the browser gets to paint,
+ * handle input, and let other awaited work (feature init behind it) proceed.
+ *
+ * A macrotask (`setTimeout`) rather than a microtask on purpose: a microtask
+ * runs before the browser paints or handles input, which is the freeze this is
+ * meant to break, not defer.
+ *
+ * @returns {Promise<void>}
+ */
+export function yieldToEventLoop() {
+    return new Promise((resolve) => setTimeout(resolve, 0));
+}

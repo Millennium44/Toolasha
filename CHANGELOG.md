@@ -12,6 +12,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - **The trial panels re-anchor instead of drifting**: React re-parenting the boss card — on first mount and again when a tier clears — used to strand the DPS block below the payout panel or flip the panel order. Each block now re-places itself against the game's own nodes whenever it comes loose, with scroll kept, so the first render and every tier rollover hold the intended layout.
 - **The panel recomputes and writes less**: the trial analysis ran twice per tile each pass and is now memoized per pass; the full-record IndexedDB write is throttled to the sampling window instead of firing on every observer burst; and the three storage reads at startup now run together instead of one after another.
 
+### The startup freeze on an enhanced inventory is gone
+
+- **Pricing a +20 inventory no longer stalls the main thread for a second**: with the inventory panel on screen at load, the badge manager priced every item in one uninterrupted pass, and each high-enhancement piece runs the enhancement-cost path (100+ ms apiece cold) — a dozen of them froze the page for ~1.2s and, because the work was fired without `await`, the startup trace pinned the blame on whatever unrelated feature happened to be mid-`await` at the time. The pricing loop now yields to the browser every 8ms, turning one long freeze into short slices; every item is still priced with the same values, just spread so the page stays responsive and the rest of startup proceeds behind it.
+
 ### Startup traces stop blaming the wrong feature
 
 - **A feature that only parked in `await` is no longer named the slow one**: the startup trace timed each feature as wall-clock around its initializer, so a trivial synchronous feature that happened to `await` at the moment a heavy storage read resolved absorbed that read's cost and topped the "slowest features" list. The trace now splits each feature's own synchronous work from time spent waiting, and labels the latter "waiting on other work" — so the next trace points at the real cost instead of the messenger.

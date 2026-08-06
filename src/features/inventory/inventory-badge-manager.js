@@ -17,6 +17,14 @@ import { parseItemCount } from '../../utils/number-parser.js';
 import { MARKET_TAX, COWBELL_BAG_HRID, COWBELL_BAG_TAX } from '../../utils/profit-constants.js';
 import { DUNGEON_CHEST_CHEST_KEYS } from '../../utils/dungeon-keys.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
+import { yieldToEventLoop } from '../../utils/background-work.js';
+
+// How long the per-item pricing loop may run before handing the thread back.
+// High-enhancement equipment runs calculateEnhancementPath (100+ ms per +20
+// piece with a cold cache), so a large enhanced inventory would otherwise price
+// every item in one uninterrupted macrotask — a ~1.2s main-thread freeze during
+// startup. 8ms keeps a frame's worth of work per slice.
+const RENDER_TIME_BUDGET_MS = 8;
 
 /**
  * InventoryBadgeManager class manages all inventory item badges from multiple features
@@ -316,7 +324,19 @@ class InventoryBadgeManager {
             '/items/pirate_token',
         ]);
 
+        let sliceStart = performance.now();
+
         for (const itemElem of itemElems) {
+            // Cooperative time-slicing: hand the thread back once a slice runs
+            // long so the expensive enhancement-cost path below cannot freeze the
+            // page in one contiguous macrotask (see RENDER_TIME_BUDGET_MS). Every
+            // item is still priced — the work is spread, not skipped — so the
+            // dataset every consumer reads ends up exactly as it would have.
+            if (performance.now() - sliceStart > RENDER_TIME_BUDGET_MS) {
+                await yieldToEventLoop();
+                sliceStart = performance.now();
+            }
+
             // Get item HRID from SVG aria-label
             const svg = itemElem.querySelector('svg');
             if (!svg) continue;
