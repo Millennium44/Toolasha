@@ -6,2659 +6,1589 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### What's-new popup reads cleanly, with a newcomer overview
+
+- **The update popup now renders the changelog as formatted text** (no raw `##`/`**`/backticks), entries are condensed to one line each, and fresh installs or arrivals from upstream Toolasha get a "Toolasha — at a glance" overview above it.
+
 ### Labyrinth pathing reveals more of the floor on ties
 
-- **Equal-cost routes now prefer the one that uncovers the most unknown rooms**: the path planner minimises shrouds, then grafts every chest reachable without an extra shroud, then minimises torches — but when several routes tied on all of that, it fell back to Dijkstra's arbitrary wall-hugging pick. It now breaks that tie toward the route that reveals the most currently-unknown rooms, via a bonus scaled below a single torch so it can never trade a torch or a shroud for a reveal — the shroud/chest/length result is unchanged, only the choice between otherwise-equal routes.
+- **Equal-cost routes now prefer the one that uncovers the most unknown rooms**.
 
 ### "Guild" is no longer turned into a /profile link
 
-- **The guild-wide broadcast "Guild has reached level N!" stays plain text**: it matched the "&lt;name&gt; has …" announcement shape, so "Guild" was being made a clickable `/profile Guild` link even though it is the guild, not a player. That exact token is now excluded from announcement linking, in both the main chat and the pop-out chat window. Real names are untouched — a player called "GuildMaster" still links.
+- **The guild-wide broadcast "Guild has reached level N!" stays plain text**.
 
 ### Selector canary stops false-alarming on alchemy and enhancing panels
 
-- **The "Skill action panel (name)" canary no longer cries "game update?" on alchemy/enhancing screens**: it reported the action-name selector missing whenever an alchemy or enhancing detail panel was open, because those panels reuse the shared `SkillActionDetail` wrapper but draw no name heading. The name check now gates on the regular (gathering/production/crafting) component, which always carries the name — so those screens are sat out, while a genuine rename of the name class on a standard panel still trips it. The name selector itself was never broken; the ~13 features that read the action name were unaffected.
+- **The "Skill action panel (name)" canary no longer cries "game update?" on alchemy/enhancing screens**.
 
 ### First run: returning users can keep their settings
 
-- **The welcome dialog for returning users now leads with "Keep my current settings"**: someone opening a build that added settings their previous version never had used to get a two-button "Keep everything as it was / Turn the new things on" prompt. It now offers "Keep my current settings" (the primary, default choice) alongside the Essentials, Combat, Market & trading and Defaults presets. Keeping — or dismissing the dialog — changes nothing and holds new on-by-default features off, so "no change" really means no change; picking a preset replaces the current settings and is undoable with Restore in the Toolasha tab. Fresh installs are unchanged.
+- **The welcome dialog for returning users now leads with "Keep my current settings"**.
 
 ### Preset renamed: "Everything on" → "Defaults"
 
-- **The preset bar's "Everything on" button is now "Defaults"**: its tooltip already said "every feature at its shipped default," which contradicted a label that read as "turn everything on." It applies the schema defaults (several hides and warnings ship off on purpose), so "Defaults" is what it actually does. Behaviour is unchanged — only the label, its description, and the internal comments were reworded.
+- **The preset bar's "Everything on" button is now "Defaults"**.
 
 ### Portrait DPS extras are now opt-in
 
-- **The seven Portrait DPS sub-readouts default OFF**: time-to-kill, wave-clear countdown, mana runway, damage-taken/net-sustain, hit & crit rate, enemy outgoing damage, and the enrage countdown now start unchecked. They were defaulting on while their own parent toggle ("Show each character's damage on their battle portrait") defaults off, so switching the parent on flooded the portraits with every extra at once — the very clutter the parent's help text warns about. Turning Portrait DPS on now shows just the DPS and total-damage figure; each extra is opt-in.
+- **The seven Portrait DPS sub-readouts default OFF**.
 
 ### Undercut alerts stop missing undercuts you didn't watch happen
 
-- **A configurable market refresh, on while undercut alerts are**: the alert compared your listings against a snapshot that went stale after startup — nothing re-fetched it, and the only fresh per-item price arrived when you opened the item yourself, so a competitor who undercut you hours ago kept showing you as "still best." A new "re-fetch market snapshot every (minutes)" setting under the undercut toggle (default 5, 1–15) forces the bulk snapshot to refresh on a timer; each refresh re-runs the undercut check against current prices, so a snapshot-only undercut on an item you never opened is finally caught. One fetch covers every listing, and because the whole script reads the same snapshot, every price surface — profit panels, net worth, the advisor — gets fresher numbers for free while it runs. An in-flight guard skips overlapping ticks, a one-minute floor keeps the cadence courteous, and the timer stops when the alert is off.
+- **A configurable market refresh, on while undercut alerts are**.
 
 ### The combat profit panel leads with the live rate again
 
-- **The sim's forecast moves out of the headline**: the top card is back to the live measured profit rate alone; the last all-zones sim's figure for the zone ("sim said here — …/day · simulated") now sits in its own dim card at the foot of the panel, present for the comparison but no longer competing with the number the panel is for.
+- **The sim's forecast moves out of the headline**.
 
 ### The combat sim's Guild Shrine gets per-shrine targets
 
-- **A "Targets" grid on the Combat Simulator's Guild Shrine upgrade, matching the Lab Sim's**: instead of one uniform level for every combat shrine, you can now set a target level per shrine — each priced from its current level up to its target and capped at its own max, shrines already maxed shown disabled. It reuses the analyzer's existing per-shrine input (the uniform level still governs when the grid is closed), and mirrors the sim's own House-targets control so it behaves identically.
+- **A "Targets" grid on the Combat Simulator's Guild Shrine upgrade, matching the Lab Sim's**.
 
 ### The trial DPS split says how much of the party it actually covers
 
-- **"Per player · 3 of 7 · watched" instead of implying three people did everything**: on a spectated stream with no player attack counters, a member's damage is only attributable when they had a solo moment aligned with a boss-damage tick, so a short watch can credit only some of the party — and the panel used to present those rows as the whole story, shares summing to 100%, with nothing said about the four members who never got a cleanly-split hit. The under-card list, the scoreboard panel, the "Copy stats" text, and the guild report now state the coverage: shares are of the attributed damage, the total is a lower bound, and the missing members didn't do nothing. A fully-covered party shows no caveat. This also explains the shifting percentages a viewer sees early in a tier — the split fills in as hits land; no one's banked total ever decreases.
+- **"Per player · 3 of 7 · watched" instead of implying three people did everything**.
 
 ### The per-player readout stays on its own tile, its panels stop drifting, and the panel does less work
 
-- **A watched fight's per-player DPS no longer dresses every tile**: the Chameleon's rows were being drawn under the Hedgehog card (and cross-checked against skilling pools), because one measurement was handed to every tile. Each tile now shows only the encounter it was measured from; the others say "no fights watched for this encounter" rather than borrowing someone else's numbers.
-- **The trial panels re-anchor instead of drifting**: React re-parenting the boss card — on first mount and again when a tier clears — used to strand the DPS block below the payout panel or flip the panel order. Each block now re-places itself against the game's own nodes whenever it comes loose, with scroll kept, so the first render and every tier rollover hold the intended layout.
-- **The panel recomputes and writes less**: the trial analysis ran twice per tile each pass and is now memoized per pass; the full-record IndexedDB write is throttled to the sampling window instead of firing on every observer burst; and the three storage reads at startup now run together instead of one after another.
+- **A watched fight's per-player DPS no longer dresses every tile**.
 
 ### The startup freeze on an enhanced inventory is gone
 
-- **Pricing a +20 inventory no longer stalls the main thread for a second**: with the inventory panel on screen at load, the badge manager priced every item in one uninterrupted pass, and each high-enhancement piece runs the enhancement-cost path (100+ ms apiece cold) — a dozen of them froze the page for ~1.2s and, because the work was fired without `await`, the startup trace pinned the blame on whatever unrelated feature happened to be mid-`await` at the time. The pricing loop now yields to the browser every 8ms, turning one long freeze into short slices; every item is still priced with the same values, just spread so the page stays responsive and the rest of startup proceeds behind it.
+- **Pricing a +20 inventory no longer stalls the main thread for a second**.
 
 ### Startup traces stop blaming the wrong feature
 
-- **A feature that only parked in `await` is no longer named the slow one**: the startup trace timed each feature as wall-clock around its initializer, so a trivial synchronous feature that happened to `await` at the moment a heavy storage read resolved absorbed that read's cost and topped the "slowest features" list. The trace now splits each feature's own synchronous work from time spent waiting, and labels the latter "waiting on other work" — so the next trace points at the real cost instead of the messenger.
+- **A feature that only parked in `await` is no longer named the slow one**.
 
 ### Damage totals stop swapping bodies at tier rollovers
 
-- **Per-player totals are banked by name at every wave boundary**: the trial-long tallies were keyed by actor slot, and the game re-deals the slots at every tier — so at a rollover, NPD's 156K could land under whoever inherited their index while they showed 24K (observed live). Each wave's damage, deaths, and support figures now fold into an immutable by-name bank before anything re-deals; live maps are per-wave only, attribution baselines reset with them, and the own-unit binding re-confirms by counters every wave. A never-named slot banks under its placeholder — an unknown then is an unknown forever, never someone else's credit. Regression test pins two waves with reversed slot orderings to exact, monotonically non-decreasing per-name totals.
-- **Loadout sightings are guild-scoped**: switching a character's guild no longer haunts the new roster with the old guild's people — each guild's sightings live under their own key (nothing is deleted on a switch), and the "Seen loadouts" panel filters to the current roster with an honest count of hidden outsiders.
-- **Levels stop printing floating-point tails**: "Lv.151.60000000000002" renders as "Lv.151.6".
-- **Narrow DPS rows keep a readable name**: the per-player value drops its unit (the header carries it), and the name is guaranteed at least five characters even in the 108-pixel cell.
+- **Per-player totals are banked by name at every wave boundary**.
 
 ### The In Progress tab stops trusting stale answers — and combat trials learn their tier
 
-- **A stated tier is only believed for the pool it was stated with**: the live view once showed "Banked 8 tiers / Next tier T10" against a bar only T15 produces, because a socket-stated tier from hours earlier was persisted and never invalidated. Stated tiers now carry the bar target they were stated for and die the moment the bar moves on; among the surviving rungs the largest wins, since tiers only climb — the badge and socket can lag but never lead the bar in front of the player.
-- **Combat trials identify their tier from the boss card's own bars**: the second bar is the tier's pool, scaling purely with the tier level (observed live: 550,000 → 600,000 is exactly 110 → 120 at 5,000 per point, no participant factor), and the spectated fight's stated tier is persisted under the same staleness contract. "Tier not known yet" on a combat card should now be rare and short-lived.
-- **Banked points top up along the ladder**: a card-quoted total from tier 8 no longer masquerades as the trial's total after six more tiers banked — the ladder's marginal steps are added (1,080 + 6×120 = 1,800, matching the live view exactly).
-- **The pace clock stops reading "Thu 09:00 AM" as nine minutes**: the status row's schedule text slipped past the clock parser's guards, inflating time-left by ~50% and making one more tier "fit" — the off-by-one between the two tabs' pace lines. The same refusals now guard every clock source.
-- **A tier clearing under an open tab keeps continuity**: the pool bar's reset onto the next tier's larger target was being misread as a boss bar and dropped; one bar on a skilling card is now the pool by construction, so the observation files under the new tier and the analysis rolls forward without a visit anywhere.
-- **The per-player DPS rows survive narrow columns**: name and figures always share one row (ellipsized name, full name in the tooltip), and the header's label/value pairs no longer wrap mid-label.
-- **The spectate caption tells the truth**: ticks keep arriving and counting while other game tabs are browsed — the note now says so, instead of claiming only on-view stretches count.
+- **A stated tier is only believed for the pool it was stated with**.
 
 ### The pace projection stops dying after one tier
 
-- **"On pace for 13 tiers → T13" with twenty-six minutes left is gone**: the figure both tabs show is the _forecast_ row, and the forecast had been starving since it was written — it read two fields the analysis never returned, so its ladder broke after exactly one tier and quietly printed the current tier as the ceiling (the missing fields also silently starved the success-decline model). The analysis now hands them over, and the forecast anchors its ladder on the live bar — the one label-verified anchor — the same discipline the pace walk uses, with stored observations as fallback only. The screenshot case now projects 17 tiers → T17, limited by time, on both tabs.
-- **A misfiled observation can no longer outprice the bar in hand**: exact-ladder pricing prefers the live bar's anchor outright, so a stale observation filed at the wrong tier can't drag the next tier's total below the current one.
-- **The card's level is the tier's ground truth, verified**: the game prints only "Lv.N" and points on a trial card (the T-chip is Toolasha's own rendering, excluded from scraping), and level → tiers banked is pinned by the card's own points arithmetic in a test.
+- **"On pace for 13 tiers → T13" with twenty-six minutes left is gone**.
 
 ### The damage tracker keeps its names, heals honestly, and a fresh character knows the tier cold
 
-- **A refresh no longer forgets who is fighting**: the party roster arrives once per tier on `new_guild_battle`, so a mid-fight refresh used to fall back to "Player 2 / Player 3" placeholders until the next tier. The roster is now persisted keyed to its battle id and re-adopted on the first tick after a reload — and only for the same battle, never borrowed from another.
-- **One name, one unit**: the spectate view draws only the watcher as a full combat card, and the positional name list handed the watcher's name to a second slot — the leaderboard showed MillenniumTest twice with SarinTest missing (reproduced verbatim from the user's export). Names are now claimed by rank (roster > own-counter-confirmed > portrait > vitals > elimination), duplicates demote to placeholders, stored slots heal mid-fight, and when exactly one slot and one name remain the pairing is forced.
-- **Regeneration stops masquerading as failed attribution**: a multi-unit HP rise at one uniform fraction of each unit's own maximum classifies itself as regen (and teaches the fraction for lone risers), shown as its own "regeneration" figure credited to nobody; and a lone ability caster now owns their tick's non-regen heals — which is exactly how a Blooming Trident's Bloom proc attributes, since it fires on ability cast and never labels itself.
-- **A brand-new character mid-joining a trial knows the tier from the bar alone**: the work-target arithmetic now solves tier and participant count jointly as an integer problem (51,360 factors uniquely as T3 × 7 participants) — needed because the In Progress tab states no sign-up count — and known first-tier bases ship as seeded defaults (crafting/foraging/alchemy 40,000; combat per encounter: Chameleon 550,000, Badger 330,000), with learned values overriding. Ambiguous targets stay honestly unknown.
+- **A refresh no longer forgets who is fighting**.
 
 ### The battle-info button finds the real units — and becomes its own tool
 
-- **The profile cycler matches the game's own unit boxes now**: it used to walk bare text and climb to "the smallest ancestor with a health reading", which sailed up to the whole battle grid and matched names this script's own damage panel had drawn there — clicks that could never open anything. Mapped live against the real DOM (script disabled): the boss is a `CombatUnit` in the monsters grid, the watcher's own character is a full `CombatUnit` card in the players area, and the rest of the party are small clickable `MiniUnit` boxes beside it. Units are now matched by those classes inside the boss's battle panel, with a text-truncated name line ("SarinTe…") still resolving by unique roster prefix.
-- **Battle info and profiles are separate buttons now**: a profile carries skills but no combat stat sheet, so the one button that silently degraded from "battle info" into "profile" was collecting the wrong thing while looking done. The battle-info button appears only while a fight on screen offers a clickable unit; the profile button walks the roster for skill levels, and each says plainly what it is asking for.
-- **The `/profile` chat fill survives a renamed input container**: the chat-input lookup now falls back to the chat panel itself when the inner container's class stops matching, keeping every clickable player name working.
-- **A fight where everyone is fresh says so**: when every fighter's combat sheet was captured within the last fifteen minutes, the battle-info button used to vanish without explanation — it now leaves a note saying everyone is fresh and the button returns when a sheet goes stale.
+- **The profile cycler matches the game's own unit boxes now**.
 
 ### The trials panel knows its tier immediately, and the pace projection stops lowballing
 
-- **The In Progress tab now identifies the tier on its own**: the live tab draws no status header, so the panel used to sit on "tier not known yet" until you visited the Trials tab. The tier now comes from a four-rung ladder — the card's badge, the socket's stated tier (now actually persisted instead of dropped on the floor), the work-target arithmetic (a skilling bar's target uniquely identifies its tier once the skill's base work is known — the crafting base of 40,000 is confirmed exact across two guilds), and the first-tier rule last. Each rung labels itself in the panel caption.
-- **Pace projections walk the exact ladder instead of a fitted curve**: both trial kinds scale by known ratios — skilling pools by `1 + 0.1×(tier−1)`, combat boss health by `100 + 10×tier` — so a single observed tier anchors every other tier's total exactly. The old geometric fit needed two observed tiers before it would say anything (mid-join with one tier seen, it stopped the walk and printed "3 tiers → T3" when the true pace was ~T18) and drifted even with two. When the next tier genuinely can't be priced, the caption now says "at least N tiers" instead of presenting the floor as the estimate.
-- **Live pool observations file under the tier being fought, not the stale badge**: a pool sampled mid-tier used to be recorded against the last banked tier, poisoning the learned base (the "59.0K next tier" figure reproduced exactly from that misfiling). Skill work bases are learned once from a stated-tier reading and shared across guilds, since the base is the game's constant, not the guild's.
+- **The In Progress tab now identifies the tier on its own**.
 
 ### Release housekeeping
 
-- **GreasyFork's version history will show real release notes**: the release workflow now writes the version's actual changelog section into the userscript commit on the `releases` branch — titled with the version, no attribution trailers, and the libraries commit no longer touches the userscript — so GreasyFork's changelog stops reading "chore(main): release X" and lists what changed instead.
-- **The userscript header catches up to 2.90.0**: the release PR merged before the version-sync automation could stamp it, so the 2.90.0 build shipped labelled `@version 2.89.0` and update checkers never saw a new version. Headers, README, and the runtime version string now say 2.90.0, and a corrected build replaces the mislabelled one on the releases branch.
-- **The CI bundle ceiling moves to 3.5 MiB**: its duplication-guard job now belongs to the import-graph check that runs on every production build and catches the real failure exactly; the ceiling remains as a sanity backstop.
+- **GreasyFork's version history will show real release notes**.
 
 ### The silent failure modes get their alarms, and two calculators become one
 
-- **The bundle-sharing rule is now executable**: the production build walks the real import graph and fails loudly on any shared util silently duplicated across bundles — the works-in-dev, broken-in-production bug class, made a build error. Its first run found 30 violations, among them live bugs: consent and character caches existing once per bundle in six bundles, duplicated savings state, and a performance monitor whose cross-bundle calls had been landing on undefined in production builds. All fixed or allowlisted with written justification; bundles came out smaller.
-- **One house-cost calculator instead of two disagreeing ones**: the survivors' pricing chain (override/ask → bid → vendor floor) settles both disputes — a live bid beats the vendor floor, and a material with no book counts at the vendor floor instead of being dropped. Net worth, score, affordability, the Houses panel, and the goal planner now quote the same number for the same room; figures can shift slightly where materials had no listings, which is the point.
-- **Every cross-bundle reach-through now goes through one bridge**: ~36 `window.Toolasha` sites collected behind 32 named, null-safe, documented accessors — greppable, testable (a dynamic test proves every accessor survives the namespace being absent), and enumerable instead of scattered.
+- **The bundle-sharing rule is now executable**.
 
 ### Thin markets stop lying in the rankings
 
-- **The liquidity cap the goal planner already obeyed now governs every profit surface**: alchemy rankings, the action-bar and pinned-page profit lines, and the combat sim's all-zones table (its Score and best-profit badge included) all cap a method's gold rate by what the market has actually absorbed — marked "limited by market volume (~1/week)" with the limiting item named, never silently. Unknown history stays unbounded (a dead price server must not zero everything); measured-zero bounds to zero. Underlying calculators, the planner, net worth, EV, and the calibration loop keep raw figures — the cap is a truth about display and ranking, switchable off with one setting.
+- **The liquidity cap the goal planner already obeyed now governs every profit surface**.
 
 ### The panels compare, lint, and remember
 
-- **The profit panel quotes the sim on the zone you're in**: "sim said here — 24.0M/day · simulated Aug 5" beside the measured figure, only when the last all-zones run holds this zone at this tier, tooltip carrying the snapshot's age and that the sim knows nothing about this run.
-- **Party lint went live**: the duplicate-aura warning now fires on the party you're actually fighting in (every player's equipped abilities arrive on `new_battle`), rendered amber at the top of the DPS panel. The gear check covers only your own character — the wire carries nobody else's wearables, and the block says so instead of linting stale profile snapshots. Default-on setting.
-- **The Combat Statistics popup opens archived sessions**: a picker ("Aug 5 · 6h 12m · Chimerical Den · party of 5") renders any archived run through the same arithmetic as the live view, clearly bannered as an archived session at today's prices, with Live one click away.
+- **The profit panel quotes the sim on the zone you're in**.
 
 ### A ledger for flips, luck for foragers, and spreadsheets for everyone
 
-- **A trading ledger measures what flipping actually earns**: every fill on your own listings is recorded (detected as filled-quantity deltas against observed baselines — a first sighting never invents a fill, a cancel after a partial fill still counts, offline fills surface on login), sell proceeds net of the 2% tax, and a "Ledger" tab beside Market History shows realized profit per item and per week on an average-cost basis — a sale with no recorded purchase shows revenue with cost "—", never a fake 100% margin. CSV export included; recording is a default-on setting.
-- **Gathering and production runs get the drop-luck verdict combat has**: "Drop luck: 73rd percentile — 27 runs in 100 beat it" under every loot-log entry's Expected line, computed by the exact FFT machinery so a rare-drop-dominated session is judged by its lumps rather than a bell curve. Historical entries get it too; essence and rare-find tables sit outside the verdict on both sides, since the log can't see the find bonuses that drive them.
-- **CSV export lands on the four history panels that had none**: dungeon run history (per run: timestamp, dungeon, tier, duration, team, key counts), the treasure tracker (two files — chest summary and per-item detail, because one file of alternating shapes can't be pivoted), the loot log (per item per session, priced as the panel prices), and the combat session archive (per session with per-player banked figures). Raw numbers, ISO timestamps, buttons only when there are rows.
+- **A trading ledger measures what flipping actually earns**.
 
 ### The trial record remembers, the sim gets audited, and silence gets alarms
 
-- **Past weeks return to the trials panel and guild report**: the four archived weekly cycles nothing ever read back now render as one line each — "Last week · combat T5 · skilling T6 · 1,800 pts · ~825 tokens each" — with failed weeks printing their zeros, unknowns as "—", tokens marked ~ (derived from today's building bonuses), and a week archived from another guild's era labelled rather than mixed in.
-- **The combat simulator is now calibrated against your own runs**: every archived combat session with a matching all-zones forecast writes a predicted-vs-measured pair into the calibration panel — tier-matched, gear-fingerprint-checked (unknown says "gear unknown", never "matched"), key costs on neither side since the sim charges none. The panel's combat group answers the question everything else stands on: is the sim optimistic about _your_ build?
-- **Enhancement sessions get percentile verdicts**: "Predicted 41 attempts, took 63 — 8% of runs take that many or more", read off the same distribution the pre-run p10/p90 use so the two can never disagree. Hand-stopped sessions and predictions recorded without variance honestly decline a verdict.
-- **A notification when your listing is undercut** (default off): "Cheese sell listing undercut: ask now 274K (as of ~12m ago), your listing 280K" — buy orders included, one alert per listing with re-arm on recovery, price age always stated, ties count as competitive, and no data never counts as undercut.
-- **Eleven new selector canaries watch the DOM the script depends on**, each gated on a same-screen witness so absence is only ever reported where presence was owed — a game update now produces a health report naming what broke instead of features quietly drawing nothing. **Every load-bearing English game string moved to one constants file** with real-message fixtures pinning each. **The sim engine gained its golden run**: one seeded hour with kills, deaths, XP and damage pinned exactly, so no engine regression can slip through unnoticed again.
+- **Past weeks return to the trials panel and guild report**.
 
 ### Live combat learns seven more things, each its own switch
 
-- **Enemy tiles answer the questions a fight actually asks** (all optional, all default on, riding the Portrait DPS toggle): "dead ~8s" from remaining HP over the party's measured rate on that enemy; one "wave ~19s" countdown on the topmost tile summing the living wave (voided honestly if any enemy's HP is unknown); a red "hits for 210/s" — the enemy's own outgoing damage, which answers "can I show DPS for enemies" with a measurement; and "enrage 1:42" counting down where the monster's sheet carries a timer, amber under thirty seconds.
-- **Player meters carry survival, not just output**: "taken 220/s · net −35/s" (red when bleeding), "94% hit · 31% crit" once twenty swings back it, and "mana ~40s" only when actually draining toward empty within the minute — measured net of refills over a rolling window, because the mana tracker's per-cast costs are a different question.
-- **The dungeon tracker paces the run**: "pace +6% vs your avg" against your stored runs of the same dungeon and tier, only after three completed waves, colored by which way it's going.
-- The equal-height rule holds throughout: any line one tile has earned renders dashed on the rest, so the party frames never shuffle. Attribution stays honest — a hit that could belong to either of two identical monsters counts in the session total and shows on neither tile.
+- **Enemy tiles answer the questions a fight actually asks**.
 
 ### The portrait meters stop jostling the party
 
-- **Every player's DPS meter is two lines, always** — the current-fight line is reserved and reads "— cur" until that player acts, instead of appearing when they do. Five portraits used to sit at three different heights and re-shuffle at every fight boundary; now the frames hold still.
+- **Every player's DPS meter is two lines, always**.
 
 ### Every player name opens a profile, and the dungeon knows its worth
 
-- **Player names are clickable wherever a dungeon shows them**: the key-counts chat line, the party system messages ("has joined", "has left", "is ready", "is not ready" — end-anchored, so the phrase mid-sentence never matches), the run history's team headers (a name click doesn't toggle the group), and the overlay DPS rows (double-click still opens the panel). One click fills `/profile <name>` in chat, ready to send — the same trick the guild cycler uses, now a shared util.
-- **Your measured treasure rate can price your chests** (default off): with the new setting on, dungeon profit estimates value the regular chest at your own treasure rate — what your recorded openings actually returned against the drop table's expectation, both at today's prices, straight from the treasure tracker's ledger. Never silently (every adjusted figure carries a `*` and names the measurement: "Chimerical Chest EV adjusted by your measured −7.4% return (5,490 opened)"), never on thin evidence (under 300 openings the estimate stays unadjusted), and never beyond scope (refinement chests, net worth, and tooltips keep the table value). First shipped reading chest-drop _counts_ instead — corrected the same day to the opening ledger, which is what "my treasure rate" meant.
-- **A dungeon run's first minutes stop screaming red**: until the first chest drops, the profit tile dims instead of alarming and says "no chest yet" — keys are charged when chests drop and revenue arrives the same way, so the early loss is consumable burn, not a verdict.
-- **The profit panel compares the dungeon to your best solo zone**: a "vs best solo (sim)" line under the per-player card, from the last all-zones sim run — named, dated, and marked simulated, so a measured number never stands beside an unmarked guess.
+- **Player names are clickable wherever a dungeon shows them**.
 
 ### A canceled battle start is not a run
 
-- **The dungeon tracker no longer records phantom runs from failed ready-checks.** The game posts "Key counts" and then "Battle ended" a second apart when a start is canceled; the tracker heard the first and not the second, so the canceled start stayed armed as a run's beginning and the next key count — minutes of party-forming later — read as its completion (one recorded "15:47 run" was two canceled starts with a member swap in between). A Battle-ended message now disarms any run with zero waves completed; fights with waves banked stay with the action feed, which already tells an early exit from a completion.
+- **The dungeon tracker no longer records phantom runs from failed ready-checks**.
 
 ### Hybrid attribution: thorns and DoT damage go to their owners
 
-- **The damage attribution learned what the party recording proved**: the server groups each battle tick by actor, so a lone player in a tick owns its damage — their reflect when the monster struck them in the same breath, their damage-over-time effect when nothing about them moved at all. The counter rungs stay first (they carry misses, crits and the per-ability split), the "last swinger" fallback now only catches multi-player ticks nothing can split, and a mana drop must be unique to name a caster. Replaying the five-player recording that exposed it: misattributed damage falls from 22,789 (5.7%, stolen from the tank and the DoT caster) to zero — 100% of counter-decidable damage lands on the right row.
-- **The trial scoreboard measures every player now, not just you.** The spectated stream runs through the same attribution, so a watched trial fills a measured per-player damage table for all thirty — the boss's own counters gate the hits and mark the crits for everybody, and your own unit's counters confirm its rows directly. The "no attack counters, split estimated from builds" era is over; captions across the trial panel, scoreboard and report now say so. The 1,405-health tick the module once refused as unattributable is credited for what it was: the tank's thorns.
+- **The damage attribution learned what the party recording proved**.
 
 ### Party lint ignores tools, and ability books answer three more questions
 
-- **Tool slots are exempt from the skilling-gear warning** — a Holy Alembic has no combat equivalent and displaces nothing; the lint now only flags skilling pieces sitting in real combat slots.
-- **The ability book tooltip now answers what you'd actually ask holding one**: which saved loadouts slot the ability (by name — the "can I coinify these" check), what level the books on hand would reach ("Books held: 7 → Lv 39"), and what the level already reached would cost to buy fresh today, in books and coin.
+- **Tool slots are exempt from the skilling-gear warning**.
 
 ### The sim summary reads in the units a player plans in
 
-- **XP/day → XP/hr** — the same unit the XP section and every zone ranking already use, so the tile reads against them directly. **Dungeons/hr → Avg clear** — the pace a session is planned around is how long one run takes, not a fractional rate. Success, Profit/day and Deaths/day stay as they were.
-- **A loaded party gets linted before its numbers are read**: an amber block right under the Summary calls out members wearing skilling gear ("Player11 has skilling gear equipped: Foraging Shears" — detected from the item's own stats, so hybrid pieces are never flagged) and duplicated auras ("Fierce Aura is equipped by Aster and Tib — auras do not stack" — detected from the ability data's party-wide buff shape, not a name list). Solo runs are never linted, and the warnings travel with each history entry.
+- **XP/day → XP/hr**.
 
 ### Entry keys are consumables, and chests point at their keys
 
-- **The consumables tracker now carries the dungeon's entry key** for the tracked character: held count from inventory, per-day burn measured from the session's own chest drops (one key per regular chest — the same arithmetic the combat stats price keys with), two-sided cost/day, buy-for-target and a "lasts" countdown, competing for the limiting-consumable highlight like any coffee. Outside a dungeon, or before the first chest has dropped, the panel is honest: no row, or a row with "—" rates and the held count.
-- **Keyed chests offer their key**: the chest popup ("Open 0 (Keys: 0)") gains a "Buy Keys on Marketplace" button that jumps straight to the key's listing — driven by the game data (an item whose `_key` sibling exists), so every keyed chest gets it and nothing else does.
+- **The consumables tracker now carries the dungeon's entry key**.
 
 ### Ability book counts respect the experience already earned
 
-- **The Upgrade tab priced every ability level-up from the floor of its current level**, re-buying the books already read: an ability 57% into its level was quoted a level's worth of extra books (Berserk 65→70 read 140.6M where the true remainder was 128.5M — the Ability Books panel had it right all along). Level-ups now price from the equipped ability's live experience, exactly as swaps already priced from the owned book's, and the ranking, repay time, and every Gold/0.01% column tighten with it. The floor remains the fallback for a book with no experience recorded or one that disagrees about its level.
+- **The Upgrade tab priced every ability level-up from the floor of its current level**.
 
 ### An attribution referee, ahead of any verdict on the presence method
 
-- **`npm run compare <recording.json>` replays a combat recording through two attribution methods side by side**: Toolasha's counter-pairing engine and a faithful reimplementation of KikiMeter's presence method (being in `pMap` is the attribution; ambiguous ticks split equally). Totals can never separate them — both conserve the team total by construction — so every disagreement tick is adjudicated from signals neither verdict used: a credited player who provably swung confirms their method, a credited player who was only being hit refutes it, and bleed ticks are set apart as unarbitrable. The report also tests the presence method's foundational claim directly — on every tick where a hit landed, was a provable swinger actually present? Accepts Toolasha combat recordings, sim-accuracy exports (the segments carry the raw payloads), and raw websocket captures alike. Analysis tooling only; nothing in the userscript changes.
+- **`npm run compare <recording.json>` replays a combat recording through two attribution methods side by side**.
 
 ### Departed members stop haunting the roster
 
-- **A member who left the guild no longer sits in "Gone quiet" forever**: the roster walked the XP _history_ — every character ever sampled, never pruned — so someone who left kept their weekly rate, earned nothing (being gone), and read as permanently idle, headed by a bare "#9349" since their name left with them. The current member list now decides who gets a row; history is consulted only for people on it; an empty list means "not known yet", not "nobody's here". Stored history self-heals on login (an early or empty roster message prunes nothing — a message that arrived early must not delete the guild), live roster messages shed departures only when they carry most of the known guild, and a member the roster doesn't name renders as "Unnamed member", never a numeric tag.
+- **A member who left the guild no longer sits in "Gone quiet" forever**.
 
 ### The wire speaks: five trial message types the game was sending all along
 
-- **`new_guild_battle` fires at every tier and states everything** this feature spent three rounds inferring: the full roster with names (the tick indexes map straight into it — 30 of 30 named, no placeholders), the tier boundary (baselines drop on the stated boundary, and exact per-tier durations record), the encounter (from the monster hrids, no fight view needed), and the tier-scaled boss sheet filed automatically — which confirms the HP rule on arrival: 330,000 × 1.30 = 429,000 with 30 players.
-- **Your own damage is measured** — the game streams action counters for your own character only, and the scoreboard now says so per row: your figure is real, the rest of the party stays estimated from builds.
-- **Skilling goes socket-fed**: `guild_skilling_updated` carries the pool (76,000 × 1.17 = 88,920, the rule again), the stated tier, participation by character ID, and your personal success rate/efficiency/action time — recorded per tier with no DOM footer needed. Cards the game draws a bar on keep their own numbers.
-- **The game announces trial ends**: `end_guild_skilling` states the final banked tier outright (9 while 10 was running — confirming the semantics this feature reasoned its way to), `end_guild_battle` marks the combat hour's end, and the recorder treats the hour as done only when every card on screen has been declared over.
-- All five types join the dedup skip-list — the skilling tick's first 100 characters end exactly where its progress figure begins, so an hour would have collapsed to one tick. Whether these messages are broadcast or view-scoped is unknowable from the capture, so each is a bonus signal and every DOM path remains as fallback. The recording's roster, ticks, and end messages are fixtured verbatim.
+- **`new_guild_battle` fires at every tier and states everything**.
 
 ### Mixed-bonus cards contribute their true base to the token sum
 
-- A card banked across a Builder's Hall upgrade divides cleanly by neither bonus, so its base points now come from the exact ladder (1,100 at T10) instead of the slightly-low division (1,091) — the token estimate gains the difference, the card's own Guild Points figure stays authoritative, and the sourcing note names the second cause. Treasury needs no such handling — tokens pay once at the round's end against the summed base, one moment, one level — with the one untestable assumption (payout-time vs round-start snapshot) documented rather than guessed at.
+- A card banked across a Builder's Hall upgrade divides cleanly by neither bonus, so its base points now come from the exact ladder (1,100 at T10) instead of the slightly-low division (1,091)…
 
 ### The notice board is not a trial, and the ladders are theorems now
 
-- **A guild notice board can no longer become a trial tile**: an older build had stored one guild's entire welcome notice — braille art, Discord links and all — as a "skilling trial", with the Discord channel IDs read as pool bars and the Overview stats attached as personal figures. Names now must be one short line before any matching, readings must be plausible (a nineteen-digit channel ID is not a progress bar; an 8.4M boss bar is), personal stats and the recorder only consume real tiles, and stored records self-heal on load — history included, since an archived notice board is a payout error a week later. The exact 987-character string is a fixture.
-- **Both points ladders are exact and locked**: skilling cumulative base = 100×(tier+1), combat = 200×(tier+1) — verified against ten observations across three guilds and three Builder's Hall levels. And the one apparent exception dissolved into a discovery: **points bank live at the bonus in effect per tier**, so a Builder's Hall upgrade mid-trial makes the total a mixture of two bonuses (the user's three high-tier cards decompose exactly: 500×1.10 + 600×1.12 = 1,222). A stated total inside that upgrade envelope gets a calm explanatory note instead of a warning; outside it, the genuine warning stands. The game's stated figures still win for payout, as ever.
+- **A guild notice board can no longer become a trial tile**.
 
 ### The watched fight knows its own name, and a wipe is an outcome
 
-- **The spectated stream attaches to the encounter being watched, and only that one**: the Chameleon fight's pool had been injected into the Hedgehog card (both barless, both claimed it) and the report narrated the wrong trial. Identity now travels with the stream — the fight view's own boss tile first, a clicked boss sheet second — is dropped on a new battle and kept across tier changes, and an unidentified pool is claimed by _no_ card ("click the boss to identify") rather than all of them. The report context is rank-gated the same way.
-- **The cycler only offers people in the fight's own subtree** (anchored by the boss's "Trial …" name — the skilling panel beside it draws members too, and those boxes are inert; that's how someone off foraging got offered mid-fight), and **dead units are clicked like anyone else** — death hides nothing; a unit without abilities simply has none.
-- **Per-tier personal stats actually record now**: the footer only ever attached to a card with a live bar (none exists between tiers or after the hour) and the tier join rode a live-only field — both fixed, so the success-decline model gets its per-tier inputs next trial.
-- **The stats reader no longer swallows session logs**: "59m": "5s" pairs are not stats — labels need a real word, aren't number+unit, and a tiny denylist catches bare generic headings, while the open-ended capture keeps working for real stats.
-- **A party that wipes before tier 1 gets an outcome, not a promise**: a stated 0 outranks the Completed badge (absent stays absent — no points seen is not zero), and the banked row says "0 tiers — fell before tier 1" instead of the live "tier 1 in progress" line; zero-point tiles survive merges and archiving, because a failed trial belongs in the record.
+- **The spectated stream attaches to the encounter being watched, and only that one**.
 
 ### Spectating measures: the trial fight is on the wire after all
 
-- **Per-player trial measurement is real** — the user's wire capture proved the fight view streams `guild_battle_updated`: the same tick shape as ordinary battles plus `battleId` and the tier stated outright. The trial damage machinery now consumes it: damage taken, healing, mana, and deaths fill from every tick; the damage split fills when the stream carries attack counters (the first capture carried none for players — the scoreboard says "watched, but the stream carried no attack counters" instead of guessing, and the export's `spectator.playerActionTicks` answers it from the next watch). The message joins the dedup skip-list — byte-identical consecutive ticks would otherwise collapse an entire trial to one.
-- **The solo-attribution fallback is off for spectated streams**: "only one character is known, so it was them" is sound in your own fights (the party was stated) and a trap here (one unit having appeared means one unit _moved_) — the capture contained the exact tick where the tank would have been credited the boss's whole health bar.
-- **Units get names three ways**: fight-view portraits in slot order, then max-HP/MP signature against captured sheets (2,612/2,180 names ICMeow uniquely), then an honest "Player N". Ambiguity resolves to nobody; placeholders don't survive the view opening.
-- **The spectated pool feeds cards with no bar of their own** (the Trials tab measured nothing all hour; now a fresh spectated reading stands in, never overriding a bar the game itself draws), the payload's tier replaces badge-inference while watching, and a fresh tick arms the recorder.
-- **The boss is a boss everywhere**: clicking it no longer stores it as a member loadout (monster units refused and purged; it would have joined the damage-split estimate), its stats popup no longer gets our info block injected into it (cards are not allowed inside dialogs — no card-shape filter could catch a popup literally titled like a card), and its per-tier sheet is filed as `bossSheets[tier]` — two tiers side by side settle whether accuracy and damage scale the way health does.
-- The wrong "simulated, not fought" note is replaced: the fight is real and server-run, and watching it is measuring it.
+- **Per-player trial measurement is real**.
 
 ### The cycler clicks the people fighting beside you
 
-- **A fight on screen outranks the roster walk**: the profile button now finds your guildmates' unit boxes in the spectated trial fight and clicks those first — that's the Battle Info popup, the only source of a combat stat sheet (`/profile` carries skills but no sheet). The boss can never be offered (only roster names match), a sheet older than 15 minutes is worth re-clicking mid-fight, and ⟲ Redo covers battle sheets too.
-- **Dead units are skipped and said**: a dead unit's popup hides its abilities, so the button skips them, counts them ("2 dead skipped — abilities hide on death"), and tells you to ask again after a revive rather than half-capturing.
+- **A fight on screen outranks the roster walk**.
 
 ### Beacons cover the way out before they chase dark corners
 
-- **A set beacon count is planned against the same objective the automatic one uses**: cover a revealed path to the exit first, a second independent route next, and only then reveal as many rooms as the count allows. Set counts used to maximise rooms and nothing else, which is how four beacons could be planned onto the fattest dark pockets of a floor while the plan's own caption admitted "a covered path to the exit needs 3". A count too small to cover a path now spends itself getting as close as it can — and still says what it would take.
-- **The count is a per-floor override again**: a number chosen because one map was worth four beacons no longer follows you onto every floor after it. Each new floor starts back on the automatic minimum.
-- **A ⟲ button beside the count** puts it back to the fewest that cover a path, without spinning the field down a step at a time.
+- **A set beacon count is planned against the same objective the automatic one uses**.
 
 ### The arrow points at the count, completed means completed, and estimates say so
 
-- **"On pace for 4 tiers → T5" is impossible output now**: the count and the arrow's target were computed from different numbers (tiers finished vs tier being fought); both now derive from one figure, and a tier the walk enters but can't finish moves neither.
-- **A Completed card is completed everywhere**: the game's own badge overrides the kind-level phase, so skilling blocks stop showing "On pace for" (or "scheduled") after their trial ends while combat runs — final rate and banked, nothing live.
-- **Per-player trial damage is presented as what it currently is — an estimate from builds**: headlined "Estimated from builds" in the scoreboard, the report ("ESTIMATED FROM BUILDS" as line two where a chat skimmer reads it), and the card line ("simulated, not fought"), with per-member auto-attack shares, build coverage ("2/3 builds"), and unestimated members named. The pool-bar party rate stays labelled measured. (A spectator battle feed was discovered moments after this shipped — real measurement lands next.)
+- **"On pace for 4 tiers → T5" is impossible output now**.
 
 ### Neither ladder has a wall, and a click is not a capture
 
-- **The profile cycler counts replies, not clicks**: a hidden chat box could mark members as logged without any profile ever opening — now a click is a timestamped request, re-offered after 20 seconds if no capture lands, the progress count derives from actual captures (wrong states self-correct), a member in flight shows as "Waiting for…", and a missing/hidden chat input says "Open the chat panel first" instead of silently doing nothing. Inert skilling units on the In Progress tab are never clicked — the chat route is the only one that works there. **⟲ Redo all** marks everyone due again without discarding stored levels; one click still equals one profile.
-- **Skilling success decline is measured and modeled**: personal stats are stored per tier, the drop is fitted (the live data reads exactly −8.0 points per tier), and future tiers scale their effective fill rate down to the game's **5% floor** — deep tiers are slow, not impossible. One observation means no trend: walk flat and say so.
-- **Enrage is a buff, not a timer**: monsters stack +10% accuracy/damage per minute to +100%/+100% at ten — fights don't end. The combat walk no longer stops at ten minutes; it carries on at DPS and captions the escalation ("fully enraged — expect deaths to slow this beyond the projection"). No forecast has a hard wall now; the hour is what ends both walks.
-- **The lifecycle phase is per trial kind**: "Skilling Trial - In Progress" no longer makes combat cards claim "measuring…" or "Banked: 1 tier" — and banked now requires stated points, since Lv.100/0 pts/T1 is tier one _in progress_ while Lv.100/236 pts/T1 is tier one _banked_.
-- **The payout block states the week's total on every tab** (it summed only visible cards on In Progress — 472 beside the Trials tab's 2,714), and **"On pace" and "Expected" are one walk**: a single row when no slowdown is measured, two clearly-labelled rows ("flat" / "slowing") when one is.
-- Anchored to live figures: pools T1–T5 exact (40,800 → 57,120, +4,080 each; T6 = 61,200 where the old fit said 63.3K), success 73.6/65.6/57.6/49.6.
+- **The profile cycler counts replies, not clicks**.
 
 ### The badge means banked, and the skilling ladder is a rule now
 
-- **Mid-trial, the stated tier badge counts tiers banked and the fight is on badge + 1** — proven by the live sequence (a T2 badge while the third pool ran). "Banked 1 tier" under a T2 badge now says 2, and live pool readings file under the tier actually being fought — two tiers' pool sizes were quietly filing under one number and corrupting the ladder.
-- **Skilling pool sizes are derived, exact on all three observed tiers**: T_n = base × (1 + 0.1×(n−1)) × (1 + 1% per participant) — linear, not geometric (a ratio fit would have drifted 400 work by T3). One reading anywhere gives the whole ladder; observed readings still win.
-- **The forecast walks the whole hour**: no more "Expected ~T2" while four tiers were on pace — it walks the derived ladder, adds the banked tiers (returning only its own walk was impossible output), and "Next tier work" appears from the first minute.
-- **Labels wrap at spaces only** ("Expecte/d" is gone — `overflow-wrap:anywhere` removed outright), long labels stack above their value.
-- **Cards stating 0 points state nothing**: zero no longer reaches the disagreement warning or the stated-points path.
+- **Mid-trial, the stated tier badge counts tiers banked and the fight is on badge + 1**.
 
 ### The recorder survives its first real trial day
 
-- **Auto-record actually arms now**: the status header carries the trial kind ("Skilling Trial - In Progress") which the reader didn't recognize — and worse, the header lives on the Trials tab while the readings live on In Progress, so requiring both at once meant auto-record almost never armed. A live reading on a real trial card now arms it; the panel can only veto with an explicit Scheduled/Completed, and silence blocks nothing.
-- **Manual recordings stop only by your hand**: the ten-minute silence rule and the one-hour cap were killing sessions whose player had simply closed the guild panel to go play. Silence is now recorded as a visible gap in the session (`{from, to, ms}`) instead of acted on, with a six-hour backstop; the silence rule for automatic sessions no longer fires while a trial is live. Between the skilling and combat hours, automatic sessions roll over by themselves and manual ones simply span both.
-- **The first tier is tier 1**: a live trial with no points and no badge is on T1 by game rule, so pace and forecast light up from the first minute and pool readings anchor the growth fit; the mid-trial-join case (points already showing) keeps the honest unknown.
-- **The start notification listens to guild chat**: the game's own "guild trials have begun" line fires it even with the guild panel closed, sharing a key with the phase trigger so whichever notices first speaks once.
-- **Labels wrap instead of vanishing**: "C… | 0 tiers → T1" is gone — the ellipsis machinery is removed outright, long values take the full width with their label above, and short figures keep their two-column row.
+- **Auto-record actually arms now**.
 
 ### Release plumbing
 
-- **Guild features moved from the ui library to the combat library**: the trials suite had pushed `toolasha-ui.js` past the 3MB bundle ceiling; the guild modules already lean on combat machinery (damage attribution, battle payloads), so they now ship in `toolasha-combat.js` (2.3MB) and `toolasha-ui.js` is back under the limit. No behavior change — the entrypoint wires the same features from their new home.
-- Repo-wide prettier drift (11 test files and one doc that slipped past the staged-files hook) formatted; the storage-estimate test suite provides its own `navigator` so it runs on CI's Node 20.
+- **Guild features moved from the ui library to the combat library**.
 
 ### A trial report your guild can actually read
 
-- **Copy guild report**: one click produces a Discord-pasteable summary — trial name and tiers cleared, party damage and rate, ranked player lines that only mention what happened (no zero-fields reading as failures), attributed and unattributed healing, and the line nothing has ever shown: **how close the party came** — "Stopped 83% into T4 — 112,000 of 669,500 HP left" states it both ways because a guild asks both "was it close?" and "how much more DPS did we need?". No markup, no padded columns (Discord renders proportionally), every line under 120 characters.
-- **Deaths are explicit** ("died 2×") and **mana depletion is tracked**: dry _spells_, not dry ticks — hitting zero counts once however long it lasts, with the empty time accumulated ("ran dry 3× (~4m)") — in the scoreboard, the report, and the export.
+- **Copy guild report**.
 
 ### A warning before the task board fills, and trials that predict themselves
 
-- **Task-slot alert**: opt-in notification when your last open task slot is projected to fill within a configurable lead (default 8 hours) — computed from the server's own slot cap, arrival cadence, and last-task time (no panel needs to be open), keyed to the projected minute so re-checks can't spam, re-armed automatically when completing or rerolling a task moves the projection. A board already full is its own once-per latched message. Help text says plainly that it's a projection. Fixed en route: the trial-starting alert announced "6 days 22 hours" for a 10-minute lead — milliseconds fed to a seconds formatter.
-- **Expected-tier forecast**: live trial cards gain "Expected ~T6" and the per-player panel says what the hour should yield. The tier ladder is now _derived, not fitted_: a tier's boss health is base × (10 + tier level)/110 × (1 + 1% per signed-up participant) — reproducing both recorded tiers (618,000 and 669,500) to the digit, with panel readings still preferred where they exist. Combat forecasts rank their damage source honestly: measured off the boss bar, else summed from captured loadouts ("based on 3 of 8 members"), else unavailable — and a tier that can't die inside the 10-minute enrage is reported as a wall, not a slow climb. Skilling forecasts only walk measured pool sizes at measured fill rates; no invented level-to-work conversion, and before data exists they say so.
-- **A profile-logging button on the guild roster**: "Open Ada's profile · logged 5/28" — one click opens one guildmate's profile (their Members-tab row when visible; otherwise it fills `/profile Ada` into the chat box and leaves Enter to you), and the `profile_shared` reply carries every skill level, which feeds the skilling side of the recording and the export (`memberSkills`, additive). Captures go stale after a week and are offered again.
+- **Task-slot alert**.
 
 ### Path shows the way to the plan, not just the plan
 
-- **The rooms between you and the first planned room are lit too**: a route only names rooms that cost something, so on a floor whose first rooms are already cleared it began out at the frontier with nothing drawn in between — leaving the map silent about which way round to walk. The shortest walk over already-cleared ground is now drawn as well, starting from the room the game says you are standing in (the entrance when it does not say). It reads as the same highlight turned down — dashed, faded, no label — so "walk through here" cannot be mistaken for "fight or shroud here", and it survives the clearing-progress sweep that strips the plan off rooms as they are cleared.
-- **The caption counts it separately and honestly**: "Path: 5 rooms (+3 walked) · 0 shrouds · 4 chests". Walked rooms are already cleared, so they cost neither a torch nor a shroud and are kept out of both numbers.
+- **The rooms between you and the first planned room are lit too**.
 
 ### Path stops planning a floor that has already moved on
 
-- **Rooms you have already shrouded are no longer marked "Shroud" again**: the route planner classified the board the moment the button went down, then spent seconds running fight sims, and drew its answer against that snapshot. A run does not stop for the sims — a shroud clears its room outright — so pressing Path during a run could come back demanding shrouds for rooms that had been shrouded while it was thinking. The plan is now classified twice: once to find the fights worth simulating, once against the board as it stands when the plan is actually drawn (grid cells included, so a plan can no longer be drawn into a grid React has since rebuilt). Pressing Path twice on an unchanged board gives the same answer; pressing it after spending shrouds re-plans from what is revealed now.
-- **A room that comes into view mid-sim is costed like any other room nothing is known about**, taking the `?` mode's posture instead of defaulting to "free" because it happened to be looked at after the sims had moved past it.
-- **A floor that changes shape mid-sim says so** rather than drawing a route for a floor you have already left.
+- **Rooms you have already shrouded are no longer marked "Shroud" again**.
 
 ### Trial cards say what their phase can know, and stay off the notice board
 
-- **No more trial card built out of the Overview tab**: the name test was a substring match, so a notice-board paragraph containing "milking" passed it, and the guild XP bar (4,120 / 20,000) read exactly like a progress bar and anchored the card. Names now match whole strings after stripping the game's real decorations, a positive tab gate refuses pages legibly showing another tab (permissive when the tab strip can't be read — failing closed on an unverified class name is how this feature went dark twice before), and stale blocks are reaped document-wide on every pass.
-- **The recorder no longer records nothing**: "any tile with a bar" counted as trial activity — including the phantom Overview card — and a lifecycle phase that had never been read was treated as permission. Auto-record now requires the panel to say live (or the damage gate to be genuinely armed); scheduled or completed stops a self-armed session immediately. A session you pressed Record for is still yours to stop.
-- **One row set per phase**: scheduled cards collapse to "scheduled — starts in 2h 24m" instead of stacking three variations of "nothing yet"; completed cards show results only (final rate if ever measured, points, banked) and drop next-tier/pace/absence rows; live keeps the full readout. A completed trial you never joined shows the facts the tab states and skips the two rows that both said "no data".
-- **Numbers keep their units**: "522 dmg/s" can no longer split mid-unit — values are non-breaking and the label truncates instead, since the unit is what makes the number mean anything.
+- **No more trial card built out of the Overview tab**.
 
 ### Poisoned trial records heal themselves, and trials announce their own schedule
 
-- **The stale record from before the switch fix cleans itself up**: records now carry the guild they were recorded under and are refused when it names a different guild — and since the reported copy had been adopted onto the new guild's own key and looked native, the page is the final arbiter: when the game says **Scheduled** and every card states nothing while the record claims tiers and points, that contradiction archives the cycle (into a four-cycle history, not deleted). A live trial showing "0 pts" before its first tier clears never triggers it — all three conditions are required. The legacy shared fallback key is purged at startup. Belt-and-braces: `await Toolasha.debug.clearTrialData()` wipes trial records (and leaves guild XP history alone) — it shouldn't be needed.
-- **The panel knows Scheduled from Live from Completed**: the game's own status header is read structurally. Scheduled says "nothing running yet"; Completed stops pretending ("Final fill rate", "Final party DPS" — the last rate measured while it ran — instead of "Tier clears in 11m" for a trial that's over); the recorder ends its session on any non-live phase so auto-record arms cleanly for the next start.
-- **Two new notifications** (both default off, in the notifications settings): **trial starting** — fires at a configurable lead time before the scheduled start (default 10 min) and again when it actually begins — and **trial results** — fires on completion with points banked and both token figures, captured while they're still on screen. Honest limitation, documented: the schedule only advances while the guild panel is open — no socket message carries it.
-- Found en route: recording a sample was silently stripping every field off the record except the week and tiles — it would have deleted the provenance stamp and the archive on the next tick.
+- **The stale record from before the switch fix cleans itself up**.
 
 ### Trials stop following you to your next guild, and the tab stops yanking you around
 
-- **A character switch drops everything**: switching accounts in the same tab showed the old guild's 2,880 points, banked tiers, and payout in the new guild — two causes, both fixed. The unnamed-guild fallback bucket was shared (`guildTrials_default`), so both characters read and wrote one record; it's now per character. And every in-memory cache — record, guild name, trial names in the damage gate, recorder session, injected blocks, scoreboard — resets on the switch event, with guild-name adoption held off until the arriving character's own data has landed (the switch fires _before_ it, so adopting early would have re-filed the new character's readings under the guild they just left).
-- **Side blocks read like text, not noodles**: a long caption ("no data — only trials you join can be measured") now takes its own full-width line under its label instead of wrapping down a squeezed value column; genuine figures keep their two-column rows; the block has sane min/max widths.
-- **The Trials tab keeps your scroll position**: blocks are updated in place and only re-rendered when their markup actually changed (compared against what we last drew, not against live DOM that stops matching once listeners attach); when insertion is unavoidable, every scrolled ancestor's position is saved and restored. Reading the bottom of the page no longer means being yanked to the top every five seconds.
+- **A character switch drops everything**.
 
 ### The bulk reroller now closes the door behind itself, and takes the free reroll on faith
 
-- **Protected tasks get their green outline back after a bulk reroll**: the reroller left the game's chooser standing open on the card it had just rerolled, which kept that card permanently "mid-flow" — and every decoration pass (protection outline, profit rows, reroll-spend line, icons) rightly refuses to touch a mid-flow card, so nothing ever repainted. The reroller now settles every card it touches: reads the chooser, presses Back, and arms the repaint watch unconditionally instead of hoping another feature does.
-- **The first click takes the MooPass free reroll even when nobody knew it was there**: the old flow read the chooser once after a fixed 300 ms — long enough for an already-open chooser, too short for the MooPass row on one it had just opened, so the unknown case paid coins. It now polls, takes a free row the instant it appears, grants the MooPass row a short grace only while a free offer is still plausible, and remembers the chooser's answer for a minute so the button label stops downgrading "FREE" to "10.0K\*" when the menu closes.
+- **Protected tasks get their green outline back after a bulk reroll**.
 
 ### The trial recorder grew hands, eyes, and a scoreboard
 
-- **Auto-record**: trials record themselves — starting when the damage gate arms or a live In Progress reading appears, stopping after the trial's hour or ten minutes of silence (and saying which), snapshotting every 15 seconds to IndexedDB so a reload loses nothing. Opt-out via the new Guild Trial Auto Record setting.
-- **In-game controls**: Record / Stop, Export, and Per-player buttons on the payout block — no more console command (though `Toolasha.debug.exportTrialData()` still works and shares the same code, so the two can't drift).
-- **A ranked damage scoreboard** ("Trial Damage" in Ctrl+K): party rate and total up top, Damage and Healing tabs, ranked rows with totals, per-second rates, and share bars coloured by each player's damage type from their captured loadout. Copy-stats button; End & start new record is the recorder's own restart, not a second mechanism. Both tabs carry the estimate disclaimer.
-- **Per-player support stats, measured not modelled**: healing received (and healing _done_, credited only when exactly one player cast a heal that tick — the rest stays honestly unattributed), damage taken with each player's closest brush with death, mana spent/restored, and casts per ability. Surveyed against 6,700 recorded battle ticks. Mitigation and live threat are **refused, with the reason shipped in the export's new `coverage` object**: no payload states pre-mitigation hits or who the boss is targeting, and a simulation wearing a measurement's name helps nobody. Skilling trials capture the In Progress footer's personal figures (work time, success rate) as generic pairs, so new stats appear the day the game adds them.
-- **Archives wired in as the counterfactual it is**: guild XP figures are measurements that already include the bonus, so the panel now says so — "Archives Lv.N · +X% — already included; Lv.N+1 would add ~Y XP/h" — with the per-level rate read from client data. Skill buildings stay out of all sims (they only act during trials).
+- **Auto-record**.
 
 ### The overlay's ⚙ popover no longer traps you, and keeps up with what it shows
 
-- **It can never cover the panel's header again**: the popover used to pick above-or-below and then clamp itself into the window, which on a tall panel — a phone, or a desktop panel dragged low — slid it _up over its own anchor_ until it sat on the header. Since the popover draws above the panel, that put the ⚙ that closes it and the ✕ that closes the overlay both underneath it, with no other way out. It now fits itself to the room instead: whichever side it fits on, else the roomier side with its height capped so it scrolls, and on a panel taller than the window it stands over its own tiles starting _below_ the header.
-- **Escape and a press outside now close it**, the two gestures everybody already tries. A press on the panel itself doesn't — the popover exists to arrange those tiles.
-- **The delete-a-layout dialog is no longer asked underneath it**: the popover stands down for the question and comes back around whatever layouts are left.
-- **It redraws when the layout changes under it**: locking or unlocking now updates its hint instead of going on telling you to do the thing you just did, a window narrowed until the tiles flow into columns says so while the popover is open, and docking from the popover puts it back rather than dropping it on the floor.
+- **It can never cover the panel's header again**.
 
 ### Trials round three: exact digits, honest captions, and a block that finally sits still
 
-- **Payout figures in full digits**: the payout block now says "2,880" and "1,320 (≈14,652,000g via credit exchange)" instead of "2.9K" and "1.3K (≈14.9Mg)" — the whole point of exact math is the exact digits. Tiles elsewhere keep abbreviating.
-- **The sign-up roster renders only on the Trials tab**: it had been migrating onto the In Progress tab after a tier advanced, because both tabs answer to the same panel finder and a stale block was never removed across the switch. The setup tab is now recognised by what its cards carry (sign-ups without progress bars), and stale blocks are removed document-wide on redraw.
-- **The injected block takes a real full row**: `grid-column: 1/-1` collapses to a single cell on a grid with no explicit column template — the 126px-wide overlap in the devtools shot. Placement now measures the actual container (grid with/without template, wrapping/non-wrapping flex, plain flow) and picks a spanning technique that works there, labelling the block with its trial's name when it can't sit beside its card.
-- **Trials you're not in say so**: progress and damage only exist for trials your character joins, so other cards now say "no data — only trials you join can be measured" instead of "measuring…" forever. Tier, points, and sign-ups still show for every trial — those are visible to everyone.
-- **The tier badge is settled**: on a completed card the badge counts tiers earned (960 pts at T3 is the three-tier ladder total), so "Banked" now says "3 tiers · finished" instead of stopping one short; a running card keeps the cautious tier − 1 and its tooltip says it's an inference.
-- **Building bonuses read from the game's own data**: Builder's Hall and Treasury per-level rates and level caps now come from the client's building detail map (user-extracted, `guildPointsBonusPerLevel`/`guildTokenBonusPerLevel` both 0.02) with the constants as fallback — a game rebalance moves the panel's math automatically.
+- **Payout figures in full digits**.
 
 ### The trial payout math is now exact, verified against four real payouts
 
-- **Combat trial cards finally produce a rate**: the two bars are the boss's HP and mana (user-confirmed), so the first is always the boss and mana is excluded from rate math — the old "whichever bar falls" rule could never classify a pair of samples straddling a tier clear, which is why the card measured nothing all hour. Damage now accumulates across tier boundaries (remaining HP of the old boss + damage into the new one), captions itself as a lower bound when the gap could span more than one tier, and a "Split disagrees" row appears when the bar-derived rate and the per-player damage split diverge past 1.4× — they measure different windows and the row says so.
-- **Card points are post-Builder's-Hall, and the payout is the cards' sum**: the game's stated "840 pts" already includes the guild's Builder's Hall bonus (+2%/level, confirmed by the upgrade popup), so the old math double-counted it — and the banked lookup missed by one tier on every trial, which is why the panel said 2.4K the day the game announced 2,880. Guild Points now sum the cards' own figures to the digit; tokens run off recovered base × half × Treasury bonus (+2%/level, also popup-confirmed) — the formula reproduces all four of the guild chat's announced payouts exactly (990/880/1,375/1,320 tokens, participants +50%).
-- **Building levels come from real guild data** when the payload carries them; with none seen, the Builder's Hall bonus is recovered from the cards themselves (840/700 = 1.2, strict whole-2%-steps check) and captioned as card-derived, while the Treasury line honestly says no level has been seen rather than guessing.
-- **The mis-framed ladder warning is gone**: it blamed the ladder on every card of every week; with the bonus understood, the game's numbers and the ladder agree, and the warning now fires only on a genuine post-bonus mismatch.
+- **Combat trial cards finally produce a rate**.
 
 ### The trial export was read, and it proved six defects — all fixed
 
-- **Per-player DPS now arms during real trial fights**: the gate compared only the payload's display names against the trial card, but live payloads name monsters by hrid too (`/monsters/trial_chameleon`), and the old reader threw the hrid away — so a party visibly fighting Trial Chameleon measured nothing. Every spelling is now collected (name, character name, the hrid itself, the client's name for the hrid) and matched with separators flattened; and the verdict on a fight already in progress is re-taken when the trials record learns the week's card, since the panel is routinely opened _after_ the party starts swinging. When the gate still says no, its reason now lists what the payload called the monsters, so the next export answers the question instead of repeating it.
-- **The 5-second sampler actually runs**: it was armed after two awaits (behind the record load), and the DOM fallback debounce starves under a bar that redraws every second — the export showed two samples seven minutes apart. The sampler is now armed before anything can fail ahead of it, a tab event revives it if ticks stop, and an early tick no longer loses to the record load.
-- **Stated tiers and points persist**: a card saying "840 pts" and "T6" but showing no level recorded neither — tier was only ever derived from `Lv.`, and a card without a level marker wasn't even read as a card. A stated `T6`/`Tier 8` now beats the derived tier and anchors the card, as does a points line.
-- **The record learns your guild name** from the `guild_updated` payload the feature already receives and from character data — not just the XP tracker, which is null whenever it's off. Exports read the feature's record, not a parallel guess.
-- **Tenacity and Threat are flat ratings, not ratios** — no more "Tenacity 16579%" in seen loadouts; every other stat row was audited against the export and zero-valued gear bonuses are dropped.
-- **Trial annotations no longer overlap the game's cards**: the game's tiles are fixed 126×126 grid cells and our block was injected inside them; it now renders as its own full-width row after the card.
+- **Per-player DPS now arms during real trial fights**.
 
 ### Trials know who hit what, and why the payout was blank
 
-- **Per-player DPS on combat trials**: one line per player under the trial card — DPS, share of party damage, deaths — using the exact same damage attribution as the DPS panel, gated so only real trial fights count (a mid-trial reload measures nothing rather than the wrong thing, and the next zone can't inherit the tally). Spans the trial's tiers; prints its reason when nothing is measured.
-- **Seen loadouts**: clicking a player's popup (and every trial battle you're in) captures their stat sheet and abilities — armor, resistances, evasions, crit, regen, drop stats, the lot — stored per character and shown in the guild roster as dated snapshots ("seen 2h ago"), because a snapshot is a photograph. Works whether the popup is socket-fed or not; the DOM fallback stands down whenever real data arrives.
-- **The blank payout block had two causes, both fixed**: the tier only exists on the Trials tab (an In Progress-only viewer had no tier → every line zero — the three states now say "open the Trials tab", "tier 1 in progress", or a figure), and the record merge on every session's first render was silently erasing the points and signups the Trials tab had reported. "On pace" now always draws with its reason instead of vanishing.
-- **The game's own points figures now check the tier ladder**: per-tier "N pts" values are stored and preferred over the derived ladder where they disagree, with the source captioned and a warning naming any tier whose figure matches neither reading — so the next trial settles whose math is right.
+- **Per-player DPS on combat trials**.
 
 ### Trials read the game as it actually is
 
-- **The real structure, from live screenshots**: the Trials tab carries setup (tier, points, signups, countdown) and the separate In Progress tab carries the pool readings — no card anywhere holds both a level and a progress bar, which the old reader required, so nothing could ever record. Cards are now found by shape (a level marker or an n/m reading) and kept by name (the five encounters + ten skills), sign-up counts parse as participants instead of masquerading as progress, the In Progress total pairs with the Trials tier in one record, and the panel no longer misreads levels off its own injected badges.
-- **The clock works**: the countdown is found structurally on either tab with guards drawn from the real page ("Work Time 3.14s", "Thu 09:00 AM" and percent lines can't win), and "On pace for — no clock visible" appears instead of the row silently vanishing.
-- **Sign-up lists render without the phantom classes**, trial records adopt the guild's real name once it's known (sessions that started under the default key merge in), and the tile hint + Ctrl+K entry point at the In Progress tab — the one that feeds the pace.
+- **The real structure, from live screenshots**.
 
 ### The trials feature existed on a guess
 
-- **Why nothing trials-related ever rendered**: the whole feature — observer, refresh, sampler — hung off a single unverified class name that the game evidently doesn't use, so no reading was ever taken and both the panel block and the tile stayed silently dark through live trials. The trials container is now _found_ (three candidate names, then any guild panel showing a trial card), with junk guards so buildings and sign-up cards can't pollute the record. Also fixed en route: a card whose first line was its numbers got named "1.2M / 4M" and misclassified, and a one-reading trial showed the same "—" as no trial at all — it now says "T7 · measuring…".
-- **Switching a tile on always shows something now**: an explicitly-enabled tile renders dim with "waiting for data — …" until it first draws something real, instead of hiding as if the click did nothing. The passive auto-hide default is unchanged (fresh characters still aren't buried); ⚙ chips carry a ◌ badge saying "shows when it has data" so the contract is visible before clicking. Applies to every measurement/watch tile.
-- **"Guild Trials" is in Ctrl+K**: navigates to the guild's trial tab, scrolls to and flashes the injected figures — the analysis renders under the game's own trial cards, which is why no panel existed to find — and says so when there's nothing drawn yet.
+- **Why nothing trials-related ever rendered**.
 
 ### The lab sims the run you choose
 
-- **Token buffs are settable from Configure**: the four combat token buffs take inputs (defaulting to live levels, orange with "live N" beside them when overridden, Reset-to-live one click away, remembered per character), and every sim path honours them — Configure/Max Level sims, Find Max, both Upgrade scopes, and the combination check. The Token Upgrades rows step up from the level being simulated, so a run under Damage 8 offers Lv8→9, not a purchase the table already assumed. Skilling tokens stay a readout here — nothing in a combat sim reads them, and the Skilling tab's own setup owns those.
-- **All-fights ability targets show every checked loadout's abilities** — the union, labelled by loadout where they differ ("Fireball (48) [Fire Lab]"), levels shown as a range when loadouts disagree, targets prefilled off the highest so a boost is real everywhere. Was silently showing only the Configure loadout's five.
-- **Guild shrines get a per-shrine Targets grid** like houses — set Force to 4 and Scholar to 2 in one run instead of one +Lv for all, combat shrines only (a skilling shrine has no win-rate column to move).
+- **Token buffs are settable from Configure**.
 
 ### Rates bounded by the market and your wallet
 
-- **A rate is capped by how fast its output actually sells**: using the market history Toolasha already fetches, any method that depends on selling an item is throttled to a conservative quarter-share of its observed 30-day sale velocity — so a charm that trades once a week collapses from "134.3B/hr" to its honest few hundred K and loses to milking naturally, labelled "limited by market volume (~1/week)". History showing no trades bounds to zero; history being _unavailable_ bounds nothing and the panel says the check is off (absence of data is not data of absence).
-- **You can't be told to start what you can't afford**: a method whose first action's inputs cost more than your available gold (after earlier goals' claims) is excluded with "needs ~X upfront — you have Y", and returns the moment gold suffices. Decomposing what's already in your bag needs no capital and stays available.
-- Thin _input_ markets get a warning note rather than a cap, and every reduction is printed beside the number it reduced.
+- **A rate is capped by how fast its output actually sells**.
 
 ### The reroll chooser is finally read as it is
 
-- **The MooPass reroll failure's real cause**: the code assumed paid reroll buttons say "Pay …" — they never have; they're a currency icon plus a bare number. So the chooser reader recognised _only_ the free button, silently did nothing when free wasn't choosable, and a stall latch (armed by a confirmation check that accepted any task progress as "the reroll worked") could permanently kill free rerolls for the session — all while the bulk button kept quoting a 10.0K reroll it would never make. A new structural chooser reader identifies options by their sprite icon and number, the stall latch became a 10-minute cooldown, reroll confirmation now requires _this_ task to actually change, and a card that can't be rerolled says so instead of wedging the queue.
-- **Bonus bug**: the same wrong "Pay" assumption meant reroll cap protection had been guarding nothing and per-task protection let paid rerolls straight through — only free rerolls were ever intercepted. Both now read the chooser correctly, with the cap measured in the option's own currency.
-- **Reroll labels are MooPass-aware**: "Reroll FREE (1)" when the free option is provably available, split labels ("2 free, 1×10.0K") when the allowance is known, and an asterisked cost with tooltip when MooPass exists but availability can't be known without opening the chooser — never a FREE that isn't proven.
+- **The MooPass reroll failure's real cause**.
 
 ### The goal planner shares, navigates, and answers instantly
 
-- **Goals share one resource ledger**: two goals can no longer both plan to spend the same crossbow or the same coins — earlier goals claim first (display order), later ones plan against what's left, with dim notes saying exactly who took what ("Sundering Crossbow ★ already spent by 'Cheesesmithing 108'"). Removing a goal gives its claims back to the goals below it, instantly.
-- **Adding or removing a goal plans and renders immediately** — no Refresh needed; already-fetched prices are reused (Refresh still owns re-pricing), and a failed refresh no longer masquerades as an empty successful one.
-- **Click a step to go there**: production, earn, and enhance steps navigate to their game action (dotted underline marks what's clickable); buy and house steps aren't destinations and don't pretend to be.
-- **Windfalls never wear per-hour clothing**: any method whose remaining stock is gone inside an hour reads as a one-off ("Decompose 22 Master Tailoring Charm (+877.9M one-off)") whether or not a fallback follows — the leak your screenshot caught is pinned by tests.
-- **Enhance steps carry an expected-materials bill** with a Buy handoff (labelled "enhancing is random"); the shopping list is one shared module across bundles now (two open lists no longer fight over the tab bar, and the autofill observer leak is fixed at the source); profit is attributed to the right recipe when two actions make the same item.
+- **Goals share one resource ledger**.
 
 ### The sims finish their own homework
 
-- **Skilling gear rows expand like combat rows**: click for the full cost breakdown — clear-rate baseline, per-piece cost basis ("enhancing a piece you already wear" vs "a piece you don't own yet"), and the kept-gear reason where combat gear was displaced.
-- **Unpriced never reads as free, anywhere**: the old ability-cost helpers that returned 0 for an unlisted book are deleted outright (a test pins them gone); Build Score and networth now say "no price" and exclude the figure rather than counting zero — and an owned-but-unslotted book's genuinely free fill says why with a "book owned" chip.
-- **The budget planner understands swap rivalry properly**: candidates carry key _sets_, so two swaps into one slot, a fill and a displacement of the same book, and levelling-vs-swapping-away an ability all correctly exclude each other — with a distinct "a pick already uses what this needs" skip reason instead of a misleading one.
-- **The lab names each loadout's archetype** after a swaps run ("Fire Lab → Fire, Old Setup → no archetype (all abilities offered)"), so a fallback is visible instead of inferred.
-- Plus: the analyze progress bar can no longer stick on an early throw, and a pre-existing formatting failure in the engine is cleaned up.
+- **Skilling gear rows expand like combat rows**.
 
 ### Nine small debts paid
 
-- **The lab supplies planner believes the server**: a just-ended run no longer reads as active off a stale grid — the game's own isActive flag wins, with the grid test kept only as fallback.
-- **One house cost basis**: build costs price at the ask everywhere now (they were quoted at the midpoint in the Houses panel but at ask in the advisor and eWatch — same room, two figures). Houses-panel costs, networth's house valuation and the combat score's house cost all move up by the half-spread to the honest buy-side number.
-- **Auto-sort keeps its promise**: with auto-sort on, the task board re-sorts itself when a reroll chooser closes; without it, nothing reorders under you.
-- **Autogrid can't overlap tiles anymore** — advances round up to the grid in both axes (the vertical had the same bug).
-- **The treasure chest popup's ✕ got the same pinned treatment as the main header**, one shared item-hash parser replaces two copies, one shared room→skill map replaces two copies, a drift test pins the notification permission keys to the schema, and a dead contradicted clamp was deleted.
+- **The lab supplies planner believes the server**.
 
 ### The goal planner stops promising billions
 
-- **A rate is only a rate while its inputs last**: every gold method now carries a sustainable cap — alchemy is capped at your own stock (decomposing one crossbow is a +851M _one-off_, not "437.9B/hr"), and the plan spends methods greedily: windfall first, then the next honest rate for the remainder, shown as indented sub-steps with their own durations. A method you can't run for an hour is never described per-hour; a target no method can cover says so instead of inventing a duration.
-- **Fantasy production margins fixed**: a material with no market listing was billed at zero cost, turning modest crafts into eight-figure hourly incomes. Rates with unpriceable costs are dropped (and counted); missing _output_ prices still understate conservatively. Training steps now print the rate behind their gold figure, so a broken number is attributable at a glance.
-- **"Gear changed" means your combat loadout changed** — not that you put on a chef's hat. The snapshot is judged against your combat loadout (explicit pick wins, then the combat default), with a picker when you have several and an honest fallback note when you have none.
-- **Buy-steps hand off to the marketplace**: house material steps open the shopping-list tabs with quantities armed, craft steps use the missing-materials machinery, single purchases go straight to the item.
-- **Less clunk**: step labels wrap instead of hiding behind tooltips, the pricing note appears once at the panel foot, the totals row says "Left to do — earn X, spend Y", and steps show thin progress bars where the fraction means something.
+- **A rate is only a rate while its inputs last**.
 
 ### The lab sims what can actually win
 
-- **Skilling rooms leave the lab combat list**: every house room grants global experience+rare-find just for existing, which the old filter read as "affects combat" — so all seventeen rooms qualified and Mystical Study's +1.02% was sampling noise wearing a room's name. The lab now only offers rooms whose buffs can change a fight's outcome; the combat sim's own tab keeps the wider set (its profit/XP columns make those rooms legitimate there).
-- **Token buffs rank in whole-run scope** — their own "Labyrinth Token Buffs" section with per-fight breakdowns; the blocker was that a token buff is an argument to the sim, not a change to the character, so the pooled path needed a buff override. The "Configure fight only" tooltip claim is gone.
-- **Your combat gear is never sold for skilling gear**: the -410M "cost" credited the Maelstrom plate's resale; combat-only pieces displaced by skilling gear are now kept (star marker, hover note, footnote) with no setting — loadouts mean you keep both, and there's no judgement call to toggle. Same-purpose swaps unchanged.
-- **Target levels everywhere**: houses (lab gains the Lv box + per-room Targets grid the combat sim had), guild shrines (summed credits+tokens), and community buffs (all three surfaces), each capped at its real max.
-- **Community buffs in lab combat** (Configure fight): ranked on XP per attempt with win-rate columns honestly blank; Combat Drop excluded because the lab table prices no drops — the footnote says so.
-- **House rows get "Save for this"** (feeding the new house goals) **and "Market"** — one click opens the dominant-cost material with the full count armed, the tooltip naming the rest.
-- **The gradient colors every scored column** in its own direction (cheapest-first for Gold/0.01% and Repay), missing values never place, and the skilling tables pick up the combat side's wrapping and row actions.
+- **Skilling rooms leave the lab combat list**.
 
 ### Task cards catch up after a reroll
 
-- **The stale picture and the stuck free reroll were one bug**: the game leaves the reroll chooser open after rerolling, and Toolasha's "never touch a mid-flow card" rule had no way back — every redraw pass skipped the card and nothing re-ran when the chooser closed, so the picture, profit rows, spend line and highlights all stayed on the old task. There's now a settle watch: any skipped card arms a poll that redraws everything the moment the chooser closes, and the task icon (a click-proof background layer) updates even mid-flow, while you're looking at it.
-- **Free MooPass rerolls are recognised however the game words them** ("Free", "Free Reroll (2)", with or without counts), never mistaken for the cowbell option, and the bulk reroller now notices a free button that silently stopped working (spent pass) after two tries and pays from then on instead of clicking forever.
+- **The stale picture and the stuck free reroll were one bug**.
 
 ### eWatch learns houses too
 
-- **House room levels are savings goals**: a "House Levels" card set beside Ability Levels — "Mystical Study Lv5" with the summed build cost across the level span (coins at face value, materials at buy price; any unpriced material makes the goal honestly unpriced, never a partial total), progress from your gold, Reached when the room gets there. Manual add from Edit mode with rooms and current levels listed, capped at the room max of 8. House goals join the headline candidates, the overlay tile, and the Everything total. The sims' house rows hand goals over via the same one-writer record the gear and ability goals use.
+- **House room levels are savings goals**.
 
 ### Ability swaps follow the guide
 
-- **Swap candidates come from the community build guide now**: each loadout's archetype is detected from its weapon (spear/sword/mace/wark/bow/crossbow/fire/water/nature — any bulwark reads as wark, staff element from the weapon or robes), and only that archetype's guide abilities are offered — replacing off-guide abilities or filling empty slots, never touching an on-guide one except for its OR-alternative (Critical ↔ Fierce/Mystic Aura). A fire mage's ~100+ swap rows become ~7. Unknown weapons fall back to the old behaviour rather than guessing.
-- **"Signature swaps only"** sub-toggle in both sims: restrict to the archetype-defining ability (Puncture, Maim, Shield Bash/Retribution, Pestilent Shot, Steady/Silencing Shot, Fireball, Water Strike, Entangle) plus the aura choice.
-- **The lab's Crit Aura option is retired** — subsumed by guide-based aura swaps that respect each fight's own loadout; the estimated sims-per-fight for swaps drops an order of magnitude with it.
-- **Found and fixed underneath**: the style detector read only the main-hand slot, so every two-handed build (bows, staves, tridents, bulwarks) was silently offered universal abilities only — no elemental or ranged swaps at all.
+- **Swap candidates come from the community build guide now**.
 
 ### The lab reads the same buffs as the sim
 
-- **The live clear-rate readout was scoring against buff levels frozen at page load** — its community buffs came from a map written once at login, so tiles and hovers drifted from the Lab Sim (which reads live levels) for the whole session. Both now build community buffs through the same code, so they cannot diverge. Combat XP readouts also gained the community Experience bonus they'd always ignored, and the sim baseline for Moo Pass subscribers no longer understates XP.
-- **House rooms work in every lab scope now** — and the old separate Configure-only pass is gone entirely: house rows used to be measured against their own baseline on their own seed (not comparable with the rest of the table); they now share the analysis's baseline and paired trials, and a whole-run candidate is simmed against each fight at that fight's own level.
-- **The Configure-fight enemy level finally defaults sensibly**: a level-source picker (Sim max / Skip level / Configure value) shows the resolved level inline. Default is Sim max — unless you've typed something other than 100 into the Level box, which is read as intent and respected. Skip level prefers a Recommend run's set-percent threshold, falling back to your configured skip; every fallback is shown, never silent.
+- **The live clear-rate readout was scoring against buff levels frozen at page load**.
 
 ### The budget planner spends the money
 
-- **The empty 500M plan is fixed**: the planner demanded every gain clear the run's 1.96σ noise bar, and on the profit axis a real 0.4% improvement never can — so everything was skipped as "within noise" and the plan came back empty. It now prefers statistically-measured rows exactly as before, and only when that buys nothing re-plans on the estimates with an amber "Ranked on estimates" note, so you always see the best affordable set. Multiple ability upgrades can share one plan (each ability is its own key; two targets for the same ability still pick the better one).
-- **Market on an ability row pre-fills the book count**: the Buy Listing quantity arrives set to the books the upgrade actually needs (the button's tooltip names the count); gear rows still fill 1.
-- **Score is configurable**: choose the scoring depth (Top 5/10/15/All, default 5 — the header says which is active), and optionally paint the top nine scores in a green→yellow→red gradient ranked by score, not table order. Both live in the ⚙ Columns popover.
+- **The empty 500M plan is fixed**.
 
 ### Three more reasons to look up
 
-- **Labyrinth run finished**: fires once per run when a run stops being active, reporting the deepest floor reached. The game's payload carries no outcome field, so the alert honestly covers all three endings — cleared, lost, or exited — and the help text says it can't tell which.
-- **Combat death**: your own death count rising (party deaths ignored), edge-triggered with the running total, capped to one message per killing zone.
-- **Enhancement target reached**: when an enhance-until-+N action hits its target, read from the game's own action data rather than the switchable tracker.
-- All three are off by default; the "market listing filled" idea was skipped because it already ships.
+- **Labyrinth run finished**.
 
 ### The listing says who built what
 
-- **`docs/GREASYFORK.md`**: a paste-ready "Additional info" body for the GreasyFork listing — the fork's biggest changes since diverging from upstream, and a Credits section that makes every attributed script visible from the listing itself (bot7420's MWITools, Celasha's Toolasha, Frotty's MWI Combat Suite/Scaley Way Idle/OPanel, Q7's market history, jigglymoose's JIGS, dakonglong's labyrinth calculator, and the combat-sim team), linking the full per-file licence record.
-- **The `@description` header** now identifies the fork, its major additions, and the credited authors in one line, so the recognition rides with the script itself.
+- **`docs/GREASYFORK.md`**.
 
 ### The session starts when combat does
 
-- **The Combat Level session no longer waits for its panel**: tracking now arms on the first battle and joins every later battle to the same run, so opening the panel an hour into a grind shows the run's duration and exp — not `5s` and `measuring…`. Leaving combat marks the next battle as a new session; figures stay readable after a run, and Reset still re-baselines from now. The Start value says whose clock it is.
-- **Drop Luck and Over Expected % are one tile** ("Drop Luck & Expected", under Drop Luck's key): each row shows the percentile and the ±% over expected side by side — per player in a party with a TOTAL row, chest percentile plus chests-against-owed in dungeons, and `—` for a half not yet measured. Both tiles' display options still apply. A layout that only had Over Expected on needs one click in overlay ⚙ to re-enable the merged tile.
+- **The Combat Level session no longer waits for its panel**.
 
 ### Tokens per hour, finally measured
 
-- **Task completions are now recorded** — from the same quest stream everything else reads, on the claim itself. Rerolls replace the pending snapshot instead of booking it, discarded or vanished tasks are never counted, re-delivered claims dedupe, and a login's whole-board state is baseline, not payday. Stored per character in rolling 8-week ISO-week records.
-- **The Task Tokens tile earns its rate line**: `tokens/hr this week` beneath the board value, on wall-clock time between your first and last claim (the tooltip names the sample and the basis; under two claims shows no rate rather than a fake one).
-- **Task statistics gains "Claimed Tasks (last 7 days)"**: tasks, tokens, coins, both hourly rates, the measured span — and reroll spend over the same window tied in for a **Net Task Income** figure, plus your last five completions.
+- **Task completions are now recorded**.
 
 ### Zones compared on even footing
 
-- **"Max-tier Food" option for all-zones sims**: substitute each equipped food slot with the strongest same-purpose food on the market (never a downgrade, never an unpriced item, your eat-triggers kept) so weak food dying in hard zones stops distorting the comparison. Sim-only — your real loadout is untouched. The headline badges the run (hover names the swaps), the CSV gains a Food column, and the stored all-zones snapshot carries the flag so the goal planner can tell a max-food comparison from your real earnings. Drinks are left alone on purpose: in this game every restoring consumable is food; drinks are buff coffees and have nothing to do with dying.
+- **"Max-tier Food" option for all-zones sims**.
 
 ### The skilling sim sims your skill
 
-- **Tool candidates are scoped to the skill being simmed**: a Cooking run no longer evaluates chisels. The rule reads item stats, not a list — a piece qualifies only if it carries the simmed skill's speed/efficiency or all-skilling speed/efficiency, which also stops rare-find charms from outranking real speed tools in "best per slot". All-skills runs are untouched.
-- **Community buffs join the skilling sim**: Production Efficiency, Enhancing Speed, Gathering Quantity and Experience appear as candidates exactly where each one actually moves the simmed skill, in their own table — priced honestly as donated cowbells per minute (there is no per-player gold cost for a community level), capped at Lv20.
-- **The XP baseline was missing the Experience buff entirely** — the level rode on the player data and the metrics had a wisdom branch waiting, but nothing connected them, so every XP/room figure (and everything ranked against it) was computed with the server's biggest permanent buff off. Fixed, with buff values read from game data.
+- **Tool candidates are scoped to the skill being simmed**.
 
 ### The buff tells you before it leaves
 
-- **Community buff expiry alerts**: get notified a selectable lead time (default 15 minutes, 5–120) before a community buff's _actual_ expiry — read from the game's own expireTime, never guessed from a last-seen duration. Master toggle plus per-buff toggles for all five buff types, off by default. A buff extended by new donations re-arms automatically; one expiry never double-fires.
-- **Two core staleness bugs found en route, fixed**: the `community_buffs_updated` message could be silently dropped as a duplicate when two donations opened identically (the changed expiry sits past the dedup hash window), and community buff levels were only ever read at login — the tea optimizer, efficiency and profit calculators all quietly used launch-time levels as the server buff moved. Levels now track the live message.
+- **Community buff expiry alerts**.
 
 ### The sim comes home
 
-- **The community buff cap is 20 after all** — the earlier raise to 30 was a misdiagnosis (the real fix was the at-cap "what the buff is worth" row, which stays). The advisor, the sim editor's inputs, and the tooltip all agree on Lv20 now.
-- **Reset to Me / Reset to Party**: after importing other players, one click restores your own live character, or your current party — party members' loadouts come from their shared profiles (real plumbing, not guesses), and anyone whose card you've never opened is named in an amber note telling you to open it once and reset again. "Reset to Party" greys out when you're not in one. Zone/tier/hours stay put. The lab sim shares the editor, so it gets both buttons too.
+- **The community buff cap is 20 after all**.
 
 ### The combat sim answers back
 
-- **Community upgrades work**: the candidate generator capped community buffs at level 20, and the live buffs sit at or above it — so "Community" alone always evaluated nothing. Ceiling raised to 30, and a buff already at the ceiling now shows what the buff is _worth_ (Lv30 → off) instead of showing nothing. Also fixed: community and drink rows were silently dropped from multi-fight lab analyses by a loadout check that treated them as equipment.
-- **The Columns popover stays closed**: a duplicate `display` declaration meant every re-render (sort, tick, replan, new analysis) rebuilt it open. One declaration now, and a new analysis closes it.
-- **"within noise" leaves the collapsed row title** — the per-metric annotations in the expanded detail are untouched.
-- **Charms are simmable**: the charm slot was skipped entirely because a pure-focus charm read as "no combat stats" (its one stat is a skill hrid, not a number). Charm enhancement levels and next-tier steps now rank like any equipment; changing the focused skill is deliberately not a candidate.
-- **Every buyable row gets a Market button** — equipment at its level, ability rows jump to their book — and ability rows gain "Save for this" straight into eWatch. Lab sim rows inherit all of it.
-- **The all-zones Results table reads better**: per-skill XP columns that are zero everywhere are hidden, numbers right-align with row striping, a sortable Score column rank-blends XP/hr and profit (same scoring philosophy as the Upgrade tab), the best-XP and best-profit zones are badged with a headline line above the table, and Score exports to CSV.
-- **Single-item swap labels carry both sides' levels** ("Old Tunic +4 → Kraken Tunic +7"), matching the lab sim's multi-piece labels; the refined-clamp path rebuilds labels instead of regex-patching them.
-- **House candidates apply correctly everywhere**: the shared candidate applier had no house branch and simulated the unchanged character (a confident +0.00%); the branch exists now.
+- **Community upgrades work**.
 
 ### The lab sim grows up
 
-- **Task Fight is gone from the lab sim** — lab targets can never be tasks; the sim now passes a hard "no" and runs recorded with the old flag still say so in their labels rather than passing as ordinary runs.
-- **Lab upgrade rows read like combat sim rows**: names wrap instead of running one line, and every row carries the same handoff buttons — "Save for this" (Equipment Savings), "Watch" (watchlist), and the shared builder's newer buttons ride along automatically.
-- **Multi-item swaps name every piece's level**: "Royal Nature Robe Top +7 + Royal Nature Robe Bottoms +7 → Royal Fire Robe Top +7 + Royal Fire Robe Bottoms +7" — no more trailing "(+7)" covering the set.
-- **House Rooms join the lab sim's Upgrade tab**: one-level-up candidates for every combat-relevant room, costed at build cost (coins + materials at buy price), ranked on the same Win Rate / Gold-per-1% as everything else. Configure-fight scope for now — the analysis says why when unavailable.
+- **Task Fight is gone from the lab sim**.
 
 ### eWatch learns abilities
 
-- **Ability levels are savings goals now**: an "Ability Levels" card in Equipment Savings tracks "Fierce Aura Lv46"-style targets — book cost at market (unpriced stays unpriced, never free), progress bar and ETA from your gold, green "Reached" when you get there, ✕ to remove. Add them by hand from Edit mode (learned abilities first, next level pre-filled), or hand them over from the sims. Ability goals join the headline candidates, the overlay tile's "what's next", and the Everything total.
-- Under the hood the savings record has one writer now — the panel and the goals API go through the same door, so neither can drop the other's edits.
+- **Ability levels are savings goals now**.
 
 ### The overlay fits the screen it's on
 
-- **A floating launcher on mobile**: the overlay switch lived in the character column's tab strip, which a phone only shows on the inventory screen — so the overlay was unreachable everywhere else. Mobile mode now gets a small draggable round launcher pinned above the game UI on every screen (position remembered); the desktop tab switch is unchanged.
-- **No more jumble**: a desktop tile layout wider than the phone's canvas used to be clamped tile-by-tile into the same space — columns dragged on top of columns. When the saved layout doesn't fit, tiles now re-flow into as many columns as the width actually holds (one below 500px), in the desktop layout's reading order, with overlap impossible by construction. The saved desktop layout is never written to — editing is disabled while flowed (the gear says why), and a wide screen gets the exact desktop arrangement back.
-- **It scales when resized**: the panel clamps to the viewport (display-time only) and re-flows on window resize, rotation, or the panel's own width changing; the gear popover clamps too.
+- **A floating launcher on mobile**.
 
 ### Panels behave on a phone
 
-- **Floating panels stay on screen**: every remembered panel clamps to the viewport on open and again on resize/rotation — a desktop-saved position restored on a phone no longer hangs off the edge, and the clamp now insists the whole panel (close button included) is visible, not a grabbable strip. A panel's minimum size also caps at the viewport, which is what actually pushed Treasure off a 400px screen. Nothing is written back — the desktop layout is untouched on the next big screen.
-- **Treasure's ✕ is always reachable**: the header wraps on narrow screens and the close button sits pinned top-right out of the flow, with a bigger touch target in mobile mode.
-- **Treasure and PFormance buttons toggle**: a second click closes the panel, matching the Overlay button.
-- **The mobile-mode setting shows its detection**: the Auto option now reads "Auto-detect (currently: mobile/desktop)" — the hardware reading, so an override's effect stays distinguishable from what was detected.
+- **Floating panels stay on screen**.
 
 ### Sync works from a phone, and can't eat itself
 
-- **`@connect gist.githubusercontent.com` added to the userscript header**: reading a truncated gist file refetches it from GitHub's raw host, which mobile userscript managers silently block when undeclared — the phone's "Could not reach GitHub" pull failure. Reinstall the userscript to pick the header up.
-- **A device that has never synced now confirms before Push overwrites an existing gist** — a fresh phone pushing before its first Pull would have replaced the account's whole gist with an empty database. The dialog says to Pull first; automatic pushes on a never-synced device simply decline.
+- **`@connect gist.githubusercontent.com` added to the userscript header**.
 
 ### The manifest error says what it means
 
-- **"Manifest is corrupt" now tells the truth**: a manifest file that was replaced by hand (e.g. a backup pasted over `toolasha-sync.json`) is called that, with the gist id in the message; a network failure while reading the manifest keeps its own classification instead of masquerading as corruption. Either way the remedy is unchanged and real: pushing from a good device rewrites the manifest and repairs the gist.
+- **"Manifest is corrupt" now tells the truth**.
 
 ### Everything fits now
 
-- **The sync payload is gzipped before upload** (and before encryption — ciphertext doesn't compress). Real numbers from a played-in account: a 7.8 MB "Everything" payload that failed the 9 MB gist ceiling once base64-inflated now stores at 1.6 MB encrypted, with 5× headroom. Old uncompressed gists still pull fine; the manifest says which format each gist holds.
+- **The sync payload is gzipped before upload**.
 
 ### The gist can keep a secret
 
-- **Optional sync passphrase** (Settings → Cross-Device Sync): when set, the sync gist holds AES-256-GCM ciphertext instead of readable JSON — useless to anyone holding the gist URL, the token, or the GitHub account. Same passphrase on every device; a wrong or missing one is a clean, named error with the fix in the toast, never garbage fed to the importer. No passphrase = exactly the old behaviour, and old unencrypted gists still pull fine. The passphrase is stored locally like the token (the help text says precisely what that means) and is never uploaded.
+- **Optional sync passphrase**.
 
 ### Console-dump fixes
 
-- **The Shrine Upgrade Planner stays in its box**: the exchange modal doesn't grow for injected content, so the expanded planner now scrolls within a bounded area (like the ranking table above it) instead of rendering past the modal's bottom edge.
-- **Self-removing listeners no longer skip their neighbours** (upstream port, 03204a5): a cleanup handler that unregistered itself during character-switch dispatch shifted the listener array under the loop and deterministically dropped the next handler — ten feature modules do exactly that. Dispatch now iterates a snapshot; pinned by tests in both data-manager and websocket.
-- **The combat profit view remembers itself again**: its saved mode was read at module scope before the database opened, so every load got the default back (the `[Storage] Database not available… combatProfitView` warning). The read now waits for storage to be ready.
+- **The Shrine Upgrade Planner stays in its box**.
 
 ### The token knows its own price
 
-- **Guild token value now uses real exchange rates**: read from client data when the game exposes them, otherwise captured automatically from the exchange dialog as you open it (per credit colour, ratio-based so batch amounts don't distort it), with the manual setting demoted to last resort — and marked "assumed" when it's all we have. The valuation picks the credit colour worth the most gold per token, not just the biggest credit multiplier.
-- **`Toolasha.debug.tokenExchange()`** dumps the full table — every known colour, its rate, its source, and which conversion won — so a rate the capture hasn't seen yet is visible at a glance. Takes `'bid'`/`'average'` for the pricing side.
-- **`/shrines` ends with the token's worth** (`Guild token ≈ 1.0Kg via Green Guild Credit`), including how many exchange rates are known.
+- **Guild token value now uses real exchange rates**.
 
 ### The goal planner learns two more trades
 
-- **Alchemy ranks without a DOM**: the best-items enumeration moved into a pure module the planner calls directly — every figure is the real calculator's, fees and under-level penalties included (an under-levelled item is offered with its penalty priced in; an action you can't do yet is dropped). Memoised on your alchemy level, gear, teas and price freshness, capped at the top 12.
-- **Combat income joins gold goals** — from your all-zones sim snapshot, labelled with its age (`from your all-zones run 3d ago`) and flagged `(stale)` past 7 days or `(gear changed)` when your equipment no longer matches the run. Never silently withheld; no snapshot at all becomes a note under the add form telling you an all-zones sim would add combat rates. Combat XP is deliberately not quoted against skill goals — the snapshot only keeps a cross-skill total.
+- **Alchemy ranks without a DOM**.
 
 ### Housekeeping
 
-- **The WebSocket prototype wrapper is gone** (upstream port, 5824eca): it was a redundant third interception path that broke `removeEventListener` for message listeners on _every_ WebSocket on the page and made duplicate registrations fire twice. The two guarded paths that remain intercept everything they did; native listener semantics are restored and pinned by tests.
-- **The dungeon chest→key maps live in one place now** (`src/utils/dungeon-keys.js`): combat-stats and the combat-sim adapter each kept their own copy — with the two names swapped between them — and four more modules imported the constant through the stats calculator. Everyone now reads the same table under one pair of names. Pure extraction, no behavior change.
-- **The CI bundle ceiling moves 2.5 → 3 MiB** with the reasoning in the workflow: the ui bundle grew honestly to ~60KB under the old line; the guard exists to catch sudden duplication jumps, which still trip it.
+- **The WebSocket prototype wrapper is gone**.
 
 ### The books balance: first swings were invisible
 
-- **The Sim Accuracy undercount is fixed**: the battle feed only reports monsters that changed, and the replay refused to score a monster's first appearance — so the opening swing on every monster of every wave went unrecorded (12–19% of swings, ~21% of damage on real fixtures). Wave baselines now seed from the battle-open message; the reported swings/damage deficit should vanish without changing anything about how you fight. The clock, task damage, and spear multi-hit were all ruled out and pinned by tests. The check sims 12 hours of the zone's own encounter mix — that's now stated on the panel.
-- **Recordings no longer stop themselves during sim runs**: a stale persisted record-target could restore late (main-thread contention while a sim launches) and stop a longer recording at the next boundary; target restore is now explicit and never touches a live recording.
-- **Record to ±%**: a third target unit stops recording when the measured noise band reaches your figure; the suggestion button now reads "Record to ±5%".
-- **Saving works again and covers everything**: the DPS-panel download carries every segment of the session (oldest keep per-fight summaries past the tick-retention cap, and the file says what's included); Sim Accuracy gains a "Save recording" button exporting the full check bundle — observations, loadout snapshots, clocks, comparison, history — for sharing.
+- **The Sim Accuracy undercount is fixed**.
 
 ### Iron Cow re-forces instantly, and one more clickable name
 
-- **Applying a preset (or All Off / Restore) while Iron Cow Mode is on now re-forces the locked settings immediately** — previously the stored values changed underneath and only got forced back on the mode's next apply. The mode's snapshot of your real pre-IC values is never touched by the re-force.
-- **Community-buff announcements are /profile-clickable** ("KimNG has added 31 minutes of community buff…").
+- **Applying a preset (or All Off / Restore) while Iron Cow Mode is on now re-forces the locked settings immediately**.
 
 ### Settings you can actually get to
 
-- **Picking a setting in Ctrl+K now opens settings itself**, expands the group it lives in (temporarily), scrolls to the row, and flashes it — composing with the search pre-fill.
-- **Presets lead the settings page**, and **Iron Cow Mode is now a chip among them** — a pressed-state toggle that stacks with the one-shot presets ("select it and others"); the old dedicated card is gone, mechanics unchanged.
-- **"Copy Settings to IC Characters"** beside the all-characters copy: game modes are recorded at each login, the copy targets known iron cows only, and characters whose mode is not yet known are skipped and named rather than guessed.
+- **Picking a setting in Ctrl+K now opens settings itself**.
 
 ### The recorder answers back
 
-- **Record for a target**: set N fights or M minutes on the Sim Accuracy panel; recording stops at the fight boundary after the target (never mid-fight), the label counts progress, the last target persists per character.
-- **XP is now recorded and checked**: per-fight XP gains come exactly from the battle totals (no new plumbing), compared with proper noise bands and a per-skill split; **drops are recorded and shown but deliberately not verdict-ed** — the sim carries no drop table to band against, and Drop Luck already answers that question properly.
-- **More to argue with**: a one-click sample-size suggestion ("≈85 more fights for ±5%"), DPS decomposed into swings × hit rate × damage-per-hit with individual bands, beyond-noise deviation hints ordered by what is actually known, and a small history of past checks to spot drift.
+- **Record for a target**.
 
 ### The black box was ours
 
-- **The black band at the foot of action panels is gone**: the sticky Queue/Start strip painted itself near-black, and against the game's dashed catalyst slot on alchemy tabs it read as a "black Consumed Item box". The strip stays sticky but now renders in the game's own colors — no invented paint in either direction; the catalyst slot was confirmed fully native and untouched.
-- Also found en route: the alchemy action pin shared a CSS class with the picker-tile pins, rendering as an invisible-on-desktop, black-square-on-touch artifact over the catalyst slot. Renamed and fixed.
+- **The black band at the foot of action panels is gone**.
 
 ### The recorder grows up
 
-- **Recordings snapshot your loadout at record time** (gear, levels, abilities, food/drink slots, house, shrines) and the 12h check sims against the snapshot — the "gear is read as worn now" caveat is retired for new recordings; mixed-gear samples say so.
-- **Recordings survive refresh**: summarized checkpoints at every fight boundary, recovered on startup ("Recovered N fights from an interrupted recording"), cleared on clean stop, standing down when the disk is full.
-- **Record as long as you like**: hitting the buffer cap now banks the segment at the next fight boundary and keeps going (no fight lost at the cut); the label counts cumulative fights, and the observation window widened to ~4 hours of continuous combat.
-- **Small samples stop lying**: the panel shows the measured noise band ("24 fights — ±3.1% noise; differences inside that band are not findings"), computed from the actual per-fight variance, and deviations inside the band render dim/inconclusive instead of red or green.
+- **Recordings snapshot your loadout at record time**.
 
 ### Idle members are clickable
 
-- **Names in the guild Overview's "Idle members" list fill `/profile Name` on click**, same as chat names.
+- **Names in the guild Overview's "Idle members" list fill `/profile Name` on click**.
 
 ### Mid-run restock honesty, and the tooltip that would not die
 
-- **The lab planner stops suggesting purchases that cannot help**: mid-run, the shortfall line reads "4 shrouds needed · 0 left this run — restock applies to your NEXT run", priced against inventory and the tier you actually use. Turns out tiers matter: a Basic shroud caps at room level 50 and fails 2%/level above it, so the old cheapest-tier hint could suggest an item that would outright fail on your floor. Beacons and torches differ by tier too (reveal radius, preserve chance) — preferences follow what you hold.
-- **The room-forecast hover panel can no longer outlive the labyrinth**: a watchdog kills it the moment its anchor leaves the DOM, grid rebuilds and scrolling hide it immediately — no more refresh to dismiss a stuck tooltip.
+- **The lab planner stops suggesting purchases that cannot help**.
 
 ### Five new tiles and layouts that follow what you're doing
 
-- **New overlay tiles** (all off by default): Queue Time Left (when do I go idle, ∞-aware), Enhancement Session (live attempts/spend), Next Goal Step, Task Tokens (board tokens + coin value — labeled as what the board pays, since no completion history exists to make a true rate), and Guild Trials pace (with honest data-age: "T7 · eta · 2h ago", going "stale" past the hour).
-- **Bundled layout presets** — Combat, Skilling, Labyrinth, Market — appear in the picker as read-only "· preset" entries; Save-as under the same name makes your own shadowing copy.
-- **Optional "Switch layout with activity"** (off by default): maps layouts to combat/skilling/lab/market, detects what you're doing (10s stability before switching, never while unlocked), and a hand-picked layout pauses auto-switch until the activity actually changes.
+- **New overlay tiles**.
 
 ### Companion privacy, a Record button where it belongs, and mooket hygiene
 
-- **Toolasha no longer names the companion script anywhere** — registry examples, marker strings, hold-provider docs, and old changelog entries now use neutral wording; the public registries the companion calls are unchanged.
-- **The Sim Accuracy panel gains its own Record button**, driving the same recorder as the Damage panel (labels reflect a recording started anywhere; stopping here feeds the accuracy check instead of downloading).
-- **Mooket never receives test-server data**: the one outbound path (the order-book WebSocket) is suppressed on test.milkywayidle.com with a one-time console note; fetching/display unaffected.
+- **Toolasha no longer names the companion script anywhere**.
 
 ### Build Score opens something now
 
-- **New Build Score breakdown panel**: the tile double-clicks (and an own-profile "breakdown" link on the score popup) into the full tree — Combat and Skiller scores with Equipment / Abilities / House / Guild Shrine sections sorted largest-first, each unfolding to its per-item, per-ability, per-room, per-buff lines, a top-5 contributors list, and the header finally saying what the number means: what the kit would cost to buy, in millions.
+- **New Build Score breakdown panel**.
 
 ### The watch card stops overcharging, and laddering becomes a mode
 
-- **Real pricing bug fixed**: the equipment-watch cost search refused protection strategies below your start level, so a +5→+7 run was quoted at 214M when the genuinely cheapest protected run (protect from +2) costs 84M — a ~2.5× overquote that also made laddering from a lower copy look cheaper than it is. Every path now searches the full strategy set; starting higher is never dearer.
-- **A Direct / Ladder button on each watch target**: pick which run the headline cost, progress bar, and ETA track (per target, persisted); the other path stays visible as the secondary line, and a vanished spare falls back to direct while remembering your choice.
+- **Real pricing bug fixed**.
 
 ### Iron Bell Farming
 
-- **"Iron Cow Farm" is now "Iron Bell Farming"** everywhere you can see it (panel, settings, command palette); stored data and settings survive the rename untouched.
-- **New "Iron Bell next step" overlay tile** (off by default): one line showing the current plan stage ("Foraging 62/80") or "Loop ready — N bells/week", opening the panel on double-click.
+- **"Iron Cow Farm" is now "Iron Bell Farming"**.
 
 ### The overlay earns its screen space
 
-- **Empty tiles stop shouting**: a tile with nothing to say renders as a dim 20px name strip (value/watch tiles) or hides until its first data (measurement tiles like DPS and drop luck), instead of a full-size "Nothing tracked yet" wall. A gear-menu dropdown (By tile / Compact / Hide / Full) overrides globally, and unlocking the layout always shows everything so you can still place tiles.
-- **Fresh characters get a curated 8-tile default** (net worth, coins, build score, status, session/EPH, XP/hr, profit, time to level) instead of everything at once; existing saved layouts are untouched and keep the old behavior.
+- **Empty tiles stop shouting**.
 
 ### Overlay tiles open their panels
 
-- **The Net Worth, Coins, Market Listings, and Inventory Value tiles now open the networth history chart** on double-click (single tap on touch), with the hint in the tooltip — matching the 26 tiles that already opened their feature's panel.
+- **The Net Worth, Coins, Market Listings, and Inventory Value tiles now open the networth history chart**.
 
 ### Iron Cow Farm
 
-- **New "Iron Cow Farm" panel** for cowbell-farming characters: the standard plan as a self-ticking checklist (skill levels, jewelry, house rooms read from your character; the loop stage unlocks when prerequisites are met), the starfruit → decompose → coinify loop costed on the iron cow rule that nothing is ever sold (coinify's vendor coins are the only income, decompose fees the only outflow, no catalysts), and the payoff in bells: bells/hour, bells/day, a week's projection, whether loose bells or the bag of ten is the better buy, plus low-gold-buffer, queue-slot, and offline-window warnings.
+- **New "Iron Cow Farm" panel**.
 
 ### Multi-target lab analysis gets the big swaps
 
-- **Combined forced-armor swaps now appear under All targets / Chosen targets** — the multi-fight analysis never generated them before. Same keep-gear costing note as single-fight, pooled per fight with the standard win-rate aggregation; sets that also swap the weapon only apply to loadouts holding that weapon.
-- **Ability swaps are allowed in multi-fight scopes too**: swaps only weigh in loadouts that actually cast the replaced ability, one decision is one row, and a big run shortens each simulation rather than leaving fights out — the status line says how many simulations it comes to before starting.
+- **Combined forced-armor swaps now appear under All targets / Chosen targets**.
 
 ### Dungeon keys cost whichever way is cheaper
 
-- **Dungeon profit charges each entry/chest key at the cheaper of buying or crafting it** (craft cost through the real crafting calculators at your efficiency; craft time shown separately, never priced as gold). Every key row says which side won and the saving — and a key with no market listing but a valid recipe now counts its craft cost instead of being silently dropped.
+- **Dungeon profit charges each entry/chest key at the cheaper of buying or crafting it**.
 
 ### Building levels cap at 20, trial tiers at 21 — and never each other
 
-- **Guild building bonuses clamp at the real level-20 cap** (the Buildings tab's "Lv. x / 20") instead of trusting and extrapolating any higher figure; the trial tier ladder keeps its separate 21 tiers (levels 100→300), and the trial badge was confirmed to never touch building tiles.
+- **Guild building bonuses clamp at the real level-20 cap**.
 
 ### The task board stops fighting the game
 
-- **The zone-index badge stops churning**: it removed and re-inserted its own span on every observer tick — a permanent 100ms mutation loop on React-owned task cards that also destabilized the profit rows' task keys. It now touches the DOM only when the index actually changed.
-
-- **The free MooPass reroll works again**: the reroll-cap protection was reading the pass count in the button label as a coin cost and cancelling the click. Cap checks now only ever fire on "Pay …" buttons, and per-task protection still covers free rerolls (they destroy the task the same).
-- **Confirm Discard actually discards, and buttons stop flashing**: while a card is showing a confirm step (reroll chooser or discard), every Toolasha injector now leaves it completely alone — previously the sorters/badges/profit rows rebuilt the card mid-flow, wiping the game's pending confirm state. The outline flicker was two features alternately stripping and redrawing the same style; resolved.
+- **The zone-index badge stops churning**.
 
 ### The lab planner reads the right bag
 
-- **During a run, supply counts come from the run itself** (what the game's Supplies row shows), not your inventory — the game moves torches/shrouds/beacons into the run at start, so the old inventory readout was counting supplies you couldn't use. Between runs it still reads inventory for planning the next entry, and the readout labels which it's showing ("this run:" vs "held:").
-- **The readout uses the game's item icons** (best tier held) instead of emoji.
+- **During a run, supply counts come from the run itself**.
 
 ### Dungeon run history stops lying
 
-- **A run-start key count can no longer end a fresh run at wave 0**: the completion fallback now requires the run to have progressed (or been restored mid-run), so the pre-scan race banks a start anchor instead of a seconds-long fake run.
-- **A websocket-detected completion no longer hands its start anchor to the next run** — two runs can't merge into one duration anymore.
-- Player names with dashes parse in key counts, the milkonomy export names the back slot like every other slot, and page-load run pickup applies the same battleId/staleness guards as live restore (keeping the hibernation flag).
+- **A run-start key count can no longer end a fresh run at wave 0**.
 
 ### Backups say whose they are, and adoption asks first
 
-- **`Toolasha.debug.claimLegacyData(charId)`** force-completes adoption after a backup restore: it hands every bare legacy value to the chosen character, overwriting the stale scoped copies that would otherwise shadow the restored data (the market listing log merges instead, so recent entries survive). `{dryRun: true}` previews.
-
-- **"Back Up Everything" filenames now carry the character and game mode** — `toolasha-backup-2026-08-04-millennium44-MC.json` — matching the hand-renamed convention; MC/IC/LC for standard, iron cow, legacy iron cow.
-- **Adoption is consent-gated**: the first time pre-scoping data is found, a dialog asks which character should inherit it (heuristics only preselect the recommendation) — nothing moves until you confirm. Reopen anytime with `Toolasha.debug.chooseDataOwner()`.
+- **`Toolasha.debug.claimLegacyData(charId)`**.
 
 ### Labyrinth: split apart, supply-aware, and honest mid-fight
 
-- **The 5,300-line labyrinth module splits into six** (formulas, pathing, outcomes, sim cache, recommendation, live readout) with byte-identical behavior, guarded by seam tests.
-- **The shroud/beacon planner reads your bag**: beacons clamp to owned ("4 set / 3 owned"), the summary splits confirmed vs assumed shroud needs ("13 needed · 2 owned — 2 confirmed, 11 assumed for unrevealed rooms"), torches are checked against the route, a cheapest-tier restock hint prices the shortfall, and the toolbar shows live held counts.
-- **The live clear-chance no longer swings wildly before the lab tab is opened**: the sim replay could not identify the room on a mid-run reload (path never seeded, and a fight joined in progress never replayed due to a zero-clock gate), so a noisy health extrapolation was quoted as a point figure. The replay now works from the first tick via battle data, and an unearned extrapolation displays as a damped range ("Clear 50–75%?") instead of a jumping number — same math as the room tab, now reachable.
+- **The 5,300-line labyrinth module splits into six**.
 
 ### Adoption accident: fixed, and repairable
 
-- **The wrong character can no longer inherit your data**: characters with "test" in their name never adopt legacy values, and neither does a character with no networth history while another character on the account has some — the hole that let a freshly logged-in alt claim everything by being first.
-- **`Toolasha.debug.moveScopedData(fromId, toId)`** moves every adopt-class store (watchlist, savings targets, treasure tally, enhancement sessions, reroll data, panel state, …) from the character that wrongly claimed it to the right one, skipping anything the destination already owns; `{dryRun: true}` previews the moves.
+- **The wrong character can no longer inherit your data**.
 
 ### The dungeon tracker earns its tests
 
-- **252 new tests** for the dungeon tracker core (run lifecycle, restore guards, key-count parsing, per-character scoping), the chat-annotation parser (all six timestamp formats, run numbering, team attribution), collection filters (ranges, sorts, badges, favourites), and the milkonomy/profile export shaping. Four latent dungeon-tracker/export bugs were pinned by tests and documented for a future fix.
+- **252 new tests**.
 
 ### History stops rewriting itself on every event
 
-- **The append-heavy history stores split into per-period records**: networth snapshots (monthly), the loot log (hourly), and alchemy sessions (daily — previously rewritten in full on every ~2s action, unbounded). Saves now write only the chunk that changed; pruning deletes old record keys instead of rewriting the survivors. One-time migration splits existing data lazily and falls back to the old key untouched if the disk is full — nothing bricks or half-migrates.
-- The account view, sync, backup, and the market-cow adoption check all read both shapes; networth snapshots now also carry the Guild Shrines value so the new chart series gets data.
+- **The append-heavy history stores split into per-period records**.
 
 ### Tokens get a price, shrines get a debug command
 
-- **Guild tokens are now priced through the guild shop's token→credit exchange** (live client data when present, else a settable rate defaulting to 1 credit/token, 0 to turn it off). Shrine upgrade rows rank on credits _plus_ tokens — token-heavy top levels sink, credit-cheap levels rise — with the valuation labeled "via credit exchange" everywhere it appears, including trial token payouts.
-- **Builders Hall and Treasury bonuses use the confirmed 2%/level formula** (checked against the Build dialog: Lv10→11 = +20%→+22%), so trial payout projections apply your guild's real +20%/+10% instead of "base figures"; manual overrides remain as a last resort.
-- **Trial tiers cap at 21** (level 300), fixing the old hard-coded 20.
-- **`/shrines` in chat** prints a local-only report of your shrine buff levels, guild building levels, and when they were captured; `Toolasha.debug.shrines()` returns the same from the console.
+- **Guild tokens are now priced through the guild shop's token→credit exchange**.
 
 ### Cross-tab sim exports can't lie about whose gear they are
 
-- **The combat-sim export bridge stamps every payload with the writing character**; per-character reads (character data, battles) refuse a mismatched stamp with a clear message instead of exporting another tab's gear, stale payloads warn, and legacy unstamped values still work. Shared data (client data, profile list) is deliberately exempt.
+- **The combat-sim export bridge stamps every payload with the writing character**.
 
 ### The variance math earns its tests
 
-- **180 new tests**: the enhancement variance formula and gamma percentiles now have hand-solved exact-rational fixtures (derived by an independent second-moment recursion — they agree to nine decimals) plus a seeded Monte Carlo cross-check and a worker-blob serialization guard; the alchemy Best Items and profit display wrappers get full coverage; and the action-speed, drink-coverage, and scroll-buff utils are pinned down.
+- **180 new tests**.
 
 ### Listing-age estimates get sharper over time
 
-- **The anonymous id→time anchor pool now grows**: every listing you record, import, or observe with a real timestamp in the order book adds an anchor (deduped, capped at 3,000 with eviction that thins dense clusters and never gives up the range endpoints). Clear History keeps the anonymous anchors — the dialog says so — so wiping your personal log no longer degrades age estimates.
+- **The anonymous id→time anchor pool now grows**.
 
 ### Missing-material tabs retire themselves
 
-- **Pinned marketplace tabs now watch your inventory**: partial acquisitions update the "Missing: N" badge, and when the needed count (at the exact enhancement level) is reached the tab flashes "✓ Acquired" and removes itself. Manual dismiss, "✕ All", and marketplace close all unsubscribe cleanly.
+- **Pinned marketplace tabs now watch your inventory**.
 
 ### Guild Shrines series in the networth chart
 
-- **The networth history chart gains a Guild Shrines line** with its own legend chip, tooltip row, and summary stats. Snapshots recorded before the field existed draw a gap, never a fake zero. (The snapshot recorder picks the field up in the storage-migration change alongside this one.)
+- **The networth history chart gains a Guild Shrines line**.
 
 ### Guild trials get pace, ETA, and payout math
 
-- **Trial cards on the In Progress tab now carry live info**: measured party DPS (combat) or pool fill rate (skilling) read from the cards themselves, ETA to clear the current tier against the trial clock, how many tiers the hour is on pace for, and the next tier's projected size (+1% per participant applied exactly; the tier growth curve is fitted from observed tiers, never invented — it says so until a second tier gives it a curve).
-- **A payout block shows what the week is worth**: Guild Points banked vs on pace and tokens per eligible member (plus the 50% participant bonus), using the official formulas, with Builders Hall and Treasury bonuses read from captured guild building levels — or manual overrides in settings, with an honest "base figures" note until either arrives.
-- Trial state persists per guild, resetting with the Friday week; the official trial rules are pinned in the module docs.
+- **Trial cards on the In Progress tab now carry live info**.
 
 ### Guild shrines in your score and your net worth
 
-- **The profile score panel gains "+ Guild Shrine" lines** under both Combat Score and Skiller Score — each buff sorted into its bucket by the game's own combat flag, tokens in the tooltip, same coin-cost-per-million convention as House and Ability. Only shown when shrine data has actually reached the client; other players' profiles never show a fake zero.
-- **Net worth gains a Guild Shrines row** under Fixed Assets: the cumulative credit cost of every shrine buff level you've bought, priced at your networth pricing mode, with per-buff breakdown rows and the same exclusion toggles Houses and Abilities have. Tokens are counted and shown, never priced into gold.
+- **The profile score panel gains "+ Guild Shrine" lines**.
 
 ### Goal Planner
 
-- **New Goal Planner panel**: state a goal — a gold amount, an item at an enhancement level, a skill level, or a house room — and get the ordered steps to it with gold and time on each: earn (best of your gathering/production rates), buy vs craft (whichever current prices favor), the enhancement run costed through the real Markov chain with your own stats, training steps inserted before crafts that need levels, and a funding step whenever the plan spends more than you hold. Steps strike through as they're satisfied; plans reprice on refresh; goals are per character.
+- **New Goal Planner panel**.
 
 ### Sim state scoped, and honest enhancement numbers in the tooltip
 
-- **The last cross-character leaks in the sims are closed**: the all-zones snapshot, upgrade-tab selections (both sims), lab skilling loadouts, and the new lab comparison runs are all per character now. Snapshots and loadout maps from another character are discarded rather than inherited — a sim result against someone else's gear is worse than none.
-- **The marketplace ENHANCEMENT PATH says whose stats it used**: a chip on the header reads Yours, Manual, or Pro — Pro filled amber so it can't be mistaken — and clicking it (or pressing P while a tooltip is open) flips between your detected stats and the pro kit (enhancing 140, +13 Celestial, ultra + blessed tea, +10 gear), rebuilding the visible numbers in place. Persisted as a normal setting; untradeable items always use your own stats.
+- **The last cross-character leaks in the sims are closed**.
 
 ### Doubled profit line fixed, stuck marketplace tabs cleared
 
-- **The action bar could show two "Profit: …/hr · remaining …" lines** with different remaining values: a game re-render orphaned the old profit node while only the time node got cleaned up, leaving a stale copy behind. Injection is now idempotent — every stale widget is swept before a fresh one is placed. The remaining basis itself was always correct (material-and-gold-limited actions, not raw inventory).
-- **Pinned missing-material marketplace tabs can finally be dismissed**: every pinned tab (lab-sim budget picks, house costs, crafting plans, shopping lists) gets a hover ✕, an "✕ All" control sits at the end of the strip, and the lab-sim budget tabs — the ones that got stuck — now also clear themselves when the marketplace closes, which every sibling feature already did.
+- **The action bar could show two "Profit: …/hr · remaining …" lines**.
 
 ### Market and inventory state stops leaking between characters
 
-- **Ten market/inventory stores scoped per character**: watchlist, equipment savings targets, house untracking, alchemy pins, inventory sort, philo calculator settings, consumable planning horizon, market history filters, and the mooket follow list (display prefs stay shared). Your iron cow starts clean; the market cow inherits the existing data.
-- **The personal listing log and the shared listing-age anchors were living under one key** — split apart: your own listings are yours per character, while the anonymous id→time anchors every character uses to date other people's listings stay global, so age estimates keep working on characters that never listed anything.
+- **Ten market/inventory stores scoped per character**.
 
 ### Combat and labyrinth records stop leaking between characters
 
-- **Eleven combat-side stores scoped per character**: enhancement tracker sessions, consumable trackers and the last combat run, combat session history, labyrinth fight outcomes / sim cache / room logs, sim-accuracy observations, in-progress dungeon runs, dungeon panel UI state, task reroll data, and the treasure tally. Keep-worthy history migrates to the main character; gear-derived data (fight outcomes, sim caches, live trackers) starts clean instead of inheriting another character's numbers.
-- **Dungeon runs stay one shared list** (team dedupe across your characters is a feature) but every new run is stamped with who recorded it, and the panel gains a "This character / All characters" filter defaulting to yours — legacy unstamped runs match by roster name.
+- **Eleven combat-side stores scoped per character**.
 
 ### Panels and task prefs stop leaking between characters
 
-- **Panel open-state is per character now** — the market cow's panels no longer auto-reopen on the iron cow. Positions and sizes stay shared (panels sit where you put them on every character); only who-had-what-open splits, with the old flags migrating to the main character.
-- **Overlay panel layout, task estimate mode, and task-board icon filters** are per character too (the six separate filter keys also collapsed into one record per character). Collection filters move to the standard key format so account-view tooling can parse them.
+- **Panel open-state is per character now**.
 
 ### Lab sim catches up to combat sim
 
-- **Comparison runs for single-target lab fights**: each fixed-level run is recorded (settings + win rate, tries, deaths per 100), with a pinnable baseline, per-metric green/red deltas, per-row delete and Clear All — and unlike combat sim's history it survives reloads, since lab comparisons usually span sittings.
-- **The Upgrade tab's mode dropdown becomes multi-select chips** (Equipment, Ability Lv, Ability Swaps, Combat Lv, Guild Shrine) with a separate target scope: configure fight, all targets, or a chosen subset of labyrinth fights — so "just the fights I'm not already strong enough for" is now expressible. Old mode choices migrate to the equivalent selection; genuinely impossible combinations are disabled with the reason shown instead of silently ignored, and a multi-set single-fight selection runs as one analysis with one shared baseline.
+- **Comparison runs for single-target lab fights**.
 
 ### The sim sees your real abilities, and shrine levels finally arrive
 
-- **Ability desync fixed**: the client never applied the game's ability-update messages — your equipped abilities were read once at login and never again, which is why the sim showed a stale kit after labyrinth loadout swaps. Equips, unequips, displacements, and level-ups now all land (with battle data as a backstop), and a message-dedup window that could swallow quick equip/unequip pairs is bypassed for ability traffic.
-- **Guild shrine levels now reach the advisor**: shrine/building levels ride on guild traffic that only arrives when someone opens the guild panel — so they're now captured whenever any message carries them (matched by shape, not by name), persisted per character, and restored at login with a captured-at timestamp. The "no guild shrine levels reached the client" row should retire itself after one visit to the guild page.
+- **Ability desync fixed**.
 
 ### Combat sim results that lead with the answer
 
-- **Headline tiles at the top of the Results tab**: Profit/day, XP/day, Kills/hr (Dungeons/hr + success rate for dungeons), DPS, and Deaths/day — read from the same numbers the detail tables print, with baseline deltas, plus a sub-line of revenue/costs/top-skill XP so the headline is auditable without scrolling.
-- **Clear all baselines** in one click beside Export CSV; per-row delete unchanged.
-- **Guild shrine upgrades take a target level**: type the shrine level you're aiming for and the advisor prices every level between here and there (credits ranked, tokens shown as info), still warning when the guild's building can't support it yet.
+- **Headline tiles at the top of the Results tab**.
 
 ### Clickable names everywhere chat shows one
 
-- **The /profile click trick now covers every name Toolasha renders**: mention-popup sender names, pop-out chat names (including announcements relayed into the pop-out window, which previously had no link at all), and names in the extended chat history buffer (previously looked clickable but did nothing after cloning). One delegated listener and one shared helper replace the per-span wiring.
+- **The /profile click trick now covers every name Toolasha renders**.
 
 ### Per-character storage helper
 
-- **New `characterKey` helper** (`src/utils/character-key.js`): one shared way to scope stored state per character, with one-time migration of legacy global values — adopted by the main character (never an iron cow; identified by longest networth history) or discarded where inheriting another character's data would be wrong. Groundwork for de-leaking all cross-character state.
-- Market-cow detection reads the same `gameMode` field MCS uses, and now recognizes `legacy_ironcow` too — no ironcow variant ever inherits the market character's data.
+- **New `characterKey` helper**.
 
 ### Official formulas, ladder costs, and the sim graded against reality
 
-- **Lab math now follows the official formulas you supplied**: exact challenge/treasure/floor-exit reward tables (tokens, Purdora's boxes, refinement chests — no more approximations), grid size, and confirmation our success/work/XP math already matched. The unrevealed-rooms path default becomes pessimistic (needing a shroud), live fight replay defaults off, and a run-once migration delivers both defaults to existing users; the precision setting's help finally describes what it governs.
-- **Ladder cost on the enhancement watch**: every watched enhancement now also shows what it costs to enhance your second-best copy (or a fresh base) instead of risking the equipped piece.
-- **Ability swaps cost from your actual book level** when owned ("from Lv12" chip), fresh-book pricing only for unowned.
-- **Sim panels remember being open** across reloads.
-- **Alchemy verified against the official rules**: most math confirmed correct; fixed the under-level penalty missing from coinify/decompose and the coinify fee inconsistency; all fee formulas share one helper.
-- **Sim accuracy panel**: replay your recorded fights against the simulator's prediction, deviations flagged only beyond statistical noise.
-- **Welcome Back gains a value row** (net gold, coins/hr, XP/hr at your pricing mode); account/sync failures surface as actionable toasts; gist errors classify by status code; and a data-shape canary catches game updates that restructure client data.
-- Enhancement cost variance (validated against Monte Carlo) now feeds a companion script's enhance-to-sell rows.
+- **Lab math now follows the official formulas you supplied**.
 
 ### Upstream ports (verdict-gated) and honest task damage
 
-- **Task damage only counts on task fights.** Sims launched from a task card carry an is-task-fight flag; everything else — zone sims, lab rankings, the upgrade advisor — excludes taskDamage, so task badges and trinkets no longer rank on damage they only deal against your task monster (their on-task value shows as row detail). Both sim panels gain an explicit "Task Fight" toggle.
-- **Six upstream fixes ported after verifying each applied to our diverged code**: the page-freezing sort loop in max produceable, storage writes requeued instead of lost on a failed save (adapted to our quota handling), six undefined color constants, real alchemy coin costs in material limits, an O(1) DOM observer buffer, and the enhancement tooltip's target-hourly-rate / minimum-sell-price feature. One item was superseded by our own storage rework (evidence recorded); the melee stab/slash/smash tier split ported separately so weapon candidates only compare within their style.
-- **Decompose fee standardized** on (10+level)×5 via one shared helper — two of our files disagreed and no recorded data could settle it, so the upstream-agreeing formula won, with the reasoning documented.
+- **Task damage only counts on task fights**.
 
 ### Advisors sharpened, your own rates guaranteed, and 1,200 new tests
 
-- **Upgrade advisor fixes**: real noise estimates on combat rows (the budget planner's significance guard finally works), profitable swaps rank as "pays for itself" instead of dividing by zero, every row shows its cost basis, unpriced items get their own box, drinks/teas and community buffs and trinkets are now rankable, and combat-level time accounts for the levels raising your rate.
-- **Task system fixes**: auto-reroll badges on a real rule (board-median rating vs amortized reroll cost), bulk reroll can't destroy above-median tasks and matches protection's cap semantics exactly, retired tasks feed a payoff history instead of being deleted, statistics show net-of-reroll spend, partial tasks advertise remaining value, token EV reads the actual task shop.
-- **Enhancing: your rates, not pro rates.** The shipped manual defaults (level 140, +13 Celestial enhancer, ultra tea, full +10 gear) no longer stand in for you — every field seeds from your detected stats unless you edited it, unearned achievement bonuses are gone, and a "manual params" tag shows wherever overrides apply. Plus: resumed sessions count attempts correctly, earrings get their 5× multiplier, the Chance Cape's success bonus counts in manual mode, mirror breakdowns follow the real optimal path, one shared price rule across tooltip/XPH/tracker, prediction and measurement share one time base, and the worker copies share the one Markov implementation (fixing a level-19 crash and negative failure probabilities).
-- **Craft-to-sell**: a Toolasha adapter serves your true per-character craft costs to a companion script's craft rows.
-- **Alchemy fixes**: equipment rare/essence find counted (was silently always zero), tea speed bonus applied (six TODO stubs unified).
-- **~1,200 new tests** across previously untested modules — gathering/production/alchemy profit math with hand-computed fixtures, networth valuation, listing-age interpolation, dungeon statistics, chat parsing, worker pool, websocket dedup, and more. Suite now 4,044 tests.
+- **Upgrade advisor fixes**.
 
 ### Sync, account view, honest philo math, and lab fixes
 
-- **Cross-device sync** (Settings → Sync): push/pull your data to a private GitHub Gist with a personal access token (settings-only or everything, optional auto-sync, newest-wins with a confirm, chunked uploads, soft failures). The token is stored locally and never uploaded — the payload redacts it.
-- **Account view**: combined networth across characters with per-character shares, last-seen, and queue state, from data each character already recorded.
-- **Philo gamba calculator corrected**: market tax on sold drops, the under-level success penalty, real action time with your speed/efficiency gear, catalyst tea cost charged, bulk symmetry, enhanced-listing fallbacks flagged, a pricing-mode dropdown (defaults conservative) with an instant | patient profit column, and bonus essence/rare drops.
-- **Labyrinth fixes**: expected tokens/boxes weighted by clear chance, equipment wisdom finally reaching lab XP, enhancing rooms carrying XP figures, Find Max unified with the recommendation search (real bounds, the 70% setting, no negative skips — the skip objective stays your set percent), effective combat level from the game's formula instead of a guess, recommend runs no longer wiping the sim cache, consistent knob persistence, and one denominator for measured vs forecast XP/hr.
-- Housekeeping: bundle duplication fixed and the CI size limit raised honestly; the bulk task reroll feature is now properly wired (off by default — it spends real rerolls).
+- **Cross-device sync**.
 
 ### Guild shrines, forecast calibration, roster intelligence, and storage that survives months
 
-- **Guild shrines everywhere they matter.** The combat and lab sim advisors can now rank "+1 shrine level" purchases (credits priced to gold, token counts shown but never priced — stated on each row), the sim editor gets an editable Guild Shrines section, skilling shrines join the skilling advisor (clear-rate and XP metrics), and the build score shows the gold value invested in shrines as its own line. All driven by the game's own guildBuffDetailMap at runtime — no hardcoded tables.
-- **Forecast calibration**: the script now grades its own profit predictions against what your runs actually produced, per skill, with a persistent-gap flag — the only way to catch silent balance changes. Ctrl+K → Calibration.
-- **Guild roster view**: contribution shares (7d/30d), gone-quiet flags measured against each member's own pace, and a guild-level projection, from data already recorded. Ctrl+K → Guild roster.
-- **Storage hardening**: quota monitoring with a one-time alert instead of silent data loss, debounced writes replacing per-message full-history rewrites, per-snapshot networth detail keys, year-plus-downsampling retention, and a streaming backup export that cannot OOM on big histories.
+- **Guild shrines everywhere they matter**.
 
 ### The simulator models more, and breaks less
 
-- **taskDamage now raises damage** in sims (deliberate divergence from reference sims — the stat is real; it already applied to thorns).
-- **Achievement combat buffs are simulated**, wired per player like guild buffs; empty data changes nothing.
-- **Unknown game mechanics no longer crash whole sims**: unknown ability effects, target types, styles, and damage types are skipped with a once-per-type warning, surfaced as a banner on results ("results may understate").
-- An item with 0 base stat but an enhancement bonus no longer loses the bonus.
-- **Healing/mana breakdown**: HP/MP gained and HP spent per source (food, regen, abilities), collapsed under the results — the engine always computed it; now you can see it.
-- **The Experience token is ranked in the skilling advisor** by XP/room per token, with XP/Room and Tokens/XP columns.
+- **taskDamage now raises damage**.
 
 ### Ctrl+K, named layouts, and the features finally talk to each other
 
-- **A command palette.** Ctrl+K (Cmd+K) opens a fuzzy-searchable launcher for every panel, every overlay row, every setting (deep-linked into the settings search), and every saved layout. Keyboard-first, never fires while you're typing in chat, and can be switched off (`Command palette` setting).
-- **Named overlay layouts.** Save the current overlay arrangement under a name, switch between layouts from the gear popover or the palette, delete with confirmation. Switching is undoable.
-- **Combat zones join the ranked action list.** All-zones sim results persist (with a gear fingerprint) and appear as rows in the Pinned page's Profit/hr / XP/hr table — marked with when they were simulated and flagged "gear changed since" when your gear no longer matches. "What should I be doing right now" finally has one answer covering skilling and combat.
-- **"Save for this" and "Watch" on advisor results.** Equipment rows in the upgrade advisor add straight to the savings-ETA targets or the watchlist; ability rows can be watched; the lab budget plan gains "Open all in marketplace" (one tab per planned purchase).
+- **A command palette**.
 
 ### Notifications, provenance, and selectors that survive game updates
 
-- **Opt-in notifications** (all off by default): consumables running low, a market listing filling, another character's queue going idle, plus the existing empty-queue alert — one service behind them all. Hidden tab → browser notification and a ❗ title flash; visible tab → toast; 10-minute cooldown per event so nothing nags. The browser-permission prompt now appears when you enable a notification, never at page load.
-- **Profit figures say where their prices came from**: pricing mode and price age on the profit line, and a ✱ marker wherever your own custom price override is feeding a number.
-- **Actual vs expected for gathering**: loot log stats now show expected run value beside the actual, phrased like the combat drop-luck line.
-- **Game-update armor**: the selectors that hardcoded build-hashed class names (guaranteed to break on any game rebuild) are prefix matches now, and a conservative four-anchor canary reports "selector missing — game update?" through the health system instead of features just silently vanishing.
-- The market history viewer joins the shared navy panel chrome and the z-index tiers.
+- **Opt-in notifications**.
 
 ### Panels remember where you put them, and stacking becomes predictable
 
-- **Both simulator panels persist their geometry.** The Lab Simulator forgot its position and size every reload (reposition it every session); the Combat Simulator remembered size but snapped back to the corner. Both now use the shared geometry store, and both drags run through the shared utility (touch support and the click-isn't-a-drag guard included). Deliberately not persisted: open state — a sim panel should not reopen itself on reload.
-- **Sorting the upgrade table no longer wipes your place.** Open detail rows and scroll position survive header sorts, column toggles, and score changes — the comparison you were building stays built.
-- **Every overlay joins the z-index tiers.** Twenty-odd hardcoded 10000–100002 values across settings dialogs, the sim editors, the networth chart stack, tea popups, task dialogs, and custom-tab menus now derive from the documented panel cap — so what covers what follows the rules, and nothing of ours paints over a game modal it shouldn't.
+- **Both simulator panels persist their geometry**.
 
 ### The product-review batch, wave one
 
-- **Back Up Everything / Restore Backup** (settings panel): one versioned JSON covering every data store — dungeon runs, networth history, loot logs, trade history, all of it — not just settings. Restore confirms what it is about to overwrite, restores store-by-store, and asks for a reload. Months of tracked history stop being one cleared browser away from gone.
-- **Setting presets**: Essentials / Combat / Market & trading / Everything on, offered once on a fresh install and available afterwards as buttons. Presets only touch on/off switches (never your numbers or colors), and Restore undoes a preset the same way it undoes All Off. A "changed only" filter beside the settings search shows just the settings you have moved off their defaults.
-- **The refresh notice stops crying wolf.** Settings that genuinely need a reload (seven, each verified to have no live-apply path) carry an amber "reload" tag; the blanket "some settings require a refresh" notice now points at exactly those.
-- **Failures get a face.** A dozen features now carry real health checks (anchor drawn but injection missing = broken; panel not open = no evidence), and when startup leaves something down you get one toast — "N features failed to start" — that opens a status view with a copyable diagnostic report (version, fork, browser, failures, startup timeline). Previously the health pass checked nothing and failures lived in the console.
-- **The savings ETA works for skillers.** "When can I afford it" used to need a live combat session; it now falls back to your networth trend (a robust 48-hour slope that a one-off sell-off cannot drag), and the panel says which estimate it is using.
-- **Labyrinth sim results survive reloads.** The combat clear-rate cache persists (7-day expiry, capped, invalidated by the same gear-change rules as the in-memory cache) and previews note the age of a cached figure.
-- **Dungeon tracker housekeeping**: the delete-all-history button no longer wears the close glyph (now 🗑 with a proper confirmation dialog instead of a frozen browser box), a "🔍 Filtered" chip on the header shows when saved filters are narrowing the run list (click to clear), and the Ctrl+Shift+D shortcut that hijacked a browser binding is replaced by a reset button in the header.
-- **What's-new dialogs** use the shared choice dialog (Escape closes, focus lands correctly) instead of a hand-rolled copy.
+- **Back Up Everything / Restore Backup**.
 
 ### The Combat Simulator panel catches up to the Lab Simulator
 
-- **Stop no longer throws away finished work.** Cancelling an upgrade analysis now renders every candidate that completed before you pressed Stop ("Analysis cancelled — showing N completed candidates"), matching what the Lab Simulator always did. The run you cancel is the one that took long enough to cancel — it is exactly the one whose partials you want.
-- **The progress bar and Stop button survive tab switches.** They lived inside the Results tab, so switching to Configure mid-run hid the only cancel control while the status line claimed "Select a zone and click Simulate." The progress area now sits outside the tabs, and the status line no longer overwrites itself while a sim or analysis is running.
-- **The ⚙ Columns menu is legible.** Five checkboxes all read "Gold/0.01%"; they now carry their metric (DPS / EXP / Profit / EPH / DPH) like the table header does.
-- **CSV export everywhere.** All Zones, Seek, the session comparison, and the Upgrade results each get the same Save-CSV control the Lab Simulator's tables have; exports carry raw numbers.
-- **A budget planner on the Upgrade tab.** Enter a gold budget (k/m/b shorthand works), pick the axis to optimize (profit/hr, DPS, or XP/hr), and get the best set of purchases within it — one per slot, superseded steps handled — using the same planning engine as the labyrinth budget planner.
+- **Stop no longer throws away finished work**.
 
 ### Sim accuracy: house rooms, guild buffs, and the Experience token
 
-Fixes from the combat-sim implementation review, all affecting numbers people act on:
-
-- **REVERTED (player-verified): house wisdom does apply to combat in the live game — the filter below was removed again.** ~~Skilling house rooms no longer inflate combat sims.~~ House-room action buffs are scoped per action type in the game data, but the engine applied every buff from every owned room — a Library's wisdom (the same `/buff_types/wisdom` string combat uses) quietly raised simulated combat XP and rare-find for anyone with developed non-combat housing. The engine now keeps only combat-scoped action buffs; genuinely global room buffs still apply. Tested.
-- **Party members keep their own guild's buffs.** Sims used to read guild combat buffs from the first player and hand them to the whole party, so teammates in a different (or no) guild simmed with yours. Each player's buffs now come from their own data. Solo sims were always correct.
-- **The labyrinth Experience token exists again.** It was dropped when loading a character into the sim, invisible in the sim editor, and its bonus computed as zero in the editor-driven skilling calculator. It now loads with the other four tokens, has its own editable row in the sim editor, and its XP effect flows through — visible in the skilling clear-rate table's new **XP/Room** column. (Ranking it in the upgrade advisor still needs an XP-based metric; the advisor ranks by clear rate, which the token does not move.)
-- **Peak enrage stack merges correctly** across multi-worker runs (maximum of chunks, not chunk 0's value).
+- **REVERTED (player-verified): house wisdom does apply to combat in the live game — the filter below was removed again**.
 
 ### Panels stay reachable and dialogs stay on top
 
-- **Confirmation dialogs can no longer hide behind panels.** Clicking panels raises them toward a z-index cap that sat above the choice dialog's fixed level, so after enough raises the delete-history and import confirmations could render invisibly behind the panel that opened them. The dialog now derives its level from the cap itself and always outranks every panel. Tested, including the exact raise-count scenario that used to fail.
-- **Shrinking the window no longer strands panels off-screen.** A debounced resize listener walks the open floating panels and nudges any that ended up out of bounds back into view; panels that still fit are untouched, and the saved position still wins in a larger window later.
-- **Lab Simulator polish:** the dense all-fights table keeps its column headers while you scroll (same sticky treatment the combat sim table documents), and a skilling-tab load failure now says so in the status line instead of leaving a silently blank tab.
+- **Confirmation dialogs can no longer hide behind panels**.
 
 ### Every setting now does what it says — a full audit of all 346
 
-Four auditors swept every setting in the schema against the code that consumes it. Most were clean; fourteen were not, and all fourteen are fixed:
-
-- **Five checkboxes did nothing at all.** `Queued actions: Show total time and completion time`, `Mana Tracker`, `Watchlist`, `Dungeon tracker HUD`, and `Dungeon tracker chat annotations` rendered and saved but were never consulted — features behind them ran unconditionally (the enable check fell through to "on" for any key missing from an internal legacy map). Each now actually gates its feature. If you had one of these unchecked expecting it to do something, it now does.
-- **Two features could never be turned off.** The task sorter and the drink timer had internal switches that were never exposed in the settings panel; they now appear there (`Task sorter`, `Drink timer`), both on by default so nothing changes until you say so.
-- **Two settings promised things the code never did**, and are removed rather than left lying: `Action panel: Total time…` (superseded by the live `Show speed/time section` and `Show level progress section` switches) and `Enhancement tooltips: Show detailed breakdown for consumed items` (the detail view it described was never ported).
-- **`Market: Listing price decimal precision` existed but nothing read it.** It now controls the decimals on the Top Order and Total columns of My Listings; its default is set to match what the display always did, so nothing shifts on update.
-- **Two Lab Simulator inputs disagreed with their settings**: the Hours field opened at 10 and the Find Max ≥ threshold at 95 when the settings (and every other consumer) say 3 and 70. They now honor the settings.
-- **`Lab Simulator: Critical Aura` sat in the Marketplace section** of the settings panel; it now lives with the other labyrinth settings under Combat Features.
-- The net worth master switch's label and help now say what was always true but undocumented: the inventory breakdown, history chart, and overlay rows all depend on it.
-
-One decision deliberately not made: a fully built but never-registered bulk task reroll feature reads a `taskBulkReroll` setting that doesn't exist. Because it automates spending task rerolls, it stays unwired pending an explicit call on whether to activate or delete it.
+- **Five checkboxes did nothing at all**.
 
 ### The Sell Queue is back
 
-Removed one commit ago on the belief it was dead; restored unchanged — module, feature registration, and the `sellQueue` setting. It keeps its Shift+RightClick entry point and gets no touch adaptation.
+- Removed one commit ago on the belief it was dead; restored unchanged — module, feature registration, and the `sellQueue` setting.
 
 ### The mobile sweep, part three: gestures that had no touch equivalent
 
-The Phase 2 items from the mobile audit — the ones where a mouse gesture had to be redesigned rather than translated:
-
-- **The Sell Queue feature is removed.** Its entry point was Shift+RightClick, and the feature no longer worked anyway. The `sellQueue` setting is gone from the schema; the marketplace tab utilities it shared with other features are untouched.
-- **Overlay tiles open with a single tap on touch.** Double-click stays on desktop, where it guards against accidental opens while reading; on a touchscreen that guard is unnecessary — a tap that follows a scroll gesture never fires a click — and double-tap fights the browser's tap-to-zoom. Taps while the layout is unlocked still arrange rather than open.
-- **Labyrinth tile previews exist on touch now.** Tapping a clear-rate badge shows the preview that hover shows on desktop, and the preview carries an "Open in sim →" button standing in for right-click; tapping anywhere else dismisses it. The "Right-click to open simulator" hint only renders for mouse users, where it is true.
-- **Mooket watchlist chips are workable by finger.** The reorder arrows grow from 8px to a tappable size on coarse pointers, and each chip gains a visible × for removal — explicitly, rather than a long-press that could silently delete a watch mid-scroll. Desktop keeps right-click removal and the compact arrows.
-
-Also: `CLAUDE.md` notes that Opus/Sonnet subagents may be used at the assistant's discretion for research and sweeps.
-
-The remaining mechanical fixes from the four-agent mobile audit, in one pass:
-
-- **Every remaining drag works by finger.** The thirteen panels still listening for mouse events — combat score abilities, queue monitor, networth exclusions, enhancement tracker, XP/h calculator, scroll simulator, mention popup, Mooket chart, labyrinth room logs, tea recommendation, bulk sell, and the overlay panel's dock bar, tile drag, and tile resize — now use pointer events with `touch-action: none` on their handles and release cleanly when a touch is interrupted. The Mooket panel drags by its toolbar on touch, so its chip row keeps scrolling.
-- **No panel opens wider than the screen.** First-open sizes are clamped (`min(Npx, 92vw)` wide, `min(Npx, 80vh)` tall) across fourteen panels — consumables, combat levels, treasure, the shared combat panels, combat sim, watchlist, house affordability, ability books, the overlay panel, mention popup, PFormance, enhancement tracker, custom-tabs modals, and the networth 24h breakdown, which also pulls itself back from the right edge instead of overflowing past it.
-- **The dungeon tracker fits a phone.** Its 480px minimum width — which pushed half the panel permanently off a 390px screen — is clamped to the viewport, a saved drag position from a wider window is pulled back on screen, and the content area scrolls within the window height instead of growing past it. The keys list also stops rebuilding its rows every second while collapsed.
-- **Hover-only controls exist on touch now.** Alchemy pin buttons and custom-tab section actions were revealed by hover, which a touchscreen does not have; on a coarse pointer they are always visible, and the pins grow to a 32px finger-sized target.
-- **Background tabs stop burning battery.** Nine once-a-second panel refreshers (portrait DPS, enhancement tracker, dungeon tracker, combat panels, combat levels, consumables, watchlist, ability books, house affordability) skip their tick while the tab is hidden. The action countdown throttles from every-frame to the ten redraws a second its tenths-of-a-second readout can actually show, and portrait DPS coalesces its observer-triggered redraws to one per frame.
-- **Worker pools are torn off with their features.** The EV, networth, and enhancement worker pools each had a terminate function nobody called; disabling those features now shuts the workers down instead of leaving them resident, and they recreate themselves on next use.
-- **Mobile mode caps simulation workers at two.** A phone reporting eight cores does not have eight cores of thermal headroom, and each worker holds its own clone of the game data. The all-zones simulator also now uses the same worker budget as every other sim path — it was reading raw `hardwareConcurrency` and spawning up to sixteen.
+- **The Sell Queue feature is removed**.
 
 ### Panels can be dragged with a finger
 
-Every drag and resize in the script listened for mouse events, and `mousedown` never fires on a touchscreen — every panel was simply immovable on a phone, the dungeon tracker included. All of it now runs on pointer events, which fire for mouse and finger alike: the shared drag/resize utility (Treasure, overlay panels, combat panels, consumables, combat level), the dungeon tracker, both simulator panels, PFormance, and the game-modal dragger. Each handle sets `touch-action: none`, without which the browser claims the gesture for scrolling after a few pixels, and an interrupted touch (a notification landing mid-drag) releases the panel instead of gluing it to a pointer that no longer exists.
-
-The Lab Simulator's default size is clamped to the viewport — `900px` is wider than every phone — and resize grips grow from 14px to 26px on touch devices, since a mouse-sized target is unhittable with a finger.
+- Every drag and resize in the script listened for mouse events, and `mousedown` never fires on a touchscreen — every panel was simply immovable on a phone, the dungeon tracker included.
 
 ### A mobile mode, auto-detected and overridable
 
-**Mobile mode** (General Settings): Auto-detect / On / Off. Auto keys on `pointer: coarse` — whether the primary pointer is a finger — rather than user-agent sniffing, which lies for compatibility. The override exists for the touchscreen laptop that wants desktop layouts, and for testing the mobile layout from a desk. Features consult it through one shared utility, so future mobile adjustments have a single switch to key on.
+- **Mobile mode**.
 
 ### Arriving from another build of Toolasha asks before anything new runs
 
-Someone switching to this fork for the first time — usually from upstream, whose settings live under the same storage keys — now gets a one-time choice before any feature initialises: **"Turn the new things on"** or **"Keep everything as it was"**. Keeping things as they were forces every fork-added on-by-default switch off and enables "New settings start turned off" for the future; either way, the full what's-new popup follows with a live switch per setting, so the wholesale choice can be refined item by item.
-
-What the fork _added_ is computed without upstream's cooperation: the settings store saves its whole map, so the keys of the saved settings are a fingerprint of whichever script wrote them, and the fork's additions are the schema entries missing from that map. A genuinely fresh install — no saved settings at all — sees no dialog. The choice is awaited before features initialise, because "keep everything as it was" is only true if the new features never run, not even once; closing the dialog without choosing counts as keeping things as they were.
+- Someone switching to this fork for the first time — usually from upstream, whose settings live under the same storage keys…
 
 ### A what's-new popup, once per update — with the new settings live in it
 
-After an update, a popup shows what changed and lists every setting that did not exist in the build you had before, **with its real control** — flip a switch there and it is flipped, no trip to the settings panel. The changelog it shows is embedded from this file at build time, so it cannot drift from what actually shipped.
-
-What counts as "new" is decided by the settings schema, not the version number: the script remembers which setting IDs you have already been shown and diffs them against the schema that just loaded. Version numbers only decide _when_ to speak — and they are compared as a **(fork, version) pair**, because this fork shares numbering with upstream and `2.88.0 → 2.88.0` across forks is different code wearing the same badge. A fork switch is announced as one ("Switched from Celasha/Toolasha 2.88.0") rather than hidden behind a matching number. Skip three versions and you see three versions' worth of new settings, since the diff is against what you were last shown, not against the previous release.
-
-The popup can be turned off — from the popup itself, which is where you are standing when you decide that, or in General Settings.
+- After an update, a popup shows what changed and lists every setting that did not exist in the build you had before, **with its real control**…
 
 ### New settings can be made to start off
 
-**"New settings start turned off"** (off by default): when an update introduces a new on-by-default switch, it is forced off before any feature reads it — so the new behaviour never runs, not even once, until you enable it. Numbers and dropdowns keep their defaults, since a value is not a feature switching itself on, and the policy never applies on a fresh install, where "everything is new" would mean turning the whole script off. Paired with the popup, an update becomes: nothing changed, and here is the list of what you could turn on.
+- **"New settings start turned off"**.
 
 ### Guild joins get a clickable name too
 
-"Player11 has joined the guild!" now gets the same clickable name as level-up announcements — clicking fills `/profile Player11` into the chat input. Leaving the guild is covered too, since it is the same sentence pointed the other way. The settings help text also stops using a real player's name as its example.
+- "Player11 has joined the guild!" now gets the same clickable name as level-up announcements — clicking fills `/profile Player11` into the chat input.
 
 ### The treasure popup sizes itself to the chest it is showing
 
-Opening the per-chest popup already measured its content and sized to fit — and then the remembered height from a manual resize was applied on top, clipping every chest with more rows than the one the resize happened on. The height now always fits the chest being shown (capped to the window); the width half of a resize is still remembered, and the height is re-fitted after the width lands since width changes how rows wrap.
+- Opening the per-chest popup already measured its content and sized to fit — and then the remembered height from a manual resize was applied on top…
 
 ### Moving the popup no longer flips "Popup follows the chest dialog"
 
-Dragging the popup used to silently pin it — one nudge and it stopped following the chest dialog, with nothing on screen saying why. A drag now just puts it where you dragged it; whether it follows the dialog is decided by the settings gear alone. The dragged position is still saved, so a popup that _is_ pinned keeps opening where it was last put.
+- Dragging the popup used to silently pin it — one nudge and it stopped following the chest dialog, with nothing on screen saying why.
 
 ### The shared seed pairs the baseline again — no more phantom DPS from skilling rooms
 
-Yesterday's change gave every batched candidate one worker while the baseline kept splitting its hours across four. The shared seed only cancels sampling noise while both runs draw the same random streams, and the chunking decides the streams — so the baseline and every candidate became independent samples, and every combat-inert candidate wore the same deterministic phantom delta against the baseline. The visible symptom: Laboratory and Observatory each "improving" DPS by an identical +0.06%.
-
-The baseline now runs one worker like the candidates, so a candidate that changes nothing combat-visible is bit-identical to the baseline and its DPS delta is exactly zero. What remains on a skilling room is real: Wisdom moves EXP/hr, and Rare Find moves profit slightly — rare drops sell, and that part is computed analytically, not sampled.
+- Yesterday's change gave every batched candidate one worker while the baseline kept splitting its hours across four.
 
 ### Six of the twelve "background" seconds were a timer, not work
 
-The new trace showed it plainly: the guild tracker's `save history` took 6013ms while loading the same data took 10ms. `storage.set` is debounced, and its promise resolves only when the 3-second timer fires — so awaiting two saves in series was six seconds of waiting for timers whose entire purpose is to postpone the write. The guild tracker and networth history now queue their saves without awaiting them; the actual writes are milliseconds, and the existing flush-on-unload covers a tab closing before the timer lands. This was also part of the original 13 seconds of blocking startup.
+- The new trace showed it plainly: the guild tracker's `save history` took 6013ms while loading the same data took 10ms.
 
 ### The thread-cap override renders now
 
-The new "Ignore the thread caps" setting declared itself as a type the settings panel doesn't know (`boolean` rather than `checkbox`) and drew as "Unknown type" instead of a switch.
+- The new "Ignore the thread caps" setting declared itself as a type the settings panel doesn't know (`boolean` rather than `checkbox`) and drew as "Unknown type" instead of a switch.
 
 ### Two features were holding the whole start up for thirteen seconds
 
-Features are initialised one after another and each one is awaited, so anything a feature does inside `initialize()` is time every feature behind it spends waiting. That is right for wiring up listeners. It is wrong for what these two were doing:
-
-- **Guild XP tracker (6.5s)** — read a guild's entire XP history out of IndexedDB, added a reading to every member's series and wrote the lot back.
-- **Networth (6.3s)** — priced every item in the inventory and loaded the history chart's snapshots.
-
-Neither result was on screen yet, and the hundred-odd features after them in the registry were queued behind both. They now register their listeners and hand the heavy part to a background pass that runs once the page has drawn. The guild tracker's update handlers wait on that pass before touching the history, so an update arriving mid-load cannot be overwritten by it.
+- **Guild XP tracker (6.5s)**.
 
 ### PFormance can now say _when_, not just _how long_
 
-A list of durations cannot show the two things that actually locate a slow start: when each feature began, and what the page was waiting for in between. Half of a slow start is usually waiting — for IndexedDB, for the game's own data — and waiting is in nobody's duration.
-
-- **A Startup section**, listing the marks on the way up (`script:start`, `storage:open`, `config:loaded`, `character:data`, `features:start`, `startup:complete`) with the moment each was reached, and calling out the longest stretches where nothing was being timed at all.
-- **Feature rows now carry a Started column**, so a six-second feature can be read as "and everything after it waited" rather than just "six seconds".
-- **Background work shows separately**, dimmed and marked `⤵`, because time spent after the page is usable is not time anybody waited.
-- **Slow features break into parts.** The two above are instrumented, so their rows now show _which call_ was the six seconds — `load history`, `save history`, `first calculation`, `history`.
+- **A Startup section**.
 
 ### Export the trace
 
-Two new buttons on the panel header: **⧉** copies the whole trace as text — environment, timeline, the gaps, the slowest features with their parts, and the busiest handlers — and **⭳** saves it as a text file plus a JSON one. Text because the point is that a person reads it, in a chat window, without tooling; JSON alongside for anyone who would rather sort it.
+- Two new buttons on the panel header: **⧉** copies the whole trace as text — environment, timeline, the gaps, the slowest features with their parts, and the busiest handlers…
 
 ### An option to take the thread setting literally
 
-Max threads is normally clamped to your core count, and an analysis runs at most six simulations at once — each holds its own copy of the game data, and the tab running the game needs a core too. **Combat Simulator: Ignore the thread caps** turns both clamps off for anyone who wants the number they typed.
+- Max threads is normally clamped to your core count, and an analysis runs at most six simulations at once…
 
 ### Fan out a single run, queue a batch — measured, not assumed
 
-The previous entry guessed that a long combat simulation, which already splits its hours across every worker, left no room to run candidates concurrently. That guess was wrong, and a benchmark with real workers and a game-data-sized payload says so plainly. On four workers, eight candidates:
-
-| Candidate length | One at a time, split 4 ways | One worker each, 4 at a time |
-| ---------------- | --------------------------- | ---------------------------- |
-| 100 h            | 3081 ms                     | **924 ms** (3.3× faster)     |
-| 200 h            | 3285 ms                     | **1304 ms** (2.5×)           |
-
-Both simulate the same total hours on the same cores, so it reads like a wash. It is not. Splitting makes every candidate pay the worker startup and the game-data clone **once per chunk** rather than once — 168 ms apiece here — and it cannot start the next candidate until its own slowest chunk lands. Raising the work per candidate narrows the gap without ever closing it: at five seconds of simulation per candidate, queueing was still 1.14× ahead.
-
-So a batch now gives each candidate **one worker** and keeps as many candidates in flight as the budget allows, at any Hours setting. A **lone** run still fans out, because there is no queue to keep the cores busy — one 600-hour simulation measured 1378 ms in a single worker against 648 ms split four ways.
+- The previous entry guessed that a long combat simulation, which already splits its hours across every worker, left no room to run candidates concurrently.
 
 ### Concurrency, with the sharp edges filed off
 
-Reviewing the concurrent fight sims turned up two things worth fixing and one that decides how far this can be taken.
-
-- **A failed simulation no longer leaves the queue running.** If one worker died, the other lanes kept pulling fights and starting simulations for an analysis whose result had already been thrown away. The first failure now stops the queue.
-- **The fan-out is capped at six**, whatever the thread setting says. Each simulation is a Worker holding its own structured clone of the entire game data, so the fleet costs memory in proportion to its width — and it is competing with the tab running the game. An analysis that takes every core makes the thing you are playing stutter.
-
-The single-monster **Upgrade** analysis in the Lab Simulator now runs its candidates concurrently as well; every candidate there is one worker against a shared baseline, so it had the same idle machine behind it.
-
-The **combat simulator's** upgrade analysis is a different case, and gets a different rule. A long run already splits itself across the whole worker budget, so four candidates at four workers apiece would be sixteen workers competing for four cores — slower than a queue. It now runs `workers ÷ workers-per-simulation` candidates at once: several when the Hours setting is low enough that each run is a single worker, and strictly one at a time when each already saturates the budget.
-
-That path also needed `runSimulation` to stop preempting. It cancels whatever is running when it starts — right for a Simulate button, fatal for a batch, where each candidate would kill the one before it. Batches now opt out; the button keeps its behaviour.
+- **A failed simulation no longer leaves the queue running**.
 
 ### The budget plans for a whole run, not for one fight
 
-A labyrinth run is ten fights in ten loadouts, and a purchase only helps the rooms it reaches — so "one upgrade per slot" was answering a question about a single fight. The plan now buys **two chestpieces where they serve different rooms**: one for the melee loadouts, one for the casters, which is two purchases doing two jobs.
-
-What it still refuses is two pieces for the _same_ rooms, where the second is gold spent on something that never gets worn. Every candidate is valued at what it adds **beyond what is already picked**: within a slot a room wears whichever picked piece is best for it, so a second piece is worth exactly the rooms it improves on the first — no more. Each row says how many rooms it is there for, and the saving beside it is its own marginal contribution rather than a total that counts shared rooms twice.
-
-If a cheap early pick is later beaten in every room it covered, it is taken back out of the plan and its gold returned to the budget. Skill levels, ability levels and house rooms stay one-per-group, because there is no second copy of those to wear somewhere else.
+- A labyrinth run is ten fights in ten loadouts, and a purchase only helps the rooms it reaches — so "one upgrade per slot" was answering a question about a single fight.
 
 ### Verify together says what it is wearing
 
-It always installed **every** pick that applies to a loadout, all at once — the tooltip just never said so. It now spells that out, and the result line reports how many were worn together. Where two picks share a slot, the room wears whichever is better _there_, which is exactly what the plan valued the second one at.
+- It always installed **every** pick that applies to a loadout, all at once — the tooltip just never said so.
 
 ### Fights simulate several at a time
 
-Every labyrinth fight is its own worker with its own seed and its own trial count, and they were being run one after another while the rest of the machine sat idle. The baseline pass and each candidate's pass now run up to `combatSim_maxThreads` (or core count) fights at once. Results are still collected in fight order, so every downstream figure is unchanged — this is wall-clock only.
+- Every labyrinth fight is its own worker with its own seed and its own trial count, and they were being run one after another while the rest of the machine sat idle.
 
 ### The simulator is about four times quicker at rebuilding stats, and fury feels it most
 
-Fury was the slowest damage type to simulate, and nothing about it was slow — it was just the only one that triggered a full stat rebuild on nearly every swing. Measured, one rebuild cost ~92 µs, and **72% of it was re-aggregating what the equipment contributes**: seventy stats, each an `Object.values` plus a filter, a map and a reduce over thirteen slots, arriving at numbers that cannot change during a fight. It is now ~23 µs.
-
-Three changes, none of which alters a single figure:
-
-- **Equipment totals are computed once** and reused until what is worn changes, keyed on the gear itself rather than on a flag somebody has to remember to clear.
-- **Buffs are indexed in one pass** per rebuild instead of thirty-five separate scans of the same object, each allocating two throwaway arrays.
-- **Buff copies use a spread instead of `structuredClone`** — every field of a buff is a primitive, so the copy is identical and about fifty times cheaper. This runs on every drink tick, every aura and every curse, so it was not only fury paying for it.
-
-Fury also stopped rewriting the event queue on every swing. A landed hit pushes the 15-second timer back, which used to mean scanning the queue, removing the old expiry and queuing a new one each time. One event now lives across the whole streak and re-arms itself if it fires while the timer has moved on.
-
-Checked by running the old and new stat rebuild side by side over 120 configurations — full gear, sparse gear, two-handers, no gear at all, with zero to thirty buffs, called repeatedly — and comparing every field. Identical throughout. The comparison also caught a real mistake while it was being written: two stats whose names end in digits were being dropped from the equipment list, which no unit test noticed.
+- **Equipment totals are computed once**.
 
 ### One purchase now counts for every loadout it would improve
 
-A tier upgrade is one item that every loadout can share, but which rooms it was credited for was decided by matching the **exact piece it replaces** — and each candidate carries whichever piece the first loadout to generate it happened to wear. Buy the Magician's Hat and the loadouts wearing some _other_ hat were never asked whether it would beat theirs: one price, a fraction of the benefit, and a `1 / 10` in the Rooms column that looked like a considered answer.
-
-A tier upgrade now applies wherever it would actually be an upgrade — same slot, not a step down in tier, not a style the loadout does not fight in, and not a damage piece dropped into a defensive slot. Enhancements are unchanged: enhancing your boots only helps loadouts wearing _those_ boots. An empty slot counts as improvable, except a hand a two-hander is already using, where installing a one-hander beside it would build a kit the game would never wear — trading between the two is what the cross-slot candidates are for. The per-room breakdown names what the piece displaces in each room, since with one purchase serving several loadouts that is no longer the same answer everywhere.
+- A tier upgrade is one item that every loadout can share, but which rooms it was credited for was decided by matching the **exact piece it replaces**…
 
 ### ΔAttempts says how much of itself is noise
 
-Every win rate is a proportion measured over a finite number of simulated attempts, and the headline figure sums ten of them through `1/p`, which magnifies the error badly at low win rates. A run of luck on one 30% room could read as a 1.6B item being worth buying, and nothing in the table said otherwise.
-
-Each row now carries `±` one standard error of its own change, and a change smaller than about twice that is drawn grey rather than green — it has not been measured. Both sims are counted in the error, which overstates it slightly since they share a seed and their errors partly cancel: colouring an honest row grey costs nothing, while the other way round recommends a purchase that did nothing.
+- Every win rate is a proportion measured over a finite number of simulated attempts, and the headline figure sums ten of them through `1/p`, which magnifies the error badly at low win rates.
 
 ### Budget mode: what to actually buy
 
-Type a budget — `500m`, `1.2b`, `750,000,000` — and the panel plans the best set that fits, rather than repeating that one item is the best single item. It walks the table in value order taking what fits, **one upgrade per slot** (two upgrades to the same boots are alternatives, and buying both spends the second one's gold on nothing), and skips anything inside the noise band above.
-
-Greedy rather than an exact knapsack, deliberately: the values are estimates with real error bars, an optimum computed from them is false precision, and a list you can read off the table beats one that is a percent better and inexplicable.
+- Type a budget — `500m`, `1.2b`, `750,000,000` — and the panel plans the best set that fits, rather than repeating that one item is the best single item.
 
 ### Verify together, because gains do not simply add up
 
-Every row is measured on its own against the same baseline. That is the right way to rank them and the wrong way to total them: two upgrades that both rescue the same failing room are each credited with rescuing it, and the sum promises a saving neither will deliver.
-
-**Verify together** runs one more pass with the whole plan installed at once — same seed, same trial counts, each piece going only where it belongs — and reports what the set is really worth beside what the parts promised, with the overlap as a percentage. If the difference is inside the noise it says so instead: the sum holds.
+- Every row is measured on its own against the same baseline.
 
 ### Per 1B is now Per 1M
 
-The value column reads in attempts saved per million coins. Small figures get more decimal places so a modest value does not print as `0.00`.
+- The value column reads in attempts saved per million coins.
 
 ### All Fights columns sort, and the panel opens big enough to read
 
-Every column in the All Fights table is a sort now — click Cost for the cheapest first, Rooms to see what reaches the whole run, Avg ΔWin for the biggest single-room gain. A second click reverses it; a new column starts at whichever end of it is the good news. Candidates with no coin price sort last either way rather than pretending to be free. The CSV export follows whatever order is on screen.
-
-The panel opens at 900×700 rather than 560×600, which is what a seven-column table needs, and it now has a grip in the **bottom-left** corner as well as the bottom-right. A panel sitting against the right edge of the screen could only be widened by pushing it further off-screen.
+- Every column in the All Fights table is a sort now — click Cost for the cheapest first, Rooms to see what reaches the whole run, Avg ΔWin for the biggest single-room gain.
 
 ### No more melee shields recommended to ranged builds
 
-Trading a two-hander for a main-hand plus off-hand offered two off-hands: the best one matching the weapon's style, and the highest-item-level one overall. That second rule was style-blind — "Cursed Bow → Sundering Crossbow + Knight's Aegis" put a melee shield on a ranged build because it had the higher item level, and every point of its melee accuracy is dead weight there.
-
-An off-hand carrying offensive stats for another style is no longer offered at all, whatever its item level says. One with no offensive stats — pure armour and evasion — is still offered to everybody, which is what made the rule worth having.
+- Trading a two-hander for a main-hand plus off-hand offered two off-hands: the best one matching the weapon's style, and the highest-item-level one overall.
 
 ### Cached labyrinth sims notice when you enhance something
 
-The fingerprint that decides whether a cached room sim is still good was taken over the stored loadout contents. For a loadout wearing the highest copy you own, enhancing an item changes what it puts on without changing anything stored — so the sim cached against the old level outlived the upgrade that made it wrong. The fingerprint now covers the levels actually worn.
+- The fingerprint that decides whether a cached room sim is still good was taken over the stored loadout contents.
 
 ### Loadouts are read at the enhancement levels they actually wear
 
-A loadout snapshot is parsed from the game's wearable hash, and that hash carries the enhancement level from the moment the loadout was last saved — for a loadout using "Use highest enhancement level" (the default) it is usually 0, because the level is not part of what the loadout stores. The game resolves it at equip time by putting on the best copy you own. Reading the stored number back reported a Refined Gatherer Cape at +0 while the character was standing there wearing it at +10, and every number computed from that loadout was wrong in the same direction.
-
-The old fallback only helped in one case: it filled a stored 0 from whatever was equipped **right now**, so the active loadout looked right and every other one read +0. A stale non-zero level — the loadout saved at +10, the cape enhanced to +14 since — was never corrected at all.
-
-Levels now come from the loadout's own rule: a loadout pinned to an exact enhancement wears exactly what it says, and every other loadout wears the highest copy you own, counting worn pieces as well as inventory. It never resolves _downward_ from a known level, so an inventory that has not loaded yet leaves a stored +10 alone rather than reporting +0.
-
-This runs through everything reading a loadout: the Skilling analysis and its per-skill loadouts, the labyrinth combat fights and All Fights, the Lab and Combat simulators' loadout dropdown, the combat score export and the character card.
+- A loadout snapshot is parsed from the game's wearable hash, and that hash carries the enhancement level from the moment the loadout was last saved…
 
 ### Export any of the three Lab Simulator analyses to CSV
 
-The Upgrade table, the All Fights table and the Skilling Upgrade table each carry an **Export CSV** button now. The file holds raw numbers rather than the panel's formatting — `1200000000` and `0.0032`, not `1.2B` and `+0.32%` — because a spreadsheet cannot sort or sum a display string, and a CSV of them is a screenshot with extra steps. Filenames carry the date and time, since exporting the same table before and after buying something is the normal case.
+- The Upgrade table, the All Fights table and the Skilling Upgrade table each carry an **Export CSV** button now.
 
 ### Skilling gear was being offered to the wrong skill, or to none at all
 
-Auditing the skilling side for the same fault as All Fights turned up four, three of them silent:
-
-- **Celestial tools and skill outfits were never offered at all.** The candidate builder wanted a bare skill name (`milking`) and the panel hands it a skill hrid (`/skills/milking`), so it looked for a stat called `/skills/milkingSpeed`, matched nothing, and missed the tool slot entirely. It returned an empty list without ever erroring — the feature has been inert since it shipped. It takes either form now.
-- **Skills with no assigned loadout got no gear candidates.** Only skills with a loadout were swept, which excludes exactly the skill most likely to still be missing its tool. Every labyrinth skill is swept now, falling back to the base kit.
-- **A piece bought for a skill with no loadout was applied nowhere** — simulated, ranked, and reported as a flat +0.00%. It now gets a kit of its own, copied from the one it was running, so the change lands on that skill and no other.
-- **Enhancing an item downgraded a second copy of it.** The application matched on item alone, so a "+3 → +5" candidate also rewrote a second copy worn at +7 in another skill's loadout down to +5 — an upgrade that made things worse. It matches the enhancement level too, and in single-skill mode leaves the other skills' kits alone.
+- **Celestial tools and skill outfits were never offered at all**.
 
 ### All Fights only sims a piece against the loadouts that wear it
 
-The all-fights analysis pooled candidates from every fight and then measured each of them against every fight. That is right for a combat level — one number the whole character carries into every room — and wrong for a piece of gear. A sword upgrade generated from the melee loadout, installed into the magic loadout, replaced the staff with a sword: not an upgrade, a costume change, and it came back as a large negative win-rate delta for a room nobody would ever have applied it to. Those deltas went straight into the aggregate the ranking is built on, so a good weapon could be pushed down the list by rooms it has nothing to do with.
-
-A candidate is now measured only against the fights it is about: gear where the loadout wears the piece it replaces, an ability level where the loadout actually casts that ability, a cross-slot swap where every piece it removes is worn, an enhancement only where the piece is not already at that level. Combat levels and house rooms still apply everywhere, because they are not held in a loadout. Rooms it does not reach keep their baseline exactly and are not simulated at all — which is both the honest answer and a good deal less work, so the runs are shorter as well.
-
-A new **Rooms** column says how many fights each upgrade reaches, the expanded breakdown marks the others "not in this loadout" rather than showing them as a flat 0.00%, and **Avg ΔWin** is now averaged over the rooms an upgrade reaches — a weapon that goes in two of eight loadouts is not a quarter as good at its job.
-
-Levelling an ability also now follows the ability rather than its slot number, so a loadout that keeps the same ability in a different slot is no longer given the upgrade in the wrong place.
+- The all-fights analysis pooled candidates from every fight and then measured each of them against every fight.
 
 ### Every sim says how long is left
 
-The progress bars said how far in a run was, which is not what anyone watching an upgrade analysis wants to know. They now also carry a time remaining — `47 / 132 · ~3m 15s left` — on every sim in both panels: the single labyrinth run and the max-level finder, the labyrinth upgrade, all-fights and skilling analyses, and the combat panel's single sim, all-zones, item seek and upgrade analysis.
-
-The estimate comes from the run's own pace, since nothing else could know it — the same analysis varies by an order of magnitude with the mode, the candidate count and the machine. It averages the whole run's average with the pace of the last few updates: the first is stable but slow to notice that a run has slowed down, the second notices at once and lurches on every expensive candidate. It stays quiet for the first second and the first couple of percent, where the only thing being measured is workers starting up, and it rounds — an estimate that ticks 2m14s, 2m11s, 2m16s claims a precision it does not have.
-
-Sims that stop early once the win rate is pinned down will beat their estimate, which is measured against the full hours.
+- The progress bars said how far in a run was, which is not what anyone watching an upgrade analysis wants to know.
 
 ### Ability upgrades are priced in books, and credit nothing back
 
-An expanded "Fireball Lv48 → Lv53" row read `Buy fireball +53 — no price found` and `Sell fireball +48 — 0 back`. Both were the equipment breakdown talking about something that is not equipment: it asked the market for a listing of the ability at an enhancement level, which does not exist for anything anyone can buy books for today, and then credited the resale of the level being left behind, which cannot happen — an ability is not an item and cannot be sold back.
-
-Ability rows now show the actual purchase — how many of which book, at what the book is going for — and say plainly that nothing is credited against it. A level-up is priced from where the ability is now; a swap is priced from scratch, including the one book that learns it. An ability whose book has no listing costs _unknown_ rather than zero, so it can no longer sit at the top of a list sorted by gold.
+- An expanded "Fireball Lv48 → Lv53" row read `Buy fireball +53 — no price found` and `Sell fireball +48 — 0 back`.
 
 ### Bulk Sell read the wrong field off the watchlist
 
-`hrid` is what a watchlist entry calls the item; `itemHrid` is what an inventory item calls it. Reading the latter off the former produced a set of `undefined`, an empty source, and "No tradable items in Watchlist" against a list of seventy. The test fixture invented its own shape, so it passed for the wrong reason — it uses the real one now.
+- `hrid` is what a watchlist entry calls the item; `itemHrid` is what an inventory item calls it.
 
 ### The Lab Simulator applies the default monster's loadout
 
-Picking a monster applies the labyrinth loadout assigned to it, but the monster the panel _opens_ on was never picked, so it opened on whatever gear happened to be equipped — the one case where the panel silently disagreed with every other monster in the list. It now applies it on the first open, and only then: reapplying on every open would throw away gear changed by hand since.
+- Picking a monster applies the labyrinth loadout assigned to it, but the monster the panel _opens_ on was never picked, so it opened on whatever gear happened to be equipped…
 
 ### Everything — All Fights, per gold
 
-A new Upgrade mode that walks **every labyrinth fight** at its skip level with its own assigned loadout, sims equipment, ability levels and combat levels against all of them, and ranks by what each buys per coin.
-
-The figure is **attempts saved across a whole run per billion coins**. Ranking by raw gain answers the wrong question: a cheap thing that helps a little routinely beats an expensive thing that helps a lot, and a list sorted by gain never says so. Candidates with no coin price — a combat level is paid for in experience — show a dash and are ranked after the priced ones by raw gain, because burying them under a zero would be worse than admitting they cannot be compared in coins.
-
-Candidates are the **union** across every fight's loadout rather than per-fight, since the question is what to buy once for all of them. Each is applied through the same code path the single-room analysis uses, so a candidate means the same thing in both views.
-
-It is a long run: roughly every fight × every candidate, against one room × every candidate for the ordinary mode. Progress and Stop work throughout.
+- A new Upgrade mode that walks **every labyrinth fight** at its skip level with its own assigned loadout, sims equipment, ability levels and combat levels against all of them…
 
 ### Skilling gear is offered at +5
 
-Nobody buys a celestial tool and leaves it at +0, so pricing and simulating one there answered a question nobody asked — and understated both its cost and its gain against every other candidate, which are judged at the level they would actually be run at. The same +5 the philosopher's accessories already use.
+- Nobody buys a celestial tool and leaves it at +0, so pricing and simulating one there answered a question nobody asked…
 
 ### The Upgrade tab's controls fit
 
-The shared select style is `flex: 1; min-width: 0`, which is right for a row of two and wrong for a row of seven: Player and Mode were squeezed down to a caret and nothing else. Those selects size to their content with a floor now, and the row wraps instead of crushing.
+- The shared select style is `flex: 1; min-width: 0`, which is right for a row of two and wrong for a row of seven: Player and Mode were squeezed down to a caret and nothing else.
 
 ### Skilling upgrades can suggest gear you do not own yet
 
-The skilling advisor could only ever offer to **enhance what was already on**, which meant it was silent about the two upgrades that actually move a labyrinth skilling room: a celestial tool, and the skill's own outfit. Neither is on the character, so neither was ever a candidate — an analysis that can only say "+1 on what you have" cannot say "buy the brush".
-
-Each slot now also offers the best piece you are not wearing, at +0, priced as a purchase net of selling what it replaces. One per slot rather than every tier of the same tool: the analysis simulates each candidate, and six tiers would spend the run proving the best one is the best one. Gear you cannot equip yet is left out, since it would sit at the top of a ranked list pushing down what you could buy today.
-
-**Each piece only counts for its own skill.** A Milking outfit does nothing in a Crafting room, and the analysis runs over every skill at once — a candidate with no skill attached is applied to all of them, so an outfit would appear to help rooms it cannot affect, which is the kind of wrong that reads as right. Every candidate carries the skill it belongs to and is installed in that skill's kit alone. Generic skilling gear, whose stats say `skillingSpeed` rather than `milkingSpeed`, is still offered to everybody — which is what generic means.
-
-What counts as "for this skill" comes from the stats rather than a list of names: an item is for Milking if its `noncombatStats` carry a milking stat. That is exactly what a celestial milking tool and a milking outfit have in common, and what a name list would need updating for on every content patch.
+- The skilling advisor could only ever offer to **enhance what was already on**, which meant it was silent about the two upgrades that actually move a labyrinth skilling room: a celestial…
 
 ### Bulk Sell never sells gear that is in a loadout
 
-A loadout is a claim on an item: you are still using it, just not right now, and you find out it is gone the next time you switch to that loadout. It goes through the same hold mechanism other scripts use, so it is counted and reported rather than silently filtered — the panel says how many were held back and why.
-
-Keyed by item **and** enhancement level, so a +10 in a loadout does not protect the +0 you keep for melting.
+- A loadout is a claim on an item: you are still using it, just not right now, and you find out it is gone the next time you switch to that loadout.
 
 ### And the Watchlist source leaves enhanced gear alone
 
-Matching every enhancement level of a tracked item is right for stacks and wrong for equipment: the list tracks "Gobo Defender", and a +10 was swept into the queue at six million coins. The Watchlist source now sells unenhanced items only, and says how many it skipped. A tab names the level it means, so a tab is still trusted to mean it.
+- Matching every enhancement level of a tracked item is right for stacks and wrong for equipment: the list tracks "Gobo Defender", and a +10 was swept into the queue at six million coins.
 
 ### And can weigh the Critical Aura as an upgrade
 
-A **Crit Aura** switch on the **Upgrade** tab adds the Critical Aura to the candidates, ranked beside your equipment and ability upgrades with its own cost, at the level you have learned it to.
-
-Not applied to the others, which is what the first version did — that measured every upgrade against a build already wearing it, and answered a different question. What you want to know is what the aura is worth _compared with_ what you were already considering.
-
-Already running it at that level is not offered, since there would be nothing to measure. Not learned it? It is offered at level 1, which is what buying the book would get you.
+- A **Crit Aura** switch on the **Upgrade** tab adds the Critical Aura to the candidates, ranked beside your equipment and ability upgrades with its own cost…
 
 ### The Watchlist's switches moved to its top bar, and there is one more
 
-Both are in the header now: **Dots on/off** and **Menu button on/off**. The Track-button switch used to be a tick box under the table, which on a list of seventy items is a row nobody scrolls to — and these are settings about the panel's reach into the rest of the game rather than about any one item on it.
-
-The new one turns off the dot the Watchlist puts on inventory tiles. Knowing what is on the list while you are looking at your inventory is the point of having one, but it is another mark on an already busy grid.
-
-Turning the dots off clears the ones already drawn rather than waiting for the game to rebuild each tile. Both switches write the same settings the settings page does — not copies, so the two can never disagree.
+- Both are in the header now: **Dots on/off** and **Menu button on/off**.
 
 ### Bulk Sell can sell the watchlist
 
-A **Watchlist** entry in the source picker, beside All items and your inventory tabs. It is offered only when the list has something in it, since an empty source would build an empty run and look like a broken button.
-
-Matched on the item rather than the item-at-a-level, unlike a tab: the watchlist tracks Cheese, not Cheese +3, so every level of a tracked item is in scope. Holds still apply — another script's claim on an item is not overruled by a source choosing it.
+- A **Watchlist** entry in the source picker, beside All items and your inventory tabs.
 
 ### And its rules are editable from its own panel
 
-A gear on the Bulk Sell panel opens the three insta-sell thresholds and the vendor switch. The moment you want to change one of these is the moment you are watching it make the wrong call, which is not the moment you want to be looking for the settings page.
-
-They write the settings the decision already reads, so this is the same switch rather than a copy — there is no third place for them to disagree in. Values are taken on change rather than on every keystroke, since half a typed number is also a number.
+- A gear on the Bulk Sell panel opens the three insta-sell thresholds and the vendor switch.
 
 ### The headline figures come with a scale
 
-Two numbers on the summary card had no way of being read.
-
-**"10.7 below expectation"** — a shortfall of ten is a shrug over one record and a finding over another, and the figure alone cannot say which. It now carries the spread: how far the total is allowed to wander if every prediction is right, `sqrt(Σ nᵢpᵢ(1−pᵢ))` over the judged rooms. Nearly all of that comes from the handful of genuinely uncertain rooms — a hundred near-certain ones contribute almost nothing — which is why the answer is not obvious by eye.
-
-**"11 rooms the record contradicts"** — a 95% interval is wrong one room in twenty by construction, so a record of two hundred rooms is _expected_ to contradict a few and the raw count is not news. It now says how many this particular record would flag anyway. Computed rather than assumed at one in twenty, because most rooms cannot be flagged at all: a room entered twice has an interval so wide nothing falls outside it, and counting it as a test would overstate the chance level several times over.
-
-On one real record: 5 rooms flagged against about 1.5 expected by chance, and a shortfall of 3 sd. Both were findings, and neither was legible before.
+- Two numbers on the summary card had no way of being read.
 
 ### Combat rooms can say something in ten fights
 
-Only skilling rooms recorded per-action data, so a combat room's entire signal was clears over attempts — which needs hundreds of fights to close an interval, and a room gives you ten. Half the room types in a record could therefore never say anything at all.
-
-Fight duration is recorded now, and set against the `avgFightSeconds` the sim already predicts. Nothing is conditioned on: the sim's figure averages its losses in, and so does this, so a model that has the fight itself wrong shows up in a handful of attempts rather than in a season of them. The spread is the sample's own, so two fights make a reading and not a verdict.
+- Only skilling rooms recorded per-action data, so a combat room's entire signal was clears over attempts — which needs hundreds of fights to close an interval, and a room gives you ten.
 
 ### Mark a point to measure from, instead of throwing the record away
 
-Reset was the only way to answer "has it been right _since_ I changed something?", and it answers it by destroying everything that came before.
-
-The summary card now offers a mark. The buckets are running totals with no timestamps in them, so a period cannot be filtered out of them — but it can be subtracted, because every figure in a bucket is a sum, and a baseline is a copy of the totals at the moment it was marked. Switch between the whole record and the period since, re-mark, or forget the mark; the record itself is untouched by all three.
-
-Reset is still there. It answers a different question — "throw this away" — and sometimes that is the one being asked.
-
-A record that has gone backwards since the mark, from an import or a wipe, treats the mark as stale for that room rather than subtracting a history it never had.
+- Reset was the only way to answer "has it been right _since_ I changed something?", and it answers it by destroying everything that came before.
 
 ### And each room type opens on a click
 
-Closed to start with. The record runs to a couple of hundred rooms and opening on all of them is a wall rather than a list — the pooled reading is the one to read first, and the levels are what you open when it says something. A caret and "click to open" say there is more behind it, and one room type opening leaves the others alone.
+- Closed to start with.
 
 ### The accuracy list is in the game's order
 
-It was sorted by how often each room happened to be fought, which is no order at all if you are looking for a particular room — and it put every pooled row first and every per-level row after them, reading as two unrelated lists.
-
-Each room type's pooled reading is now followed by its own levels, indented under it, with room types in the game's own order and levels ascending inside each. The order comes from the client data's `sortIndex` rather than a list here, so a monster added by an update lands where the game puts it; one the data has never heard of sorts last rather than first, which is where an undefined would otherwise put it.
+- It was sorted by how often each room happened to be fought, which is no order at all if you are looking for a particular room…
 
 ### Room timings are compared per clear, on both sides
 
-The calculator's `expectedSeconds` is **time per clear including the attempts you lose** — for a fight, the average fight length divided by the win rate; for a skilling room, the expected time of an attempt divided by the clear chance. A room you clear one visit in five is predicted to cost about five visits' worth of seconds.
-
-It was being compared against the mean duration of the visits that ended in a clear, which differs in two compounding ways: it threw away every second spent on visits that ended in defeat — the term the prediction is mostly made of — and then selected on the outcome, keeping the visits that happened to go well. The two errors do not cancel. They point opposite ways depending on how the room went, which is why one record showed first-try clears finishing in a third of the predicted time and multi-attempt rooms taking three times it, and neither figure meant anything.
-
-The measurement is now every second spent in the room, whatever came of the visit, over the clears those seconds bought. Nothing conditioned on, nothing discarded, so it estimates the same ratio the prediction is. The old per-visit figure is kept beside it — the gap between the two is the time a room has cost you in attempts that came to nothing.
-
-A room never cleared has no figure rather than a zero: what a clear costs when you have not had one is unknown, and the calculator's own prediction for such a room is infinite.
+- The calculator's `expectedSeconds` is **time per clear including the attempts you lose** — for a fight, the average fight length divided by the win rate; for a skilling room…
 
 ### The double rate was being divided by the wrong thing
 
-A double rolls on a **successful** action; the record counted them against every action. Every skilling room therefore reported about a quarter of the rate the server states — Crafting Lv.202 read "18.0% calc, 18.0% server, 2.3% seen" — which looked like the loudest fault in the whole record and was a denominator.
-
-Over the twenty largest samples in one real record, 1,438 actions: 102.7 doubles observed against 385.6 expected per action (−18.6 sd) and 100.7 expected per success (+0.1 sd). The rate was never wrong.
+- A double rolls on a **successful** action; the record counted them against every action.
 
 ### And the success rate is now measured per room rather than per action
 
-A skilling room ends the moment you clear it. A lucky room therefore contributes four actions and an unlucky one contributes the full two minutes of them, so pooling every action across rooms builds a sample made mostly of the rooms that went badly — and reads several points below the rate the server states for no reason but the stopping rule. In that same record it came out 3.6 sd low, which is exactly the sort of thing that starts a hunt for a bug that is not there.
-
-Each room's own rate is now recorded, and the reading is the mean across rooms with an interval taken from how much the rooms actually differed. The pooled figure is kept beside it, because the gap between the two _is_ the size of the effect. Rooms that happen to agree exactly do not pin the rate to a point: the interval never narrows past the ordinary binomial error over the same draws.
-
-Records written before this hold no per-room sums, so they fall back to the pooled figure and say so.
+- A skilling room ends the moment you clear it.
 
 ### The sim accuracy record can leave the browser
 
-An **Export** button on the Sim accuracy tab copies the whole record as text. The record is the only thing that can say whether the model is wrong, and until now it sat in one browser's IndexedDB where nobody could look at it.
-
-Text rather than JSON, because the point of handing it over is that a person reads it. Three tables: pooled by room type, per room and level, and the per-action rates. Counts as well as rates — the rates can be recomputed from the counts and not the other way round, and anybody checking the arithmetic needs the counts.
+- An **Export** button on the Sim accuracy tab copies the whole record as text.
 
 ### And a reading per room type, across every level of it
 
-A per-level row is the honest unit — Crafting at 190 and Crafting at 202 are different fights — but it is also a small sample, and small samples say nothing. Twenty rooms of Crafting spread over six levels can be six rows of "consistent" while the sim is ten points high on every one of them, because no single level ever gathers enough fights to prove it.
-
-Each room type now gets a pooled row above the per-level ones: what the sim owed you over everything you have ever done in that kind of room, against what you got. The pooled prediction is weighted by how often each level was fought, so it is "expected clears ÷ attempts" rather than an average of rates — a level fought a hundred times says more about the total than one fought twice.
+- A per-level row is the honest unit — Crafting at 190 and Crafting at 202 are different fights — but it is also a small sample, and small samples say nothing.
 
 ### Consumables are coloured against the target you set
 
-A consumable lasting two days is fine if you asked for one and is the thing to go and fix if you asked for three. The tile and the panel both used a fixed one-hour threshold, so with "3 days" chosen the tile called Dragon Fruit Yogurt green while the panel's own Buy column said to buy 1.15K of it — two halves of one feature disagreeing.
-
-Both now colour against the target. The setting moved into `utils/consumable-target.js` and is declared shared in the bundler config, because the panel that sets it and the tile that reads it are in different bundles and two copies would mean the tile never hearing about a change.
+- A consumable lasting two days is fine if you asked for one and is the thing to go and fix if you asked for three.
 
 ### Swept the rest of the panels for the same start-up race
 
-Three separate bugs this week were one mistake: reading stored state at module scope, which runs long before IndexedDB is open, and getting the default back with no way to tell that from nothing having been stored.
-
-- **The Houses panel** read which rooms you had switched off that way, so every room counted towards "affordable" until something happened to redraw it — with a "Database not available" line in the console saying exactly that. It waits now, and redraws when the answer lands.
-- **`loadWhenReady`**, the shared helper for this, polled for about five seconds guessing when the database had opened, because a shut database and an empty one look the same from outside. Storage now says when it has finished starting up, so there is one thing to wait on. That covers its four users: the combat-level panel's target selection, the charm panel's folds, the watchlist, and the equipment-savings list.
-
-The rest came out clean. The overlay reads its layout inside `initialize()`, which runs after storage is up; the DPs, IHurt and Profit panels rebuild their header controls on every redraw, so late state catches up on its own; and the panels built on the shared shell redraw their whole body every few seconds and keep no settings in their headers.
+- **The Houses panel**.
 
 ### The chest popup says which side of the book it is pricing at
 
-TReasure always values loot at bid and labels the figure "bid". Toolasha values it through the profit pricing mode instead, which for most settings means ask — so the same chest reads 45.44K here and 43.1K there, and neither is wrong. Without the word there was no way to tell that apart from one of them being broken. The basis is now printed beside the figure, with the setting that controls it in the tooltip.
+- TReasure always values loot at bid and labels the figure "bid".
 
 ### The target the Consumables panel was saving never came back
 
-The write was fine; the read was not. It happens at module scope, long before the database is open, so it came back with the default and there was no way to tell that from nothing having been stored — the same mistimed-read that stopped panels reopening. It waits for storage now.
+- The write was fine; the read was not.
 
 ### The Treasure header caught up with its settings
 
-The header is built once, and a panel reopened at start-up builds it before the settings arrive — so it sat there claiming "Token value / Cowbells counted / Luck" whatever you had actually chosen, until it was closed and opened again. All three controls are refreshed on every redraw, and the sort picker is left alone while the pointer is in it.
+- The header is built once, and a panel reopened at start-up builds it before the settings arrive — so it sat there claiming "Token value / Cowbells counted / Luck" whatever you had actually…
 
 ### The Consumables panel remembers itself, and remembers the target
 
-It reopens if the page was left with it up, like the rest of them — and it keeps the duration you picked. That one matters more than a preference usually does: every figure in the panel is measured against it, so a panel that forgets shows you a day's shortfall when you asked for a week's, and looks perfectly right doing it.
-
-Going to the marketplace does not count as closing it. The panel gets out of the way because the marketplace opens underneath it; you went shopping, you did not put the panel away.
+- It reopens if the page was left with it up, like the rest of them — and it keeps the duration you picked.
 
 ### The cost lines on the consumables tile are left-aligned
 
-The tile centres its text. A flex line is unaffected by that and a plain `div` is not, so the two cost lines sat in the middle while everything above them started at the edge.
+- The tile centres its text.
 
 ### The Treasure tile shows a chest
 
-The overlay's generic chest glyph, replaced with the Large Treasure Chest's own art. The tile is about chests specifically, and item art says so at a glance where a symbol has to be learned first.
+- The overlay's generic chest glyph, replaced with the Large Treasure Chest's own art.
 
 ### The Treasure panel had a second thing to wait for
 
-Its chest list arrives with the game's data; its **ledger** comes from storage, and that lands later still. A panel reopened at start-up drew the whole chest list against an empty ledger — "Nothing opened yet", against a real history — until it was closed and opened again. It redraws when the ledger arrives.
+- Its chest list arrives with the game's data; its **ledger** comes from storage, and that lands later still.
 
 ### The Treasure panel stopped waiting forever
 
-A panel reopened at start-up is drawn before the game has sent anything, so it drew "Waiting for the game to send its chest data…" — and nothing redrew it. The message stayed up for the rest of the session, which reads as a panel that has stopped working rather than one that is early. It now looks again until there is something to draw.
+- A panel reopened at start-up is drawn before the game has sent anything, so it drew "Waiting for the game to send its chest data…" — and nothing redrew it.
 
 ### Chest contents keep their order
 
-The item rows inside a chest were ordered by what each was worth, which meant they rearranged whenever a price moved and whenever the cape or cowbell valuation was changed — a list you had learned the shape of reordering itself for reasons that had nothing to do with the chest.
-
-They are now ordered by how much of each the chest owes you, commonest first, and by nothing else. A drop table does not change, so neither does the order. This is unrelated to the sort picker, which only ever ordered the chests in the main list, and it is also the order TReasure lists them in.
+- The item rows inside a chest were ordered by what each was worth, which meant they rearranged whenever a price moved and whenever the cape or cowbell valuation was changed…
 
 ### The chest popup closes on a click away again
 
-Pinning it used to switch that off, on the reasoning that a moved popup wants to stay. But pinning says where the popup opens, not that it should stay on screen — and while a single click on its header was enough to pin it, that quietly took the dismissal away too.
+- Pinning it used to switch that off, on the reasoning that a moved popup wants to stay.
 
 ### The consumables tile reads like CRack's
 
-- **The item is named.** "3.17K remaining" never said _which_ consumable, which is the one thing the tile is for — you cannot top up a number.
-- **The count is exact.** It is a stock figure, not a sum of money: `3,170`, not `3.17K`.
-- **Count, icon, name, in that order**, with the count bold and coloured by how soon it runs out.
-- **`Total Cost/Day:` gets its own line** above the two sides of the book. On a tile this narrow they never fitted on one line anyway; they ran together instead of admitting it.
+- **The item is named**.
 
 ### The marketplace badge is the game's badge, with our number in it
 
-Two things were wrong, and the first explains the second.
-
-The selector matched `NavigationBar_badge` as a _prefix_, so it also caught the element sitting beside the badge in the same sidebar item — the count was written into both, and the badge read "2 2". It now matches `NavigationBar_badge__`, with the two underscores that begin the CSS-module hash, which is the whole class name rather than a prefix of it.
-
-And the count no longer comes through CSS at all. A number printed in a pseudo-element is a bare digit sitting where a styled badge should be; blanking the real text to make room for it meant hiding whatever was carrying the badge's shape and colour. The digits are rewritten in place instead, and put back whenever React writes its own over them — so the badge stays exactly the badge, and only the number differs. Hiding it outright is still a stylesheet, which is the one case where a rule the game does not know about is the right tool.
+- Two things were wrong, and the first explains the second.
 
 ### A click is not a drag
 
-Dragging a panel by its header fires an "it was moved" callback on release — and it fired on a press that never moved, which for most panels means saving the position it already had, and for the Treasure popup means being told to stay put. So **one click on the popup's header silently pinned it**, and it stopped appearing beside the chest dialog with nothing to say why.
-
-The other half of that: the popup asked for its remembered position back on every opening whether or not it was pinned. A stale position was reapplied each time, and if the dialog was not found within the retries the popup simply stayed there. It now restores its size only unless it has been pinned.
+- Dragging a panel by its header fires an "it was moved" callback on release — and it fired on a press that never moved, which for most panels means saving the position it already had…
 
 ### The unpin button no longer disappears when you press it
 
-It was only drawn while the popup was pinned, so pressing it removed the button — which reads as the button breaking rather than as the setting changing. It is always there now, saying which way it is set: _Popup follows the chest dialog_ or _Popup stays where you put it_. Unpinning forgets where the popup was put and keeps how big it was, since only the position is what pinning is about.
+- It was only drawn while the popup was pinned, so pressing it removed the button — which reads as the button breaking rather than as the setting changing.
 
 ### Remembered panels actually reopen
 
-They recorded being open and then never came back, which is the more annoying half of the bug. Two things were wrong, and both are about _when_ a panel asks:
-
-- **The database was not open yet.** Panels ask at module scope, which runs long before storage is initialised, so the read came back with the default — indistinguishable from having been closed. The storage module now hands out a promise that resolves once it has finished starting up, and the geometry store waits on it before its first read.
-- **There was nothing to draw into.** The script runs at `document-start`, so at that moment there is no `<body>` to append a panel to. Reopening now waits for one.
-
-Both waits live in a single `reopenIfLeftOpen`, which is what each panel calls, so there is one place for this rather than five.
+- **The database was not open yet**.
 
 ### The treasure popup resizes in every direction again
 
-It was capped with `max-height`, and the resize grip writes `height` — so dragging the corner downwards changed a number nothing rendered, and the popup could be made wider but never taller. It is measured once when it opens and given a plain height instead, which caps it just the same and leaves `height` as the only thing deciding how tall it is.
+- It was capped with `max-height`, and the resize grip writes `height` — so dragging the corner downwards changed a number nothing rendered, and the popup could be made wider but never taller.
 
 ### Sort the chest list
 
-The Treasure panel lists every chest in the game, ordered by how far each sits from expectation — which is the right answer to "which one let me down" and the worst possible one for "where is the chest I am looking for". A picker in the header offers luck, name, most opened, chest value, and coins up or down, and remembers which you chose.
-
-It is a `<select>` in the header rather than above the list because the header is built once; a control rebuilt by the panel's redraw would shut its own dropdown under the pointer.
+- The Treasure panel lists every chest in the game, ordered by how far each sits from expectation — which is the right answer to "which one let me down" and the worst possible one for "where…
 
 ### The marketplace badge counts the finished ones
 
-It said 2 for a filled sell order sitting beside a buy order that had taken 130 of 719 — and collecting those 130 does nothing except silence it until the next fill. It says 1.
-
-The number has to come through CSS for the same reason the hiding did: React owns that node and rewrites its text on every update, so anything written into it is gone within the second. A generated rule blanks the real text and prints ours in a pseudo-element, which survives every re-render because the game does not know the rule is there. None finished still hides the badge outright rather than showing a zero.
+- It said 2 for a filled sell order sitting beside a buy order that had taken 130 of 719 — and collecting those 130 does nothing except silence it until the next fill.
 
 ### Panels remember whether they were open
 
-Every panel built from MCS — DPs, IHurt, Profit, Party Luck, Party Loot, and the rest — reopens itself if the page was left with it up. A panel that has to be found and reopened after every refresh is a panel that gets opened once and then not bothered with.
-
-Stored beside the geometry, because it is the same question: where a panel was, and whether it was anywhere at all. The read is fired off at module scope rather than awaited, so a panel appears a moment after the page — which is what a remembered panel looks like anyway.
-
-The Houses and Treasure panels roll their own show/hide rather than using either shared base, so they were brought in by hand. Two details there worth naming:
-
-- **A feature being disabled does not count as closing a panel.** The Treasure panel's teardown and its close button used the same method; only the button should stop it reopening, so they are now separate.
-- **The chest popup is deliberately not restored.** It is a reaction to opening something, and a popup about a chest opened yesterday reappearing on load would be a stale answer to a question nobody asked.
+- **A feature being disabled does not count as closing a panel**.
 
 ### The treasure popup, closer to TReasure
 
-- **Rows that say nothing are gone.** A chest's drop table runs to thirty-odd entries, most of them equipment at rates so long that a lifetime of opening owes you a hundredth of one. Listed, they read "0, 0.00 expected, −100%" — three figures agreeing that nothing happened, pushing the rows that did happen off the bottom. Anything that actually dropped is kept however unlikely it was, because that is exactly the row worth seeing.
-- **Smaller**, and capped against the window rather than left to grow past the bottom of the screen.
-- **Clicking away closes it**, as the game's own loot dialog does. Armed a tick late so the click that opened it does not immediately close it, and skipped once the popup has been dragged — moving it is how you say "stay".
-- **Opening the full stats no longer closes it.** It is the thing you were reading when you decided you wanted more; taking it away answers the question by removing it.
-- **An unpriced drop gets a real percentage now.** It used to read "no price" where the verdict goes. But an item nothing will price still has a drop rate, and "four when you were owed two and a quarter" is the same fact whether or not the market has an opinion — it is only the _total_ it cannot join, which the row still says.
+- **Rows that say nothing are gone**.
 
 ### Portrait meters read like DPs, and the monsters get one too
 
-- **Two lines per character**, this fight above the run: `1,052 DPS 1.9k cur` over `374 DPS 88.5k total`. The order is the point — the fight in front of you is the one you can still change, and the run is what you read it against.
-- **The rate in full, the damage abbreviated.** They are read differently: a rate is compared against another rate, where `1,052` against `1.1K` _is_ the comparison, while a running total only has to convey a size.
-- **A rate under every monster**, showing how fast that one is coming down.
-- **Monsters are joined by slot, players by name** — opposite rules, for opposite reasons. Two Veyes side by side are two different fights that their names cannot tell apart, so a name-keyed rate would appear on both tiles and be true of neither. A slot is stable for the length of a battle, which is exactly how long the figure lives. Players keep the name join, because a slot stops meaning the same person the moment somebody leaves the party.
-- **A per-fight tally now sits beside the per-run one** in the damage tracker, cleared when the next battle starts. The run's tally keys enemies by name, which is right for a run and cannot answer "which of these two", so the fight keeps its own.
+- **Two lines per character**.
 
 ### No arrow on the time-to-level tile
 
-`Defense → 130:` ellipsised to `Defense → 1…` and lost the very number the arrow was introducing. The tile has no width to spare, so the arrow is gone in every case and the label is simply the level being worked towards. The starting level and where the target came from are in the tooltip.
+- `Defense → 130:` ellipsised to `Defense → 1…` and lost the very number the arrow was introducing.
 
 ### Portrait DPS was drawing, and being cropped away
 
-The meter was positioned at `top: -14px`, outside the portrait tile's own box. The battle panel clips its children, so it was present in the DOM and invisible. It sits **in the flow** of the tile now, as MCS's does — the tile simply gets taller — and is re-seated on every draw, since React rebuilding the tile puts its children back in whatever order it likes.
+- The meter was positioned at `top: -14px`, outside the portrait tile's own box.
 
 ### Refinement chests are not completions
 
-A refinement chest takes a chest key to open like any other, and **no entry key**, because it is not what a completion pays. The dungeon key costing already had this right; the chest-luck reading did not — it took the guaranteed entries from the zone's reward table, and a refinement chest listed there would have counted as a completion that never happened, inflating both the chest tally and what it was owed. Excluded by name, so a refinement chest for a dungeon added later needs no list edit.
+- A refinement chest takes a chest key to open like any other, and **no entry key**, because it is not what a completion pays.
 
 ### Why the marketplace badge is hidden, on demand
 
-`Toolasha.Debug.marketBadge()` in the console reports what the filter can see: whether the setting is on, how many listings it found and from where, which of them count as finished, and whether the hiding style is actually in the document. The feature's only output is the _absence_ of a badge, which looks identical to the setting being off, to the game not badging at all, and to every listing genuinely still working — there was no way to tell those apart from the outside.
-
-It also now falls back to the last listing payload it saw when the character's book comes back empty, rather than treating an empty book as "nothing is finished".
+- `Toolasha.Debug.marketBadge()` in the console reports what the filter can see: whether the setting is on, how many listings it found and from where, which of them count as finished…
 
 ### Audited the rest of the codebase for the same start-up bug
 
-Sixteen features subscribe to `character_initialized`, and every one of them registers that listener from inside the handler for that same event — so none of them will ever receive its first firing.
-
-Only the marketplace badge filter was actually broken by it. The rest either seed themselves at start-up (`remaining-xp`, `xp-tracker`, `guild-xp-tracker`, `collection-filters`, `queue-monitor-ui`, `task-reroll-tracker`), are explicitly only interested in character _switches_ — which do fire the event again (`action-panel-sort`) — or are driven by a DOM observer and do not depend on the event at all (`market-order-totals`, `estimated-listing-age`, `listing-price-display`, `action-time-display`, `settings-ui`, `task-profit-display`, `expected-value-calculator`).
-
-One stale comment in `loadout-snapshot` claims its handler corrects a character id that was null when storage was first read. It cannot — the event has already gone — but the id is not null at that point either, so nothing is wrong beyond the comment.
+- Sixteen features subscribe to `character_initialized`, and every one of them registers that listener from inside the handler for that same event…
 
 ### Fixed: the marketplace badge stayed down even for finished orders
 
-The filter that quietens the sidebar badge for still-working orders was quietening everything, including a fully filled order with coins waiting to be collected.
-
-- **It was subscribing to an event that had already fired.** Features are initialized from _inside_ the `character_initialized` handler, so a feature that registers its own listener for that event never receives it. The filter hid the badge on start-up and then waited to be told otherwise — and the telling had already happened. A filled order that survived a page reload stayed unbadged until some unrelated listing happened to change and trigger a `market_listings_updated`.
-- **It now reads what is already known** at start-up instead of waiting.
-- **And reads it from the data manager** rather than from a copy it accumulated itself. The data manager already merges every listing update into the character's book; a private copy could only drift from it, and would keep badging for a listing that had left the book entirely — the opposite failure, and one nobody would have connected to this.
-- **The rule about which orders count has not changed.** A partly filled order that is still working is still not a reason to badge the sidebar.
+- **It was subscribing to an event that had already fired**.
 
 ### Fixed: the time-to-level tile named the level you already have
 
-It read "Melee 135" beside a time, for a level long since earned. The number is now the level being worked _towards_, in both the automatic case and a chosen target one level ahead.
-
-The old reasoning was that "135 → 136" gains an arrow saying nothing, so the arrow was dropped and the current level kept — which quietly swapped the number for the wrong one. The duration is the giveaway: it is time until the number, so the number has to be the one you do not have yet. A target further off still gets its arrow, because "→ 140" and "136" are different claims.
+- It read "Melee 135" beside a time, for a level long since earned.
 
 ### Past sessions in the loot panel
 
-FLoot's top bar, on our drop list. The panel answered "how is this run going"; the question people come back with is "what did last night earn", and that needs the run to be choosable.
-
-- **A picker across the top**: the live run, every stored run by start time and length, and a combined view of the lot.
-- **A run is archived when a different one starts**, because that is the first moment it is knowable to be over — nothing on the wire announces an ending, and a timer would be guessing. So the newest finished run appears as the next one begins, and the run in progress is never in the list. It does not need to be: it is the live session.
-- **A session is its roster and its start time together**, the same identity the damage tally uses. Twenty are kept.
-- **The combined view merges on the item, not on the game's slot key.** Two sessions number their loot slots independently, so merging on the raw key would put the same item in two rows — the same trap the per-player item table fell into once. Characters are followed by name for the same reason: position means nothing between runs.
-- **The session timer / EPH tile opens it** on a double-click, since what a session timer raises is what the session produced. Total Profit still opens it too.
-- **A chosen run that has since fallen off the list falls back to live**, rather than leaving the panel pointing at nothing.
+- **A picker across the top**.
 
 ### The game's own artwork, where the game has some
 
-Emoji beside the game's UI look pasted on: an emoji is whatever font the browser picked, at whatever weight, in whatever palette its designer chose. The game's coin is _the_ coin.
-
-- **Any sprite sheet, not just the item one.** `spriteUrl(sheet)` finds `skills`, `actions` and `combat_monsters` the same way the item sheet was already found — off an icon the game has drawn, because the URL carries a build hash that changes every update. Row segments take a `sheet` alongside `icon`.
-- **`glyph(name)` returns artwork or text**, deciding for itself. Coin, chests, books, food, mana, damage dealt and taken have sprites; a bid order and a market trend are concepts rather than objects, so they stay emoji — which is what OPanel does with them too.
-- **It falls back rather than failing.** The sheet can only be found once the game has drawn from it, so a glyph asked for too early is the emoji, and the row is never an empty box.
+- **Any sprite sheet, not just the item one**.
 
 ### The houses grid reads like JHouse
 
-- **Every room carries the skill it boosts**, from the game's skill sheet — a milk bottle says Dairy Barn before the words have been read, which is what makes a grid of seventeen scannable. The room-to-skill map is JHouse's; a room nobody has mapped falls back to its own name, finds no sprite and draws a spacer, so an added room is a missing icon rather than somebody else's.
-- **Materials are priced at both sides of the book**, as JHouse shows them, and they are genuinely different answers: ask is finishing the level today, bid is waiting for your own buy orders to fill. On a level wanting six thousand milk the gap between them is the decision.
-- **Coins in a material list count at face value** rather than being looked up — a coin has no bid and no ask, and dropping it would understate the level by exactly the coin part.
+- **Every room carries the skill it boosts**.
 
 ### Damage on the battle portraits
 
-Each character's DPS and total damage, drawn on their own portrait. The DPS tile already ranks the party, and a ranked list is the wrong shape for the question asked mid-fight, which is "is _that_ one pulling their weight" while looking straight at them.
-
-- **Matched by name, not by position.** The obvious join is index — the payload's player 0 is the leftmost portrait — and it is exactly the join that produced the bug fixed above. A portrait whose name is not in the tally gets nothing rather than getting somebody else's damage.
-- **Off by default**, since the portraits already carry health, mana and an ability bar. Settings → Combat, with a choice of above or below the portrait.
-- **The rate reads first**, because it is the comparable figure: total damage rewards whoever has been in the fight longest, which after a death is not a measure of anything. Too early for a rate shows a dash rather than a zero.
-- **This is the most fragile thing in the script**, and worth saying so: it reaches into the game's own DOM rather than into the payload, and the class names carry a build hash that changes with every game update. Every selector is a prefix match, the meters are re-attached on a `MutationObserver` because the game rebuilds the panel from under them, and the failure mode is drawing nothing.
+- **Matched by name, not by position**.
 
 ### Fixed: a party you left stayed in the DPS table, and your name appeared twice
 
-Both symptoms, one cause. The damage tally is keyed by **battle slot**, which is a position in this fight rather than an identity — fine while the fight keeps its shape, wrong the moment it does not.
-
-- **Leave a party of five and slots 1 to 4 stop being anybody**, but they were never cleared, so four people who had gone kept their rows.
-- **And slot 0 stops being who it was.** Alone you are slot 0; in that party you were slot 3. Both rows survived, both labelled with your name, which is the duplicate in the screenshot.
-- **A run is now identified by its roster and its start time together**, the way MCS names one. Either half alone is not enough: the same party in a new zone is a new run, and the same zone with somebody gone is a different run measuring different people. When the key changes the tally resets, because a slot-keyed tally genuinely cannot survive a reshuffle — carrying it over would hand one person's damage to whoever inherited their slot.
-- **Names are rebuilt every battle** rather than merged, for the same reason the monster map already was.
+- **Leave a party of five and slots 1 to 4 stop being anybody**.
 
 ### One set of glyphs for the overlay
 
-Emoji were chosen per file, so a coin was 🪙 in one row and 💰 in another and the overlay read as several tools stacked rather than one. They now come from a single `GLYPHS` vocabulary in `overlay-format.js`, following OPanel's choices where OPanel has an opinion — the two sit side by side on the same screen, and a reader should not have to learn two alphabets.
+- Emoji were chosen per file, so a coin was 🪙 in one row and 💰 in another and the overlay read as several tools stacked rather than one.
 
 ### Party Loot, behind the profit tile
 
-The Total Profit tile now carries a coin figure per character, and the question that raises is _what_ — a party does not split a dungeon evenly, because loot is rolled per character against their own drop gear. FLoot's answer, as a panel.
-
-- **A card per character**: what they banked, what that is per day, and every drop with its value and count, biggest first. Yours first and in gold whatever order the party arrived in.
-- **The party total sits above them**, because "did we do well" is asked before "who got what" — and it is the party against the party rather than an average of the characters, which would weight somebody who looted one item the same as somebody who looted a hundred.
-- **Item rows link to the marketplace**, icon and name both.
-- **An unpriced drop reads as unpriced, not as worthless.** Zero is a claim about what something is worth; the market has simply not said.
-- **Nothing is recomputed here.** Every figure comes from `calculatePlayerStats`, the same function the Combat Statistics popup and the overlay rows call — a third opinion about a run's income is a third number to reconcile when they disagree.
-- **Double-clicking Total Profit opens it.** Combat Revenue still opens the Profit panel, which answers the other question: which pricing, and what the costs were.
+- **A card per character**.
 
 ### Houses: rooms you can switch off, and the materials you are actually short of
 
-- **A checkbox per room, as JHouse has.** A room nobody intends to buy — a skill you do not train — sat in the denominator forever, so "14 of 17 affordable" was answering a question about somebody else's character. An unchecked room leaves _both_ halves of the count and stops being eligible as "cheapest"; it stays in the grid, dimmed, because you have to be able to switch it back on. Remembered across sessions.
-- **Materials say what is missing, not just what is needed.** Each row now carries the item's icon and a `−N` shortfall beside the have/need pair, and a line underneath totals what those missing materials would cost to buy at ask. That is a different number from the upgrade cost, which prices every material including the ones already in your bags.
-- **The material rows link through to the marketplace**, icon and name both, since going to buy the thing you are short of is the next move anyway. Coins are exempt — there is nowhere to click to.
+- **A checkbox per room, as JHouse has**.
 
 ### The overlay filled in on the next wave; now it fills in on load
 
-After a refresh every combat tile read "No loot tracked yet", "No combat yet", "Not in combat" until the next battle started. In a dungeon a battle is a wave, so that is tens of seconds of a blank overlay — and MCS has no such gap.
-
-- **The snapshot was already being written, and only the popup read it back.** `combat-stats-data-collector` saves the run to IndexedDB on every battle and has a `loadLatestData` to restore it, which `initialize` never called — the Combat Statistics popup was the only caller. That is exactly why the popup survived a reload and the overlay beside it did not. It is called at start-up now.
-- **Safe to restore unconditionally**, because the rows date the run from `combatStartTime` rather than from when it was stored, and the next `new_battle` replaces it outright.
-- **The DPS table borrows the party's names too.** Damage arrives on `battle_updated`, which is constant, but names arrive on `new_battle`, which is a wave apart — so a reload drew real numbers against "Player 1" through "Player 5". The names come from the restored snapshot, which is built from the same player list in the same order.
-- **A test that fails without the fix**, since nothing here throws: the failure is a tile quietly saying it has nothing.
+- **The snapshot was already being written, and only the popup read it back**.
 
 ### A restored run is dropped when it stops describing anything
 
-The other half of restoring a snapshot: knowing when to stop. A finished run left on the overlay is worse than a blank one, because its per-day rates keep dividing by a clock nobody stopped — they decay toward zero and read as a run going badly rather than as a run that is not happening.
-
-- **Elapsed time is the wrong test, and it is the obvious one.** A snapshot can be twelve hours old for two opposite reasons: the character has been fighting all night with the tab shut, or combat stopped last night. The first is the correct run, slightly behind, and blanking it reintroduces the very gap this was meant to close. The second is history. The clock cannot tell them apart.
-- **The current action decides it.** A combat action in progress means the run is live and the snapshot is shown whatever its age. No combat action means it is over.
-- **A different zone in progress means it is somebody else's run**, and it is dropped even if it is a minute old — the clock would have called that fresh.
-- **The clock is only the fallback**, for when combat has stopped or the character's actions have not loaded yet. Ten minutes, so the run you just finished stays up while you read it, then it belongs to the popup — which still shows it on demand, because the popup falls back to reading storage directly.
-- **Snapshots now record the zone they were fought in.** One written by an earlier version has none, so it falls back to the clock rather than crashing or silently passing.
-
-Both degraded versions were checked against the tests: removing the cutoff fails three, and a naive time-only cutoff fails two — including the overnight run, which is the case that matters.
+- **Elapsed time is the wrong test, and it is the obvious one**.
 
 ### A refresh no longer throws the dungeon away, and Total Profit shows the party
 
-Two unrelated faults, both visible in the same screenshot.
-
-- **The chest reading survives a reload now.** It did not, and MCS's equivalent does — because MCS stores nothing for it. `totalLootMap` is the loot for the **combat session**, not the character's inventory, and the server accumulates it and re-sends the whole thing on every `new_battle` along with `combatStartTime`. Nothing needs keeping; the server keeps it. The tally was treating a first sighting as a baseline, which is the right rule for an inventory — somebody may walk in holding a hundred chests from yesterday — and quite wrong for session loot. Every refresh reset the run to zero.
-- **The completions behind those chests are recovered too.** A chest total with no completion count cannot be placed, and that part genuinely is lost on reload. The dungeon tracker has been writing every finished run to storage all along, so they are counted from there — runs of this dungeon stamped at or after the session began. The panel says how many were read back.
-- **A session is now identified by its start time** rather than by the battle counter, which is what makes a reload continue a session instead of starting one. A falling battle id stays as the fallback for a payload without a start time.
-- **Total Profit is a row per character.** It only ever asked the calculator about the current player, so a five-person party showed one line — the spread between five people splitting a zone is exactly what the tile is for. Yours is first and in gold whatever order the party arrived in, and the tile's default height now fits a party rather than clipping it.
+- **The chest reading survives a reload now**.
 
 ### Counted keys, counted completions, and a level gap that was invisible
 
-Three things the chest reading was guessing at, all now measured.
-
-- **Keys are counted continuously, not sampled.** The obvious measurement is the count at the start of a run against the count at the end, and it breaks the moment somebody buys keys mid-run: start at 10, spend 3, buy 20, and the difference says you _gained_ 17. Two samples cannot tell one number changing twice from one number changing once. So `items_updated` is watched instead and the two directions are added up separately — a fall is spending, a rise is acquiring, and a mid-run restock lands in the second and never touches the first.
-- **Party members are only visible twice a run**, through the key-count chat message, so their figure is trusted only while it falls. A rise is marked unmeasurable rather than counted as zero spent, which would quietly drag the average down every time somebody restocked.
-- **Completions come from the dungeon tracker** where it has them, which it does in a party. It counts a run that paid somebody _nothing_ — something watching the chest count can never do, because nothing is exactly what such a run looks like. The chest-rise inference stays as the solo fallback, and the panel says which one is in use.
-- **The level gap is no longer invisible.** A character far enough below the top of the party has their drops cut, and the formula existed only inside the simulator, applied to per-monster drops. The live model had no notion of it at all, so the simulator would predict a level-gapped player taking a fraction of the loot and Party Luck would then call that same player unlucky for it. The formula now lives in `utils/dungeon-level-gap.js` and the simulator imports it, so the two cannot drift.
-- **The gap is in the expectation, and a mean below one chest is a chance.** A party of five with no quantity bonus is a mean of 1 chest each; at a 90% penalty that is 0.1, and a tenth of a chest is not something the game can hand over. It is realised the way 1.295 is — as a probability. Nine completions in ten pay that character nothing and the tenth pays one, which is why a level-gapped player sees zero _sometimes_ rather than always. Below one chest a completion there is no guaranteed part at all and the wording says so, since "0 guaranteed" reads as "you get nothing".
-- **So the percentile is about their luck again**, not about their party. One chest against an owed 0.375 is a good run, and it now reads as one instead of as the catastrophe a full-share expectation called it.
-- **The size of the cut is still borrowed**, not measured: it is the debuff the simulator applies to monster drops, and nothing has confirmed a dungeon uses the same number. So the observed rate is shown beside the modelled one — if the multiplier is wrong for chests, the two diverge on screen rather than quietly.
+- **Keys are counted continuously, not sampled**.
 
 ### A dungeon is measured by its chests
 
-Party Luck and the Luck and Over Expected tiles showed nothing at all in a dungeon, for everybody, with no explanation. The drop model declines dungeons on purpose — they pay from a reward table on completion rather than per monster — but there is a question a dungeon _can_ answer, and it is the one people ask: how many chests came, against how many were owed.
-
-- **The drop-quantity bonus is the whole of the randomness.** A completion pays five chests split across the party, scaled by Combat Drop Quantity. Five people at +29.5% is a mean of 1.295 each: one chest guaranteed and a 29.5% chance of a second — the buff people describe as "double chests sometimes". Everything else about a dungeon payout is fixed, so the extras are the only thing luck can be measured on.
-- **Completions are counted, not assumed.** The game never states how many dungeons finished; only the simulator has ever had that number, and only for runs it simulated. So each player's chest count is watched, and every rise is one completion that paid what it rose by. The first sighting starts the count rather than paying out, so somebody who walked in holding yesterday's chests is not a windfall.
-- **Which item is the chest comes from the zone**, not from a list: the reward table's guaranteed entries are the chests, which is the same test the simulator applies. A named list is the fallback for when the zone data has not loaded.
-- **The percentile is over the extras**, from an exactly-summed binomial. A hundred completions that each paid their guaranteed chest and nothing more is not a hundred pieces of bad luck.
-- **Where it shows.** The Luck tile carries the percentile per player, Over Expected carries chests against chests owed, and the Party Luck panel gets a Dungeon chests card with the completions, the split, and each run's payout. A player with no completion yet says so instead of reading as a disaster.
-- **A whole-number mean says there is no luck in it**, rather than inventing a percentile for something that never varied.
+- **The drop-quantity bonus is the whole of the randomness**.
 
 ### The Profit panel answers for the whole party
 
-It only ever asked the calculator about one character. Loot is rolled per character against their own drop gear, so five people splitting a zone do not split it evenly — and who is actually being paid is a coarser question than which price to sell at.
-
-- **A row per character**, revenue and profit per day, in whichever of the four cases is selected. Yours is first and in gold whatever order the party arrived in.
-- **Revenue beside profit, not profit alone.** In a dungeon the two are far apart: the key is charged the moment the chest drops and the chest only pays when it is opened, so a run reads as a loss until it does not.
-- **Chests are already counted at their expected value** — what opening one is worth, rather than what it sells for. The panel now says so when a dungeon is detected, since a revenue figure built from unopened chests is worth explaining.
-- **Solo the section is not drawn at all**, because a party of one is the rest of the panel.
+- **A row per character**.
 
 ### Party Luck cannot measure a dungeon, and should say so
 
-Written down as a known gap, and fixed by the chest reading above. Kept here because the reason still holds: the drop model declines dungeons deliberately — they pay from a reward table on completion rather than per monster, so a spawn table is the wrong model rather than an imprecise one.
+- Written down as a known gap, and fixed by the chest reading above.
 
 ### Fixed: in a five-person party, whoever tanked collected everyone else's damage
 
-Two characters was enough to show that the old rule was not losing anything. Five was enough to show what it _was_ getting wrong, and two could not: with one person holding aggro and four hitting, the character a tick is about is very often the one being **hit**.
-
-- **The bottom rung was "only one character in this tick, so it was them".** On 82 of 440 damage ticks that lone character was in the tick because their own health and damage counter had moved. They had not attacked. Crediting them handed about 8,500 points of other people's damage to whoever was tanking.
-- **It is now "the last character to swing".** A swing and the damage it does are not always in the same tick: 76 of those 82 had somebody else swinging one real tick earlier.
-- **Every payload arrives twice** — 757 of 1,465 combat messages in that recording are byte-identical to the one before. Nothing has to care, since a duplicate diffs to no change, but it is why the swing behind a hit looked two ticks back rather than one.
-- **Two characters swinging on the same tick is rare but real**: three times in fourteen hundred ticks, one of which dealt damage. That falls to mana, and failing that to whoever swung last, rather than being pretended away.
-- **The recording is a fixture**, names replaced with Player One through Player Five, and one of its tests replays the old rung to check the fault reappears.
+- **The bottom rung was "only one character in this tick, so it was them"**.
 
 ### A recorded party, and what it settled
 
-Every recording until now was solo, and solo cannot exercise the question attribution exists to answer: when a monster loses health, which of the party did it. A rule that always names the same character passes every solo test there is.
-
-- **Two characters, twelve battles, two minutes**, now a fixture. The names in it are replaced with Player One and Player Two.
-- **Damage dealt is split between them**, damage taken is kept per character, and every hit taken is attributed to one of eleven named monsters with the per-player split inside each enemy card — the thing solo can never produce.
-- **The enemy breakdown adds up to what the party took**, 1,515 across both of them.
-- **It corrected a claim rather than confirming one**, which is the main reason it was worth taking; see the entry below.
-- **A guard on the fixture** asserts the attack counter is still in it, so trimming it later fails loudly rather than quietly weakening the attribution — the same trap an earlier fixture fell into.
+- **Two characters, twelve battles, two minutes**.
 
 ### A kill is priced from the tick, not from the screen
 
-Every monster a tick mentions states its own full health as `mHP` — on all 292 monster entries across two recorded runs, agreeing with what the battle said each time.
-
-- **The DPs panel takes it from there.** It prices a kill by the health bar it took to empty, and previously had that only from the start of a battle — so a monster first met after a reload had no figure at all until the battle-panel reading supplied one.
-- **The battle-panel reading gives up trying.** It only ever needed the current health, to match a tile against a monster; the maximum was a second and worse source for a number the payload already gives. Reading it also meant untangling two health bars that flatten into one string, which is a hazard now gone.
-- **`isActive` was measured and left alone.** It looked like a cleaner death signal than health crossing zero, and it is not: across both recordings the two always fire on the same tick — five times and thirteen times, neither ever alone. Nothing to gain.
+- **The DPs panel takes it from there**.
 
 ### The caster is identified by an attack counter
 
-Every player carries `atkCounter` and it goes up when they attack. Across three recorded runs it rose on every tick that dealt damage, and on a recorded two-character party it named one character and never both.
-
-- **The caster is identified by that counter now**, not by mana. Only an ability costs mana, so `cMP` falling named the actor on eight of sixty-nine solo damage ticks.
-- **Correcting what was claimed here first.** The entry that shipped with this change said a party was losing nine hits in ten. That was measured by splicing a bystander into _every_ tick of a solo recording, and a real party does not look like that: `pMap` is a delta exactly as `mMap` is, so a character who did nothing is not in the tick at all. On a genuine two-character recording — twelve battles, a hundred and thirty-seven damage ticks — the old rule and the new one pick the _same_ character every single time, including the eight ticks that carried both.
-- **So this is a better-founded answer, not a rescue.** The actor is named because a counter of attacks went up, rather than inferred from being the only one the payload mentioned. The inference was right here; nothing guarantees it stays right.
-- **Mana is kept below the counter**, for the tick where two people act at once and one of them cast, and for a payload that carries no counter at all.
+- **The caster is identified by that counter now**.
 
 ### The auto-record switch turns itself off
 
-It writes its file and puts the switch back, so the next load is an ordinary one. A switch that downloads something on every page load until somebody remembers it is a switch left on by accident, and collecting one recording is finished the moment the file exists. It stays armed if there was nothing to save — loading outside combat is not the recording anybody was after.
+- It writes its file and puts the switch back, so the next load is an ordinary one.
 
 ### Fixed: a refresh named the first monster of the wave and no others
 
-The battle panel is read for the monsters' names after a reload, because the client never receives the message that names them. That reading stopped as soon as it had found anything — and `mMap` is a delta, so a wave of two arrives across several ticks: the first monster reported on the very first tick, the second not for another two. The first got a name, the second never did, and every hit it landed went to Unknown Enemy for the rest of the fight.
-
-- **The panel is read on every tick until a battle is announced**, not merely while nothing is known, so a wave that arrives a monster at a time is named all the way through.
-- **A name once read is never overwritten.** The earlier reading was taken while that monster was actually on screen; a later health match could be a coincidence.
-- **The same fix applies to the kill tally**, which had the same guard and lost the same monsters.
-- **Confirmed against a recorded refresh** that had been reproducing the fault: nineteen points of damage sitting under Unknown Enemy move to the Eye that dealt them, and nothing is left unattributed. That recording is now a fixture, along with the snapshots of the battle panel it carries — so this is tested against the screen the browser actually had, not a reconstruction of it.
-- **The selectors were fine all along.** The snapshots show the monster area, the unit grid and every tile parsing correctly. It was the guard.
+- **The panel is read on every tick until a battle is announced**.
 
 ### The recorder can catch the refresh
 
-The Record button in the Damage panel can only start once a session is already running, which means it can never capture the seconds that matter most: reload mid-fight and the client never sees the message that names what you are fighting, and what arrives instead is not something to reason about from the outside.
-
-- **Auto-record combat on load**, off by default, starts the recorder the moment the page does and writes the file out on its own after a set number of seconds (sixty by default, ten to six hundred). Nobody is watching a recording that started itself, so it hands over the file without being asked.
-- **It snapshots the battle panel on every tick until the first battle is announced.** Whether the monsters' names can be read off the screen during that window is the other half of the same question, and a recording made during a refresh can now carry the answer rather than leaving it to be guessed at.
-- **The snapshots stop once the payload names the wave**, because from that point the screen has nothing to add.
-- **Both damage trackers move out of Loot Log and into Combat Features**, along with the new switches. They had been filed under Loot Log, which is where nobody would look for them and where I could not find them either.
+- **Auto-record combat on load**.
 
 ### Fixed: everything went to Unknown Enemy, and the fixture was why
 
-The previous change sent every hit of a live session to Unknown Enemy while three replay tests passed. It had been measured against a recording that was **hand-trimmed to five fields per monster** when it became a fixture, and the rung derived from it — "a monster in the delta with nothing changed is the one that swung" — held on thirty-seven of that recording's forty-two hits only because the trimming had removed everything that changes. Against a real payload it fires never.
-
-- **`atkCounter` is what identifies the attacker**, and it was there the whole time — a counter that goes up when a monster attacks, sitting in a field the old fixture had thrown away. On an untrimmed dungeon recording it names the attacker on thirty-two of the thirty-eight ticks the character was hit; the other six are a monster's first appearance in the delta, alone, which is now its own rung.
-- **Thirteen hits, thirteen named, no Unknown Enemy** on that recording — against Veyes, Eye and Eyes, in waves of two and three.
-- **The fixture keeps every field a tick carries.** That is the whole point of the new one, and a test asserts `atkCounter` is still in it, so trimming it later would fail loudly rather than quietly weaken the attribution.
-- **The old recording is kept and labelled.** It is still a good check that the arithmetic holds on a thin payload, and it now says in as many words that nothing may be derived from it.
+- **`atkCounter` is what identifies the attacker**.
 
 ### The payload names the attacker after all
 
-Unknown Enemy kept turning up in waves even after the reload fix, because that fix was for a different cause. Going back to the recorded run to measure rather than reason turned up something better: **`mMap` is a delta**. A tick does not carry the wave, it carries the units the server touched — nought or one entry per tick against rosters of three.
-
-- **A monster in the delta with nothing changed is the one that swung.** Same health, same mana, same counters, and there anyway. Across the recording that held on every one of the forty-two ticks the character was hit, and the wave was still three strong for thirty-six of them. That is the attacker, stated by the payload.
-- **The old rung 2 was right by accident.** It said "there is only one monster in the tick, so there is no ambiguity" — but the ambiguity it was dodging was in the delta, not in the fight. Believing the wrong reason is what left it crediting the monster you were attacking whenever two units reported on the same tick, which in a wave is most of the time.
-- **Being hit is now the last rung, not the second.** A monster whose own damage counter rose is one _you_ hit. That is evidence about your target and says nothing about theirs.
-- **Two monsters of the same kind are no longer ambiguous.** "An Eyes hit you for 41" is true whichever of the two it was. Only candidates that disagree fall through to Unknown Enemy, and a wrong name would be worse than none — it would move damage from one monster of a wave onto another and then read as evidence about which is dangerous.
-- **Some Unknown Enemy remains, and it is honest.** A tick where you were hit and the server mentioned no monster at all cannot name one, and neither can two different monsters swinging together.
+- **A monster in the delta with nothing changed is the one that swung**.
 
 ### Reloading mid-fight no longer costs you the monsters' names
 
-A combat tick carries each monster's health, mana and two counters — and nothing that says what the monster is. Identity arrives once, in the message that starts a battle, and a page reloaded mid-fight never sees it. So everything that hit you for the rest of that battle went to "Unknown Enemy", and everything you killed in it went nowhere at all. MCS has the same hole for the same reason.
-
-- **The names are recovered from the battle panel**, which is drawing them the whole time.
-- **Matched on health, not on position.** The obvious join is that the first tile is monster 0, which is an assumption about how the panel handles a dead monster — the kind that holds until a game update and then silently mis-attributes everything. Health is a number both sides state.
-- **Two monsters at the same health resolve themselves.** If they have the same name it does not matter which is which, and if they do not, nothing is claimed. A wave of three Eyes at full health is the common case and it is the harmless one.
-- **The kill counts stop coming up short too.** An unnamed enemy was dropped from the DPs panel's kill tally rather than shown, so a reload quietly lost a fight's worth of kills. The monster's full health bar comes back with the name, which is what a kill is priced by.
-- **The half-battle is not filed as a wave.** Part of an encounter is not the composition that was fought, and counting it as one would make that wave's per-encounter average wrong from then on.
-- **Every part of it fails closed.** A missing panel, a renamed class, a tile whose shape changed — each produces nothing, and nothing means "Unknown Enemy" exactly as before. It cannot put a wrong name where a right one would have been.
+- **The names are recovered from the battle panel**.
 
 ### Encounters & Kills, against what the zone owed you
 
-IHurt's last section. A kill count on its own is not a fact about a run — seven Eyes is a lot or a little depending entirely on how often the zone spawns them, and that is not a number anybody carries around.
-
-- **Actual against expected, per monster, with the difference as a percentage.** The same reading Drop Luck gives for coins, applied to the spawns that produced them.
-- **The expectation is solved rather than sampled.** A wave is drawn from a weighted table until the next draw would break its strength budget, so a heavy monster turns up less often than its weight suggests and a light one more. The arithmetic for that was already here for Drop Luck; this is the layer that turns per-wave expectations into per-run ones.
-- **The battle in progress is not counted.** Its monsters are partly dead and partly not, and counting it in full makes every zone look unlucky by about one wave — which at seven battles is fifteen per cent of the reading.
-- **A boss wave replaces an ordinary one rather than joining it**, so twenty battles with a boss every ten is eighteen ordinary waves and two bosses, not twenty and two.
-- **A monster the zone owes you and has not produced is listed at zero**, dimmed. A rare spawn you have not seen once is exactly what somebody checking this is looking for, and a row that is simply absent reads as "not in this zone".
-- **A zone that cannot be modelled shows counts and no comparison** — a dungeon runs a script and pays out at the end, so a spawn table would be the wrong model rather than an imprecise one. Comparing against nothing would call every kill infinitely lucky.
+- **Actual against expected, per monster, with the difference as a percentage**.
 
 ### Fixed: IHurt showed zeroes, and DPs was broken in the release build
 
-IHurt reported nothing at all — no damage taken, no regeneration, no enemies, and "nothing has hit the party yet" through a fight that was plainly hitting the party. The tracker was working; the panel could not reach it.
-
-- **The panel now imports the tracker instead of reaching for a global.** It was reading `Toolasha.Combat.damageTakenTracker.takenBreakdown`, and what sits at that global is the tracker's _feature_ object — the thing with `initialize` and `cleanup` on it. So the lookup was `undefined`, the optional call returned nothing, and every figure defaulted to zero.
-- **The same mistake had already broken the DPs panel in the release build**, which is the more serious half of this. A module in rollup's externals map is not bundled into the libraries that import it — every import compiles to a property read off one global. The Combat library was publishing `damage-tracker.js`'s default export there, so `damageBreakdown` and its neighbours resolved to `undefined` in the production bundles. It never showed up in testing because the dev standalone build has no externals: it bundles everything, imports resolve normally, and it works. Both trackers are now published as modules.
-- **A test reads the rollup config, walks the real import graph, and checks every cross-bundle named import against what its library actually publishes.** Sixty-nine of them. It accepts any shape that works — a namespace import, a hand-built object, a top-level re-export — because several are already written each of those ways and all of them are correct. What it rejects is a default export sitting where a module should be.
+- **The panel now imports the tracker instead of reaching for a global**.
 
 ### The Deaths panel is IHurt now
 
-It showed a death count and a rate, which is the tile with more decimal places. The question a deaths panel exists to answer is not "how many" but "can this zone be idled overnight", and a count cannot answer it — you find out by dying.
-
-- **Damage taken and health regenerated, side by side and never netted.** A net figure of −200 describes both a comfortable zone and one you barely survive. 3,400 taken against 3,600 healed is sustainable; 3,400 against 200 is a run that ends while you are asleep.
-- **Broken out by what is dealing it**, with the hit range for each. A wave whose average hit is forty is comfortable until one of its members hits for two hundred, and only the maximum says so. In a party, each monster's damage is split by who it landed on.
-- **And by wave composition** — `Eye x2 + Veyes` — with encounters, total and average per encounter. Sorted and counted rather than taken in spawn order, so the same three monsters handed over in a different order are recognised as the same wave rather than filed under six names that never accumulate enough encounters to average.
-- **Deaths still come from the server.** This can see a health bar cross zero and does, but two sources for one number is two numbers that eventually disagree, and the server's is the one that is right. Each source supplies only what it knows.
-- **A hit is the damage counter rising, not health falling.** Health moves for regeneration, for bleeds and for food. The counter also gives the one event a health diff can never express: a **miss** is the counter rising with the health unchanged.
-- **Which monster hit you is a guess above a certain party size, and it says so.** A monster casting is identified by its mana, exactly as the outgoing side identifies a caster — but an auto-attack spends none, and most of what hits you is auto-attacks. So there is a ladder: a monster that cast, then a lone monster, then the weak proxy IHurt uses, then nobody. Unattributed damage is shown as **Unknown Enemy** rather than credited to a guess, and the enemy totals still add up to the party total.
-- **Verified against a real recorded fight**, the same sixty-eight seconds on Planet of the Eyes the outgoing side replays, read from the other end: 703 taken against 936 healed, the enemy breakdown adding up to the total, and the shortfall in the wave breakdown being exactly the ticks recorded before the first battle started.
+- **Damage taken and health regenerated, side by side and never netted**.
 
 ### Fixed: the Overlay switch was invisible
 
-It was added to the strip, positioned, kept in place, and could not be seen. The switch is a clone of one of the game's own tabs, so that it looks like whatever the game currently thinks a tab looks like — and it was cloning a hidden one.
-
-- **It is no longer copied from a tab the game has hidden.** With "show Toolasha tab by default" on, the game's own Inventory tab is set to `display: none` — and it is the first tab in the strip, so it was exactly what the search picked. The clone brought that inline style along with it.
-- **It no longer inherits its model's position.** Tab Reorder lays the strip out with CSS `order`, and a clone carries that number, which would park the switch on top of the very tab it was copied from.
-- **Nor its model's drag handle**, which survived cloning without the handlers that gave it meaning.
-- **Injected tabs are not used as the model.** Toolasha and Optimizer are added by this script; cloning one would copy whatever that feature had done to itself.
+- **It is no longer copied from a tab the game has hidden**.
 
 ### Fixed: docking cut the bottom row of tiles off
 
-The column did not shrink to make room — it grew, so the docked panel hung off the bottom of the window with its last row of tiles sliced in half.
-
-- **The column is measured against the window rather than against its parent.** The rule that was supposed to constrain it said `max-height: 100%`, which quietly does nothing: a percentage resolves against the parent's height, that height is not definite, so there was no constraint at all and the column grew to fit whatever was in it. From the column's own top to the bottom of the screen is a real number, and once the column has one the flex rules divide it as intended.
-- **It re-measures when the window changes shape**, and once a second, so a wrapping tab strip or a resized window does not leave it stale.
-- **The panel starts as tall as its tiles**, instead of at a fixed 220 pixels. A fixed starting height is a guess about a layout it has never seen, and a guess that is too small is precisely what cut the tiles off. Drag the top edge once and that height is what it keeps.
-- **It will not take so much of the column that the inventory has nowhere to draw.** A height remembered from a tall window and reopened in a short one would otherwise leave a column that is entirely overlay.
+- **The column is measured against the window rather than against its parent**.
 
 ### An Overlay switch in the character tabs, and somewhere for the overlay to live
 
-The overlay was opened from a button inside the settings dialog. That is two clicks and a scroll away from something people turn on and off several times an hour, and the cost of that is not the clicks — it is that everybody leaves it up permanently and works around whatever it covers.
-
-- **An Overlay switch beside Inventory**, before Optimizer, drawn the way Room Logs is: a clone of a real tab, so it inherits whatever the game currently thinks a tab looks like rather than a copy that drifts at the next patch. Dim when the overlay is down, lit when it is up — a button that does nothing visible on the second click reads as broken.
-- **It never highlights as a selected tab.** It opens a panel rather than choosing what the column shows, and a column showing Inventory with Overlay highlighted would be saying something untrue.
-- **The switch follows the panel**, including when the panel is closed by its own ✕, so it never claims a state the overlay is not in.
-- **⇲ docks the overlay below the character tabs**, in the column's own flow, and the inventory gives up the height rather than being covered — which is the point. Floating over the game is the wrong resting place for a panel that is always up: whatever it covers is covered permanently, and moving it out of the way only means moving it somewhere else that is also in the way.
-- **Nothing measures anything.** Docked, the panel is a sibling of the tab body and the column becomes a flex column, so the game's own layout hands the body the leftover height. It survives the window changing, the column being resized, and the combat panel's own height setting without a single recalculation.
-- **Drag its top edge to trade height with the inventory.** That edge is the boundary being moved, so it is where the handle belongs; a corner grip would be the wrong gesture for something that only has a height to choose.
-- **It puts itself back after the game rebuilds the column**, which switching tabs does.
-- **Asked to dock before the column exists, it opens floating instead of not at all** — which is what a reload looks like, since the setting is read back before the game has drawn the column it names.
+- **An Overlay switch beside Inventory**.
 
 ### A tile with nothing to report says so
 
-Tiles went blank when their feature had nothing yet, which looks broken rather than idle — you cannot tell a feature waiting for its first measurement from one that has fallen over, and on an overlay of a dozen tiles the empty ones are exactly the ones your eye keeps returning to, because there is nothing there to finish reading.
-
-- **Every row can say what it would rather say when idle**, and twenty-six of them now do: "Not in combat", "No run measured yet", "Nothing watched", "No chests opened". Naming the condition rather than the absence is what tells idle apart from broken.
-- **A row that says nothing names itself** — "No drop luck data" — which at least identifies which tile is which while a layout is being arranged.
-- **A tile drawing only an icon is left alone.** A tile showing a coin and no words has drawn exactly what it meant to.
+- **Every row can say what it would rather say when idle**.
 
 ### Fixed: a small tile could not be made bigger again
 
-The text-size buttons sit in a tile's bottom-left corner and the resize grip in its bottom-right, which is fine until the tile is narrower than two buttons — a tile may be forty pixels wide, and two buttons are wider than that. The buttons then covered the grip, and the grip is the only thing that would have made the tile bigger again, so the tile was stuck at exactly the size that caused it.
-
-- **The grip is drawn above the buttons.** Whichever is on top takes the mouse, and it has to be the one that gets you out.
-- **It carries its own backdrop and is a little larger**, because on a small tile it is now drawn over a button, and a bare triangle on top of one reads as neither.
-- **The buttons keep clear of the corner where there is room**, so on a tile with space nothing overlaps at all.
+- **The grip is drawn above the buttons**.
 
 ### The DPS, Over Expected and Luck tiles line up
 
-They sit in a row beside each other and were laid out as if each were alone, so nothing agreed with anything: columns within a tile, and lines across the three of them.
-
-- **The lines of a tile share columns.** Each line used to be laid out independently — right for an income line above a cost line, which are different facts, and wrong for a player row above a total, which is the same measurement twice. A total sitting a few pixels off the figure it totals makes a reader check whether it is even the same kind of number. They are a grid now: the name column takes the slack and every figure lands against the right edge, whether or not each line has the same number of them.
-- **Only a name may be truncated, never a figure.** `1.2…` reads as a number rather than as a truncation.
-- **Digits are one width**, so a column of figures stops shifting as it counts.
-- **Lines start at the top of a tile rather than centred.** This is what stopped the three tiles agreeing: they carry different numbers of lines — DPS has a player and a total, Luck has one — and centring put the single line of one halfway down the two lines of the next. Aligned to the top, the first line of every tile is at the same height, so tiles whose tops agree have figures that agree.
+- **The lines of a tile share columns**.
 
 ### Drop Luck breaks out per player after all
 
-Last change said a percentile could not be split between a party. That was wrong: it cannot be _divided_, but it can be computed again for each player, and doing so gives a genuinely different number for each of them.
-
-- **A row per player, each against their own distribution.** Everybody's drop gear differs, so everybody's distribution differs — the same haul is a remarkable run for one of them and an ordinary one for another. The party's percentile repeated under two names would have said nothing; these are separate figures.
-- **It is the better per-player reading**, and better than Over Expected's. Takings against expectation say how far off the mean somebody landed; they cannot say whether that is unusual. On a zone whose value rides on one rare, −20% is an entirely ordinary run, and on a zone of small steady drops it is a bad one. Only the distribution knows which.
-- **Computed when a session is analysed, not while drawing.** Inverting a distribution costs about ten milliseconds — nothing once a session, and a frozen overlay if it ran per player on a tile that redraws every second.
-- **Solo is still one row**, deliberately: the session percentile already _is_ that player's, since the model was built from their bonuses. A second one would be the same number arrived at twice.
-- **Luck: only you** joins the other tile options, now that there is more than one row for it to narrow.
+- **A row per player, each against their own distribution**.
 
 ### Only-numbers options for the luck tiles
 
-Three checkboxes beside the row list in the overlay's settings, where OPanel keeps the same ones — somebody arranging an overlay is already looking there and would not think to open a settings dialog for it.
-
-- **Luck: only numbers** and **Expected: only numbers** drop the names and leave the figures. On a tile narrowed to sit beside five others, the name is the part you already know.
-- **Expected: only you** shows your row alone. The total goes with it: a total of one row is that row again, printed twice.
-- The checkboxes share one builder now rather than a dozen lines each, so the next one is three lines.
+- **Luck: only numbers**.
 
 ### The DPS and luck tiles, in OPanel's shapes
 
-- **DPS reads to a tenth.** OPanel writes `347.6` rather than `348`, and at these magnitudes the tenth is the figure people watch move as they change a rotation. Past ten thousand it is noise on a number that no longer fits, so the compact form takes over there.
-- **Drop Luck is your name and the figure**, which is the shape Lucky's tile has, rather than the word "Luck" and a number. Still one row in a party: the percentile is a property of the session — how unusual this run was against the zone's own distribution — and there is no honest way to split it between the people who were in it.
-- **Over Expected is a row per player and a total, whether or not there is a party.** It had a separate solo layout carrying the coins the percentage came from; those are three times as wide as the tile and are the tooltip now. One shape rather than two is also one fewer thing to keep matching.
-- The two tiles sit side by side and would look equally plausible showing each other's number, so there are now tests that each shows its own: the percentile on one, takings against expectation on the other.
+- **DPS reads to a tenth**.
 
 ### A recorded fight, replayed as a test — and a second bug it found
 
-A real sixty-eight-second run confirms the attribution fix: the split is now 79.8% auto-attack, 11.0% penetrating strike, 9.3% puncture, against the 34%/23%/42% the same code produced before it. The recording is kept as a fixture and replayed on every test run, so this cannot quietly come back.
-
-- **Monsters were being named from a field the payload does not carry.** It looked for `combatMonsterHrid` or `monsterHrid`; a real battle carries `name` and `hrid`. The fallback happened to work, but only by accident — `name` is checked first now, with the hrid behind it.
-- **The replay script carried its monster map between battles.** The indices are reused every fight and mean different monsters each time — slot 0 is an Eye in one and an Eyes in the next — so a stale entry credits one monster's damage to the other. The tracker already rebuilt it; the script did not.
-- **Seven assertions on the real run**, including the one that matters: an ability cast twice may not be credited with a third of a run. Reverting either half of the attribution fix fails four of them.
+- **Monsters were being named from a field the payload does not carry**.
 
 ### Fixed: every hit was credited to whatever was cast first
 
-The ability attached to a hit was read once, from `new_battle`, and never again. So the label was frozen at whatever the character happened to be preparing when the fight began, and the entire fight was credited to that one ability — which is why the per-ability split disagreed with DPs so badly.
-
-Two things were wrong at once:
-
-- **The field has two spellings.** `new_battle` writes `preparingAbilityHrid` and `isPreparingAutoAttack`; a `battle_updated` tick abbreviates them to `abilityHrid` and `isAutoAtk`. Only the long pair was being read, so a tick never had anything to say. Both are read now.
-- **It has to be read after attributing, not before.** The hit that lands on a tick was cast by what was prepared _before_ it — by the time the payload arrives the character has already begun the next thing. Updating first would swap one wrong answer for another, crediting every hit to its successor. The tracker now attributes the tick and then records what is being prepared next, which is the order DPs uses.
+- **The field has two spellings**.
 
 ### Recording combat, so attribution can be settled rather than argued
 
-Attribution is inferred — mana falling identifies the caster, a counter rising identifies a hit — and every inference is somewhere to be wrong. Two panels disagreeing cannot be settled from two screenshots: both are summaries of a fight that is over.
-
-- **A Record button in the DPs header** captures the raw feed and writes it to a file. It keeps `new_battle` whole, because that is one payload per fight and carries the names and health bars, and from each tick only `pMap` and `mMap` — everything attribution reads and none of the rest. No character name, no chat.
-- **It stops itself.** Ticks arrive several times a second, so an unbounded recording is a tab that quietly grows until it falls over. It caps and says so in the file.
-- **`npm run replay -- recording.json`** feeds a recording back through the attribution and prints what the panel would have made of it. That is what turns a disagreement into a comparison, and a fight into a fixture that fails when a change breaks it.
+- **A Record button in the DPs header**.
 
 ### The enemy rows belong to the player who fought them
 
-They sat at the top of the table as a party-wide total, which is the wrong shape and the wrong arithmetic. They nest under the player now, as DPs nests them: collapse a player and their enemies go with them.
-
-- **Per-player, per-enemy tracking.** One player kiting while another burns the boss is two different fights, and a party-wide enemy row averages them into neither. The attribution fold now splits a player's damage by what it was aimed at, and by ability within that.
-- **Three levels, each closed by default** — the player, then the abilities and the enemies they fought, then what was used against each enemy. Every one of them remembers whether it was open across the panel's repaint.
-- **The enemy-HP card stays party-level**, which is right: a health bar is emptied by the party, and kills are not attributable to one person the way a hit is.
+- **Per-player, per-enemy tracking**.
 
 ### The enemy-HP card, laid out as DPs lays it out
 
-- **The three figures are the headline**, side by side above the detail with the caption that tells them apart underneath each — total time, battle time, and the loss between them. As a column of labelled rows they read as three findings of equal weight; they are one finding read three ways.
-- **The inputs are a strip, not four more rows.** Time logging, time in battle, health destroyed and enemies killed are what the figures were computed from, and stacking them under the figures made them look like findings themselves.
-- **A tile per kind of monster, two to a row.** `7 kills × 2.40K HP = 16.77K` four times in a flat list is read one line at a time; as a grid it is read at a glance.
-- **DPS carries its accuracy**, as DPs pairs them — the figure and how much of it landed — and every DPS reads to one decimal rather than rounded to nothing.
-- **Enemy rows open too.** A monster taking a long time is either tanky or the wrong thing is being pointed at it, and only the per-ability breakdown behind that row can say which.
+- **The three figures are the headline**.
 
 ### The damage table reads at any width
 
-- **Proportional columns instead of fixed pixels.** Fixed widths add up to more than a panel somebody has narrowed, and the column that pays for it is the first — so the name, the one cell you cannot infer from the others, became "Mi…". Proportions share the squeeze out, and each column has a floor it cannot collapse past.
-- **The character row shows its damage bare**, as DPs does. A share of the party total says something on an ability row and on an enemy row; on the only player in a solo run it says 100% and costs the width that was making everything else truncate.
-- **A panel remembered at a width from before it held a table is widened to fit one.** It was 440 wide as a stack of cards, which is a column of ellipses as a table, and nothing else would ever have widened it again.
-- **Tabular figures**, so a column of numbers reads as a column rather than shifting every time one of them changes, and every cell carries its full text as a tooltip for when it does have to truncate.
+- **Proportional columns instead of fixed pixels**.
 
 ### Per-enemy tracking, and DPs' second reading of the run
 
-The tracker attributed hits to players and abilities and stopped there — it never recorded which monster took the hit, and nothing counted kills. Both now exist, which is what the last two pieces of DPs needed.
-
-- **An enemy row per monster.** The player table answers "who is doing the damage"; this answers "to what". A run that reads as slow is often one zone's worth of a single tanky monster rather than a rotation problem, and no per-ability figure can say so. Keyed by the kind of monster rather than by the spawn, since a zone cycles through dozens of them.
-- **A death is its own event, separate from the hit that caused it.** Merging them would lose every kill landed by a bleed — the health reaches zero on a tick where no counter moved — and that undercounts exactly the long fights worth measuring. It is also not a swing, so it adds no phantom hit to whoever happened to be casting.
-- **DPS based off enemy HPs.** The same run measured a second way: not from attributed hits but from full health bars emptied. Attribution has holes — a bleed, a tick before the counters were known, two people casting together — and a corpse does not: the monster is dead, and its bar was worth what it was worth. Where the two figures disagree, the difference is what attribution could not see.
-- **Quoted against battle time and against total time**, as DPs quotes it. The first says how hard the party hits, the second says what the run actually produced, and the gap between them is time spent walking rather than fighting — which no rotation fixes and a shorter respawn does.
-- **A kill is priced at the largest health bar that monster has been seen with**, since a weakened spawn would understate what killing one is worth.
+- **An enemy row per monster**.
 
 ### The Damage panel is DPs' table
 
-It was a stack of cards — a Party card, then a card per player with the abilities as lines underneath. That reads fine for one player and badly for a party, because nothing lines up: comparing two players' crit rates meant reading two cards and holding one in your head.
-
-- **A table with DPs' own columns** — Character / Ability, DPS, Damage, Atks, Hit, Crit, Miss — so a party reads down a column instead of across a stack. Counts are written as DPs writes them, `193 (78.8%)`, because the bare count says nothing without the attempts behind it and the bare percentage hides how few swings it came from.
-- **Abilities are behind the player row.** Every ability of every player at once is a wall; the row opens to show its own. An open row stays open when the panel repaints, which it does every couple of seconds — a row that shuts while you are reading it is worse than one that never opened.
-- **The header carries the run and the two buttons**, where DPs has them: the DPS figure, the total damage it came from, the elapsed time, and **Filter Nondamage** and **Reset**.
-- **The exchange stays**, below the table. A party doing well on paper is still losing if it takes more than it deals, and no per-ability column can say that.
-
-Not yet matched: DPs' per-enemy rows and its "DPS based off enemy HPs" card. Both need damage tracked per monster and kills counted per monster type, which this script does not collect — the tracker attributes hits to players and abilities and stops there. That is a change to the tracker rather than to the panel.
+- **A table with DPs' own columns**.
 
 ### Fixed: the blue box around Queue and Start
 
-The box was never a border. It was the pinned strip's own background, painted with one of the game's themed colour variables — the one whose name reads like a dark background is not one; that scale is a set of visible tints. So the strip painted itself blue, and the blue showing above and below the buttons was the box. Two earlier attempts went looking for a border and a scrollbar instead.
-
-- **The strip is painted a dark literal**, so it reads as the panel continuing behind the buttons rather than as a coloured band around them.
-- **The horizontal scrollbar is gone, at its source.** Three of this script's own blocks — the Cost Summary card, the budget row and the Missing Mats button — were built full-width with padding and a border and no `box-sizing`, so each rendered about thirty pixels wider than the column holding it. That is what pushed the Calculate button past the edge and put a scrollbar under the whole panel. They are sized correctly now, which fixes them everywhere they appear rather than only inside a clipped panel.
-- **The overflow was the grid, not any of the blocks in it.** The panel's body is a two-column grid — a label like "Requires" beside a value — and everything this script adds goes into the value column. A grid item will not go narrower than its own longest unbreakable content unless told it may, so the column took whatever "Missing Mats Marketplace" and "Direct recipe cost 5.7M" asked for, the grid outgrew the panel, and the panel scrolled sideways. Every block inside measured exactly the column's width, which is why each one looked innocent under inspection: correctly sized, to a column that was itself too wide. The grid items may shrink now.
-- **The scrollbar gutter is reserved.** Without it the vertical bar appears _after_ the layout has been worked out and takes its width out of the column, so every row that was exactly as wide as the column becomes wider than it — a horizontal scrollbar caused by the vertical one.
-- **The width limit applies at any depth.** It was written for the panel's direct children, which walked straight past the Cost Summary card: that is inserted beside the item requirements rather than at the top level, and it is the widest thing in the panel.
-- **The scrollbar is the game's own again.** Recolouring it was chasing the wrong thing: the bar was a width problem, not a styling one.
-- **The divider is a plain hairline with no drop shadow**, so the row reads as the edge of the content sliding underneath.
+- **The strip is painted a dark literal**.
 
 ### The action panel fits on the screen again
 
-The game's panel was built for the game's contents — a name, the inputs, the outputs, two buttons. This script adds most of a second panel on top of that, and the modal grows to hold all of it. Past a certain recipe it grows taller than the window, and the first thing to fall off the bottom is **Start Now**, which is the one thing the panel exists to press.
-
-- **The modal stops growing at the height of the window**, and the panel scrolls instead of the page. The title and the close button stay where they are rather than drifting off the top.
-- **Queue and Start are pinned to the bottom.** They are the panel's verbs, and having to scroll to reach a verb is the failure everything else here is downstream of. A hairline and the panel's own background separate them from the content sliding underneath.
-- **Overscroll is contained**, so reaching the bottom of the panel stops there instead of handing the scroll to the page behind the modal — which was most of what made the scrolling feel wrong.
-- **A scrollbar you can actually grab**, and the added sections are tightened: eight pixels above and below seven collapsible sections is over a hundred pixels of nothing.
-- All of it is CSS, scoped with `:has()` to modals that actually contain an action panel — the marketplace and the settings dialogs share the same class names and want none of it. Under Missing Materials & Crafting Plan, on by default; turning it off restores the panel exactly as it was.
+- **The modal stops growing at the height of the window**.
 
 ### Sort the task board after reading new tasks
 
-- **A new option: sort again once you press Read.** Reading is the one moment the board is guaranteed to come apart — new tasks arrive at the end however the rest was arranged. Auto-sort-on-open does not cover it, because the panel is already open, so a sorted board falls out of order every few hours and has to be sorted by hand again. Off by default, under Tasks.
-- **It waits for the tasks to land rather than guessing how long they take.** A fixed delay is a guess about how long the game needs to draw several cards, and on a slower machine the guess fires first — which shows as a board that sorted everything except the tasks that were just read. It sorts what is there immediately, then again as the new cards settle.
-- **The listener is delegated rather than bound to the button.** The card holding Read is drawn and thrown away by the game every time the unread count changes, so anything attached to one instance of it would work once and then silently stop.
+- **A new option: sort again once you press Read**.
 
 ### Crafts are priced with your tea, and open the marketplace on what they are short of
 
-- **Artisan tea was not being counted.** The card priced a craft at the recipe's printed cost, so a Corsair Helmet read 100 Pirate Refinement Shards where the game's own panel said 88.9 — an eleven per cent overcharge on every craft the panel quoted, and worse the better your tea. It goes through the same artisan calculation the action panel uses, which resolves the loadout for that skill, so it is the tea you would actually be brewing under rather than whatever is in the slots while you are out fighting.
-- **The saving is shown rather than silently applied.** The ingredient line carries one decimal once the tea has taken its cut — `26.7 × Shard` — because rounding it back to a whole number hides the very thing that changed, and a count that quietly disagrees with the game's panel reads as a bug. An **Artisan tea −11.1% materials** line names where the difference came from.
-- **Missing Mats Marketplace, on the card.** The button the action panel carries, on the card that is saving towards the craft — which is where "what am I actually missing" gets asked. It calls the action feature's own handler rather than rebuilding the marketplace tabs, so the two cannot drift apart, and says so plainly if that feature is switched off.
+- **Artisan tea was not being counted**.
 
 ### The revenue tile reads profit the way the panel does
 
-- **The tile follows the case you picked.** It was hard-wired to bid revenue less every cost — one of four readings, and not the one somebody who has chosen Patient in the panel is thinking in. A tile that disagrees with the panel behind it is a tile nobody trusts, so the panel now says which reading is on screen and the tile draws that one. Its tooltip names the case.
-- **The MooPass shows on the tile when it is being counted**, between revenue and consumables and in its own colour, because it is a standing bill rather than a cost of this run: `68.6M - 2.0M - 12.6M = 54.0M/day`. With Costs Off or Tax Off those terms disappear from the sum rather than showing as zero.
-- **The three settings survive a reload.** They were held for the session only. That was tolerable while they affected one panel; now that the tile follows them, a tile that silently reverts to a different reading of profit on every page load would be worse than one that never followed at all.
+- **The tile follows the case you picked**.
 
 ### The MooPass is a cost you can count, and the fourth corner of the book
 
-- **Tax On subtracts the MooPass from every case.** A profit figure that ignores a standing weekly bill is a profit figure that has not paid the rent, so it is now a header toggle beside Costs On, and every box and the summary line carry it when it is on. Off by default, and remembered.
-- **It charges for the bags you still need, not twenty-five.** Cowbells accumulate — dailies, drops, bags bought and not yet spent — and the panel was quoting the full 25-bag price regardless, which overstated the tax by whatever you were already holding and made runs look like they were not covering something they covered comfortably. Loose cowbells and bagged ones count the same at ten to one, and the card says "13 of 25 bags" so the credit is visible rather than assumed.
-- **Ask - Ask is back in the set.** There are four ways round the order book and only three of them have names: Lazy is Bid - Ask, Mid is Bid - Bid, Patient is Ask - Bid, and the fourth corner — everything at the asking price — had no box. Each named case now says which corner it is, so the set reads as a set rather than as three unrelated opinions.
+- **Tax On subtracts the MooPass from every case**.
 
 ### Enhancement costs follow your enhancing loadout, and Combat Profit shows its working
 
-- **It was reading whatever is on your character right now.** A cape costed while you are in combat kit is costed off a battleaxe — no enhancer, no philosopher's anything — which quotes a run nobody would make. It goes through the loadout resolver now, so it uses the gear you would auto-equip to enhance: skill-specific default first, then the all-skills default, then any saved enhancing loadout, then what is worn. Same order the profit calculators already use.
-- **The loadout resolver was answering "no loadout" in most bundles.** Each bundle that imports it gets its own copy of the snapshot store, and only the Combat one ever has `initialize` called — so the others never read storage and every caller quietly fell back to currently-equipped gear. It reaches for the shared instance first now, which fixes this everywhere it is used, not only in enhancing.
-- **Combat Profit is laid out like HWhat.** Each case is a box with the figure large, the rule under it, and the arithmetic beneath that — `67.6M - 12.0M = 55.6M`. The conclusion alone cannot say whether a bad number is a revenue problem or a cost problem; the sum can.
-- **A header line and two buttons, also HWhat's.** The sum across the top reads revenue, cost and what is left in the case you have chosen. **Costs On** drops the cost side entirely rather than zeroing it, and the mode button cycles Lazy → Mid → Patient for which case the header reads. Both are remembered.
+- **It was reading whatever is on your character right now**.
 
 ### The enhancement cost is your bench, and one luck panel instead of two
 
-- **It was costing the run at somebody else's bench.** The parameters came from `getEnhancingParams`, which hands back the enhancement simulator's _manual_ settings unless auto-detect happens to be switched on — and those default to a fully kitted enhancer: celestial tool at +13, every accessory at +10. So the quote was what a fully geared player would pay, which is not a number you can save towards. It reads the character's own gear, skill, house and teas now.
-- **"expected cost at the anvil" is "Enhancement Cost"**, in the card and in the picker preview.
-- **The Drop Luck panel is gone, and both luck tiles open Party Luck.** Splitting one question across two panels — a percentile in one, the item table that explains it in the other — meant the answer was always in the half you had not opened. The verdict, the percentile and the coins it is about are a card at the top of Party Luck, so nothing is lost and the drop that caused it is directly underneath.
+- **It was costing the run at somebody else's bench**.
 
 ### Fixed: the cape costing never fired, a layout came back rearranged, and the game drew over the panel
 
-- **The anvil path was gated on the wrong question.** It asked whether the item was untradable, and a cape is not — capes are perfectly tradable, they are simply never listed above +0. So the check never passed and a +7 cape read "nobody is selling this one" exactly as before. It now asks the question that actually matters: is anybody selling **this level**. If not, and you own one, the cost is the run from the level you already hold.
-- **The picker was pricing the choice separately from the panel.** It read the ask directly rather than going through the same costing the watched cards use, so a cape previewed as unbuyable and then watched perfectly well — a preview contradicting the thing it was previewing.
-- **A cape is priced through the shop that sells it.** Capes drop or are bought with tokens and never appear on the market, so a market-only reading says one cannot be had at any price — which made "buy a base and enhance it" impossible for the pieces that path exists for. A token is worth the best line its own shop converts to, the same rule the scrolls already use.
-- **Enhancing the piece you are wearing no longer trades it in.** It is the same cape; subtracting what it would fetch has you sell the thing you are about to enhance.
-- **An exported layout re-imported on the same character came back rearranged.** Import grew every tile to fit and then repacked the columns — right for an OPanel file, whose sizes measure OPanel's rendering, and wrong for one of ours, which already holds this overlay's own coordinates. Correcting what needed no correcting moved tiles that were exactly where they had been put. Our own files are now applied as written, frame included; OPanel's still get refitted.
-- **The panel rises while it is being arranged.** It sits below the game's interface on purpose — it is always up, and a permanent readout covering the tabs is worse than one occasionally covered. But that is a readout's rule, not a workbench's, and the ability cooldowns counting down through the tile you are dragging made the settings unusable. It now lifts above while the settings are open or the layout is unlocked, and drops back when you are done.
+- **The anvil path was gated on the wrong question**.
 
 ### Capes are priced at the anvil, crafts go through the planner, and a layout survives the trip between characters
 
-- **A cape has no ask, so it was unpriced forever.** Capes, quivers and the rest of the untradable gear cannot be bought at any enhancement level, so "save up for a +7 cape" is not a purchase — it is a run at the anvil, and reading it at a market price that does not exist reported nothing at all. Untradable targets are now costed through Toolasha's own enhancing calculator: expected attempts × materials, plus the protections the run expects to burn, counted from the level you are already wearing rather than from +0. The card says **Untradable** and names the run — `Enhance +5 → +7` — so nobody reads it as a price tag.
-- **It prices the run a player would actually make.** Failing all the way back to +0 every time is what going unprotected means, and past about +5 it is ruinous — so costing it that way would quote a number nobody would ever pay. It searches the protect-from choices and quotes the cheapest, which is the same search the enhancement display makes, using the Mirror of Protection or whatever cheaper protection the piece names. With no protection on the market it quotes the unprotected run, because a protected run at a protection nobody sells is a run that cannot be made.
-- **Crafting costs go through the crafting planner now**, rather than the flat market ask of each ingredient. The planner already knows when an ingredient is cheaper to make than to buy, and pricing a craft at retail throws that away — which for a deep recipe is most of the reason to craft it. It falls back to the flat pricing if the planner cannot answer.
-- **An exported layout no longer arrives jumbled on another character.** The export was written in MCS's OPanel format, which names twenty rows; Toolasha has half as many again. Everything without an OPanel name — every row this fork added — came back with no position and no size and piled up in the corner. The file now carries a `toolasha` section alongside the OPanel one, holding the layout in full: order, visibility, positions, sizes, zoom, and the panel's own settings. Toolasha reads that section when it is there and falls back to the OPanel half when it is not, so files exported before this still import, and MCS still reads the file because it ignores keys it does not know.
+- **A cape has no ask, so it was unpriced forever**.
 
 ### EWatch: craft it yourself, sell per piece, and a bar on the tile
 
-- **"I will craft it."** A Furious Spear you already hold becomes a Refined one for the price of the shards, not the nine hundred million the finished one asks — a completely different decision, and the panel could not express it. Any target the game has a recipe for gains a **Buying / Crafting** switch. Crafting prices the **materials**, itemised, because the reason to craft is usually that one ingredient is the expensive one and a total hides which. The piece being upgraded is counted in only when you do not already own it, and the panel says which of those it assumed.
-- **One unpriced ingredient makes the whole craft unpriced.** A recipe totalled from the ingredients it could price reports a cheaper craft than is possible, which is worse than saying nothing.
-- **Selling is per piece now.** The sword being replaced gets sold; the second ring replaces nothing you would part with. Each target cycles between following the panel switch, always selling, and always keeping — starting on "follows", since one differing is the exception.
-- **The list is ordered by how far along it is** — affordable first, then nearest to done, then unpriced. Insertion order said nothing, and ordering by cost buries the piece you are two days from behind one you are two months from.
-- **The tile grows a progress bar and a percentage**, which is what a savings tile is for: a figure says where you are, a bar says it at a glance.
+- **"I will craft it."**.
 
 ### Fixed: EWatch never had income data, and its tile omitted the enhancement
 
-- **"No income data", always.** Two bugs stacked. The duration was read from `startTime`/`endTime`, which the collector does not publish — it publishes `durationSeconds` — so the sum was `Date.now() − Date.now()` and every run was zero seconds long. And `dailyProfit` is `{ask, bid}`, two figures rather than one, so comparing it as a number was NaN and would have failed even with a correct duration. Both fixed; the bar now reads **Lazy** or **Mid** for which side of the book it is using, as HWhat's does, and No Sell switches it to the ask side since that is the assumption No Sell already makes.
-- **The tile names the enhancement**, because a Plate Body and a Plate Body +10 are different purchases at very different prices, and naming only the first names the wrong one.
-- **A pinned target you can already afford says "Affordable"** rather than `0` and `0s`, which read as broken rather than as done.
-- **MCS's own eye glyphs.** The open one is the emoji it uses; the closed one is drawn as a path, because there is no crossed-out-eye emoji that renders the same everywhere — the nearest candidates are sunglasses and a monkey covering its face, and the sunglasses is what was showing.
+- **"No income data", always**.
 
 ### Fixed: EWatch counted coins it could not spend, and hid the slots by default
 
-- **The coin figure was reading every coin row the game holds, not the one in your inventory.** `getInventory` returns every character item — equipped pieces, listings, all of it — and coins appear under more than one, so an unfiltered lookup reported fifty-one trillion where the character had two hundred and sixty-eight million. Everything was affordable, every bar sat at 100%. It filters to `/item_locations/inventory` now, which is what every other reader of that list already did.
-- **The slot list is what the panel opens on again.** Locking it away by default hid the only way to add a target, which is most of what the panel is for. Locked is still there as the compact reading view; it is just no longer the resting state.
+- **The coin figure was reading every coin row the game holds, not the one in your inventory**.
 
 ### EWatch gains Lock, Refresh, and the picker where it belongs
 
-- **Lock and Edit are the panel's two shapes.** Locked is a reading list — what you are saving for, how far along, and the Everything row — which is what the panel is for almost all of the time. Edit opens every slot so targets can be changed. Locked is the resting state because the editing view is several times longer and only wanted while changing something.
-- **The picker opens under the slot that asked for it**, not at the top of the panel. The question is "what is going in this slot", and a picker somewhere else makes you carry the slot in your head. Clicking the same slot again closes it. It offers only pieces that fill that slot, so reaching a helmet never means scrolling past every charm in the game.
-- **A list box rather than a dropdown**, as EWatch uses. A dropdown over three hundred items is a scroll whose shape you cannot see — and it was the thing closing under the pointer on every redraw.
-- **Enhancement buttons are tinted where the market has one.** Most levels of most items have never been listed, and knowing which exist is half of choosing a target. Picking one previews the whole thing before it is committed to: lowest ask, the difference after the trade-in, and how long that takes.
-- **Refresh, with the age of the prices beside it.** Every figure in the panel is only as current as the prices behind it, and a saving that has not moved in a day is usually a price that has not moved rather than a run of bad luck. It says "Refreshing…" while the fetch is in flight, because a button that does nothing visible for a second is a button people press four times.
-- **The eye pins the tile.** Not just the panel header — the overlay tile's own answer is "the nearest one", and the thing somebody is actually saving for is often not the cheapest. The eye is how you say so; pressing it again gives the tile its own judgement back.
+- **Lock and Edit are the panel's two shapes**.
 
 ### Fixed: an unpriced drop is a row, and a dropdown stops closing under you
 
-- **Anything a chest drops now gets a row**, priced or not. Valuing the scrolls through the labyrinth shop was the wrong half of the fix — the rule underneath it was that an item with no price contributes to neither side of a chest's verdict _and gets no row_, so anything the script cannot value simply vanished and read as a chest that never contained it. Unpriced rows show the count with a dash and `no price`, sort last so they cannot lead the verdict, and still count towards nothing. A zero would have been a different and wrong claim: that the chest gave you something worthless.
-- **A panel no longer rebuilds a control you are using.** The refresh redraws the whole body every few seconds, and redrawing a `<select>` closes its dropdown — scroll a long equipment list for more than a moment and it shut under the pointer, which reads as the panel refusing to be used. Any panel with a focused input, select or textarea now skips its timed redraw.
+- **Anything a chest drops now gets a row**.
 
 ### EWatch is laid out by slot
 
-- **A section per equipment slot**, as EWatch has: the slot, what is in it, and what selling that would fetch — then either what is being saved for or **Click to watch**. A slot with nothing on it is still worth a line; a list of only your targets cannot say "this slot is empty and here is what it would cost to fill".
-- **Clicking an empty slot opens the picker on that slot alone**, because scrolling past every charm in the game to reach a helmet is exactly what the invitation is there to avoid. It widens back to everything with one click.
-- Watched targets gain EWatch's **Ask Price** and **Difference** lines and an **ETA**, and take its colouring — blue for the one the header carries, gold for the rest.
+- **A section per equipment slot**.
 
 ### Treasure was dropping the scrolls, and EWatch gains its item picker
 
-- **Scrolls were missing from the chest contents.** They are bought from the labyrinth shop and used, never sold, so a market-only reading prices them at nothing — and an item worth nothing contributes to neither side of a chest's verdict and gets no row at all. The valuation already existed for the tooltip; the treasure tracker was looking only in `shopItemDetailMap`, and the labyrinth keeps its own shop under `labyrinthShopItemDetailMap`. A scroll is worth the tokens it costs, and a token is worth the best thing its shop converts to.
-- **An unsellable shop line cannot set the token price.** Otherwise a token prices at nothing and every reward follows it down — which is the same "unpriced is not free" rule the ability books and the charms already run on.
-- **EWatch has its Edit picker.** The item menu can only offer what you are holding, which is exactly the wrong set: the thing you are saving for is by definition something you do not have. Edit opens a list of every piece of equipment in the game, grouped by the slot it fills, with a button per enhancement level — greyed where nobody is selling — and a live reading of what the swap would cost before you commit to it.
-- **The Enhancement Run tile is gone**, along with the row it drew. It was the readout that used to sit under the Equipment Watch name.
+- **Scrolls were missing from the chest contents**.
 
 ### The Party Luck panel — LYuck's item table
 
-Behind the Drop Luck tile. The tile carries one figure and the panel behind it carried the run in coins; neither answers the question a long session actually raises, which is **which drop is the reason**. A run reads as unlucky because one rare did not come, and no total can say that.
-
-- **Session Statistics** — battles, party size, zone and difficulty tier. Every figure below is built from these, so they are visible rather than assumed.
-- **Revenue** — expected against actual per player and for the party, with each player's own drop-rate, rare-find and quantity bonuses in the tooltip, since those are why two people in the same fight are owed different amounts.
-- **A table per player** — item, quantity, value, what was owed, and how far off it landed, biggest haul first. A drop that was owed and never came is still a row: those are the interesting ones.
-- MCS draws these as separate draggable panes; they are sections of one panel here, because six panes that each need positioning is six panes that end up on top of each other.
-
-**A bug the panel test caught:** the loot map is keyed by the game's own slot key, not by item hrid, so matching it against the expectation on the raw key produced **two rows for every item that dropped** — one with the haul and one stuck at −100%. Resolved through each entry now.
+- **Session Statistics**.
 
 ### Luck and Over Expected are a line per player
 
-LYuck's answer to a question a single figure cannot answer. A party shares a zone and a battle count and **nothing else** — drop rate, rare find and drop quantity are each somebody's own gear, so five people fighting the same monsters are owed five different amounts, and one number for the party is an average over people who are not comparable.
-
-- **A line per player, then the total**, in both tiles. The total is the party's takings against the party's expectation, not an average of the percentages: an average weights somebody who looted one item the same as somebody who looted a hundred.
-- **One model per player.** MCS computes a base expectation and multiplies each player's share by their own bonuses; this builds the whole session per player with their own bonuses instead. Same arithmetic — the bonuses enter as multipliers either way — but it cannot drift from the single-player model, because it _is_ the single-player model. A version that split one expectation evenly would report the player with the drop-rate build as permanently lucky, which is the exact failure the model already carries a warning about.
-- **Solo is unchanged.** One player means one line, as before.
-- Worth knowing what the figure means: a player with no drop gear is owed less, so par for them is a smaller haul. "Am I unlucky" is a different question from "am I contributing", and this answers the first.
-- `expectedItemCounts` is new alongside `sessionMean` — the same walk over the same priced drops, one summing coins and one summing counts, with a test that they agree when the counts are priced back up.
+- **A line per player, then the total**.
 
 ### The combat simulator is its own bundle, and the combat bundle stops scraping its ceiling
 
-The engine under `features/combat-sim/` is a megabyte of source and the largest thing in the script by a wide margin. Four features across three bundles reach into it — the labyrinth clear-rate model, task profit, the build score, and the simulator's own interface — and because it was never declared shared, **it was copied into each of them**. Both the combat and the UI bundle carried their own `class Monster` while sitting a few kilobytes under the 2 MB ceiling.
-
-It is now `toolasha-sim.js`, loaded once and referenced.
-
-| Bundle | Before    | After         |
-| ------ | --------- | ------------- |
-| combat | 2,090,702 | **1,068,270** |
-| ui     | 2,064,758 | **1,795,494** |
-| sim    | —         | 1,394,937     |
-
 - Combat has a megabyte of headroom instead of six kilobytes, which is what the per-player luck work needs.
-- The new bundle loads after utils and before market, because market declares the engine external too. CI's size gate globs `dist/libraries/*.js`, so it covers the new one without being told.
-- One subtlety worth recording: a **default** import of an external compiles to the global value itself, so `Toolasha.Sim.monster` has to _be_ the class. Wrapping it in a namespace would have handed a `{default}` object to every `new Monster(...)` in the script — and only at runtime.
 
 ### Equipment Savings — the gear you are saving for, and when you will have it
 
-MCS's EWatch, ported. Wanting a piece of equipment is a savings problem and the game helps with none of it: the price is on one screen, your coins on another, and what you earn per day nowhere. So the question people actually ask — "can I afford it yet, and if not, when" — gets answered by opening the market and subtracting in your head, several times a day, for weeks.
-
-It takes over the **Equipment Watch** tile, which is what that tile was named for. The enhancement-run readout that was sitting there keeps working under its own name, **Enhancement Run** — it is a different thing that had borrowed the name.
-
-- **What an upgrade costs is not what it is priced at.** You sell the piece it replaces, so the cost is the target's ask **less the bid on what you are wearing** — for a late-game slot that is most of the price, and reading the ask alone can double the figure. Finding the piece it replaces means turning the target's **equipment type** into an **item location**, two different strings that look interchangeable; getting it wrong throws nothing and silently charges full price for everything.
-- **Keep old gear** turns the trade-in off, for a piece you are keeping for a second loadout.
-- **A progress bar per target**, with what is still to find and how long that takes at your measured daily profit. **Everything** does the same for the whole list, because one slot at a time answers the wrong question when you want three pieces.
-- **No income measured means no arrival time**, not "never" — a figure there would be a claim about the future. Likewise an unpriced target is unknown rather than free: costing it at nothing would report it as already bought, which is the most misleading thing this could say.
-- Targets are added with a **Save for** button on the game's item menu, off by default like the Watchlist's, since it changes a menu you use for other things. Equipment only — saving up for a cheese is not a plan.
-- Coins are read off the character rather than out of net worth, which is recalculated on a schedule: a savings bar has to move when you spend, not when a worker next runs.
-
-Rebuilt against EWatch's own pane rather than from its idea:
-
-- **The eye.** With several things on the list, one of them is the one you are actually saving for; clicking its eye puts it at the top of the panel with its own bar, as EWatch's header does.
-- **The purse bar** carries coins, what is tied up in market orders, and income per day — the three numbers that decide everything below.
-- **Market Value** decides whether coins in market orders count as money you have. Sell orders at what they will pay after tax, buy orders at what was already handed over, plus anything unclaimed.
-- **No Sell**, under its own name, for the trade-in switch.
-- **The percentage runs to five decimals**, which looks absurd until the target is a two-billion-coin spear — at which point the bar and a rounded figure both sit still for an entire evening and the fifth decimal is the only thing saying you are getting anywhere.
+- **What an upgrade costs is not what it is priced at**.
 
 ### Fixed: the Drop Luck panel said `[object Object]`
 
-- `describeLuck` returns `{text, tone}` and the whole object was handed to the line, so the verdict rendered as `[object Object]` where the words should be. It reads the text now, and takes the colour from the tone — lucky green, unlucky red — which is what the tone was there for.
+- `describeLuck` returns `{text, tone}` and the whole object was handed to the line, so the verdict rendered as `[object Object]` where the words should be.
 
 ### The DPS tile is a line per player, then the total
 
-- DPs' shape: **name, damage per second, hit rate** for each player, and a **Total DPS** line under them. A party figure says the group is doing damage and not who is doing it, and "who" is the whole question when somebody is under-geared for the zone.
-- **The total is the sum of the lines**, taken from attribution rather than from this module's own health-diff figure. The two measure different things — health lost includes bleeds nobody cast — and a total that did not add up to the lines above it would read as an arithmetic bug.
-- **It falls back to the party figure** when the Damage Tracker is off, still labelled `Party DPS ×N` so it cannot be read as yours, and the tooltip says which switch turns the per-player lines on.
-- No swings seen reads `--` rather than `0.0%`: an unmeasured hit rate is not a missed swing.
+- DPs' shape: **name, damage per second, hit rate** for each player, and a **Total DPS** line under them.
 
 ### Charm panel folds are remembered between sessions
 
-- They survived a refresh but not a reload. Stored now, through the same deferred read the Watchlist uses, since IndexedDB opens after the libraries evaluate and a read at module scope reliably returns the default.
+- They survived a refresh but not a reload.
 
 ### Fixed: the Charms panel kept unfolding sections you folded away
 
-- Each section's fold lived in the DOM, and the panel rebuilds its whole body every few seconds — so every refresh put all three sections back to the shape they open in. Collapse the upgrades, watch them reappear three seconds later, over and over. The folds are held outside the draw now, so a redraw finds what you chose rather than the default.
-- Remembered under a stable key rather than under the heading, because the headings carry the equipped bonus and change when you swap charms.
+- Each section's fold lived in the DOM, and the panel rebuilds its whole body every few seconds — so every refresh put all three sections back to the shape they open in.
 
 ### Fixed: the charm slot was read with the wrong kind of key, and the panel is QCharm's
 
-- **It asked the equipment map for `/equipment_types/charm`.** The map is keyed by **item locations** — `/item_locations/charm` — so every lookup returned undefined, the panel reported an empty charm slot with a Grandmaster Melee Charm sitting in it, and "over what you are wearing" was computed against nothing. Nothing threw; the wrong key is simply a miss. A panel test now states the key the game actually uses, because no arithmetic test can catch this.
-- **Scoped to the charm you are wearing**, as QCharm is. It was ranking every charm in the game together and opening on Basic Brewing, Basic Tailoring and Basic Cooking — a melee charm and a brewing charm are not alternatives to each other, so that list was things you do not want with the one you do want somewhere in it. Now it is the same focus at every tier.
-- **A row per enhancement level the market is selling**, not one per charm. A Master +3 and a Master +5 are different purchases at different prices, and which of them is worth it is the whole question.
-- **Charm Upgrades and Charm Downgrades**, each headed with what you are wearing. Downgrades are not there to be bought — seeing that a charm two tiers down is a fraction of the price is how you decide the top tier is not worth it. Equal counts as an upgrade, because the same bonus for less money is the trade people are looking for.
-- **Exp/M**, the bonus per million coins, sortable along with every other column. Per coin the ratio is 0.000000052, which no column can show; per million it is 0.05 against 0.03, the same ordering in a form you can read.
-- **The Charm EXP Guide**, folded away by default: the six tier percentages and the twenty enhancement multipliers. Every figure in the panel comes out of those two tables and neither is visible anywhere in the game.
-- Enhancement scaling is now stated as the charm slot's rather than looked up per item. A lookup that misses does not fail — it returns the 1× default and reports a +20 charm as scaling like a sword.
-- **The trainee tier is priced at the vendor's 250,000**, as QCharm prices it. Nobody lists trainee charms — there is no profit in reselling something the shop stocks at a fixed price — so a market-only reading shows the bottom tier as unpriced, and it is not unpriced. It is the floor every other tier's value per coin is judged against. Only unenhanced: a trainee at +5 is somebody's enhancement work and is priced by the market like anything else. Every other tier with no listings stays genuinely unpriced, since calling one free would put it top of the ranking.
+- **It asked the equipment map for `/equipment_types/charm`**.
 
 ### Clicking a book fills the buy dialog in
 
-- **The count is already typed in when the marketplace's Buy Listing dialog opens.** The number of books is the point of the panel, and retyping it into the dialog is where it gets rounded to something convenient — 2,800 rather than 2,809 is one book short of a level, found out a fortnight later.
-- It follows the **target the row is aimed at**, not the next level, so setting a row to 150 and clicking its book buys the books for 150.
-- **One-shot rather than standing.** The dialog does not say which item it is for, so a quantity left armed would be filled into the next thing you buy. An ability that needs no books arms nothing rather than leaving the last count sitting there.
-- The observer that fills it in registers on the first click and stays. The dialog is reached by navigating to the marketplace and then clicking + New Buy Listing, which can be a while later and with the panel shut in between — an observer that lived only as long as the panel would miss exactly that.
+- **The count is already typed in when the marketplace's Buy Listing dialog opens**.
 
 ### The Ability Books panel loses its labels, and tiles stop sitting an icon low
 
-- **The heading row and the ability-name column are gone.** They were what made the panel look cramped beside BRead: the labels were the widest thing in three columns — a third of the width spent writing "Books" above a column of book counts — and the name was ellipsed to `Pen…` at any width that left room for the figures. The book's icon is the name, as it is in BRead, with the ability named in its tooltip. Every cell keeps a tooltip, so nothing that was labelled is now unexplained.
-- **The figures are the size of figures.** Level and books at 17px, the icon at 28, and rows breathing at 7px rather than 2. Books get their own orange: side by side with the cost in gold, two figures in one colour read as one figure.
-- **An icon on an overlay tile no longer sits low.** Text on a line is aligned on its baseline, which is what makes a row of figures read as a row — but an icon is a box with no baseline, so it sat below the numbers and dragged the line's height about. A line carrying an icon is centred instead, aligning the box and the numbers on the only thing they share.
+- **The heading row and the ability-name column are gone**.
 
 ### The Ability Books panel is BRead's panel now
 
-- **BRead's columns, which are not the ones it had**: level, book, **experience still owed with the rate it is coming in at**, **time to get there**, books, cost, and a target level **per ability**. The old table had books and cost against a single shared target, which cannot answer the question anybody has — an ability at 41 and one at 70 are different purchases, and "how long" was not on the table at all.
-- **The rate is measured over the last ten minutes**, not from when you opened the panel, so it is sampled whether the panel is open or shut. A rate that only starts measuring when you look at it says nothing for ten minutes, every time you look.
-- **An ability nobody is training reads `—`, not `never`.** No rate is unmeasurable; infinity would be a claim about the future.
-- The header carries the same phrase the tile does — icon, books, cost — so the panel opens showing the figure you opened it for. **Reset** puts every ability back to its next level.
-- The shared "take everything to level" bar stays and now clears the per-ability targets when used, or "everything" would quietly mean "everything else". Its total counts each ability where **it** is aimed, which needs `aimedTotals` rather than a single column — `costToTarget` is null on the rows with no target and `costToNext` ignores the ones that have one.
-- **Not ported: MCS's range calculator.** It answers "books from level 1 to 100" at a hardcoded 50 and 500 experience per book. The target column does the same job against each book's real experience, so the two would disagree and the hardcoded one would be the wrong one.
+- **BRead's columns, which are not the ones it had**.
 
 ### The Skill Books tile is centred, and the Combat Log says why it is empty
 
 - The tile's icon, count and price are one phrase and now read as one, centred, rather than the price being pushed to the far edge of a resized tile with a gap in the middle.
-- **The Combat Log tile was blank because the feature behind it is off by default.** Blank reads as broken, so it now names the switch it wants — Settings › Combat › Scrolling Combat Text — and says "waiting for a fight" once it is on and nothing has happened yet.
-- It opens a panel too, with the last eighty events rather than the six a tile holds. Six is fine for a glance and no use for "what actually killed me".
 
 ### QCharm and MAna open, and the Skill Books tile is BRead's
 
-- **Charms and Mana were tiles with nothing behind them.** Both now open on double-click. **Charms** lists the whole field ranked by experience per coin — icon, name, bonus, price — with each one's **gain over the charm you are wearing**, which is the number to pay against; the charm's own bonus is what you already have plus what you would gain, and paying for the whole of it is how people overpay. **Mana** breaks the run down by ability with each one's share, because the tile's per-fight figure does not say which ability moves when the rotation changes, and carries a Reset.
-- **The Skill Books tile is BRead's tile now**: the cheapest ability's **own book icon**, how many books that level takes, and what they come to. It was carrying four figures — inventory count, inventory worth, ability name, cost — and the name was ellipsed to `Pen…` to fit. The icon names the ability in the width a truncation was costing, and the books you already hold moved to the tooltip: a pile of unread books is a figure, the cheapest next level is a purchase.
-- `utils/simple-panel.js` is the shell all of these share, now declared shared in the build — it was about to be copied into both the combat and market bundles. 8 tests, including that a `draw` which throws says so rather than leaving an empty panel.
+- **Charms and Mana were tiles with nothing behind them**.
 
 ### Fixed: Combat Profit was a column of zeroes
 
-- It read the **raw player** out of the collector. `dailyIncome`, `dailyProfit` and the cost figures are produced by `calculatePlayerStats`, which the panel never called — so every branch defaulted to nought and the panel reported a confident zero for all three scenarios. It goes through the calculator now, the same one the Combat Revenue tile uses, so the two cannot disagree.
+- It read the **raw player** out of the collector.
 
 ### Fixed: the Watchlist and the target selection forgot everything on load
 
-- Both read their saved state at module scope, which races the database: IndexedDB is opened **after** the libraries are evaluated, so the read reliably returned the default and reliably logged `Database not available`. The feature then ran on defaults for the whole session and looked like it had simply forgotten.
-- `utils/deferred-load.js` keeps asking until the database answers, front-loaded so the usual case costs nothing, and gives up after a few seconds rather than polling for the rest of the session. Loading later was not an option — the overlay reads that state on its first paint.
-
-**Damage attribution is confirmed working against the live game.** The per-ability breakdown, accuracy and crit rate are all real, so `cMP`, `dmgCounter`, `critCounter` and `preparingAbilityHrid` are current in the payload.
+- Both read their saved state at module scope, which races the database: IndexedDB is opened **after** the libraries are evaluated…
 
 ### Damage attribution — DPs properly, and the combat text with it
 
-The gap behind three half-ports closed at once. The game attributes nothing, and MCS's trick is that **it does not need it to**: only the casting player's mana falls on a cast, so whoever's `cMP` went down this tick is who acted. That one join is what DPs, the floating text and a party mana tally were all missing.
-
-- **`utils/damage-attribution.js`**, 23 tests. The caster from the mana drop; a hit from `dmgCounter` **rising** rather than health falling, so a bleed is not credited to whatever was mid-cast; a crit from `critCounter`; and the case a health diff can never express — a counter rising with health unchanged is a **miss**, not a non-event. Solo skips the mana check entirely, or an auto-attacking character would never register a hit at all.
-- **The Damage panel is DPs now**: per player, per ability, with damage, share, DPS, **accuracy** and **crit rate**, and the **Filter non-damaging** toggle. Accuracy with no swings is `—` rather than 0%, which is not the same claim.
-- **Floating text gained what it was missing**: a colour per **attacker** so a party's numbers are separable, **misses** drawn as `miss` where the game's own bar cannot show them at all, and crits drawn larger — the thing you want to notice without reading.
-- **`combat-dps.js` is untouched and still feeds the tile.** The two measure different things and would disagree: it counts every point of health a side lost including bleeds nobody cast, this counts only attributable hits. The tile's total is the honest "output"; the panel is honest for "who and what". Merging them would force one to be wrong.
-
-`damage-attribution.js` is declared shared — it was being copied into both bundles, which took combat to 7 KB under its ceiling.
-
-**Unverified against the live game.** The field names come from MCS v0.9.36235 (`cMP`, `dmgCounter`, `critCounter`, `preparingAbilityHrid`, `isPreparingAutoAttack`) and have not been seen on a real payload.
+- **`utils/damage-attribution.js`**.
 
 ### Rebuilt the combat panels against the actual source
 
-The four panels shipped a moment ago were my own design wearing MCS's names — I did not open the vendored script for any of them. Read properly, three were wrong in shape.
-
-- **Deaths is a party breakdown**, as IHurt is (line 11614): session deaths and deaths/hr **per player**, plus the party totals and the session clock. A party figure says the group is dying and not who, and "who" is the whole question when one member is under-geared for the zone. My previous version was solo-only and invented _one death every X_ and _encounters per death_, neither of which IHurt has. It also no longer implies it knows what killed anybody — the third-party notes said "broken down by what killed you" and the code does no such thing.
-- **Profit names the three cases HWhat names** (line 29211), which are not "at ask" and "at bid": each mixes a revenue side with a cost side, because you sell and buy on opposite sides of the book. **Lazy** is `Revenue (Bid) − Cost (Ask)`, **Mid** is `Revenue (Bid) − Cost (Bid)`, **Patient** is `Revenue (Ask) − Cost (Bid)`, and the Difference block prices what patience is worth. It also gains HWhat's **tax section** — 25 Bags of 10 Cowbells a week, costed from the market — and says whether the run covers it, because a profit that does not clear the weekly tax is a slower way of running down.
-- **Damage is unchanged and still does not match.** DPs attributes damage per player per ability from `dmgCounter`, `critCounter` and the casting player, and has a Filter Nondamage toggle. Toolasha's collector only diffs total health per side, so matching it needs the **collector** extended, not the panel redrawn. Left as it is rather than faked.
+- **Deaths is a party breakdown**.
 
 ### Panels behind DPs, IHurt, LYuck and HWhat
 
-Four tiles that were one number each now open on double-click. Each panel reads the collector its tile already reads and computes nothing of its own — if a panel and its tile ever disagree, the disagreement is in the collector.
-
-- **Damage.** Dealt and taken, each per second and in total, and the **exchange ratio** between them — which is the thing a DPS figure alone cannot tell you: whether you are winning the fight or merely surviving it. Party size and your own share, marked as the estimate it is, since the game does not attribute hits.
-- **Deaths.** Deaths, per hour, run length and encounters — plus **one death every `X`** and encounters per death, because a rate of 0.7/hr is not a thing anybody pictures. No deaths is rated as nothing rather than as infinity. The game does not say what killed you, and the panel says so instead of implying it knows.
-- **Drop Luck.** The percentile, and then **how many coins the verdict is about** — income against expected, and the difference. A percentile alone cannot distinguish a fortune from a rounding error. It says when drop-rate bonuses were folded into the expectation, since that changes what the number means.
-- **Combat Profit.** Both pricing sides, because which is honest depends on whether you sell into the bids or wait at the asks, and the gap between them is frequently the whole profit. Costs split into consumables and keys rather than presented as one figure to subtract.
-
-All four panels share one shell — header, drag, resize, remembered position — so a panel cannot open somewhere unreachable in one place and not another. 13 tests build them, including with nothing loaded, which is the state every one of them is in for the first minute of a session.
-
-`combat-dps.js` and `combat-drop-luck.js` are now declared shared: they are stateful singletons fed by the websocket, so a second copy in the UI bundle would have sat there receiving nothing and reporting zeroes.
+- **Damage**.
 
 ### Floating and Scrolling Combat Text
 
-- **Damage numbers over the units taking them**, and a **Combat Log** overlay row of the same events. A health bar tells you the state and not the event — "did that hit for 400 or 4,000" is a question a number answers and a bar does not.
-- **Both off by default**, and each can be turned on alone. With both off nothing subscribes to the websocket at all, so the feature costs nothing when unused.
-- **The game sends no events.** It sends every unit's health every tick, and a hit is the difference between two of those. `utils/combat-events.js` derives it, with the three ways to get it wrong pinned by tests: health going **up** is a heal rather than negative damage, or a healer cancels the party's output; a unit seen for the **first** time has not been hit for its entire health bar; and a unit that has **gone** did not take its remaining health as damage, because it died or the wave ended and the state cannot tell those apart.
-- The floating text draws the largest event per unit per tick. A tick carries a dozen events and ticks come several a second, and a number per event is a great deal of DOM for something nobody can read.
+- **Damage numbers over the units taking them**.
 
 ### MAna and QCharm
 
-- **Mana/fight.** Mana is the constraint nobody watches — damage is in the combat log, mana shows up only as the moment an ability does not fire, by which point the fight has gone differently. The row reports mana and casts **per fight** rather than the running total, because a total only says how long you have been playing.
-- The game announces a cast but not what it cost, so a cast is a message and its mana is a lookup in `abilityDetailMap`. An ability the game has never described contributes casts and no mana, and the row carries a ⚠ saying the total is a lower bound rather than letting a short figure read as a measurement.
-- **Charm Value.** A charm's bonus scales with tier and enhancement; its price scales with neither in any orderly way. So the best charm to buy is neither the highest tier nor the cheapest — it is the most bonus per coin, which is a division across six tiers and twenty enhancement levels. Ranking by bonus alone recommends the grandmaster every time, which is true and useless.
-- The tooltip says what the **upgrade** buys rather than what the charm is worth: swapping a 5% charm for a 6.5% one buys 1.5%, and paying for it as though it bought 6.5% is how people overpay.
-- An unpriced charm is unknown rather than free, and sorts last — the same rule the ability books needed, for the same reason.
-
-`utils/mana-spend.js` (8 tests) and `utils/charm-value.js` (14 tests) hold the arithmetic. Charms are found by looking for the charm slot in the item map and reading the tier out of the hrid, so one added by a game update is priced rather than missed.
+- **Mana/fight**.
 
 ### Fixed: the Ability Book panel listed nothing at all
 
-- It read the character out of `getInitClientData()`, which returns **static game data** — an `abilityDetailMap` describing every ability in the game and nothing about yours. So the list was always empty, and "No abilities learned yet" was the panel faithfully reporting a lookup that could never succeed.
-- **It now shows the equipped kit**, which is the right question anyway: what to buy next for the build you are running, not for every ability you have ever touched. That needs **two** sources — `combatUnit.combatAbilities` is the only place that says which abilities are slotted, and `characterAbilities` is the only place that carries experience. Joined, because with the level alone every ability reads as freshly levelled and every plan costs a whole level too much.
+- It read the character out of `getInitClientData()`, which returns **static game data** — an `abilityDetailMap` describing every ability in the game and nothing about yours.
 
 ### Skill Books is BRead now, and Ability Books is gone
 
-- One row, not two. **Skill Books** already existed and was already about books; it now also carries the cheapest next ability level and opens the panel on double-click. The separate **Ability Books** row I added last time has been removed — two rows about books, one of which you had to know to enable, is worse than one that was already there.
+- One row, not two. **Skill Books** already existed and was already about books; it now also carries the cheapest next ability level and opens the panel on double-click.
 
 ### The Watchlist counts what is on the market
 
-- Items sitting in your own **sell orders** and **unclaimed** from filled buy orders now count towards what you own. A checklist that reads only the inventory says you have none of something you have two hundred of — the difference between "go farm this" and "wait", which is exactly the distinction a collection list exists to make.
-- The count is starred and the tooltip breaks it down — in the bag, listed for sale, unclaimed — because where they are is the actionable part. A buy order's unfilled remainder is coin rather than items and is not counted.
-
-Every item icon and name in the new panels opens the marketplace; checked across all four.
+- Items sitting in your own **sell orders** and **unclaimed** from filled buy orders now count towards what you own.
 
 ### Ability Books — BRead
 
-- **Every ability at once**, with the books its next level costs and what those books cost in coin. The Item Dictionary already answered this for the one ability whose book you happened to be looking at, which is the wrong shape for the question people actually ask — not "what does this cost" but "what should I buy", and you cannot answer the second by opening the first eighteen times.
-- **Sorted by cost, because cheapest is not nearest.** Books differ in the experience they grant and by orders of magnitude in price, so the ability two hundred experience from a level routinely costs more than one four thousand away. An **Ability Books** overlay row carries the winner; double-click opens the panel.
-- **An unpriced book is unknown, not free.** Treating a missing price as zero would make whatever nobody is selling win every time, which is exactly backwards. Those rows say `no price`, sort last, and are excluded from the cheapest.
-- **One target level for everything**, with the total books and coin to get every ability there — and a count of how many it could not price, so a lower bound is not read as a total.
-- **The maths now lives in one place.** `utils/ability-books.js` holds it, and the dictionary calculator was rewired onto it. Both need the rule that an unlearned ability costs one book more — the book teaches the ability rather than levelling it — and two copies of that rule is two places for it to go missing.
-
-20 tests on the arithmetic and 13 that build the panel. The panel ships in the UI bundle rather than the combat one: put beside the dictionary calculator it took the combat bundle to 2,093,537 bytes, 3.6 KB under the ceiling.
+- **Every ability at once**.
 
 ### A Track button in the item menu, off by default
 
-- Clicking an inventory item now offers **Track** / **Untrack** beside Sell, so an item goes on the Watchlist where you noticed it rather than by opening a panel and finding it again. It says which of the two it will do, so the menu reports the item's state as well as changing it.
-- **Off by default.** This adds a button to a menu you open for other reasons, next to Sell, and a misclick there is a sale — nobody who does not use the Watchlist should find that menu rearranged by a feature they did not ask for.
-- **The switch is in two places and is one setting.** It is on the settings page under Loot Log and on the Watchlist panel itself, which is where you are when you decide you want it. Neither is a copy: both write the same setting, and flipping it from either attaches or removes the buttons immediately rather than at the next reload.
-- It borrows the game's own button styling from a button already in that menu, so it does not read as something bolted on.
+- Clicking an inventory item now offers **Track** / **Untrack** beside Sell, so an item goes on the Watchlist where you noticed it rather than by opening a panel and finding it again.
 
 ### Watchlist — NTally
 
-- **A list of items you care about**, with what you hold, the unit ask and bid, and what the pile is worth. Inventory Value says what the whole bag is worth, which is a number that moves when anything moves; this one answers something narrower and actionable — _these thirty things, how many have I got, and which of them should I not be selling on the market._
-- **Tick a combat zone and its whole drop table goes on the list.** Read from the game's own data: both `dropTable` and `rareDropTable` of every ordinary spawn **and every boss**, or the completion reward table if it is a dungeon. Reading only the common table would omit precisely the drops anybody tracks a zone for, and reading a dungeon as an ordinary zone finds nothing at all. Chests work the same way, and include the unopened chest itself.
-- **The zones come from the action map rather than a list**, so a zone added by a game update appears on its own — where MCS's hardcoded fifteen would not.
-- **Un-ticking a set does not take items another set still wants.** Zones share drops, so every row remembers which set put it there, and un-ticking re-homes any row a still-ticked set also contains instead of deleting it. Items added by hand belong to no set and survive everything. This is the part with the most tests, because getting it wrong looks like the list losing things at random.
-- **A green dot on tracked items in the inventory**, so the list is readable where you are actually looking rather than only when the panel is open.
-- **The vendor warning.** A market bid below what the vendor pays flat is not a price, and reporting it as the item's value quietly advises the worse of two sales. Those rows show the vendor price with a ⚠ and say why. Items with no market at all report the vendor price too — a bid of zero is the absence of a price, not a value of nothing. Toolasha already made this comparison inside the bulk-sell flow; here it stands as a property of the item rather than as a step in selling one.
-- A **Watchlist** overlay row carries `held / tracked`, the total at ask, and the count of rows the vendor would pay more for. Double-click opens the panel.
-- One tick can add thirty rows, so there is one gesture to empty the list again — which unticks every set at the same time, since a ticked box over an empty list is a box claiming something untrue.
-
-`utils/watchlist.js` (26 tests) and `utils/drop-sources.js` (16 tests) hold the set algebra and the drop-table walking; 14 more build the panel and read it back.
+- **A list of items you care about**.
 
 ### The MWI Combat Suite source is back in the tree while the port runs
 
-- `third-party/mwi-combat-suite/mwi-combat-suite-0.9.36235.user.js` is restored. It was removed because 2 MB and 42,155 lines cost every clone for a file nothing builds against — which is true, and was the wrong trade while the port is still in progress. Without it, every question about what a panel actually does gets answered from screenshots, and at least one port went in wrong that way.
-- Nothing in the toolchain reads it: `eslint` and the test runner only look at `src/`, `prettier` is scoped to `src`, `*.config.js` and `**/*.md`, and CI's 2 MB check only measures `dist/`. It is added to `.prettierignore` anyway, so a repo-wide `prettier --write` cannot reformat somebody else's script. The notes and licence beside it stay formatted.
-- It can go again once nothing is being read out of it.
+- `third-party/mwi-combat-suite/mwi-combat-suite-0.9.36235.user.js` is restored.
 
 ### The combat level is a target you can aim at
 
-- **The Target Selector offers Combat alongside the skills**, so "when do I hit 151?" is answerable directly rather than by picking a skill and doing the last step in your head. It drives the Time to Level tile like any other target: `Combat → 130`.
-- **Combat level has no experience table of its own** — it moves because two skills underneath it are moving, at different rates and different weights — so this is not a division. The clock is run forward at the projected rates and the formula is asked when it crosses, found by doubling until it passes and then bisecting, which is exact to the second. A closed form would need the weights to hold still, and they do not: a skill overtaking another changes what a level of it is worth partway through, and the answer has to be right across that crossover.
-- A target the current rates can never reach — everything caps out — declines rather than reporting a century.
-- Combat is offered on the Target Selector only. Primary and Focus are shares of experience, and combat level does not receive experience.
-
-`fractionalLevelOf` and `timeToCombatLevel` are in `utils/combat-level.js` with 11 more tests, one of which checks the table inverts cleanly at all 150 levels rather than only at the ones anybody would try by hand.
+- **The Target Selector offers Combat alongside the skills**.
 
 ### The Time to Level tile follows the Target Selector
 
-- **Pick a skill and a level in the panel and the tile reports that**, instead of going on about whichever skill happens to be going up fastest. A selector that drives nothing you can see is indistinguishable from a selector that does not work. A target beyond the next level reads `Defense → 130`; the next level reads as it always did, since the arrow would be saying nothing.
-- **The choice is kept**, so a tile you set once still says the same thing next week. It also lives outside the panel now — it has to, since the tile is on screen while the panel is closed, which is most of the time.
-- The time comes from the same projected rate the panel shows, so the tile and the Target Selector cannot disagree.
+- **Pick a skill and a level in the panel and the tile reports that**.
 
 ### The two copies of the sampling loop are now one
 
-- The panel and the Time to Level row each had their own copy of "read every skill, keep ten minutes, work out a rate". Both had the clock-going-backwards bug and the different-character bug; **only one copy had been fixed**, so the overlay row was still going quiet after a resume from sleep and still measuring the gap between two characters as a rate.
-- Both now use `utils/skill-history.js`, with 12 tests. Each still keeps its own instance, so opening or closing the panel cannot reset the row's measurement — which was the reason for two copies in the first place, and did not require two copies.
-- Writing its tests found a third: the very first reading was refused whenever the clock started near zero, because "never sampled" was stored as time zero and zero is a real time. Invisible under a real clock, which is how it survived.
+- The panel and the Time to Level row each had their own copy of "read every skill, keep ten minutes, work out a rate".
 
 ### Fixed: changing a dropdown appeared to do nothing
 
-- **The refresh guard was blocking the redraws the user asked for.** The panel skips its five-second redraw while a field has focus, so a half-typed level is not swept away — but `change` fires on a dropdown while that dropdown still has focus, so the redraw it asked for was skipped too. The new figures then turned up whenever focus next moved and the clock came round, which is what "takes ages to show the new exp rate" was.
-- The two are now separate: the periodic redraw still leaves a field alone, and a redraw the user asked for always happens. **The control also keeps its focus across it**, so changing Focus twice in a row does not mean clicking back into the dropdown between.
-- **The Target Selector reads the same rates as the table below it.** It used the measured rate while the table used the projected one, so choosing a skill you are not training answered `—` with the answer two inches beneath it. Both now come from one `projectedRates`, which also fixes the case nobody had hit: pointing Primary and Focus at the same skill gave it one share and silently dropped the other.
+- **The refresh guard was blocking the redraws the user asked for**.
 
 ### Combat Revenue reads like MCS's
 
-- One decimal and a plain hyphen: `95.1M - 13.2M = 82.0M/day`. Three numbers and two operators on one tile is already tight, and the second decimal buys nothing when the figure moves by millions a minute.
+- One decimal and a plain hyphen: `95.1M - 13.2M = 82.0M/day`.
 
 ### Panels can now be tested, and testing this one found two more bugs
 
-- **`happy-dom` is a dev dependency, opted into per file** with `/** @vitest-environment happy-dom */`. Everything else stays in `node`, which is right — most of what is worth testing here is arithmetic, and the DOM environment costs setup time on every file that takes it. `AGENTS.md` documents the pattern.
-- **23 tests build the Combat Level panel and read it back.** The load-bearing one is the dullest: every section draws and none reports a failure. That single line is what a missing method, a renamed helper, or a property read off something that stopped having it all fail — and it is exactly what nothing caught last time.
-- **Fixed: a clock that goes backwards stopped the rates.** A correction or a resume from sleep leaves readings stamped in the future, and the window between them is negative, so every rate reads as unmeasurable until real time catches up — which for a long sleep is hours of a panel quietly saying nothing. The readings are now discarded and the measurement starts again.
-- **Fixed: switching character measured the gap between the two as a rate.** Experience does not go down, so a reading below the last one is a different character — a test server beside a live one is an ordinary thing to have. That skill's history is now dropped rather than subtracted across.
-
-Both were found by writing the tests, not by using the panel.
+- **`happy-dom` is a dev dependency, opted into per file**.
 
 ### Fixed: the Combat Level panel stopped after the session bar
 
-- `_busiest` was called and never written. It threw on the Target Selector, which is the section immediately after the session bar — so everything below it, the whole panel, was never drawn.
-- **A section that cannot be drawn no longer takes the rest of the panel with it.** Each one is built inside its own guard and says what went wrong in its place. Half a panel with no explanation looks like a missing feature rather than a bug, which is the wrong thing for it to look like — and it is why this shipped at all.
+- `_busiest` was called and never written.
 
 ### GWhiz, part three: the bar was measuring the wrong thing
 
-- **The progress bar was 30% when it should have been 79%.** The obvious reading of "how far to the next combat level" is the fraction the displayed whole number throws away — `126.300` is 30% of the way to 127. That is wrong. Combat level is computed from **whole** skill levels, so it steps; feed it the part-finished levels instead and it becomes the continuous figure it really is. A build at `126.300` whose Melee is 81.7% of the way to its next level is 79% of the way to Combat 127, because most of the Melee level carrying the doubled term is already banked. That is the difference between "a third of the way" and "nearly there", and it is what GWhiz's bar has been showing all along.
-- **So the bar is drawn in two colours**, and the formula is run twice: whole levels give the number the game shows and the arithmetic beside it, fractional levels give the bar. The first colour is what completed levels have banked; the second is what the level in progress has added.
-- **Time to the next combat level**, on the block and on the title bar. It is the cheapest route's levels costed at that skill's measured rate against the real experience table — so "2 levels of Melee" and the 8d 22h beside it are the same plan, not two.
-- **Laid out like GWhiz.** Cards rather than one column; a session bar with Start, Duration, Exp and Exp/Hr; the formula in monospace with **every term coloured by the skill it is**, so the repeated one is visible rather than inferred; a full block per skill actually gaining, with its remaining experience, its share of the run, and its own bar; and folding headings on the lower sections.
-- **Time to Level answers "what if I trained something else".** The split between the two skills receiving experience — 28.4% and 71.6% on the reference build — is a property of the setup, not of those skills. The Primary and Focus selectors point those measured shares at any skill you like, and the table's rates and times follow, so the cost of switching is answerable without spending a day finding out. Projected rates are italicised, since they are not measurements.
-- **Skills with no rate get a tile instead of a row of dashes** — level and how far into it — which is what GWhiz's compact section is for. The charm and wisdom figures stay beneath them.
-- **Double-clicking Experience/hr or Time to Level opens the panel.** Both rows are one line about a question the panel answers in full. The Experience/hr row reaches it through the global rather than by import, since it is in the combat bundle and importing would have given it a second panel with its own session clock.
-- Exp Lookup shows the subtraction, not just its result, since the two thresholds are the answer to the next question.
-
-`levelFraction` and `fractionalLevels` are in `utils/combat-level.js` with 4 more tests, one of which reproduces the 79% from the reference build's own numbers.
+- **The progress bar was 30% when it should have been 79%**.
 
 ### GWhiz, part two: the session, targets, charms and the lookup
 
-- **Corrected the combat level formula.** The two maxima are over **different sets**: the flat sum takes the best of Melee, Ranged and Magic, and the doubled term takes the best of those _plus Attack and Defense_. Part one used the offensive maximum for both. The two agree whenever an offensive skill leads overall — which is most builds, and is exactly why the wrong reading survived a check against a real character — and part company the moment Attack or Defense is your highest, where it understated the level by as much as fifteen. The panel now names both skills, and the tooltip on the formula says which is which.
-- **A Session block, and a Combat Session overlay row.** How long you have been at it, how much combat experience it has been worth, at what rate, and which skills it went to — with a **Reset** to start the measurement again. It survives closing the panel, since tidying up is not the same gesture as starting a new measurement, and it re-baselines itself rather than reporting a loss when the readings belong to a different character.
-- **A target level per skill.** The Skills table gained an editable **Target** box and a **Time** column, so any level is answerable, not just the next one. This is the whole of GWhiz's separate skill-and-target selector, on the row it belongs to rather than behind a dropdown. Hovering the time says how much experience the target is worth.
-- **Charms & Wisdom.** What is actually multiplying the experience in the table above it: the wisdom on every combat skill, and per skill the charm bonus, which charm it comes from, and the resulting multiplier. Read through Toolasha's own experience parser rather than re-derived, so it agrees with the figures the action panels already show.
-- **Experience Lookup.** Experience between any two levels, which the game never shows.
-- The panel no longer rebuilds itself under a box you are typing into, so a target half-entered on the five-second refresh is not lost.
-
-The session arithmetic is in `utils/exp-session.js` with 9 tests, and the corrected formula is pinned by three in `utils/combat-level.js` that fail under the old reading.
+- **Corrected the combat level formula**.
 
 ### GWhiz, part one: combat level and what moves it
 
-- **A Combat Level row and panel.** The game shows a whole number, which hides the two facts worth acting on: combat level is a weighted average, so the fraction you have already earned is invisible, and the skill that would finish it soonest is not the one most people are training.
-- **The formula is spelled out**, the way GWhiz does it: `0.1 × (110 + 100 + 129 + 120 + 134) + 0.5 × 134 = 126.300`, with a bar for the 0.3 the displayed `126` throws away.
-- **A level of the offensive skill you are actually using is worth six of any other**, because it counts twice in the formula — once in the sum and once on its own. The panel says how many levels of each skill would raise Combat, and the row names the shortest route.
-- **An offensive skill sitting behind a higher one is worth nothing at all** until it overtakes, so it says so rather than reporting `0` — which would read as "already done" for a skill that will never do it on its own.
-- Each skill also carries its measured experience rate and the countdown to its next level, over a rolling ten minutes.
-
-The arithmetic is in `utils/combat-level.js` with 22 tests, checked against the figures GWhiz shows for the same build — `126.300` and "2 levels of Melee" are both reproduced from the screenshot's own numbers.
-
-**Still to port from GWhiz:** the session timer and exp total, the TTL selector with arbitrary target levels, the per-skill target table, Charms, and the Exp Lookup. — _All of these landed in part two above, which also corrects the formula quoted here: `0.5 ×` takes the best of five skills, not of the three offensive ones. For this particular build the two happen to agree._
+- **A Combat Level row and panel**.
 
 ### Every feature that adds marketplace tabs now finds the visible marketplace
 
-- `visibleTabsContainer` moved into `utils/marketplace-tabs.js` beside the tab machinery it serves, and **Missing Materials, the Crafting Plan, Guild Credit Value and the consumables restock all use it**. Each of them took the first tab bar in the document, which is the hidden full-page marketplace whenever the popout is the one you are looking at — so their tabs went somewhere real and invisible.
-- That failure only showed up in the restock because the others are reached from flows that happen to land on the full marketplace page. The bug was the same in all four; only the route hid it.
-
-- **House Cost Display, Market History Viewer and the Sell Queue** were fixed too, so **no feature anywhere still takes the first tab bar it finds**. None of them had been reported broken — they are reached by routes that land on the full marketplace page, exactly as the other three were — but the latent bug was the same and they would have failed the same way from the popout.
+- `visibleTabsContainer` moved into `utils/marketplace-tabs.js` beside the tab machinery it serves, and Missing Materials, the Crafting Plan…
 
 ### Fixed: the restock tabs went onto the marketplace you could not see
 
-- **There is more than one marketplace.** It opens as a popout over whatever you were doing, and the full marketplace page keeps its own tab bar in the document behind it. Both match the same selector, and the search took whichever came first — frequently the hidden one.
-- So the tabs were being added correctly, to a tab bar nobody could see. That is why visiting the real marketplace first appeared to fix it: it made the bar that was already being picked the one on screen.
-- Every candidate bar is now checked and the one actually being displayed wins.
+- **There is more than one marketplace**.
 
 ### Fixed: the restock heading duplicated, and a failed build stood until something else rebuilt the tabs
 
 - The green **Restock: N items** heading was not marked as one of ours, so the tidy-up that removes the tabs left it behind — and every re-add stacked another heading beside the last.
-- Worse, the watcher judged itself on _having run_ rather than on the tabs being there. A heading with nothing after it counted as success, so a failed attempt stood until some other feature happened to rebuild the tab bar — which is why running a normal missing-materials lookup first appeared to "fix" it. It now checks that every item tab it expected is actually on screen, and rebuilds until they are.
-- A tab that cannot be built logs why, rather than leaving a list that has silently arrived short looking like one that had nothing to add.
 
 ### Fixed: Buy all showed the heading and no tabs
 
-- The tab helper reads `itemName`, and the shopping list passed `name`. It threw on the very first item, so the green **Restock: N items** heading went in and nothing after it did. Each tab is now built inside its own try/catch too, so one item that cannot be drawn costs its own tab rather than the whole list.
+- The tab helper reads `itemName`, and the shopping list passed `name`.
 
 ### Fixed: the overlay sat above the game's own interface
 
-- It used the floating-panel layer, which is meant for panels you open on purpose and dismiss. The overlay is never dismissed — it is always up — so on that layer it covered the game's tabs and buttons wherever it happened to overlap them.
-- It now sits on the HUD layer, below the game's interactive UI, which is what that layer exists for. The settings popover stays above, since that one _is_ summoned on purpose and has to be usable while it is open.
+- It used the floating-panel layer, which is meant for panels you open on purpose and dismiss.
 
 ### Fixed: Buy all opened the marketplace with no tabs on it
 
-- The tabs went in immediately after navigating, and the marketplace tab bar is usually **already there** from a previous visit — so they were added, and then wiped a moment later when React rebuilt the panel for the item being navigated to. Waiting longer would not have helped; the bar was never missing.
-- The tabs are now put back whenever they have gone, for a few seconds after the navigation, which outlasts however many times the panel rebuilds itself.
+- The tabs went in immediately after navigating, and the marketplace tab bar is usually **already there** from a previous visit…
 
 ### Fixed: the Consumables panel sat on top of the marketplace it sent you to
 
-- It is a floating panel and the marketplace opens underneath it, so pressing Buy or Buy all covered the thing you had just asked for — including the tabs. It now closes itself on the way.
+- It is a floating panel and the marketplace opens underneath it, so pressing Buy or Buy all covered the thing you had just asked for — including the tabs.
 
 ### Buy the whole restock at once, as marketplace tabs
 
-- The footer's total is now a **Buy all** button. It opens the marketplace with **a tab per short item, each reading "Missing: N"** — the same tabs the missing-materials features already put there — and each one opens its item with the quantity filled in. The row of tabs is the shopping list: what is left to buy is what is still red.
-- Buying a row at a time was the wrong gesture for a restock. Six items meant six trips back to a panel sitting behind the marketplace you were standing in.
-- **Nothing about the tabs is new.** `createMaterialTab` draws them, the autofill manager fills the quantity, and the marketplace cleanup observer takes them away when you leave. A second implementation of marketplace tabs would only be a second set of bugs about where the game moved its tab bar.
+- The footer's total is now a **Buy all** button.
 
 ### The buy recommendation now measures the queue instead of assuming it
 
-- The order-against-instant call used a flat six-hour guess at how long a buy order takes to fill. It now reads the **real order book** — the queue length estimator already caches every book the game has sent — and estimates the wait from the depth at the best bid and the listing timestamps behind it.
-- **The timestamps are the only rate signal there is.** Twenty listings at one price spanning ten minutes is a level that churns; twenty spanning a week is a level where an order is a week-long proposition. Fill time is depth ahead ÷ the rate depth arrived at, which assumes a level drains about as fast as it fills — true in a liquid market, false in a moving one, and stated in the module rather than buried.
-- Queue depth is extrapolated past the twenty listings the game shows, using the same arithmetic as the queue length display, so the two never disagree.
-- **It says which answer you got.** With a measured wait the hover reads "fills in about 40 minutes"; without one it says no order book has been seen for that item yet and suggests opening it once. A guess presented as a measurement is worse than a guess labelled as one.
-- Measuring changes the answer both ways: a fast-filling book now recommends an order where the flat assumption refused one, and a slow book refuses an order the assumption would have allowed.
+- The order-against-instant call used a flat six-hour guess at how long a buy order takes to fill.
 
 ### Buy the shortfall, in equipped order, with exact drink rates
 
-- **Click the Buy figure to open the marketplace with the quantity already filled in**, through the same autofill the missing-materials features use. It opens the buy modal rather than buying: this is a decision about spending coins, and a panel that spends them for you is a panel you have to watch.
-- **It recommends an order or an instant buy**, the same judgement the bulk sell assistant makes in the other direction. ⏳ means a buy order at bid is worth the wait, ⚡ means take the ask. Two things force ⚡: **running out before an order would plausibly fill** — a discount that arrives after you have stopped has saved you nothing, so urgency beats price — and a spread too thin to be worth waiting for. The reasoning is in the hover text.
-- **Rows are in equipped order now, not soonest-first.** Slot order is how you think about them, the one that runs out first is already marked in red, and sorting by it as well traded a familiar list for one that reshuffles itself.
+- **Click the Buy figure to open the marketplace with the quantity already filled in**.
 
 ### Fixed: drinks were assumed to be drunk at maximum concentration
 
-- Drink consumption was measured from observed use and then **capped at a hardcoded 345.6 a day** — 300 seconds at the maximum 20% drink concentration. Anyone below that cap was told they drink faster than they do, and that their stock would run out sooner than it will.
-- Drinks do not need measuring at all: one is re-drunk the moment its buff expires, so the rate is the buff's duration divided by `1 + drinkConcentration`, which is exactly what the combat simulator does to it. It is now computed from the game's own numbers and the player's actual concentration.
-- **Food is deliberately still measured.** It is eaten when health or mana crosses a threshold, which depends on what is hitting you — there is nothing to compute, and observation is the only honest answer.
+- Drink consumption was measured from observed use and then **capped at a hardcoded 345.6 a day** — 300 seconds at the maximum 20% drink concentration.
 
 ### The Consumables tile answers for you and for the party
 
-- Reads `You: 1.2d   Party: --` the way MCS's does. **Two answers, because they are two different things to act on**: your own countdown is what you can do something about right now, and the party's is what ends the run regardless of how well stocked you are. Rolling them into one figure loses whichever of the two you needed.
-- The party figure **excludes you** — it answers "and how is everyone else doing", which is the only part of it you cannot already see. Hovering names whoever in the party runs dry first.
-- Under it, the item that stops you with its icon and how many remain, then the daily bill at **both sides of the book** to match the panel. Clicking the icon or the count opens the marketplace, which is where you go next when the answer is "soon".
-- The tile and the panel now read their figures off one calculation. `partyOutlook` and the rest of the judgement live in `utils/consumable-forecast.js`, so neither view decides for itself what "runs out first" means.
+- Reads `You: 1.2d   Party: --` the way MCS's does. **Two answers, because they are two different things to act on**: your own countdown is what you can do something about right now…
 
 ### The Consumables panel reads like CRack's, and items open the marketplace
 
-- **Laid out the way MCS lays it out**: the count you hold, the item's icon, its name, the daily rate, the cost, the shortfall, and the countdown — in that order, so the eye lands on the stock figure first.
-- **Cost is shown at both sides of the book, Ask over Bid.** Buying costs ask and the stock you already hold is worth bid; on a bill of twelve million a day the gap between them is real money, and averaging it away hides it. The footer reads `Total Cost/Day: Ask: … / Bid: …` to match.
-- **The consumable that stops the run is coloured throughout its row**, not only in its time column. It is the row the whole panel exists to point at, and a single red figure at the far right is easy to miss.
-- **Click an item's icon or name — in the panel or on the overlay tile — to open it in the marketplace.** That is what you point at when you think "what does that cost", and the row is read while deciding whether to go and buy more. The click is stopped from reaching the tile behind, so it cannot accidentally count towards the double-click that closes the panel.
-- The overlay tile gained the icon too, so the row and the panel name the same thing the same way.
-
-**Not reproduced**: CRack's two `↑ / ↓` columns. They show the same pair of figures on every row and I could not work out what they measure without guessing, and a column that is confidently wrong is worse than a column that is absent.
+- **Laid out the way MCS lays it out**.
 
 ### Double-clicking a tile closes the panel it opened
 
-- Treasure, Houses and Consumables all toggle now. The same gesture that summoned a panel is the one you reach for to dismiss it, and a double-click that only ever opens leaves you hunting for the close button.
+- Treasure, Houses and Consumables all toggle now.
 
 ### The dev build says which build it is
 
-- The dev script and the published one carry the same `@name` and the same `@version`, so neither Tampermonkey nor you can tell them apart — a stale install looks exactly like a fresh one that is missing a feature. Every dev build now prints `[Toolasha] dev build <timestamp>` to the console on load. Whatever the console says is what is actually running.
+- The dev script and the published one carry the same `@name` and the same `@version`, so neither Tampermonkey nor you can tell them apart…
 
 ### A Consumables panel: what runs out, when, and what to buy
 
-- The overlay row answers "what runs out first, and when". That is the figure worth watching, but not the one worth acting on — when the answer is "six hours", the next question is immediately "so what do I buy, and how much". **Double-click the Consumables row** to open the panel that holds it.
-- **Every line is measured against a duration you pick** — 8 hours, a day, three days, a week, cycled from the header. A list of stock levels says what you have; the same list against "last me a day" says what to do about it, and the two readings differ per consumable because they are drunk at different rates.
-- Each row shows what is held, how many go per day, how long it lasts, and **what to buy** — the shortfall from what you already hold, rounded up, priced. Half a drink is not a drink, and a refill that leaves you one short leaves you stopped.
-- **The headline is a minimum, not a mean.** A character stops when its _first_ consumable runs out. Anything not being consumed is kept out of that entirely rather than counted as lasting forever and quietly winning it — an unused slot reads as `∞` in the list and is ignored by the verdict.
-- **Party members are listed**, because a party run stops when the first member runs dry and that member is frequently not you.
-- Unpriced consumables are counted separately rather than as free, so a total is never quietly smaller than the truth.
+- The overlay row answers "what runs out first, and when".
 
 ### Tile text buttons moved to the bottom left
 
-- They sat top right, which is where a tile's value sits — so hovering to resize the text covered the number you were sizing. Bottom right belongs to the resize grip, so bottom left it is.
+- They sat top right, which is where a tile's value sits — so hovering to resize the text covered the number you were sizing.
 
 ### The combat bundle had 19 KB left
 
-- Adding the panel there would have left the next feature unable to build. The panel reads combat data but is otherwise a panel, so it lives in the UI bundle, and the collector it reads — a stateful singleton fed by the websocket — is now declared shared rather than copied into a second instance that would sit there receiving nothing. Verified in the built files: one collector, in combat, referenced by ui through the shared global. Headroom is back to 42 KB.
+- Adding the panel there would have left the next feature unable to build.
 
 ### Fixed: importing a layout wider than the panel folded it in half
 
-- The layout was laid out against the width the panel **currently** was, and the panel is only resized to fit a moment later. A canvas narrower than the file asks for does not scroll — it _clamps_, pulling every tile past the right edge back inside it. That dropped the right-hand column on top of the left one, and settling then stacked the collision into a single very tall column with holes in it.
-- It is now laid out against the width the file actually needs, which is the width the panel is about to have. Measured on the two-column layout: at the old panel width 19 of 20 tiles moved; now none do, so an imported layout arrives exactly as it was designed.
+- The layout was laid out against the width the panel **currently** was, and the panel is only resized to fit a moment later.
 
 ### Fixed: Time to Level tracked the total level
 
-- The game keeps the total level in the same list as real skills, and it gains experience faster than any of them by definition — it is the sum of them all. So it always won "which skill is being trained", and always reported no next level, since there is no row for it in the experience table. The row read `Total Level 2274: —` and never anything else.
+- The game keeps the total level in the same list as real skills, and it gains experience faster than any of them by definition — it is the sum of them all.
 
 ### Text size, per tile and for the panel at once
 
-- **Every tile shows − and + when you hover it while the layout is unlocked**, for its own text size. The rest of the time a tile is something you read, and two buttons sitting on the figure are two buttons in the way.
-- **A Text control in settings scales the whole panel.** Each tile's own size is a percentage of that, so scaling everything leaves the differences between tiles intact — a tile you made 130% stays half again as large as its neighbours. Reset puts it back to 100%, and Undo carries it back with the rest of the layout.
+- **Every tile shows − and + when you hover it while the layout is unlocked**.
 
 ### Fixed: Ctrl+scroll zoomed the whole page
 
-- Ctrl+wheel is the browser's own page-zoom gesture, and a page that zooms when you meant to resize one tile is worse than no shortcut at all. The buttons above replace it — and unlike a modifier gesture, they can be found without being told about.
+- Ctrl+wheel is the browser's own page-zoom gesture, and a page that zooms when you meant to resize one tile is worse than no shortcut at all.
 
 ### The settings popover moved out of the panel, and Autogrid can be undone
 
-- **Settings open above the panel, not inside it.** The gear section took its height out of the tiles, so opening it squashed the very layout you opened it to arrange. It is now its own floating popover, placed above the panel — below it only when there is no room above — and it follows the panel when you drag or resize it.
-- **Undo.** Autogrid, Reset and Import each throw away an arrangement that may have taken a while to get right, and none of them can be judged until after they have happened — you press Autogrid to find out what Autogrid does. Each now keeps the layout it replaced, and an **Undo Autogrid** / **Undo Reset** / **Undo Import** button appears beside it. It is only there when there is something to take back, so it never reads as a button that does nothing.
+- **Settings open above the panel, not inside it**.
 
 ### Fixed: the panel was see-through
 
-- At 90% opacity the game's inventory grid read straight through the tiles, and a figure you have to pick out of a background is not a glance. Near-opaque now.
+- At 90% opacity the game's inventory grid read straight through the tiles, and a figure you have to pick out of a background is not a glance.
 
 ### Fixed: an imported layout arrived as a scatter with holes in it
 
-- Growing imported tiles to fit made them collide, and pushing the collisions down left the gaps the old smaller tiles used to sit in — so the layout stretched into something sparse and wrong rather than something snug.
-- Tiles now **settle upwards in their own column** instead. Overlaps resolve because two tiles cannot settle in the same place, and the gaps close because a tile no longer stops at the space it used to sit below. Columns are still never crossed: sliding into the other column is not a nudge, it is a scramble.
+- Growing imported tiles to fit made them collide, and pushing the collisions down left the gaps the old smaller tiles used to sit in…
 
 ### Separators, and an import that arrives usable
 
-- **Separators.** Each tile draws a rule under it when the layout is locked, which is what gives a column of tiles the ruled look rather than a floating jumble. Off while you are editing, since the tile's own outline is showing then, and switchable in the gear.
-
-- **Fixed: an imported OPanel layout arrived unreadable.** Every size in an OPanel file is a measurement of OPanel's rendering, and this overlay's rows are not that rendering — so tiles imported verbatim were too small for what they had to hold, and the result was a wall of clipped half-words. Imported tiles are now grown to at least what the row needs, taking the larger of the two so a tile someone deliberately made roomy stays roomy.
-- Growing them makes them collide, so anything overlapping is **pushed straight down, staying in its column**. An OPanel layout is two columns, and a tile that resolves a collision by sliding into the other one has not been nudged, it has been scrambled. Reading order survives and the layout stretches instead.
-- The panel's own frame is grown to fit as well. Left at the imported size, half the layout arrives below the fold, which reads as tiles that failed to import rather than as a panel that needs dragging.
-
-- **Durations in tiles are short now.** `71 days 9h 55m` is right in a tooltip and wrong in a tile, where it pushed the label beside it down to a single letter. Two units at most, and the small one drops once the large one makes it noise: `45s`, `12m`, `3h 20m`, `4d 16h`, `71d`.
+- **Separators**.
 
 ### Build Score, and rows that fit their tiles
 
-- **Build Score.** Toolasha already computes this — it is the figure on the profile card, the build's cost in millions split into equipment, abilities and house. It was only ever shown for a profile you had opened, so the one build you could not casually check was your own. `calculateCombatScore` reads exactly three things out of a shared profile — house rooms, equipped abilities, worn items — and all three are already known for the current character, so the same shape is assembled locally and the same function gives the same answer as the card. It recomputes on gear and house changes, debounced, never on the overlay's timer, and attaches its listeners on the first render so a row nobody switched on costs nothing.
-
-- **Import and export the overlay layout, in OPanel's own format.** A layout is worth an hour of fiddling and is then worth keeping, and someone arriving from MCS has already spent that hour. Positions, sizes, text scales, order, visibility, the lock and the grid all carry across; the panel's frame comes too. Rows the file names that have no equivalent here are **listed in the confirmation** rather than dropped quietly, because a layout that silently arrives missing three tiles reads as an import that half-worked. Export writes the same shape, leaving out rows OPanel has no key for — writing ours into their file gives MCS something it reads as corrupt rather than as extended.
-
-- **Every row now reads like OPanel's.** Tiles are small and fixed, so anything that wraps does not get taller, it gets cut off — which is how the overlay ended up with "Drop luck" broken across two lines beside a figure that had run off the edge. One shared formatter now draws every row: nothing wraps, exactly one piece per line may be shortened (a name, never a number, since a truncated number is not a smaller number but a wrong one), and one palette means two rows cannot disagree about what green stands for.
-
-- **The unit moved onto the value.** `260,572 exp/hr`, not `Experience` on the left and `260,572/hr` on the right — half the label was repeating what the number's own unit already said, in the space the number needed. Drop Luck is a figure with the sentence in its tooltip, the session clock reads `2:44:51 | 180.16 EPH`, and revenue reads `61.6M − 13.2M = 48.3M/day`.
+- **Build Score**.
 
 ### Fixed: Total Profit read NaN
 
-- Session income had the two cost figures subtracted from it, but both are `{ask, bid}` objects rather than numbers, so the arithmetic produced NaN — the daily rate beside it was right, which is what made it look like a display bug rather than a subtraction one.
+- Session income had the two cost figures subtracted from it, but both are `{ask, bid}` objects rather than numbers, so the arithmetic produced NaN…
 
 ### Fixed: numbers above a trillion printed as thousands of billions
 
-- `formatKMB` stopped at B, so a net worth of 985 trillion rendered `985663.62B`. It now carries on into T and Q.
+- `formatKMB` stopped at B, so a net worth of 985 trillion rendered `985663.62B`.
 
 ### Twelve more overlay rows
 
-Everything OPanel shows that Toolasha had the data for. Nothing here computes anything new on the overlay's timer — each row reads a figure some feature already keeps, or measures one thing cheaply itself.
-
-- **Session Timer / EPH** — the run clock and encounters per hour. EPH is the rate every other figure is divided by, so it is the first thing to check when one has drifted: income falling while EPH holds means prices moved, both falling together means the fights got slower.
-- **Total Profit** — what the run has actually banked, beside the daily projection. The two disagree whenever the run started badly or has just had a rare, and the disagreement is the useful part — a daily rate off twenty minutes is a guess.
-- **Consumables** — which one runs out first, how long it has, and what the lot costs per day. The soonest one is the only one that matters: it is what ends the run whether you are watching or not. Under an hour it turns red.
-- **Combat Status** — fighting, skilling, or idle. Read from the action queue, not from combat data, because combat data keeps saying what the last run did long after it stopped.
-- **DPS** — damage and damage taken per second. **The game sends no damage figure**, so this is inferred from health lost between combat ticks. Two things follow and are stated on the row rather than buried: overkill is not counted, and in a party it is the whole party's damage, since nothing on the wire says who struck. The clock counts ticks received rather than wall time, so an idle night is not divided into the average.
-- **Over Expected %** — takings against what the zone owed, in coins. The companion to Drop Luck rather than a duplicate of it: the percentile says how _unusual_ a run was, and on a zone whose value rides on one rare, a perfectly ordinary session sits well below the 50th and reads as bad luck. Against the mean it reads as par. Computed in closed form, so it costs microseconds where the percentile costs a tenth of a second.
-- **Equipment Watch** — what is on the anvil, what it has cost, time left, and a progress bar. The bar is **attempts against expected attempts**, not level against target: levels are not evenly spaced, so a bar drawn on levels sits at 90% for hours. Past expectation it stays full and turns red, because "this has taken twice what it should" is the thing you want it to be able to say.
-- **Time to Level** — which skill is going up fastest and when it next levels, measured over a rolling ten minutes. A rate measured from the session start answers how fast it has gone on average, when the question is how fast it is going now — and they differ by the whole of any break you took. At the cap it says nothing rather than "never".
-- **Coins**, **Market Listings**, **Inventory Value**, **Skill Books** — four fields of the net worth pass you already run. Net worth as one figure moves too slowly to watch and hides the parts that do move.
-
-**Not ported: Build Score.** It is KOllection's own formula, and Toolasha has no equivalent. Inventing a scoring formula and labelling it with someone else's name would produce a confident number that means nothing and matches nothing.
-
-**Not ported: the Only Numbers / Only Player display toggles.** They control party columns, and every row here shows the current player only, so the switches would do nothing.
+- **Session Timer / EPH**.
 
 ### The overlay is a layout, not a list
 
-- **Rows are placed freely rather than stacked.** A stack forces one ordering decision — what goes above what — when the question you want to answer is what sits _beside_ what: revenue next to profit, luck next to expectation, so a glance reads a comparison instead of a column. Each tile carries its own position, size and text scale, and all of it is remembered.
-- **Locked by default (🔒).** An always-editable overlay is one where every click risks nudging the layout. Unlock to drag tiles by their body and resize them from the corner; lock again to go back to reading it.
-- **Snap to a 10px grid**, so tiles line up without being fiddled into place, and can be switched off when they need not to.
-- **Ctrl+scroll a tile to change its text size.** Tiles hold wildly different amounts — a timer is four characters and combat revenue is three lines of figures — so one text size for the whole panel means either a cramped tile or a wasteful one. Plain scroll is left to the panel, which still has to scroll.
-- **Autogrid** repacks everything from the top left in order, wrapping at the panel edge; a wrapped line clears the tallest tile above it rather than interleaving with it. **Reset layout** forgets every position, size and scale, and the panel's own geometry with them.
-- The row picker is now **chips that wrap** rather than one line each — fifteen rows as a vertical list is a panel of scrollbar; as chips it is four lines. Order still matters: it is what Autogrid packs by and where a new row is placed.
-- A row can declare the size it needs (`defaultSize`), because the row knows how much it draws and the panel does not. A row no saved layout has heard of is **placed in the first free space** rather than left at the origin under an existing tile, where it would read as a row that failed to render.
-- Refreshes hold off while you are dragging. The panel rewrites every tile's position once a second, which mid-drag meant the tile snapping back under the pointer a second in.
+- **Rows are placed freely rather than stacked**.
 
 ### Panels remember their size and position, and can be resized
 
-- Every floating panel opened at a hardcoded corner at a hardcoded width and forgot anything you did to it, so the Treasure ledger and the Houses grid had to be dragged and re-read into shape on every page load. All three panels — Overlay, Treasure, Houses — now have a resize corner and one shared store behind them.
-- Saved geometry is **clamped to the current window** on the way back out. A panel restored wider than the screen cannot be resized back, because its resize grip is off the edge; a panel restored off the right edge cannot be reached at all, which looks exactly like a feature that stopped working.
-- **The chest popup remembers its size, but not its position — until you move it.** Sitting beside the game's loot dialog is the whole point of that popup, and a remembered position would silently switch that off the first time you nudged it out of the way. Dragging it pins it; the gear then offers **Unpin popup** to hand it back to auto-placement.
+- Every floating panel opened at a hardcoded corner at a hardcoded width and forgot anything you did to it…
 
 ### Import asks Add, Replace or Cancel, in three buttons
 
-- It was an OK/Cancel box with a paragraph explaining that OK meant add and Cancel meant replace — a sentence you have to read twice and can still read wrong, and reading it wrong overwrites a history that took months to accumulate. Buttons that say what they do cannot be misread.
-- Deleting all history asks the same way, with the destructive answer coloured as one.
+- It was an OK/Cancel box with a paragraph explaining that OK meant add and Cancel meant replace — a sentence you have to read twice and can still read wrong…
 
 ### Treasure: choose what untradables are worth, and move your history in and out
 
-- **Capes, quivers and cloaks can be valued three ways.** They have no market price, so a chest that drops one otherwise reads as a chest that dropped nothing. A header button cycles between the **token cost** of what those tokens would have bought, the price of a **Mirror of Protection**, and **zero**. The token figure is read from the game's own shop table rather than hardcoded, so it follows a price change instead of going stale.
-- **Cowbells can be counted or ignored.** A cowbell is untradable but a bag of ten is not, so counted, one is worth a bag's market price less the 18% tax, split ten ways. The toggle dims itself when it is set to count something as nothing, so the panel says at a glance that a figure is leaving something out.
-- **Export and import your chest history.** Export writes item counts and your valuation settings — deliberately not prices. A price is a fact about the market on the day you exported, and baking it in would make an old file re-import as a ledger priced in last month's money.
-- **Import reads Toolasha and TReasure files.** The format is detected from the file rather than asked for. It then asks whether to **add** the file to what you hold or **replace** it: two copies of the same ledger are not twice the ledger, so replace is the default for a file from this same tool on another machine. Appending adds counts but keeps the last opening you already had — the file's "most recent" belongs to another timeline.
-- **Import from Edible Tools** reads its data straight out of browser storage, finding the current character by id and falling back to name. It keys everything by display name in whatever language the game was running in, so translation needs a name index built from today's game data; anything that will not translate is **named in the confirmation** rather than dropped in silence. A chest renamed since the data was written would otherwise vanish without trace.
-- **Chests can be hidden individually.** The gear turns on an eye beside each row. Hidden chests are still tracked and still counted in the totals — hiding is about what you want to read, not what you want to stop recording.
+- **Capes, quivers and cloaks can be valued three ways**.
 
 ### The Treasure panel lists every chest, and its columns line up
 
-- **Every chest in the game is listed, not only the ones you have opened.** The panel is also where you look up what a chest is worth before deciding to open it, and a list of your own history cannot answer that. Unopened chests show their name and value, dimmed, with no verdict and no Reset — there is nothing to reset and no verdict to give.
-- Chests you have opened still sort worst-first; the rest follow by what one is worth, so the list stays useful rather than alphabetical.
-- A chest the game has stopped listing keeps its history rather than disappearing from the panel at the next update.
-- **The three columns now line up.** Each was laid out with flex, so counts, values and percentages drifted with the width of whatever was above them, and the expected column ran off the panel's edge — the last figure was cut mid-number. Every band now shares one grid, each column has fixed sub-columns, digits are tabular so a changing value does not make the column jitter, and the panel is wide enough for four figures.
-- Chest headers carry what one chest is worth beside the name, and a per-chest Reset.
+- **Every chest in the game is listed, not only the ones you have opened**.
 
 ### Double-click an overlay row to open the panel behind it
 
-- A row is a summary; the detail it provokes a question about now lives one gesture away. Rows that own a panel show a pointer cursor and a hint on hover; rows that do not are simply not interactive.
-- **Treasure** opens the full ledger, **Houses** opens the new room panel. Registering a row now takes an optional `onOpen`, so any future row gets this for free.
+- A row is a summary; the detail it provokes a question about now lives one gesture away.
 
 ### The Treasure ledger reads across three columns
 
-- Expanding a chest now shows **LAST**, **TOTAL** and **EXPECTED** side by side, one row per item, in a shared order — the question is always "how does this compare with that", and a single column cannot answer it.
-- The last opening is judged against what **that opening** owed, not against the whole run. One chest owes a fraction of what forty do, and scoring one against forty would report every single opening as a disaster.
-- The expected column carries both scales: what one chest owes, and what every chest you have opened owed. Counts below one keep three decimals or go exponential — a rare owed 0.002 of itself per chest rounds to zero, which reads as owing nothing rather than a one-in-five-hundred chance.
+- Expanding a chest now shows **LAST**, **TOTAL** and **EXPECTED** side by side, one row per item, in a shared order…
 
 ### A Houses panel
 
-- The overlay row says how many upgrades you can afford and the cheapest one. Double-clicking opens a grid of every room, coloured by whether you can afford its next level, maxed rooms last and the rest cheapest first — the panel is read to decide what to buy next, not to audit what you own.
-- Selecting a room lists what its next level needs, with **what you hold against what it wants**. The coin cost is only the answer if you intend to buy the materials; the usual question is whether you already have them.
+- The overlay row says how many upgrades you can afford and the cheapest one.
 
 ### Fixed: the Houses row counted only rooms you had already bought
 
-- `characterHouseRoomMap` holds the rooms you own, not every room in the game. A character with one maxed observatory and everything else unbuilt therefore looked like a character with nothing left to buy, and the row drew a blank. The unbuilt rooms are the whole point of the figure.
-- It now walks the game's full room list and treats anything missing from your map as level 0, so the first upgrade of an unbought room is counted like any other.
+- `characterHouseRoomMap` holds the rooms you own, not every room in the game.
 
 ### Fixed: the treasure popup ignored the loot dialog and stayed in the corner
 
-- The dialog is rendered by React from the same message that tells us about the loot, so it is reliably not on screen yet when we look for it. The first attempt found nothing and gave up, leaving the popup where it started.
-- It now retries briefly until the dialog appears, then places against it. Falling back to the corner only once the retries run out, which is what should happen when a chest is opened by a route that raises no dialog.
+- The dialog is rendered by React from the same message that tells us about the loot, so it is reliably not on screen yet when we look for it.
 
 ### The treasure popup now sits beside the game's loot dialog
 
-- It was pinned to the top-right corner while the game's Opened Loot dialog opens near the middle, so reading the two together meant looking back and forth across the whole window. The popup is now measured after it mounts and placed against the dialog — to its right, or to its left when the right would run off screen, top-aligned and nudged up only if it is the taller of the two.
-- Falls back to the corner when no dialog is up, which happens if a chest is opened by a route that does not raise one.
+- It was pinned to the top-right corner while the game's Opened Loot dialog opens near the middle, so reading the two together meant looking back and forth across the whole window.
 
 ### Toolasha.Debug.houses()
 
-- The Houses row draws nothing when it cannot price a single upgrade, and nothing is indistinguishable from the feature being off. `Toolasha.Debug.houses()` in the console now reports which step came back empty: the room list, the level, the game's `upgradeCostsMap`, or the market prices those costs are valued at — per room, with the cumulative figures either side of the subtraction so a wrong reading of the cost table is visible rather than inferred.
+- The Houses row draws nothing when it cannot price a single upgrade, and nothing is indistinguishable from the feature being off.
 
 ### Drop luck updates during a run, not only after it
 
-- It was computed once, on leaving combat, because that is when the battle panel it writes into appears. The overlay row therefore sat empty for a whole grind and then filled in at the end — the least useful moment. Everything it needs is already on the `new_battle` message, so it is now recomputed from the running loot total as you fight.
-- Throttled to once every thirty seconds, and deferred off the WebSocket handler. The transform costs around a tenth of a second, battles can be seconds apart, and a message handler is the worst place to spend that — it delays every other feature listening to the same message.
-- The other rows were already live. Revenue, Experience/hr and Deaths/hr are rebuilt on every `new_battle`, and Treasure on every chest; the earlier note saying they needed a finished run was wrong.
+- It was computed once, on leaving combat, because that is when the battle panel it writes into appears.
 
 ### Fixed: bundles were carrying private copies of shared utilities
 
-The combat bundle was 2,648 bytes under its 2 MB ceiling and about to break the build.
-
-- The released script is six bundles, and any `src/utils` module not declared shared in `rollup.config.js` is **copied into every bundle that imports it**. Seventeen were undeclared, including all the drop-luck maths — 85 KB of source duplicated across bundles for no reason.
-- All seventeen are now shared. Verified against the built files: the combat bundle references `Toolasha.Utils.*` and contains no copy of `sessionLuck`, `fftInPlace` or `buildCombatSession`, each of which now exists exactly once, in the utils bundle.
-- **Combat headroom went from 2,648 bytes to 67,403.** Every other bundle shrank too — actions by 18 KB, market by 51 KB, ui by 36 KB.
-- This was the same class of mistake as the overlay registry bug: a module that looks shared because it sits in `src/utils/` is not shared unless the build is told. The rule is now written down in `rollup.config.js` beside the list.
+- The released script is six bundles, and any `src/utils` module not declared shared in `rollup.config.js` is **copied into every bundle that imports it**.
 
 ### Five more overlay rows, from calculators Toolasha already had
 
-The overlay had two rows and both needed something to have happened first, so a fresh install showed an empty box. These read figures the codebase already computes.
-
-- **Revenue** — income, what it cost to earn, and what is left: `75.8M − 11.9M = 63.9M/day`. The third number is the only one worth acting on and the one an income figure alone quietly overstates.
-- **Experience/hr** and **Deaths/hr** — the same figures the Combat Statistics popup shows, on the overlay so they can be watched during a run rather than opened after one. Zero deaths is left uncoloured: it is the goal, not a shortfall.
-- **Net worth** — reads the value the networth feature last calculated rather than calculating. A full pass prices every item you own and runs a worker pool, which is not something a row redrawn every second may do; it refreshes when the feature itself recalculates.
-- **Houses** — how many room upgrades your coins cover, and the cheapest one. Counted per room rather than as a basket, because buying the cheapest changes what you can afford next, so "you could buy all six" would be false.
-
-Nothing new is computed for the three combat rows — `calculatePlayerStats` is the same function the popup calls. The result is cached for a few seconds, since that function prices every item in the loot map and the overlay redraws every second.
-
-**The combat bundle is now 2,648 bytes under its 2 MB limit.** Adding the three combat rows took roughly 6 KB of the 8 KB that was left. The next feature that touches that bundle will break the build, and splitting it is now the blocking problem rather than a tidy-up.
+- **Revenue**.
 
 ### Treasure pops up what an opening actually paid
 
-New setting, on by default. Open a chest and a panel appears beside the game's own Opened Loot dialog, itemised.
-
-- The game's dialog answers "what did I get" and leaves the only interesting question — was that good — to a feeling. Each item now shows the count and value you got on top, and what the drop table owed for that many chests underneath, with the difference as a percentage.
-- Items that **should** have dropped and did not are listed with a `-100%`. On an unlucky opening that missing row is the whole story, and a list of only what appeared cannot tell you.
-- Expected counts below ten keep two decimals. A rare owed 0.02 of itself rounds to nothing, and a row reading "0 expected" would say the chest owed you nothing when it owed you a 1-in-50 chance.
-- Underneath, the lifetime figure for that chest type, so a good opening off a bad run still reads as a bad run. "View full stats" opens the whole ledger.
-- Priced through the same source as the ledger, so a chest cannot look lucky merely because two views priced it differently.
+- The game's dialog answers "what did I get" and leaves the only interesting question — was that good — to a feeling.
 
 ### Settings moved out of the wrong section
 
-- **Overlay Panel** and **Treasure Tracker** were filed under "Item Tooltip Enhancements", which has nothing to do with either. They now sit under **UI & Appearance** and **Loot Log**.
+- **Overlay Panel**.
 
 ### The reference script is no longer carried in the repository
 
-- Frotty's MWI Combat Suite was vendored while the ports were written. It is ~2 MB and 42,155 lines, which is not worth carrying in the history for a file nothing builds against, so it has been removed from this branch's history rather than deleted in a later commit — the blob never reaches `main` at all.
-- Attribution still needs to name something checkable, so `third-party/mwi-combat-suite/` keeps the licence, the version string, and the line numbers in that exact version for everything taken.
+- Frotty's MWI Combat Suite was vendored while the ports were written.
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
