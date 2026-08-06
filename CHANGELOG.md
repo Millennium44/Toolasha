@@ -3732,64 +3732,58 @@ Full audit of the codebase; every finding adversarially verified before fixing.
 
 ## [2.91.0](https://github.com/Millennium44/Toolasha/compare/v2.90.0...v2.91.0) (2026-08-06)
 
-
 ### Features
 
-* **combat-sim:** per-shrine Targets grid on the Guild Shrine upgrade ([f78ffdb](https://github.com/Millennium44/Toolasha/commit/f78ffdbf9d519dddaba9d707c6c1df3786849eaa))
-* **labyrinth:** break equal-route ties toward revealing the most unknown rooms ([a55635e](https://github.com/Millennium44/Toolasha/commit/a55635ee2f2c3d134f71aa0dff7656e2b4c8afcc))
-* **notifications:** active market-snapshot refresh so undercut alerts see current prices ([6592962](https://github.com/Millennium44/Toolasha/commit/659296225ceabb398ddf23458e11cac2bfa97a66))
-* **settings:** default the seven Portrait DPS sub-readouts to off ([aaf715e](https://github.com/Millennium44/Toolasha/commit/aaf715ec64b23978b63576305d3c4dba8e3c67f7))
-* **settings:** offer "Keep my current settings" to returning users at first run ([53615e5](https://github.com/Millennium44/Toolasha/commit/53615e58d0ac2f80ea9a6e046c0be681016434f9))
-* **settings:** rename the "Everything on" preset to "Defaults" ([7447536](https://github.com/Millennium44/Toolasha/commit/744753677cc5a33287aa8e37e0ca21366d23adef))
-* **settings:** safer defaults for new-settings-off and market dimming ([f694ac3](https://github.com/Millennium44/Toolasha/commit/f694ac319dbfc6597642eceb6d50ba36ab1847aa))
-
+- **combat-sim:** per-shrine Targets grid on the Guild Shrine upgrade ([f78ffdb](https://github.com/Millennium44/Toolasha/commit/f78ffdbf9d519dddaba9d707c6c1df3786849eaa))
+- **labyrinth:** break equal-route ties toward revealing the most unknown rooms ([a55635e](https://github.com/Millennium44/Toolasha/commit/a55635ee2f2c3d134f71aa0dff7656e2b4c8afcc))
+- **notifications:** active market-snapshot refresh so undercut alerts see current prices ([6592962](https://github.com/Millennium44/Toolasha/commit/659296225ceabb398ddf23458e11cac2bfa97a66))
+- **settings:** default the seven Portrait DPS sub-readouts to off ([aaf715e](https://github.com/Millennium44/Toolasha/commit/aaf715ec64b23978b63576305d3c4dba8e3c67f7))
+- **settings:** offer "Keep my current settings" to returning users at first run ([53615e5](https://github.com/Millennium44/Toolasha/commit/53615e58d0ac2f80ea9a6e046c0be681016434f9))
+- **settings:** rename the "Everything on" preset to "Defaults" ([7447536](https://github.com/Millennium44/Toolasha/commit/744753677cc5a33287aa8e37e0ca21366d23adef))
+- **settings:** safer defaults for new-settings-off and market dimming ([f694ac3](https://github.com/Millennium44/Toolasha/commit/f694ac319dbfc6597642eceb6d50ba36ab1847aa))
 
 ### Bug Fixes
 
-* **canary:** stop the skill-action-name canary false-alarming on alchemy/enhancing panels ([749003e](https://github.com/Millennium44/Toolasha/commit/749003e5af4691da8019cd90915496bd3bfa4b74))
-* **chat:** stop turning the guild-wide broadcast subject "Guild" into a /profile link ([bc35dea](https://github.com/Millennium44/Toolasha/commit/bc35deab55325a449cc56a80ba7c425fe3dded13))
-* **combat-panels:** profit panel leads with the live rate, sim forecast to the foot ([6805486](https://github.com/Millennium44/Toolasha/commit/68054869b6c39c3af3f52d7d701ec3744c4579e6))
-* **guild:** bank damage by name at wave boundaries; guild-scope loadout sightings ([212f496](https://github.com/Millennium44/Toolasha/commit/212f4968346ac862661d3d49622431f66232da3a))
-* **guild:** battle units found via MiniUnit boxes; battle info split from the profile walk ([04019ef](https://github.com/Millennium44/Toolasha/commit/04019ef0e1dc4258100d8404b790c8f6e60cd4e3))
-* **guild:** battle-unit clicker matches real CombatUnit boxes, not its own panel ([e745f9e](https://github.com/Millennium44/Toolasha/commit/e745f9e1d972f79c681486ebf3bf7d99b0946edb))
-* **guild:** forecast ladder anchors on the live bar and stops dying after one tier ([aa73604](https://github.com/Millennium44/Toolasha/commit/aa73604c5e2cc80f36a4c9f9d73be1a5ec14187d))
-* **guild:** identify trial tier on the in-progress tab and project pace on the exact ladder ([b3dedff](https://github.com/Millennium44/Toolasha/commit/b3dedffbe2fcf08a0be5b923bfb47a48c23c7101))
-* **guild:** roster survives refresh, names stay injective, regen self-classifies, joint tier solve ([a9ab27a](https://github.com/Millennium44/Toolasha/commit/a9ab27aef10847fecf9192ad1dd9a1a3f4a0bc30))
-* **guild:** say when every fighter's combat sheet is fresh instead of hiding the button ([9d7fb47](https://github.com/Millennium44/Toolasha/commit/9d7fb47725a4a5cb6981ce9498f65d24e4fc1620))
-* **guild:** scope per-player DPS to its tile, re-anchor drifting panels, cut redundant work ([27b8f1a](https://github.com/Millennium44/Toolasha/commit/27b8f1a13420b5badee68226af32f562fe369939))
-* **guild:** stale tiers die with their pool, combat learns its tier, clock guards everywhere ([71256a4](https://github.com/Millennium44/Toolasha/commit/71256a40707425ebd567a80e0178ab4c5ece1e17))
-* **guild:** trial DPS split states how much of the party it covers ([f2eb847](https://github.com/Millennium44/Toolasha/commit/f2eb8473c033725729c60ddfe1efb1fb82fcc538))
-
+- **canary:** stop the skill-action-name canary false-alarming on alchemy/enhancing panels ([749003e](https://github.com/Millennium44/Toolasha/commit/749003e5af4691da8019cd90915496bd3bfa4b74))
+- **chat:** stop turning the guild-wide broadcast subject "Guild" into a /profile link ([bc35dea](https://github.com/Millennium44/Toolasha/commit/bc35deab55325a449cc56a80ba7c425fe3dded13))
+- **combat-panels:** profit panel leads with the live rate, sim forecast to the foot ([6805486](https://github.com/Millennium44/Toolasha/commit/68054869b6c39c3af3f52d7d701ec3744c4579e6))
+- **guild:** bank damage by name at wave boundaries; guild-scope loadout sightings ([212f496](https://github.com/Millennium44/Toolasha/commit/212f4968346ac862661d3d49622431f66232da3a))
+- **guild:** battle units found via MiniUnit boxes; battle info split from the profile walk ([04019ef](https://github.com/Millennium44/Toolasha/commit/04019ef0e1dc4258100d8404b790c8f6e60cd4e3))
+- **guild:** battle-unit clicker matches real CombatUnit boxes, not its own panel ([e745f9e](https://github.com/Millennium44/Toolasha/commit/e745f9e1d972f79c681486ebf3bf7d99b0946edb))
+- **guild:** forecast ladder anchors on the live bar and stops dying after one tier ([aa73604](https://github.com/Millennium44/Toolasha/commit/aa73604c5e2cc80f36a4c9f9d73be1a5ec14187d))
+- **guild:** identify trial tier on the in-progress tab and project pace on the exact ladder ([b3dedff](https://github.com/Millennium44/Toolasha/commit/b3dedffbe2fcf08a0be5b923bfb47a48c23c7101))
+- **guild:** roster survives refresh, names stay injective, regen self-classifies, joint tier solve ([a9ab27a](https://github.com/Millennium44/Toolasha/commit/a9ab27aef10847fecf9192ad1dd9a1a3f4a0bc30))
+- **guild:** say when every fighter's combat sheet is fresh instead of hiding the button ([9d7fb47](https://github.com/Millennium44/Toolasha/commit/9d7fb47725a4a5cb6981ce9498f65d24e4fc1620))
+- **guild:** scope per-player DPS to its tile, re-anchor drifting panels, cut redundant work ([27b8f1a](https://github.com/Millennium44/Toolasha/commit/27b8f1a13420b5badee68226af32f562fe369939))
+- **guild:** stale tiers die with their pool, combat learns its tier, clock guards everywhere ([71256a4](https://github.com/Millennium44/Toolasha/commit/71256a40707425ebd567a80e0178ab4c5ece1e17))
+- **guild:** trial DPS split states how much of the party it covers ([f2eb847](https://github.com/Millennium44/Toolasha/commit/f2eb8473c033725729c60ddfe1efb1fb82fcc538))
 
 ### Performance Improvements
 
-* **inventory:** time-slice badge pricing so an enhanced inventory doesn't freeze startup ([16a1f67](https://github.com/Millennium44/Toolasha/commit/16a1f67b9f733f27231a1f50bfff7d9f7267a201))
-* **startup:** split feature init timing into own-work vs await-drain ([cf806f1](https://github.com/Millennium44/Toolasha/commit/cf806f1c6bf3162939a2bbda6b4a4ac629feb13a))
-
+- **inventory:** time-slice badge pricing so an enhanced inventory doesn't freeze startup ([16a1f67](https://github.com/Millennium44/Toolasha/commit/16a1f67b9f733f27231a1f50bfff7d9f7267a201))
+- **startup:** split feature init timing into own-work vs await-drain ([cf806f1](https://github.com/Millennium44/Toolasha/commit/cf806f1c6bf3162939a2bbda6b4a4ac629feb13a))
 
 ### Documentation
 
-* **greasyfork:** drop Iron Cow mode from the fork's additions list ([8dccdf4](https://github.com/Millennium44/Toolasha/commit/8dccdf42737f173795aaea27924b94412a71c6f1))
-* **greasyfork:** frame the fork as Toolasha + Combat Suite, add Ctrl+K and tweak count ([280901f](https://github.com/Millennium44/Toolasha/commit/280901fa6372de94017b2948c95d81bbc8c70131))
-* **greasyfork:** lead with how the pieces integrate and how far market prices reach ([5c7662d](https://github.com/Millennium44/Toolasha/commit/5c7662d7b5445fa8600349c2e3fcbfbbe9619d26))
-* **greasyfork:** reframe sim-upgrade and labyrinth bullets to fork-distinct angles ([19c2a50](https://github.com/Millennium44/Toolasha/commit/19c2a50a69909c021d1767ca56a353f6cb39a83f))
-* **greasyfork:** reword per-character bullet, soften mobile claim ([e2a365f](https://github.com/Millennium44/Toolasha/commit/e2a365fa4bd8373892c8f474ab82f208767d559c))
-* **greasyfork:** soften the mobile bullet to "Mobile-friendly touches" ([639c4f2](https://github.com/Millennium44/Toolasha/commit/639c4f2e0523b3fa9e50bd2b426b97ad83b3c13b))
-* **greasyfork:** trim inherited clauses from labyrinth, guild, and task bullets ([a023830](https://github.com/Millennium44/Toolasha/commit/a023830170f848f6d0a929b93165ac3f4d5c286f))
-* **greasyfork:** trim Iron Bell from the listing, refresh guild tools and test count ([d198ea9](https://github.com/Millennium44/Toolasha/commit/d198ea9b287bc357a226462a0a72cb23b31f53df))
-* **greasyfork:** trim the upgrade-advisor bullet to its fork-new parts ([47f701c](https://github.com/Millennium44/Toolasha/commit/47f701c762f38be063c2714289e8563b2015c562))
-
+- **greasyfork:** drop Iron Cow mode from the fork's additions list ([8dccdf4](https://github.com/Millennium44/Toolasha/commit/8dccdf42737f173795aaea27924b94412a71c6f1))
+- **greasyfork:** frame the fork as Toolasha + Combat Suite, add Ctrl+K and tweak count ([280901f](https://github.com/Millennium44/Toolasha/commit/280901fa6372de94017b2948c95d81bbc8c70131))
+- **greasyfork:** lead with how the pieces integrate and how far market prices reach ([5c7662d](https://github.com/Millennium44/Toolasha/commit/5c7662d7b5445fa8600349c2e3fcbfbbe9619d26))
+- **greasyfork:** reframe sim-upgrade and labyrinth bullets to fork-distinct angles ([19c2a50](https://github.com/Millennium44/Toolasha/commit/19c2a50a69909c021d1767ca56a353f6cb39a83f))
+- **greasyfork:** reword per-character bullet, soften mobile claim ([e2a365f](https://github.com/Millennium44/Toolasha/commit/e2a365fa4bd8373892c8f474ab82f208767d559c))
+- **greasyfork:** soften the mobile bullet to "Mobile-friendly touches" ([639c4f2](https://github.com/Millennium44/Toolasha/commit/639c4f2e0523b3fa9e50bd2b426b97ad83b3c13b))
+- **greasyfork:** trim inherited clauses from labyrinth, guild, and task bullets ([a023830](https://github.com/Millennium44/Toolasha/commit/a023830170f848f6d0a929b93165ac3f4d5c286f))
+- **greasyfork:** trim Iron Bell from the listing, refresh guild tools and test count ([d198ea9](https://github.com/Millennium44/Toolasha/commit/d198ea9b287bc357a226462a0a72cb23b31f53df))
+- **greasyfork:** trim the upgrade-advisor bullet to its fork-new parts ([47f701c](https://github.com/Millennium44/Toolasha/commit/47f701c762f38be063c2714289e8563b2015c562))
 
 ### Continuous Integration
 
-* allow manual dispatch of the release workflow ([0987431](https://github.com/Millennium44/Toolasha/commit/0987431ea4fc38020513040cb4d1f6e8b99e3686))
-
+- allow manual dispatch of the release workflow ([0987431](https://github.com/Millennium44/Toolasha/commit/0987431ea4fc38020513040cb4d1f6e8b99e3686))
 
 ### Miscellaneous Chores
 
-* format the release-please changelog section ([3bff84c](https://github.com/Millennium44/Toolasha/commit/3bff84cdcd9726e0bd1a8f152e6cb0fabc4e5b83))
-* **release:** write real release notes into the greasyfork-facing commit ([66981d7](https://github.com/Millennium44/Toolasha/commit/66981d7724d43c1715124a384744bbc83cf5abef))
-* stamp userscript headers at 2.90.0 ([d44aad3](https://github.com/Millennium44/Toolasha/commit/d44aad3b5353fa72ca1180101cddcc74e8a7112c))
+- format the release-please changelog section ([3bff84c](https://github.com/Millennium44/Toolasha/commit/3bff84cdcd9726e0bd1a8f152e6cb0fabc4e5b83))
+- **release:** write real release notes into the greasyfork-facing commit ([66981d7](https://github.com/Millennium44/Toolasha/commit/66981d7724d43c1715124a384744bbc83cf5abef))
+- stamp userscript headers at 2.90.0 ([d44aad3](https://github.com/Millennium44/Toolasha/commit/d44aad3b5353fa72ca1180101cddcc74e8a7112c))
 
 ## [2.90.0](https://github.com/Millennium44/Toolasha/compare/v2.89.0...v2.90.0) (2026-08-06)
 
