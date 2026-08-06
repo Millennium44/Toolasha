@@ -875,9 +875,7 @@ describe('the live party lint on the Damage panel', () => {
     });
 
     test('your own skilling gear is flagged, and the block says gear is checked for you only', () => {
-        state.equipment = new Map([
-            ['/item_locations/body', { itemHrid: '/items/foragers_top', enhancementLevel: 2 }],
-        ]);
+        state.equipment = new Map([['/item_locations/body', { itemHrid: '/items/foragers_top', enhancementLevel: 2 }]]);
         dpsPanel.show();
 
         const text = dpsPanel.panel.textContent;
