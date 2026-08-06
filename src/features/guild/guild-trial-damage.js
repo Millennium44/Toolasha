@@ -94,8 +94,14 @@ import { guildLoadoutCapture } from './guild-loadout-capture.js';
 import { isMonsterUnit } from './guild-loadouts.js';
 import { autoAttackDps } from './guild-trial-forecast.js';
 import { foldSupportTick, newSupportState, summariseSupport, supportCoverage } from './guild-trial-support.js';
-import { fightViewBossNames, fightViewNames, nameCoverage, resolveUnitNames } from './guild-trial-units.js';
-import { COMBAT_ENCOUNTERS, TRIAL_ACTIVE_MS, tierFromLevel } from './guild-trials-math.js';
+import {
+    fightViewBossNames,
+    fightViewNames,
+    nameCoverage,
+    resolveUnitNames,
+    rosterFromBattle,
+} from './guild-trial-units.js';
+import { COMBAT_ENCOUNTERS, TRIAL_ACTIVE_MS, tierFromLevel, trialFromHrid } from './guild-trials-math.js';
 
 /** Below this the per-player rates are one exchange's luck rather than a rate */
 export const MIN_SECONDS = 5;
@@ -116,6 +122,12 @@ export const SPECTATED_TRIAL_NOTE =
 
 /** The stream that carries a spectated trial fight */
 export const GUILD_BATTLE_MESSAGE = 'guild_battle_updated';
+
+/** The message that opens a tier, with the roster and the tier-scaled boss on it */
+export const NEW_GUILD_BATTLE_MESSAGE = 'new_guild_battle';
+
+/** The message that closes a combat trial */
+export const END_GUILD_BATTLE_MESSAGE = 'end_guild_battle';
 
 /** A tick further from the last than this is a break, not a slow swing */
 const MAX_TICK_GAP_MS = 2000;
@@ -310,7 +322,7 @@ export function battleMonsterNames(data) {
  * @param {number} [input.seconds] - Seconds of fighting measured
  * @returns {{players: Array<Object>, totalDamage: number, partyDps: number|null}} Rows, biggest first
  */
-export function summariseTrialDamage({ tally = {}, names = {}, deaths = {}, seconds = 0 } = {}) {
+export function summariseTrialDamage({ tally = {}, names = {}, deaths = {}, seconds = 0, counted = null } = {}) {
     const measurable = seconds >= MIN_SECONDS;
     const totalDamage = Object.values(tally).reduce((sum, entry) => sum + (entry?.damage || 0), 0);
 
@@ -319,6 +331,10 @@ export function summariseTrialDamage({ tally = {}, names = {}, deaths = {}, seco
         return {
             index,
             name: names[index] || `Player ${Number(index) + 1}`,
+            // Whether this row's own counters were on the wire. The game streams
+            // action counters for one unit — yours — so a table can be measured
+            // for one row and estimated for the rest, and must say which is which
+            measured: counted ? counted.has(index) : null,
             damage: entry.damage || 0,
             hits: entry.hits || 0,
             crits: entry.crits || 0,
@@ -393,6 +409,16 @@ class GuildTrialDamage {
         this.bossSheets = {};
         /** What the fight view says is being watched, exactly as it wrote it */
         this.spectatedBossName = null;
+        /** Slot → `{name, characterId}`, from `new_guild_battle` */
+        this.roster = {};
+        /** Slots whose own action counters have been seen — your character, and only yours */
+        this.countedSlots = new Set();
+        /** When each tier started, from the message that opens it */
+        this.tierStarts = {};
+        /** Set once `end_guild_battle` has been seen for this trial */
+        this.endedAt = null;
+        /** The party size the game stated, which is what the ladders scale by */
+        this.participants = null;
     }
 
     /**
@@ -444,10 +470,14 @@ class GuildTrialDamage {
         this.onBattleUpdated = (data) => this._onBattleUpdated(data);
         this.onGuildBattle = (data) => this._onGuildBattleTick(data);
         this.onUnitFetched = (data) => this._onUnitFetched(data);
+        this.onNewGuildBattle = (data) => this._onNewGuildBattle(data);
+        this.onEndGuildBattle = (data) => this._onEndGuildBattle(data);
         webSocketHook.on('new_battle', this.onNewBattle);
         webSocketHook.on('battle_updated', this.onBattleUpdated);
         webSocketHook.on(GUILD_BATTLE_MESSAGE, this.onGuildBattle);
         webSocketHook.on('battle_unit_fetched', this.onUnitFetched);
+        webSocketHook.on(NEW_GUILD_BATTLE_MESSAGE, this.onNewGuildBattle);
+        webSocketHook.on(END_GUILD_BATTLE_MESSAGE, this.onEndGuildBattle);
     }
 
     cleanup() {
@@ -455,12 +485,148 @@ class GuildTrialDamage {
         if (this.onBattleUpdated) webSocketHook.off('battle_updated', this.onBattleUpdated);
         if (this.onGuildBattle) webSocketHook.off(GUILD_BATTLE_MESSAGE, this.onGuildBattle);
         if (this.onUnitFetched) webSocketHook.off('battle_unit_fetched', this.onUnitFetched);
+        if (this.onNewGuildBattle) webSocketHook.off(NEW_GUILD_BATTLE_MESSAGE, this.onNewGuildBattle);
+        if (this.onEndGuildBattle) webSocketHook.off(END_GUILD_BATTLE_MESSAGE, this.onEndGuildBattle);
         this.onNewBattle = null;
         this.onBattleUpdated = null;
         this.onGuildBattle = null;
         this.onUnitFetched = null;
+        this.onNewGuildBattle = null;
+        this.onEndGuildBattle = null;
         this.initialized = false;
         this.reset();
+    }
+
+    /**
+     * A tier of the trial has begun.
+     *
+     * The single most useful message in the family, and it fires at *every*
+     * tier. Four things arrive with it that nothing else on this client has:
+     *
+     * - **The roster, in slot order.** `players[]` carries `character.id` and
+     *   `character.name`, and a tick's `pMap` keys are indexes into that array.
+     *   That is the join the spectator stream never had, and it retires the
+     *   guessing for anyone watching from the start.
+     * - **The tier-scaled boss.** `monsters[]` are whole sheets — health, the
+     *   enrage timer, the full `combatDetails` — so a boss sheet no longer needs
+     *   anybody to click the thing. It confirms the rule again on arrival: a
+     *   330,000-health Badger with thirty players in the trial reads 429,000,
+     *   which is `330,000 × (1 + 0.01 × 30)` exactly.
+     * - **The tier boundary.** Stated, rather than inferred from the boss's
+     *   health jumping. The baselines are dropped here and the walk over the
+     *   pool never sees a wave reset as a heal.
+     * - **The encounter**, from `monsters[].hrid`.
+     *
+     * @param {Object} data - A `new_guild_battle` payload
+     */
+    _onNewGuildBattle(data) {
+        try {
+            if (!data || typeof data !== 'object') return;
+
+            const now = Date.now();
+            const tier = Number.isFinite(Number(data.tier)) ? Number(data.tier) : null;
+            const battleId = data.battleId ?? null;
+
+            // The stated boundary, which is what this message is *for*
+            if (battleId !== this.guildBattleId || tier !== this.tier) {
+                this._newSpectatedWave(battleId, tier, now);
+            }
+            this.tier = tier;
+            this.guildBattleId = battleId;
+            this.source = this.source || 'spectated';
+            // The game saying a tier has begun is the strongest statement that a
+            // trial is running that this module has ever had
+            this.active = true;
+            this.reason = SPECTATED_TRIAL_NOTE;
+            this.endedAt = null;
+            if (!this.startedAt) this.startedAt = now;
+            if (Number.isFinite(tier)) this.tierStarts[tier] = now;
+
+            // The roster replaces every weaker source, and a new battle restates
+            // it — a slot that changed hands must not keep the old name
+            const roster = rosterFromBattle(data);
+            if (Object.keys(roster).length) {
+                this.roster = roster;
+                for (const [index, entry] of Object.entries(roster)) {
+                    this.unitNames[index] = { name: entry.name, source: 'roster', characterId: entry.characterId };
+                    this.names[index] = entry.name;
+                }
+            }
+
+            this._noteBattleMonsters(data.monsters, tier, now);
+            // The party size the pool and health ladders scale by, stated rather
+            // than counted off a sign-up sheet
+            const participants = Object.keys(roster).length;
+            if (participants) this.participants = participants;
+        } catch (error) {
+            console.error('[GuildTrialDamage] Reading the start of a trial tier failed:', error);
+        }
+    }
+
+    /**
+     * The boss sheets a tier's opening message carries.
+     *
+     * Filed exactly where a clicked sheet goes, so the two sources are one store
+     * and a trial watched from the start needs no clicking at all.
+     *
+     * @param {Array<Object>} monsters - `new_guild_battle.monsters`
+     * @param {number|null} tier - The tier it opened
+     * @param {number} at - Now
+     */
+    _noteBattleMonsters(monsters, tier, at) {
+        for (const monster of Array.isArray(monsters) ? monsters : []) {
+            const name = String(monster?.name || '');
+            const encounter = encounterOf(monster?.hrid || name);
+            if (!encounter) continue;
+
+            if (!this.encounter) {
+                this.encounter = encounter;
+                this.spectatedBossName = name || this.spectatedBossName;
+            }
+            if (!Number.isFinite(tier)) continue;
+
+            const details =
+                monster.combatDetails && typeof monster.combatDetails === 'object' ? monster.combatDetails : {};
+            this.bossSheets[tier] = {
+                name,
+                tier,
+                hrid: monster.hrid ?? null,
+                level: Number(details.combatLevel) || null,
+                maxHitpoints: Number(monster.maxHitpoints ?? details.maxHitpoints) || null,
+                maxManapoints: Number(monster.maxManapoints ?? details.maxManapoints) || null,
+                // Nanoseconds on the wire — ten minutes, which is the stack cap
+                enrageTimerMs: Number(monster.enrageTimerDuration) / 1e6 || null,
+                spawnTime: monster.spawnTime ?? null,
+                stats: { ...details },
+                source: 'new_guild_battle',
+                at,
+            };
+            return;
+        }
+    }
+
+    /**
+     * The combat trial is over, stated by the game.
+     *
+     * It carries a battle id and a trial hrid and nothing else — no result, no
+     * tier, no rewards — so what it settles is the *lifecycle*: this is the
+     * moment a session can be finalised and a result reported with certainty,
+     * rather than inferred from ticks going quiet.
+     *
+     * @param {Object} data - An `end_guild_battle` payload
+     */
+    _onEndGuildBattle(data) {
+        try {
+            const trial = trialFromHrid(data?.trialHrid);
+            // A different trial's ending is not this one's
+            if (trial && this.encounter && trial.key !== this.encounter) return;
+            if (trial && !this.encounter) this.encounter = trial.key;
+
+            this.endedAt = Date.now();
+            this.active = false;
+        } catch (error) {
+            console.error('[GuildTrialDamage] Reading the end of a trial failed:', error);
+        }
     }
 
     /**
@@ -527,9 +693,17 @@ class GuildTrialDamage {
             noteActions(this.state, pMap);
 
             this.spectator.ticks += 1;
-            if (Object.values(pMap).some((unit) => Number.isFinite(Number(unit?.atkCounter)))) {
-                this.spectator.playerActionTicks += 1;
+            // Which *slots* carried counters, not merely whether any did. The
+            // recording shows exactly one player entry ever carrying them — the
+            // client's own unit — so "can this be split" is a fact about a row
+            // rather than about the trial
+            let counted = false;
+            for (const [index, unit] of Object.entries(pMap)) {
+                if (!Number.isFinite(Number(unit?.atkCounter))) continue;
+                this.countedSlots.add(index);
+                counted = true;
             }
+            if (counted) this.spectator.playerActionTicks += 1;
             if (Object.keys(mMap).length) this.spectator.bossTicks += 1;
 
             const gap = now - this.lastTickAt;
@@ -623,6 +797,9 @@ class GuildTrialDamage {
             // gets filed under Hedgehog
             this.spectatedBossName = null;
             this.encounter = null;
+            // …and a different battle is a different roster. A tier change is
+            // not: the same thirty people fight every tier of one trial
+            this.roster = {};
         }
 
         this.guildBattleId = battleId;
@@ -683,6 +860,7 @@ class GuildTrialDamage {
     _nameUnits(pMap) {
         const resolved = resolveUnitNames({
             pMap,
+            roster: this.roster,
             portraits: fightViewNames(),
             loadouts: guildLoadoutCapture.seen?.() || [],
             known: this.unitNames,
@@ -856,6 +1034,7 @@ class GuildTrialDamage {
             names: this.names,
             deaths: this.deaths,
             seconds: this.seconds,
+            counted: this.countedSlots,
         });
         const support = summariseSupport(this.support, this.names, this.deaths);
 
@@ -889,6 +1068,16 @@ class GuildTrialDamage {
             // what a per-player *damage* split needs. Without them the boss's
             // lost health is still party damage, and still measured
             splitFromCounters: this.spectator.playerActionTicks > 0,
+            // Which slots the game streamed counters for. In every recording so
+            // far that is exactly one — the viewer's own character
+            countedSlots: [...this.countedSlots],
+            countedNames: [...this.countedSlots].map((index) => this.names[index]).filter(Boolean),
+            // The roster the game stated, and the party size the ladders scale by
+            roster: { ...this.roster },
+            participants: this.participants ?? null,
+            // When each tier started, so a trial's tier durations are exact
+            tierStarts: { ...this.tierStarts },
+            endedAt: this.endedAt,
             // How each unit was identified, so a placeholder can be shown as one
             names: Object.fromEntries(Object.entries(this.unitNames).map(([index, e]) => [index, { ...e }])),
             nameCoverage: nameCoverage(this.unitNames),

@@ -38,6 +38,8 @@ const game = vi.hoisted(() => ({
     scoreboardToggles: 0,
     breakdown: {},
     scoreboardContext: null,
+    skilling: {},
+    skillingEnded: {},
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -147,6 +149,19 @@ vi.mock('../notifications/guild-trial-alerts.js', () => ({
         noteTrialStatus: (status) => game.alerts.status.push(status),
         notePayout: (payout) => game.alerts.payouts.push(payout),
         reset: () => (game.alerts.reset += 1),
+    },
+}));
+vi.mock('./guild-trial-skilling.js', () => ({
+    default: {
+        initialize: vi.fn(),
+        cleanup: vi.fn(),
+        forTrial: (name) => game.skilling[String(name).toLowerCase()] || null,
+        endedFor: (name) => game.skillingEnded[String(name).toLowerCase()] || null,
+        participating: (name, id) => {
+            const ids = game.skilling[String(name).toLowerCase()]?.participantIds;
+            return Array.isArray(ids) ? ids.includes(Number(id)) : null;
+        },
+        snapshot: () => ({ updates: game.skilling, ended: game.skillingEnded }),
     },
 }));
 vi.mock('./guild-trial-scoreboard.js', () => ({
@@ -766,6 +781,8 @@ describe('the panel, end to end', () => {
         game.scoreboardToggles = 0;
         game.breakdown = {};
         game.scoreboardContext = null;
+        game.skilling = {};
+        game.skillingEnded = {};
         await trialsFeature.initialize();
     });
 
@@ -1784,6 +1801,82 @@ describe('the panel, end to end', () => {
         expect(game.recorder.recording).toBe(false);
         // And no block was drawn over somebody's notice board
         expect(document.querySelectorAll('.mwi-trial-info')).toHaveLength(0);
+    });
+
+    test('the socket fills a skilling card the DOM has nothing on', async () => {
+        // `guild_skilling_updated` states the pool, the tier and the player's own
+        // action figures — every one of which was otherwise scraped off a tab
+        // that has to be open, and each of which has had its own bug
+        game.skilling.crafting = {
+            trial: { kind: 'skilling', key: 'crafting', name: 'Crafting' },
+            tier: 10,
+            reading: { current: 21_608, max: 88_920 },
+            personal: { 'Success Rate': '8.0%', 'Work Power': '161' },
+            participantIds: [910007],
+            at: now,
+        };
+        const root = buildTab([{ name: 'Crafting', level: 190, points: 1100, bar: '' }]);
+        root.querySelectorAll('[class*="ProgressBar_text"]').forEach((el) => el.remove());
+        fire(root);
+
+        const tile = guildTrials.record.tiles['skilling::crafting'];
+        expect(tile.samples).toHaveLength(1);
+        expect(tile.samples[0].readings[0]).toEqual({ current: 21_608, max: 88_920 });
+        // The tier is the payload's own, not a badge plus an assumption
+        expect(tile.tiers).toContainEqual({ tier: 10, total: 88_920 });
+        expect(tile.personalByTier['10']).toMatchObject({ 'Success Rate': '8.0%' });
+    });
+
+    test('a card the game is drawing a bar on keeps its own numbers', async () => {
+        game.skilling.crafting = {
+            trial: { kind: 'skilling', key: 'crafting', name: 'Crafting' },
+            tier: 10,
+            reading: { current: 1, max: 88_920 },
+            personal: {},
+            participantIds: [],
+            at: now,
+        };
+        const root = buildTab([{ name: 'Crafting', level: 190, points: 1100, bar: '21,608 / 88,920' }]);
+        fire(root);
+
+        expect(guildTrials.record.tiles['skilling::crafting'].samples[0].readings[0].current).toBe(21_608);
+    });
+
+    test('the end message stamps the card completed at the tier it banked', async () => {
+        // `end_guild_skilling` states tier 9 while tier 10 is in progress — the
+        // game's own confirmation that a stated tier counts what is finished
+        game.skillingEnded.crafting = { tier: 9, at: now };
+        const root = buildTab([{ name: 'Crafting', level: 190, points: 1100, bar: '' }]);
+        root.querySelectorAll('[class*="ProgressBar_text"]').forEach((el) => el.remove());
+        fire(root);
+
+        const tile = guildTrials.record.tiles['skilling::crafting'];
+        expect(tile.completed).toBe(true);
+        expect(tile.tier).toBe(9);
+    });
+
+    test('the game declaring a trial over ends the recording, certainly', async () => {
+        // The only lifecycle signal this feature has ever had that is certain.
+        // Everything else is a phase inferred from a header that may name the
+        // other kind, or from a badge that may not have been redrawn
+        game.skillingEnded.crafting = { tier: 9, at: now };
+        const root = buildTab([{ name: 'Crafting', level: 190, points: 1100, bar: '21,608 / 88,920' }]);
+        fire(root);
+
+        expect(game.recorder.lifecycle).toContain('completed');
+    });
+
+    test('one kind ending is not the hour ending', async () => {
+        // A guild runs the two kinds one after the other, so the skilling half
+        // finishing while a combat trial is still live is not the end of anything
+        game.skillingEnded.crafting = { tier: 9, at: now };
+        const root = buildTab([
+            { name: 'Crafting', level: 190, points: 1100, bar: '21,608 / 88,920' },
+            { name: 'Trial Badger', level: 100, points: 400, bar: '429,000 / 429,000' },
+        ]);
+        fire(root);
+
+        expect(game.recorder.lifecycle).not.toContain('completed');
     });
 
     test('a card wearing a Completed badge shows results, whatever the header says', async () => {
@@ -2935,6 +3028,8 @@ describe('the payout block, audited', () => {
         game.scoreboardToggles = 0;
         game.breakdown = {};
         game.scoreboardContext = null;
+        game.skilling = {};
+        game.skillingEnded = {};
         await trialsFeature.initialize();
     });
 

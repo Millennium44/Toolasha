@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The wire speaks: five trial message types the game was sending all along
+
+- **`new_guild_battle` fires at every tier and states everything** this feature spent three rounds inferring: the full roster with names (the tick indexes map straight into it — 30 of 30 named, no placeholders), the tier boundary (baselines drop on the stated boundary, and exact per-tier durations record), the encounter (from the monster hrids, no fight view needed), and the tier-scaled boss sheet filed automatically — which confirms the HP rule on arrival: 330,000 × 1.30 = 429,000 with 30 players.
+- **Your own damage is measured** — the game streams action counters for your own character only, and the scoreboard now says so per row: your figure is real, the rest of the party stays estimated from builds.
+- **Skilling goes socket-fed**: `guild_skilling_updated` carries the pool (76,000 × 1.17 = 88,920, the rule again), the stated tier, participation by character ID, and your personal success rate/efficiency/action time — recorded per tier with no DOM footer needed. Cards the game draws a bar on keep their own numbers.
+- **The game announces trial ends**: `end_guild_skilling` states the final banked tier outright (9 while 10 was running — confirming the semantics this feature reasoned its way to), `end_guild_battle` marks the combat hour's end, and the recorder treats the hour as done only when every card on screen has been declared over.
+- All five types join the dedup skip-list — the skilling tick's first 100 characters end exactly where its progress figure begins, so an hour would have collapsed to one tick. Whether these messages are broadcast or view-scoped is unknowable from the capture, so each is a bonus signal and every DOM path remains as fallback. The recording's roster, ticks, and end messages are fixtured verbatim.
+
 ### Mixed-bonus cards contribute their true base to the token sum
 
 - A card banked across a Builder's Hall upgrade divides cleanly by neither bonus, so its base points now come from the exact ladder (1,100 at T10) instead of the slightly-low division (1,091) — the token estimate gains the difference, the card's own Guild Points figure stays authoritative, and the sourcing note names the second cause. Treasury needs no such handling — tokens pay once at the round's end against the summed base, one moment, one level — with the one untestable assumption (payout-time vs round-start snapshot) documented rather than guessed at.

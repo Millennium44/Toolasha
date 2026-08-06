@@ -19,7 +19,9 @@ import {
     matchByVitals,
     nameCoverage,
     resolveUnitNames,
+    rosterFromBattle,
 } from './guild-trial-units.js';
+import { NEW_GUILD_BATTLE } from './guild-trial-messages.fixture.js';
 
 /**
  * A captured sheet, as the loadout store holds one.
@@ -162,6 +164,65 @@ describe('resolveUnitNames', () => {
     test('a portrait slot the party does not reach is not borrowed from', () => {
         // Index 4 with two tiles on screen is not tile 0 wrapped around
         const names = resolveUnitNames({ pMap: { 4: icmeow }, portraits: ['Tib', 'Moo'] });
+        expect(names['4'].source).toBe('placeholder');
+    });
+});
+
+describe('rosterFromBattle', () => {
+    test('slot order is the join, and it is exact', () => {
+        const roster = rosterFromBattle(NEW_GUILD_BATTLE);
+
+        expect(Object.keys(roster)).toHaveLength(30);
+        // Verified against the recording: a tick's `pMap` key "19" is players[19]
+        expect(roster[19]).toEqual({ name: 'Player20', characterId: 900020 });
+        expect(roster[0]).toEqual({ name: 'Player01', characterId: 900001 });
+    });
+
+    test('a payload with no roster on it gives none, rather than throwing', () => {
+        expect(rosterFromBattle({})).toEqual({});
+        expect(rosterFromBattle({ players: 'nope' })).toEqual({});
+        expect(rosterFromBattle(null)).toEqual({});
+    });
+
+    test('a slot with no name is skipped rather than filled with a placeholder', () => {
+        const roster = rosterFromBattle({ players: [{ character: { id: 1, name: 'Tib' } }, { character: {} }] });
+        expect(Object.keys(roster)).toEqual(['0']);
+    });
+});
+
+describe('the roster outranks everything', () => {
+    const unit = { mHP: 2612, mMP: 2180 };
+
+    test('a stated name beats a portrait and a build alike', () => {
+        const names = resolveUnitNames({
+            pMap: { 1: unit },
+            roster: { 1: { name: 'Stated', characterId: 7 } },
+            portraits: ['Tib', 'Portrait'],
+            loadouts: [
+                {
+                    name: 'Vitals',
+                    rows: [
+                        { label: 'Max HP', value: '2,612' },
+                        { label: 'Max MP', value: '2,180' },
+                    ],
+                },
+            ],
+        });
+
+        expect(names['1']).toEqual({ name: 'Stated', source: 'roster', characterId: 7 });
+    });
+
+    test('and it restates a slot that had already been resolved', () => {
+        // A new battle is a new roster; a slot that changed hands must not keep
+        // the name the last one had
+        const first = resolveUnitNames({ pMap: { 1: unit }, portraits: ['Tib', 'WasHere'] });
+        const later = resolveUnitNames({ pMap: { 1: unit }, roster: { 1: { name: 'NowHere' } }, known: first });
+
+        expect(later['1']).toMatchObject({ name: 'NowHere', source: 'roster' });
+    });
+
+    test('a slot the roster does not cover still falls through', () => {
+        const names = resolveUnitNames({ pMap: { 4: unit }, roster: { 1: { name: 'Stated' } } });
         expect(names['4'].source).toBe('placeholder');
     });
 });

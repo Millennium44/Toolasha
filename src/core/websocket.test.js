@@ -163,6 +163,39 @@ describe('content-hash deduplication', () => {
         expect(handler).toHaveBeenCalledTimes(2);
     });
 
+    test('the whole guild-trial family survives the hash', () => {
+        // `guild_skilling_updated` is the worst of them: the window ends exactly
+        // where `currentProgress` begins, and only `actionCounter` — the last
+        // field in the message — ever changes between ticks. The lifecycle four
+        // are short enough to fit inside the window whole, so a second trial of
+        // the same skill would silently drop its own start or end
+        const cases = {
+            guild_skilling_updated: (n) =>
+                `{"type":"guild_skilling_updated","trialHrid":"/guild_skilling/crafting","tier":10,` +
+                `"currentProgress":0.243,"targetWorkValue":88920,"actionCounter":${n}}`,
+            new_guild_battle: (n) => `{"type":"new_guild_battle","battleId":1,"wave":1,"tier":${n},"players":[]}`,
+            new_guild_skilling: (n) =>
+                `{"type":"new_guild_skilling","trialHrid":"/guild_skilling/crafting","tier":${n}}`,
+            end_guild_battle: (n) => `{"type":"end_guild_battle","battleId":${n},"trialHrid":"/guild_combat/badger"}`,
+            end_guild_skilling: (n) =>
+                `{"type":"end_guild_skilling","trialHrid":"/guild_skilling/crafting","tier":${n}}`,
+        };
+
+        for (const [type, build] of Object.entries(cases)) {
+            const handler = vi.fn();
+            webSocketHook.on(type, handler);
+
+            webSocketHook.processMessage(build(1));
+            webSocketHook.processMessage(build(1));
+            webSocketHook.processMessage(build(2));
+
+            expect(handler, type).toHaveBeenCalledTimes(3);
+        }
+
+        // And the reason the first of them needs it at all
+        expect(cases.guild_skilling_updated(83).slice(0, 100)).toBe(cases.guild_skilling_updated(84).slice(0, 100));
+    });
+
     test('action_completed uses a 50ms TTL dedup instead of the content hash', () => {
         const handler = vi.fn();
         webSocketHook.on('action_completed', handler);

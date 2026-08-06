@@ -114,12 +114,16 @@ export function scoreboardRows(breakdown, tab = 'damage') {
             ? support.map((row) => ({ index: row.index, name: row.name, value: row.healingDone || 0 }))
             : (breakdown?.players || []).map((row) => ({ index: row.index, name: row.name, value: row.damage || 0 }));
 
+    const measuredBy = new Map((breakdown?.players || []).map((row) => [row.index, row.measured]));
     const rows = raw.filter((row) => row.value > 0).sort((a, b) => b.value - a.value);
     const total = rows.reduce((sum, row) => sum + row.value, 0);
 
     return {
         rows: rows.map((row, position) => ({
             ...row,
+            // Per row, not per table: the game streams action counters for one
+            // unit — yours — so one row can be measured while the rest are not
+            measured: measuredBy.get(row.index) ?? null,
             rank: position + 1,
             perSecond: seconds > 0 ? row.value / seconds : null,
             share: total > 0 ? (row.value / total) * 100 : null,
@@ -361,6 +365,28 @@ class GuildTrialScoreboard {
     }
 
     /**
+     * Whose damage is actually measured, when only some of it is.
+     *
+     * The game streams action counters for **one** unit — the viewer's own
+     * character — so a watched trial produces a real, attributed figure for you
+     * and nothing attributable for anybody else. Saying "measured" over a table
+     * where that is true of one row would be claiming the other twenty-nine.
+     *
+     * @param {Object} breakdown - From `guildTrialDamage.breakdown()`
+     * @returns {string} A sentence, or an empty string
+     */
+    _ownRowNote(breakdown) {
+        const named = breakdown?.countedNames || [];
+        if (!named.length) return '';
+
+        return (
+            ` The game only streams action counters for your own character, so ${named.slice(0, 2).join(' and ')}` +
+            `${named.length > 2 ? ` and ${named.length - 2} more` : ''} ` +
+            `${named.length === 1 ? 'is' : 'are'} measured and the rest of the party is not.`
+        );
+    }
+
+    /**
      * How the units in a watched fight were identified, when it is worth saying.
      *
      * A spectated tick names its units by index only, so a row headed "Player 3"
@@ -469,6 +495,7 @@ class GuildTrialScoreboard {
                 `<div style="color:${DIM}; font-size:10px; line-height:1.5; margin-bottom:6px;">` +
                 'Folded from the stream the In Progress fight view subscribes to. Only the stretch the view ' +
                 'was open for is counted, so closing it pauses these rather than ending them.' +
+                this._ownRowNote(breakdown) +
                 this._namingNote(breakdown) +
                 '</div>'
               : `<div style="color:${DIM}; font-size:10px; line-height:1.5; margin-bottom:6px;">` +
@@ -581,6 +608,9 @@ class GuildTrialScoreboard {
         // carries a tilde so it cannot be read as a measurement
         const estimated = row.value === null || row.value === undefined;
         const figure = estimated ? `~${rate}/s` : formatKMB(Math.round(row.value));
+        // A row the game streamed counters for is measured; one folded in
+        // beside it is not, and a table that does not say so is claiming both
+        const label = estimated ? 'estimated' : row.measured === false ? `${rate}/s · partial` : `${rate}/s`;
 
         return (
             `<div style="position:relative; margin:3px 0; padding:3px 6px; border-radius:3px;` +
@@ -591,7 +621,7 @@ class GuildTrialScoreboard {
             `<span style="margin-left:auto; color:${color}; font-weight:600;">${figure}</span>` +
             `</div>` +
             `<div style="display:flex; gap:6px; color:${DIM}; font-size:10px;">` +
-            `<span>${estimated ? 'estimated' : `${rate}/s`}</span>` +
+            `<span>${label}</span>` +
             `<span style="margin-left:auto;">${row.share === null ? '—' : `${row.share.toFixed(1)}%`}</span>` +
             `</div></div>`
         );

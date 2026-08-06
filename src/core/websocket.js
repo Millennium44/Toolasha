@@ -260,6 +260,19 @@ class WebSocketHook {
             // identical for far more than a hundred characters and only the
             // health past it differs. Hashed, a whole trial collapses to one tick
             messageType === 'guild_battle_updated' ||
+            // The rest of the guild-trial family, for the same reason and worse.
+            // `guild_skilling_updated` opens `{"type":"guild_skilling_updated",
+            // "trialHrid":"/guild_skilling/crafting","tier":10,"currentProgress":`
+            // — a hundred characters exactly, so every tick of an hour's
+            // skilling trial hashes identically and only `actionCounter`, right
+            // at the end, ever changes. The lifecycle four are short enough to
+            // fit inside the window whole, so a second trial of the same skill
+            // would silently drop its own start or end
+            messageType === 'guild_skilling_updated' ||
+            messageType === 'new_guild_battle' ||
+            messageType === 'new_guild_skilling' ||
+            messageType === 'end_guild_battle' ||
+            messageType === 'end_guild_skilling' ||
             messageType === 'action_type_consumable_slots_updated' ||
             messageType === 'consumable_buffs_updated' ||
             // Two donations to the same buff in a row produce messages whose

@@ -56,6 +56,9 @@ const {
 /** The six ticks the wire capture kept, byte for byte */
 const { TRIAL_WIRE_DUMP: wireDump } = await import('./guild-trial-wire-dump.fixture.js');
 
+/** And the five message types a later, fuller recording found */
+const { END_GUILD_BATTLE, GUILD_BATTLE_TICKS, NEW_GUILD_BATTLE } = await import('./guild-trial-messages.fixture.js');
+
 /**
  * One player in a tick, with the counters attribution reads.
  * @param {number} atk - Attack counter
@@ -867,5 +870,208 @@ describe('which trial is being watched', () => {
         game.wsHandlers[GUILD_BATTLE_MESSAGE]({ ...wireDump[1], tier: 3 });
 
         expect(guildTrialDamage.breakdown().encounter).toBe('chameleon');
+    });
+});
+
+/**
+ * The messages a guild trial actually opens and closes with.
+ *
+ * Replayed from a guildmate's raw recording — 81,725 events across one trial
+ * hour — kept verbatim in `guild-trial-messages.fixture.js`. `new_guild_battle`
+ * is the message this feature spent three rounds working around the absence of.
+ */
+describe('the tier-opening message', () => {
+    const at = new Date('2026-08-03T16:00:00Z').getTime();
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        vi.setSystemTime(at);
+        game.clientData = {};
+        game.loadouts = [];
+        guildTrialDamage.initialize();
+        guildTrialDamage.reset();
+        guildTrialDamage.setTrialNames(['Trial Badger']);
+    });
+
+    afterEach(() => {
+        guildTrialDamage.cleanup();
+        vi.useRealTimers();
+        document.body.innerHTML = '';
+    });
+
+    test('the roster names every unit, in slot order', () => {
+        game.wsHandlers.new_guild_battle(NEW_GUILD_BATTLE);
+        game.wsHandlers[GUILD_BATTLE_MESSAGE](GUILD_BATTLE_TICKS[1]);
+
+        const report = guildTrialDamage.breakdown();
+        // Verified against the recording: pMap key "19" is players[19]
+        expect(report.names['19']).toMatchObject({ name: 'Player20', source: 'roster' });
+        expect(report.names['0']).toMatchObject({ name: 'Player01', source: 'roster' });
+        expect(report.nameCoverage.placeholders).toEqual([]);
+        expect(report.nameCoverage.of).toBe(30);
+    });
+
+    test('a character id comes with each name, so a unit can be known to be you', () => {
+        game.wsHandlers.new_guild_battle(NEW_GUILD_BATTLE);
+        expect(guildTrialDamage.breakdown().roster['19']).toMatchObject({ name: 'Player20' });
+        expect(guildTrialDamage.breakdown().roster['0'].characterId).toBe(900001);
+    });
+
+    test('the roster outranks a name already resolved from a build', () => {
+        // A viewer who joined mid-tier matched by vitals; the roster then states
+        // the answer, and a stated answer is not overruled by an inferred one
+        game.loadouts = [
+            {
+                name: 'SomebodyElse',
+                at: 1,
+                rows: [
+                    { label: 'Max HP', value: '1,620' },
+                    { label: 'Max MP', value: '1,929' },
+                ],
+            },
+        ];
+        game.wsHandlers[GUILD_BATTLE_MESSAGE](GUILD_BATTLE_TICKS[2]);
+        expect(guildTrialDamage.breakdown().names['19'].source).toBe('vitals');
+
+        game.wsHandlers.new_guild_battle(NEW_GUILD_BATTLE);
+        game.wsHandlers[GUILD_BATTLE_MESSAGE](GUILD_BATTLE_TICKS[2]);
+        expect(guildTrialDamage.breakdown().names['19']).toMatchObject({ name: 'Player20', source: 'roster' });
+    });
+
+    test('the boss sheet arrives without anybody clicking anything', () => {
+        game.wsHandlers.new_guild_battle(NEW_GUILD_BATTLE);
+
+        const sheet = guildTrialDamage.breakdown().bossSheets[1];
+        expect(sheet).toMatchObject({
+            name: 'Trial Badger',
+            tier: 1,
+            hrid: '/monsters/trial_badger',
+            maxHitpoints: 429_000,
+            source: 'new_guild_battle',
+        });
+        // Ten minutes, in nanoseconds on the wire
+        expect(sheet.enrageTimerMs).toBe(600_000);
+        expect(sheet.stats.combatLevel).toBe(100);
+    });
+
+    test('and confirms the participant rule again', () => {
+        game.wsHandlers.new_guild_battle(NEW_GUILD_BATTLE);
+
+        const report = guildTrialDamage.breakdown();
+        expect(report.participants).toBe(30);
+        // 330,000 base health with thirty in the trial: 330,000 × 1.30
+        expect(report.bossSheets[1].maxHitpoints).toBe(Math.round(330_000 * 1.3));
+    });
+
+    test('it identifies the encounter without the fight view being open', () => {
+        game.wsHandlers.new_guild_battle(NEW_GUILD_BATTLE);
+
+        const report = guildTrialDamage.breakdown();
+        expect(report.encounter).toBe('badger');
+        expect(report.bossName).toBe('Trial Badger');
+    });
+
+    test('it is the tier boundary, so a fresh wave is never read as a heal', () => {
+        game.wsHandlers.new_guild_battle(NEW_GUILD_BATTLE);
+        game.wsHandlers[GUILD_BATTLE_MESSAGE]({
+            ...GUILD_BATTLE_TICKS[0],
+            mMap: { 0: { cHP: 10_000, mHP: 429_000, dmgCounter: 5 } },
+        });
+
+        vi.setSystemTime(at + 200_000);
+        game.wsHandlers.new_guild_battle({ ...NEW_GUILD_BATTLE, tier: 2 });
+        game.wsHandlers[GUILD_BATTLE_MESSAGE]({
+            ...GUILD_BATTLE_TICKS[0],
+            tier: 2,
+            mMap: { 0: { cHP: 468_000, mHP: 468_000, dmgCounter: 6 } },
+        });
+
+        const report = guildTrialDamage.breakdown();
+        expect(report.tier).toBe(2);
+        expect(report.totalDamage).toBe(0);
+        // And the boundary is stamped, so a tier's duration is exact
+        expect(report.tierStarts).toEqual({ 1: at, 2: at + 200_000 });
+    });
+
+    test('the end message closes the trial rather than leaving it to go quiet', () => {
+        game.wsHandlers.new_guild_battle(NEW_GUILD_BATTLE);
+        expect(guildTrialDamage.breakdown().active).toBe(true);
+
+        vi.setSystemTime(at + 3_600_000);
+        game.wsHandlers.end_guild_battle(END_GUILD_BATTLE);
+
+        const report = guildTrialDamage.breakdown();
+        expect(report.active).toBe(false);
+        expect(report.endedAt).toBe(at + 3_600_000);
+    });
+
+    test('another trial’s ending is not this one’s', () => {
+        game.wsHandlers.new_guild_battle(NEW_GUILD_BATTLE);
+        game.wsHandlers.end_guild_battle({
+            type: 'end_guild_battle',
+            battleId: 9,
+            trialHrid: '/guild_combat/chameleon',
+        });
+
+        expect(guildTrialDamage.breakdown().endedAt).toBeNull();
+    });
+
+    test('a malformed opening message is logged rather than thrown', () => {
+        const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        expect(() => game.wsHandlers.new_guild_battle(null)).not.toThrow();
+        expect(() => game.wsHandlers.new_guild_battle({ players: 'nope', monsters: 7 })).not.toThrow();
+        expect(() => game.wsHandlers.end_guild_battle(undefined)).not.toThrow();
+        spy.mockRestore();
+    });
+});
+
+describe('only your own damage is measured', () => {
+    const at = new Date('2026-08-03T16:00:00Z').getTime();
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        vi.setSystemTime(at);
+        game.clientData = {};
+        game.loadouts = [];
+        guildTrialDamage.initialize();
+        guildTrialDamage.reset();
+    });
+
+    afterEach(() => {
+        guildTrialDamage.cleanup();
+        vi.useRealTimers();
+    });
+
+    test('the slot the game streams counters for is recorded, and it is one', () => {
+        // 4,939 of 81,641 ticks carried counters, always on a single entry —
+        // index 19, the recording client's own character
+        game.wsHandlers.new_guild_battle(NEW_GUILD_BATTLE);
+        for (const tick of GUILD_BATTLE_TICKS) game.wsHandlers[GUILD_BATTLE_MESSAGE](tick);
+
+        const report = guildTrialDamage.breakdown();
+        expect(report.countedSlots).toEqual(['19']);
+        expect(report.countedNames).toEqual(['Player20']);
+        expect(report.splitFromCounters).toBe(true);
+    });
+
+    test('a row says whether it is the measured one', () => {
+        game.wsHandlers.new_guild_battle(NEW_GUILD_BATTLE);
+
+        const swing = (atk, dmg, hp) => ({
+            type: 'guild_battle_updated',
+            battleId: 1,
+            tier: 1,
+            pMap: { 19: { cHP: 1620, mHP: 1620, cMP: 1929, mMP: 1929, atkCounter: atk, isAutoAtk: true } },
+            mMap: { 0: { cHP: hp, mHP: 429_000, dmgCounter: dmg, critCounter: 0 } },
+        });
+
+        game.wsHandlers[GUILD_BATTLE_MESSAGE](swing(1, 1, 429_000));
+        vi.setSystemTime(at + 250);
+        game.wsHandlers[GUILD_BATTLE_MESSAGE](swing(2, 2, 428_000));
+
+        const row = guildTrialDamage.breakdown().players.find((entry) => entry.index === '19');
+        expect(row.measured).toBe(true);
+        expect(row.name).toBe('Player20');
+        expect(row.damage).toBe(1000);
     });
 });
