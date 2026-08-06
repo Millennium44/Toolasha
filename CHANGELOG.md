@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Preset renamed: "Everything on" → "Defaults"
+
+- **The preset bar's "Everything on" button is now "Defaults"**: its tooltip already said "every feature at its shipped default," which contradicted a label that read as "turn everything on." It applies the schema defaults (several hides and warnings ship off on purpose), so "Defaults" is what it actually does. Behaviour is unchanged — only the label, its description, and the internal comments were reworded.
+
 ### Portrait DPS extras are now opt-in
 
 - **The seven Portrait DPS sub-readouts default OFF**: time-to-kill, wave-clear countdown, mana runway, damage-taken/net-sustain, hit & crit rate, enemy outgoing damage, and the enrage countdown now start unchecked. They were defaulting on while their own parent toggle ("Show each character's damage on their battle portrait") defaults off, so switching the parent on flooded the portraits with every extra at once — the very clutter the parent's help text warns about. Turning Portrait DPS on now shows just the DPS and total-damage figure; each extra is opt-in.

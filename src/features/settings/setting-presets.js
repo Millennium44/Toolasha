@@ -16,12 +16,12 @@
  * trap. This is the same set of settings `All Off` writes, and the snapshot the
  * two share means `Restore` undoes either one.
  *
- * ## Why "Everything on" is the schema defaults
+ * ## Why "Defaults" is the schema defaults, not every switch true
  *
- * Not "every switch true" — several switches are hides and warnings that start
- * off on purpose, and turning them all on would be a configuration nobody has
- * ever run. "Everything on" means the way the script behaves out of the box,
- * which is what a person dismissing the first-run question is asking to keep.
+ * Several switches are hides and warnings that start off on purpose, and
+ * turning them all on would be a configuration nobody has ever run. "Defaults"
+ * means the way the script behaves out of the box, which is what a person
+ * dismissing the first-run question is asking to keep.
  */
 
 import config from '../../core/config.js';
@@ -271,8 +271,8 @@ export const SETTING_PRESETS = [
     },
     {
         id: DEFAULT_PRESET_ID,
-        label: 'Everything on',
-        description: 'Every feature at its shipped default — how Toolasha behaves with nothing turned off.',
+        label: 'Defaults',
+        description: 'Every feature reset to its shipped default — how Toolasha behaves out of the box.',
         useDefaults: true,
     },
 ];
@@ -449,7 +449,7 @@ export async function clearBulkSnapshot() {
  * Settings already holding the wanted value are skipped: every `setSetting`
  * persists the entire settings map, so writing three hundred of them at boot to
  * change none of them is three hundred pointless round trips through IndexedDB
- * — and "Everything on" on a fresh install is exactly that case.
+ * — and "Defaults" on a fresh install is exactly that case.
  *
  * @param {Object<string, boolean>} values - id → value
  * @returns {string[]} The ids that were actually written

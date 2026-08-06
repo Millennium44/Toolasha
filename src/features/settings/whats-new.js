@@ -187,7 +187,7 @@ class WhatsNew {
      * Awaited before features initialise for the same reason the inherited-
      * settings question is: a feature switched off after startup has already
      * run once. Dismissing the dialog — Escape, or clicking away — is the same
-     * as choosing "Everything on", which is what a fresh install would have
+     * as choosing "Defaults", which is what a fresh install would have
      * done anyway, so nothing here can leave a person stuck.
      *
      * @param {{fork: string, version: string}} current - This build
