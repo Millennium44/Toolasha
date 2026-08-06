@@ -11,6 +11,7 @@ import DungeonTrackerUIChart from './dungeon-tracker-ui-chart.js';
 import DungeonTrackerUIHistory from './dungeon-tracker-ui-history.js';
 import DungeonTrackerUIInteractions from './dungeon-tracker-ui-interactions.js';
 import { filterRunsForCharacter, currentCharacter } from './dungeon-tracker-storage.js';
+import { historyAvgWaveMs, pacePercent, paceChip } from './dungeon-pace.js';
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
 import config from '../../core/config.js';
@@ -183,6 +184,7 @@ class DungeonTrackerUI {
                     <span>Runs: <span id="mwi-dt-header-runs" style="color: #fff; font-weight: bold;">0</span></span>
                     <span>|</span>
                     <span>Keys: <span id="mwi-dt-header-keys" style="color: #fff; font-weight: bold;">0</span></span>
+                    <span id="mwi-dt-pace" style="display: none; font-weight: bold;"></span>
                     <span id="mwi-dt-filter-indicator" style="
                         display: none;
                         align-items: center;
@@ -569,6 +571,11 @@ class DungeonTrackerUI {
             lastRunTime = 0;
         }
 
+        // Pace against stored history — always your own runs for this dungeon,
+        // unfiltered by the panel's history filters, since "vs your avg" is a
+        // claim about you and this dungeon whatever the list below is showing
+        this.updatePaceChip(run, allRuns);
+
         // Update header stats (always visible)
         const headerLast = this.container.querySelector('#mwi-dt-header-last');
         if (headerLast) {
@@ -608,6 +615,41 @@ class DungeonTrackerUI {
 
         // Update run history list
         await this.updateRunHistory();
+    }
+
+    /**
+     * Draw or hide the pace chip: this run's average wave time against the
+     * stored average for the same dungeon. No history, or a run too young to
+     * have a pace, draws nothing rather than a guess.
+     *
+     * @param {Object} run - Current run state, from `getCurrentRun`
+     * @param {Array<Object>} allRuns - Every stored run, unfiltered
+     */
+    updatePaceChip(run, allRuns) {
+        const paceElement = this.container?.querySelector('#mwi-dt-pace');
+        if (!paceElement) return;
+
+        let chip = null;
+        if (config.getSetting('dungeonPace')) {
+            const mine = filterRunsForCharacter(allRuns, 'mine', currentCharacter());
+            const history = historyAvgWaveMs(mine, {
+                dungeonName: run.dungeonName,
+                tier: run.tier,
+                maxWaves: run.maxWaves,
+            });
+            chip = paceChip(pacePercent(run.avgWaveTime, history, run.wavesCompleted));
+        }
+
+        if (!chip) {
+            paceElement.style.display = 'none';
+            return;
+        }
+
+        paceElement.style.display = 'inline';
+        paceElement.textContent = chip.text;
+        paceElement.style.color = chip.tone === 'good' ? '#5fda5f' : chip.tone === 'bad' ? '#ff6b6b' : '#aaa';
+        paceElement.title =
+            "This run's average wave time against your stored average for this dungeon. Green is faster than your history.";
     }
 
     /**
