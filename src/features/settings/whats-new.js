@@ -128,9 +128,18 @@ class WhatsNew {
     /**
      * The one-time choice for someone arriving with another build's settings.
      *
-     * Awaited before features initialise, deliberately: "keep everything as it
-     * was" is only true if the new features never run — a feature switched off
-     * after startup has already announced itself. The page underneath is the
+     * A returning user already has opinions saved, so the safe answer is to
+     * touch nothing — "Keep my current settings" is the default and the primary
+     * button. The presets follow it, for the person who would rather start from
+     * a known configuration than reconcile a fork's worth of new switches by
+     * hand. The two kinds of answer are not symmetric, and the message says so:
+     * keeping changes nothing, whereas a preset overwrites what is there — which
+     * is why `applyPreset` snapshots first, so Restore in the Toolasha tab can
+     * walk it back.
+     *
+     * Awaited before features initialise, deliberately: "keep my current
+     * settings" is only true if the new features never run — a feature switched
+     * off after startup has already announced itself. The page underneath is the
      * game, which works fine while this waits; closing the dialog counts as
      * keeping things as they were, because the person who dismisses a dialog
      * unread is exactly the person who did not ask for new behaviour.
@@ -147,23 +156,47 @@ class WhatsNew {
             message:
                 `This build has ${inherited.length} setting${inherited.length === 1 ? '' : 's'} that did not exist ` +
                 `in the version your settings came from. ${conservative.length} of them switch new behaviour on by ` +
-                'default.\n\nEither way, the full list follows with a switch for each — nothing here is final.',
+                'default.\n\n' +
+                'Keeping your settings changes nothing. A preset replaces your current settings — you can undo it ' +
+                'later with Restore in the Toolasha tab.',
             choices: [
-                { value: 'keep', label: 'Keep everything as it was' },
-                { value: 'enable', label: 'Turn the new things on', tone: 'primary' },
+                {
+                    value: 'keepCurrent',
+                    label: 'Keep my current settings',
+                    tone: 'primary',
+                    hint:
+                        'Change nothing — leave every setting exactly where it is now. New features stay off ' +
+                        'until you turn them on.',
+                },
+                ...SETTING_PRESETS.map((preset) => ({
+                    value: preset.id,
+                    label: preset.label,
+                    hint: preset.description,
+                })),
             ],
         });
-        // Dismissal counts as keeping things as they were: the person who
-        // closes a dialog unread is exactly the person who did not ask for new
-        // behaviour
-        const keepAsIs = answer !== 'enable';
 
-        let turnedOff = new Set();
-        if (keepAsIs) {
-            config.setSetting('whatsNew_newDefaultsOff', true);
-            for (const id of conservative) config.setSetting(id, false);
-            turnedOff = new Set(conservative);
+        // A real preset id — and only a real preset id — takes the preset path.
+        // `keepCurrent` and dismissal (null) both fall through to the safe path,
+        // because the user asked for either "no change" or nothing at all.
+        const chosenPreset = getPreset(answer);
+        if (chosenPreset) {
+            await applyPreset(chosenPreset.id);
+            this._pending = {
+                headline: `Switched to ${current.fork} ${current.version} — ${chosenPreset.label} preset`,
+                forkChanged: true,
+                newIds: [],
+                turnedOff: new Set(),
+            };
+            return;
         }
+
+        // The safe path: keep every current value, and hold the conservative
+        // policy so genuinely-new on-by-default switches stay off until asked
+        // for. Dismissal lands here too — the person who closes a dialog unread
+        // is exactly the person who least wants their config touched.
+        config.setSetting('whatsNew_newDefaultsOff', true);
+        for (const id of conservative) config.setSetting(id, false);
 
         // The full popup still follows after startup, live switches and all —
         // the choice was wholesale, and the list is where it gets refined
@@ -171,7 +204,7 @@ class WhatsNew {
             headline: `Switched to ${current.fork} ${current.version}`,
             forkChanged: true,
             newIds: inherited,
-            turnedOff,
+            turnedOff: new Set(conservative),
         };
     }
 

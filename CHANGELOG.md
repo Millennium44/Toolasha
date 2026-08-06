@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### First run: returning users can keep their settings
+
+- **The welcome dialog for returning users now leads with "Keep my current settings"**: someone opening a build that added settings their previous version never had used to get a two-button "Keep everything as it was / Turn the new things on" prompt. It now offers "Keep my current settings" (the primary, default choice) alongside the Essentials, Combat, Market & trading and Defaults presets. Keeping — or dismissing the dialog — changes nothing and holds new on-by-default features off, so "no change" really means no change; picking a preset replaces the current settings and is undoable with Restore in the Toolasha tab. Fresh installs are unchanged.
+
 ### Preset renamed: "Everything on" → "Defaults"
 
 - **The preset bar's "Everything on" button is now "Defaults"**: its tooltip already said "every feature at its shipped default," which contradicted a label that read as "turn everything on." It applies the schema defaults (several hides and warnings ship off on purpose), so "Defaults" is what it actually does. Behaviour is unchanged — only the label, its description, and the internal comments were reworded.
