@@ -41,7 +41,7 @@ biggest changes since forking, in rough order of how much they change the game:
   auto-switching, tiles that open their panels, and made more mobile-friendly: a
   floating launcher on every screen and layouts that re-flow to the width they're
   given without touching your desktop arrangement.
-- **Mobile support throughout** — panels clamp to the viewport, close buttons stay
+- **Mobile-friendly touches** — panels clamp to the viewport, close buttons stay
   reachable, touch targets grow, and the mobile-mode setting shows what
   auto-detection decided.
 - **Notifications** — empty queue, community buff expiry (per-buff, with lead
