@@ -3674,6 +3674,33 @@ describe('renderTrialPlayers', () => {
         expect(html).toContain('3 fights');
     });
 
+    test('a partial split says how much of the party it covers', () => {
+        // The spectated Chameleon export: seven on the roster, two with a damage
+        // row because the stream carried no other player's counters. The header
+        // must say "2 of 7" and the caption must scope the shares, or the two
+        // names summing to 100% read as a claim the party is two people
+        const partial = {
+            ...breakdown,
+            source: 'spectated',
+            participants: 7,
+            roster: { 0: {}, 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {} },
+        };
+        const html = renderTrialPlayers(partial).join('');
+
+        expect(html).toContain('2 of 7');
+        expect(html).toContain('shares of the 2 attributed');
+        expect(html).toContain('5 not yet split out');
+    });
+
+    test('a fully covered party gets no coverage annotation', () => {
+        const full = { ...breakdown, source: 'spectated', participants: 2 };
+        const html = renderTrialPlayers(full).join('');
+
+        expect(html).toContain('3 fights');
+        expect(html).not.toContain('of 2');
+        expect(html).not.toContain('not yet split out');
+    });
+
     test('the row spends its pixels on the name, not on a unit', () => {
         // In a 108px fight-view cell "B… 1.5K dmg/s · 36%" was the reported
         // result of spending them on a unit the header already implies. The

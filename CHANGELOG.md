@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The trial DPS split says how much of the party it actually covers
+
+- **"Per player · 3 of 7 · watched" instead of implying three people did everything**: on a spectated stream with no player attack counters, a member's damage is only attributable when they had a solo moment aligned with a boss-damage tick, so a short watch can credit only some of the party — and the panel used to present those rows as the whole story, shares summing to 100%, with nothing said about the four members who never got a cleanly-split hit. The under-card list, the scoreboard panel, the "Copy stats" text, and the guild report now state the coverage: shares are of the attributed damage, the total is a lower bound, and the missing members didn't do nothing. A fully-covered party shows no caveat. This also explains the shifting percentages a viewer sees early in a tier — the split fills in as hits land; no one's banked total ever decreases.
+
 ### The per-player readout stays on its own tile, its panels stop drifting, and the panel does less work
 
 - **A watched fight's per-player DPS no longer dresses every tile**: the Chameleon's rows were being drawn under the Hedgehog card (and cross-checked against skilling pools), because one measurement was handed to every tile. Each tile now shows only the encounter it was measured from; the others say "no fights watched for this encounter" rather than borrowing someone else's numbers.

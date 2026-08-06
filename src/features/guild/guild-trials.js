@@ -130,7 +130,7 @@ import {
     trialBankedBasePoints,
     trialWeekStart,
 } from './guild-trials-math.js';
-import guildTrialDamage, { encounterOf } from './guild-trial-damage.js';
+import guildTrialDamage, { attributionCoverage, encounterOf } from './guild-trial-damage.js';
 import guildTrialSkilling from './guild-trial-skilling.js';
 import guildLoadoutCapture from './guild-loadout-capture.js';
 import guildTrialRecorder, { buildTrialExport, downloadTrialExport } from './guild-trial-recorder.js';
@@ -1282,11 +1282,28 @@ export function renderTrialPlayers(breakdown) {
         return [line('Per player', value, DIM, why)];
     }
 
+    // How much of the party these rows actually cover. A spectated split names
+    // its attacker by presence, so a member who never had a tick of their own
+    // earns no row — three names at 100% under a party of seven is honest but
+    // partial, and a header that says "3 of 7" is the difference between that
+    // and a claim the party is three people
+    const coverage = attributionCoverage(breakdown);
     const rows = [
         `<div style="margin-top:4px; color:${ACCENT}; font-weight:600;">` +
             `Per player · ${breakdown.fights} fight${breakdown.fights === 1 ? '' : 's'}` +
+            `${coverage.partial ? ` · ${coverage.attributed} of ${coverage.party}` : ''}` +
             `${breakdown.source === 'spectated' ? ' · watched' : ''}</div>`,
     ];
+    if (coverage.partial) {
+        rows.push(
+            `<div style="color:${DIM}; font-size:9px; line-height:1.4;" title="A spectated split names its ` +
+                `attacker by which lone player changed on a tick the boss lost health; the other ` +
+                `${coverage.party - coverage.attributed} of ${coverage.party} never had such a tick this window. ` +
+                `Shares are of the attributed damage, and the party rate is a lower bound — the rest fill in as ` +
+                `their hits land alone on the boss.">shares of the ${coverage.attributed} attributed; ` +
+                `${coverage.party - coverage.attributed} not yet split out</div>`
+        );
+    }
 
     for (const player of breakdown.players) {
         const share = Number.isFinite(player.share) ? `${player.share.toFixed(0)}%` : '—';

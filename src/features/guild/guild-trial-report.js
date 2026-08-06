@@ -29,6 +29,7 @@
  * a panel.
  */
 
+import { attributionCoverage } from './guild-trial-damage.js';
 import { pastWeekLine } from './guild-trial-history.js';
 import { formatWithSeparator } from '../../utils/formatters.js';
 
@@ -204,6 +205,18 @@ export function buildGuildReport({
     ranked.forEach((player, index) => lines.push(playerLine(player, supportFor(player.index), index + 1)));
     if (players.length > ranked.length) {
         lines.push(`…and ${players.length - ranked.length} more`);
+    }
+
+    // A spectated split names its attacker by presence, so a member who never
+    // had a tick of their own earns no line — three names summing to 100% under
+    // a party of seven is honest but partial, and a guild reading it should
+    // know the other four are not people who did nothing
+    const coverage = attributionCoverage(breakdown);
+    if (coverage.partial) {
+        lines.push(
+            `(Only ${coverage.attributed} of ${coverage.party} attributed — shares are of that damage; ` +
+                'the total is a lower bound.)'
+        );
     }
 
     const healed = breakdown?.support?.totals?.healingDone || 0;

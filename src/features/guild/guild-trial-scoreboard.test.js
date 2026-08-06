@@ -167,6 +167,26 @@ describe('scoreboardText', () => {
         expect(text).toContain('nothing measured');
         expect(text).toContain('not this week');
     });
+
+    test('a split that covers part of the party says so', () => {
+        // Two of seven earned a damage row; the copied stats must not read as a
+        // claim the other five did nothing
+        const text = scoreboardText(
+            breakdown({
+                source: 'spectated',
+                participants: 7,
+                roster: { 0: {}, 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {} },
+            }),
+            'damage'
+        );
+        expect(text).toContain('2 of 7 players attributed');
+        expect(text).toContain('lower bound');
+    });
+
+    test('a full party carries no coverage caveat', () => {
+        const text = scoreboardText(breakdown({ source: 'spectated', participants: 2 }), 'damage');
+        expect(text).not.toContain('players attributed');
+    });
 });
 
 describe('the panel', () => {
@@ -182,6 +202,25 @@ describe('the panel', () => {
 
         guildTrialScoreboard.close();
         expect(document.querySelector(`.${PANEL_CLASS}`)).toBeNull();
+    });
+
+    test('a spectated split that covers part of the party says how much', () => {
+        game.breakdown = breakdown({
+            source: 'spectated',
+            participants: 7,
+            roster: { 0: {}, 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {} },
+        });
+        guildTrialScoreboard.open();
+
+        expect(text()).toContain('2 of 7 players');
+        expect(text()).toContain('lower bound');
+    });
+
+    test('a fully covered party gets no coverage caveat', () => {
+        game.breakdown = breakdown({ source: 'spectated', participants: 2 });
+        guildTrialScoreboard.open();
+
+        expect(text()).not.toContain('of 2 players');
     });
 
     test('the healing tab switches what is ranked', () => {
