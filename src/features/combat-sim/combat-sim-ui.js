@@ -43,6 +43,8 @@ import {
     calculateDungeonKeyCosts,
     calculateSimRevenue,
     getZonesThatDropItem,
+    getGuildBuffDetailMap,
+    guildBuffMaxLevel,
 } from './combat-sim-adapter.js';
 import { runSimulation, cancelSimulation } from './combat-sim-runner.js';
 import { runAllZonesSimulation, cancelAllZonesSimulation } from './all-zones-runner.js';
@@ -58,6 +60,8 @@ import {
     RANK_PLACES,
     SCORE_METRICS,
     DEFAULT_SCORE_KEYS,
+    MAX_GUILD_SHRINE_LEVEL,
+    shrineName,
 } from './upgrade-advisor.js';
 import { applyMaxTierFood } from './food-optimizer.js';
 import { SimEditor } from './sim-editor.js';
@@ -1291,6 +1295,7 @@ const MODE_OPTIONS = {
             <input id="mwi-csim-shrine-target-level" type="number" min="1" max="100" placeholder="+1" style="
                 width:48px; text-align:center; ${CHIP_INPUT_STYLE}"
                 title="Target level to buy every combat shrine buff up to. Cost is every level from where the buff is now to this one; the improvement is measured at this one. Leave blank to evaluate one level up.">
+            <button id="mwi-csim-shrine-targets-toggle" title="Set a target level per shrine instead of one number for all of them" style="${CHIP_BUTTON_STYLE}">Targets</button>
         </span>`,
     community_buff: `
         <span id="mwi-csim-community-group" data-mode-options="community_buff" style="display:none; align-items:center; gap:4px;">
@@ -1897,10 +1902,23 @@ class CombatSimUI {
             ACCENT_BTN_BORDER +
             ';';
 
+        // Per-shrine target levels for guild_shrine mode (hidden until toggled;
+        // inputs built from the combat shrines in game data when opened), on the
+        // same terms as the House grid: one Lv box asks five shrines sitting at
+        // five different levels for the same absolute level, which was a no-op
+        // for anything already past it and a several-level purchase for the rest
+        const shrineTargetsGrid = document.createElement('div');
+        shrineTargetsGrid.id = 'mwi-csim-shrine-targets';
+        shrineTargetsGrid.style.cssText =
+            'display:none; padding:4px 14px 8px; flex-shrink:0; gap:8px 14px; flex-wrap:wrap; align-items:center; border-left:3px solid ' +
+            ACCENT_BTN_BORDER +
+            ';';
+
         upgradeContent.appendChild(upgradeControls);
         upgradeContent.appendChild(combatTargets);
         upgradeContent.appendChild(abilityTargetsGrid);
         upgradeContent.appendChild(houseTargetsGrid);
+        upgradeContent.appendChild(shrineTargetsGrid);
         upgradeContent.appendChild(upgradeProgress);
         upgradeContent.appendChild(upgradeResults);
 
@@ -2001,6 +2019,14 @@ class CombatSimUI {
             grid.style.display = opening ? 'flex' : 'none';
             if (opening) {
                 this._buildHouseTargets();
+            }
+        });
+        this.panel.querySelector('#mwi-csim-shrine-targets-toggle').addEventListener('click', () => {
+            const grid = this.panel.querySelector('#mwi-csim-shrine-targets');
+            const opening = grid.style.display === 'none';
+            grid.style.display = opening ? 'flex' : 'none';
+            if (opening) {
+                this._buildShrineTargets();
             }
         });
         this.panel.querySelector('#mwi-csim-upgrade-level-type').addEventListener('change', (e) => {
@@ -5589,6 +5615,10 @@ class CombatSimUI {
         if (!modes.has('house')) {
             this.panel.querySelector('#mwi-csim-house-targets').style.display = 'none';
         }
+
+        if (!modes.has('guild_shrine')) {
+            this.panel.querySelector('#mwi-csim-shrine-targets').style.display = 'none';
+        }
     }
 
     /**
@@ -5657,6 +5687,85 @@ class CombatSimUI {
             const value = parseInt(input.value);
             if (Number.isFinite(value) && value > 0) {
                 targets[input.dataset.houseTarget] = Math.min(8, value);
+            }
+        });
+        return Object.keys(targets).length > 0 ? targets : null;
+    }
+
+    /**
+     * Build the per-shrine target inputs from the combat guild shrines in game
+     * data, prefilled to the uniform shrine Lv value (or one level up).
+     *
+     * Mirrors `_buildHouseTargets`: combat shrines only (this tab ranks combat
+     * outcomes, and a skilling shrine has no column it could move), each capped
+     * at its own maximum, a shrine already at its max shown disabled.
+     * @private
+     */
+    _buildShrineTargets() {
+        const grid = this.panel.querySelector('#mwi-csim-shrine-targets');
+        if (!grid) return;
+
+        const detailMap = getGuildBuffDetailMap();
+        const playerIndex = parseInt(this.panel.querySelector('#mwi-csim-upgrade-player')?.value) || 0;
+        const editedDTOs = this._editor?.getEditedDTOs();
+        const dto = editedDTOs ? Object.values(editedDTOs)[playerIndex] : null;
+        const uniform = Math.min(
+            MAX_GUILD_SHRINE_LEVEL,
+            Math.max(0, parseInt(this.panel.querySelector('#mwi-csim-shrine-target-level')?.value) || 0)
+        );
+
+        const shrines = Object.entries(detailMap)
+            .filter(([, detail]) => Boolean(detail?.isCombat))
+            .map(([buffHrid, detail]) => ({
+                buffHrid,
+                name: shrineName(detail.shrineHrid || buffHrid),
+                level: Math.max(0, Math.floor(Number(dto?.guildShrineLevels?.[buffHrid]) || 0)),
+                maxLevel: Math.min(MAX_GUILD_SHRINE_LEVEL, guildBuffMaxLevel(detail) || MAX_GUILD_SHRINE_LEVEL),
+            }))
+            .sort((a, b) => a.name.localeCompare(b.name));
+
+        if (shrines.length === 0) {
+            grid.innerHTML =
+                '<span style="color:#666; font-size:11px;">No combat guild shrine reached the client — join a ' +
+                'guild, or open the shrine screen once, so the levels are known.</span>';
+            return;
+        }
+
+        grid.innerHTML =
+            '<span style="color:#666; font-size:11px; flex-basis:100%;"><b>Guild Shrine</b> target levels (blank ' +
+            'or ≤ current level skips the shrine; used instead of the Lv value while open):</span>' +
+            shrines
+                .map(
+                    (shrine) => `
+                <span style="display:inline-flex; align-items:center; gap:4px;">
+                    <label style="color:#888; font-size:11px;">${shrine.name} (${shrine.level})</label>
+                    <input type="number" min="1" max="${shrine.maxLevel}" data-shrine-target="${shrine.buffHrid}"
+                        value="${
+                            shrine.level >= shrine.maxLevel
+                                ? ''
+                                : Math.min(shrine.maxLevel, Math.max(uniform, shrine.level + 1))
+                        }"
+                        ${shrine.level >= shrine.maxLevel ? 'disabled title="Already at max level"' : ''} style="
+                        width:44px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
+                        border-radius:3px; padding:2px 4px; font-size:11px; text-align:center;">
+                </span>`
+                )
+                .join('');
+    }
+
+    /**
+     * Per-shrine target levels, or null when the grid is closed.
+     * @returns {Object|null} buffHrid → target level
+     * @private
+     */
+    _getShrineTargets() {
+        const grid = this.panel.querySelector('#mwi-csim-shrine-targets');
+        if (!grid || grid.style.display === 'none') return null;
+        const targets = {};
+        grid.querySelectorAll('[data-shrine-target]').forEach((input) => {
+            const value = parseInt(input.value);
+            if (Number.isFinite(value) && value > 0) {
+                targets[input.dataset.shrineTarget] = Math.min(MAX_GUILD_SHRINE_LEVEL, value);
             }
         });
         return Object.keys(targets).length > 0 ? targets : null;
@@ -5815,6 +5924,10 @@ class CombatSimUI {
             const guildShrineTargetLevel = upgradeModes.includes('guild_shrine')
                 ? Math.max(0, parseInt(this.panel.querySelector('#mwi-csim-shrine-target-level')?.value) || 0)
                 : 0;
+            // Per-shrine grid, when open, overrides the uniform Lv above — the
+            // advisor's `guildShrineTargets` takes precedence over the single
+            // number, exactly as the House grid overrides the House Lv value
+            const guildShrineTargets = upgradeModes.includes('guild_shrine') ? this._getShrineTargets() : null;
             // Blank means one level up here too — and a level is not a purchase
             // either way, so this only changes what gets simulated
             const communityBuffTargetLevel = upgradeModes.includes('community_buff')
@@ -5849,6 +5962,7 @@ class CombatSimUI {
                     houseTargetLevel,
                     houseTargets,
                     guildShrineTargetLevel,
+                    guildShrineTargets,
                     communityBuffTargetLevel,
                     signatureSwapsOnly,
                 },

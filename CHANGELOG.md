@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The combat sim's Guild Shrine gets per-shrine targets
+
+- **A "Targets" grid on the Combat Simulator's Guild Shrine upgrade, matching the Lab Sim's**: instead of one uniform level for every combat shrine, you can now set a target level per shrine — each priced from its current level up to its target and capped at its own max, shrines already maxed shown disabled. It reuses the analyzer's existing per-shrine input (the uniform level still governs when the grid is closed), and mirrors the sim's own House-targets control so it behaves identically.
+
 ### The trial DPS split says how much of the party it actually covers
 
 - **"Per player · 3 of 7 · watched" instead of implying three people did everything**: on a spectated stream with no player attack counters, a member's damage is only attributable when they had a solo moment aligned with a boss-damage tick, so a short watch can credit only some of the party — and the panel used to present those rows as the whole story, shares summing to 100%, with nothing said about the four members who never got a cleanly-split hit. The under-card list, the scoreboard panel, the "Copy stats" text, and the guild report now state the coverage: shares are of the attributed damage, the total is a lower bound, and the missing members didn't do nothing. A fully-covered party shows no caveat. This also explains the shifting percentages a viewer sees early in a tier — the split fills in as hits land; no one's banked total ever decreases.

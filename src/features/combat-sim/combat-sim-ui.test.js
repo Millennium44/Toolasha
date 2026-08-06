@@ -36,6 +36,8 @@ const mocks = vi.hoisted(() => ({
     /** What `buildGameDataPayload` and `buildAllPlayerDTOs` hand the panel */
     gameData: { itemDetailMap: {} },
     playerDTOs: [{ hrid: 'player1', equipment: {} }],
+    /** buffHrid → detail, what `getGuildBuffDetailMap` hands the shrine grid */
+    guildBuffDetailMap: {},
     /** The params the last all-zones run was started with */
     allZonesArgs: null,
     /** itemHrid → unit price, what `resolveItemPrice` answers with */
@@ -182,6 +184,8 @@ vi.mock('./combat-sim-adapter.js', () => ({
     calculateDungeonKeyCosts: () => [],
     calculateSimRevenue: () => ({ netPerHour: 0, costPerHour: 0, revenuePerHour: 0 }),
     getZonesThatDropItem: () => [],
+    getGuildBuffDetailMap: () => mocks.guildBuffDetailMap || {},
+    guildBuffMaxLevel: (detail) => detail?.maxLevel ?? 20,
 }));
 
 vi.mock('./combat-sim-runner.js', () => ({
@@ -2515,6 +2519,91 @@ describe('the guild shrine target level', () => {
         ui.panel.querySelector('[data-upgrade-mode="guild_shrine"]').checked = true;
         ui._onUpgradeModesChanged();
         expect(group.style.display).toBe('inline-flex');
+    });
+});
+
+/**
+ * The per-shrine Targets grid, mirroring the House-targets grid: one Lv box asks
+ * every combat shrine for the same absolute level, and the shrines are not at the
+ * same level as each other, so a grid of per-shrine boxes overrides it.
+ */
+describe('the guild shrine per-shrine targets grid', () => {
+    beforeEach(() => {
+        mocks.upgradeResult = { baseline: null, results: [], food: null };
+        mocks.onRun = null;
+        mocks.guildBuffDetailMap = {
+            '/guild_buffs/force_combat': { isCombat: true, shrineHrid: '/guild_shrines/force', maxLevel: 20 },
+            '/guild_buffs/aegis_combat': { isCombat: true, shrineHrid: '/guild_shrines/aegis', maxLevel: 20 },
+            // A skilling shrine, deliberately left out of the combat grid
+            '/guild_buffs/gathering': { isCombat: false, shrineHrid: '/guild_shrines/gathering', maxLevel: 20 },
+        };
+        ui.buildPanel();
+    });
+
+    afterEach(() => {
+        mocks.guildBuffDetailMap = {};
+        ui.destroy();
+    });
+
+    test('the Targets toggle reveals the grid and lists only the combat shrines', () => {
+        const grid = ui.panel.querySelector('#mwi-csim-shrine-targets');
+        expect(grid.style.display).toBe('none');
+
+        ui.panel.querySelector('#mwi-csim-shrine-targets-toggle').click();
+
+        expect(grid.style.display).toBe('flex');
+        const inputs = grid.querySelectorAll('[data-shrine-target]');
+        const hrids = Array.from(inputs).map((input) => input.dataset.shrineTarget);
+        expect(hrids).toContain('/guild_buffs/force_combat');
+        expect(hrids).toContain('/guild_buffs/aegis_combat');
+        expect(hrids).not.toContain('/guild_buffs/gathering');
+        expect(grid.textContent).toContain('Force');
+        expect(grid.textContent).toContain('Aegis');
+    });
+
+    test('chosen per-shrine targets reach the analysis inputs, overriding the uniform Lv', async () => {
+        const zone = ui.panel.querySelector('#mwi-csim-zone');
+        zone.innerHTML = '<option value="/zones/a">A</option>';
+        zone.value = '/zones/a';
+        ui.panel.querySelector('[data-upgrade-mode="equipment"]').checked = false;
+        ui.panel.querySelector('[data-upgrade-mode="ability_level"]').checked = false;
+        ui.panel.querySelector('[data-upgrade-mode="guild_shrine"]').checked = true;
+        ui.panel.querySelector('#mwi-csim-shrine-target-level').value = '6';
+
+        ui.panel.querySelector('#mwi-csim-shrine-targets-toggle').click();
+        const grid = ui.panel.querySelector('#mwi-csim-shrine-targets');
+        grid.querySelector('[data-shrine-target="/guild_buffs/force_combat"]').value = '9';
+        grid.querySelector('[data-shrine-target="/guild_buffs/aegis_combat"]').value = '5';
+
+        let seen = null;
+        mocks.onRun = (params) => {
+            seen = params;
+        };
+        await ui._onUpgradeAnalyze();
+
+        expect(seen.guildShrineTargets).toEqual({
+            '/guild_buffs/force_combat': 9,
+            '/guild_buffs/aegis_combat': 5,
+        });
+        // The uniform Lv still rides along; the advisor prefers the per-shrine map
+        expect(seen.guildShrineTargetLevel).toBe(6);
+    });
+
+    test('a closed grid leaves the uniform Lv in charge', async () => {
+        const zone = ui.panel.querySelector('#mwi-csim-zone');
+        zone.innerHTML = '<option value="/zones/a">A</option>';
+        zone.value = '/zones/a';
+        ui.panel.querySelector('[data-upgrade-mode="guild_shrine"]').checked = true;
+        ui.panel.querySelector('#mwi-csim-shrine-target-level').value = '6';
+
+        let seen = null;
+        mocks.onRun = (params) => {
+            seen = params;
+        };
+        await ui._onUpgradeAnalyze();
+
+        expect(seen.guildShrineTargets).toBeNull();
+        expect(seen.guildShrineTargetLevel).toBe(6);
     });
 });
 
