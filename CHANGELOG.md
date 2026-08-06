@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Ability book counts respect the experience already earned
+
+- **The Upgrade tab priced every ability level-up from the floor of its current level**, re-buying the books already read: an ability 57% into its level was quoted a level's worth of extra books (Berserk 65→70 read 140.6M where the true remainder was 128.5M — the Ability Books panel had it right all along). Level-ups now price from the equipped ability's live experience, exactly as swaps already priced from the owned book's, and the ranking, repay time, and every Gold/0.01% column tighten with it. The floor remains the fallback for a book with no experience recorded or one that disagrees about its level.
+
 ### An attribution referee, ahead of any verdict on the presence method
 
 - **`npm run compare <recording.json>` replays a combat recording through two attribution methods side by side**: Toolasha's counter-pairing engine and a faithful reimplementation of KikiMeter's presence method (being in `pMap` is the attribution; ambiguous ticks split equally). Totals can never separate them — both conserve the team total by construction — so every disagreement tick is adjudicated from signals neither verdict used: a credited player who provably swung confirms their method, a credited player who was only being hit refutes it, and bleed ticks are set apart as unarbitrable. The report also tests the presence method's foundational claim directly — on every tick where a hit landed, was a provable swinger actually present? Accepts Toolasha combat recordings and raw websocket captures alike. Analysis tooling only; nothing in the userscript changes.
