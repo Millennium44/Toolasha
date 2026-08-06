@@ -8,6 +8,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Release housekeeping
 
+- **The userscript header catches up to 2.90.0**: the release PR merged before the version-sync automation could stamp it, so the 2.90.0 build shipped labelled `@version 2.89.0` and update checkers never saw a new version. Headers, README, and the runtime version string now say 2.90.0, and a corrected build replaces the mislabelled one on the releases branch.
 - **The CI bundle ceiling moves to 3.5 MiB**: its duplication-guard job now belongs to the import-graph check that runs on every production build and catches the real failure exactly; the ceiling remains as a sanity backstop.
 
 ### The silent failure modes get their alarms, and two calculators become one
