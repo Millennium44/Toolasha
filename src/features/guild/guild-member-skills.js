@@ -433,6 +433,20 @@ class GuildMemberSkills {
     }
 
     /**
+     * Whether a fight on screen draws any clickable roster units at all.
+     *
+     * Distinct from {@link nextBattleUnit} being null, which also happens
+     * when every fighter's sheet is fresh — the roster panel uses the
+     * difference to say "everyone is fresh" instead of drawing nothing.
+     *
+     * @returns {boolean} True when the fight view offers units
+     */
+    anyBattleUnits() {
+        const members = guildXPTracker.getMemberList?.() || [];
+        return findBattleUnits(members).length > 0;
+    }
+
+    /**
      * Click the next due battle unit, if a fight on screen offers one.
      *
      * Its own tool on purpose: the unit's popup is the only source of a

@@ -33,6 +33,7 @@ vi.mock('./guild-member-skills.js', () => ({
     default: {
         progress: () => tracker.cycler,
         nextBattleUnit: () => tracker.unit ?? null,
+        anyBattleUnits: () => tracker.anyUnits ?? false,
         openNextUnit: () => {
             tracker.openedUnits.push(tracker.unit?.name ?? null);
             return tracker.unitResult ?? { opened: null, how: 'no-unit' };
@@ -101,6 +102,7 @@ describe('the profile cycler', () => {
         tracker.unit = null;
         tracker.unitResult = null;
         tracker.openedUnits = [];
+        tracker.anyUnits = false;
         document.body.innerHTML = '';
     });
 
@@ -128,6 +130,19 @@ describe('the profile cycler', () => {
         const body = document.createElement('div');
         drawProfileCycler(body);
         expect(body.querySelector('.mwi-battleinfo-cycler')).toBeNull();
+        expect(body.textContent).not.toContain('fresh combat sheet');
+    });
+
+    test('a fight where everyone is fresh says so instead of hiding the button', () => {
+        // All four fighters clicked minutes ago: no unit is due, but a
+        // silently absent button reads as broken
+        tracker.unit = null;
+        tracker.anyUnits = true;
+        const body = document.createElement('div');
+        drawProfileCycler(body);
+
+        expect(body.querySelector('.mwi-battleinfo-cycler')).toBeNull();
+        expect(body.textContent).toContain('Everyone in the fight has a fresh combat sheet');
     });
 
     test('shows how far along the roster it is, and who is next', () => {
@@ -424,6 +439,7 @@ describe('the panel and tile', () => {
         tracker.unit = null;
         tracker.unitResult = null;
         tracker.openedUnits = [];
+        tracker.anyUnits = false;
         tracker.members = [
             { characterID: 'a', name: 'Alice' },
             { characterID: 'b', name: 'Bob' },
