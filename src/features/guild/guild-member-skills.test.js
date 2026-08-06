@@ -318,15 +318,20 @@ describe('per guild, and forgotten with the character', () => {
 
 describe('people in the battle come first', () => {
     /**
-     * A spectated fight: unit boxes with a name line and a health reading.
+     * A spectated fight: the game's grid with CombatUnit boxes, as the real
+     * DOM draws them (`BattlePanel_combatUnitGrid` → `CombatUnit_combatUnit`
+     * → `CombatUnit_name`).
      * @param {Array<[string, string]>} units - [name, hp] pairs
      */
     function fightView(units, { boss = 'Trial Chameleon' } = {}) {
         const view = document.createElement('div');
+        view.className = 'BattlePanel_combatUnitGrid__2hTAM';
         const rows = boss ? [[boss, '454,807/618,000'], ...units] : units;
         for (const [name, hp] of rows) {
             const box = document.createElement('div');
+            box.className = 'CombatUnit_combatUnit__1m3XT';
             const nameEl = document.createElement('div');
+            nameEl.className = 'CombatUnit_name__1SlO1';
             nameEl.textContent = name;
             const hpEl = document.createElement('div');
             hpEl.textContent = hp;
@@ -346,8 +351,25 @@ describe('people in the battle come first', () => {
     test('a panel with no boss in it offers nobody — those units are inert', () => {
         // The skilling instance draws members too (this is how Liqueur, off
         // foraging, came to be offered during a fight), but only the fight's
-        // own subtree holds a "Trial …" boss
+        // own grid holds a "Trial …" boss
         fightView([['Ada', '1,436/1,923']], { boss: null });
+        expect(findBattleUnits(game.members)).toEqual([]);
+        expect(guildMemberSkills.nextBattleUnit(now)).toBeNull();
+    });
+
+    test('names our own panels draw into the grid are never offered', () => {
+        // The trial payout and damage panels are injected as children of the
+        // game's battle grid and carry every roster name as text. A fight
+        // where the game draws only the boss (a spectated trial does exactly
+        // this) must offer nobody — the first version matched its own
+        // panel's names and offered clicks that could never open anything
+        const grid = fightView([]);
+        const panel = document.createElement('div');
+        panel.className = 'mwi-trial-info';
+        const row = document.createElement('div');
+        row.textContent = 'Ada';
+        panel.appendChild(row);
+        grid.appendChild(panel);
         expect(findBattleUnits(game.members)).toEqual([]);
         expect(guildMemberSkills.nextBattleUnit(now)).toBeNull();
     });

@@ -91,6 +91,7 @@ export const GAME = {
 
     // Combat
     COMBAT_UNIT: '[class*="CombatUnit_combatUnit"]',
+    COMBAT_UNIT_NAME: '[class*="CombatUnit_name"]',
     BATTLE_MONSTERS_AREA: '[class*="BattlePanel_monstersArea"]',
 
     // Enhancement

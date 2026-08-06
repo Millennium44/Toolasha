@@ -84,6 +84,16 @@ describe('findChatInput', () => {
         document.body.innerHTML = '<div class="SomethingElse"><input /></div>';
         expect(findChatInput()).toBeNull();
     });
+
+    test('a renamed input container is survived through the chat panel', () => {
+        // The inner container's class is the game's to rename; the panel-level
+        // fallbacks keep the /profile route alive when it does
+        document.body.innerHTML = '<div class="Chat_chat__3D"><form><input /></form></div>';
+        expect(findChatInput()).toBe(document.querySelector('input'));
+
+        document.body.innerHTML = '<div class="GamePage_chatPanel__m"><div><input /></div></div>';
+        expect(findChatInput()).toBe(document.querySelector('input'));
+    });
 });
 
 describe('VALID_PLAYER_NAME_RE', () => {
