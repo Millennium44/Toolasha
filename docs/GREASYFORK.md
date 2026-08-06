@@ -10,6 +10,13 @@ get their visible recognition, per their licences and plain courtesy.
 
 This is the **Millennium44 fork of Toolasha** (itself a rewrite of MWITools).
 
+**At its core it folds MWI Combat Suite into Toolasha, so one script gives you
+both.** That brings Combat Suite's combat tooling — live DPS tracking, loot and
+drop tracking, drop-luck analysis — and a full labyrinth simulator into
+Toolasha, sitting alongside its market, crafting, action and task tools instead
+of a second userscript that knows the other half of the game. Everything below
+is what that combination adds on top of the two scripts it came from.
+
 **Everything talks to everything now.** The Combat Suite maths and the combat
 simulator no longer sit off to the side: your recorded fights calibrate the sim,
 the sim's all-zones forecast feeds the goal planner, the combat profit panel and
@@ -54,6 +61,10 @@ game:
   auto-switching, tiles that open their panels, and made more mobile-friendly: a
   floating launcher on every screen and layouts that re-flow to the width they're
   given without touching your desktop arrangement.
+- **Ctrl+K command palette** — one hotkey (Cmd+K on a Mac) opens a search box
+  over every panel, overlay row, saved layout and setting; type a few letters
+  and press Enter to jump straight to it. It stands down while you're typing in
+  chat, so it never eats a message.
 - **Mobile-friendly touches** — panels clamp to the viewport, close buttons stay
   reachable, touch targets grow, and the mobile-mode setting shows what
   auto-detection decided.
@@ -65,7 +76,8 @@ game:
   fed straight from the simulators, with progress and ETA from your gold.
 - **Storage that survives months** — chunked per-period history records, honest
   quota handling, per-character backups that say whose they are.
-- Hundreds of bug fixes over the upstream base, and a test suite grown from
+- Hundreds of bug fixes and over a hundred smaller tweaks to how existing
+  features look and behave, over the upstream base — and a test suite grown from
   ~2,300 to over 8,500 tests.
 
 ## Credits
