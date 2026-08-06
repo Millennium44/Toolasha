@@ -60,6 +60,43 @@ export async function loadAllZonesSnapshot() {
 }
 
 /**
+ * The snapshot's row for one particular zone at one particular tier.
+ *
+ * For the surfaces that compare a *measured* run against what the sim promised
+ * for the same place — same shape as {@link bestSoloZone} so a caller can hold
+ * either. Tiers must match exactly, with an unstated tier read as 0 on both
+ * sides: tier 2 of a zone is a different fight from tier 0, and quoting one
+ * against a run in the other would be a comparison of nothing. A row without a
+ * finite `profitPerHour` is no answer, not an answer of zero.
+ *
+ * @param {Object|null} snapshot - From {@link loadAllZonesSnapshot}
+ * @param {string} zoneHrid - The zone being measured, e.g. `/actions/combat/fly`
+ * @param {number} [difficultyTier] - Its difficulty tier
+ * @returns {{zoneName: string, zoneHrid: string, difficultyTier: number,
+ *   profitPerHour: number, xpPerHour: number|null, savedAt: number|null,
+ *   fingerprint: string|null}|null} The row, or null when the snapshot has none
+ */
+export function zoneFromSnapshot(snapshot, zoneHrid, difficultyTier = 0) {
+    if (!zoneHrid) return null;
+
+    const zones = Array.isArray(snapshot?.zones) ? snapshot.zones : [];
+    const zone = zones.find(
+        (entry) => entry?.zoneHrid === zoneHrid && (entry.difficultyTier ?? 0) === (difficultyTier ?? 0)
+    );
+    if (!zone || !Number.isFinite(zone.profitPerHour)) return null;
+
+    return {
+        zoneName: zone.zoneName || zone.zoneHrid,
+        zoneHrid: zone.zoneHrid,
+        difficultyTier: zone.difficultyTier ?? 0,
+        profitPerHour: zone.profitPerHour,
+        xpPerHour: Number.isFinite(zone.xpPerHour) ? zone.xpPerHour : null,
+        savedAt: snapshot.savedAt ?? null,
+        fingerprint: snapshot.fingerprint ?? null,
+    };
+}
+
+/**
  * The snapshot's most profitable zone, dungeons excluded.
  *
  * The comparison this feeds is "what would my time earn solo instead", and a

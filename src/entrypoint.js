@@ -414,6 +414,20 @@ function registerFeatures() {
         },
         { key: 'tradeHistory', name: 'Trade History', category: 'Market', module: Market.tradeHistory, async: false },
         {
+            key: 'tradeLedgerStore',
+            name: 'Trade Ledger',
+            category: 'Market',
+            module: Market.tradeLedgerStore,
+            async: false,
+        },
+        {
+            key: 'tradeLedgerView',
+            name: 'Trade Ledger View',
+            category: 'Market',
+            module: Market.tradeLedgerView,
+            async: false,
+        },
+        {
             key: 'tradeHistoryDisplay',
             name: 'Trade History Display',
             category: 'Market',

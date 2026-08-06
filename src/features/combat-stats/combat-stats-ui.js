@@ -4,9 +4,11 @@
  */
 
 import config from '../../core/config.js';
+import dataManager from '../../core/data-manager.js';
 import marketAPI from '../../api/marketplace.js';
 import combatStatsDataCollector from './combat-stats-data-collector.js';
 import { calculateAllPlayerStats, describeLuckAdjustment } from './combat-stats-calculator.js';
+import { loadSessions } from './combat-session-history.js';
 import {
     formatWithSeparator,
     coinFormatter,
@@ -15,13 +17,53 @@ import {
     isAbbreviationEnabled,
 } from '../../utils/formatters.js';
 import { formatKeyCostNote } from '../../utils/key-cost.js';
+import { shortDuration } from '../../utils/overlay-format.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
+
+/**
+ * An archived run as one line in the session picker.
+ *
+ * "Aug 5 · 6h 12m · Chimerical Den · party of 5" — the four things that tell
+ * one stored run from another. Pure, so a picker's labelling is testable: the
+ * zone name comes in through `zoneNameOf` because game data lives with the
+ * caller, and a session whose zone the archive never recorded simply goes
+ * unnamed rather than being guessed.
+ *
+ * @param {Object} session - A snapshot from the session archive
+ * @param {Object} [options]
+ * @param {Function} [options.zoneNameOf] - `(actionHrid) => string|null`
+ * @param {Function} [options.formatDuration] - Seconds to something readable
+ * @returns {string}
+ */
+export function archivedSessionLabel(session, { zoneNameOf, formatDuration = shortDuration } = {}) {
+    const started = session?.combatStartTime ? new Date(session.combatStartTime) : null;
+    const when =
+        started && !Number.isNaN(started.getTime())
+            ? started.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+            : 'Unknown date';
+
+    const length = formatDuration(Math.round(session?.durationSeconds || 0));
+    const zone = (typeof zoneNameOf === 'function' && zoneNameOf(session?.actionHrid)) || null;
+    const count = session?.players?.length || 0;
+    const party = count > 1 ? `party of ${count}` : 'solo';
+
+    return [when, length, zone, party].filter(Boolean).join(' · ');
+}
 
 class CombatStatsUI {
     constructor() {
         this.isInitialized = false;
         this.observer = null;
         this.popup = null;
+        /**
+         * Which run the popup is showing: 'live', or an archived session's key.
+         * On the instance rather than the popup so reopening the popup shows
+         * the same run — and showPopup falls back to Live when the remembered
+         * session has since dropped off the archive.
+         */
+        this.viewing = 'live';
+        /** Archived runs, newest first; refreshed on every popup open */
+        this.sessions = [];
     }
 
     /**

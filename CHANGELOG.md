@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### A ledger for flips, luck for foragers, and spreadsheets for everyone
+
+- **A trading ledger measures what flipping actually earns**: every fill on your own listings is recorded (detected as filled-quantity deltas against observed baselines — a first sighting never invents a fill, a cancel after a partial fill still counts, offline fills surface on login), sell proceeds net of the 2% tax, and a "Ledger" tab beside Market History shows realized profit per item and per week on an average-cost basis — a sale with no recorded purchase shows revenue with cost "—", never a fake 100% margin. CSV export included; recording is a default-on setting.
+- **Gathering and production runs get the drop-luck verdict combat has**: "Drop luck: 73rd percentile — 27 runs in 100 beat it" under every loot-log entry's Expected line, computed by the exact FFT machinery so a rare-drop-dominated session is judged by its lumps rather than a bell curve. Historical entries get it too; essence and rare-find tables sit outside the verdict on both sides, since the log can't see the find bonuses that drive them.
+- **CSV export lands on the four history panels that had none**: dungeon run history (per run: timestamp, dungeon, tier, duration, team, key counts), the treasure tracker (two files — chest summary and per-item detail, because one file of alternating shapes can't be pivoted), the loot log (per item per session, priced as the panel prices), and the combat session archive (per session with per-player banked figures). Raw numbers, ISO timestamps, buttons only when there are rows.
+
 ### The trial record remembers, the sim gets audited, and silence gets alarms
 
 - **Past weeks return to the trials panel and guild report**: the four archived weekly cycles nothing ever read back now render as one line each — "Last week · combat T5 · skilling T6 · 1,800 pts · ~825 tokens each" — with failed weeks printing their zeros, unknowns as "—", tokens marked ~ (derived from today's building bonuses), and a week archived from another guild's era labelled rather than mixed in.

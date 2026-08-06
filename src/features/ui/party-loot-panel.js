@@ -33,6 +33,7 @@ import { formatKMB, formatWithSeparator } from '../../utils/formatters.js';
 import { itemIcon, linkToMarketplace, shortDuration, ROW_COLORS, GLYPHS } from '../../utils/overlay-format.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { createPanel, panelCard, panelNote } from '../../utils/simple-panel.js';
+import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
 import combatStatsDataCollector from '../combat-stats/combat-stats-data-collector.js';
 import { calculatePlayerStats } from '../combat-stats/combat-stats-calculator.js';
 import { loadSessions, combineSessions, describeSession } from '../combat-stats/combat-session-history.js';
@@ -41,6 +42,63 @@ const ACCENT = '#e0b978';
 
 /** Past this a drop list is a scrollbar rather than an answer */
 const MAX_ITEMS = 14;
+
+/** The session-history export, one row per archived run */
+export const SESSION_HISTORY_COLUMNS = [
+    { key: 'start', label: 'Start' },
+    { key: 'durationSeconds', label: 'Duration (s)' },
+    { key: 'zone', label: 'Zone' },
+    { key: 'zoneHrid', label: 'Zone Hrid' },
+    { key: 'partySize', label: 'Party Size' },
+    { key: 'players', label: 'Players' },
+    { key: 'bankedTotal', label: 'Banked Total' },
+    { key: 'perPlayerBanked', label: 'Per-Player Banked' },
+    { key: 'perPlayerDaily', label: 'Per-Player Daily' },
+];
+
+/**
+ * The archived runs as CSV rows, one per session.
+ *
+ * The per-player figures are the ones the panel's cards show: loot income less
+ * consumables and keys ("banked"), and the daily rate, both at bid — packed
+ * `Name: value` into two columns, because the roster changes run to run and a
+ * column per player would give every export a different shape. The numbers
+ * inside are raw integers, not the panel's `1.2M`.
+ *
+ * @param {Array<Object>} sessionList - Archived snapshots, as `loadSessions` returns them
+ * @param {Function} [statsFor] - `(player, durationSeconds) => stats`, injectable for tests
+ * @returns {Array<Object>} Rows for `SESSION_HISTORY_COLUMNS`
+ */
+export function buildSessionHistoryRows(sessionList, statsFor = calculatePlayerStats) {
+    return (sessionList || [])
+        .filter((session) => session?.players?.length)
+        .map((session) => {
+            const stats = session.players.map((player) => statsFor(player, session.durationSeconds || 0));
+            const banked = (playerStats) =>
+                playerStats.income.bid - (playerStats.consumableCosts?.bid || 0) - (playerStats.keyCosts?.bid || 0);
+
+            const started = new Date(session.combatStartTime);
+            const zoneHrid = session.actionHrid || '';
+
+            return {
+                start: Number.isNaN(started.getTime()) ? String(session.combatStartTime || '') : started.toISOString(),
+                durationSeconds: session.durationSeconds || 0,
+                // The snapshot stores the zone as an hrid; its tail reads well
+                // enough without asking the game for a display name
+                zone: zoneHrid ? zoneHrid.split('/').pop().replace(/_/g, ' ') : '',
+                zoneHrid,
+                partySize: session.players.length,
+                players: stats.map((playerStats) => playerStats.name || '?').join(', '),
+                bankedTotal: Math.round(stats.reduce((sum, playerStats) => sum + banked(playerStats), 0)),
+                perPlayerBanked: stats
+                    .map((playerStats) => `${playerStats.name || '?'}: ${Math.round(banked(playerStats))}`)
+                    .join('; '),
+                perPlayerDaily: stats
+                    .map((playerStats) => `${playerStats.name || '?'}: ${Math.round(playerStats.dailyProfit.bid)}`)
+                    .join('; '),
+            };
+        });
+}
 
 /**
  * Which run the panel is showing.
@@ -273,6 +331,35 @@ function drawTopBar(body) {
     meta.textContent = snapshot?.durationSeconds ? shortDuration(snapshot.durationSeconds) : '';
 
     bar.append(picker, meta);
+
+    // Only when there is a history to write — the live run is not archived, and
+    // a button exporting an empty file would read as the button breaking
+    if (sessions.length) {
+        const exportBtn = document.createElement('button');
+        exportBtn.textContent = 'Export CSV';
+        exportBtn.title = 'Save every archived run as a spreadsheet — one row per session, raw numbers.';
+        Object.assign(exportBtn.style, {
+            marginLeft: 'auto',
+            background: 'rgba(255, 255, 255, 0.06)',
+            color: ROW_COLORS.dim,
+            border: '1px solid rgba(255, 255, 255, 0.15)',
+            borderRadius: '4px',
+            padding: '2px 6px',
+            fontSize: '11px',
+            cursor: 'pointer',
+        });
+        exportBtn.addEventListener('click', () => {
+            try {
+                const rows = buildSessionHistoryRows(sessions);
+                if (!rows.length) return;
+                downloadCsv(csvFilename('combat-sessions'), toCsv(rows, SESSION_HISTORY_COLUMNS));
+            } catch (error) {
+                console.error('[PartyLoot] CSV export failed:', error);
+            }
+        });
+        bar.appendChild(exportBtn);
+    }
+
     if (viewing === 'combined') {
         const note = document.createElement('span');
         note.style.color = ROW_COLORS.dim;
