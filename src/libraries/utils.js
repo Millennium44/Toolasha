@@ -63,7 +63,8 @@ import * as evWorkerManager from '../utils/ev-worker-manager.js';
 import * as enhancementWorkerManager from '../utils/enhancement-worker-manager.js';
 import * as networthWorkerManager from '../utils/networth-worker-manager.js';
 import * as panelZIndex from '../utils/panel-z-index.js';
-import * as performanceMonitor from '../utils/performance-monitor.js';
+// performance-monitor is deliberately absent: the initialized copy lives in the
+// core bundle (which loads first) and is shared as Toolasha.Core.performanceMonitor.
 import * as gameLookups from '../utils/game-lookups.js';
 import * as itemNavigation from '../utils/item-navigation.js';
 import * as marketplaceTabs from '../utils/marketplace-tabs.js';
@@ -75,6 +76,41 @@ import * as toast from '../utils/toast.js';
 // apply the same bound (see utils/liquidity-cap.js). Needs a matching
 // utilsExternalGlobals entry in rollup.config.js to be deduplicated.
 import * as liquidityCap from '../utils/liquidity-cap.js';
+// Everything below was surfaced by scripts/check-bundle-sharing.mjs: reachable
+// from two or more production bundles, so it must be exported here (and mapped
+// in utilsExternalGlobals) or every bundle silently carries its own copy.
+import * as actionContext from '../utils/action-context.js';
+import * as adoptionConsent from '../utils/adoption-consent.js';
+import * as alchemyFees from '../utils/alchemy-fees.js';
+import * as allZonesSnapshot from '../utils/all-zones-snapshot.js';
+// Default import on purpose: every consumer default-imports this module, and a
+// default import of an external resolves to the global itself — so the global
+// must be the default export, not the module namespace.
+import assetManifest from '../utils/asset-manifest.js';
+import * as backgroundWork from '../utils/background-work.js';
+import * as battlePanelMonsters from '../utils/battle-panel-monsters.js';
+import * as characterKey from '../utils/character-key.js';
+import * as chestImport from '../utils/chest-import.js';
+import * as chunkedHistory from '../utils/chunked-history.js';
+import * as consumableForecast from '../utils/consumable-forecast.js';
+import * as csvExport from '../utils/csv-export.js';
+import * as deferredLoad from '../utils/deferred-load.js';
+import * as dropSources from '../utils/drop-sources.js';
+import * as dungeonKeys from '../utils/dungeon-keys.js';
+import * as dungeonLevelGap from '../utils/dungeon-level-gap.js';
+import * as equipmentSavings from '../utils/equipment-savings.js';
+import * as gameServer from '../utils/game-server.js';
+import * as gameText from '../utils/game-text.js';
+import * as guildCreditPricing from '../utils/guild-credit-pricing.js';
+import * as keyLedger from '../utils/key-ledger.js';
+import * as numberParser from '../utils/number-parser.js';
+import * as partyLint from '../utils/party-lint.js';
+import * as profileCommand from '../utils/profile-command.js';
+import * as progressEta from '../utils/progress-eta.js';
+import * as roomSkills from '../utils/room-skills.js';
+import * as tableColumns from '../utils/table-columns.js';
+import * as watchlist from '../utils/watchlist.js';
+import * as bundleBridge from '../utils/bundle-bridge.js';
 
 // Export to global namespace
 const toolashaRoot = window.Toolasha || {};
@@ -142,7 +178,6 @@ toolashaRoot.Utils = {
     enhancementWorkerManager,
     networthWorkerManager,
     panelZIndex,
-    performanceMonitor,
     gameLookups,
     itemNavigation,
     marketplaceTabs,
@@ -151,6 +186,35 @@ toolashaRoot.Utils = {
     scrollBuffValues,
     toast,
     liquidityCap,
+    actionContext,
+    adoptionConsent,
+    alchemyFees,
+    allZonesSnapshot,
+    assetManifest,
+    backgroundWork,
+    battlePanelMonsters,
+    characterKey,
+    chestImport,
+    chunkedHistory,
+    consumableForecast,
+    csvExport,
+    deferredLoad,
+    dropSources,
+    dungeonKeys,
+    dungeonLevelGap,
+    equipmentSavings,
+    gameServer,
+    gameText,
+    guildCreditPricing,
+    keyLedger,
+    numberParser,
+    partyLint,
+    profileCommand,
+    progressEta,
+    roomSkills,
+    tableColumns,
+    watchlist,
+    bundleBridge,
 };
 
 console.log('[Toolasha] Utils library loaded');

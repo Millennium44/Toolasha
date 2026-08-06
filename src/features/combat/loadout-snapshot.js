@@ -18,6 +18,7 @@ import webSocketHook from '../../core/websocket.js';
 import dataManager from '../../core/data-manager.js';
 import config from '../../core/config.js';
 import storage from '../../core/storage.js';
+import { webSocketHook as sharedWebSocketHook } from '../../utils/bundle-bridge.js';
 
 const STORAGE_KEY_PREFIX = 'loadout_snapshots';
 
@@ -29,7 +30,7 @@ const STORAGE_KEY_PREFIX = 'loadout_snapshots';
  * Falls back to the bundled copy for the dev standalone build (single bundle, one instance).
  */
 function getWebSocketHook() {
-    return (typeof window !== 'undefined' && window.Toolasha?.Core?.webSocketHook) || webSocketHook;
+    return sharedWebSocketHook() || webSocketHook;
 }
 
 /**

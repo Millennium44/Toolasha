@@ -3,6 +3,8 @@
  * Organizes all script settings into logical groups for the settings UI
  */
 
+import { loadoutSnapshot } from '../utils/bundle-bridge.js';
+
 export const settingsGroups = {
     ironCow: {
         title: 'Iron Cow Mode',
@@ -2089,7 +2091,7 @@ export const settingsGroups = {
                 type: 'select',
                 default: '',
                 options: () => {
-                    const snapshot = window.Toolasha?.Combat?.loadoutSnapshot;
+                    const snapshot = loadoutSnapshot();
                     const loadouts = snapshot
                         ? snapshot
                               .getAllSnapshots()

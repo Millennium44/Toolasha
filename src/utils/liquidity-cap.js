@@ -49,6 +49,7 @@
 
 import config from '../core/config.js';
 import bundledMarketLiquidity from '../features/planner/market-liquidity.js';
+import { marketLiquidity as sharedMarketLiquidity } from './bundle-bridge.js';
 
 /** The one checkbox that turns display-wide capping off */
 export const LIQUIDITY_CAP_SETTING = 'profitCalc_liquidityCap';
@@ -58,7 +59,7 @@ export const LIQUIDITY_CAP_SETTING = 'profitCalc_liquidityCap';
  * @returns {Object} The planner's liquidity module
  */
 function liquidity() {
-    return (typeof window !== 'undefined' && window.Toolasha?.Actions?.marketLiquidity) || bundledMarketLiquidity;
+    return sharedMarketLiquidity() || bundledMarketLiquidity;
 }
 
 /**

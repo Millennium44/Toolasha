@@ -34,6 +34,7 @@ import { registerRow } from '../../utils/overlay-rows.js';
 import { formatLargeNumber } from '../../utils/formatters.js';
 import { rows, blank, ROW_COLORS } from '../../utils/overlay-format.js';
 import { fillProfileCommand, VALID_PLAYER_NAME_RE } from '../../utils/profile-command.js';
+import { dpsPanel } from '../../utils/bundle-bridge.js';
 
 /** Accuracy in its own colour, so it does not read as part of the damage figure */
 const ACCURACY_COLOR = '#ff9800';
@@ -287,7 +288,7 @@ registerRow({
     },
     // The panel behind it: a DPS figure alone cannot say whether you are
     // winning the exchange or merely surviving it
-    onOpen: () => window.Toolasha?.UI?.dpsPanel?.toggle(),
+    onOpen: () => dpsPanel()?.toggle(),
 });
 
 export default combatDPS;

@@ -40,11 +40,12 @@ import {
     calculateSimRevenue,
 } from '../combat-sim/combat-sim-adapter.js';
 // Lazy accessor: in production multi-bundle builds, the UI bundle loads after Combat.
-// Resolve at runtime via window.Toolasha.Combat to share the initialized instance,
+// Resolve at runtime through the bundle bridge to share the initialized instance,
 // with a fallback to the static import for dev single-bundle builds.
 import loadoutSnapshotLocal from '../combat/loadout-snapshot.js';
+import { loadoutSnapshot } from '../../utils/bundle-bridge.js';
 function getLoadoutSnapshot() {
-    return window.Toolasha?.Combat?.loadoutSnapshot || loadoutSnapshotLocal;
+    return loadoutSnapshot() || loadoutSnapshotLocal;
 }
 
 // Compiled regex pattern (created once, reused for performance)

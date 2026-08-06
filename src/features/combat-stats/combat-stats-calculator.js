@@ -9,6 +9,7 @@ import marketAPI from '../../api/marketplace.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
 import { DUNGEON_CHEST_ENTRY_KEYS, DUNGEON_CHEST_CHEST_KEYS } from '../../utils/dungeon-keys.js';
 import { describeKeyCost, getKeyPricingMode } from '../../utils/key-cost.js';
+import { treasureTracker } from '../../utils/bundle-bridge.js';
 
 /**
  * Below this many openings a treasure reading is luck, not a rate.
@@ -41,7 +42,7 @@ function chestLuckAdjustment(itemHrid) {
     if (!DUNGEON_CHEST_ENTRY_KEYS[itemHrid]) return null;
     if (!config.getSetting('dropLuck_profitAdjust')) return null;
 
-    const measured = globalThis.window?.Toolasha?.Market?.treasureTracker?.measuredReturn?.(itemHrid);
+    const measured = treasureTracker()?.measuredReturn?.(itemHrid);
     if (!measured || !(measured.opened >= MIN_OPENED_FOR_PROFIT_ADJUST)) return null;
     return { ratio: measured.ratio, chests: measured.opened };
 }

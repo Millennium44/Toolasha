@@ -70,6 +70,7 @@ import combatSimUI from '../combat-sim/combat-sim-ui.js';
 import dataManager from '../../core/data-manager.js';
 import bundledLoadoutSnapshot from '../combat/loadout-snapshot.js';
 import { loadCombatGear, saveCombatGear } from './goal-planner-store.js';
+import { loadoutSnapshot } from '../../utils/bundle-bridge.js';
 
 /** Older than this and a snapshot is still used, but flagged */
 export const STALE_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
@@ -109,7 +110,7 @@ export function ageLabel(ageMs) {
  * @returns {Object} The snapshot store
  */
 function loadouts() {
-    return (typeof window !== 'undefined' && window.Toolasha?.Combat?.loadoutSnapshot) || bundledLoadoutSnapshot;
+    return loadoutSnapshot() || bundledLoadoutSnapshot;
 }
 
 /**

@@ -21,6 +21,7 @@ import {
     resolveItemPrice,
 } from '../../utils/profit-helpers.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
+import { settingsUI as sharedSettingsUI } from '../../utils/bundle-bridge.js';
 
 const PHILO_HRID = '/items/philosophers_stone';
 const PRIME_CATALYST_HRID = '/items/prime_catalyst';
@@ -172,7 +173,7 @@ class PhiloCalculator {
             }
         };
 
-        const settingsUI = window.Toolasha?.UI?.settingsUI;
+        const settingsUI = sharedSettingsUI();
         if (settingsUI && typeof settingsUI.onSettingsPanelAppear === 'function') {
             settingsUI.onSettingsPanelAppear(ensureButtonExists);
         }
