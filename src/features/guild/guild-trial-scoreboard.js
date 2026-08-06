@@ -173,11 +173,18 @@ export function scoreboardText(breakdown, tab = 'damage', estimate = null) {
             (row.share === null ? ')' : `, ${row.share.toFixed(1)}%)`)
     );
 
-    const unattributed = breakdown?.support?.unattributedHealing || 0;
-    if (tab === 'healing' && unattributed > 0) {
-        lines.push(
-            `Unattributed: ${formatWithSeparator(Math.round(unattributed))} (regeneration, or two healers at once)`
-        );
+    if (tab === 'healing') {
+        const regen = breakdown?.support?.regenHealing || 0;
+        if (regen > 0) {
+            lines.push(`Regeneration: ${formatWithSeparator(Math.round(regen))} (the trial’s flat regen, nobody’s)`);
+        }
+        const unattributed = breakdown?.support?.unattributedHealing || 0;
+        if (unattributed > 0) {
+            lines.push(
+                `Unattributed: ${formatWithSeparator(Math.round(unattributed))} ` +
+                    '(overlapping heals, or an on-cast proc from a player without streamed counters)'
+            );
+        }
     }
 
     return [header, ...lines].join('\n');
@@ -522,9 +529,10 @@ class GuildTrialScoreboard {
             `<div style="color:${DIM}; padding:6px 0; line-height:1.5;">` +
             (healing
                 ? spectated
-                    ? 'Watched, but no heal could be attributed: a rise in health is only credited when exactly ' +
-                      'one player cast a heal on that tick. Anything else is kept as unattributed rather than ' +
-                      'assigned to whoever looked likely.'
+                    ? 'Watched, but no heal could be attributed: a rise in health is only credited when the tick ' +
+                      'names its actor — a lone heal cast, or a lone ability cast whose non-regeneration rises ' +
+                      'are then that cast’s effect. Regeneration is set aside by its shape, and anything else is ' +
+                      'kept as unattributed rather than assigned to whoever looked likely.'
                     : `No healing has been watched — ${SPECTATED_TRIAL_NOTE}. ` +
                       'Open it during a trial and this fills from the same ticks the damage does; a build ' +
                       'cannot be used to guess healing, so there is no estimate to show meanwhile.'
@@ -548,11 +556,26 @@ class GuildTrialScoreboard {
                     .join('') + unestimated
               : unsplit || nothing;
 
+        // Regeneration and unattributed are different claims and get different
+        // lines: "the game healed everyone" is not a failure to attribute, and
+        // lumping the two together read as one — "0 party hps" over a bucket
+        // that was mostly the trial's own flat regen
         const unattributed = breakdown?.support?.unattributedHealing || 0;
+        const regen = breakdown?.support?.regenHealing || 0;
         const footnote =
-            healing && unattributed > 0
+            healing && (unattributed > 0 || regen > 0)
                 ? `<div style="color:${DIM}; font-size:10px; margin-top:4px;">` +
-                  `${formatKMB(Math.round(unattributed))} unattributed — regeneration, or two healers on one tick.</div>`
+                  (regen > 0
+                      ? `${formatKMB(Math.round(regen))} regeneration — the trial’s own flat regen, ` +
+                        'identified by its uniform per-unit size and credited to nobody.'
+                      : '') +
+                  (regen > 0 && unattributed > 0 ? ' ' : '') +
+                  (unattributed > 0
+                      ? `${formatKMB(Math.round(unattributed))} unattributed — nothing on those ticks names a ` +
+                        'caster: overlapping heals, or an on-cast proc (a Blooming Trident’s Bloom, say) from a ' +
+                        'player whose counters this stream does not carry.'
+                      : '') +
+                  '</div>'
                 : '';
 
         const forecast = this.forecast;

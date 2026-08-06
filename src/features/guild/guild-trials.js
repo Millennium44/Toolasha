@@ -203,6 +203,40 @@ const GOOD = '#4ade80';
 const WARN = '#f0a830';
 
 /**
+ * First-tier totals confirmed by direct observation, as cold-start seeds.
+ *
+ * The learned store answers first and overrides these; the seeds exist because
+ * the store cannot cross a browser profile — the user's second account, in a
+ * second browser, mid-joined a trial and had base and bar in front of it with
+ * no way to connect them ("tier not known yet" over a bar reading 8,276/51,360
+ * = 40,000 × 1.2 × 1.07 exactly). Each entry is backed by observations this
+ * codebase already carries:
+ *
+ * - **crafting 40,000** — two guilds and an export: 49,920 = ×1.2×1.04 (T3,
+ *   4 signed), 88,920 = ×1.9×1.17 (T10, 17 signed), and a full T2–T15 ladder
+ *   41,600 × (1 + 0.1(t−1)) in the recorded week.
+ * - **foraging 40,000** — a live trial watched through 40,800 / 44,880 /
+ *   48,960 with 2 signed up.
+ * - **alchemy 40,000** — a live card at 65,280 = ×1.6×1.02 (T7, 2 signed).
+ * - **Trial Chameleon 550,000** — the pool bar's own ladder 550,000 / 600,000
+ *   / 650,000 / 700,000 = (100 + 10t) × 5,000, with the HP bar exactly ×1.04
+ *   beside it in a 4-participant guild and ×1.03 in a 3-participant one.
+ * - **Trial Badger 330,000** — a `new_guild_battle` sheet: 429,000 with 30 in
+ *   the trial, 330,000 × 1.3 exactly.
+ *
+ * Every observed skilling base has been 40,000 so far, but only the observed
+ * skills are seeded: a wrong seed states wrong tiers with confidence, and an
+ * unseeded skill merely learns on its first stated-tier moment as before.
+ */
+const DEFAULT_WORK_BASES = {
+    crafting: 40_000,
+    foraging: 40_000,
+    alchemy: 40_000,
+    'trial chameleon': 550_000,
+    'trial badger': 330_000,
+};
+
+/**
  * Everything derivable about one trial, from its stored samples.
  *
  * Pure, and exported for tests: it takes a record and returns numbers, and never
@@ -2792,7 +2826,7 @@ class GuildTrials {
         const key = String(tile?.name || '')
             .trim()
             .toLowerCase();
-        const base = this.workBases[key]?.baseWork;
+        const base = this.workBases[key]?.baseWork ?? DEFAULT_WORK_BASES[key];
         return Number.isFinite(base) && base > 0 ? base : null;
     }
 

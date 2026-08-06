@@ -653,6 +653,55 @@ export async function saveWorkBases(bases) {
     }
 }
 
+// ─── The spectated fight's roster ───────────────────────────────────────────
+
+/**
+ * The key the last-seen trial fight roster lives under.
+ *
+ * `new_guild_battle` states the party in slot order — the join every
+ * spectated tick's `pMap` indexes into — and it fires once per tier and never
+ * again. A page refresh mid-tier therefore lost every name until the next
+ * tier began: "Player 2" and "Player 3" on a leaderboard whose names had been
+ * on the wire minutes earlier. The roster is written down with the battle id
+ * it belongs to, and a refreshed session adopts it back the moment the stream
+ * shows the same battle id — the id is the guard, so another fight's roster
+ * can never be borrowed.
+ *
+ * Under the `guildTrials` prefix, so {@link clearTrialStorage} takes it too.
+ */
+const ROSTER_KEY = `${KEY_PREFIX}Roster`;
+
+/**
+ * The last trial fight roster written down.
+ * @returns {Promise<{battleId: *, roster: Object, at: number}|null>} The entry, or null
+ */
+export async function loadTrialRoster() {
+    try {
+        const held = await storage.get(ROSTER_KEY, STORE_NAME, null);
+        if (!held || typeof held !== 'object') return null;
+        if (!held.roster || typeof held.roster !== 'object') return null;
+        return held;
+    } catch (error) {
+        console.error('[GuildTrialsStore] Failed to load the trial roster:', error);
+        return null;
+    }
+}
+
+/**
+ * Write a trial fight's roster down, keyed to its battle.
+ * @param {{battleId: *, roster: Object, at: number}} entry - The roster and whose fight it is
+ * @returns {Promise<boolean>} True when the write was queued
+ */
+export async function saveTrialRoster(entry) {
+    try {
+        await storage.set(ROSTER_KEY, entry, STORE_NAME);
+        return true;
+    } catch (error) {
+        console.error('[GuildTrialsStore] Failed to save the trial roster:', error);
+        return false;
+    }
+}
+
 // ─── Building bonuses ───────────────────────────────────────────────────────
 
 /**

@@ -766,8 +766,11 @@ export const WORK_LADDER_TIER_TOLERANCE = 0.05;
  *   with 4 signed up is exactly the 550,000 base at T1.
  *
  * Accepted only when the arithmetic lands within
- * {@link WORK_LADDER_TIER_TOLERANCE} of a whole tier on the ladder; anything
- * else returns null and the tier stays honestly unknown.
+ * {@link WORK_LADDER_TIER_TOLERANCE} of a whole tier on the ladder. A skilling
+ * target that fails gets one more chance with the party size treated as the
+ * unknown it often is — the In Progress tab states no sign-up count — via the
+ * joint search in {@link solveWorkLadder}; anything else returns null and the
+ * tier stays honestly unknown.
  *
  * @param {Object} input - Inputs
  * @param {number} input.target - The bar's target (`targetWorkValue`, or the boss health maximum)
@@ -796,8 +799,65 @@ export function tierFromWorkTarget({
             : 1 + (ratio - 1) / SKILLING_TIER_STEP;
     const tier = Math.round(exactTier);
 
-    if (Math.abs(exactTier - tier) > tolerance) return null;
-    return tier >= 1 && tier <= TRIAL_MAX_TIER ? tier : null;
+    if (Math.abs(exactTier - tier) <= tolerance && tier >= 1 && tier <= TRIAL_MAX_TIER) return tier;
+
+    // The participant count may be the thing that is wrong — unknown on the In
+    // Progress tab, or stale off an old sign-up reading — and for a skilling
+    // trial the target still factors: see {@link solveWorkLadder}
+    if (kind !== 'skilling') return null;
+    return solveWorkLadder({ target, baseWork })?.tier ?? null;
+}
+
+/**
+ * The most participants a trial is searched against.
+ *
+ * Sign-up slots are capped by the Encampment buildings well below this; the
+ * bound exists so the joint search cannot wander into absurd party sizes, and
+ * a generous bound only ever makes the answer *more* conservative — an extra
+ * candidate fit turns a unique answer into an honest unknown.
+ */
+export const MAX_TRIAL_PARTICIPANTS = 50;
+
+/**
+ * The tier **and** the party size, from nothing but a skilling bar's target.
+ *
+ * The In Progress tab carries no sign-up count, so a mid-trial join there had
+ * a base and a target and still could not use them — `target = base ×
+ * (1 + 0.1 × (t − 1)) × (1 + 0.01 × p)` has two unknowns. But both are small
+ * integers, and the product usually factors uniquely: the live case, 51,360 on
+ * a 40,000 base, is 1.284 = 1.2 × 1.07 — tier 3 with 7 signed up — and no
+ * other `(t, p)` on either ladder produces it. Every candidate tier's implied
+ * party size is rounded and verified against the target exactly (±1 for the
+ * game's rounding); one surviving pair is an identification, and two or more
+ * is an honest null — 52,800 is 1.1 × 1.2 and 1.2 × 1.1 alike, and nothing
+ * may pick between them.
+ *
+ * The true `(t, p)` always reproduces its own target exactly, so it is always
+ * among the fits: a unique fit is therefore the right one, never a guess that
+ * happened to land.
+ *
+ * @param {Object} input - Inputs
+ * @param {number} input.target - The bar's target
+ * @param {number} input.baseWork - The skill's first-tier work
+ * @param {number} [input.maxParticipants] - Largest party size searched
+ * @param {number} [input.toleranceHp] - How far off the exact product a target may round
+ * @returns {{tier: number, participants: number}|null} The unique solution, or null
+ */
+export function solveWorkLadder({ target, baseWork, maxParticipants = MAX_TRIAL_PARTICIPANTS, toleranceHp = 1 } = {}) {
+    if (!Number.isFinite(target) || target <= 0) return null;
+    if (!Number.isFinite(baseWork) || baseWork <= 0) return null;
+
+    const fits = [];
+    for (let tier = 1; tier <= TRIAL_MAX_TIER; tier += 1) {
+        const byTier = 1 + SKILLING_TIER_STEP * (tier - 1);
+        const participants = Math.round((target / (baseWork * byTier) - 1) / PARTICIPANT_SCALE_STEP);
+        if (participants < 1 || participants > maxParticipants) continue;
+
+        const predicted = baseWork * byTier * (1 + PARTICIPANT_SCALE_STEP * participants);
+        if (Math.abs(predicted - target) <= toleranceHp) fits.push({ tier, participants });
+    }
+
+    return fits.length === 1 ? fits[0] : null;
 }
 
 /**

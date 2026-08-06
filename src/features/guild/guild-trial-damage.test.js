@@ -20,11 +20,23 @@ const game = vi.hoisted(() => ({
     clientData: {},
     wsHandlers: {},
     loadouts: [],
+    ownName: null,
+    storedRoster: null,
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getInitClientData: () => game.clientData,
+        getCurrentCharacterName: () => game.ownName,
+    },
+}));
+// The roster persistence reaches IndexedDB through the store; here it is a
+// field on the fixture, so a test can seed "a previous session wrote this"
+vi.mock('./guild-trials-store.js', () => ({
+    loadTrialRoster: async () => game.storedRoster,
+    saveTrialRoster: async (entry) => {
+        game.storedRoster = entry;
+        return true;
     },
 }));
 vi.mock('../../core/websocket.js', () => ({
@@ -226,6 +238,9 @@ describe('the live tracker', () => {
         vi.useFakeTimers();
         vi.setSystemTime(new Date('2026-08-04T12:00:00Z'));
         game.clientData = {};
+        game.ownName = null;
+        game.storedRoster = null;
+        guildTrialDamage.storedRoster = null;
         guildTrialDamage.initialize();
         guildTrialDamage.reset();
         guildTrialDamage.setTrialNames(['Trial Chameleon']);
@@ -524,6 +539,9 @@ describe('the spectated trial fight', () => {
         vi.setSystemTime(at);
         game.clientData = {};
         game.loadouts = [];
+        game.ownName = null;
+        game.storedRoster = null;
+        guildTrialDamage.storedRoster = null;
         guildTrialDamage.initialize();
         guildTrialDamage.reset();
         guildTrialDamage.setTrialNames(['Trial Chameleon']);
@@ -735,6 +753,9 @@ describe('the boss’s own sheet', () => {
         vi.setSystemTime(new Date('2026-08-05T22:00:00Z'));
         game.clientData = {};
         game.loadouts = [];
+        game.ownName = null;
+        game.storedRoster = null;
+        guildTrialDamage.storedRoster = null;
         guildTrialDamage.initialize();
         guildTrialDamage.reset();
     });
@@ -806,6 +827,9 @@ describe('which trial is being watched', () => {
         vi.setSystemTime(at);
         game.clientData = {};
         game.loadouts = [];
+        game.ownName = null;
+        game.storedRoster = null;
+        guildTrialDamage.storedRoster = null;
         guildTrialDamage.initialize();
         guildTrialDamage.reset();
         guildTrialDamage.setTrialNames(['Trial Chameleon', 'Trial Hedgehog']);
@@ -896,6 +920,9 @@ describe('the tier-opening message', () => {
         vi.setSystemTime(at);
         game.clientData = {};
         game.loadouts = [];
+        game.ownName = null;
+        game.storedRoster = null;
+        guildTrialDamage.storedRoster = null;
         guildTrialDamage.initialize();
         guildTrialDamage.reset();
         guildTrialDamage.setTrialNames(['Trial Badger']);
@@ -944,6 +971,68 @@ describe('the tier-opening message', () => {
         game.wsHandlers.new_guild_battle(NEW_GUILD_BATTLE);
         game.wsHandlers[GUILD_BATTLE_MESSAGE](GUILD_BATTLE_TICKS[2]);
         expect(guildTrialDamage.breakdown().names['19']).toMatchObject({ name: 'TakoTsubo', source: 'roster' });
+    });
+
+    test('a page refresh mid-tier reads the roster back, for the same battle only', async () => {
+        // `new_guild_battle` fires once per tier and never again, so a refresh
+        // lost every name until the next tier: "Player 2" and "Player 3" on a
+        // leaderboard whose roster had been on the wire minutes earlier
+        game.wsHandlers.new_guild_battle(NEW_GUILD_BATTLE);
+        expect(game.storedRoster).toMatchObject({ battleId: 1 });
+
+        // The refresh: a fresh page-load holds none of the in-memory state
+        guildTrialDamage.cleanup();
+        guildTrialDamage.storedRoster = null;
+        guildTrialDamage.initialize();
+        await vi.advanceTimersByTimeAsync(0);
+
+        game.wsHandlers[GUILD_BATTLE_MESSAGE](GUILD_BATTLE_TICKS[2]);
+        expect(guildTrialDamage.breakdown().names['19']).toMatchObject({ name: 'TakoTsubo', source: 'roster' });
+    });
+
+    test('another battle’s stored roster stays unused', async () => {
+        game.storedRoster = {
+            battleId: 999,
+            roster: { 19: { name: 'SomebodyElse', characterId: 1 } },
+            at: Date.now(),
+        };
+        guildTrialDamage.cleanup();
+        guildTrialDamage.storedRoster = null;
+        guildTrialDamage.initialize();
+        await vi.advanceTimersByTimeAsync(0);
+
+        game.wsHandlers[GUILD_BATTLE_MESSAGE](GUILD_BATTLE_TICKS[2]);
+        expect(guildTrialDamage.breakdown().names['19'].source).toBe('placeholder');
+    });
+
+    test('a stored duplicate of the watcher’s name heals on the next tick', () => {
+        // The user's own export, verbatim: names held {0: MillenniumTest
+        // (portrait), 2: MillenniumTest (vitals)} with countedSlots ['2'] —
+        // the ended-trial summary ranked the user at positions 1 and 3 while
+        // SarinTest went missing. The resolver now refuses the watcher's name
+        // anywhere but their counted slot and enforces one-name-one-unit, so
+        // the next tick corrects the stored mislabel.
+        game.ownName = 'MillenniumTest';
+        guildTrialDamage.unitNames = {
+            0: { name: 'MillenniumTest', source: 'portrait' },
+            2: { name: 'MillenniumTest', source: 'vitals' },
+        };
+        guildTrialDamage.names = { 0: 'MillenniumTest', 2: 'MillenniumTest' };
+        guildTrialDamage.countedSlots.add('2');
+
+        game.wsHandlers[GUILD_BATTLE_MESSAGE]({
+            battleId: 7,
+            tier: 1,
+            pMap: { 0: { cHP: 3000, mHP: 3100 }, 2: { cHP: 2600, mHP: 2612, atkCounter: 4 } },
+            mMap: {},
+        });
+
+        const names = guildTrialDamage.breakdown().names;
+        expect(names['2']).toMatchObject({ name: 'MillenniumTest', source: 'own' });
+        expect(names['0'].name).not.toBe('MillenniumTest');
+        // …and the summary the ended-trial report reads from carries the fix
+        const wearingIt = Object.values(guildTrialDamage.names).filter((name) => name === 'MillenniumTest');
+        expect(wearingIt).toHaveLength(1);
     });
 
     test('the boss sheet arrives without anybody clicking anything', () => {
@@ -1041,6 +1130,9 @@ describe('only your own damage is measured', () => {
         vi.setSystemTime(at);
         game.clientData = {};
         game.loadouts = [];
+        game.ownName = null;
+        game.storedRoster = null;
+        guildTrialDamage.storedRoster = null;
         guildTrialDamage.initialize();
         guildTrialDamage.reset();
     });
