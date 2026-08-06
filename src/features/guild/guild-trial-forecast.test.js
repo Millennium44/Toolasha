@@ -435,6 +435,56 @@ describe('forecastTrial', () => {
         expect(lands.tier).toBe(5);
     });
 
+    test('the live bar anchors the whole ladder — the IC screen that stalled at its own tier', () => {
+        // Confirmed live on both tabs: base 40,000, 7 signed up, twelve tiers
+        // banked, bar 67,158/94,160 filling at 316 work/s, 26m44s on the clock
+        // — and the panel said "On pace for 13 tiers → T13". The forecast read
+        // `analysis.tiers`, a field the analysis never carried, walked with no
+        // ladder at all, and broke one step past the current tier.
+        const forecast = forecastTrial({
+            analysis: {
+                kind: 'skilling',
+                tier: 13,
+                tiersClearedSoFar: 12,
+                rate: 0.316,
+                remaining: 27_002,
+                total: 94_160,
+                timeLeftMs: 26 * 60_000 + 44_000,
+                tiers: [],
+                personalByTier: {},
+            },
+            participants: 7,
+        });
+
+        // 85s finishes T13; then 98,440 / 102,720 / 107,000 / 111,280 fit and
+        // T18's 115,560 does not: seventeen tiers, limited only by the hour
+        expect(forecast.limitedBy).toBe('time');
+        expect(forecast.tiersCleared).toBe(17);
+        expect(forecast.tier).toBe(17);
+        expect(forecast.source).toBe('measured');
+    });
+
+    test('…and it outranks stored observations whose labels have gone stale', () => {
+        // A T9 target misfiled at T13 must not reprice the ladder the walk
+        // spends its minutes on — the bar in hand is the verified anchor
+        const forecast = forecastTrial({
+            analysis: {
+                kind: 'skilling',
+                tier: 13,
+                tiersClearedSoFar: 12,
+                rate: 0.316,
+                remaining: 27_002,
+                total: 94_160,
+                timeLeftMs: 26 * 60_000 + 44_000,
+                tiers: [{ tier: 13, total: 77_040 }],
+                personalByTier: {},
+            },
+            participants: 7,
+        });
+
+        expect(forecast.tiersCleared).toBe(17);
+    });
+
     test('every kind of not-knowing says which kind it is', () => {
         expect(forecastTrial({ analysis: analysis({ tier: null }) }).reason).toContain('tier is not known');
         expect(forecastTrial({ analysis: analysis({ timeLeftMs: null }) }).reason).toContain('no clock');

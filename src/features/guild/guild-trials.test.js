@@ -196,6 +196,7 @@ const {
 const trialsFeature = (await import('./guild-trials.js')).default;
 
 const { NOTICE_BOARD_NAME } = await import('./guild-notice-board.fixture.js');
+const { forecastTrial } = await import('./guild-trial-forecast.js');
 const { trialWeekStart } = await import('./guild-trials-math.js');
 
 const now = Date.parse('2026-08-04T12:00:00Z');
@@ -2870,6 +2871,123 @@ describe('the rungs go stale at different speeds', () => {
 
         expect(analysis.tier).toBe(15);
         expect(analysis.tierSource).toBe('card');
+    });
+});
+
+describe('the ladder only climbs — the IC screen, in full', () => {
+    // One live screenshot, three provable inconsistencies: bar 68,419/85,600
+    // filling at 409 work/s, badge banked-9 from a stale Trials visit, 35m29s
+    // on the clock — and the panel said "Next tier work (T11) 77.3K" (below
+    // the bar's own target), "On pace for 10 tiers → T10" (the walk never left
+    // the current tier), "Banked 9 tiers". The bar factors uniquely: 85,600 =
+    // 40,000 × 2.0 × 1.07 is T11 with 7 signed up and nothing else.
+    const screen = () => ({
+        name: 'Crafting',
+        kind: 'skilling',
+        tier: 9,
+        points: 1_500,
+        pointsByTier: { 9: 1_500 },
+        samples: [
+            { t: now, readings: [{ current: 64_329, max: 85_600 }] },
+            { t: now + 10_000, readings: [{ current: 68_419, max: 85_600 }] },
+        ],
+        // The observations as a stale badge files them: real targets pinned a
+        // tier or two low, including one landing exactly on a tier the
+        // projection will ask about — a T9 target (77,040) filed at T11
+        tiers: [
+            { tier: 9, total: 81_320 },
+            { tier: 10, total: 85_600 },
+            { tier: 11, total: 77_040 },
+        ],
+    });
+    const options = { participants: 7, phase: 'live', timeLeftMs: 35 * 60_000 + 29_000, workBase: 40_000 };
+
+    test('the work ladder outvotes the stale badge — T11, not T10', () => {
+        const analysis = analyseTrial(screen(), options);
+
+        expect(analysis.rate * 1000).toBeCloseTo(409, 9);
+        expect(analysis.tier).toBe(11);
+        expect(analysis.tierSource).toBe('work-ladder');
+        expect(analysis.tiersClearedSoFar).toBe(10);
+    });
+
+    test('…and with no participant count at all, the joint solve reads the same bar', () => {
+        const analysis = analyseTrial(screen(), { ...options, participants: 0 });
+        expect(analysis.tier).toBe(11);
+    });
+
+    test('the next tier is never priced below the bar in hand', () => {
+        // 77.3K under an 85,600 bar was a misfiled observation outvoting the
+        // live anchor through the nearest-anchor rule; the live bar now
+        // anchors alone, and T12 is 85,600 × 2.1/2.0
+        const analysis = analyseTrial(screen(), options);
+
+        expect(analysis.next.tier).toBe(12);
+        expect(analysis.next.total).toBeCloseTo(89_880, 6);
+        expect(analysis.next.total).toBeGreaterThan(analysis.total);
+    });
+
+    test('the pace walks the half hour, not one tier', () => {
+        // 17,181 left of T11 at 409 work/s, then 89,880 / 94,160 / … per the
+        // exact ladder: the 870,761 work the clock buys clears T11 through T19
+        const analysis = analyseTrial(screen(), options);
+
+        expect(analysis.pace.limitedBy).toBe('time');
+        expect(analysis.pace.finalTier).toBe(19);
+        expect(analysis.pace.tiersCleared).toBe(19);
+
+        const html = renderTrialBlock(analysis, 7, { measured: false, reason: 'none' }, { phase: 'live' });
+        expect(html).toContain('19 tiers → T19');
+        expect(html).not.toContain('→ T10');
+        expect(html).toContain('10 tiers');
+    });
+});
+
+describe('the forecast walks the same ladder as the pace', () => {
+    // The second IC screen, both tabs at once: banked 12 (the Lv.210 card,
+    // whose 1,664 pts is the twelve-tier base at +28% exactly), bar
+    // 67,158/94,160 filling at 316 work/s, 26m44s left — and both tabs read
+    // "On pace for 13 tiers → T13". The forecast row *replaces* the pace row
+    // whenever a forecast exists, and the forecast had starved: it read
+    // `analysis.tiers`, a field the analysis never carried, found no ladder
+    // past the current tier, and its one-tier walk rendered as the hour's
+    // verdict with no "at least" — that caption belongs to the pace row it
+    // was suppressing.
+    const screen = () => ({
+        name: 'Crafting',
+        kind: 'skilling',
+        tier: 12,
+        points: 1_664,
+        pointsByTier: { 12: 1_664 },
+        samples: [
+            { t: now, readings: [{ current: 63_998, max: 94_160 }] },
+            { t: now + 10_000, readings: [{ current: 67_158, max: 94_160 }] },
+        ],
+        tiers: [],
+    });
+    const options = { participants: 7, phase: 'live', timeLeftMs: 26 * 60_000 + 44_000, workBase: 40_000 };
+
+    test('the rendered block projects T17 — and both tabs share this exact path', () => {
+        const analysis = analyseTrial(screen(), options);
+        expect(analysis.tier).toBe(13);
+        expect(analysis.rate * 1000).toBeCloseTo(316, 9);
+        expect(analysis.next.total).toBeCloseTo(98_440, 6);
+
+        // The analysis now carries what the forecast reads off it
+        expect(analysis.tiers).toEqual([]);
+        expect(analysis.personalByTier).toEqual({});
+
+        // 85s finishes T13; 98,440 / 102,720 / 107,000 / 111,280 fit in the
+        // remaining ~25 minutes and T18's 115,560 does not — seventeen tiers
+        const forecast = forecastTrial({ analysis, participants: 7 });
+        expect(forecast.tiersCleared).toBe(17);
+        expect(forecast.limitedBy).toBe('time');
+        // …and the two walks, now on one anchor, agree to the tier
+        expect(analysis.pace.tiersCleared).toBe(17);
+
+        const html = renderTrialBlock(analysis, 7, { measured: false, reason: 'none' }, { phase: 'live', forecast });
+        expect(html).toContain('17 tiers → T17');
+        expect(html).not.toContain('13 tiers');
     });
 });
 

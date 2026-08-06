@@ -252,7 +252,8 @@ const DEFAULT_WORK_BASES = {
  * @returns {{kind: string, tier: number|null, level: number|null, tiersClearedSoFar: number,
  *   rate: number|null, rateNote: string|null, remaining: number|null, total: number|null,
  *   etaMs: number|null, growthPerTier: number|null, next: Object|null, pace: Object|null,
- *   samples: number, timeLeftMs: number|null}} Analysis
+ *   samples: number, timeLeftMs: number|null, tiers: Array<{tier: number, total: number}>,
+ *   personalByTier: Object}} Analysis
  */
 export function analyseTrial(
     record,
@@ -458,6 +459,18 @@ export function analyseTrial(
         next: null,
         pace: null,
         samples: samples.length,
+        // The record's tier observations and per-tier personal stats, carried
+        // through because the forecast reads them off the analysis. It always
+        // did — `analysis.tiers` and `analysis.personalByTier` — and neither
+        // field existed, so the skilling forecast walked with no ladder at
+        // all: its first step past the current tier found nothing, broke with
+        // 'unknown-next-tier', and "On pace for 13 tiers → T13" was a walk of
+        // exactly one tier presented as the hour's verdict — on both tabs,
+        // because a live forecast suppresses the exact-ladder pace row. The
+        // success-decline model starved the same way, silently.
+        tiers: observations,
+        personalByTier:
+            record?.personalByTier && typeof record.personalByTier === 'object' ? record.personalByTier : {},
         // Carried through so the block can tell "no pace because no clock" from
         // "no pace because no rate yet" — they read identically on screen and
         // only one of them is something the player can do anything about
@@ -499,14 +512,19 @@ export function analyseTrial(
         rate = ratePerMs(series, direction);
     }
 
-    // Every tier total this trial has shown, plus the bar in hand: the live
-    // target is the one anchor a player who never opens the Trials tab has,
-    // and `observations` may still be empty when nothing has banked while
-    // watched. One anchor is all the exact ladder needs.
-    const anchors =
-        Number.isFinite(tier) && Number.isFinite(total) && total > 0
-            ? [...observations, { tier, total }]
-            : observations;
+    // The bar in hand is the one anchor whose tier label has been through the
+    // full rung ladder above, and one anchor is all the exact ladder needs —
+    // so when it exists it anchors *alone*. The stored observations' tier
+    // labels are inference-quality: a stale badge files the same total under
+    // two or three successive tiers (the recorded week holds exactly that),
+    // and a misfiled observation that lands on a projected tier outvotes
+    // everything through the nearest-anchor rule. Observed live: "Next tier
+    // work (T11) 77.3K" under a bar whose own target read 85,600 — a ladder
+    // that only climbs, priced downhill by a T9 target filed at T11. The
+    // observations still anchor a record with no live bar, which is the case
+    // they exist for.
+    const liveAnchor = Number.isFinite(tier) && Number.isFinite(total) && total > 0 ? { tier, total } : null;
+    const anchors = liveAnchor ? [liveAnchor] : observations;
 
     // The next tier's size, off the exact ladder first — both kinds' curves are
     // known exactly, so a preview no longer waits for a fit — with the fitted

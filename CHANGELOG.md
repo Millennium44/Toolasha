@@ -16,6 +16,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - **The per-player DPS rows survive narrow columns**: name and figures always share one row (ellipsized name, full name in the tooltip), and the header's label/value pairs no longer wrap mid-label.
 - **The spectate caption tells the truth**: ticks keep arriving and counting while other game tabs are browsed — the note now says so, instead of claiming only on-view stretches count.
 
+### The pace projection stops dying after one tier
+
+- **"On pace for 13 tiers → T13" with twenty-six minutes left is gone**: the figure both tabs show is the _forecast_ row, and the forecast had been starving since it was written — it read two fields the analysis never returned, so its ladder broke after exactly one tier and quietly printed the current tier as the ceiling (the missing fields also silently starved the success-decline model). The analysis now hands them over, and the forecast anchors its ladder on the live bar — the one label-verified anchor — the same discipline the pace walk uses, with stored observations as fallback only. The screenshot case now projects 17 tiers → T17, limited by time, on both tabs.
+- **A misfiled observation can no longer outprice the bar in hand**: exact-ladder pricing prefers the live bar's anchor outright, so a stale observation filed at the wrong tier can't drag the next tier's total below the current one.
+- **The card's level is the tier's ground truth, verified**: the game prints only "Lv.N" and points on a trial card (the T-chip is Toolasha's own rendering, excluded from scraping), and level → tiers banked is pinned by the card's own points arithmetic in a test.
+
 ### The damage tracker keeps its names, heals honestly, and a fresh character knows the tier cold
 
 - **A refresh no longer forgets who is fighting**: the party roster arrives once per tier on `new_guild_battle`, so a mid-fight refresh used to fall back to "Player 2 / Player 3" placeholders until the next tier. The roster is now persisted keyed to its battle id and re-adopted on the first tick after a reload — and only for the same battle, never borrowed from another.
