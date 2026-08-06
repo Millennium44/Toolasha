@@ -15,11 +15,10 @@ biggest changes since forking, in rough order of how much they change the game:
   XP, drops, fight boundaries that survive refresh), replay them against the
   simulator, and get a verdict with honest noise bands. Record to N fights, M
   minutes, or a ±% precision target; export everything for sharing.
-- **Upgrade advisors in both simulators** — every candidate that could move your
-  numbers (equipment, enhancement, ability levels, ability swaps, charms, house
-  rooms, guild shrines, drinks, community buffs) ranked on gold-per-result, with a
-  budget planner, rank-blend scoring, and per-row handoffs: save the gold for it,
-  watch it, or jump straight to it on the marketplace.
+- **Upgrade-advisor budget planner and handoffs** — a spending budget and
+  rank-blend scoring across the simulators' upgrade candidates, and per-row
+  handoffs on any result: save the gold for it, watch it, or jump straight to it
+  on the marketplace.
 - **Labyrinth simulator, grown up** — multi-target analysis with combined armor
   swaps, supply-aware planning (torches/shrouds/beacons from the actual run),
   skip-level finding, house rooms per fight, and skilling-sim candidates scoped to
