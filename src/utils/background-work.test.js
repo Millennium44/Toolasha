@@ -8,7 +8,7 @@
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 import performanceMonitor from './performance-monitor.js';
-import { runInBackground } from './background-work.js';
+import { runInBackground, yieldToEventLoop } from './background-work.js';
 
 beforeEach(() => {
     performanceMonitor.reset();
@@ -78,6 +78,20 @@ describe('what the trace says about it', () => {
         const snapshot = performanceMonitor.getSnapshots().get('bg:later');
 
         expect(snapshot.startedAt).toBeGreaterThan(0);
+    });
+});
+
+describe('yielding the main thread', () => {
+    test('resolves on a later macrotask, so a synchronous loop is broken into slices', async () => {
+        const order = [];
+        const promise = yieldToEventLoop().then(() => order.push('after yield'));
+        // Synchronous work queued after the yield call still runs first — the
+        // yield hands control back rather than continuing inline
+        order.push('still synchronous');
+
+        await promise;
+
+        expect(order).toEqual(['still synchronous', 'after yield']);
     });
 });
 
