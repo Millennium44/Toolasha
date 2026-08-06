@@ -35,7 +35,13 @@ const file = JSON.parse(readFileSync(path, 'utf8'));
  * @returns {Array<Object>} `{type, payload}` per message, battle types only
  */
 function normalize(raw) {
-    const list = Array.isArray(raw) ? raw : raw?.ticks || raw?.events || raw?.messages || raw?.samples || [];
+    // A sim-accuracy export nests the raw payloads per segment, in order
+    const segments = raw?.recording?.segments;
+    const list = Array.isArray(raw)
+        ? raw
+        : Array.isArray(segments)
+          ? segments.flatMap((segment) => segment?.ticks || [])
+          : raw?.ticks || raw?.events || raw?.messages || raw?.samples || [];
     const ticks = [];
     for (const entry of list) {
         if (!entry || typeof entry !== 'object') continue;
