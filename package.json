@@ -13,6 +13,7 @@
         "test": "vitest run",
         "test:watch": "vitest",
         "replay": "node scripts/replay-combat.mjs",
+        "compare": "node scripts/compare-attribution.mjs",
         "lint": "eslint src/",
         "lint:fix": "eslint src/ --fix",
         "format": "prettier --write \"src/**/*.js\" \"*.config.js\" \"**/*.md\"",
