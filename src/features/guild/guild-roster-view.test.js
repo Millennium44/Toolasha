@@ -68,6 +68,7 @@ tracker.unitResult = null;
 tracker.openedUnits = [];
 
 const {
+    filterSeenToRoster,
     drawProfileCycler,
     drawSeenLoadouts,
     seriesDelta,
@@ -546,7 +547,10 @@ describe('seen loadouts', () => {
                     abilities: [{ label: 'Fireball', level: 40 }],
                 },
             ],
-            now
+            now,
+            // An explicit empty roster: what this test is about is the line,
+            // not the guild filter
+            []
         );
 
         expect(host.textContent).toContain('Tib Lv.150');
@@ -564,8 +568,53 @@ describe('seen loadouts', () => {
 
     test('a reading with no abilities in it says so rather than implying none are equipped', () => {
         const host = body();
-        drawSeenLoadouts(host, [{ name: 'Moo', at: now, source: 'popup', rows: [], abilities: [] }], now);
+        drawSeenLoadouts(host, [{ name: 'Moo', at: now, source: 'popup', rows: [], abilities: [] }], now, []);
 
         expect(host.querySelector('[title]').title).toContain('not carried by this reading');
+    });
+
+    test('a captured level is shown to one decimal, not floating-point garbage', () => {
+        // "BOOB Lv.151.60000000000002" reached the screen: the captured combat
+        // level is a weighted average and arrives as floating point
+        const host = body();
+        drawSeenLoadouts(
+            host,
+            [{ name: 'BOOB', level: 151.60000000000002, at: now, source: 'popup', rows: [], abilities: [] }],
+            now,
+            []
+        );
+
+        expect(host.textContent).toContain('BOOB Lv.151.6');
+        expect(host.textContent).not.toContain('151.60000000000002');
+    });
+
+    test('sightings from outside the roster are hidden and counted, never deleted', () => {
+        // The reported leak: Cream and ICMeow from the guild this character
+        // left, listed beside the new guild's fighters
+        const host = body();
+        drawSeenLoadouts(
+            host,
+            [
+                { name: 'Rick', at: now, source: 'popup', rows: [], abilities: [] },
+                { name: 'Cream', at: now, source: 'popup', rows: [], abilities: [] },
+            ],
+            now,
+            ['Rick', 'NPD']
+        );
+
+        expect(host.textContent).toContain('Seen loadouts (1)');
+        expect(host.textContent).toContain('Rick');
+        expect(host.textContent).not.toContain('Cream');
+        expect(host.textContent).toContain('1 sighting from outside this guild’s roster');
+    });
+
+    test('no roster known keeps everything — unknown is not “not a member”', () => {
+        const { kept, hidden } = filterSeenToRoster([{ name: 'Cream' }], []);
+        expect(kept).toHaveLength(1);
+        expect(hidden).toBe(0);
+
+        const filtered = filterSeenToRoster([{ name: 'Rick' }, { name: 'Cream' }, { name: 'ICMeow' }], ['rick', 'NPD']);
+        expect(filtered.kept.map((player) => player.name)).toEqual(['Rick']);
+        expect(filtered.hidden).toBe(2);
     });
 });

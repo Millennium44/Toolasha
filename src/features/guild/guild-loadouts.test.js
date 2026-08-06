@@ -334,4 +334,19 @@ describe('storage', () => {
         await saveLoadouts('char-1', foldLoadout(null, { name: 'Tib', at: now, rows: [1] }));
         expect(await loadLoadouts('char-2')).toEqual({ players: {}, updatedAt: 0 });
     });
+
+    test('each guild keeps its own key, once the guild is known', async () => {
+        // The reported leak: the character changed guild and "Seen loadouts"
+        // still listed the previous guild's people 18 hours later — one
+        // character-wide bucket cannot tell two guilds' sightings apart
+        expect(guildLoadoutsStorageKey('char-1')).toBe('guildLoadouts_char-1');
+        expect(guildLoadoutsStorageKey('char-1', 'Testmaxxing')).toBe('guildLoadouts_char-1_Testmaxxing');
+
+        await saveLoadouts('char-1', foldLoadout(null, { name: 'Cream', at: now, rows: [1] }), 'OldGuild');
+        await saveLoadouts('char-1', foldLoadout(null, { name: 'Rick', at: now, rows: [1] }), 'NewGuild');
+
+        expect((await loadLoadouts('char-1', 'OldGuild')).players.cream).toBeDefined();
+        expect((await loadLoadouts('char-1', 'NewGuild')).players.cream).toBeUndefined();
+        expect((await loadLoadouts('char-1', 'NewGuild')).players.rick).toBeDefined();
+    });
 });

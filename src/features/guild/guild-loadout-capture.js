@@ -140,6 +140,10 @@ class GuildLoadoutCapture {
         this.initialized = false;
         this.record = { players: {}, updatedAt: 0 };
         this.characterId = null;
+        /** The guild the record is keyed by; null before the name has arrived */
+        this.guildName = null;
+        /** When this session began, so pre-adoption sightings can be told apart */
+        this.startedAt = 0;
         this.unregister = [];
         this.timers = createTimerRegistry();
         this.lastSocketAt = 0;
@@ -165,7 +169,8 @@ class GuildLoadoutCapture {
         this.initialized = true;
 
         this.characterId = dataManager.getCurrentCharacterId?.() ?? null;
-        this.record = await loadLoadouts(this.characterId);
+        this.startedAt = Date.now();
+        this.record = await loadLoadouts(this.characterId, this.guildName);
 
         // Self-heal on the way in. Clicking the boss in a trial's fight view
         // fetched its sheet exactly as clicking a member does, and it was filed
@@ -176,7 +181,7 @@ class GuildLoadoutCapture {
         if (cleaned.purged.length) {
             console.warn('[GuildLoadoutCapture] Dropping stored monster sheets:', cleaned.purged.join(', '));
             this.record = cleaned.record;
-            await saveLoadouts(this.characterId, this.record);
+            await saveLoadouts(this.characterId, this.record, this.guildName);
         }
 
         this.onUnitFetched = (message) => this._onUnitFetched(message);
@@ -205,6 +210,60 @@ class GuildLoadoutCapture {
         this.timers.clearAll();
         this.saveQueued = false;
         this.initialized = false;
+    }
+
+    /**
+     * Move the record onto the guild's own key, once the guild is known.
+     *
+     * The same lazy adoption the trial record does, for the same reason: the
+     * guild's name arrives on socket traffic after this initialises. Three
+     * cases, in the order a switched character hits them:
+     *
+     * - **The guild key already holds a record.** It is this guild's own
+     *   history and it wins outright; only sightings captured *this session*
+     *   (which happened in this guild, whatever key held them) are folded in.
+     *   The character-only record is deliberately not — it may span guilds,
+     *   which is the reported leak: Cream and ICMeow from the guild the
+     *   character left, listed beside the new guild's fighters.
+     * - **The guild key is empty.** The character-only record adopts onto it
+     *   once — the common case of a character who never switches, whose whole
+     *   history belongs to this one guild.
+     * - **`null`** simply forgets which guild the record is keyed by, for a
+     *   character switch; the next name to arrive re-adopts.
+     *
+     * @param {string|null} name - The guild's name, or null to forget
+     * @returns {Promise<void>}
+     */
+    async setGuildName(name) {
+        try {
+            if (!name) {
+                this.guildName = null;
+                return;
+            }
+            if (name === this.guildName) return;
+
+            const held = this.record;
+            const before = this.guildName;
+            const stored = await loadLoadouts(this.characterId, name);
+            // A switch may have happened while the read was in flight
+            if (this.guildName !== before) return;
+
+            if (Object.keys(stored.players || {}).length) {
+                this.record = stored;
+                for (const player of loadoutList(held)) {
+                    if (Number.isFinite(player?.at) && player.at >= this.startedAt) {
+                        this.record = foldLoadout(this.record, player);
+                    }
+                }
+            }
+            // else: the character-only record adopts wholesale — `this.record`
+            // already holds it
+
+            this.guildName = name;
+            this._queueSave();
+        } catch (error) {
+            console.error('[GuildLoadouts] Adopting the guild key failed:', error);
+        }
     }
 
     /** @returns {Array<Object>} Every snapshot held, most recently seen first */
@@ -273,6 +332,9 @@ class GuildLoadoutCapture {
         const characterId = dataManager.getCurrentCharacterId?.() ?? null;
         if (characterId !== this.characterId) {
             this.characterId = characterId;
+            // The arriving character's guild is not knowable yet; the trials
+            // feature re-states it and the record re-adopts then
+            this.guildName = null;
             this.record = { players: {}, updatedAt: 0 };
             this._adopt(characterId, loadout);
             return;
@@ -308,7 +370,7 @@ class GuildLoadoutCapture {
         this.timers.registerTimeout(
             setTimeout(async () => {
                 this.saveQueued = false;
-                await saveLoadouts(this.characterId, this.record);
+                await saveLoadouts(this.characterId, this.record, this.guildName);
             }, SAVE_DEBOUNCE_MS)
         );
     }

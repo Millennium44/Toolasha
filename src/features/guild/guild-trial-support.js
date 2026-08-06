@@ -190,6 +190,42 @@ function emptyRow() {
 }
 
 /**
+ * Fold one support row into another, field by field.
+ *
+ * For banking a wave's rows under player names when the wave ends — the slots
+ * re-deal at every tier, so index-keyed rows are only meaningful within one
+ * wave. Almost everything sums; the two exceptions are the fields that are not
+ * counters: `lowestHealthFraction` is the *worst moment* and keeps the minimum,
+ * and `outOfMana` is live state — the row being folded in is the fresher and
+ * its value stands. Neither input is mutated.
+ *
+ * @param {Object|null} target - The row folded into, or null to start one
+ * @param {Object} row - The row to fold in
+ * @returns {Object} A new row holding both
+ */
+export function foldSupportRow(target, row) {
+    const merged = { ...emptyRow(), ...(target || {}) };
+    for (const [key, value] of Object.entries(row || {})) {
+        if (key === 'lowestHealthFraction') {
+            if (value !== null && Number.isFinite(value)) {
+                merged.lowestHealthFraction =
+                    merged.lowestHealthFraction === null ? value : Math.min(merged.lowestHealthFraction, value);
+            }
+        } else if (key === 'outOfMana') {
+            merged.outOfMana = Boolean(value);
+        } else if (key === 'castsByAbility') {
+            merged.castsByAbility = { ...merged.castsByAbility };
+            for (const [ability, casts] of Object.entries(value || {})) {
+                merged.castsByAbility[ability] = (merged.castsByAbility[ability] || 0) + casts;
+            }
+        } else if (typeof value === 'number') {
+            merged[key] = (merged[key] || 0) + value;
+        }
+    }
+    return merged;
+}
+
+/**
  * Fold one tick's `pMap` into the support tally.
  *
  * Mutates `state`, in the shape the rest of the trials feature already uses for

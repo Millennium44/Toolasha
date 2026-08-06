@@ -386,6 +386,28 @@ export function drawProfileCycler(body, capture = guildMemberSkills) {
 }
 
 /**
+ * Only the snapshots naming somebody on the roster, when a roster is known.
+ *
+ * The storage is guild-keyed now, but a record written before that shipped —
+ * or adopted from the character-only key — can still carry another guild's
+ * people: reported live, "Seen loadouts" listing Cream and ICMeow eighteen
+ * hours after the character left their guild. The roster is the test of who
+ * belongs; with no roster to test against, everything is kept rather than
+ * everything hidden.
+ *
+ * @param {Array<Object>} seen - Snapshots
+ * @param {string[]} memberNames - The current guild's members
+ * @returns {{kept: Array<Object>, hidden: number}} What the panel may show
+ */
+export function filterSeenToRoster(seen, memberNames) {
+    const roster = new Set((memberNames || []).map((name) => String(name || '').toLowerCase()).filter(Boolean));
+    if (!roster.size) return { kept: seen || [], hidden: 0 };
+
+    const kept = (seen || []).filter((player) => roster.has(String(player?.name || '').toLowerCase()));
+    return { kept, hidden: (seen || []).length - kept.length };
+}
+
+/**
  * The stat sheets that have been seen, with the date on every one of them.
  *
  * The only place a guild member's build is visible is the unit popup, and it is
@@ -395,10 +417,17 @@ export function drawProfileCycler(body, capture = guildMemberSkills) {
  * exactly what makes an undated sheet misleading.
  *
  * @param {HTMLElement} body - The panel body
- * @param {Array<Object>} [seen] - Snapshots, newest first; the capture's own by default
+ * @param {Array<Object>} [allSeen] - Snapshots, newest first; the capture's own by default
  * @param {number} [now] - Clock
+ * @param {string[]} [memberNames] - The current roster, for the guild filter
  */
-export function drawSeenLoadouts(body, seen = guildLoadoutCapture.seen(), now = Date.now()) {
+export function drawSeenLoadouts(
+    body,
+    allSeen = guildLoadoutCapture.seen(),
+    now = Date.now(),
+    memberNames = guildXPTracker.getMemberList().map((member) => member?.name || '')
+) {
+    const { kept: seen, hidden } = filterSeenToRoster(allSeen, memberNames);
     const card = panelCard(body, `Seen loadouts (${seen.length})`, ACCENT);
 
     if (!seen.length) {
@@ -406,6 +435,7 @@ export function drawSeenLoadouts(body, seen = guildLoadoutCapture.seen(), now = 
         card.appendChild(
             panelNote('Click a member’s icon in the guild In Progress view, or fight a trial beside them.')
         );
+        if (hidden) card.appendChild(panelNote(`${hidden} from outside this guild’s roster, not shown.`));
         return;
     }
 
@@ -423,11 +453,23 @@ export function drawSeenLoadouts(body, seen = guildLoadoutCapture.seen(), now = 
 
         card.appendChild(
             panelLine(
-                `${player.name}${player.level ? ` Lv.${player.level}` : ''}`,
+                // A captured combat level is a weighted average and arrives as
+                // floating point — "Lv.151.60000000000002" reached the screen —
+                // so one decimal is as much as it means
+                `${player.name}${player.level ? ` Lv.${Math.round(player.level * 10) / 10}` : ''}`,
                 describeLoadoutAge(player.at, now),
                 ROW_COLORS.gold,
                 `${headline || 'No stat rows in this reading.'}${abilities}\n` +
                     `A snapshot from when it was read (${player.source}) — not a live figure.`
+            )
+        );
+    }
+
+    if (hidden) {
+        card.appendChild(
+            panelNote(
+                `${hidden} sighting${hidden === 1 ? '' : 's'} from outside this guild’s roster, not shown — ` +
+                    'they stay stored under the guild they were seen in.'
             )
         );
     }

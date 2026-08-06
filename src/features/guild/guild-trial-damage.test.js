@@ -593,8 +593,10 @@ describe('the spectated trial fight', () => {
     test('damage taken and healing received fill from the player’s own health', () => {
         replay();
 
-        // 2612 → 2577 → 2612 → 2499 across the capture: 35 then 113 taken, 35 healed
-        const row = guildTrialDamage.breakdown().support.players.find((entry) => entry.index === '1');
+        // 2612 → 2577 → 2612 → 2499 across the capture: 35 then 113 taken, 35 healed.
+        // Rows are keyed by identity now — the placeholder, for a slot never
+        // named — because a raw index does not survive the per-tier slot re-deal
+        const row = guildTrialDamage.breakdown().support.players.find((entry) => entry.name === 'Player 2');
         expect(row.damageTaken).toBe(35 + 113);
         expect(row.healingReceived).toBe(35);
     });
@@ -603,7 +605,7 @@ describe('the spectated trial fight', () => {
         replay();
 
         const report = guildTrialDamage.breakdown();
-        for (const row of report.support.players) expect(row.index).not.toBe('0');
+        for (const row of report.support.players) expect(row.name).not.toBe('Player 1');
         // Its 618,000 health is a pool reading, not somebody's damage taken
         expect(report.support.totals.damageTaken).toBeLessThan(1000);
     });
@@ -621,7 +623,7 @@ describe('the spectated trial fight', () => {
         const report = guildTrialDamage.breakdown();
         expect(report.totalDamage).toBe(1_405);
         expect(report.players).toHaveLength(1);
-        expect(report.players[0].index).toBe('1');
+        expect(report.players[0].name).toBe('Player 2');
         expect(report.players[0].measured).toBe(true);
         // Still true, and still exported: no *player-side* counters were seen
         expect(report.splitFromCounters).toBe(false);
@@ -677,7 +679,7 @@ describe('the spectated trial fight', () => {
         game.wsHandlers[GUILD_BATTLE_MESSAGE](tick(3, 1923));
 
         const report = guildTrialDamage.breakdown();
-        const row = report.support.players.find((entry) => entry.index === '1');
+        const row = report.support.players.find((entry) => entry.name === 'Player 2');
         expect(row.healingReceived).toBe(0);
         expect(row.deaths).toBe(1);
     });
@@ -1013,6 +1015,15 @@ describe('the tier-opening message', () => {
         // anywhere but their counted slot and enforces one-name-one-unit, so
         // the next tick corrects the stored mislabel.
         game.ownName = 'MillenniumTest';
+        // A wave is under way…
+        game.wsHandlers[GUILD_BATTLE_MESSAGE]({
+            battleId: 7,
+            tier: 1,
+            pMap: { 0: { cHP: 3000, mHP: 3100 }, 2: { cHP: 2600, mHP: 2612, atkCounter: 4 } },
+            mMap: {},
+        });
+        // …and holds the poisoned state the old build wrote: the watcher's
+        // name on two slots at once
         guildTrialDamage.unitNames = {
             0: { name: 'MillenniumTest', source: 'portrait' },
             2: { name: 'MillenniumTest', source: 'vitals' },
@@ -1023,7 +1034,7 @@ describe('the tier-opening message', () => {
         game.wsHandlers[GUILD_BATTLE_MESSAGE]({
             battleId: 7,
             tier: 1,
-            pMap: { 0: { cHP: 3000, mHP: 3100 }, 2: { cHP: 2600, mHP: 2612, atkCounter: 4 } },
+            pMap: { 0: { cHP: 2990, mHP: 3100 }, 2: { cHP: 2590, mHP: 2612, atkCounter: 5 } },
             mMap: {},
         });
 
@@ -1169,9 +1180,106 @@ describe('only your own damage is measured', () => {
         vi.setSystemTime(at + 250);
         game.wsHandlers[GUILD_BATTLE_MESSAGE](swing(2, 2, 428_000));
 
-        const row = guildTrialDamage.breakdown().players.find((entry) => entry.index === '19');
+        const row = guildTrialDamage.breakdown().players.find((entry) => entry.name === 'TakoTsubo');
         expect(row.measured).toBe(true);
-        expect(row.name).toBe('TakoTsubo');
         expect(row.damage).toBe(1000);
+    });
+});
+
+describe('per-name history is immutable across wave boundaries', () => {
+    // The live regression: at "1 fight watched" NPD ranked with 156.2K; 32
+    // seconds and one tier rollover later NPD read 24.3K while Caicedo gained
+    // 166K — totals swapped between names, because the trial-long tally was
+    // index-keyed and `new_guild_battle` re-deals `players[]` per tier in an
+    // order that is not stable. Damage banked under a name must never move.
+    const at = new Date('2026-08-03T16:00:00Z').getTime();
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        vi.setSystemTime(at);
+        game.clientData = {};
+        game.loadouts = [];
+        game.ownName = null;
+        game.storedRoster = null;
+        guildTrialDamage.storedRoster = null;
+        guildTrialDamage.initialize();
+        guildTrialDamage.reset();
+        guildTrialDamage.setTrialNames(['Trial Chameleon']);
+    });
+
+    afterEach(() => {
+        guildTrialDamage.cleanup();
+        vi.useRealTimers();
+        document.body.innerHTML = '';
+    });
+
+    const roster = (tier, names) => ({
+        battleId: 9,
+        tier,
+        players: names.map((name, index) => ({ character: { id: index + 100, name } })),
+        monsters: [{ hrid: '/monsters/trial_chameleon', name: 'Trial Chameleon', combatDetails: {} }],
+    });
+    const tick = (tier, pMap, bossHp, bossDmg, offsetMs) => {
+        vi.setSystemTime(at + offsetMs);
+        game.wsHandlers[GUILD_BATTLE_MESSAGE]({
+            battleId: 9,
+            tier,
+            pMap,
+            mMap: { 0: { cHP: bossHp, mHP: 650_000, dmgCounter: bossDmg, critCounter: 0 } },
+        });
+    };
+    const totals = () => Object.fromEntries(guildTrialDamage.breakdown().players.map((row) => [row.name, row.damage]));
+
+    test('a tier rollover that re-deals the slots moves no banked damage between names', () => {
+        // Tier 3: Rick is slot 0, NPD slot 1
+        game.wsHandlers.new_guild_battle(roster(3, ['Rick', 'NPD']));
+        tick(3, { 0: { atkCounter: 1 }, 1: { atkCounter: 1 } }, 650_000, 0, 0);
+        tick(3, { 1: { atkCounter: 2 } }, 500_000, 1, 250); // NPD 150K
+        tick(3, { 0: { atkCounter: 2 } }, 400_000, 2, 500); // Rick 100K
+
+        const before = totals();
+        expect(before).toEqual({ NPD: 150_000, Rick: 100_000 });
+
+        // Tier 4: the same two people, the slots REVERSED
+        game.wsHandlers.new_guild_battle(roster(4, ['NPD', 'Rick']));
+        tick(4, { 0: { atkCounter: 5 }, 1: { atkCounter: 5 } }, 650_000, 0, 750);
+        tick(4, { 0: { atkCounter: 6 } }, 620_000, 1, 1000); // NPD (slot 0 now) 30K
+
+        const after = totals();
+        expect(after).toEqual({ NPD: 180_000, Rick: 100_000 });
+        // The invariant the screenshots broke: banked per-name damage only climbs
+        for (const [name, damage] of Object.entries(before)) {
+            expect(after[name] ?? 0).toBeGreaterThanOrEqual(damage);
+        }
+    });
+
+    test('the own-counter slot re-confirms per wave, never carried across a re-deal', () => {
+        game.wsHandlers.new_guild_battle(roster(3, ['Rick', 'NPD']));
+        tick(3, { 1: { atkCounter: 1 } }, 650_000, 0, 0);
+        tick(3, { 1: { atkCounter: 2 } }, 640_000, 1, 250);
+        expect(guildTrialDamage.breakdown().countedSlots).toEqual(['1']);
+
+        // The rollover clears the binding outright…
+        game.wsHandlers.new_guild_battle(roster(4, ['NPD', 'Rick']));
+        expect(guildTrialDamage.breakdown().countedSlots).toEqual([]);
+
+        // …and the new wave's counters re-confirm it at the new slot
+        tick(4, { 0: { atkCounter: 7 } }, 650_000, 0, 500);
+        tick(4, { 0: { atkCounter: 8 } }, 640_000, 1, 750);
+        expect(guildTrialDamage.breakdown().countedSlots).toEqual(['0']);
+    });
+
+    test('support figures bank by name across the same boundary', () => {
+        game.wsHandlers.new_guild_battle(roster(3, ['Rick', 'NPD']));
+        tick(3, { 1: { cHP: 2000, mHP: 2600 } }, 650_000, 0, 0);
+        tick(3, { 1: { cHP: 1400, mHP: 2600 } }, 650_000, 0, 250); // NPD takes 600
+
+        game.wsHandlers.new_guild_battle(roster(4, ['NPD', 'Rick']));
+        tick(4, { 0: { cHP: 2600, mHP: 2600 } }, 650_000, 0, 500);
+        tick(4, { 0: { cHP: 2350, mHP: 2600 } }, 650_000, 0, 750); // NPD takes 250 more
+
+        const rows = guildTrialDamage.breakdown().support.players;
+        expect(rows.find((row) => row.name === 'NPD').damageTaken).toBe(850);
+        expect(rows.find((row) => row.name === 'Rick')).toBeUndefined();
     });
 });

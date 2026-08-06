@@ -116,15 +116,23 @@ export const STAT_ROWS = [
 /**
  * Storage key for a character's record of what it has seen.
  *
- * Keyed by the *viewing* character rather than by guild, following
- * `guildShrineLevels`: an alt in another guild has seen different people, and a
- * shared key would show one guild's builds under the other's roster.
+ * Keyed by the *viewing* character AND their guild, once the guild is known.
+ * Per character because an alt in another guild has seen different people; per
+ * guild because one character *changes* guild — reported live: "Seen loadouts"
+ * still listed the previous guild's Cream and ICMeow beside the new guild's
+ * fighters, eighteen hours after the switch. Each guild's sightings keep their
+ * own key, so nothing is deleted on a switch and nothing bleeds across one.
+ * Before the guild's name has arrived the character-only key stands, exactly
+ * as the trial record's `default` key does, and the capture adopts onto the
+ * guild key when the name lands.
  *
  * @param {string|number|null} characterId - Viewing character id
+ * @param {string|null} [guildName] - The character's guild, when known
  * @returns {string} Storage key
  */
-export function guildLoadoutsStorageKey(characterId) {
-    return `${LOADOUT_KEY_PREFIX}_${characterId ?? 'default'}`;
+export function guildLoadoutsStorageKey(characterId, guildName = null) {
+    const base = `${LOADOUT_KEY_PREFIX}_${characterId ?? 'default'}`;
+    return guildName ? `${base}_${guildName}` : base;
 }
 
 /**
@@ -391,11 +399,12 @@ export function describeLoadoutAge(at, now = Date.now()) {
 /**
  * Read a character's record of the loadouts it has seen.
  * @param {string|number|null} characterId - Viewing character id
+ * @param {string|null} [guildName] - The character's guild, when known
  * @returns {Promise<Object>} The record, or an empty one
  */
-export async function loadLoadouts(characterId) {
+export async function loadLoadouts(characterId, guildName = null) {
     try {
-        const record = await storage.get(guildLoadoutsStorageKey(characterId), LOADOUT_STORE, null);
+        const record = await storage.get(guildLoadoutsStorageKey(characterId, guildName), LOADOUT_STORE, null);
         if (!record || typeof record !== 'object') return { players: {}, updatedAt: 0 };
         return { players: record.players || {}, updatedAt: record.updatedAt || 0 };
     } catch (error) {
@@ -408,12 +417,13 @@ export async function loadLoadouts(characterId) {
  * Write a character's record.
  * @param {string|number|null} characterId - Viewing character id
  * @param {Object} record - The record
+ * @param {string|null} [guildName] - The character's guild, when known
  * @returns {Promise<boolean>} True when the write was queued
  */
-export async function saveLoadouts(characterId, record) {
+export async function saveLoadouts(characterId, record, guildName = null) {
     try {
         if (!Object.keys(record?.players || {}).length) return false;
-        await storage.set(guildLoadoutsStorageKey(characterId), record, LOADOUT_STORE);
+        await storage.set(guildLoadoutsStorageKey(characterId, guildName), record, LOADOUT_STORE);
         return true;
     } catch (error) {
         console.error('[GuildLoadouts] Failed to save seen loadouts:', error);

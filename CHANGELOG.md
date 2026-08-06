@@ -6,6 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Damage totals stop swapping bodies at tier rollovers
+
+- **Per-player totals are banked by name at every wave boundary**: the trial-long tallies were keyed by actor slot, and the game re-deals the slots at every tier — so at a rollover, NPD's 156K could land under whoever inherited their index while they showed 24K (observed live). Each wave's damage, deaths, and support figures now fold into an immutable by-name bank before anything re-deals; live maps are per-wave only, attribution baselines reset with them, and the own-unit binding re-confirms by counters every wave. A never-named slot banks under its placeholder — an unknown then is an unknown forever, never someone else's credit. Regression test pins two waves with reversed slot orderings to exact, monotonically non-decreasing per-name totals.
+- **Loadout sightings are guild-scoped**: switching a character's guild no longer haunts the new roster with the old guild's people — each guild's sightings live under their own key (nothing is deleted on a switch), and the "Seen loadouts" panel filters to the current roster with an honest count of hidden outsiders.
+- **Levels stop printing floating-point tails**: "Lv.151.60000000000002" renders as "Lv.151.6".
+- **Narrow DPS rows keep a readable name**: the per-player value drops its unit (the header carries it), and the name is guaranteed at least five characters even in the 108-pixel cell.
+
 ### The In Progress tab stops trusting stale answers — and combat trials learn their tier
 
 - **A stated tier is only believed for the pool it was stated with**: the live view once showed "Banked 8 tiers / Next tier T10" against a bar only T15 produces, because a socket-stated tier from hours earlier was persisted and never invalidated. Stated tiers now carry the bar target they were stated for and die the moment the bar moves on; among the surviving rungs the largest wins, since tiers only climb — the badge and socket can lag but never lead the bar in front of the player.

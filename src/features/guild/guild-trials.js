@@ -1247,7 +1247,11 @@ export function renderTrialPlayers(breakdown) {
 
     for (const player of breakdown.players) {
         const share = Number.isFinite(player.share) ? `${player.share.toFixed(0)}%` : '—';
-        const dps = player.dps === null ? 'measuring…' : `${num(player.dps)} dmg/s`;
+        // No unit on the figure: the header names what this list is, the
+        // tooltip has it in full, and in a 108px fight-view cell every saved
+        // pixel is name — "B… 1.5K dmg/s · 36%" was the reported result of
+        // spending them on a unit
+        const dps = player.dps === null ? 'measuring…' : `${num(player.dps)}/s`;
         const deaths = player.deaths > 0 ? ` · ${player.deaths}✝` : '';
 
         rows.push(
@@ -1291,7 +1295,7 @@ function playerRow(name, value, color, title) {
     return (
         `<div style="display:flex; justify-content:space-between; align-items:baseline; gap:4px; ` +
         `font-size:10px;" title="${full.replace(/"/g, '&quot;')}">` +
-        `<span style="color:${DIM}; flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; ` +
+        `<span style="color:${DIM}; flex:1 1 auto; min-width:5ch; overflow:hidden; text-overflow:ellipsis; ` +
         `white-space:nowrap;">${name}</span>` +
         `<span style="color:${color}; font-weight:600; text-align:right; white-space:nowrap; ` +
         `flex:0 0 auto;">${value}</span></div>`
@@ -1666,6 +1670,7 @@ class GuildTrials {
             guildTrialDamage.reset?.();
             guildTrialRecorder.forget?.();
             guildTrialRecorder.setGuildName?.(null);
+            guildLoadoutCapture.setGuildName?.(null)?.catch?.(() => {});
             guildTrialAlerts.reset?.();
             guildMemberSkills.forget?.();
             this.phase = null;
@@ -1764,6 +1769,7 @@ class GuildTrials {
             this.guildName = name;
             guildTrialRecorder.setGuildName(name);
             guildMemberSkills.setGuildName(name).catch(() => {});
+            guildLoadoutCapture.setGuildName?.(name)?.catch?.(() => {});
             await saveTrialRecord(name, this.record, this.characterId, { guildId: this._guildId() });
         } catch (error) {
             console.error('[GuildTrials] Moving the record onto the guild key failed:', error);

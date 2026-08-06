@@ -3542,6 +3542,17 @@ describe('renderTrialPlayers', () => {
         expect(html).toContain('3 fights');
     });
 
+    test('the row spends its pixels on the name, not on a unit', () => {
+        // In a 108px fight-view cell "B… 1.5K dmg/s · 36%" was the reported
+        // result of spending them on a unit the header already implies. The
+        // name is guaranteed a readable minimum; the tooltip has it all.
+        const html = renderTrialPlayers(breakdown).join('');
+
+        expect(html).toContain('5.0K/s');
+        expect(html).not.toContain('dmg/s');
+        expect(html).toContain('min-width:5ch');
+    });
+
     test('a long name shares its row with its figures instead of pushing them off it', () => {
         // Reported from a fight-view screenshot: "Orven 273 dmg/s · 38%" held
         // one line while "MillenniumTest" dropped its figures onto a second —
