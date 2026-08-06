@@ -41,6 +41,11 @@ import skillingOptimizer from '../features/skilling-optimizer/skilling-optimizer
 import goalPlanner from '../features/planner/goal-planner-ui.js';
 // Side-effect import: registers the Next Goal Step overlay row
 import '../features/planner/goal-planner-row.js';
+// The market-volume measurement behind the planner's liquidity bound. Exported
+// because the shared display cap (utils/liquidity-cap.js) reaches for this
+// initialized copy at runtime — its volume cache must be the same one the goal
+// planner fills, not a per-bundle duplicate asking the server twice.
+import marketLiquidity from '../features/planner/market-liquidity.js';
 
 // Export to global namespace
 const toolashaRoot = window.Toolasha || {};
@@ -79,6 +84,7 @@ toolashaRoot.Actions = {
     drinkTimer,
     skillingOptimizer,
     goalPlanner,
+    marketLiquidity,
 };
 
 // Console-driven debug tools, kept out of the feature namespaces because

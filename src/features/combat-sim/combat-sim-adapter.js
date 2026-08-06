@@ -1158,7 +1158,9 @@ export function calculateSimRevenue(simResult, gameData, playerHrid, hours) {
         revenuePerHour += perHour;
         if (unitValue > 0) {
             const itemName = dataManager.getItemDetails(itemHrid)?.name || itemHrid.split('/').pop();
-            dropEntries.push({ name: itemName, countPerHour: total / hours, unitValue, totalValue: perHour });
+            // itemHrid rides along so display surfaces can bound the quoted
+            // pace by the item's observed trade volume
+            dropEntries.push({ itemHrid, name: itemName, countPerHour: total / hours, unitValue, totalValue: perHour });
         }
     }
     dropEntries.sort((a, b) => b.totalValue - a.totalValue);

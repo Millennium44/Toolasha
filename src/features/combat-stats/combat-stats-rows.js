@@ -35,7 +35,15 @@ import { getItemPrices } from '../../utils/market-data.js';
 import { forecastAll, costPerDaySides, partyOutlook, drinkRatePerDay } from '../../utils/consumable-forecast.js';
 import { currentTarget, loadTarget } from '../../utils/consumable-target.js';
 import combatStatsDataCollector from './combat-stats-data-collector.js';
-import { calculatePlayerStats } from './combat-stats-calculator.js';
+import { calculatePlayerStats, describeLuckAdjustment } from './combat-stats-calculator.js';
+import {
+    combatProfitView,
+    profitPanel,
+    combatLevelPanel,
+    deathsPanel,
+    partyLootPanel,
+    consumablesPanel,
+} from '../../utils/bundle-bridge.js';
 
 /** Long enough that a busy loot map is not repriced every tick */
 const CACHE_MS = 4000;
@@ -90,6 +98,22 @@ function currentStats() {
     return partyStats().find((player) => player.isCurrentPlayer) || null;
 }
 
+/**
+ * Whether a dungeon run has yet to pay anything out.
+ *
+ * Keys are charged when a chest drops and the revenue arrives the same way, so
+ * until the first chest a dungeon is pure consumable burn — a real cost, but
+ * not a verdict, and painting it red for the first minutes of every run taught
+ * people to distrust the figure. `keyBreakdown` filling is the same signal the
+ * key costs bill by, so the two cannot disagree about what "no chest yet" means.
+ *
+ * @param {Object} stats - From `calculatePlayerStats`
+ * @returns {boolean}
+ */
+export function warmingUp(stats) {
+    return Boolean(stats?.isDungeonRun) && !(stats?.keyBreakdown || []).length;
+}
+
 registerRow({
     key: 'combatRevenue',
     empty: 'No loot tracked yet',
@@ -107,7 +131,7 @@ registerRow({
         // somebody reading Patient there is not thinking in bid revenue, and a
         // tile that disagrees with the panel behind it is a tile nobody trusts.
         // The panel lives in the UI bundle, so it is reached through the global.
-        const view = window.Toolasha?.UI?.combatProfitView?.(stats) || {
+        const view = combatProfitView()?.(stats) || {
             revenue: stats.dailyIncome.bid,
             cost: stats.dailyConsumableCosts + stats.dailyKeyCosts,
             tax: 0,
@@ -135,21 +159,32 @@ registerRow({
                 { text: formatLargeNumber(Math.round(view.cost), 1), color: ROW_COLORS.bad }
             );
         }
+        // A dungeon that has not paid out yet is dimmed rather than damned:
+        // the burn is real, the verdict is not in until a chest drops
+        const warming = warmingUp(stats);
         segments.push(
             { text: '=', color: ROW_COLORS.dim },
             {
                 text: `${formatLargeNumber(Math.round(view.profit), 1)}/day`,
-                color: view.profit >= 0 ? ROW_COLORS.gold : ROW_COLORS.bad,
+                color: view.profit >= 0 ? ROW_COLORS.gold : warming ? ROW_COLORS.dim : ROW_COLORS.bad,
                 bold: true,
             }
         );
+        if (warming) segments.push({ text: '· no chest yet', color: ROW_COLORS.dim });
 
         row(container, segments);
+        // An adjusted chest EV inside the revenue is marked, never silent
+        const luckNotes = (stats.chestLuckAdjustments || []).map(describeLuckAdjustment);
         container.title =
+            (warming
+                ? 'Warming up — no chest has dropped yet. Keys are charged when chests drop and the revenue ' +
+                  'arrives the same way, so a dungeon run reads as a loss until it pays out.\n'
+                : '') +
             `${view.title}.\nDouble-click for the other readings, costs and the MooPass tax.` +
-            (view.tax ? '\nThe middle figure is the weekly MooPass, per day.' : '');
+            (view.tax ? '\nThe middle figure is the weekly MooPass, per day.' : '') +
+            (luckNotes.length ? `\n${luckNotes.join('\n')}` : '');
     },
-    onOpen: () => window.Toolasha?.UI?.profitPanel?.toggle(),
+    onOpen: () => profitPanel()?.toggle(),
 });
 
 registerRow({
@@ -171,7 +206,7 @@ registerRow({
     // The panel lives in the UI bundle, so it is reached through the global
     // rather than imported — a direct import here would put a second copy of it
     // in this bundle, with its own session clock
-    onOpen: () => window.Toolasha?.UI?.combatLevelPanel?.toggle(),
+    onOpen: () => combatLevelPanel()?.toggle(),
 });
 
 registerRow({
@@ -192,7 +227,7 @@ registerRow({
             },
         ]);
     },
-    onOpen: () => window.Toolasha?.UI?.deathsPanel?.toggle(),
+    onOpen: () => deathsPanel()?.toggle(),
 });
 
 /**
@@ -228,7 +263,7 @@ registerRow({
     },
     // The session's own loot list, and the picker for earlier sessions — the
     // question a session timer raises is what the session produced
-    onOpen: () => window.Toolasha?.UI?.partyLootPanel?.toggle(),
+    onOpen: () => partyLootPanel()?.toggle(),
 });
 
 /**
@@ -279,12 +314,19 @@ registerRow({
                 ];
             })
         );
+
+        // The banked figures above price unopened chests at EV; when that EV is
+        // scaled by measured luck the tile says so rather than staying silent
+        const luckNotes = [
+            ...new Set(party.flatMap((stats) => (stats.chestLuckAdjustments || []).map(describeLuckAdjustment))),
+        ];
+        container.title = luckNotes.join('\n');
     },
     // Party Loot rather than the Profit panel: this tile is a coin figure per
     // character, and the question it raises is *what* each of them picked up.
     // The Profit panel answers a different one — which pricing, and what the
     // costs were — and is still behind Combat Revenue.
-    onOpen: () => window.Toolasha?.UI?.partyLootPanel?.toggle(),
+    onOpen: () => partyLootPanel()?.toggle(),
 });
 
 /**
@@ -392,7 +434,7 @@ registerRow({
     },
     // Looked up at click time, not imported: the panel lives in the UI bundle,
     // which loads after this one
-    onOpen: () => window.Toolasha?.UI?.consumablesPanel?.toggle(),
+    onOpen: () => consumablesPanel()?.toggle(),
 });
 
 /**

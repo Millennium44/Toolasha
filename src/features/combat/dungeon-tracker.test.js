@@ -720,6 +720,54 @@ describe('routing chat messages', () => {
     });
 });
 
+describe('a canceled battle start', () => {
+    test('the ended message disarms a run no wave of which ever completed', async () => {
+        // The phantom 15:47 "run": a failed ready-check posts Key counts and
+        // then Battle ended a second later. The canceled start must not stay
+        // armed as a run's beginning, or the next key count — minutes of
+        // party-forming later — reads as its completion.
+        tracker.onActionsUpdated({ endCharacterActions: [{ actionHrid: DEN, difficultyTier: 0, isDone: false }] });
+        await tracker.onNewBattle({ wave: 0, battleId: 9, combatStartTime: '2026-08-04T10:26:30.000Z' });
+        tracker.onChatMessage(keyCountsData('2026-08-04T10:26:30.000Z', '[Aster - 95] [Player11 - 42]'));
+        await flush();
+        expect(tracker.isTracking).toBe(true);
+
+        tracker.onChatMessage({
+            message: {
+                chan: '/chat_channel_types/party',
+                isSystemMessage: true,
+                m: 'systemChatMessage.partyBattleEnded',
+                t: '2026-08-04T10:26:31.000Z',
+            },
+        });
+        await flush();
+
+        expect(tracker.isTracking).toBe(false);
+        expect(tracker.firstKeyCountTimestamp).toBeNull();
+
+        // The next key count, however much later, completes nothing
+        tracker.onChatMessage(keyCountsData('2026-08-04T10:42:17.000Z', '[Aster - 95] [cove - 42]'));
+        await flush();
+        expect(mockStorage.storeFor('settings').get(`dungeonTracker_teamRuns_${game.characterId}`)).toBeUndefined();
+    });
+
+    test('a fight with waves already banked is left to the action feed', async () => {
+        await beTracking({ wavesCompleted: 3 });
+
+        tracker.onChatMessage({
+            message: {
+                chan: '/chat_channel_types/party',
+                isSystemMessage: true,
+                m: 'systemChatMessage.partyBattleEnded',
+                t: '2026-08-04T10:26:31.000Z',
+            },
+        });
+        await flush();
+
+        expect(tracker.isTracking).toBe(true);
+    });
+});
+
 describe('finishing a run', () => {
     test('a second key count completes it, and the server’s clock is the duration', async () => {
         beTracking({

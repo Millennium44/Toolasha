@@ -21,6 +21,7 @@
 
 import dataManager from '../core/data-manager.js';
 import bundledLoadoutSnapshot from '../features/combat/loadout-snapshot.js';
+import { loadoutSnapshot } from './bundle-bridge.js';
 
 /**
  * The loadout store that actually has the loadouts in it.
@@ -35,7 +36,7 @@ import bundledLoadoutSnapshot from '../features/combat/loadout-snapshot.js';
  * @returns {Object} The snapshot store
  */
 function loadouts() {
-    return (typeof window !== 'undefined' && window.Toolasha?.Combat?.loadoutSnapshot) || bundledLoadoutSnapshot;
+    return loadoutSnapshot() || bundledLoadoutSnapshot;
 }
 
 /**

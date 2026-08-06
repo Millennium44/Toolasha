@@ -268,11 +268,15 @@ export function foldSupportTick(state, pMap, actions = {}, detailMap, at = null)
  * @returns {{players: Array<Object>, totals: Object, unattributedHealing: number,
  *   abilityKindsKnown: boolean}} Rows, most damage taken first
  */
-export function summariseSupport(state, names = {}) {
+export function summariseSupport(state, names = {}, deaths = {}) {
     const players = Object.entries(state?.players || {}).map(([index, row]) => ({
         index,
         name: names[index] || `Player ${Number(index) + 1}`,
         ...row,
+        // Deaths ride along here because on a stream with no attack counters
+        // the damage table is empty and this table is the only one a death
+        // could be seen in
+        deaths: deaths[index] || 0,
         castsByAbility: { ...row.castsByAbility },
     }));
 

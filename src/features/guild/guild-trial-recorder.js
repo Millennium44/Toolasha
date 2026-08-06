@@ -42,6 +42,7 @@ import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import guildTrialDamage from './guild-trial-damage.js';
+import guildTrialSkilling from './guild-trial-skilling.js';
 import { loadLoadouts } from './guild-loadouts.js';
 import { supportCoverage } from './guild-trial-support.js';
 import guildMemberSkills from './guild-member-skills.js';
@@ -62,6 +63,19 @@ export const IDLE_STOP_MS = 10 * 60_000;
 
 /** An hour of snapshots at one every fifteen seconds is 240; this is the ceiling */
 export const MAX_SNAPSHOTS = 400;
+
+/**
+ * Longest a session somebody pressed Record for is left running.
+ *
+ * Not a rule about trials — a cycle is two of them and takes a couple of hours —
+ * but a backstop against a session left open for a week by somebody who forgot.
+ * The user's hand is what stops a manual session; this is only there so that
+ * "forever" is not a state the recorder can be in.
+ */
+export const MANUAL_MAX_MS = 6 * 60 * 60 * 1000;
+
+/** A silence longer than this, while recording, is noted as a gap in the data */
+export const GAP_AFTER_MS = 3 * SNAPSHOT_MS;
 
 /**
  * Storage key for a guild's most recent session.
@@ -238,6 +252,15 @@ class GuildTrialRecorder {
      */
     noteActivity(kind, at = Date.now()) {
         this.lastActivityAt = at;
+
+        // Something is happening, so whatever the panel last said about the
+        // cycle is out of date. Cleared rather than set to `live`: this module
+        // does not read the page and will not claim to. Leaving a stale
+        // `completed` here is what would make a session start and be stopped by
+        // the watcher on the same tick, forever — which is exactly the gap
+        // between a skilling hour ending and the combat hour beginning.
+        this.phase = null;
+
         if (this.recording) return;
         if (!config.getSetting('guildTrialAutoRecord', true)) return;
         this.start(kind, at);
@@ -251,6 +274,14 @@ class GuildTrialRecorder {
      * which is the bug this exists for: a session was found running on a guild
      * whose weekly trials were not on at all, because "no status seen" was
      * being treated the same as "a trial is live".
+     *
+     * A cycle is two trials — a skilling hour and then a combat one — and the
+     * lull between them reads as `completed` and then `scheduled`. That closes
+     * the skilling session, which is right, and it must not stop the *next* one
+     * from arming: `noteActivity` clears the phase the moment the combat hour
+     * produces a reading or a fight, so the recorder rolls over into it without
+     * anybody pressing anything. A session somebody started by hand is not
+     * closed at all and simply spans both.
      *
      * @param {string|null} phase - `scheduled`, `live`, `completed` or null
      * @param {number} [at] - Clock
@@ -278,16 +309,30 @@ class GuildTrialRecorder {
             this._snapshot(now);
 
             const automatic = this.session.startedBy !== 'button';
-            const ranLong = now - this.session.startedAt > TRIAL_ACTIVE_MS;
-            const wentQuiet = now - this.lastActivityAt > IDLE_STOP_MS;
-            // Neither the panel nor the battle feed says a trial is happening,
-            // and nobody pressed Record. Stopped now rather than in ten minutes
+
+            // Silence is not evidence of anything. Readings only arrive while the
+            // guild panel is open, so a player who closes it to go and forage
+            // starves the recorder — and the ten-minute rule then stopped the
+            // session they had started by hand, mid-trial, which is what was
+            // reported. A gap in the data is a gap in the data; it is written
+            // down rather than acted on.
+            const quietFor = now - this.lastActivityAt;
+            if (quietFor > GAP_AFTER_MS) this._noteGap(now, quietFor);
+
+            // A session somebody pressed Record for stops when they say so. The
+            // rules below are for the ones that armed themselves.
+            const ranLong = now - this.session.startedAt > (automatic ? TRIAL_ACTIVE_MS : MANUAL_MAX_MS);
+            // …and even then, not while the panel says a trial is running: an
+            // open trial with a shut panel is still an open trial
+            const wentQuiet = automatic && this.phase !== 'live' && quietFor > IDLE_STOP_MS;
             const notRunning = automatic && !breakdown?.active && this.phase && this.phase !== 'live';
 
             if (ranLong || wentQuiet || notRunning) {
                 this.stop(
                     ranLong
-                        ? 'the hour a trial runs for elapsed'
+                        ? automatic
+                            ? 'the hour a trial runs for elapsed'
+                            : 'left recording for six hours'
                         : notRunning
                           ? `the trial is ${this.phase}`
                           : 'nothing seen',
@@ -297,6 +342,33 @@ class GuildTrialRecorder {
         } catch (error) {
             console.error('[GuildTrialRecorder] Watching the trial failed:', error);
         }
+    }
+
+    /**
+     * Write down that the data stopped arriving for a while.
+     *
+     * Expected rather than exceptional: nothing reaches this recorder while the
+     * guild panel is shut, so a session that spans somebody going off to do
+     * something else *will* have holes in it. A reader of the export should be
+     * able to see where they are rather than reading a flat stretch as a trial
+     * where nothing happened.
+     *
+     * @param {number} at - Clock
+     * @param {number} quietFor - How long the silence has lasted
+     */
+    _noteGap(at, quietFor) {
+        if (!this.session) return;
+        const gaps = (this.session.gaps ||= []);
+        const last = gaps[gaps.length - 1];
+
+        // One gap, extended, rather than one per tick of the same silence
+        if (last && at - last.to <= SNAPSHOT_MS * 2) {
+            last.to = at;
+            last.ms = last.to - last.from;
+            return;
+        }
+        gaps.push({ from: at - quietFor, to: at, ms: quietFor });
+        if (gaps.length > 50) gaps.shift();
     }
 
     /**
@@ -382,6 +454,10 @@ export async function buildTrialExport({ guildName = null } = {}) {
         session,
         coverage: supportCoverage(),
         memberSkills: guildMemberSkills.all?.() ?? {},
+        // What the socket said about the skilling half — the pool, the tier, the
+        // participants and the per-tier personal figures, none of which needed a
+        // tab to be open
+        trialSkilling: guildTrialSkilling.snapshot?.() ?? null,
     };
 }
 

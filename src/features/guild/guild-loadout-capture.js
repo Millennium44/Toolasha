@@ -39,8 +39,10 @@ import {
     extractLoadout,
     extractPartyLoadouts,
     foldLoadout,
+    isMonsterUnit,
     loadLoadouts,
     loadoutList,
+    purgeMonsterLoadouts,
     saveLoadouts,
 } from './guild-loadouts.js';
 
@@ -125,6 +127,11 @@ export function readUnitPopup(root, at = Date.now()) {
     }
     if (rows.length < MIN_POPUP_ROWS) return null;
 
+    // The boss's popup has exactly this shape — "Trial Chameleon - Lv.110" over
+    // a stat sheet — and was scraped into the roster as a member. A monster is
+    // not a loadout, whichever way it arrived
+    if (isMonsterUnit({ name })) return null;
+
     return { name, characterId: null, level, rows, abilities: [], stats: {}, source: 'popup', at };
 }
 
@@ -159,6 +166,18 @@ class GuildLoadoutCapture {
 
         this.characterId = dataManager.getCurrentCharacterId?.() ?? null;
         this.record = await loadLoadouts(this.characterId);
+
+        // Self-heal on the way in. Clicking the boss in a trial's fight view
+        // fetched its sheet exactly as clicking a member does, and it was filed
+        // under the roster — so "Trial Chameleon Lv.110" is already on disk for
+        // anybody who opened one before this shipped, and would otherwise be
+        // exported and shared out in the estimated damage split forever
+        const cleaned = purgeMonsterLoadouts(this.record);
+        if (cleaned.purged.length) {
+            console.warn('[GuildLoadoutCapture] Dropping stored monster sheets:', cleaned.purged.join(', '));
+            this.record = cleaned.record;
+            await saveLoadouts(this.characterId, this.record);
+        }
 
         this.onUnitFetched = (message) => this._onUnitFetched(message);
         this.onNewBattle = (message) => this._onNewBattle(message);

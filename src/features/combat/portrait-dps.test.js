@@ -11,14 +11,32 @@
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
-const opts = vi.hoisted(() => ({ position: 'above', players: [], fight: { players: {}, enemies: {} } }));
+const opts = vi.hoisted(() => ({
+    position: 'above',
+    players: [],
+    fight: { players: {}, enemies: {} },
+    taken: [],
+    battleTaken: {},
+    mana: {},
+    settings: {},
+}));
 
 vi.mock('../../core/config.js', () => ({
-    default: { getSetting: () => true, getSettingValue: () => opts.position },
+    default: {
+        // Every checkbox on unless a test says otherwise — the optional lines
+        // are what most of these tests are about
+        getSetting: (key) => opts.settings[key] ?? true,
+        getSettingValue: () => opts.position,
+    },
 }));
 vi.mock('./damage-tracker.js', () => ({
     damageBreakdown: () => ({ players: opts.players }),
     battleBreakdown: () => opts.fight,
+    manaSamples: () => opts.mana,
+}));
+vi.mock('./damage-taken-tracker.js', () => ({
+    takenBreakdown: () => ({ players: opts.taken }),
+    battleTakenBreakdown: () => ({ seconds: 0, enemies: opts.battleTaken }),
 }));
 vi.mock('../../utils/timer-registry.js', () => ({
     createTimerRegistry: () => ({ registerInterval: () => {}, clearAll: () => {} }),
@@ -31,6 +49,19 @@ const {
     enemyMeterText,
     default: portraitDps,
 } = await import('./portrait-dps.js');
+
+beforeEach(() => {
+    opts.position = 'above';
+    opts.players = [];
+    opts.fight = { players: {}, enemies: {} };
+    opts.taken = [];
+    opts.battleTaken = {};
+    opts.mana = {};
+    opts.settings = {};
+});
+
+/** A line's text, whether it is a bare string or carries its own colour */
+const lineText = (line) => (typeof line === 'string' ? line : line.text);
 
 /** A portrait tile as the game builds it, hashed class names and all */
 const portrait = (name) => {
@@ -94,12 +125,16 @@ describe('pairing portraits with the tally', () => {
 });
 
 describe('what a meter says', () => {
-    test('the run alone is one line', () => {
+    test('the run alone still reserves the fight line, dashed', () => {
+        // Two lines whether or not this player has acted this fight: a meter
+        // that grows a line when they do gives five portraits three different
+        // heights, and shifts them all again at every fight boundary
         const meter = meterText({ name: 'A', damage: 98000, dps: 239.4 });
 
-        expect(meter.lines).toHaveLength(1);
-        expect(meter.lines[0]).toContain('239');
-        expect(meter.lines[0]).toContain('total');
+        expect(meter.lines).toHaveLength(2);
+        expect(meter.lines[0]).toBe('— cur');
+        expect(meter.lines[1]).toContain('239');
+        expect(meter.lines[1]).toContain('total');
     });
 
     test('with a fight in progress it is two, this fight first', () => {
@@ -116,8 +151,8 @@ describe('what a meter says', () => {
     test('too early for a rate reads as no rate, not as zero', () => {
         const meter = meterText({ name: 'A', damage: 120, dps: null });
 
-        expect(meter.lines[0]).toContain('—');
-        expect(meter.lines[0]).not.toContain('0 DPS');
+        expect(meter.lines[1]).toContain('—');
+        expect(meter.lines[1]).not.toContain('0 DPS');
         expect(meter.title).toContain('not yet long enough');
     });
 });
@@ -232,5 +267,196 @@ describe('drawing on the monster tiles', () => {
         portraitDps.initialize();
 
         expect(tiles[1].querySelector('[data-toolasha-portrait-dps]')).toBeNull();
+    });
+});
+
+describe('the optional player lines', () => {
+    const extras = (overrides = {}) => ({
+        showSustain: true,
+        taken: null,
+        showAccuracy: true,
+        showMana: true,
+        manaRunway: null,
+        ...overrides,
+    });
+
+    test('every player renders the same lines, earned or dashed', () => {
+        // The invariant the meters live by: a line one player has earned and
+        // another has not still renders on both, as figure and dash, so five
+        // portraits keep one height
+        const earned = meterText(
+            { name: 'A', damage: 98000, dps: 239, hits: 47, misses: 3, crits: 15 },
+            { damage: 1900, dps: 1052 },
+            extras({ taken: { dps: 220, hps: 185 }, manaRunway: 40 })
+        );
+        const fresh = meterText({ name: 'B', damage: 0, dps: null, hits: 0, misses: 0, crits: 0 }, null, extras());
+
+        expect(earned.lines).toHaveLength(5);
+        expect(fresh.lines).toHaveLength(5);
+        expect(earned.lines.map(lineText)).toEqual([
+            expect.stringContaining('cur'),
+            expect.stringContaining('total'),
+            'taken 220/s · net −35/s',
+            '94% hit · 32% crit',
+            'mana ~40s',
+        ]);
+        expect(fresh.lines.map(lineText)).toEqual([
+            '— cur',
+            expect.stringContaining('total'),
+            '— taken',
+            '— hit',
+            '— mana',
+        ]);
+    });
+
+    test('a negative net is red and a positive one is not', () => {
+        const losing = meterText({ name: 'A', damage: 0 }, null, extras({ taken: { dps: 220, hps: 185 } }));
+        const holding = meterText({ name: 'A', damage: 0 }, null, extras({ taken: { dps: 220, hps: 260 } }));
+
+        expect(losing.lines[2].color).toBe('#f87171');
+        expect(holding.lines[2].color).not.toBe('#f87171');
+    });
+
+    test('a comfortable mana runway dashes rather than reassures', () => {
+        // The line is a warning; "mana ~4:10" would bury the readings that matter
+        const meter = meterText({ name: 'A', damage: 0 }, null, extras({ manaRunway: 250 }));
+        expect(lineText(meter.lines[4])).toBe('— mana');
+    });
+
+    test('too few swings is a dash, not a rate', () => {
+        const meter = meterText({ name: 'A', damage: 0, hits: 5, misses: 1, crits: 2 }, null, extras());
+        expect(lineText(meter.lines[3])).toBe('— hit');
+    });
+
+    test('with everything off the meter is the two lines it always was', () => {
+        const meter = meterText({ name: 'A', damage: 98000, dps: 239 });
+        expect(meter.lines).toHaveLength(2);
+    });
+});
+
+describe('the optional enemy lines', () => {
+    const extras = (overrides = {}) => ({
+        showTimeToKill: true,
+        showWaveClear: true,
+        waveSeconds: null,
+        showOutgoing: true,
+        outgoingDps: null,
+        showEnrage: true,
+        now: 0,
+        ...overrides,
+    });
+
+    test('every enemy renders the same lines, earned or dashed', () => {
+        const boss = enemyMeterText(
+            { name: 'Veyes', damage: 987, dps: 100, hp: 800, enrageAt: 102_000 },
+            extras({ waveSeconds: 19, outgoingDps: 210 })
+        );
+        const untouched = enemyMeterText({ name: 'Eye', damage: 0, dps: null, hp: null, enrageAt: null }, extras());
+
+        expect(boss.lines).toHaveLength(5);
+        expect(untouched.lines).toHaveLength(5);
+        expect(boss.lines.map(lineText)).toEqual(['100/s', 'dead ~8s', 'wave ~19s', 'hits for 210/s', 'enrage 1:42']);
+        expect(untouched.lines.map(lineText)).toEqual(['—', '— dead', '— wave', '— hits', '— enrage']);
+    });
+
+    test('the outgoing line is red and the enrage line goes amber when close', () => {
+        const meter = enemyMeterText(
+            { name: 'Veyes', damage: 0, dps: null, hp: null, enrageAt: 29_000 },
+            extras({ outgoingDps: 210 })
+        );
+
+        expect(meter.lines[3]).toEqual({ text: 'hits for 210/s', color: '#f87171' });
+        expect(meter.lines[4].text).toBe('enrage 29s');
+        expect(meter.lines[4].color).toBe('#ffcf5c');
+    });
+
+    test('past the timer it reads enraged', () => {
+        const meter = enemyMeterText({ name: 'Veyes', damage: 0, dps: null, enrageAt: 0 }, extras({ now: 5_000 }));
+        expect(meter.lines[4].text).toBe('enraged');
+    });
+
+    test('with everything off it is the single rate it always was', () => {
+        const meter = enemyMeterText({ name: 'Veyes', damage: 987, dps: 493 });
+        expect(meter.lines).toEqual(['493/s']);
+        expect(meter.text).toBe('493/s');
+    });
+});
+
+describe('drawing the optional lines on the panel', () => {
+    const panel = () => {
+        document.body.innerHTML = '';
+        const players = document.createElement('div');
+        players.className = 'BattlePanel_playersArea__9xk2j';
+        players.appendChild(portrait('Millennium44'));
+        players.appendChild(portrait('Gold999'));
+        const monsters = document.createElement('div');
+        monsters.className = 'BattlePanel_monstersArea__7z1k';
+        monsters.appendChild(portrait('Veyes'));
+        monsters.appendChild(portrait('Veyes'));
+        document.body.appendChild(players);
+        document.body.appendChild(monsters);
+        return {
+            players: [...players.querySelectorAll('[class*="CombatUnit_combatUnit"]')],
+            monsters: [...monsters.children],
+        };
+    };
+
+    const meterLines = (unit) => [...unit.querySelector('[data-toolasha-portrait-dps]').children];
+
+    afterEach(() => portraitDps.cleanup());
+
+    test('a player with data and a player without keep the same height', () => {
+        const tiles = panel();
+        opts.players = [
+            { index: '0', name: 'Millennium44', damage: 20_100, dps: 316, hits: 40, misses: 2, crits: 9 },
+            { index: '1', name: 'Gold999', damage: 0, dps: null, hits: 0, misses: 0, crits: 0 },
+        ];
+        opts.taken = [{ name: 'Millennium44', damage: 900, dps: 220, hps: 185 }];
+
+        portraitDps.initialize();
+
+        const first = meterLines(tiles.players[0]).map((row) => row.textContent);
+        const second = meterLines(tiles.players[1]).map((row) => row.textContent);
+        expect(first).toHaveLength(second.length);
+        expect(first[2]).toBe('taken 220/s · net −35/s');
+        expect(second[2]).toBe('— taken');
+    });
+
+    test('the wave figure lives on the topmost tile and the rest dash it', () => {
+        const tiles = panel();
+        opts.fight = {
+            players: {},
+            enemies: {
+                0: { name: 'Veyes', damage: 987, dps: 100, hp: 800, enrageAt: null },
+                1: { name: 'Veyes', damage: 1188, dps: 100, hp: 1200, enrageAt: null },
+            },
+        };
+
+        portraitDps.initialize();
+
+        const first = meterLines(tiles.monsters[0]).map((row) => row.textContent);
+        const second = meterLines(tiles.monsters[1]).map((row) => row.textContent);
+        expect(first).toHaveLength(second.length);
+        // 2,000 health at a combined 200/s
+        expect(first).toContain('wave ~10s');
+        expect(second).toContain('— wave');
+    });
+
+    test('turning a line off removes it from everybody at once', () => {
+        const tiles = panel();
+        opts.players = [
+            { index: '0', name: 'Millennium44', damage: 20_100, dps: 316 },
+            { index: '1', name: 'Gold999', damage: 5_000, dps: 80 },
+        ];
+        opts.settings = {
+            portraitDps_sustain: false,
+            portraitDps_accuracy: false,
+            portraitDps_manaRunway: false,
+        };
+
+        portraitDps.initialize();
+
+        expect(meterLines(tiles.players[0])).toHaveLength(2);
+        expect(meterLines(tiles.players[1])).toHaveLength(2);
     });
 });

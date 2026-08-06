@@ -1,3 +1,5 @@
+/** @vitest-environment happy-dom */
+
 /**
  * Per-player damage in a guild combat trial.
  *
@@ -5,6 +7,11 @@
  * worth asserting here is the thing this module actually adds: the gate. A
  * feature that credits the wrong fights is worse than one that credits none, so
  * most of this file is about battles that must *not* count.
+ *
+ * A DOM is opted into for the whole file rather than a few tests, because the
+ * spectated path reads the fight view's own tiles to work out *which* trial is
+ * being watched — and that identification is exactly what the panels get wrong
+ * when it is missing.
  */
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -12,6 +19,7 @@ import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 const game = vi.hoisted(() => ({
     clientData: {},
     wsHandlers: {},
+    loadouts: [],
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
@@ -27,9 +35,29 @@ vi.mock('../../core/websocket.js', () => ({
         off: (type) => delete game.wsHandlers[type],
     },
 }));
+// The spectated path resolves unit names against the captured builds, which live
+// in IndexedDB and are never what a test here is about
+vi.mock('./guild-loadout-capture.js', () => ({
+    guildLoadoutCapture: { seen: () => game.loadouts, forPlayer: () => null },
+    default: { seen: () => game.loadouts, forPlayer: () => null },
+}));
 
-const { battleMonsterNames, encounterOf, guildTrialDamage, isTrialBattle, summariseTrialDamage } =
-    await import('./guild-trial-damage.js');
+const {
+    battleMonsterNames,
+    encounterOf,
+    estimateDamageSplit,
+    GUILD_BATTLE_MESSAGE,
+    guildTrialDamage,
+    isTrialBattle,
+    SPECTATED_TRIAL_NOTE,
+    summariseTrialDamage,
+} = await import('./guild-trial-damage.js');
+
+/** The six ticks the wire capture kept, byte for byte */
+const { TRIAL_WIRE_DUMP: wireDump } = await import('./guild-trial-wire-dump.fixture.js');
+
+/** And the five message types a later, fuller recording found */
+const { END_GUILD_BATTLE, GUILD_BATTLE_TICKS, NEW_GUILD_BATTLE } = await import('./guild-trial-messages.fixture.js');
 
 /**
  * One player in a tick, with the counters attribution reads.
@@ -373,5 +401,682 @@ describe('the live tracker', () => {
         const breakdown = guildTrialDamage.breakdown();
         expect(breakdown.stale).toBe(true);
         expect(breakdown.measured).toBe(false);
+    });
+});
+
+/**
+ * The split nobody can measure.
+ *
+ * The fallback when nobody has watched the fight. The gate above never arms —
+ * a trial is not on this client's own battle feed — and until somebody opens the
+ * In Progress fight view there is nothing streamed either, so this is what the
+ * panels draw. Everything here is about it being *labelled* an estimate and
+ * about nobody being quietly dropped from it.
+ */
+describe('estimateDamageSplit', () => {
+    /**
+     * A captured sheet.
+     * @param {string} name - Whose
+     * @param {number} damage - `autoAttackDamage`
+     * @param {number} at - When it was captured
+     * @returns {Object} A loadout snapshot
+     */
+    const sheet = (name, damage, at = 1) => ({
+        name,
+        at,
+        // Nanoseconds on the wire, as the recorded sheets show: 3s a swing
+        stats: { attackInterval: 3_000_000_000, autoAttackDamage: damage },
+    });
+
+    test('shares the members’ own sheets out, biggest first', () => {
+        const split = estimateDamageSplit({
+            loadouts: [sheet('Moo', 0.3), sheet('Tib', 0.9)],
+            members: ['Tib', 'Moo'],
+        });
+
+        expect(split.players.map((row) => row.name)).toEqual(['Tib', 'Moo']);
+        expect(split.players[0].dps).toBeCloseTo(0.3, 9); // 0.9 over 3s
+        expect(split.players[0].share).toBeCloseTo(75, 6);
+        expect(split.total).toBeCloseTo(0.4, 9);
+    });
+
+    test('a member with no captured build is named, not dropped', () => {
+        // A leaderboard that silently omits three people reads as three people
+        // who did nothing
+        const split = estimateDamageSplit({
+            loadouts: [sheet('Tib', 0.9)],
+            members: ['Tib', 'Ada', 'Moo'],
+        });
+
+        expect(split.players.map((row) => row.name)).toEqual(['Tib']);
+        expect(split.unestimated).toEqual(['Ada', 'Moo']);
+        expect(split.covered).toBe(1);
+        expect(split.of).toBe(3);
+    });
+
+    test('with no roster it covers whoever has been seen', () => {
+        const split = estimateDamageSplit({ loadouts: [sheet('Tib', 0.9), sheet('Moo', 0.3)] });
+        expect(split.of).toBe(2);
+        expect(split.unestimated).toEqual([]);
+    });
+
+    test('a sheet that cannot say is unestimated rather than zero', () => {
+        const split = estimateDamageSplit({
+            loadouts: [{ name: 'Tib', stats: { attackInterval: 0, autoAttackDamage: 0.9 } }],
+            members: ['Tib'],
+        });
+
+        expect(split.players).toEqual([]);
+        expect(split.unestimated).toEqual(['Tib']);
+        expect(split.total).toBe(0);
+    });
+
+    test('the oldest sheet is reported, because a build is a photograph', () => {
+        const split = estimateDamageSplit({ loadouts: [sheet('Tib', 0.9, 500), sheet('Moo', 0.3, 200)] });
+        expect(split.oldestAt).toBe(200);
+    });
+
+    test('nothing at all is an empty split rather than a throw', () => {
+        expect(estimateDamageSplit().players).toEqual([]);
+        expect(estimateDamageSplit({}).of).toBe(0);
+    });
+});
+
+describe('the reason a split is never measured', () => {
+    test('says the mechanic rather than implying a fight was missed', () => {
+        expect(SPECTATED_TRIAL_NOTE).toContain('fight view is open');
+        expect(SPECTATED_TRIAL_NOTE).not.toContain('simulated');
+
+        const verdict = isTrialBattle({ monsterNames: ['Granite Golem'], trialNames: ['Trial Chameleon'] });
+        expect(verdict.isTrial).toBe(false);
+        expect(verdict.reason).toContain('fight view is open');
+        // And still carries what the payload called them, for the next report
+        expect(verdict.reason).toContain('Granite Golem');
+    });
+
+    test('a guild party during the trial hour is still not a trial fight', () => {
+        // The battles a client sees during the hour are its own grinding, guild
+        // party or not — counting them would report an evening as the trial
+        const verdict = isTrialBattle({
+            monsterNames: ['/monsters/magnetic_golem', 'Stalactite Golem'],
+            trialNames: ['Trial Chameleon'],
+        });
+        expect(verdict.isTrial).toBe(false);
+    });
+});
+
+/**
+ * The spectator stream, replayed from the capture that found it.
+ *
+ * Every tick here is one the game actually sent — six consecutive
+ * `guild_battle_updated` messages from a minute of watching a T2 Trial
+ * Chameleon, kept verbatim in `guild-trial-wire-dump.fixture.json`. Asserting
+ * against invented ticks would test the invention.
+ */
+describe('the spectated trial fight', () => {
+    const at = new Date('2026-08-05T22:00:00Z').getTime();
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        vi.setSystemTime(at);
+        game.clientData = {};
+        game.loadouts = [];
+        guildTrialDamage.initialize();
+        guildTrialDamage.reset();
+        guildTrialDamage.setTrialNames(['Trial Chameleon']);
+    });
+
+    afterEach(() => {
+        guildTrialDamage.cleanup();
+        vi.useRealTimers();
+    });
+
+    /**
+     * Replay the capture, a quarter of a second apart as the game sends it.
+     * @param {number} [count] - How many of the six ticks to send
+     */
+    function replay(count = wireDump.length) {
+        wireDump.slice(0, count).forEach((tick, index) => {
+            vi.setSystemTime(at + index * 250);
+            game.wsHandlers[GUILD_BATTLE_MESSAGE](tick);
+        });
+    }
+
+    test('the stream is listened to at all', () => {
+        expect(typeof game.wsHandlers[GUILD_BATTLE_MESSAGE]).toBe('function');
+    });
+
+    test('the boss’s own bar is read to the unit, and is the pool', () => {
+        replay();
+
+        const { pool } = guildTrialDamage.breakdown();
+        // The last tick of the capture, and 618,000 is the T2 Chameleon pool
+        expect(pool).toMatchObject({ current: 453_402, max: 618_000, tier: 2 });
+    });
+
+    test('the tier is taken from the payload, not reasoned about', () => {
+        replay();
+        expect(guildTrialDamage.breakdown().tier).toBe(2);
+    });
+
+    test('it arms without a gate, because only a trial produces this message', () => {
+        // No `new_battle`, no monster names, no encounter to recognise
+        replay();
+
+        const report = guildTrialDamage.breakdown();
+        expect(report.active).toBe(true);
+        expect(report.source).toBe('spectated');
+        expect(report.reason).toBe(SPECTATED_TRIAL_NOTE);
+    });
+
+    test('damage taken and healing received fill from the player’s own health', () => {
+        replay();
+
+        // 2612 → 2577 → 2612 → 2499 across the capture: 35 then 113 taken, 35 healed
+        const row = guildTrialDamage.breakdown().support.players.find((entry) => entry.index === '1');
+        expect(row.damageTaken).toBe(35 + 113);
+        expect(row.healingReceived).toBe(35);
+    });
+
+    test('the boss is never a row in the player table', () => {
+        replay();
+
+        const report = guildTrialDamage.breakdown();
+        for (const row of report.support.players) expect(row.index).not.toBe('0');
+        // Its 618,000 health is a pool reading, not somebody's damage taken
+        expect(report.support.totals.damageTaken).toBeLessThan(1000);
+    });
+
+    test('the lone unit in a tick owns it — the 1,405 is the tank\u2019s reflect', () => {
+        // The capture's `pMap` entries carry no `atkCounter`, and the boss lost
+        // 1,405 health on a tick whose only player was being *hit*. This module
+        // once refused that tick as unattributable; the party recording that
+        // calibrated the hybrid rungs proved the refusal wrong — the server
+        // groups ticks by actor, the boss's own hit counter rose in the same
+        // breath, and health a boss loses while striking somebody is that
+        // somebody's thorns. Measured, and credited to the one unit present.
+        replay();
+
+        const report = guildTrialDamage.breakdown();
+        expect(report.totalDamage).toBe(1_405);
+        expect(report.players).toHaveLength(1);
+        expect(report.players[0].index).toBe('1');
+        expect(report.players[0].measured).toBe(true);
+        // Still true, and still exported: no *player-side* counters were seen
+        expect(report.splitFromCounters).toBe(false);
+    });
+
+    test('what the stream did and did not carry is counted, so a caption can say which', () => {
+        replay();
+
+        const { spectator } = guildTrialDamage.breakdown();
+        expect(spectator.ticks).toBe(6);
+        expect(spectator.playerActionTicks).toBe(0);
+        // Five of the six carried the boss; the first had an empty `mMap`
+        expect(spectator.bossTicks).toBe(5);
+    });
+
+    test('with the players’ counters present the split is made', () => {
+        // The same shape with `atkCounter` on the player, which is what the
+        // capture would have shown on a tick where somebody swung
+        const swing = (atk, dmg, hp) => ({
+            type: 'guild_battle_updated',
+            battleId: 1,
+            tier: 2,
+            pMap: { 1: { cHP: 2612, mHP: 2612, cMP: 2180, mMP: 2180, atkCounter: atk, isAutoAtk: true } },
+            mMap: { 0: { cHP: hp, mHP: 618_000, dmgCounter: dmg, critCounter: 0 } },
+        });
+
+        game.wsHandlers[GUILD_BATTLE_MESSAGE](swing(1, 1, 618_000));
+        vi.setSystemTime(at + 250);
+        game.wsHandlers[GUILD_BATTLE_MESSAGE](swing(2, 2, 617_000));
+
+        const report = guildTrialDamage.breakdown();
+        expect(report.splitFromCounters).toBe(true);
+        expect(report.totalDamage).toBe(1000);
+        expect(report.players[0].damage).toBe(1000);
+    });
+
+    test('a revive at the new tier is not a heal, and the death still counts', () => {
+        // The game starts everyone fresh and alive at each tier, so a unit
+        // dead at the end of one and full at the start of the next crossed a
+        // baseline drop, not a healer
+        const tick = (tier, hp) => ({
+            type: 'guild_battle_updated',
+            battleId: 1,
+            tier,
+            pMap: { 1: { cHP: hp, mHP: 1923, cMP: 1000, mMP: 1923 } },
+            mMap: { 0: { cHP: 500_000, mHP: 618_000 } },
+        });
+
+        game.wsHandlers[GUILD_BATTLE_MESSAGE](tick(2, 1923));
+        vi.setSystemTime(at + 250);
+        game.wsHandlers[GUILD_BATTLE_MESSAGE](tick(2, 0));
+        vi.setSystemTime(at + 500);
+        game.wsHandlers[GUILD_BATTLE_MESSAGE](tick(3, 1923));
+
+        const report = guildTrialDamage.breakdown();
+        const row = report.support.players.find((entry) => entry.index === '1');
+        expect(row.healingReceived).toBe(0);
+        expect(row.deaths).toBe(1);
+    });
+
+    test('a new tier is a new wave, not a 618,000-point heal', () => {
+        const tick = (tier, hp) => ({
+            type: 'guild_battle_updated',
+            battleId: 1,
+            tier,
+            pMap: {},
+            mMap: { 0: { cHP: hp, mHP: 618_000, dmgCounter: 1 } },
+        });
+
+        game.wsHandlers[GUILD_BATTLE_MESSAGE](tick(2, 10_000));
+        vi.setSystemTime(at + 250);
+        game.wsHandlers[GUILD_BATTLE_MESSAGE](tick(3, 669_500));
+
+        const report = guildTrialDamage.breakdown();
+        // The fresh boss is a first sighting again, so nothing is diffed off it
+        expect(report.totalDamage).toBe(0);
+        expect(report.tier).toBe(3);
+        expect(report.fights).toBe(2);
+    });
+
+    test('a member is identified by the health and mana their build states', () => {
+        // The capture's player reads mHP 2612 / mMP 2180, and exactly one
+        // captured sheet says Max HP 2,612 and Max MP 2,180
+        game.loadouts = [
+            {
+                name: 'ICMeow',
+                at: 1,
+                rows: [
+                    { label: 'Max HP', value: '2,612' },
+                    { label: 'Max MP', value: '2,180' },
+                ],
+            },
+            {
+                name: 'Cream',
+                at: 1,
+                rows: [
+                    { label: 'Max HP', value: '1,923' },
+                    { label: 'Max MP', value: '1,923' },
+                ],
+            },
+        ];
+        replay();
+
+        const report = guildTrialDamage.breakdown();
+        expect(report.names['1']).toEqual({ name: 'ICMeow', source: 'vitals' });
+        expect(report.support.players[0].name).toBe('ICMeow');
+        expect(report.nameCoverage).toMatchObject({ named: 1, of: 1 });
+    });
+
+    test('a unit nothing can name is a placeholder, and says so', () => {
+        replay();
+
+        const report = guildTrialDamage.breakdown();
+        expect(report.names['1']).toEqual({ name: 'Player 2', source: 'placeholder' });
+        expect(report.nameCoverage.placeholders).toEqual(['Player 2']);
+    });
+
+    test('a malformed tick is logged rather than thrown', () => {
+        const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        expect(() => game.wsHandlers[GUILD_BATTLE_MESSAGE](null)).not.toThrow();
+        expect(() => game.wsHandlers[GUILD_BATTLE_MESSAGE]({ pMap: 'nonsense' })).not.toThrow();
+        spy.mockRestore();
+    });
+});
+
+describe('the boss’s own sheet', () => {
+    beforeEach(() => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-08-05T22:00:00Z'));
+        game.clientData = {};
+        game.loadouts = [];
+        guildTrialDamage.initialize();
+        guildTrialDamage.reset();
+    });
+
+    afterEach(() => {
+        guildTrialDamage.cleanup();
+        vi.useRealTimers();
+    });
+
+    /** The popup the fight view opens when the boss is clicked */
+    const bossUnit = (level, hp) => ({
+        unit: {
+            character: { name: 'Trial Chameleon' },
+            combatDetails: {
+                combatLevel: level,
+                maxHitpoints: hp,
+                combatStats: { rangedDamage: 462, rangedAccuracy: 971, stabEvasion: 432 },
+            },
+        },
+    });
+
+    test('is kept per tier, from the level it states', () => {
+        // Lv.110 is the second rung of the ladder, and 618,000 is its pool
+        game.wsHandlers.battle_unit_fetched(bossUnit(110, 618_000));
+
+        const sheets = guildTrialDamage.breakdown().bossSheets;
+        expect(sheets[2]).toMatchObject({ name: 'Trial Chameleon', tier: 2, level: 110, maxHitpoints: 618_000 });
+        expect(sheets[2].stats.rangedDamage).toBe(462);
+    });
+
+    test('two tiers sit side by side, which is what makes them worth keeping', () => {
+        game.wsHandlers.battle_unit_fetched(bossUnit(110, 618_000));
+        game.wsHandlers.battle_unit_fetched(bossUnit(120, 669_500));
+
+        expect(Object.keys(guildTrialDamage.breakdown().bossSheets).sort()).toEqual(['2', '3']);
+    });
+
+    test('the stream’s tier wins over the sheet’s level while it is running', () => {
+        game.wsHandlers[GUILD_BATTLE_MESSAGE](wireDump[1]);
+        game.wsHandlers.battle_unit_fetched(bossUnit(999, 618_000));
+
+        expect(guildTrialDamage.breakdown().bossSheets[2]).toBeTruthy();
+    });
+
+    test('a guild member’s sheet is not a boss sheet', () => {
+        game.wsHandlers.battle_unit_fetched({
+            unit: { character: { name: 'ICMeow' }, combatDetails: { combatLevel: 153, maxHitpoints: 2612 } },
+        });
+        expect(guildTrialDamage.breakdown().bossSheets).toEqual({});
+    });
+
+    test('an ordinary zone monster clicked during the hour is not one either', () => {
+        game.wsHandlers.battle_unit_fetched({
+            unit: {
+                name: 'Granite Golem',
+                combatMonsterHrid: '/monsters/granite_golem',
+                combatDetails: { combatLevel: 110 },
+            },
+        });
+        expect(guildTrialDamage.breakdown().bossSheets).toEqual({});
+    });
+});
+
+describe('which trial is being watched', () => {
+    const at = new Date('2026-08-05T22:00:00Z').getTime();
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        vi.setSystemTime(at);
+        game.clientData = {};
+        game.loadouts = [];
+        guildTrialDamage.initialize();
+        guildTrialDamage.reset();
+        guildTrialDamage.setTrialNames(['Trial Chameleon', 'Trial Hedgehog']);
+    });
+
+    afterEach(() => {
+        guildTrialDamage.cleanup();
+        vi.useRealTimers();
+        document.body.innerHTML = '';
+    });
+
+    test('the pool carries no encounter when nothing can name it', () => {
+        // Reported: two combat trials this week, both cards barless, and an
+        // unnamed pool stood in for both — so a Chameleon fight was reported as
+        // "Trial Hedgehog — cleared 0 tiers". Unnamed now means unclaimed
+        game.wsHandlers[GUILD_BATTLE_MESSAGE](wireDump[1]);
+
+        const { pool, encounter } = guildTrialDamage.breakdown();
+        expect(encounter).toBeNull();
+        expect(pool.encounter).toBeNull();
+    });
+
+    test('the fight view’s boss tile names it', () => {
+        document.body.innerHTML =
+            '<div class="BattlePanel_monstersArea__d">' +
+            '<div class="CombatUnit_combatUnit__b"><div class="CombatUnit_name__c">Trial Chameleon</div></div>' +
+            '</div>';
+        game.wsHandlers[GUILD_BATTLE_MESSAGE](wireDump[1]);
+
+        const report = guildTrialDamage.breakdown();
+        expect(report.encounter).toBe('chameleon');
+        expect(report.bossName).toBe('Trial Chameleon');
+        expect(report.pool.encounter).toBe('chameleon');
+    });
+
+    test('one click on the boss names it, and outlives the view closing', () => {
+        game.wsHandlers.battle_unit_fetched({
+            unit: {
+                character: { name: 'Trial Chameleon' },
+                combatDetails: { combatLevel: 110, maxHitpoints: 618_000 },
+            },
+        });
+        game.wsHandlers[GUILD_BATTLE_MESSAGE](wireDump[1]);
+
+        expect(guildTrialDamage.breakdown().pool.encounter).toBe('chameleon');
+    });
+
+    test('a new battle drops the identity rather than carrying it over', () => {
+        document.body.innerHTML =
+            '<div class="BattlePanel_monstersArea__d">' +
+            '<div class="CombatUnit_combatUnit__b"><div class="CombatUnit_name__c">Trial Chameleon</div></div>' +
+            '</div>';
+        game.wsHandlers[GUILD_BATTLE_MESSAGE](wireDump[1]);
+        expect(guildTrialDamage.breakdown().encounter).toBe('chameleon');
+
+        // The view is shut and a different fight starts streaming
+        document.body.innerHTML = '';
+        game.wsHandlers[GUILD_BATTLE_MESSAGE]({ ...wireDump[1], battleId: 2 });
+
+        expect(guildTrialDamage.breakdown().encounter).toBeNull();
+    });
+
+    test('a tier change within one battle keeps it', () => {
+        document.body.innerHTML =
+            '<div class="BattlePanel_monstersArea__d">' +
+            '<div class="CombatUnit_combatUnit__b"><div class="CombatUnit_name__c">Trial Chameleon</div></div>' +
+            '</div>';
+        game.wsHandlers[GUILD_BATTLE_MESSAGE](wireDump[1]);
+        document.body.innerHTML = '';
+        game.wsHandlers[GUILD_BATTLE_MESSAGE]({ ...wireDump[1], tier: 3 });
+
+        expect(guildTrialDamage.breakdown().encounter).toBe('chameleon');
+    });
+});
+
+/**
+ * The messages a guild trial actually opens and closes with.
+ *
+ * Replayed from a guildmate's raw recording — 81,725 events across one trial
+ * hour — kept verbatim in `guild-trial-messages.fixture.js`. `new_guild_battle`
+ * is the message this feature spent three rounds working around the absence of.
+ */
+describe('the tier-opening message', () => {
+    const at = new Date('2026-08-03T16:00:00Z').getTime();
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        vi.setSystemTime(at);
+        game.clientData = {};
+        game.loadouts = [];
+        guildTrialDamage.initialize();
+        guildTrialDamage.reset();
+        guildTrialDamage.setTrialNames(['Trial Badger']);
+    });
+
+    afterEach(() => {
+        guildTrialDamage.cleanup();
+        vi.useRealTimers();
+        document.body.innerHTML = '';
+    });
+
+    test('the roster names every unit, in slot order', () => {
+        game.wsHandlers.new_guild_battle(NEW_GUILD_BATTLE);
+        game.wsHandlers[GUILD_BATTLE_MESSAGE](GUILD_BATTLE_TICKS[1]);
+
+        const report = guildTrialDamage.breakdown();
+        // Verified against the recording: pMap key "19" is players[19]
+        expect(report.names['19']).toMatchObject({ name: 'Player20', source: 'roster' });
+        expect(report.names['0']).toMatchObject({ name: 'Player01', source: 'roster' });
+        expect(report.nameCoverage.placeholders).toEqual([]);
+        expect(report.nameCoverage.of).toBe(30);
+    });
+
+    test('a character id comes with each name, so a unit can be known to be you', () => {
+        game.wsHandlers.new_guild_battle(NEW_GUILD_BATTLE);
+        expect(guildTrialDamage.breakdown().roster['19']).toMatchObject({ name: 'Player20' });
+        expect(guildTrialDamage.breakdown().roster['0'].characterId).toBe(900001);
+    });
+
+    test('the roster outranks a name already resolved from a build', () => {
+        // A viewer who joined mid-tier matched by vitals; the roster then states
+        // the answer, and a stated answer is not overruled by an inferred one
+        game.loadouts = [
+            {
+                name: 'SomebodyElse',
+                at: 1,
+                rows: [
+                    { label: 'Max HP', value: '1,620' },
+                    { label: 'Max MP', value: '1,929' },
+                ],
+            },
+        ];
+        game.wsHandlers[GUILD_BATTLE_MESSAGE](GUILD_BATTLE_TICKS[2]);
+        expect(guildTrialDamage.breakdown().names['19'].source).toBe('vitals');
+
+        game.wsHandlers.new_guild_battle(NEW_GUILD_BATTLE);
+        game.wsHandlers[GUILD_BATTLE_MESSAGE](GUILD_BATTLE_TICKS[2]);
+        expect(guildTrialDamage.breakdown().names['19']).toMatchObject({ name: 'Player20', source: 'roster' });
+    });
+
+    test('the boss sheet arrives without anybody clicking anything', () => {
+        game.wsHandlers.new_guild_battle(NEW_GUILD_BATTLE);
+
+        const sheet = guildTrialDamage.breakdown().bossSheets[1];
+        expect(sheet).toMatchObject({
+            name: 'Trial Badger',
+            tier: 1,
+            hrid: '/monsters/trial_badger',
+            maxHitpoints: 429_000,
+            source: 'new_guild_battle',
+        });
+        // Ten minutes, in nanoseconds on the wire
+        expect(sheet.enrageTimerMs).toBe(600_000);
+        expect(sheet.stats.combatLevel).toBe(100);
+    });
+
+    test('and confirms the participant rule again', () => {
+        game.wsHandlers.new_guild_battle(NEW_GUILD_BATTLE);
+
+        const report = guildTrialDamage.breakdown();
+        expect(report.participants).toBe(30);
+        // 330,000 base health with thirty in the trial: 330,000 × 1.30
+        expect(report.bossSheets[1].maxHitpoints).toBe(Math.round(330_000 * 1.3));
+    });
+
+    test('it identifies the encounter without the fight view being open', () => {
+        game.wsHandlers.new_guild_battle(NEW_GUILD_BATTLE);
+
+        const report = guildTrialDamage.breakdown();
+        expect(report.encounter).toBe('badger');
+        expect(report.bossName).toBe('Trial Badger');
+    });
+
+    test('it is the tier boundary, so a fresh wave is never read as a heal', () => {
+        game.wsHandlers.new_guild_battle(NEW_GUILD_BATTLE);
+        game.wsHandlers[GUILD_BATTLE_MESSAGE]({
+            ...GUILD_BATTLE_TICKS[0],
+            mMap: { 0: { cHP: 10_000, mHP: 429_000, dmgCounter: 5 } },
+        });
+
+        vi.setSystemTime(at + 200_000);
+        game.wsHandlers.new_guild_battle({ ...NEW_GUILD_BATTLE, tier: 2 });
+        game.wsHandlers[GUILD_BATTLE_MESSAGE]({
+            ...GUILD_BATTLE_TICKS[0],
+            tier: 2,
+            mMap: { 0: { cHP: 468_000, mHP: 468_000, dmgCounter: 6 } },
+        });
+
+        const report = guildTrialDamage.breakdown();
+        expect(report.tier).toBe(2);
+        expect(report.totalDamage).toBe(0);
+        // And the boundary is stamped, so a tier's duration is exact
+        expect(report.tierStarts).toEqual({ 1: at, 2: at + 200_000 });
+    });
+
+    test('the end message closes the trial rather than leaving it to go quiet', () => {
+        game.wsHandlers.new_guild_battle(NEW_GUILD_BATTLE);
+        expect(guildTrialDamage.breakdown().active).toBe(true);
+
+        vi.setSystemTime(at + 3_600_000);
+        game.wsHandlers.end_guild_battle(END_GUILD_BATTLE);
+
+        const report = guildTrialDamage.breakdown();
+        expect(report.active).toBe(false);
+        expect(report.endedAt).toBe(at + 3_600_000);
+    });
+
+    test('another trial’s ending is not this one’s', () => {
+        game.wsHandlers.new_guild_battle(NEW_GUILD_BATTLE);
+        game.wsHandlers.end_guild_battle({
+            type: 'end_guild_battle',
+            battleId: 9,
+            trialHrid: '/guild_combat/chameleon',
+        });
+
+        expect(guildTrialDamage.breakdown().endedAt).toBeNull();
+    });
+
+    test('a malformed opening message is logged rather than thrown', () => {
+        const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        expect(() => game.wsHandlers.new_guild_battle(null)).not.toThrow();
+        expect(() => game.wsHandlers.new_guild_battle({ players: 'nope', monsters: 7 })).not.toThrow();
+        expect(() => game.wsHandlers.end_guild_battle(undefined)).not.toThrow();
+        spy.mockRestore();
+    });
+});
+
+describe('only your own damage is measured', () => {
+    const at = new Date('2026-08-03T16:00:00Z').getTime();
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        vi.setSystemTime(at);
+        game.clientData = {};
+        game.loadouts = [];
+        guildTrialDamage.initialize();
+        guildTrialDamage.reset();
+    });
+
+    afterEach(() => {
+        guildTrialDamage.cleanup();
+        vi.useRealTimers();
+    });
+
+    test('the slot the game streams counters for is recorded, and it is one', () => {
+        // 4,939 of 81,641 ticks carried counters, always on a single entry —
+        // index 19, the recording client's own character
+        game.wsHandlers.new_guild_battle(NEW_GUILD_BATTLE);
+        for (const tick of GUILD_BATTLE_TICKS) game.wsHandlers[GUILD_BATTLE_MESSAGE](tick);
+
+        const report = guildTrialDamage.breakdown();
+        expect(report.countedSlots).toEqual(['19']);
+        expect(report.countedNames).toEqual(['Player20']);
+        expect(report.splitFromCounters).toBe(true);
+    });
+
+    test('a row says whether it is the measured one', () => {
+        game.wsHandlers.new_guild_battle(NEW_GUILD_BATTLE);
+
+        const swing = (atk, dmg, hp) => ({
+            type: 'guild_battle_updated',
+            battleId: 1,
+            tier: 1,
+            pMap: { 19: { cHP: 1620, mHP: 1620, cMP: 1929, mMP: 1929, atkCounter: atk, isAutoAtk: true } },
+            mMap: { 0: { cHP: hp, mHP: 429_000, dmgCounter: dmg, critCounter: 0 } },
+        });
+
+        game.wsHandlers[GUILD_BATTLE_MESSAGE](swing(1, 1, 429_000));
+        vi.setSystemTime(at + 250);
+        game.wsHandlers[GUILD_BATTLE_MESSAGE](swing(2, 2, 428_000));
+
+        const row = guildTrialDamage.breakdown().players.find((entry) => entry.index === '19');
+        expect(row.measured).toBe(true);
+        expect(row.name).toBe('Player20');
+        expect(row.damage).toBe(1000);
     });
 });

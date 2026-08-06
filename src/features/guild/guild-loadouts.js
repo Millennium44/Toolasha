@@ -42,6 +42,7 @@
 
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
+import { COMBAT_ENCOUNTERS } from './guild-trials-math.js';
 import { formatRelativeTime } from '../../utils/formatters.js';
 
 /** Object store the records live in — shared with the guild XP history */
@@ -219,6 +220,7 @@ export function extractLoadout(payload, { at = Date.now(), source = 'battle_unit
     // A monster carries `combatDetails` too, and storing one under the roster
     // would be a guild member who is a Chimerical Beast
     if (!character && unit.isPlayer !== true) return null;
+    if (isMonsterUnit(unit)) return null;
 
     const details = unit.combatDetails && typeof unit.combatDetails === 'object' ? unit.combatDetails : {};
     const stats = details.combatStats && typeof details.combatStats === 'object' ? details.combatStats : {};
@@ -240,6 +242,43 @@ export function extractLoadout(payload, { at = Date.now(), source = 'battle_unit
         source,
         at,
     };
+}
+
+/**
+ * Whether a fetched unit is a monster rather than a member.
+ *
+ * Reported live: clicking the **boss** in the guild trial's fight view fires
+ * `battle_unit_fetched` exactly as clicking a party member does, and the sheet
+ * that came back was filed under the roster — "Seen loadouts (4): Trial
+ * Chameleon Lv.110, seen Just now". A boss in the loadout store is not merely
+ * untidy: it becomes a row in the estimated damage split, where a 618,000-health
+ * monster's auto-attack is shared out as if it were a guild member's.
+ *
+ * The `isPlayer` guard above did not catch it, so the unit is judged on what it
+ * is called and what it is keyed by, both of which say monster outright:
+ *
+ * - an hrid under `/monsters/`, which no character has;
+ * - a name containing "trial", which no character may have — the game reserves
+ *   it and it is what `guild-trial-damage.js`' own gate keys off;
+ * - a name that reduces to one of the five trial encounters.
+ *
+ * @param {Object} unit - A unit from `battle_unit_fetched` or `new_battle`
+ * @returns {boolean} True when it must not be stored as a member
+ */
+export function isMonsterUnit(unit) {
+    if (!unit || typeof unit !== 'object') return false;
+    if (unit.isPlayer === false) return true;
+
+    const hrids = [unit.combatMonsterHrid, unit.monsterHrid, unit.hrid, unit.character?.hrid];
+    if (hrids.some((hrid) => typeof hrid === 'string' && hrid.startsWith('/monsters/'))) return true;
+
+    const name = String(unit.character?.name || unit.name || '')
+        .toLowerCase()
+        .replace(/[/_-]+/g, ' ');
+    if (!name) return false;
+    if (/\btrial\b/.test(name)) return true;
+
+    return COMBAT_ENCOUNTERS.some((encounter) => name.split(/\s+/).includes(encounter));
 }
 
 /**
@@ -308,8 +347,34 @@ export function foldLoadout(record, loadout) {
 export function loadoutList(record) {
     const players = record?.players && typeof record.players === 'object' ? record.players : {};
     return Object.values(players)
-        .filter((entry) => entry && entry.name)
+        .filter((entry) => entry && entry.name && !isMonsterUnit(entry))
         .sort((a, b) => (b.at || 0) - (a.at || 0));
+}
+
+/**
+ * Drop anything already stored that should never have been.
+ *
+ * Self-healing rather than a migration: the boss sheets are on disk in every
+ * guild that opened a trial fight view before this shipped, and a filter on the
+ * way out would leave them there to be re-exported forever. Returns the record
+ * unchanged — the same object — when there is nothing to purge, so a caller can
+ * tell whether a write is needed.
+ *
+ * @param {Object|null} record - A stored record
+ * @returns {{record: Object|null, purged: string[]}} The clean record and who left
+ */
+export function purgeMonsterLoadouts(record) {
+    const players = record?.players && typeof record.players === 'object' ? record.players : null;
+    if (!players) return { record, purged: [] };
+
+    const purged = [];
+    for (const [key, entry] of Object.entries(players)) {
+        if (isMonsterUnit(entry)) purged.push(entry?.name || key);
+    }
+    if (!purged.length) return { record, purged };
+
+    const kept = Object.fromEntries(Object.entries(players).filter(([, entry]) => !isMonsterUnit(entry)));
+    return { record: { ...record, players: kept }, purged };
 }
 
 /**

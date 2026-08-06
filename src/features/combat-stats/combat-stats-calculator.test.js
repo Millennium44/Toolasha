@@ -12,6 +12,8 @@
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
 const keys = vi.hoisted(() => ({ mode: 'ask', costs: {} }));
+const ev = vi.hoisted(() => ({ value: 0 }));
+const luck = vi.hoisted(() => ({ enabled: false, measured: null }));
 
 vi.mock('../../utils/key-cost.js', () => ({
     getKeyPricingMode: () => keys.mode,
@@ -38,14 +40,25 @@ vi.mock('../../core/data-manager.js', () => ({
 
 vi.mock('../market/expected-value-calculator.js', () => ({
     default: {
-        isInitialized: false,
-        getCachedValue: () => 0,
-        calculateSingleContainer: () => 0,
-        calculateExpectedValue: () => null,
+        isInitialized: true,
+        getCachedValue: () => ev.value,
+        calculateSingleContainer: () => ev.value,
+        calculateExpectedValue: (hrid) =>
+            ev.value > 0 ? { itemHrid: hrid, itemName: hrid, expectedValue: ev.value, drops: [] } : null,
     },
 }));
 
-const { calculateKeyCosts, calculatePlayerStats } = await import('./combat-stats-calculator.js');
+vi.mock('../../core/config.js', () => ({
+    default: { getSetting: (id) => (id === 'dropLuck_profitAdjust' ? luck.enabled : false) },
+}));
+
+// The calculator reaches the treasure tracker through the global, so the test
+// provides one — {ratio, opened} as `measuredReturn` answers
+globalThis.window = globalThis.window || {};
+globalThis.window.Toolasha = { Market: { treasureTracker: { measuredReturn: () => luck.measured } } };
+
+const { calculateKeyCosts, calculatePlayerStats, calculateIncome, calculateIncomeBreakdown, describeLuckAdjustment } =
+    await import('./combat-stats-calculator.js');
 
 const CHIMERICAL_CHEST = '/items/chimerical_chest';
 const CHIMERICAL_REFINEMENT = '/items/chimerical_refinement_chest';
@@ -79,6 +92,9 @@ beforeEach(() => {
         [ENTRY_KEY]: cost(ENTRY_KEY, { buyPrice: 20000 }),
         [CHEST_KEY]: cost(CHEST_KEY, { buyPrice: 8000, craftCost: 5000, craftSeconds: 60 }),
     };
+    ev.value = 0;
+    luck.enabled = false;
+    luck.measured = null;
 });
 
 describe('calculateKeyCosts', () => {
@@ -173,5 +189,75 @@ describe('calculatePlayerStats', () => {
         expect(stats.keyPricingMode).toBe('bid');
         expect(stats.keyBreakdown.find((row) => row.itemHrid === CHEST_KEY).keyCost.cheaper).toBe('craft');
         expect(stats.dailyProfit.ask).toBe(-25000 * 24);
+    });
+});
+
+describe('measured-luck adjustment of a dungeon chest EV', () => {
+    const lootOf = (hrid = CHIMERICAL_CHEST) => ({ a: { itemHrid: hrid, count: 2 } });
+
+    beforeEach(() => {
+        ev.value = 100000;
+        luck.measured = { ratio: 0.926, opened: 5490 };
+    });
+
+    test('the setting gates the adjustment: off means drop-table EV even with data', () => {
+        luck.enabled = false;
+
+        expect(calculateIncome(lootOf()).ask).toBe(200000);
+        const row = calculateIncomeBreakdown(lootOf()).breakdown[0];
+        expect(row.evPerChest).toBe(100000);
+        expect(row.luckAdjustment).toBeNull();
+    });
+
+    test('on, the measured ratio scales income and rides the breakdown for labelling', () => {
+        luck.enabled = true;
+
+        expect(calculateIncome(lootOf()).ask).toBeCloseTo(2 * 100000 * 0.926, 6);
+        expect(calculateIncome(lootOf()).bid).toBeCloseTo(2 * 100000 * 0.926, 6);
+
+        const row = calculateIncomeBreakdown(lootOf()).breakdown[0];
+        expect(row.evPerChest).toBeCloseTo(92600, 6);
+        expect(row.totalValue).toBeCloseTo(185200, 6);
+        expect(row.luckAdjustment).toEqual({ ratio: 0.926, chests: 5490 });
+    });
+
+    test('a reading under the opening floor is withheld, however confident it looks', () => {
+        luck.enabled = true;
+        luck.measured = { ratio: 0.5, opened: 299 };
+
+        expect(calculateIncome(lootOf()).ask).toBe(200000);
+        expect(calculateIncomeBreakdown(lootOf()).breakdown[0].luckAdjustment).toBeNull();
+    });
+
+    test('no measurement means no adjustment, even with the setting on', () => {
+        luck.enabled = true;
+        luck.measured = null;
+
+        expect(calculateIncome(lootOf()).ask).toBe(200000);
+        expect(calculateIncomeBreakdown(lootOf()).breakdown[0].luckAdjustment).toBeNull();
+    });
+
+    test('only a dungeon chest: another openable is left at its drop-table EV', () => {
+        luck.enabled = true;
+
+        // Openable under the mock, but not a chest a dungeon completion pays
+        expect(calculateIncome(lootOf('/items/treasure_chest')).ask).toBe(200000);
+        expect(calculateIncomeBreakdown(lootOf('/items/treasure_chest')).breakdown[0].luckAdjustment).toBeNull();
+    });
+
+    test('the adjustments surface on the player stats, and profit is built on them', () => {
+        luck.enabled = true;
+
+        const stats = calculatePlayerStats({ name: 'You', loot: lootOf(), deathCount: 0 }, 3600);
+
+        expect(stats.chestLuckAdjustments).toEqual([{ itemName: CHIMERICAL_CHEST, ratio: 0.926, chests: 5490 }]);
+        // Adjusted income of 185,200 less two entry keys and two chest keys
+        expect(stats.dailyProfit.ask).toBeCloseTo((185200 - 2 * 25000) * 24, 6);
+    });
+
+    test('describeLuckAdjustment words the adjustment for wherever it is shown', () => {
+        expect(describeLuckAdjustment({ itemName: 'Chimerical Chest', ratio: 0.926, chests: 5490 })).toBe(
+            'Chimerical Chest EV adjusted by your measured -7.4% return (5,490 opened)'
+        );
     });
 });

@@ -3,6 +3,8 @@
  * Organizes all script settings into logical groups for the settings UI
  */
 
+import { loadoutSnapshot } from '../utils/bundle-bridge.js';
+
 export const settingsGroups = {
     ironCow: {
         title: 'Iron Cow Mode',
@@ -614,6 +616,13 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'Saves loot log entries and displays older entries below current ones in the loot log panel',
+            },
+            lootLogDropLuck: {
+                id: 'lootLogDropLuck',
+                label: 'Loot Log: Drop luck percentile for gathering runs',
+                type: 'checkbox',
+                default: true,
+                help: "Places a run's drop value in the distribution of everything those actions could have paid — 50 is typical, 5 means nineteen runs in twenty do better. Only for actions with their own drop table (gathering); combat has its own verdict and production rolls nothing",
             },
         },
     },
@@ -1237,6 +1246,13 @@ export const settingsGroups = {
                 ],
                 help: 'Instant: Compare to instant buy/sell prices. Orders: Compare to buy/sell orders.',
             },
+            market_tradeLedger: {
+                id: 'market_tradeLedger',
+                label: 'Market: Record trade ledger (realized flip profit)',
+                type: 'checkbox',
+                default: true,
+                help: 'Passively records every fill on your own listings (partial fills included) and adds a "Ledger" tab to the marketplace showing per-item realized profit — sells matched against your average recorded buy cost, proceeds net of the 2% market tax — with weekly totals and CSV export.',
+            },
             market_listingPricePrecision: {
                 id: 'market_listingPricePrecision',
                 label: 'Market: Listing price decimal precision',
@@ -1382,6 +1398,13 @@ export const settingsGroups = {
                 default: 'ask',
                 options: ['ask', 'bid'],
                 help: 'Whether to use ask (instant buy) or bid (patient buy) prices when valuing dungeon keys in tooltips, networth, and combat income calculations.',
+            },
+            profitCalc_liquidityCap: {
+                id: 'profitCalc_liquidityCap',
+                label: 'Profit: Cap displayed rates by market volume',
+                type: 'checkbox',
+                default: true,
+                help: 'Bounds displayed and ranked profit/hr figures (alchemy Best Items, action-bar profit, pinned actions, the all-zones combat table) by how fast each method’s outputs actually trade, using the pooled market history — a method producing more per hour than the market absorbs cannot realize its quoted rate. Capped figures carry a "vol-capped" marker naming the limiting item. Needs the Market price history panel setting to have data; with it off, nothing is bounded. Turn this off to see raw rates.',
             },
             profitCalc_customPriceOverrides: {
                 id: 'profitCalc_customPriceOverrides',
@@ -1690,6 +1713,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'Damage taken against health regenerated, broken out per monster and per wave with hit ranges. Feeds the Deaths panel behind the deaths/hr tile',
             },
+            partyLint_live: {
+                id: 'partyLint_live',
+                label: 'Party lint: Flag loadout mistakes in the live party',
+                type: 'checkbox',
+                default: true,
+                help: 'The same checks the Combat Sim runs before a party simulation — skilling gear in a combat slot, the same aura equipped twice — fired on the party you are actually fighting with, as an amber block in the Damage panel. Auras are checked for everyone; gear only for you, since the battle payload carries no one’s equipment. Parties of 2+ only',
+            },
             combatRecorder_autoStart: {
                 id: 'combatRecorder_autoStart',
                 label: 'Auto-record combat on load',
@@ -1732,6 +1762,13 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: "Adds an Open Item Dictionary button to the popup shown when clicking an ability, opening that ability's book entry.",
+            },
+            chestKeyMarketButton: {
+                id: 'chestKeyMarketButton',
+                label: 'Chests: Add Buy Keys on Marketplace to chest menus',
+                type: 'checkbox',
+                default: true,
+                help: 'Adds a button to the popup shown when clicking a keyed chest, opening its key on the marketplace.',
             },
             characterCard: {
                 id: 'characterCard',
@@ -1909,6 +1946,13 @@ export const settingsGroups = {
                 default: true,
                 help: "Puts the session's drop value in the distribution of everything those battles could have paid, as a percentile. Skips dungeons, which pay from a reward table rather than per monster",
             },
+            dropLuck_profitAdjust: {
+                id: 'dropLuck_profitAdjust',
+                label: 'Dungeon profit: value chests at my measured treasure rate',
+                type: 'checkbox',
+                default: false,
+                help: "Scales a dungeon chest's expected value in profit estimates by your own treasure rate for that chest — what your recorded openings actually returned against the drop table's expectation, both at today's prices. Only applies once a few hundred openings back the measurement, and every adjusted figure is marked (*) with the measurement in its tooltip",
+            },
             combatDps: {
                 id: 'combatDps',
                 label: 'Combat DPS: Measure damage per second during a run',
@@ -1933,6 +1977,62 @@ export const settingsGroups = {
                     { value: 'below', label: 'Below the portrait' },
                 ],
                 help: 'Above sits over the name; below sits under the ability bar',
+            },
+            portraitDps_timeToKill: {
+                id: 'portraitDps_timeToKill',
+                label: 'Portrait DPS: Time-to-kill on enemy tiles',
+                type: 'checkbox',
+                default: true,
+                help: 'Adds "dead ~8s" to each enemy tile — its remaining health over the rate it is being hit at. Dashed until the fight has both a health reading and a rate; nothing is ever extrapolated from a guess',
+            },
+            portraitDps_waveClear: {
+                id: 'portraitDps_waveClear',
+                label: 'Portrait DPS: Wave-clear countdown',
+                type: 'checkbox',
+                default: true,
+                help: 'One "wave ~19s" figure on the topmost enemy tile: every living enemy\'s remaining health over the party\'s combined rate. Dashed until every health bar is known and a rate exists — a countdown that silently excluded a monster would lie',
+            },
+            portraitDps_manaRunway: {
+                id: 'portraitDps_manaRunway',
+                label: 'Portrait DPS: Mana runway per player',
+                type: 'checkbox',
+                default: true,
+                help: 'Adds "mana ~40s" to a player\'s meter when their mana is draining and under a minute from empty, measured net of regeneration and refills. Steady or rising mana shows a dash — there is nothing to warn about',
+            },
+            portraitDps_sustain: {
+                id: 'portraitDps_sustain',
+                label: 'Portrait DPS: Damage taken and net sustain per player',
+                type: 'checkbox',
+                default: true,
+                help: 'Adds "taken 220/s" from the incoming-damage tracker, and "net −35/s" where regeneration is measurable — red when the net is negative, which is the reading that says a zone is not survivable',
+            },
+            portraitDps_accuracy: {
+                id: 'portraitDps_accuracy',
+                label: 'Portrait DPS: Hit and crit rate per player',
+                type: 'checkbox',
+                default: true,
+                help: 'Adds "94% hit · 31% crit" to each player\'s meter once 20 swings back it. Fewer swings show a dash rather than one fight\'s luck dressed up as a rate',
+            },
+            portraitDps_enemyOutgoing: {
+                id: 'portraitDps_enemyOutgoing',
+                label: 'Portrait DPS: Enemy outgoing damage',
+                type: 'checkbox',
+                default: true,
+                help: 'A red "hits for 210/s" line on each enemy tile — what that enemy is doing to the party this fight, from the incoming-damage split. Dashed until a hit can be pinned to that enemy',
+            },
+            portraitDps_enrage: {
+                id: 'portraitDps_enrage',
+                label: 'Portrait DPS: Enrage countdown on enemy tiles',
+                type: 'checkbox',
+                default: true,
+                help: 'Adds "enrage 1:42" counting down when the monster\'s sheet carries an enrage timer and spawn time, amber under 30 seconds. Monsters whose sheet states no timer show a dash',
+            },
+            dungeonPace: {
+                id: 'dungeonPace',
+                label: 'Dungeon Tracker: Pace vs your average',
+                type: 'checkbox',
+                default: true,
+                help: 'A chip on the in-progress dungeon panel — "pace +6% vs your avg" — comparing this run\'s average wave time against your stored history for the same dungeon, green when faster. No stored history, or fewer than three waves in, shows nothing',
             },
             combatSim: {
                 id: 'combatSim',
@@ -1991,7 +2091,7 @@ export const settingsGroups = {
                 type: 'select',
                 default: '',
                 options: () => {
-                    const snapshot = window.Toolasha?.Combat?.loadoutSnapshot;
+                    const snapshot = loadoutSnapshot();
                     const loadouts = snapshot
                         ? snapshot
                               .getAllSnapshots()
@@ -2789,6 +2889,13 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 help: 'Keys on the count of finished listings going up — an order that filled completely, or a cancelled one holding a refund. An order still partly filling is not counted, because collecting it achieves nothing. Same rule as the Marketplace badge filter, and works whether or not that filter is on.',
+            },
+            notifications_marketListingUndercut: {
+                id: 'notifications_marketListingUndercut',
+                label: 'Notify when a market listing of yours is undercut',
+                type: 'checkbox',
+                default: false,
+                help: 'Compares each active sell listing of yours against the current best ask for that item and enhancement level, and each buy order against the best bid — a strictly better price than yours means you have been beaten; matching the best price is still competitive and says nothing. The figures come from the market data this script already holds, which can be up to 15 minutes old: the message carries the age of the figure it used, and data older than that — or an item with no cached price at all — is treated as unknown rather than as an undercut. Once per listing per undercut, re-arming when you reprice the listing or your price is the best again.',
             },
             notifications_otherCharacterIdle: {
                 id: 'notifications_otherCharacterIdle',

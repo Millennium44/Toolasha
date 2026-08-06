@@ -17,6 +17,7 @@ import storage from '../../core/storage.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { formatReport, reportData } from '../../utils/performance-report.js';
 import { showToast } from '../../utils/toast.js';
+import { performanceMonitor, toolashaRoot } from '../../utils/bundle-bridge.js';
 
 const PANEL_ID = 'toolasha-health-status';
 
@@ -36,7 +37,7 @@ const COLORS = {
  * @returns {Object|null} The monitor, or null before Core has loaded
  */
 function getPerformanceMonitor() {
-    return window.Toolasha?.Core?.performanceMonitor || null;
+    return performanceMonitor();
 }
 
 /** Store key counts from the last `refreshStorageFacts()`, or null before one */
@@ -139,7 +140,7 @@ function storageLines() {
  * @returns {string} The report
  */
 export function buildDiagnosticReport(failures = []) {
-    const root = typeof window !== 'undefined' ? window.Toolasha : undefined;
+    const root = toolashaRoot();
     const agent = typeof navigator !== 'undefined' ? navigator.userAgent : 'unknown';
     const monitor = getPerformanceMonitor();
 
@@ -193,7 +194,7 @@ export function buildDiagnosticReport(failures = []) {
  * @returns {Object} JSON-safe report
  */
 export function diagnosticData(failures = []) {
-    const root = typeof window !== 'undefined' ? window.Toolasha : undefined;
+    const root = toolashaRoot();
     const monitor = getPerformanceMonitor();
     return {
         script: root?.version || 'unknown',

@@ -77,8 +77,10 @@ vi.mock('../enhancement/enhancement-params-source.js', () => ({
     getTooltipEnhancementParams: () => ({ enhancingLevel: 1, houseLevel: 0 }),
     describeEnhancementSource: () => ({ kind: 'own', detail: '' }),
 }));
-vi.mock('../house/house-cost-calculator.js', () => ({
-    default: { initialize: async () => {}, calculateCumulativeCost: async () => null, getItemName: () => '' },
+vi.mock('../../utils/house-cost-calculator.js', () => ({
+    initialize: async () => {},
+    calculateCumulativeCost: async () => null,
+    getItemName: () => '',
 }));
 vi.mock('../../utils/enhancement-calculator.js', () => ({ calculateEnhancement: () => null }));
 vi.mock('../../utils/experience-calculator.js', () => ({

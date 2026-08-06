@@ -5,7 +5,64 @@
 
 import dungeonTrackerStorage, { filterRunsForCharacter, currentCharacter } from './dungeon-tracker-storage.js';
 import storage from '../../core/storage.js';
+import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
 import { formatDateTime } from '../../utils/formatters.js';
+import { fillProfileCommand, VALID_PLAYER_NAME_RE } from '../../utils/profile-command.js';
+
+/** The run-history export, one row per run. */
+export const DUNGEON_RUN_CSV_COLUMNS = [
+    { key: 'timestamp', label: 'Timestamp' },
+    { key: 'dungeon', label: 'Dungeon' },
+    { key: 'tier', label: 'Tier' },
+    { key: 'durationSeconds', label: 'Duration (s)' },
+    { key: 'team', label: 'Team' },
+    { key: 'teamSize', label: 'Team Size' },
+    { key: 'keyCounts', label: 'Key Counts' },
+];
+
+/**
+ * A stored timestamp as ISO, or as it was when it will not parse.
+ * @param {string} value - Run timestamp
+ * @returns {string} ISO timestamp
+ */
+function isoTimestamp(value) {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? String(value || '') : date.toISOString();
+}
+
+/**
+ * Run history as CSV rows, one per run.
+ *
+ * Pure and DOM-free: it reads the same run list the panel just grouped, not the
+ * grouped markup, so the export carries whatever the current filters allowed —
+ * in the order the groups hold it — with raw numbers a spreadsheet can sort.
+ *
+ * @param {Array<Object>} runs - Stored runs, as `dungeon-tracker-storage` keeps them
+ * @returns {Array<Object>} Rows for `DUNGEON_RUN_CSV_COLUMNS`
+ */
+export function buildRunHistoryRows(runs) {
+    return (runs || []).map((run) => {
+        const team =
+            Array.isArray(run.team) && run.team.length ? run.team : (run.teamKey || '').split(',').filter(Boolean);
+        const keyCounts = run.keyCountsMap
+            ? Object.entries(run.keyCountsMap)
+                  .sort(([a], [b]) => a.localeCompare(b))
+                  .map(([name, count]) => `${name}: ${count}`)
+                  .join('; ')
+            : '';
+
+        return {
+            timestamp: isoTimestamp(run.timestamp),
+            dungeon: run.dungeonName || 'Unknown',
+            // Tier is only known for runs recorded by routes that saw it
+            tier: run.tier ?? null,
+            durationSeconds: (run.duration || run.totalTime || 0) / 1000,
+            team: team.length ? team.join(', ') : 'Solo',
+            teamSize: team.length || 1,
+            keyCounts,
+        };
+    });
+}
 
 class DungeonTrackerUIHistory {
     constructor(state, formatTimeFunc) {
@@ -157,6 +214,12 @@ class DungeonTrackerUIHistory {
             // Render grouped runs
             this.renderGroupedRuns(runList, groups);
 
+            // The export bar sits inside the list it describes, so the redraw
+            // that replaces the list replaces the bar with it. The rows come
+            // from the grouped data at click time — what the filters allowed,
+            // in the order the groups hold it — never from the DOM.
+            runList.prepend(this.csvExportBar(groups.flatMap((group) => group.runs)));
+
             // Update filter dropdowns
             const dungeons = [...new Set(allRuns.map((r) => r.dungeonName).filter(Boolean))].sort();
             const teams = [...new Set(allRuns.map((r) => r.teamKey).filter(Boolean))].sort();
@@ -213,6 +276,74 @@ class DungeonTrackerUIHistory {
     }
 
     /**
+     * A group header label, with team-member names individually clickable.
+     *
+     * Only the team grouping's headers are player lists ("Aster,Player11,cove");
+     * dungeon headers and the Solo bucket come back escaped but unwrapped. The
+     * wrap keeps the label's exact text, with each valid player name in its own
+     * span that fills "/profile <name>" into chat when clicked.
+     *
+     * @param {Object} group - A group from groupByTeam/groupByDungeon
+     * @returns {string} HTML for the header label
+     */
+    renderGroupLabel(group) {
+        if (this.state.groupBy !== 'team' || group.key === 'Solo') {
+            return this.escapeHtml(group.label);
+        }
+
+        return String(group.label)
+            .split(',')
+            .map((name) => {
+                // A malformed name gets no click handler — plain text, never a
+                // broken /profile command
+                if (!VALID_PLAYER_NAME_RE.test(name)) return this.escapeHtml(name);
+                const escaped = this.escapeHtml(name);
+                return (
+                    `<span class="mwi-dt-player-name" data-player-name="${escaped}" style="cursor: pointer; ` +
+                    `text-decoration: underline dotted; text-underline-offset: 2px;" ` +
+                    `title="Fill &quot;/profile ${escaped}&quot; into chat">${escaped}</span>`
+                );
+            })
+            .join(',');
+    }
+
+    /**
+     * An Export CSV bar for the run list.
+     *
+     * Only built when there are runs to write — `update` bails out before this
+     * on an empty or fully filtered-out list, so an exportless empty state
+     * never shows a button with nothing behind it.
+     *
+     * @param {Array} runs - The runs the current grouping holds, in group order
+     * @returns {HTMLElement} The bar
+     */
+    csvExportBar(runs) {
+        const bar = document.createElement('div');
+        bar.dataset.csvExport = 'dungeon-runs';
+        bar.style.cssText = 'display: flex; justify-content: flex-end; margin: 0 0 6px 0;';
+
+        const button = document.createElement('button');
+        button.textContent = 'Export CSV';
+        button.title = 'Save the listed runs as a spreadsheet — one row per run, raw numbers.';
+        button.style.cssText =
+            'background: none; border: 1px solid #555; color: #aaa; border-radius: 2px; ' +
+            'font-size: 9px; padding: 1px 6px; cursor: pointer;';
+        button.addEventListener('click', (event) => {
+            event.stopPropagation();
+            try {
+                const rows = buildRunHistoryRows(runs);
+                if (!rows.length) return;
+                downloadCsv(csvFilename('dungeon-runs'), toCsv(rows, DUNGEON_RUN_CSV_COLUMNS));
+            } catch (error) {
+                console.error('[Dungeon Tracker UI History] CSV export failed:', error);
+            }
+        });
+
+        bar.appendChild(button);
+        return bar;
+    }
+
+    /**
      * Render grouped runs
      * @param {HTMLElement} runList - Run list container
      * @param {Array} groups - Grouped runs with stats
@@ -246,7 +377,7 @@ class DungeonTrackerUIHistory {
                     " class="mwi-dt-group-header" data-group-label="${this.escapeHtml(group.label)}">
                         <div style="flex: 1;">
                             <div style="font-weight: bold; color: #4a9eff; margin-bottom: 2px;">
-                                ${this.escapeHtml(group.label)}
+                                ${this.renderGroupLabel(group)}
                             </div>
                             <div style="font-size: 10px; color: #aaa;">
                                 Runs: ${group.stats.totalRuns} | Avg: ${avgTime} | Best: ${bestTime} | Worst: ${worstTime}
@@ -284,6 +415,15 @@ class DungeonTrackerUIHistory {
                     toggle.textContent = '▼';
                     this.state.expandedGroups.delete(groupLabel);
                 }
+            });
+        });
+
+        // Player-name clicks fill "/profile <name>" into chat. Stopped, so the
+        // click does not also toggle the group open or shut underneath it.
+        runList.querySelectorAll('.mwi-dt-player-name').forEach((el) => {
+            el.addEventListener('click', (event) => {
+                event.stopPropagation();
+                fillProfileCommand(el.dataset.playerName);
             });
         });
 

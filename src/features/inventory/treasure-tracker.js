@@ -59,6 +59,7 @@ import {
 } from '../../utils/chest-import.js';
 import { calculateDungeonTokenValue, labyrinthRewardValue } from '../../utils/token-valuation.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
+import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
 
 /**
  * The ledger and the panel's preferences.
@@ -223,6 +224,88 @@ export function worthShowing(items) {
  */
 export function pricingBasis() {
     return getPricingMode('profit', 'sell');
+}
+
+/** The chest-summary export, one row per chest kind */
+export const TREASURE_SUMMARY_COLUMNS = [
+    { key: 'chest', label: 'Chest' },
+    { key: 'chestHrid', label: 'Chest Hrid' },
+    { key: 'opened', label: 'Opened' },
+    { key: 'actualValue', label: 'Actual Value' },
+    { key: 'expectedValue', label: 'Expected Value' },
+    { key: 'difference', label: 'Difference' },
+    { key: 'ratio', label: 'Ratio' },
+    { key: 'perChestValue', label: 'Per-Chest Value' },
+];
+
+/** The per-item export, one row per item per chest kind */
+export const TREASURE_DETAIL_COLUMNS = [
+    { key: 'chest', label: 'Chest' },
+    { key: 'chestHrid', label: 'Chest Hrid' },
+    { key: 'item', label: 'Item' },
+    { key: 'itemHrid', label: 'Item Hrid' },
+    { key: 'actualCount', label: 'Actual Count' },
+    { key: 'expectedCount', label: 'Expected Count' },
+    { key: 'actualValue', label: 'Actual Value' },
+    { key: 'expectedValue', label: 'Expected Value' },
+    { key: 'unpriced', label: 'Unpriced' },
+];
+
+/**
+ * The ledger as CSV rows, one per chest kind you have actually opened.
+ *
+ * Two exports rather than one file of mixed shapes: a summary row and an item
+ * line have different columns, and a CSV that alternates between them cannot be
+ * sorted, summed or pivoted — which is the only reason to want a CSV. The
+ * summary answers "which chest let me down"; the detail file underneath it is
+ * the same ledger one item per row, ready to pivot.
+ *
+ * @param {Array<Object>} rows - From `summariseTally`
+ * @param {Function} [nameOf] - `(itemHrid) => string`, injectable for tests
+ * @returns {Array<Object>} Rows for `TREASURE_SUMMARY_COLUMNS`
+ */
+export function buildTreasureSummaryRows(rows, nameOf = itemName) {
+    return (rows || [])
+        .filter((row) => row.opened > 0)
+        .map((row) => ({
+            chest: nameOf(row.chestHrid),
+            chestHrid: row.chestHrid,
+            opened: row.opened,
+            actualValue: row.actualValue,
+            expectedValue: row.expectedValue,
+            difference: row.difference,
+            // Null with nothing priced, which the CSV writes as an empty cell
+            // rather than a claim of zero
+            ratio: row.ratio,
+            perChestValue: row.perChestValue,
+        }));
+}
+
+/**
+ * The same ledger one item per row: what each opened chest paid, against what
+ * its drop table owed. Filtered the way the panel filters — anything that
+ * dropped is kept, and an expectation too small to print is left out.
+ *
+ * @param {Array<Object>} rows - From `summariseTally`
+ * @param {Function} [nameOf] - `(itemHrid) => string`, injectable for tests
+ * @returns {Array<Object>} Rows for `TREASURE_DETAIL_COLUMNS`
+ */
+export function buildTreasureDetailRows(rows, nameOf = itemName) {
+    return (rows || [])
+        .filter((row) => row.opened > 0)
+        .flatMap((row) =>
+            worthShowing(row.items).map((item) => ({
+                chest: nameOf(row.chestHrid),
+                chestHrid: row.chestHrid,
+                item: nameOf(item.itemHrid),
+                itemHrid: item.itemHrid,
+                actualCount: item.actualCount,
+                expectedCount: item.expectedCount,
+                actualValue: item.actualValue,
+                expectedValue: item.expectedValue,
+                unpriced: Boolean(item.unpriced),
+            }))
+        );
 }
 
 /** The tallest a freshly-opened popup is allowed to be */
@@ -453,6 +536,33 @@ class TreasureTracker {
      */
     restore() {
         reopenIfLeftOpen(PANEL_GEOMETRY_KEY, () => this.show({ remember: false }));
+    }
+
+    /**
+     * Your measured return on one chest kind, for the profit adjustment.
+     *
+     * Actual value out against the drop table's expectation, both priced at
+     * today's prices through the panel's own price source — so the ratio says
+     * "my openings run this far off the table", never "prices moved". This is
+     * the treasure rate the dungeon profit option applies.
+     *
+     * @param {string} chestHrid - The chest item
+     * @returns {{ratio: number, opened: number}|null} Null before anything has
+     *   been opened, without a drop table, or when nothing could be priced
+     */
+    measuredReturn(chestHrid) {
+        try {
+            const entry = this.tally?.[chestHrid];
+            const dropTable = dataManager.getInitClientData()?.openableLootDropMap?.[chestHrid];
+            if (!entry?.opened || !dropTable) return null;
+
+            const lifetime = chestPerformance(entry, dropTable, this._priceOf());
+            if (!(lifetime.expectedValue > 0) || !Number.isFinite(lifetime.ratio)) return null;
+            return { ratio: lifetime.ratio, opened: lifetime.opened };
+        } catch (error) {
+            console.error('[TreasureTracker] Measuring a chest return failed:', error);
+            return null;
+        }
     }
 
     /**
@@ -1136,6 +1246,19 @@ class TreasureTracker {
         buttons.appendChild(this._actionButton('Import', () => this._importHistory()));
         buttons.appendChild(this._actionButton('Import from Edible Tools', () => this._importEdibleTools()));
 
+        // The CSV pair appears only once something has been opened — a ledger
+        // with nothing in it has no rows to write, and a button that saves an
+        // empty file reads as the button breaking
+        if (this._summary().rows.some((row) => row.opened > 0)) {
+            const chestsCsv = this._actionButton('Chests CSV', () => this._exportSummaryCsv());
+            chestsCsv.title = 'One row per chest kind: opened, actual and expected value, ratio. Raw numbers.';
+            buttons.appendChild(chestsCsv);
+
+            const itemsCsv = this._actionButton('Items CSV', () => this._exportDetailCsv());
+            itemsCsv.title = 'One row per item per chest: counts and values against the drop table. Raw numbers.';
+            buttons.appendChild(itemsCsv);
+        }
+
         // Always here, saying which way it is set. It used to appear only while
         // the popup was pinned, so pressing it made the button itself disappear
         // — which reads as the button breaking rather than as the setting
@@ -1201,6 +1324,28 @@ class TreasureTracker {
             onClick();
         });
         return button;
+    }
+
+    /** The chest summary as a CSV download, built at click time */
+    _exportSummaryCsv() {
+        try {
+            const rows = buildTreasureSummaryRows(this._summary().rows);
+            if (!rows.length) return;
+            downloadCsv(csvFilename('treasure-chests'), toCsv(rows, TREASURE_SUMMARY_COLUMNS));
+        } catch (error) {
+            console.error('[TreasureTracker] CSV export failed:', error);
+        }
+    }
+
+    /** The per-item ledger as a CSV download, built at click time */
+    _exportDetailCsv() {
+        try {
+            const rows = buildTreasureDetailRows(this._summary().rows);
+            if (!rows.length) return;
+            downloadCsv(csvFilename('treasure-chest-items'), toCsv(rows, TREASURE_DETAIL_COLUMNS));
+        } catch (error) {
+            console.error('[TreasureTracker] CSV export failed:', error);
+        }
     }
 
     /** Write the ledger to a file */

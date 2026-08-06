@@ -7,6 +7,12 @@ import webSocketHook from '../../core/websocket.js';
 import dungeonTrackerStorage from './dungeon-tracker-storage.js';
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
+import {
+    DUNGEON_BATTLE_STARTED,
+    DUNGEON_BATTLE_ENDED,
+    DUNGEON_KEY_COUNTS,
+    DUNGEON_PARTY_FAILED_RE,
+} from '../../utils/game-text.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { characterKey, readScoped, writeScoped } from '../../utils/character-key.js';
 
@@ -449,7 +455,7 @@ class DungeonTracker {
                     }
 
                     // Look for "Battle started:" messages
-                    if (text.includes('Battle started:')) {
+                    if (text.includes(DUNGEON_BATTLE_STARTED)) {
                         // Try to extract timestamp
                         // Try to extract timestamp from message display format: [MM/DD HH:MM:SS AM/PM] or [DD-M HH:MM:SS]
                         const timestampMatch = text.match(
@@ -496,7 +502,7 @@ class DungeonTracker {
                     }
 
                     // Look for "Key counts:" messages
-                    if (text.includes('Key counts:')) {
+                    if (text.includes(DUNGEON_KEY_COUNTS)) {
                         // Parse the message
                         const keyCountsMap = this.parseKeyCountsFromMessage(text);
 
@@ -578,7 +584,7 @@ class DungeonTracker {
                             timestamp: this.firstKeyCountTimestamp,
                             keyCountsMap: latestKeyCountsMap,
                             text:
-                                'Key counts: ' +
+                                `${DUNGEON_KEY_COUNTS} ` +
                                 Object.entries(latestKeyCountsMap)
                                     .map(([name, count]) => `[${name} - ${count}]`)
                                     .join(', '),
@@ -701,7 +707,42 @@ class DungeonTracker {
         // Handle "Key counts" messages
         if (message.m === 'systemChatMessage.partyKeyCount') {
             this.onKeyCountsMessage(timestamp, message);
+            return;
         }
+
+        // Handle "Battle ended" messages — the game's word for a start that was
+        // canceled or a fight that was fled, never for a completed run. Matched
+        // by suffix rather than the exact key, which no capture has pinned down
+        if (typeof message.m === 'string' && /battleended/i.test(message.m)) {
+            this.onBattleEnded(timestamp);
+        }
+    }
+
+    /**
+     * Handle a "Battle ended" message.
+     *
+     * The phantom this closes: a ready-check that fails posts "Key counts" and
+     * then "Battle ended" a second later. Nothing consumed the ended message,
+     * so the canceled start stayed armed as a run's beginning, and the *next*
+     * key count — however much party-forming idle later — read as its
+     * completion. One recorded 15:47 "run" was two canceled starts with a
+     * member swap in between; its party had not assembled at its supposed start.
+     *
+     * Only a run with no wave completed is reset here: that is what a canceled
+     * start looks like. A fight fled mid-run is the action feed's business, and
+     * a successful completion has already been recorded by the time this could
+     * fire — `isTracking` is false and this returns without touching it.
+     *
+     * @param {number} _timestamp - Message timestamp in milliseconds
+     */
+    onBattleEnded(_timestamp) {
+        if (!this.isTracking || !this.currentRun) {
+            return;
+        }
+        if (this.currentRun.wavesCompleted > 0) {
+            return;
+        }
+        this.resetTracking();
     }
 
     /**
@@ -1488,8 +1529,8 @@ class DungeonTracker {
                 const timestamp = new Date(now.getFullYear(), month - 1, day, hour, min, sec, 0);
 
                 // Extract "Battle started:" messages
-                if (text.includes('Battle started:')) {
-                    const dungeonName = text.split('Battle started:')[1]?.split(']')[0]?.trim();
+                if (text.includes(DUNGEON_BATTLE_STARTED)) {
+                    const dungeonName = text.split(DUNGEON_BATTLE_STARTED)[1]?.split(']')[0]?.trim();
                     if (dungeonName) {
                         events.push({
                             type: 'battle_start',
@@ -1499,7 +1540,7 @@ class DungeonTracker {
                     }
                 }
                 // Extract "Key counts:" messages
-                else if (text.includes('Key counts:')) {
+                else if (text.includes(DUNGEON_KEY_COUNTS)) {
                     // Parse team composition from key counts
                     const keyCountsMap = this.parseKeyCountsFromMessage(text);
                     const playerNames = Object.keys(keyCountsMap).sort();
@@ -1514,15 +1555,15 @@ class DungeonTracker {
                     }
                 }
                 // Extract "Party failed" messages
-                else if (text.match(/Party failed on wave \d+/)) {
+                else if (text.match(DUNGEON_PARTY_FAILED_RE)) {
                     events.push({
                         type: 'fail',
                         timestamp,
                     });
                 }
                 // Extract "Battle ended:" messages (fled/canceled)
-                else if (text.includes('Battle ended:')) {
-                    const dungeonName = text.split('Battle ended:')[1]?.split(']')[0]?.trim();
+                else if (text.includes(DUNGEON_BATTLE_ENDED)) {
+                    const dungeonName = text.split(DUNGEON_BATTLE_ENDED)[1]?.split(']')[0]?.trim();
                     events.push({
                         type: 'cancel',
                         timestamp,

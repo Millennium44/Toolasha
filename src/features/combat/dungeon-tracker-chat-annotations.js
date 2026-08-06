@@ -6,8 +6,15 @@
 
 import dungeonTrackerStorage from './dungeon-tracker-storage.js';
 import dungeonTracker from './dungeon-tracker.js';
+import { markAsProfileLink } from '../chat/chat-profile-link.js';
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
+import {
+    DUNGEON_BATTLE_STARTED,
+    DUNGEON_BATTLE_ENDED,
+    DUNGEON_KEY_COUNTS,
+    DUNGEON_PARTY_FAILED_RE,
+} from '../../utils/game-text.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 
@@ -609,14 +616,14 @@ class DungeonTrackerChatAnnotations {
 
             // Check message relevance FIRST before parsing timestamp
             // Battle started message
-            if (text.includes('Battle started:')) {
+            if (text.includes(DUNGEON_BATTLE_STARTED)) {
                 const timestamp = this.getTimestampFromMessage(node);
                 if (!timestamp) {
                     console.warn('[Dungeon Tracker Debug] Battle started message has no timestamp:', text);
                     continue;
                 }
 
-                const dungeonName = text.split('Battle started:')[1]?.split(']')[0]?.trim();
+                const dungeonName = text.split(DUNGEON_BATTLE_STARTED)[1]?.split(']')[0]?.trim();
                 if (dungeonName) {
                     // Cache the dungeon name (survives chat scrolling)
                     this.lastSeenDungeonName = dungeonName;
@@ -632,7 +639,11 @@ class DungeonTrackerChatAnnotations {
                 // as a session boundary for the forward-scan pairing logic.
             }
             // Key counts message (warn if timestamp fails - these should always have timestamps)
-            else if (text.includes('Key counts:')) {
+            else if (text.includes(DUNGEON_KEY_COUNTS)) {
+                // Decorated before the timestamp/team checks, so the names are
+                // clickable even on a line those checks would drop
+                this.decorateKeyCountNames(node);
+
                 const timestamp = this.getTimestampFromMessage(node, true);
                 if (!timestamp) continue;
 
@@ -647,7 +658,7 @@ class DungeonTrackerChatAnnotations {
                 });
             }
             // Party failed message
-            else if (text.match(/Party failed on wave \d+/)) {
+            else if (text.match(DUNGEON_PARTY_FAILED_RE)) {
                 const timestamp = this.getTimestampFromMessage(node);
                 if (!timestamp) continue;
 
@@ -659,7 +670,7 @@ class DungeonTrackerChatAnnotations {
                 // Do NOT mark fail as processed — must persist as session context.
             }
             // Battle ended (canceled/fled)
-            else if (text.includes('Battle ended:')) {
+            else if (text.includes(DUNGEON_BATTLE_ENDED)) {
                 const timestamp = this.getTimestampFromMessage(node);
                 if (!timestamp) continue;
 
@@ -796,6 +807,51 @@ class DungeonTrackerChatAnnotations {
         const now = new Date();
         const dateObj = new Date(now.getFullYear(), month - 1, day, hour, min, sec, 0);
         return dateObj;
+    }
+
+    /**
+     * Make each bracketed player name in a "Key counts:" line clickable —
+     * clicking one fills "/profile <name>" into the chat input, via the shared
+     * chat profile-link decoration (delegated click handler, so the links keep
+     * working in chat history clones).
+     *
+     * Names are wrapped in `<a>` elements rather than spans on purpose:
+     * insertAnnotation() addresses the message body as the message's second
+     * `<span>`, and a span-wrapped name would become that second span. The
+     * wrap never changes the message's text content, so getTeamFromMessage()
+     * and the timestamp parsing read exactly what they always read.
+     *
+     * @param {HTMLElement} msg - A "Key counts:" chat message
+     */
+    decorateKeyCountNames(msg) {
+        if (msg.dataset.mwiKeyNamesLinked) return;
+        msg.dataset.mwiKeyNamesLinked = '1';
+
+        try {
+            const walker = document.createTreeWalker(msg, NodeFilter.SHOW_TEXT);
+            const textNodes = [];
+            let node;
+            while ((node = walker.nextNode())) textNodes.push(node);
+
+            for (const textNode of textNodes) {
+                const matches = [...textNode.textContent.matchAll(/\[([A-Za-z0-9_]+)\s*-\s*[\d,]+\]/g)];
+                // Wrapped back to front, so earlier match offsets stay valid
+                // while surroundContents splits the text node
+                for (const match of matches.reverse()) {
+                    const name = match[1];
+                    const link = document.createElement('a');
+                    if (!markAsProfileLink(link, name)) continue;
+
+                    const start = match.index + 1; // just inside the opening bracket
+                    const range = document.createRange();
+                    range.setStart(textNode, start);
+                    range.setEnd(textNode, start + name.length);
+                    range.surroundContents(link);
+                }
+            }
+        } catch (error) {
+            console.error('[Dungeon Tracker] Could not link key count names:', error);
+        }
     }
 
     /**

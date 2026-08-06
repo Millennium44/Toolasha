@@ -114,6 +114,7 @@
 import config from '../../core/config.js';
 import webSocketHook from '../../core/websocket.js';
 import { describeMonsterPanel } from '../../utils/battle-panel-monsters.js';
+import { webSocketHook as sharedWebSocketHook } from '../../utils/bundle-bridge.js';
 
 /**
  * Ticks per segment.
@@ -154,7 +155,7 @@ const RETAINED_TICKS = MAX_TICKS * 5;
  * @returns {Object}
  */
 function hook() {
-    return (typeof window !== 'undefined' && window.Toolasha?.Core?.webSocketHook) || webSocketHook;
+    return sharedWebSocketHook() || webSocketHook;
 }
 
 /** Panel snapshots stop once the wave is known, since the payload names it then */

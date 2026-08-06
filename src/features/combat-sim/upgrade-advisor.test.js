@@ -3198,6 +3198,25 @@ describe('what an ability upgrade costs', () => {
         expect(explainAbilityLevelUpCost).toHaveBeenLastCalledWith('/abilities/fireball', 48, 0, 53);
     });
 
+    test('a level-up is priced from the experience already into the level', () => {
+        // An ability part-way to its next level has already read some of the
+        // books; pricing from the level floor bought them all over again and
+        // overstated every ability row by up to a level's worth of books
+        character.characterAbilities = [{ abilityHrid: '/abilities/fireball', level: 48, experience: 99_999 }];
+        explainUpgradeCost(levelUp, gameData);
+
+        expect(explainAbilityLevelUpCost).toHaveBeenLastCalledWith('/abilities/fireball', 48, 99_999, 53);
+    });
+
+    test('a live book that disagrees about its level falls back to the floor', () => {
+        // Experience is a position within a level; carried onto a different
+        // level it means nothing, so the floor is the honest reading
+        character.characterAbilities = [{ abilityHrid: '/abilities/fireball', level: 47, experience: 99_999 }];
+        explainUpgradeCost(levelUp, gameData);
+
+        expect(explainAbilityLevelUpCost).toHaveBeenLastCalledWith('/abilities/fireball', 48, 0, 53);
+    });
+
     test('a swap to an ability you have never read is learned from scratch', () => {
         const detail = explainUpgradeCost(swap, gameData);
 

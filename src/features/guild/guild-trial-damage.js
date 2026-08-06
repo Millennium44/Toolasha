@@ -25,9 +25,10 @@
  * 2. **This week's encounter, by name.** The guild trials record knows the
  *    week's combat trial card ("Trial Chameleon"), and the five encounters are a
  *    closed list (`COMBAT_ENCOUNTERS`). A battle whose monster reduces to the
- *    same encounter as the card is that trial. Without a combat card on the
- *    record — no trial this week, or the panel has never been opened — rule 2
- *    cannot fire at all, which is the conservative direction.
+ *    same encounter as the card is that trial.
+ *    Without a combat card on the record — no trial this week, or the panel has
+ *    never been opened — rule 2 cannot fire at all, which is the conservative
+ *    direction.
  * 3. **Nothing else.** A battle that matches neither is not attributed, and the
  *    breakdown says so rather than showing an empty table that reads as zero
  *    damage.
@@ -38,33 +39,95 @@
  * the next `new_battle` confirms what is being fought — a reload mid-trial
  * therefore measures nothing rather than measuring the wrong thing.
  *
- * ## What it can say
+ * This gate has never once armed, and it is not supposed to: a trial fight is
+ * not on this client's own battle feed. That is why it is no longer the only
+ * source.
  *
- * Damage, share of the party's total, hit rate, crit rate and deaths, per
- * player, across the whole trial and not merely the tier on screen — a trial is
- * a ladder of fights and the interesting comparison spans them. Deaths come from
- * the same feed for free: a player's health crossing zero in `pMap`.
+ * ## The spectator stream, which is the real one
  *
- * ## What it cannot
+ * Opening the In Progress **fight view** subscribes the client to
+ * `guild_battle_updated`, and it is a firehose: 127 messages in a minute of
+ * watching, each one
  *
- * **Only the fights this client is in.** A guild member watching a trial they
- * did not sign up for receives no battle traffic for it, so there is nothing
- * here to fold. That is the same limit the rest of the trials feature has and it
- * is reported the same way — the breakdown says nothing has been seen rather
- * than drawing zeroes.
+ * ```
+ * {type, battleId, tier, pMap, mMap}
+ * ```
  *
- * **Overkill is not counted**, and a tick that names nobody credits nobody —
- * both inherited from the attribution module, both documented there.
+ * with `pMap`/`mMap` entries in exactly the shape a normal battle tick uses —
+ * `cHP mHP cMP mMP isActive leftCombat atkCounter isAutoAtk abilityHrid int
+ * dmgCounter critCounter`. `mMap["0"]` is the boss, its `cHP` is the pool bar to
+ * the unit (454,807 of 618,000 in the capture, which is the T2 Chameleon pool
+ * exactly), and `tier` states outright what the DOM badge had to be reasoned
+ * about. So the fight *is* real and server-run, and spectating streams it.
+ *
+ * Everything below therefore runs twice over: the same `attributeTick`,
+ * `foldEvents` and `foldSupportTick` this module already used, fed from a second
+ * listener. Nothing about the arithmetic changes, because the payload shape does
+ * not.
+ *
+ * ### What that costs, and what it does not
+ *
+ * - **Only while somebody watches.** Close the fight view and the stream stops.
+ *   The measurement covers the watched stretch and every caption says so; the
+ *   recorder's session gaps already model exactly this.
+ * - **Units are indexes.** `pMap` is `{"1": …}` with no roster on it, so names
+ *   come from `guild-trial-units.js` — the fight view's own portraits first, the
+ *   captured builds' maximum health and mana second, and a placeholder when
+ *   neither can say. A wrong name is worse than no name.
+ * - **A per-player damage split needs the players' own counters.** Boss health
+ *   falling is party damage and is unambiguous; splitting it needs `atkCounter`
+ *   on the `pMap` entries, which the attribution module requires and refuses to
+ *   guess without. Ticks that carried them are counted, so the panel can say
+ *   which of the two it has rather than drawing an empty table.
+ *
+ * ### What is shown when nothing has been watched
+ *
+ * {@link estimateDamageSplit} — a per-player split derived from the members'
+ * captured builds, labelled as an estimate. Measured beats estimated whenever
+ * measured exists, and the panels name the source either way.
  */
 
 import dataManager from '../../core/data-manager.js';
 import webSocketHook from '../../core/websocket.js';
 import { attributeTick, foldEvents, newAttributionState, noteActions } from '../../utils/damage-attribution.js';
+import { guildLoadoutCapture } from './guild-loadout-capture.js';
+import { isMonsterUnit } from './guild-loadouts.js';
+import { autoAttackDps } from './guild-trial-forecast.js';
 import { foldSupportTick, newSupportState, summariseSupport, supportCoverage } from './guild-trial-support.js';
-import { COMBAT_ENCOUNTERS, TRIAL_ACTIVE_MS } from './guild-trials-math.js';
+import {
+    fightViewBossNames,
+    fightViewNames,
+    nameCoverage,
+    resolveUnitNames,
+    rosterFromBattle,
+} from './guild-trial-units.js';
+import { COMBAT_ENCOUNTERS, TRIAL_ACTIVE_MS, tierFromLevel, trialFromHrid } from './guild-trials-math.js';
 
 /** Below this the per-player rates are one exchange's luck rather than a rate */
 export const MIN_SECONDS = 5;
+
+/**
+ * Where a trial's figures come from, in one sentence.
+ *
+ * This used to say the fight did not exist — that trial combat was simulated and
+ * no measurement was possible. A wire capture disproved it: the fight is a real
+ * server-run battle and `guild_battle_updated` streams it to anyone with the
+ * fight view open. The condition is not "impossible", it is "while watching",
+ * and that is a very different thing to tell a player, because they can act on
+ * it.
+ */
+export const SPECTATED_TRIAL_NOTE =
+    'a trial fight runs on the game’s own server and streams to this client only while the In Progress fight ' +
+    'view is open — so what is measured is the stretch somebody was watching';
+
+/** The stream that carries a spectated trial fight */
+export const GUILD_BATTLE_MESSAGE = 'guild_battle_updated';
+
+/** The message that opens a tier, with the roster and the tier-scaled boss on it */
+export const NEW_GUILD_BATTLE_MESSAGE = 'new_guild_battle';
+
+/** The message that closes a combat trial */
+export const END_GUILD_BATTLE_MESSAGE = 'end_guild_battle';
 
 /** A tick further from the last than this is a break, not a slow swing */
 const MAX_TICK_GAP_MS = 2000;
@@ -107,7 +170,11 @@ export function isTrialBattle({ monsterNames = [], trialNames = [] } = {}) {
 
     const wanted = new Set((trialNames || []).map(encounterOf).filter(Boolean));
     if (!wanted.size) {
-        return { isTrial: false, encounter: null, reason: 'no combat trial on this week’s record' };
+        return {
+            isTrial: false,
+            encounter: null,
+            reason: `no combat trial on this week’s record — ${SPECTATED_TRIAL_NOTE}`,
+        };
     }
 
     for (const name of monsterNames) {
@@ -119,15 +186,85 @@ export function isTrialBattle({ monsterNames = [], trialNames = [] } = {}) {
 
     // Names the battle carried, in the reason. A gate that fails closed and says
     // only *that* it failed cannot be diagnosed from a bug report — this one was
-    // reported as "no per-player split during a Trial Chameleon fight" and the
-    // one fact needed to explain it, what the payload actually called those
-    // monsters, was the one fact nothing recorded.
+    // reported as "no per-player split during a Trial Chameleon fight", and what
+    // the payload called those monsters is the fact that answered it: ordinary
+    // zone monsters, because the battle was the player's own grinding while the
+    // trial ran on the server, where the spectator stream now reads it.
     const seen = [...new Set(monsterNames.map((name) => String(name || '').trim()).filter(Boolean))];
     const listed = seen.length ? ` (${seen.slice(0, 4).join(', ')})` : '';
     return {
         isTrial: false,
         encounter: null,
-        reason: `the monsters${listed} are not this week’s trial encounter (${[...wanted].join(', ')})`,
+        reason:
+            `this client's own battle${listed} is not this week’s trial encounter ` +
+            `(${[...wanted].join(', ')}) — ${SPECTATED_TRIAL_NOTE}`,
+    };
+}
+
+/**
+ * An estimated per-player split, from the builds that have been captured.
+ *
+ * The honest replacement for a measurement that cannot exist. Each member's own
+ * sheet says what their auto-attack is worth a second; summing those and taking
+ * shares is the same arithmetic the forecast's estimated party rate already
+ * uses, so the two agree by construction. It is a *shape* — the sheet's
+ * auto-attack figure is a multiplier on a weapon whose own damage is not on it,
+ * abilities are not modelled, and a build seen a week ago is not what that
+ * member is wearing now. Everything that draws this must lead with that.
+ *
+ * Members whose sheet has never been captured are returned by name rather than
+ * dropped: a leaderboard that silently omits three people reads as three people
+ * who did nothing.
+ *
+ * @param {Object} input - Inputs
+ * @param {Array<Object>} [input.loadouts] - Snapshots from `guild-loadout-capture.js`
+ * @param {string[]} [input.members] - Everyone the split should cover, e.g. the signed-up roster
+ * @returns {{players: Array<Object>, unestimated: string[], total: number, covered: number, of: number,
+ *   oldestAt: number|null}} The split, biggest first
+ */
+export function estimateDamageSplit({ loadouts = [], members = [] } = {}) {
+    const byName = new Map();
+    for (const loadout of loadouts || []) {
+        const name = String(loadout?.name || '').trim();
+        if (!name) continue;
+        const key = name.toLowerCase();
+        // `seen()` is most-recent-first, so the first spelling of a name wins
+        if (!byName.has(key)) byName.set(key, loadout);
+    }
+
+    const wanted = (members || []).map((name) => String(name || '').trim()).filter(Boolean);
+    const roster = wanted.length ? wanted : [...byName.values()].map((loadout) => loadout.name);
+
+    const rows = [];
+    const unestimated = [];
+    const counted = new Set();
+
+    for (const name of roster) {
+        const key = name.toLowerCase();
+        if (counted.has(key)) continue;
+        counted.add(key);
+
+        const loadout = byName.get(key);
+        const dps = autoAttackDps(loadout?.stats);
+        if (dps === null) {
+            unestimated.push(name);
+            continue;
+        }
+        rows.push({ name: loadout.name || name, dps, at: Number.isFinite(loadout.at) ? loadout.at : null });
+    }
+
+    const total = rows.reduce((sum, row) => sum + row.dps, 0);
+    const stamps = rows.map((row) => row.at).filter((at) => Number.isFinite(at));
+
+    return {
+        players: rows
+            .map((row) => ({ ...row, share: total > 0 ? (row.dps / total) * 100 : null }))
+            .sort((a, b) => b.dps - a.dps),
+        unestimated,
+        total,
+        covered: rows.length,
+        of: rows.length + unestimated.length,
+        oldestAt: stamps.length ? Math.min(...stamps) : null,
     };
 }
 
@@ -194,6 +331,11 @@ export function summariseTrialDamage({ tally = {}, names = {}, deaths = {}, seco
         return {
             index,
             name: names[index] || `Player ${Number(index) + 1}`,
+            // Every tally row is measured off the stream: the server groups
+            // each tick by actor, so the attribution names its owner without
+            // needing that player's own counters — the boss's counters gate
+            // the hits and mark the crits for everybody
+            measured: true,
             damage: entry.damage || 0,
             hits: entry.hits || 0,
             crits: entry.crits || 0,
@@ -238,11 +380,46 @@ class GuildTrialDamage {
         this.battleId = null;
         this.active = false;
         this.encounter = null;
-        this.reason = 'no trial fight seen yet';
+        this.reason = SPECTATED_TRIAL_NOTE;
         this.fights = 0;
         this.startedAt = 0;
         /** Every spelling of the monsters in the fight in progress, for a late verdict */
         this.monsterNames = [];
+
+        // ── The spectator stream ────────────────────────────────────────────
+        /** `'spectated'` once a `guild_battle_updated` tick has been folded in */
+        this.source = null;
+        /** The battle the spectated ticks belong to */
+        this.guildBattleId = null;
+        /** The tier the stream states outright, which beats reasoning about a badge */
+        this.tier = null;
+        /** The boss's own bar, to the unit, and when it was read */
+        this.pool = null;
+        /** Index → `{name, source}`, from `guild-trial-units.js` */
+        this.unitNames = {};
+        /**
+         * How much of the stream has been seen, and how much of it could be split.
+         *
+         * `playerActionTicks` is the one that decides what the panel may claim: a
+         * boss losing health is party damage no matter what, but naming who did
+         * it needs `atkCounter` on the `pMap` entries. Counting the ticks that
+         * carried one lets the caption say which of the two this trial has.
+         */
+        this.spectator = { ticks: 0, playerActionTicks: 0, bossTicks: 0, lastAt: 0, firstAt: 0 };
+        /** The boss's own stat sheet, per tier, from clicking it in the fight view */
+        this.bossSheets = {};
+        /** What the fight view says is being watched, exactly as it wrote it */
+        this.spectatedBossName = null;
+        /** Slot → `{name, characterId}`, from `new_guild_battle` */
+        this.roster = {};
+        /** Slots whose own action counters have been seen — your character, and only yours */
+        this.countedSlots = new Set();
+        /** When each tier started, from the message that opens it */
+        this.tierStarts = {};
+        /** Set once `end_guild_battle` has been seen for this trial */
+        this.endedAt = null;
+        /** The party size the game stated, which is what the ladders scale by */
+        this.participants = null;
     }
 
     /**
@@ -292,17 +469,435 @@ class GuildTrialDamage {
 
         this.onNewBattle = (data) => this._onNewBattle(data);
         this.onBattleUpdated = (data) => this._onBattleUpdated(data);
+        this.onGuildBattle = (data) => this._onGuildBattleTick(data);
+        this.onUnitFetched = (data) => this._onUnitFetched(data);
+        this.onNewGuildBattle = (data) => this._onNewGuildBattle(data);
+        this.onEndGuildBattle = (data) => this._onEndGuildBattle(data);
         webSocketHook.on('new_battle', this.onNewBattle);
         webSocketHook.on('battle_updated', this.onBattleUpdated);
+        webSocketHook.on(GUILD_BATTLE_MESSAGE, this.onGuildBattle);
+        webSocketHook.on('battle_unit_fetched', this.onUnitFetched);
+        webSocketHook.on(NEW_GUILD_BATTLE_MESSAGE, this.onNewGuildBattle);
+        webSocketHook.on(END_GUILD_BATTLE_MESSAGE, this.onEndGuildBattle);
     }
 
     cleanup() {
         if (this.onNewBattle) webSocketHook.off('new_battle', this.onNewBattle);
         if (this.onBattleUpdated) webSocketHook.off('battle_updated', this.onBattleUpdated);
+        if (this.onGuildBattle) webSocketHook.off(GUILD_BATTLE_MESSAGE, this.onGuildBattle);
+        if (this.onUnitFetched) webSocketHook.off('battle_unit_fetched', this.onUnitFetched);
+        if (this.onNewGuildBattle) webSocketHook.off(NEW_GUILD_BATTLE_MESSAGE, this.onNewGuildBattle);
+        if (this.onEndGuildBattle) webSocketHook.off(END_GUILD_BATTLE_MESSAGE, this.onEndGuildBattle);
         this.onNewBattle = null;
         this.onBattleUpdated = null;
+        this.onGuildBattle = null;
+        this.onUnitFetched = null;
+        this.onNewGuildBattle = null;
+        this.onEndGuildBattle = null;
         this.initialized = false;
         this.reset();
+    }
+
+    /**
+     * A tier of the trial has begun.
+     *
+     * The single most useful message in the family, and it fires at *every*
+     * tier. Four things arrive with it that nothing else on this client has:
+     *
+     * - **The roster, in slot order.** `players[]` carries `character.id` and
+     *   `character.name`, and a tick's `pMap` keys are indexes into that array.
+     *   That is the join the spectator stream never had, and it retires the
+     *   guessing for anyone watching from the start.
+     * - **The tier-scaled boss.** `monsters[]` are whole sheets — health, the
+     *   enrage timer, the full `combatDetails` — so a boss sheet no longer needs
+     *   anybody to click the thing. It confirms the rule again on arrival: a
+     *   330,000-health Badger with thirty players in the trial reads 429,000,
+     *   which is `330,000 × (1 + 0.01 × 30)` exactly.
+     * - **The tier boundary.** Stated, rather than inferred from the boss's
+     *   health jumping. The baselines are dropped here and the walk over the
+     *   pool never sees a wave reset as a heal.
+     * - **The encounter**, from `monsters[].hrid`.
+     *
+     * @param {Object} data - A `new_guild_battle` payload
+     */
+    _onNewGuildBattle(data) {
+        try {
+            if (!data || typeof data !== 'object') return;
+
+            const now = Date.now();
+            const tier = Number.isFinite(Number(data.tier)) ? Number(data.tier) : null;
+            const battleId = data.battleId ?? null;
+
+            // The stated boundary, which is what this message is *for*
+            if (battleId !== this.guildBattleId || tier !== this.tier) {
+                this._newSpectatedWave(battleId, tier, now);
+            }
+            this.tier = tier;
+            this.guildBattleId = battleId;
+            this.source = this.source || 'spectated';
+            // The game saying a tier has begun is the strongest statement that a
+            // trial is running that this module has ever had
+            this.active = true;
+            this.reason = SPECTATED_TRIAL_NOTE;
+            this.endedAt = null;
+            if (!this.startedAt) this.startedAt = now;
+            if (Number.isFinite(tier)) this.tierStarts[tier] = now;
+
+            // The roster replaces every weaker source, and a new battle restates
+            // it — a slot that changed hands must not keep the old name
+            const roster = rosterFromBattle(data);
+            if (Object.keys(roster).length) {
+                this.roster = roster;
+                for (const [index, entry] of Object.entries(roster)) {
+                    this.unitNames[index] = { name: entry.name, source: 'roster', characterId: entry.characterId };
+                    this.names[index] = entry.name;
+                }
+            }
+
+            this._noteBattleMonsters(data.monsters, tier, now);
+            // The party size the pool and health ladders scale by, stated rather
+            // than counted off a sign-up sheet
+            const participants = Object.keys(roster).length;
+            if (participants) this.participants = participants;
+        } catch (error) {
+            console.error('[GuildTrialDamage] Reading the start of a trial tier failed:', error);
+        }
+    }
+
+    /**
+     * The boss sheets a tier's opening message carries.
+     *
+     * Filed exactly where a clicked sheet goes, so the two sources are one store
+     * and a trial watched from the start needs no clicking at all.
+     *
+     * @param {Array<Object>} monsters - `new_guild_battle.monsters`
+     * @param {number|null} tier - The tier it opened
+     * @param {number} at - Now
+     */
+    _noteBattleMonsters(monsters, tier, at) {
+        for (const monster of Array.isArray(monsters) ? monsters : []) {
+            const name = String(monster?.name || '');
+            const encounter = encounterOf(monster?.hrid || name);
+            if (!encounter) continue;
+
+            if (!this.encounter) {
+                this.encounter = encounter;
+                this.spectatedBossName = name || this.spectatedBossName;
+            }
+            if (!Number.isFinite(tier)) continue;
+
+            const details =
+                monster.combatDetails && typeof monster.combatDetails === 'object' ? monster.combatDetails : {};
+            this.bossSheets[tier] = {
+                name,
+                tier,
+                hrid: monster.hrid ?? null,
+                level: Number(details.combatLevel) || null,
+                maxHitpoints: Number(monster.maxHitpoints ?? details.maxHitpoints) || null,
+                maxManapoints: Number(monster.maxManapoints ?? details.maxManapoints) || null,
+                // Nanoseconds on the wire — ten minutes, which is the stack cap
+                enrageTimerMs: Number(monster.enrageTimerDuration) / 1e6 || null,
+                spawnTime: monster.spawnTime ?? null,
+                stats: { ...details },
+                source: 'new_guild_battle',
+                at,
+            };
+            return;
+        }
+    }
+
+    /**
+     * The combat trial is over, stated by the game.
+     *
+     * It carries a battle id and a trial hrid and nothing else — no result, no
+     * tier, no rewards — so what it settles is the *lifecycle*: this is the
+     * moment a session can be finalised and a result reported with certainty,
+     * rather than inferred from ticks going quiet.
+     *
+     * @param {Object} data - An `end_guild_battle` payload
+     */
+    _onEndGuildBattle(data) {
+        try {
+            const trial = trialFromHrid(data?.trialHrid);
+            // A different trial's ending is not this one's
+            if (trial && this.encounter && trial.key !== this.encounter) return;
+            if (trial && !this.encounter) this.encounter = trial.key;
+
+            this.endedAt = Date.now();
+            this.active = false;
+        } catch (error) {
+            console.error('[GuildTrialDamage] Reading the end of a trial failed:', error);
+        }
+    }
+
+    /**
+     * A tick of the trial fight, as streamed to a spectator.
+     *
+     * The same arithmetic as `_onBattleUpdated` over the same payload shape, with
+     * three differences that all come from this being somebody else's fight:
+     *
+     * - **No gate.** A `guild_battle_updated` is a guild trial by construction —
+     *   it is the only thing that produces one — so there is no encounter to
+     *   recognise and no battle to mistake it for.
+     * - **The tier is stated.** It replaces the badge inference for as long as
+     *   the stream runs, and a change of tier is a new wave: the boss is a fresh
+     *   unit at full health and the party is topped up between them, so the
+     *   diff baselines are dropped or the reset reads as a heal for the pool.
+     * - **Names are indexes**, resolved by `guild-trial-units.js` rather than
+     *   read off a roster the payload does not carry.
+     *
+     * @param {Object} data - `guild_battle_updated` payload
+     */
+    _onGuildBattleTick(data) {
+        try {
+            if (!data || typeof data !== 'object') return;
+
+            const now = Date.now();
+            const battleId = data.battleId ?? null;
+            const tier = Number.isFinite(Number(data.tier)) ? Number(data.tier) : null;
+
+            // A different battle, or a different wave of the same one. Either way
+            // the units on screen are not the units the baselines describe
+            if (battleId !== this.guildBattleId || tier !== this.tier) {
+                this._newSpectatedWave(battleId, tier, now);
+            }
+
+            this.source = 'spectated';
+            this.active = true;
+            this.reason = SPECTATED_TRIAL_NOTE;
+            if (!this.startedAt) this.startedAt = now;
+            if (!this.spectator.firstAt) this.spectator.firstAt = now;
+
+            const pMap = data.pMap || {};
+            const mMap = data.mMap || {};
+
+            this._identifyEncounter();
+            this._nameUnits(pMap);
+            this._readPool(mMap, tier, now);
+
+            // Before `noteActions`, exactly as the ordinary path does it: the hit
+            // that lands on this tick was cast by what was prepared before it.
+            //
+            // The server groups each tick by actor, so the attribution's
+            // presence rung measures every player here — the lone unit in a
+            // tick owns its action, reflect and damage-over-time included.
+            // (The 1,405-health tick this module once refused as "the tank was
+            // merely being hit" carried the boss's own hit counter rising: the
+            // boss struck the tank and bled on their thorns, and refusing it
+            // was the error.) `soloFallback: false` still holds — it gates the
+            // party-of-one rung, and no roster message states a party here.
+            const events = attributeTick(data, this.state, { soloFallback: false });
+            // No non-damaging filter: `abilityHrid` streams for your own unit
+            // only, so every other player's action reads as idle — on this
+            // stream that means unlabeled, not idle, and the hit gate (the
+            // boss's own counter) already keeps non-hits out
+            foldEvents(this.tally, events, { filterNonDamaging: false });
+            this._noteDeaths(pMap);
+            foldSupportTick(this.support, pMap, this.state.actions, undefined, now);
+            noteActions(this.state, pMap);
+
+            this.spectator.ticks += 1;
+            // Which *slots* carried counters, not merely whether any did. The
+            // recording shows exactly one player entry ever carrying them — the
+            // client's own unit — so "can this be split" is a fact about a row
+            // rather than about the trial
+            let counted = false;
+            for (const [index, unit] of Object.entries(pMap)) {
+                if (!Number.isFinite(Number(unit?.atkCounter))) continue;
+                this.countedSlots.add(index);
+                counted = true;
+            }
+            if (counted) this.spectator.playerActionTicks += 1;
+            if (Object.keys(mMap).length) this.spectator.bossTicks += 1;
+
+            const gap = now - this.lastTickAt;
+            if (this.lastTickAt && gap > 0 && gap < MAX_TICK_GAP_MS) this.seconds += gap / 1000;
+            this.lastTickAt = now;
+            this.spectator.lastAt = now;
+        } catch (error) {
+            console.error('[GuildTrialDamage] Reading a spectated trial tick failed:', error);
+        }
+    }
+
+    /**
+     * The boss's own sheet, from clicking it in the fight view.
+     *
+     * Clicking the boss fires `battle_unit_fetched` exactly as clicking a member
+     * does, and the sheet that comes back is the *tier-scaled* one — Lv.110,
+     * 618,000 health, and every accuracy, damage and evasion rating with it.
+     * That is worth keeping, and it is emphatically not a loadout: it is filed
+     * here by tier and `guild-loadouts.js` refuses it as a member outright.
+     *
+     * Kept per tier because that is the whole value of it. The health ladder is
+     * derived and verified; whether the *other* ratings scale the same way has
+     * only ever been assumed, and two tiers' sheets in one export settle it.
+     *
+     * @param {Object} data - `battle_unit_fetched` payload
+     */
+    _onUnitFetched(data) {
+        try {
+            const unit = data?.unit || data;
+            if (!unit || typeof unit !== 'object' || !isMonsterUnit(unit)) return;
+
+            const name = String(unit.character?.name || unit.name || '');
+            // Only a trial's boss. An ordinary zone monster clicked during the
+            // hour is not a trial sheet and would sit here pretending to be one
+            if (!encounterOf(name)) return;
+
+            const details = unit.combatDetails && typeof unit.combatDetails === 'object' ? unit.combatDetails : {};
+            const level = Number(details.combatLevel ?? unit.character?.combatLevel);
+            // The stream states the tier outright while it runs; the sheet's own
+            // level is what answers when nobody is watching
+            const tier = this.tier ?? tierFromLevel(level);
+            if (!Number.isFinite(tier)) return;
+
+            // One click on the boss is enough to say which trial this is, and it
+            // outlives the fight view being closed
+            if (!this.encounter) {
+                this.encounter = encounterOf(name);
+                this.spectatedBossName = name;
+            }
+
+            this.bossSheets[tier] = {
+                name,
+                tier,
+                level: Number.isFinite(level) ? level : null,
+                maxHitpoints: Number(details.maxHitpoints) || null,
+                maxManapoints: Number(details.maxManapoints) || null,
+                stats: { ...(details.combatStats || {}) },
+                at: Date.now(),
+            };
+        } catch (error) {
+            console.error('[GuildTrialDamage] Reading a trial boss sheet failed:', error);
+        }
+    }
+
+    /**
+     * A new battle or a new wave: drop the baselines, keep the tally.
+     *
+     * The tally spans the whole trial deliberately — a trial is a ladder of
+     * fights and the comparison a guild wants spans them. What must not span
+     * them is the *diff*: a fresh boss at full health read against the last one's
+     * corpse is a 618,000-point heal, and a party topped up between waves is
+     * everybody healing everybody.
+     *
+     * @param {*} battleId - The battle this tick belongs to
+     * @param {number|null} tier - The tier it states
+     * @param {number} at - Now
+     */
+    _newSpectatedWave(battleId, tier, at) {
+        const newFight = battleId !== this.guildBattleId;
+
+        this.state.monstersHP = {};
+        this.state.dmgCounter = {};
+        this.state.critCounter = {};
+        this.support.lastHP = {};
+        this.support.lastMP = {};
+        this.playersHP = {};
+
+        if (newFight) {
+            // A different battle is a different encounter until something says
+            // otherwise. Carrying the last one over is how a Chameleon fight
+            // gets filed under Hedgehog
+            this.spectatedBossName = null;
+            this.encounter = null;
+            // …and a different battle is a different roster. A tier change is
+            // not: the same thirty people fight every tier of one trial
+            this.roster = {};
+        }
+
+        this.guildBattleId = battleId;
+        this.tier = tier;
+        this.fights += 1;
+        // A gap in the watching is not a gap in the fight, but it is a gap in
+        // what was measured, and folding it into the elapsed seconds would
+        // divide the damage by an hour nobody watched
+        if (newFight) this.lastTickAt = 0;
+        this.pool = null;
+        this.spectator.lastAt = at;
+    }
+
+    /**
+     * Which encounter is being watched.
+     *
+     * The stream carries a `battleId` and a `tier` and no name at all, so the
+     * identity has to come from beside it. Two sources, and neither is a guess:
+     *
+     * 1. **The fight view's own boss tile.** It draws "Trial Chameleon" in the
+     *    monsters area exactly as it draws the party's names in the players
+     *    area, and this reads it the same way.
+     * 2. **A boss sheet already clicked.** `battle_unit_fetched` names the unit
+     *    outright, so one click identifies a fight for the rest of it.
+     *
+     * When neither can say, the answer stays null and the pool attaches to *no*
+     * card. That is the whole point: standing in for every barless combat card
+     * is what filed a Chameleon fight under Hedgehog, and "no data" on both is
+     * strictly better than the right number on the wrong trial.
+     */
+    _identifyEncounter() {
+        if (this.encounter) return;
+
+        for (const name of fightViewBossNames()) {
+            const encounter = encounterOf(name);
+            if (!encounter) continue;
+
+            this.spectatedBossName = name;
+            this.encounter = encounter;
+            return;
+        }
+
+        // A sheet for the tier being fought first, then any sheet at all — one
+        // click on the boss identifies the fight even after the view is shut
+        const sheets = Object.values(this.bossSheets);
+        const preferred = sheets.find((sheet) => sheet.tier === this.tier) || sheets[sheets.length - 1];
+        const fromSheet = encounterOf(preferred?.name || '');
+        if (!fromSheet) return;
+
+        this.spectatedBossName = preferred.name;
+        this.encounter = fromSheet;
+    }
+
+    /**
+     * Put names to the tick's unit indexes.
+     * @param {Object} pMap - The tick's players
+     */
+    _nameUnits(pMap) {
+        const resolved = resolveUnitNames({
+            pMap,
+            roster: this.roster,
+            portraits: fightViewNames(),
+            loadouts: guildLoadoutCapture.seen?.() || [],
+            known: this.unitNames,
+        });
+
+        for (const [index, entry] of Object.entries(resolved)) {
+            this.unitNames[index] = entry;
+            this.names[index] = entry.name;
+        }
+    }
+
+    /**
+     * The boss's own bar, which is the pool to the unit.
+     *
+     * A second and better source for the figure the trials panel has been
+     * scraping off the DOM: the same number, per tick rather than per redraw, and
+     * available when the card is not on screen.
+     *
+     * @param {Object} mMap - The tick's monsters
+     * @param {number|null} tier - The tier the payload states
+     * @param {number} at - Now
+     */
+    _readPool(mMap, tier, at) {
+        for (const unit of Object.values(mMap || {})) {
+            const current = Number(unit?.cHP);
+            const max = Number(unit?.mHP);
+            if (!Number.isFinite(current) || !Number.isFinite(max) || max <= 0) continue;
+
+            // The encounter travels with the reading. A pool with no name on it
+            // is a pool no card may claim
+            this.pool = { current, max, tier, at, encounter: this.encounter, bossName: this.spectatedBossName };
+            return;
+        }
     }
 
     /**
@@ -366,7 +961,9 @@ class GuildTrialDamage {
             if (data?.battleId !== this.battleId) {
                 this.battleId = data?.battleId ?? null;
                 this.active = false;
-                this.reason = 'this fight was already under way — no start message to identify it';
+                this.reason =
+                    'this fight was already under way — no start message to identify it. ' +
+                    `In any case, ${SPECTATED_TRIAL_NOTE}`;
                 return;
             }
             if (!this.active) return;
@@ -417,10 +1014,17 @@ class GuildTrialDamage {
     /**
      * What the trial has looked like so far.
      *
+     * `support` fills from the spectator stream even when the damage split does
+     * not: health falling, health rising and mana are per-unit facts on every
+     * tick, where naming the *attacker* needs `atkCounter` on the players. So a
+     * breakdown can honestly carry a full tank-and-healer table and an empty
+     * damage table, and `splitFromCounters` is what says which.
+     *
      * @returns {{measured: boolean, active: boolean, encounter: string|null, reason: string,
      *   seconds: number, fights: number, players: Array<Object>, totalDamage: number,
-     *   partyDps: number|null, ageMs: number|null}} The breakdown; `measured` is false when there
-     *   is nothing to draw, and `reason` says which flavour of nothing it is
+     *   partyDps: number|null, ageMs: number|null, source: string|null, tier: number|null,
+     *   pool: Object|null, spectator: Object, names: Object}} The breakdown; `measured` is false
+     *   when there is nothing to draw, and `reason` says which flavour of nothing it is
      */
     breakdown() {
         const ageMs = this.lastTickAt ? Date.now() - this.lastTickAt : null;
@@ -435,9 +1039,14 @@ class GuildTrialDamage {
             deaths: this.deaths,
             seconds: this.seconds,
         });
+        const support = summariseSupport(this.support, this.names, this.deaths);
 
         return {
             measured: !stale && summary.players.length > 0,
+            // A watched trial that produced no damage split still produced a
+            // tank-and-healer table, and a panel that only looks at `measured`
+            // would throw it away
+            measuredSupport: !stale && support.players.length > 0,
             stale,
             active: this.active,
             encounter: this.encounter,
@@ -445,6 +1054,37 @@ class GuildTrialDamage {
             seconds: this.seconds,
             fights: this.fights,
             ageMs,
+            // Where these figures came from, which every caption has to state
+            source: this.source,
+            // The stream says the tier outright; nothing else on this client does
+            tier: this.tier,
+            // The boss's own bar, per tick — the pool reading the panel scrapes
+            // off the DOM, from the wire instead
+            pool: this.pool ? { ...this.pool } : null,
+            spectator: { ...this.spectator },
+            // What the fight view called the thing being fought, verbatim
+            bossName: this.spectatedBossName,
+            // The boss's tier-scaled sheet, per tier, for the export. Not a
+            // loadout and never stored as one — see `isMonsterUnit`
+            bossSheets: { ...this.bossSheets },
+            // Whether any player's own attack counters have been seen. The
+            // split no longer depends on them — the presence rung measures
+            // every actor — but a row they confirm directly is worth naming,
+            // and the export keeps the fact either way
+            splitFromCounters: this.spectator.playerActionTicks > 0,
+            // Which slots the game streamed counters for. In every recording so
+            // far that is exactly one — the viewer's own character
+            countedSlots: [...this.countedSlots],
+            countedNames: [...this.countedSlots].map((index) => this.names[index]).filter(Boolean),
+            // The roster the game stated, and the party size the ladders scale by
+            roster: { ...this.roster },
+            participants: this.participants ?? null,
+            // When each tier started, so a trial's tier durations are exact
+            tierStarts: { ...this.tierStarts },
+            endedAt: this.endedAt,
+            // How each unit was identified, so a placeholder can be shown as one
+            names: Object.fromEntries(Object.entries(this.unitNames).map(([index, e]) => [index, { ...e }])),
+            nameCoverage: nameCoverage(this.unitNames),
             // What the last fight's payload called its monsters, and what the
             // gate was looking for. Both are in the export, so a gate that fails
             // closed can be diagnosed from a bug report rather than guessed at
@@ -452,7 +1092,7 @@ class GuildTrialDamage {
             trialNames: [...this.trialNames],
             // Everything a tick says about a player besides damage, and a note
             // of what it cannot say — see `guild-trial-support.js`
-            support: summariseSupport(this.support, this.names),
+            support,
             supportCoverage: supportCoverage(),
             ...summary,
         };

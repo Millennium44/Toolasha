@@ -242,13 +242,20 @@ describe('the selector canary', () => {
     // needing its own.
     const canary = () => window.Toolasha.debug.canary();
 
-    /** All four ever-present anchors, drawn as a healthy loaded game page would */
+    /**
+     * All four ever-present anchors, drawn as a healthy loaded game page would.
+     * The level and XP bar sit inside a nav entry, as they do in the game —
+     * `canaryNavBar` is gated on the level being drawn, so a fixture that drew
+     * a level with no nav around it would be a page the game never renders.
+     */
     const allAnchorsPresent = () => {
         document.body.innerHTML = `
             <div class="Header_totalLevel__1Ku1r">Total 1500</div>
             <div class="GamePage_gamePanel__3uNKN"></div>
-            <span class="NavigationBar_level__2abcd">12</span>
-            <div class="NavigationBar_currentExperience__9wxyz" style="width: 40%"></div>
+            <div class="NavigationBar_nav__3uyeQ">
+                <span class="NavigationBar_level__2abcd">12</span>
+                <div class="NavigationBar_currentExperience__9wxyz" style="width: 40%"></div>
+            </div>
         `;
     };
 
@@ -284,5 +291,79 @@ describe('the selector canary', () => {
         allAnchorsPresent();
         expect(document.querySelector(GAME.TASK_LIST)).toBeNull();
         expect(canary()).toEqual([]);
+    });
+
+    describe('gated canaries — high-fanout selectors that only exist on their own screen', () => {
+        test('a closed screen is no evidence: the gate is absent, so nothing is reported', () => {
+            // No skill panel, no inventory, no chat, no combat — every gated
+            // canary must sit this page out rather than call it broken.
+            allAnchorsPresent();
+            expect(canary()).toEqual([]);
+        });
+
+        test('the gate surviving while the canaried class vanished is the alarm', () => {
+            // A skill panel whose name element is drawn but whose wrapper class
+            // is not what the script expects: the game renamed one class.
+            allAnchorsPresent();
+            document.body.innerHTML += '<div class="SkillActionDetail_name__2P1Nw">Milking</div>';
+
+            const failures = canary();
+            expect(failures).toHaveLength(1);
+            expect(failures[0].key).toBe('canarySkillActionDetail');
+            expect(failures[0].reason).toBe('selector missing — game update?');
+        });
+
+        test('and the fully-drawn screen is healthy', () => {
+            allAnchorsPresent();
+            document.body.innerHTML +=
+                '<div class="SkillActionDetail_skillActionDetail__1p3aX">' +
+                '<div class="SkillActionDetail_name__2P1Nw">Milking</div></div>';
+            expect(canary()).toEqual([]);
+        });
+
+        test('a cross-component gate: chat input drawn, messages unfindable', () => {
+            // The chat panel (Chat_) survived while the message class
+            // (ChatMessage_) renamed — exactly the wholesale-rename slice the
+            // dungeon tracker and profile links would go dark on.
+            allAnchorsPresent();
+            document.body.innerHTML += '<div class="Chat_chatInputContainer__2z5cJ"></div>';
+
+            const failures = canary();
+            expect(failures).toHaveLength(1);
+            expect(failures[0].key).toBe('canaryChatMessage');
+        });
+
+        test('the inventory pair watches each other, so either class renaming alone is caught', () => {
+            allAnchorsPresent();
+            document.body.innerHTML += '<div class="Inventory_items__6SXv0"></div>';
+            expect(canary().map((failure) => failure.key)).toEqual(['canaryItemContainer']);
+
+            allAnchorsPresent();
+            document.body.innerHTML += '<div class="Item_itemContainer__x7kH1"></div>';
+            expect(canary().map((failure) => failure.key)).toEqual(['canaryInventoryItems']);
+        });
+
+        test('a tab strip is found by its unhashed role, so a TabsComponent rename cannot hide', () => {
+            // [role="tablist"] comes from the game's accessibility markup, not
+            // from a hashed class — the one gate a wholesale rename cannot take
+            // down with it.
+            allAnchorsPresent();
+            document.body.innerHTML += '<div role="tablist"><button role="tab">Inventory</button></div>';
+
+            const failures = canary();
+            expect(failures.map((failure) => failure.key)).toEqual(['canaryTabsContainer']);
+        });
+
+        test('a badge-less tab strip reports only the badge', () => {
+            allAnchorsPresent();
+            document.body.innerHTML +=
+                '<div role="tablist" class="TabsComponent_tabsContainer__3B9iF">' +
+                '<button role="tab">Inventory</button></div>';
+            expect(canary().map((failure) => failure.key)).toEqual(['canaryTabBadge']);
+
+            document.querySelector('[role="tab"]').innerHTML =
+                '<span class="TabsComponent_badge__1Du26">Inventory</span>';
+            expect(canary()).toEqual([]);
+        });
     });
 });

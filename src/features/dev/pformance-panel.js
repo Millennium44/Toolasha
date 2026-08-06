@@ -9,9 +9,10 @@ import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { formatReport, reportData, gapsBetween, initTimeline, initSummary } from '../../utils/performance-report.js';
 import { downloadFile } from '../../utils/csv-export.js';
+import { performanceMonitor, toolashaRoot } from '../../utils/bundle-bridge.js';
 
 function getPerformanceMonitor() {
-    return window.Toolasha?.Core?.performanceMonitor;
+    return performanceMonitor();
 }
 
 /**
@@ -401,7 +402,7 @@ class PFormancePanel {
             spans: pm.spans,
             stats: pm.getAllStats(),
             environment: {
-                script: window.Toolasha?.version || 'unknown',
+                script: toolashaRoot()?.version || 'unknown',
                 cores: typeof navigator !== 'undefined' ? navigator.hardwareConcurrency : 'unknown',
                 agent: typeof navigator !== 'undefined' ? navigator.userAgent : 'unknown',
                 takenAt: new Date().toISOString(),

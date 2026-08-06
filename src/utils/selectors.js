@@ -18,12 +18,17 @@ export const GAME = {
     TAB_PANELS_CONTAINER: '[class*="TabsComponent_tabPanelsContainer"]',
     TAB_PANEL: '[class*="TabPanel_tabPanel"]',
 
+    // Tab strips (shared by every game panel that draws tabs)
+    TABS_CONTAINER: '[class*="TabsComponent_tabsContainer"]',
+    TAB_BADGE: '[class*="TabsComponent_badge"]',
+
     // Game Panel
     GAME_PANEL: 'div[class*="GamePage_gamePanel"]',
 
     // Skill Action Detail
     SKILL_ACTION_DETAIL: '[class*="SkillActionDetail_skillActionDetail"]',
     SKILL_ACTION_NAME: '[class*="SkillActionDetail_name"]',
+    SKILL_ACTION_ITEM_REQUIREMENTS: '[class*="SkillActionDetail_itemRequirements"]',
     ENHANCING_COMPONENT: 'div[class*="SkillActionDetail_enhancingComponent"]',
 
     // Action Queue
@@ -71,11 +76,22 @@ export const GAME = {
     // trailing "__" too, or it would match every item container as well.
     ITEM_ITEM: '[class*="Item_item__"]',
     ITEM_COUNT: '[class*="Item_count"]',
+    ITEM_NAME: '[class*="Item_name"]',
     ITEM_TOOLTIP_TEXT: '[class*="ItemTooltipText_itemTooltipText"]',
 
     // Navigation/Experience Bars
     NAV_LEVEL: '[class*="NavigationBar_level"]',
     NAV_CURRENT_EXPERIENCE: '[class*="NavigationBar_currentExperience"]',
+    // Matches loosely on purpose — consumers use it via closest() the same way
+    NAV_BAR: '[class*="NavigationBar_nav"]',
+
+    // Chat
+    CHAT_MESSAGE: '[class*="ChatMessage_chatMessage"]',
+    CHAT_INPUT_CONTAINER: '[class*="Chat_chatInputContainer"]',
+
+    // Combat
+    COMBAT_UNIT: '[class*="CombatUnit_combatUnit"]',
+    BATTLE_MONSTERS_AREA: '[class*="BattlePanel_monstersArea"]',
 
     // Enhancement
     PROTECTION_ITEM_INPUT: '[class*="protectionItemInputContainer"]',

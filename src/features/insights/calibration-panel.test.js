@@ -12,7 +12,7 @@
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
-const store = vi.hoisted(() => ({ records: [] }));
+const store = vi.hoisted(() => ({ records: [], enhancing: [] }));
 
 vi.mock('../../core/config.js', () => ({ default: { Z_FLOATING_PANEL: 1100 } }));
 vi.mock('../../utils/panel-geometry.js', () => ({
@@ -26,6 +26,12 @@ vi.mock('./prediction-calibration.js', () => ({
     predictionCalibration: {
         getCachedRecords: () => store.records,
         getRecords: async () => store.records,
+    },
+}));
+vi.mock('./enhancement-calibration.js', () => ({
+    enhancementCalibration: {
+        getCachedRecords: () => store.enhancing,
+        getRecords: async () => store.enhancing,
     },
 }));
 
@@ -60,6 +66,7 @@ beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(now);
     store.records = [];
+    store.enhancing = [];
     store.rows = [];
 });
 
@@ -97,6 +104,53 @@ describe('the panel', () => {
         store.records = null;
         calibrationPanel.show({ remember: false });
         expect(text()).toContain('Reading history');
+    });
+
+    test('draws combat as a group, carrying its provenance flags', () => {
+        store.records = Array.from({ length: 3 }, (_, i) => ({
+            ...pair('combat', 1_000_000, 800_000, i + 1),
+            actionHrid: '/actions/combat/rat_cave',
+            difficultyTier: 1,
+            snapshotAgeMs: 2 * 24 * HOUR,
+            fingerprintMatch: i !== 0,
+        }));
+
+        calibrationPanel.show({ remember: false });
+
+        expect(text()).not.toContain('could not be drawn');
+        expect(text()).toContain('Combat');
+        // The forecast's provenance sits with the figures, not behind them
+        expect(text()).toContain('Forecast: all-zones sim');
+        expect(text()).toContain('1 of 3 in different gear');
+        // Recent runs name the zone and mark the mismatched pair
+        expect(text()).toContain('Rat cave T1');
+        expect(text()).toContain('⚠');
+    });
+
+    test('draws enhancement runs as percentiles, even with no rate pairs at all', () => {
+        store.enhancing = [
+            {
+                id: 's1:8',
+                t: now - HOUR,
+                itemHrid: '/items/cheese_sword',
+                itemName: 'Cheese Sword',
+                targetLevel: 8,
+                expectedAttempts: 41,
+                observedAttempts: 63,
+                tailProbability: 0.08,
+            },
+        ];
+
+        calibrationPanel.show({ remember: false });
+
+        expect(text()).not.toContain('could not be drawn');
+        expect(text()).toContain('Enhancing (1 runs)');
+        expect(text()).toContain('Median outcome percentile');
+        expect(text()).toContain('92%');
+        expect(text()).toContain('Cheese Sword +8');
+        // The percentile is the headline, never a bare predicted-vs-actual gap
+        expect(text()).toContain('8% take ≥');
+        expect(text()).not.toContain('No finished runs measured yet');
     });
 });
 

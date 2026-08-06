@@ -102,6 +102,7 @@ import labyrinthRunAlerts from '../features/notifications/labyrinth-run-alerts.j
 import combatDeathAlerts from '../features/notifications/combat-death-alerts.js';
 import enhancementTargetAlerts from '../features/notifications/enhancement-target-alerts.js';
 import taskSlotAlerts from '../features/notifications/task-slot-alerts.js';
+import marketUndercutAlerts from '../features/notifications/market-undercut-alerts.js';
 import notificationService from '../features/notifications/notification-service.js';
 
 // Queue Monitor
@@ -201,6 +202,7 @@ toolashaRoot.UI = {
     combatDeathAlerts,
     enhancementTargetAlerts,
     taskSlotAlerts,
+    marketUndercutAlerts,
     notificationService,
     queueMonitor,
     accountView,

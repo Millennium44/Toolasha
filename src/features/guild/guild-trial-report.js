@@ -29,6 +29,7 @@
  * a panel.
  */
 
+import { pastWeekLine } from './guild-trial-history.js';
 import { formatWithSeparator } from '../../utils/formatters.js';
 
 /** Longest player list a report will print before it summarises the tail */
@@ -123,6 +124,9 @@ export function playerLine(player, support, rank) {
  * @param {number|null} [input.tier] - The tier in progress when it ended
  * @param {Object} input.breakdown - From `guildTrialDamage.breakdown()`
  * @param {Object} [input.shortfall] - `{remaining, total, unit}` for the tier in progress
+ * @param {Object} [input.estimate] - From `estimateDamageSplit`, used when nothing was measured
+ * @param {Array<Object>} [input.pastWeeks] - Archived-cycle summaries from
+ *   `summariseArchivedCycle`, newest first; appended as a short tail when present
  * @returns {string} The report
  */
 export function buildGuildReport({
@@ -131,6 +135,8 @@ export function buildGuildReport({
     tier = null,
     breakdown,
     shortfall,
+    estimate = null,
+    pastWeeks = [],
 } = {}) {
     const players = breakdown?.players || [];
     const support = breakdown?.support?.players || [];
@@ -140,8 +146,49 @@ export function buildGuildReport({
         ? `${trialName} — cleared ${tiersCleared} tier${tiersCleared === 1 ? '' : 's'}`
         : trialName;
 
+    // The archived cycles, one line each, at the very bottom of whichever shape
+    // the report takes — a guild judging this week's result wants last week's
+    // beside it, and this is the only place those figures can still be read
+    const history = (pastWeeks || []).length ? ['Past weeks:', ...pastWeeks.map((week) => pastWeekLine(week))] : [];
+
     if (!players.length) {
-        return `${headline}\nNothing was measured here — ${breakdown?.reason || 'no trial fight seen'}.`;
+        const close = describeShortfall({ tier, ...(shortfall || {}) });
+        // Nothing was watched, so there is no measurement to paste — but there is
+        // an estimate, and a guild arguing about who to sign up wants it.
+        // Labelled at the top, where somebody skimming a chat message reads it
+        if (estimate?.players?.length) {
+            const lines = [
+                headline,
+                'Per-player figures below are ESTIMATED FROM BUILDS — nobody had the In Progress fight view ' +
+                    'open, which is what streams the real ones.',
+                `Est. party · ~${whole(estimate.total)}/s from ${estimate.covered} of ${estimate.of} builds`,
+            ];
+
+            estimate.players
+                .slice(0, MAX_REPORT_PLAYERS)
+                .forEach((player, index) =>
+                    lines.push(
+                        `${index + 1}. ${player.name} · ~${whole(player.dps)}/s` +
+                            (Number.isFinite(player.share) ? ` · ${player.share.toFixed(0)}%` : '')
+                    )
+                );
+            if (estimate.players.length > MAX_REPORT_PLAYERS) {
+                lines.push(`…and ${estimate.players.length - MAX_REPORT_PLAYERS} more`);
+            }
+            if (estimate.unestimated.length) {
+                lines.push(`No build captured, so not estimated · ${estimate.unestimated.join(', ')}`);
+            }
+            if (close) lines.push(close);
+            lines.push(...history);
+            return lines.join('\n');
+        }
+
+        // Not "no trial fight seen", which reads as a fight that was missed: the
+        // fight is real and streams to whoever has the fight view open
+        const why =
+            breakdown?.reason ||
+            'nobody had the In Progress fight view open, which is what streams a trial’s own battle ticks';
+        return [headline, `Nothing was measured here — ${why}.`, ...(close ? [close] : []), ...history].join('\n');
     }
 
     const lines = [headline];
@@ -172,8 +219,15 @@ export function buildGuildReport({
     if (close) lines.push(close);
 
     // Said once, at the bottom, because a guild reading a table of numbers
-    // should know the game did not produce them
-    lines.push('(estimated from the battle feed — only fights this client took part in are counted)');
+    // should know where they came from
+    lines.push(
+        breakdown?.source === 'spectated'
+            ? `(measured from the trial fight itself, over the ${shortTime((breakdown.seconds || 0) * 1000)} ` +
+                  'somebody had the In Progress fight view open)'
+            : '(attributed from this client’s own battle feed)'
+    );
+
+    lines.push(...history);
 
     return lines.join('\n');
 }

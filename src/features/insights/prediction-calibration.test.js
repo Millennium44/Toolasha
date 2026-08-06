@@ -172,6 +172,28 @@ describe('pairing a forecast with a finished run', () => {
         game.actionType = '/action_types/milking';
     });
 
+    test('accepts a pair another recorder measured, into the same ledger', async () => {
+        const written = await calibration.addRecord({
+            id: 'combat|A|2026-08-04T10:00:00Z',
+            actionType: 'combat',
+            predicted: 1000,
+            actual: 900,
+            t: Date.now(),
+        });
+
+        expect(written).toBe(true);
+        // Same store, same key: one history, whoever measured the pair
+        expect(game.stored['lootLogHistory:calibration_char-1']).toHaveLength(1);
+    });
+
+    test('does not accept the same outside pair twice, nor one without a name', async () => {
+        const record = { id: 'combat|A|t', actionType: 'combat', predicted: 1, actual: 1, t: 0 };
+        expect(await calibration.addRecord(record)).toBe(true);
+        expect(await calibration.addRecord(record)).toBe(false);
+        expect(await calibration.addRecord({ actionType: 'combat', predicted: 1, actual: 1 })).toBe(false);
+        expect(await calibration.getRecords()).toHaveLength(1);
+    });
+
     test('drops the oldest pairs rather than growing without end', async () => {
         calibration.records = Array.from({ length: 1000 }, (_, i) => ({ id: `old-${i}`, t: i }));
         await send([entry(1, '2026-08-04T10:00:00Z')]);

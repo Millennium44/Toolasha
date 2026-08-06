@@ -159,17 +159,37 @@ function mergeFailures(...lists) {
 }
 
 /**
- * A conservative set of anchors that should exist on any loaded game page,
- * regardless of which panel is open — the header, the page's own wrapper, and
- * the persistent skill navigation bars. Checked once, well after startup, to
- * catch the one failure a per-feature health check cannot: the game renaming
- * its own classes out from under every selector at once. A missing feature
- * mark says "reopen the panel"; a missing anchor says the game updated.
+ * The selectors that should exist on a loaded game page, checked once, well
+ * after startup, to catch the one failure a per-feature health check cannot:
+ * the game renaming its classes out from under every selector at once. A
+ * missing feature mark says "reopen the panel"; a missing anchor says the game
+ * updated.
  *
- * Deliberately short. Anything that only exists on one screen (a task card,
- * an inventory tile, an open settings panel) is left out on purpose — it is
- * routinely absent on a perfectly healthy page, and canarying it would just
- * be noise the moment somebody was looking at a different tab.
+ * Two kinds of entry:
+ *
+ * - **Ungated** (the first four): anchors that exist on any loaded page no
+ *   matter which panel is open — the header, the page's own wrapper, the
+ *   persistent skill nav bars. Their absence is always evidence.
+ * - **Gated** (`when`): the highest-fanout hashed-class selectors in the
+ *   codebase — `Item_itemContainer` alone is load-bearing in twenty-odd files
+ *   — which only exist on particular screens. Each is checked only while its
+ *   `when` selector matches: an element from the same screen that cannot be
+ *   drawn without the canaried one. A closed panel therefore reads as "no
+ *   evidence" rather than as a failure, which is what keeps this from being
+ *   noise on every page where a panel is legitimately shut.
+ *
+ * Gates are taken from a *different* CSS-module component wherever one
+ * co-exists (Inventory_↔Item_, Chat_→ChatMessage_, BattlePanel_→CombatUnit_,
+ * [role="tablist"]→TabsComponent_), so a whole component renaming still trips
+ * the canary whose gate survived. Where no cross-component witness exists
+ * (SkillActionDetail, RandomTask) the pair gates on a sibling class: a rename
+ * of one class in the component is caught, a rename of the whole component
+ * falls back to the ungated four.
+ *
+ * Left out on purpose, despite their fanout: `Item_enhancementLevel` (only
+ * drawn when an enhanced item happens to be on screen — no screen guarantees
+ * one, so its absence is never evidence) and `ProgressBar_text` (absent
+ * whenever the action queue is empty, and only one file leans on it).
  *
  * @returns {Array<{key: string, name: string, reason: string}>} One entry per missing anchor
  */
@@ -179,10 +199,63 @@ function checkAnchorCanaries() {
         { key: 'canaryGamePanel', name: 'Game panel wrapper', selector: GAME.GAME_PANEL },
         { key: 'canaryNavLevel', name: 'Navigation bar (skill levels)', selector: GAME.NAV_LEVEL },
         { key: 'canaryNavExperience', name: 'Navigation bar (skill XP)', selector: GAME.NAV_CURRENT_EXPERIENCE },
+        // Gated: checked only while `when` matches
+        { key: 'canaryNavBar', name: 'Navigation bar (nav entries)', selector: GAME.NAV_BAR, when: GAME.NAV_LEVEL },
+        {
+            key: 'canaryTabsContainer',
+            name: 'Tab strip (container)',
+            selector: GAME.TABS_CONTAINER,
+            when: '[role="tablist"]',
+        },
+        { key: 'canaryTabBadge', name: 'Tab strip (badges)', selector: GAME.TAB_BADGE, when: GAME.TABS_CONTAINER },
+        {
+            key: 'canaryItemContainer',
+            name: 'Item tiles',
+            selector: GAME.ITEM_CONTAINER,
+            when: GAME.INVENTORY_ITEMS,
+        },
+        {
+            key: 'canaryInventoryItems',
+            name: 'Inventory item grid',
+            selector: GAME.INVENTORY_ITEMS,
+            when: GAME.ITEM_CONTAINER,
+        },
+        {
+            key: 'canaryItemName',
+            name: 'Item names (requirements list)',
+            selector: GAME.ITEM_NAME,
+            when: GAME.SKILL_ACTION_ITEM_REQUIREMENTS,
+        },
+        {
+            key: 'canarySkillActionDetail',
+            name: 'Skill action panel',
+            selector: GAME.SKILL_ACTION_DETAIL,
+            when: GAME.SKILL_ACTION_NAME,
+        },
+        {
+            key: 'canarySkillActionName',
+            name: 'Skill action panel (name)',
+            selector: GAME.SKILL_ACTION_NAME,
+            when: GAME.SKILL_ACTION_DETAIL,
+        },
+        { key: 'canaryTaskCard', name: 'Task cards', selector: GAME.TASK_CARD, when: GAME.TASK_NAME },
+        {
+            key: 'canaryChatMessage',
+            name: 'Chat messages',
+            selector: GAME.CHAT_MESSAGE,
+            when: GAME.CHAT_INPUT_CONTAINER,
+        },
+        {
+            key: 'canaryCombatUnit',
+            name: 'Combat units',
+            selector: GAME.COMBAT_UNIT,
+            when: GAME.BATTLE_MONSTERS_AREA,
+        },
     ];
 
     const failures = [];
-    for (const { key, name, selector } of ANCHORS) {
+    for (const { key, name, selector, when } of ANCHORS) {
+        if (when && !document.querySelector(when)) continue;
         if (!document.querySelector(selector)) {
             failures.push({ key, name, reason: 'selector missing — game update?' });
         }
@@ -340,6 +413,20 @@ function registerFeatures() {
             async: false,
         },
         { key: 'tradeHistory', name: 'Trade History', category: 'Market', module: Market.tradeHistory, async: false },
+        {
+            key: 'tradeLedgerStore',
+            name: 'Trade Ledger',
+            category: 'Market',
+            module: Market.tradeLedgerStore,
+            async: false,
+        },
+        {
+            key: 'tradeLedgerView',
+            name: 'Trade Ledger View',
+            category: 'Market',
+            module: Market.tradeLedgerView,
+            async: false,
+        },
         {
             key: 'tradeHistoryDisplay',
             name: 'Trade History Display',
@@ -671,6 +758,13 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'chestKeyMarketButton',
+            name: 'Chest Key Market Button',
+            category: 'Combat',
+            module: Combat.chestKeyMarketButton,
+            async: false,
+        },
+        {
             key: 'zoneIndices',
             name: 'Zone Indices',
             category: 'Combat',
@@ -749,6 +843,8 @@ function registerFeatures() {
             key: 'combatDropLuck',
             name: 'Combat Drop Luck',
             category: 'Combat',
+            // `.default` because the global is the module namespace — see
+            // the note in libraries/combat.js
             module: Combat.combatDropLuck,
             async: false,
         },
@@ -1249,6 +1345,14 @@ function registerFeatures() {
             module: UI.combatDeathAlerts,
             async: true,
             customCheck: () => config.getSetting('notifications_combatDeath'),
+        },
+        {
+            key: 'marketUndercutAlerts',
+            name: 'Market Undercut Alerts',
+            category: 'Notifications',
+            module: UI.marketUndercutAlerts,
+            async: true,
+            customCheck: () => config.getSetting('notifications_marketListingUndercut'),
         },
         {
             key: 'enhancementTargetAlerts',

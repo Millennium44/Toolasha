@@ -46,7 +46,7 @@ vi.mock('../combat-stats/combat-session-history.js', () => ({
     describeSession: (session) => `run ${session.key}`,
 }));
 
-const { partyLootPanel } = await import('./party-loot-panel.js');
+const { partyLootPanel, buildSessionHistoryRows, SESSION_HISTORY_COLUMNS } = await import('./party-loot-panel.js');
 
 const CHEST = { itemHrid: '/items/enchanted_chest', itemName: 'Enchanted Chest', count: 2, totalValue: 7_400_000 };
 const ODDITY = { itemHrid: '/items/nothing', itemName: 'Unpriced Thing', count: 1, totalValue: 0 };
@@ -198,6 +198,20 @@ describe('the top bar', () => {
         expect(text()).toContain('Millennium44');
     });
 
+    test('the export button appears only once there is a history to write', async () => {
+        const button = () =>
+            [...partyLootPanel.panel.querySelectorAll('button')].find((el) => el.textContent === 'Export CSV');
+
+        partyLootPanel.show();
+        // The archive cache outlives the panel, so let the empty read land first
+        await settle();
+        expect(button()).toBeUndefined();
+
+        game.sessions = [archived('a|1', '2026-08-02T22:00:00Z')];
+        await settle();
+        expect(button()).toBeTruthy();
+    });
+
     test('a chosen run that has since fallen off the list falls back to live', async () => {
         game.sessions = [archived('a|1', '2026-08-02T22:00:00Z')];
         partyLootPanel.show();
@@ -211,5 +225,67 @@ describe('the top bar', () => {
 
         expect(partyLootPanel.panel.querySelector('select').value).toBe('live');
         expect(text()).toContain('Briggsy99');
+    });
+});
+
+describe('the session-history CSV rows', () => {
+    // The same arithmetic the cards draw, injected rather than imported so the
+    // expected figures are on the page
+    const statsFor = (player) => ({
+        name: player.name,
+        income: { bid: player.income, ask: player.income },
+        consumableCosts: { bid: 1000 },
+        keyCosts: { bid: 500 },
+        dailyProfit: { bid: player.income * 10 },
+    });
+
+    test('no archive is no rows', () => {
+        expect(buildSessionHistoryRows([], statsFor)).toEqual([]);
+        expect(buildSessionHistoryRows(null, statsFor)).toEqual([]);
+    });
+
+    test('one row per session: start, duration, zone, party size, and each player’s banked figure', () => {
+        const sessionList = [
+            {
+                key: 'Briggsy99,Millennium44|2026-08-02T22:00:00Z',
+                combatStartTime: '2026-08-02T22:00:00Z',
+                durationSeconds: 3600,
+                actionHrid: '/actions/combat/rainbow_bay',
+                players: [
+                    { name: 'Briggsy99', income: 8_000_000 },
+                    { name: 'Millennium44', income: 3_000_000 },
+                ],
+            },
+        ];
+
+        expect(buildSessionHistoryRows(sessionList, statsFor)).toEqual([
+            {
+                start: '2026-08-02T22:00:00.000Z',
+                durationSeconds: 3600,
+                zone: 'rainbow bay',
+                zoneHrid: '/actions/combat/rainbow_bay',
+                partySize: 2,
+                players: 'Briggsy99, Millennium44',
+                bankedTotal: 8_000_000 - 1500 + (3_000_000 - 1500),
+                perPlayerBanked: 'Briggsy99: 7998500; Millennium44: 2998500',
+                perPlayerDaily: 'Briggsy99: 80000000; Millennium44: 30000000',
+            },
+        ]);
+    });
+
+    test('a snapshot without players is skipped rather than exported as an empty run', () => {
+        expect(buildSessionHistoryRows([{ combatStartTime: '2026-08-02T22:00:00Z', players: [] }], statsFor)).toEqual(
+            []
+        );
+    });
+
+    test('every column names a field the rows carry', () => {
+        const [row] = buildSessionHistoryRows(
+            [{ combatStartTime: '2026-08-02T22:00:00Z', durationSeconds: 60, players: [{ name: 'A', income: 1 }] }],
+            statsFor
+        );
+        for (const column of SESSION_HISTORY_COLUMNS) {
+            expect(row).toHaveProperty(column.key);
+        }
     });
 });

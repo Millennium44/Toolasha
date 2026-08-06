@@ -61,6 +61,33 @@ vi.mock('../../api/marketplace.js', () => ({
 vi.mock('./gathering-profit.js', () => ({ calculateGatheringProfit: async () => null }));
 vi.mock('../market/profit-calculator.js', () => ({ default: { calculateProfit: async () => null } }));
 
+/**
+ * The market-volume cap, as one settable throttle. The cap arithmetic is
+ * utils/liquidity-cap.js's own tested business; what this file proves is that
+ * the action bar displays the *capped* pace and never a capped figure without
+ * its marker.
+ */
+const liquidity = vi.hoisted(() => ({ throttle: null }));
+
+vi.mock('../../utils/liquidity-cap.js', () => ({
+    capProfitData: async (profitData) => {
+        if (!profitData || !liquidity.throttle || liquidity.throttle >= 1) return profitData;
+        return {
+            ...profitData,
+            profitPerHour: profitData.profitPerHour * liquidity.throttle,
+            uncappedProfitPerHour: profitData.profitPerHour,
+            liquidityLimit: {
+                kind: 'volume',
+                note: 'limited by market volume (~1/week)',
+                detail: 'Foraging Essence trades ~1/week, and you are not the only seller.',
+                itemHrid: '/items/foraging_essence',
+                throttle: liquidity.throttle,
+            },
+        };
+    },
+    liquidityMarkerHtml: (limit) => (limit ? `<span title="${limit.note} — ${limit.detail}">vol-capped</span>` : ''),
+}));
+
 const alchemyCalc = vi.hoisted(() => ({
     coinify: null,
 }));
@@ -184,5 +211,59 @@ describe('action bar profit line — "remaining" basis', () => {
         const html = actionTimeDisplay.profitElement.innerHTML;
         expect(html).toContain('+1.90M/hr');
         expect(html).not.toContain('remaining');
+    });
+});
+
+describe('action bar profit line — the market-volume cap', () => {
+    const action = {
+        actionHrid: '/actions/alchemy/coinify',
+        primaryItemHash: '/item_locations/inventory::/items/foraging_essence::0',
+    };
+
+    beforeEach(() => {
+        setActionNameDom();
+        actionTimeDisplay.displayElement = null;
+        actionTimeDisplay.profitElement = null;
+        actionTimeDisplay.createDisplayPanel();
+        actionTimeDisplay.activeBarProfitId = null;
+        liquidity.throttle = null;
+
+        game.actionDetails = {
+            '/actions/alchemy/coinify': { type: '/action_types/alchemy', outputItems: [] },
+        };
+        alchemyCalc.coinify = () => ({ profitPerHour: 1_900_000, actionsPerHour: 1000 });
+    });
+
+    test('the displayed rate is the capped one, and it carries the marker', async () => {
+        liquidity.throttle = 0.1;
+
+        await actionTimeDisplay.updateActionBarProfit(action, Infinity);
+
+        const html = actionTimeDisplay.profitElement.innerHTML;
+        // 1.9M/hr the calculator claims, 190K/hr the market will pay
+        expect(html).toContain('+190.0K/hr');
+        expect(html).not.toContain('+1.90M/hr');
+        expect(html).toContain('vol-capped');
+        expect(html).toContain('limited by market volume (~1/week)');
+        expect(html).toContain('Foraging Essence');
+    });
+
+    test('"remaining" is priced at the pace the market pays, not the fantasy one', async () => {
+        liquidity.throttle = 0.1;
+
+        // 190K/hr over 1000 actions/hr → 190/action × 1000 remaining = 190K
+        await actionTimeDisplay.updateActionBarProfit(action, 1000);
+
+        const html = actionTimeDisplay.profitElement.innerHTML;
+        expect(html).toContain('remaining');
+        expect(html).toContain('+190.0K');
+    });
+
+    test('an uncapped rate shows no marker — the cap is never implied', async () => {
+        await actionTimeDisplay.updateActionBarProfit(action, Infinity);
+
+        const html = actionTimeDisplay.profitElement.innerHTML;
+        expect(html).toContain('+1.90M/hr');
+        expect(html).not.toContain('vol-capped');
     });
 });

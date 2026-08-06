@@ -6,6 +6,7 @@
 
 import enhancementTracker from './enhancement-tracker.js';
 import { SessionState, getSessionDuration, getCurrentLegCounters } from './enhancement-session.js';
+import { attemptTailProbability, describeAttemptOutcome } from './attempt-percentile.js';
 import dataManager from '../../core/data-manager.js';
 import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
@@ -926,6 +927,22 @@ class EnhancementUI {
                     <strong> ${protFactor ? protFactor + 'x' : '—'}</strong>
                 </div>
             </div>`;
+            }
+
+            // A finished run read as a percentile of the predicted distribution.
+            // The factor above says how far the run strayed; this says how often
+            // a run strays that far, which is the only honest reading of one
+            // draw against a heavy-tailed spread. Only for runs that reached
+            // the target — a hand-stopped session is censored, not finished —
+            // and only when the prediction stored its distribution.
+            if (session.state === SessionState.COMPLETED && session.currentLevel >= session.targetLevel) {
+                const tail = attemptTailProbability(predictions, leg.attempts);
+                if (tail !== null) {
+                    html += `
+            <div style="font-size: 11px; margin-top: 2px; color: ${STYLE.colors.textSecondary};">
+                ${describeAttemptOutcome(predictions.expectedAttemptsExact ?? expAtt, leg.attempts, tail)}
+            </div>`;
+                }
             }
 
             // The factors above are only meaningful against a prediction made from this

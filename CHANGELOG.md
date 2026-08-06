@@ -6,11 +6,169 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Release housekeeping
+
+- **The CI bundle ceiling moves to 3.5 MiB**: its duplication-guard job now belongs to the import-graph check that runs on every production build and catches the real failure exactly; the ceiling remains as a sanity backstop.
+
+### The silent failure modes get their alarms, and two calculators become one
+
+- **The bundle-sharing rule is now executable**: the production build walks the real import graph and fails loudly on any shared util silently duplicated across bundles — the works-in-dev, broken-in-production bug class, made a build error. Its first run found 30 violations, among them live bugs: consent and character caches existing once per bundle in six bundles, duplicated savings state, and a performance monitor whose cross-bundle calls had been landing on undefined in production builds. All fixed or allowlisted with written justification; bundles came out smaller.
+- **One house-cost calculator instead of two disagreeing ones**: the survivors' pricing chain (override/ask → bid → vendor floor) settles both disputes — a live bid beats the vendor floor, and a material with no book counts at the vendor floor instead of being dropped. Net worth, score, affordability, the Houses panel, and the goal planner now quote the same number for the same room; figures can shift slightly where materials had no listings, which is the point.
+- **Every cross-bundle reach-through now goes through one bridge**: ~36 `window.Toolasha` sites collected behind 32 named, null-safe, documented accessors — greppable, testable (a dynamic test proves every accessor survives the namespace being absent), and enumerable instead of scattered.
+
+### Thin markets stop lying in the rankings
+
+- **The liquidity cap the goal planner already obeyed now governs every profit surface**: alchemy rankings, the action-bar and pinned-page profit lines, and the combat sim's all-zones table (its Score and best-profit badge included) all cap a method's gold rate by what the market has actually absorbed — marked "limited by market volume (~1/week)" with the limiting item named, never silently. Unknown history stays unbounded (a dead price server must not zero everything); measured-zero bounds to zero. Underlying calculators, the planner, net worth, EV, and the calibration loop keep raw figures — the cap is a truth about display and ranking, switchable off with one setting.
+
+### The panels compare, lint, and remember
+
+- **The profit panel quotes the sim on the zone you're in**: "sim said here — 24.0M/day · simulated Aug 5" beside the measured figure, only when the last all-zones run holds this zone at this tier, tooltip carrying the snapshot's age and that the sim knows nothing about this run.
+- **Party lint went live**: the duplicate-aura warning now fires on the party you're actually fighting in (every player's equipped abilities arrive on `new_battle`), rendered amber at the top of the DPS panel. The gear check covers only your own character — the wire carries nobody else's wearables, and the block says so instead of linting stale profile snapshots. Default-on setting.
+- **The Combat Statistics popup opens archived sessions**: a picker ("Aug 5 · 6h 12m · Chimerical Den · party of 5") renders any archived run through the same arithmetic as the live view, clearly bannered as an archived session at today's prices, with Live one click away.
+
+### A ledger for flips, luck for foragers, and spreadsheets for everyone
+
+- **A trading ledger measures what flipping actually earns**: every fill on your own listings is recorded (detected as filled-quantity deltas against observed baselines — a first sighting never invents a fill, a cancel after a partial fill still counts, offline fills surface on login), sell proceeds net of the 2% tax, and a "Ledger" tab beside Market History shows realized profit per item and per week on an average-cost basis — a sale with no recorded purchase shows revenue with cost "—", never a fake 100% margin. CSV export included; recording is a default-on setting.
+- **Gathering and production runs get the drop-luck verdict combat has**: "Drop luck: 73rd percentile — 27 runs in 100 beat it" under every loot-log entry's Expected line, computed by the exact FFT machinery so a rare-drop-dominated session is judged by its lumps rather than a bell curve. Historical entries get it too; essence and rare-find tables sit outside the verdict on both sides, since the log can't see the find bonuses that drive them.
+- **CSV export lands on the four history panels that had none**: dungeon run history (per run: timestamp, dungeon, tier, duration, team, key counts), the treasure tracker (two files — chest summary and per-item detail, because one file of alternating shapes can't be pivoted), the loot log (per item per session, priced as the panel prices), and the combat session archive (per session with per-player banked figures). Raw numbers, ISO timestamps, buttons only when there are rows.
+
+### The trial record remembers, the sim gets audited, and silence gets alarms
+
+- **Past weeks return to the trials panel and guild report**: the four archived weekly cycles nothing ever read back now render as one line each — "Last week · combat T5 · skilling T6 · 1,800 pts · ~825 tokens each" — with failed weeks printing their zeros, unknowns as "—", tokens marked ~ (derived from today's building bonuses), and a week archived from another guild's era labelled rather than mixed in.
+- **The combat simulator is now calibrated against your own runs**: every archived combat session with a matching all-zones forecast writes a predicted-vs-measured pair into the calibration panel — tier-matched, gear-fingerprint-checked (unknown says "gear unknown", never "matched"), key costs on neither side since the sim charges none. The panel's combat group answers the question everything else stands on: is the sim optimistic about _your_ build?
+- **Enhancement sessions get percentile verdicts**: "Predicted 41 attempts, took 63 — 8% of runs take that many or more", read off the same distribution the pre-run p10/p90 use so the two can never disagree. Hand-stopped sessions and predictions recorded without variance honestly decline a verdict.
+- **A notification when your listing is undercut** (default off): "Cheese sell listing undercut: ask now 274K (as of ~12m ago), your listing 280K" — buy orders included, one alert per listing with re-arm on recovery, price age always stated, ties count as competitive, and no data never counts as undercut.
+- **Eleven new selector canaries watch the DOM the script depends on**, each gated on a same-screen witness so absence is only ever reported where presence was owed — a game update now produces a health report naming what broke instead of features quietly drawing nothing. **Every load-bearing English game string moved to one constants file** with real-message fixtures pinning each. **The sim engine gained its golden run**: one seeded hour with kills, deaths, XP and damage pinned exactly, so no engine regression can slip through unnoticed again.
+
+### Live combat learns seven more things, each its own switch
+
+- **Enemy tiles answer the questions a fight actually asks** (all optional, all default on, riding the Portrait DPS toggle): "dead ~8s" from remaining HP over the party's measured rate on that enemy; one "wave ~19s" countdown on the topmost tile summing the living wave (voided honestly if any enemy's HP is unknown); a red "hits for 210/s" — the enemy's own outgoing damage, which answers "can I show DPS for enemies" with a measurement; and "enrage 1:42" counting down where the monster's sheet carries a timer, amber under thirty seconds.
+- **Player meters carry survival, not just output**: "taken 220/s · net −35/s" (red when bleeding), "94% hit · 31% crit" once twenty swings back it, and "mana ~40s" only when actually draining toward empty within the minute — measured net of refills over a rolling window, because the mana tracker's per-cast costs are a different question.
+- **The dungeon tracker paces the run**: "pace +6% vs your avg" against your stored runs of the same dungeon and tier, only after three completed waves, colored by which way it's going.
+- The equal-height rule holds throughout: any line one tile has earned renders dashed on the rest, so the party frames never shuffle. Attribution stays honest — a hit that could belong to either of two identical monsters counts in the session total and shows on neither tile.
+
+### The portrait meters stop jostling the party
+
+- **Every player's DPS meter is two lines, always** — the current-fight line is reserved and reads "— cur" until that player acts, instead of appearing when they do. Five portraits used to sit at three different heights and re-shuffle at every fight boundary; now the frames hold still.
+
+### Every player name opens a profile, and the dungeon knows its worth
+
+- **Player names are clickable wherever a dungeon shows them**: the key-counts chat line, the party system messages ("has joined", "has left", "is ready", "is not ready" — end-anchored, so the phrase mid-sentence never matches), the run history's team headers (a name click doesn't toggle the group), and the overlay DPS rows (double-click still opens the panel). One click fills `/profile <name>` in chat, ready to send — the same trick the guild cycler uses, now a shared util.
+- **Your measured treasure rate can price your chests** (default off): with the new setting on, dungeon profit estimates value the regular chest at your own treasure rate — what your recorded openings actually returned against the drop table's expectation, both at today's prices, straight from the treasure tracker's ledger. Never silently (every adjusted figure carries a `*` and names the measurement: "Chimerical Chest EV adjusted by your measured −7.4% return (5,490 opened)"), never on thin evidence (under 300 openings the estimate stays unadjusted), and never beyond scope (refinement chests, net worth, and tooltips keep the table value). First shipped reading chest-drop _counts_ instead — corrected the same day to the opening ledger, which is what "my treasure rate" meant.
+- **A dungeon run's first minutes stop screaming red**: until the first chest drops, the profit tile dims instead of alarming and says "no chest yet" — keys are charged when chests drop and revenue arrives the same way, so the early loss is consumable burn, not a verdict.
+- **The profit panel compares the dungeon to your best solo zone**: a "vs best solo (sim)" line under the per-player card, from the last all-zones sim run — named, dated, and marked simulated, so a measured number never stands beside an unmarked guess.
+
+### A canceled battle start is not a run
+
+- **The dungeon tracker no longer records phantom runs from failed ready-checks.** The game posts "Key counts" and then "Battle ended" a second apart when a start is canceled; the tracker heard the first and not the second, so the canceled start stayed armed as a run's beginning and the next key count — minutes of party-forming later — read as its completion (one recorded "15:47 run" was two canceled starts with a member swap in between). A Battle-ended message now disarms any run with zero waves completed; fights with waves banked stay with the action feed, which already tells an early exit from a completion.
+
+### Hybrid attribution: thorns and DoT damage go to their owners
+
+- **The damage attribution learned what the party recording proved**: the server groups each battle tick by actor, so a lone player in a tick owns its damage — their reflect when the monster struck them in the same breath, their damage-over-time effect when nothing about them moved at all. The counter rungs stay first (they carry misses, crits and the per-ability split), the "last swinger" fallback now only catches multi-player ticks nothing can split, and a mana drop must be unique to name a caster. Replaying the five-player recording that exposed it: misattributed damage falls from 22,789 (5.7%, stolen from the tank and the DoT caster) to zero — 100% of counter-decidable damage lands on the right row.
+- **The trial scoreboard measures every player now, not just you.** The spectated stream runs through the same attribution, so a watched trial fills a measured per-player damage table for all thirty — the boss's own counters gate the hits and mark the crits for everybody, and your own unit's counters confirm its rows directly. The "no attack counters, split estimated from builds" era is over; captions across the trial panel, scoreboard and report now say so. The 1,405-health tick the module once refused as unattributable is credited for what it was: the tank's thorns.
+
+### Party lint ignores tools, and ability books answer three more questions
+
+- **Tool slots are exempt from the skilling-gear warning** — a Holy Alembic has no combat equivalent and displaces nothing; the lint now only flags skilling pieces sitting in real combat slots.
+- **The ability book tooltip now answers what you'd actually ask holding one**: which saved loadouts slot the ability (by name — the "can I coinify these" check), what level the books on hand would reach ("Books held: 7 → Lv 39"), and what the level already reached would cost to buy fresh today, in books and coin.
+
+### The sim summary reads in the units a player plans in
+
+- **XP/day → XP/hr** — the same unit the XP section and every zone ranking already use, so the tile reads against them directly. **Dungeons/hr → Avg clear** — the pace a session is planned around is how long one run takes, not a fractional rate. Success, Profit/day and Deaths/day stay as they were.
+- **A loaded party gets linted before its numbers are read**: an amber block right under the Summary calls out members wearing skilling gear ("Player11 has skilling gear equipped: Foraging Shears" — detected from the item's own stats, so hybrid pieces are never flagged) and duplicated auras ("Fierce Aura is equipped by Aster and Tib — auras do not stack" — detected from the ability data's party-wide buff shape, not a name list). Solo runs are never linted, and the warnings travel with each history entry.
+
+### Entry keys are consumables, and chests point at their keys
+
+- **The consumables tracker now carries the dungeon's entry key** for the tracked character: held count from inventory, per-day burn measured from the session's own chest drops (one key per regular chest — the same arithmetic the combat stats price keys with), two-sided cost/day, buy-for-target and a "lasts" countdown, competing for the limiting-consumable highlight like any coffee. Outside a dungeon, or before the first chest has dropped, the panel is honest: no row, or a row with "—" rates and the held count.
+- **Keyed chests offer their key**: the chest popup ("Open 0 (Keys: 0)") gains a "Buy Keys on Marketplace" button that jumps straight to the key's listing — driven by the game data (an item whose `_key` sibling exists), so every keyed chest gets it and nothing else does.
+
+### Ability book counts respect the experience already earned
+
+- **The Upgrade tab priced every ability level-up from the floor of its current level**, re-buying the books already read: an ability 57% into its level was quoted a level's worth of extra books (Berserk 65→70 read 140.6M where the true remainder was 128.5M — the Ability Books panel had it right all along). Level-ups now price from the equipped ability's live experience, exactly as swaps already priced from the owned book's, and the ranking, repay time, and every Gold/0.01% column tighten with it. The floor remains the fallback for a book with no experience recorded or one that disagrees about its level.
+
+### An attribution referee, ahead of any verdict on the presence method
+
+- **`npm run compare <recording.json>` replays a combat recording through two attribution methods side by side**: Toolasha's counter-pairing engine and a faithful reimplementation of KikiMeter's presence method (being in `pMap` is the attribution; ambiguous ticks split equally). Totals can never separate them — both conserve the team total by construction — so every disagreement tick is adjudicated from signals neither verdict used: a credited player who provably swung confirms their method, a credited player who was only being hit refutes it, and bleed ticks are set apart as unarbitrable. The report also tests the presence method's foundational claim directly — on every tick where a hit landed, was a provable swinger actually present? Accepts Toolasha combat recordings, sim-accuracy exports (the segments carry the raw payloads), and raw websocket captures alike. Analysis tooling only; nothing in the userscript changes.
+
+### Departed members stop haunting the roster
+
+- **A member who left the guild no longer sits in "Gone quiet" forever**: the roster walked the XP _history_ — every character ever sampled, never pruned — so someone who left kept their weekly rate, earned nothing (being gone), and read as permanently idle, headed by a bare "#9349" since their name left with them. The current member list now decides who gets a row; history is consulted only for people on it; an empty list means "not known yet", not "nobody's here". Stored history self-heals on login (an early or empty roster message prunes nothing — a message that arrived early must not delete the guild), live roster messages shed departures only when they carry most of the known guild, and a member the roster doesn't name renders as "Unnamed member", never a numeric tag.
+
+### The wire speaks: five trial message types the game was sending all along
+
+- **`new_guild_battle` fires at every tier and states everything** this feature spent three rounds inferring: the full roster with names (the tick indexes map straight into it — 30 of 30 named, no placeholders), the tier boundary (baselines drop on the stated boundary, and exact per-tier durations record), the encounter (from the monster hrids, no fight view needed), and the tier-scaled boss sheet filed automatically — which confirms the HP rule on arrival: 330,000 × 1.30 = 429,000 with 30 players.
+- **Your own damage is measured** — the game streams action counters for your own character only, and the scoreboard now says so per row: your figure is real, the rest of the party stays estimated from builds.
+- **Skilling goes socket-fed**: `guild_skilling_updated` carries the pool (76,000 × 1.17 = 88,920, the rule again), the stated tier, participation by character ID, and your personal success rate/efficiency/action time — recorded per tier with no DOM footer needed. Cards the game draws a bar on keep their own numbers.
+- **The game announces trial ends**: `end_guild_skilling` states the final banked tier outright (9 while 10 was running — confirming the semantics this feature reasoned its way to), `end_guild_battle` marks the combat hour's end, and the recorder treats the hour as done only when every card on screen has been declared over.
+- All five types join the dedup skip-list — the skilling tick's first 100 characters end exactly where its progress figure begins, so an hour would have collapsed to one tick. Whether these messages are broadcast or view-scoped is unknowable from the capture, so each is a bonus signal and every DOM path remains as fallback. The recording's roster, ticks, and end messages are fixtured verbatim.
+
+### Mixed-bonus cards contribute their true base to the token sum
+
+- A card banked across a Builder's Hall upgrade divides cleanly by neither bonus, so its base points now come from the exact ladder (1,100 at T10) instead of the slightly-low division (1,091) — the token estimate gains the difference, the card's own Guild Points figure stays authoritative, and the sourcing note names the second cause. Treasury needs no such handling — tokens pay once at the round's end against the summed base, one moment, one level — with the one untestable assumption (payout-time vs round-start snapshot) documented rather than guessed at.
+
+### The notice board is not a trial, and the ladders are theorems now
+
+- **A guild notice board can no longer become a trial tile**: an older build had stored one guild's entire welcome notice — braille art, Discord links and all — as a "skilling trial", with the Discord channel IDs read as pool bars and the Overview stats attached as personal figures. Names now must be one short line before any matching, readings must be plausible (a nineteen-digit channel ID is not a progress bar; an 8.4M boss bar is), personal stats and the recorder only consume real tiles, and stored records self-heal on load — history included, since an archived notice board is a payout error a week later. The exact 987-character string is a fixture.
+- **Both points ladders are exact and locked**: skilling cumulative base = 100×(tier+1), combat = 200×(tier+1) — verified against ten observations across three guilds and three Builder's Hall levels. And the one apparent exception dissolved into a discovery: **points bank live at the bonus in effect per tier**, so a Builder's Hall upgrade mid-trial makes the total a mixture of two bonuses (the user's three high-tier cards decompose exactly: 500×1.10 + 600×1.12 = 1,222). A stated total inside that upgrade envelope gets a calm explanatory note instead of a warning; outside it, the genuine warning stands. The game's stated figures still win for payout, as ever.
+
+### The watched fight knows its own name, and a wipe is an outcome
+
+- **The spectated stream attaches to the encounter being watched, and only that one**: the Chameleon fight's pool had been injected into the Hedgehog card (both barless, both claimed it) and the report narrated the wrong trial. Identity now travels with the stream — the fight view's own boss tile first, a clicked boss sheet second — is dropped on a new battle and kept across tier changes, and an unidentified pool is claimed by _no_ card ("click the boss to identify") rather than all of them. The report context is rank-gated the same way.
+- **The cycler only offers people in the fight's own subtree** (anchored by the boss's "Trial …" name — the skilling panel beside it draws members too, and those boxes are inert; that's how someone off foraging got offered mid-fight), and **dead units are clicked like anyone else** — death hides nothing; a unit without abilities simply has none.
+- **Per-tier personal stats actually record now**: the footer only ever attached to a card with a live bar (none exists between tiers or after the hour) and the tier join rode a live-only field — both fixed, so the success-decline model gets its per-tier inputs next trial.
+- **The stats reader no longer swallows session logs**: "59m": "5s" pairs are not stats — labels need a real word, aren't number+unit, and a tiny denylist catches bare generic headings, while the open-ended capture keeps working for real stats.
+- **A party that wipes before tier 1 gets an outcome, not a promise**: a stated 0 outranks the Completed badge (absent stays absent — no points seen is not zero), and the banked row says "0 tiers — fell before tier 1" instead of the live "tier 1 in progress" line; zero-point tiles survive merges and archiving, because a failed trial belongs in the record.
+
+### Spectating measures: the trial fight is on the wire after all
+
+- **Per-player trial measurement is real** — the user's wire capture proved the fight view streams `guild_battle_updated`: the same tick shape as ordinary battles plus `battleId` and the tier stated outright. The trial damage machinery now consumes it: damage taken, healing, mana, and deaths fill from every tick; the damage split fills when the stream carries attack counters (the first capture carried none for players — the scoreboard says "watched, but the stream carried no attack counters" instead of guessing, and the export's `spectator.playerActionTicks` answers it from the next watch). The message joins the dedup skip-list — byte-identical consecutive ticks would otherwise collapse an entire trial to one.
+- **The solo-attribution fallback is off for spectated streams**: "only one character is known, so it was them" is sound in your own fights (the party was stated) and a trap here (one unit having appeared means one unit _moved_) — the capture contained the exact tick where the tank would have been credited the boss's whole health bar.
+- **Units get names three ways**: fight-view portraits in slot order, then max-HP/MP signature against captured sheets (2,612/2,180 names ICMeow uniquely), then an honest "Player N". Ambiguity resolves to nobody; placeholders don't survive the view opening.
+- **The spectated pool feeds cards with no bar of their own** (the Trials tab measured nothing all hour; now a fresh spectated reading stands in, never overriding a bar the game itself draws), the payload's tier replaces badge-inference while watching, and a fresh tick arms the recorder.
+- **The boss is a boss everywhere**: clicking it no longer stores it as a member loadout (monster units refused and purged; it would have joined the damage-split estimate), its stats popup no longer gets our info block injected into it (cards are not allowed inside dialogs — no card-shape filter could catch a popup literally titled like a card), and its per-tier sheet is filed as `bossSheets[tier]` — two tiers side by side settle whether accuracy and damage scale the way health does.
+- The wrong "simulated, not fought" note is replaced: the fight is real and server-run, and watching it is measuring it.
+
+### The cycler clicks the people fighting beside you
+
+- **A fight on screen outranks the roster walk**: the profile button now finds your guildmates' unit boxes in the spectated trial fight and clicks those first — that's the Battle Info popup, the only source of a combat stat sheet (`/profile` carries skills but no sheet). The boss can never be offered (only roster names match), a sheet older than 15 minutes is worth re-clicking mid-fight, and ⟲ Redo covers battle sheets too.
+- **Dead units are skipped and said**: a dead unit's popup hides its abilities, so the button skips them, counts them ("2 dead skipped — abilities hide on death"), and tells you to ask again after a revive rather than half-capturing.
+
 ### Beacons cover the way out before they chase dark corners
 
 - **A set beacon count is planned against the same objective the automatic one uses**: cover a revealed path to the exit first, a second independent route next, and only then reveal as many rooms as the count allows. Set counts used to maximise rooms and nothing else, which is how four beacons could be planned onto the fattest dark pockets of a floor while the plan's own caption admitted "a covered path to the exit needs 3". A count too small to cover a path now spends itself getting as close as it can — and still says what it would take.
 - **The count is a per-floor override again**: a number chosen because one map was worth four beacons no longer follows you onto every floor after it. Each new floor starts back on the automatic minimum.
 - **A ⟲ button beside the count** puts it back to the fewest that cover a path, without spinning the field down a step at a time.
+
+### The arrow points at the count, completed means completed, and estimates say so
+
+- **"On pace for 4 tiers → T5" is impossible output now**: the count and the arrow's target were computed from different numbers (tiers finished vs tier being fought); both now derive from one figure, and a tier the walk enters but can't finish moves neither.
+- **A Completed card is completed everywhere**: the game's own badge overrides the kind-level phase, so skilling blocks stop showing "On pace for" (or "scheduled") after their trial ends while combat runs — final rate and banked, nothing live.
+- **Per-player trial damage is presented as what it currently is — an estimate from builds**: headlined "Estimated from builds" in the scoreboard, the report ("ESTIMATED FROM BUILDS" as line two where a chat skimmer reads it), and the card line ("simulated, not fought"), with per-member auto-attack shares, build coverage ("2/3 builds"), and unestimated members named. The pool-bar party rate stays labelled measured. (A spectator battle feed was discovered moments after this shipped — real measurement lands next.)
+
+### Neither ladder has a wall, and a click is not a capture
+
+- **The profile cycler counts replies, not clicks**: a hidden chat box could mark members as logged without any profile ever opening — now a click is a timestamped request, re-offered after 20 seconds if no capture lands, the progress count derives from actual captures (wrong states self-correct), a member in flight shows as "Waiting for…", and a missing/hidden chat input says "Open the chat panel first" instead of silently doing nothing. Inert skilling units on the In Progress tab are never clicked — the chat route is the only one that works there. **⟲ Redo all** marks everyone due again without discarding stored levels; one click still equals one profile.
+- **Skilling success decline is measured and modeled**: personal stats are stored per tier, the drop is fitted (the live data reads exactly −8.0 points per tier), and future tiers scale their effective fill rate down to the game's **5% floor** — deep tiers are slow, not impossible. One observation means no trend: walk flat and say so.
+- **Enrage is a buff, not a timer**: monsters stack +10% accuracy/damage per minute to +100%/+100% at ten — fights don't end. The combat walk no longer stops at ten minutes; it carries on at DPS and captions the escalation ("fully enraged — expect deaths to slow this beyond the projection"). No forecast has a hard wall now; the hour is what ends both walks.
+- **The lifecycle phase is per trial kind**: "Skilling Trial - In Progress" no longer makes combat cards claim "measuring…" or "Banked: 1 tier" — and banked now requires stated points, since Lv.100/0 pts/T1 is tier one _in progress_ while Lv.100/236 pts/T1 is tier one _banked_.
+- **The payout block states the week's total on every tab** (it summed only visible cards on In Progress — 472 beside the Trials tab's 2,714), and **"On pace" and "Expected" are one walk**: a single row when no slowdown is measured, two clearly-labelled rows ("flat" / "slowing") when one is.
+- Anchored to live figures: pools T1–T5 exact (40,800 → 57,120, +4,080 each; T6 = 61,200 where the old fit said 63.3K), success 73.6/65.6/57.6/49.6.
+
+### The badge means banked, and the skilling ladder is a rule now
+
+- **Mid-trial, the stated tier badge counts tiers banked and the fight is on badge + 1** — proven by the live sequence (a T2 badge while the third pool ran). "Banked 1 tier" under a T2 badge now says 2, and live pool readings file under the tier actually being fought — two tiers' pool sizes were quietly filing under one number and corrupting the ladder.
+- **Skilling pool sizes are derived, exact on all three observed tiers**: T_n = base × (1 + 0.1×(n−1)) × (1 + 1% per participant) — linear, not geometric (a ratio fit would have drifted 400 work by T3). One reading anywhere gives the whole ladder; observed readings still win.
+- **The forecast walks the whole hour**: no more "Expected ~T2" while four tiers were on pace — it walks the derived ladder, adds the banked tiers (returning only its own walk was impossible output), and "Next tier work" appears from the first minute.
+- **Labels wrap at spaces only** ("Expecte/d" is gone — `overflow-wrap:anywhere` removed outright), long labels stack above their value.
+- **Cards stating 0 points state nothing**: zero no longer reaches the disagreement warning or the stated-points path.
+
+### The recorder survives its first real trial day
+
+- **Auto-record actually arms now**: the status header carries the trial kind ("Skilling Trial - In Progress") which the reader didn't recognize — and worse, the header lives on the Trials tab while the readings live on In Progress, so requiring both at once meant auto-record almost never armed. A live reading on a real trial card now arms it; the panel can only veto with an explicit Scheduled/Completed, and silence blocks nothing.
+- **Manual recordings stop only by your hand**: the ten-minute silence rule and the one-hour cap were killing sessions whose player had simply closed the guild panel to go play. Silence is now recorded as a visible gap in the session (`{from, to, ms}`) instead of acted on, with a six-hour backstop; the silence rule for automatic sessions no longer fires while a trial is live. Between the skilling and combat hours, automatic sessions roll over by themselves and manual ones simply span both.
+- **The first tier is tier 1**: a live trial with no points and no badge is on T1 by game rule, so pace and forecast light up from the first minute and pool readings anchor the growth fit; the mid-trial-join case (points already showing) keeps the honest unknown.
+- **The start notification listens to guild chat**: the game's own "guild trials have begun" line fires it even with the guild panel closed, sharing a key with the phase trigger so whichever notices first speaks once.
+- **Labels wrap instead of vanishing**: "C… | 0 tiers → T1" is gone — the ellipsis machinery is removed outright, long values take the full width with their label above, and short figures keep their two-column row.
 
 ### Release plumbing
 

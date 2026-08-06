@@ -19,12 +19,14 @@ vi.mock('../../utils/dom.js', () => ({ addStyles: () => {} }));
 
 const {
     ANNOUNCE_RE,
+    PARTY_RE,
     VALID_NAME_RE,
     markAsProfileLink,
     default: chatProfileLinkFeature,
 } = await import('./chat-profile-link.js');
 
 const nameIn = (message) => message.match(ANNOUNCE_RE)?.[1] ?? null;
+const partyNameIn = (message) => message.match(PARTY_RE)?.[1] ?? null;
 
 afterEach(() => {
     settings.chat_profileLink = false;
@@ -46,6 +48,28 @@ describe('announcements that get a link', () => {
 
     test('a channel tag in front does not hide the name', () => {
         expect(nameIn('[General] Someone has completed a task')).toBe('Someone');
+    });
+});
+
+describe('party status lines', () => {
+    test('all four shapes name their player', () => {
+        expect(partyNameIn('Briggsy99 has joined the party.')).toBe('Briggsy99');
+        expect(partyNameIn('Briggsy99 has left the party.')).toBe('Briggsy99');
+        expect(partyNameIn('Briggsy99 is ready.')).toBe('Briggsy99');
+        expect(partyNameIn('Briggsy99 is not ready.')).toBe('Briggsy99');
+    });
+
+    test('a timestamp in front does not hide the name', () => {
+        expect(partyNameIn('[08/04 10:00:00 AM] Briggsy99 is ready.')).toBe('Briggsy99');
+    });
+
+    test('anything longer than exactly those sentences is left alone', () => {
+        // The end anchor is the conservatism: a player typing one of these
+        // phrases mid-sentence must never grow a link
+        expect(partyNameIn('Briggsy99 is ready to trade!')).toBe(null);
+        expect(partyNameIn('Briggsy99 is ready. Let us go')).toBe(null);
+        expect(partyNameIn('I think Briggsy99 has left the party.')).toBe(null);
+        expect(partyNameIn('the party has joined the party bus')).toBe(null);
     });
 });
 
@@ -143,6 +167,27 @@ describe('end-to-end: an announcement message decorated by the feature is clicka
 
         nameSpan.dispatchEvent(new Event('click', { bubbles: true }));
         expect(input.value).toBe('/profile Player11');
+
+        chatProfileLinkFeature.disable();
+    });
+
+    test('a party ready line gets the same treatment, and its text never changes', () => {
+        settings.chat_profileLink = true;
+        document.body.innerHTML =
+            '<div class="Chat_chatInputContainer"><input /></div>' +
+            '<div class="ChatMessage_chatMessage">Briggsy99 is not ready.</div>';
+        const input = document.querySelector('input');
+        const messageEl = document.querySelector('.ChatMessage_chatMessage');
+        const before = messageEl.textContent;
+
+        chatProfileLinkFeature.initialize();
+
+        const nameSpan = document.querySelector('.mwi-chat-profile-name');
+        expect(nameSpan?.textContent).toBe('Briggsy99');
+        expect(messageEl.textContent).toBe(before);
+
+        nameSpan.dispatchEvent(new Event('click', { bubbles: true }));
+        expect(input.value).toBe('/profile Briggsy99');
 
         chatProfileLinkFeature.disable();
     });

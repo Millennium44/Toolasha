@@ -133,14 +133,32 @@ export function projectGuildXP(currentXP, xpPerHour, hours) {
 /**
  * The roster, ranked by what each member did this week.
  *
+ * ## Who is on it
+ *
+ * The **current** roster, and that is a correction. This walked the *history*
+ * map — every character ever sampled — which never forgets, so a member who left
+ * the guild kept their weekly rate, did nothing all day because they were gone,
+ * and sat in "Gone quiet" permanently. They had no metadata either, having been
+ * dropped from the member list when they left, so the row was headed with the
+ * only thing left to head it with: `#9349`.
+ *
+ * Both defects are one defect. The member list the tracker rebuilds on every
+ * roster message *is* the statement of who is in the guild, so it decides who
+ * gets a row and the history is only consulted for the people on it.
+ *
+ * Before any roster message has arrived the list is empty, and an empty list is
+ * "not known yet" rather than "nobody is in this guild" — so the history stands
+ * in, exactly as it did, until the game says otherwise.
+ *
  * @param {Object} input - Everything this needs, so it can be tested without the tracker
  * @param {Object<string, Array<{t: number, xp: number}>>} input.series - characterID → samples
- * @param {Object<string, {name: string}>} input.meta - characterID → metadata
+ * @param {Object<string, {name: string}>} input.meta - characterID → metadata, and the roster
  * @param {number} [input.now] - Clock
- * @returns {Array<Object>} One row per member, best 7-day share first
+ * @returns {Array<Object>} One row per current member, best 7-day share first
  */
 export function buildRoster({ series, meta = {}, now = Date.now() }) {
-    const ids = Object.keys(series || {});
+    const current = Object.keys(meta || {});
+    const ids = current.length ? current : Object.keys(series || {});
 
     const rows = ids.map((characterID) => {
         const samples = series[characterID] || [];
@@ -151,7 +169,10 @@ export function buildRoster({ series, meta = {}, now = Date.now() }) {
 
         return {
             characterID,
-            name: meta[characterID]?.name || `#${characterID}`,
+            // Never a `#id`. A numeric tag where a name belongs reads as a
+            // member whose name is a number, and every row that ever showed one
+            // was a member who should not have been on the list at all
+            name: meta[characterID]?.name || null,
             samples: samples.length,
             delta: week ? week.delta : null,
             delta7d: week ? week.delta : null,
@@ -172,6 +193,21 @@ export function buildRoster({ series, meta = {}, now = Date.now() }) {
     });
 
     return rows.sort((a, b) => (b.share7d ?? 0) - (a.share7d ?? 0) || (b.totalXP ?? 0) - (a.totalXP ?? 0));
+}
+
+/**
+ * What to head a member's row with when their name was never captured.
+ *
+ * Withheld rather than faked. The tracker learns a name from the same message
+ * that says somebody is in the guild, so a member on the list with no name is a
+ * message this script could not read — which is worth saying, and is not worth
+ * printing an internal id for. `#9349` is not a name and nobody can act on it.
+ *
+ * @param {Object} member - A row from {@link buildRoster}
+ * @returns {string} Something a person can read
+ */
+export function memberLabel(member) {
+    return member?.name || 'Unnamed member';
 }
 
 /**
@@ -238,8 +274,15 @@ export function drawProfileCycler(body, capture = guildMemberSkills) {
 
     const button = document.createElement('button');
     button.className = 'mwi-profile-cycler';
-    button.textContent = state.next ? `Open ${state.next.name}\u2019s profile` : 'Every member logged';
-    button.disabled = !state.next;
+    // A fight on screen outranks the roster walk: the unit's popup is the only
+    // source of a combat sheet, and it is only on offer while the fight is
+    const unit = capture.nextBattleUnit?.();
+    button.textContent = unit?.el
+        ? `Open ${unit.name}\u2019s battle info`
+        : state.next
+          ? `Open ${state.next.name}\u2019s profile`
+          : 'Every member logged';
+    button.disabled = !unit?.el && !state.next;
     button.style.cssText =
         'width:100%; margin:4px 0; padding:4px 8px; border-radius:4px; font-size:11px;' +
         `cursor:${state.next ? 'pointer' : 'default'}; background:transparent;` +
@@ -251,13 +294,63 @@ export function drawProfileCycler(body, capture = guildMemberSkills) {
         'A profile carries every skill level, which is what the skilling forecast needs; combat stat sheets ' +
         'come from fighting beside somebody instead.';
 
+    const status = panelNote('');
+    status.style.display = 'none';
+
     button.addEventListener('click', () => {
         const result = capture.openNext?.();
-        if (result?.how === 'chat') button.textContent = `Press Enter to open ${result.opened}`;
-        else if (result?.opened) button.textContent = `Opened ${result.opened}`;
+        status.style.display = '';
+
+        if (result?.how === 'no-chat') {
+            // The only route to a skilling participant's profile is the chat
+            // command, and a hidden chat swallows it silently — which is how a
+            // roster came to read "every member logged" with one missing
+            status.textContent = 'Open the chat panel first — that is how a profile is asked for.';
+            status.style.color = ROW_COLORS.bad;
+            button.textContent = `Open ${result.opened}’s profile`;
+            return;
+        }
+
+        status.style.color = ROW_COLORS.dim;
+        if (result?.how === 'unit') {
+            status.textContent = `Waiting for ${result.opened}’s battle info…`;
+            button.textContent = `Asked for ${result.opened}…`;
+        } else if (result?.how === 'chat') {
+            status.textContent = `Press Enter in chat to open ${result.opened}.`;
+            button.textContent = `Asked for ${result.opened}…`;
+        } else if (result?.opened) {
+            status.textContent = `Waiting for ${result.opened}’s profile…`;
+            button.textContent = `Asked for ${result.opened}…`;
+        }
     });
 
     card.appendChild(button);
+
+    // Redo: a capture goes stale on its own after a week, which is too slow for
+    // a player who has just watched half the guild level up. It only changes who
+    // is considered due — it never asks for a profile itself
+    if (state.logged > 0) {
+        const redo = document.createElement('button');
+        redo.className = 'mwi-profile-redo';
+        redo.textContent = `⟲ Redo all ${state.logged}`;
+        redo.style.cssText =
+            'width:100%; margin:0 0 4px; padding:3px 8px; border-radius:4px; font-size:11px; cursor:pointer;' +
+            `background:transparent; border:1px solid rgba(255,255,255,0.2); color:${ROW_COLORS.dim};`;
+        redo.title =
+            'Marks every capture as due again, so the button above walks the roster once more. Nothing is ' +
+            'thrown away — the levels already stored stand until a fresh profile replaces them.';
+        redo.addEventListener('click', () => {
+            capture.redoAll?.();
+            redo.textContent = 'Every member due again';
+            button.textContent = 'Open the next profile';
+        });
+        card.appendChild(redo);
+    }
+
+    card.appendChild(status);
+    if (state.pending) {
+        card.appendChild(panelNote(`Waiting for ${state.pending.name}’s profile to open.`));
+    }
     if (state.stale) {
         card.appendChild(panelNote(`${state.stale} capture${state.stale === 1 ? '' : 's'} older than a week.`));
     }
@@ -359,7 +452,7 @@ export const guildRosterPanel = createPanel({
             for (const member of quiet) {
                 card.appendChild(
                     panelLine(
-                        member.name,
+                        memberLabel(member),
                         `${xp(member.dayRate)}/h today vs ${xp(member.weekRate)}/h this week`,
                         ROW_COLORS.bad
                     )
@@ -378,7 +471,7 @@ export const guildRosterPanel = createPanel({
         for (const member of contributing) {
             card.appendChild(
                 panelLine(
-                    `${member.name}${member.quiet ? ' ·' : ''}`,
+                    `${memberLabel(member)}${member.quiet ? ' ·' : ''}`,
                     `${percent(member.share7d)} 7d · ${percent(member.share30d)} 30d · ${xp(member.delta7d)} XP`,
                     member.quiet ? ROW_COLORS.bad : ROW_COLORS.gold,
                     `${member.samples} samples recorded.\nShares are of the XP actually observed, not of career totals.`

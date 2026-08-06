@@ -1,8 +1,9 @@
 /**
  * Consumables panel
  *
- * Everything the character is eating and drinking, how long it lasts, and what
- * it would take to keep it going.
+ * Everything the character is eating and drinking — and, in a dungeon, the
+ * entry keys the runs are spending — how long it lasts, and what it would take
+ * to keep it going.
  *
  * The overlay row answers "what runs out first, and when". That is the figure
  * worth watching, but it is not the figure worth acting on — when the answer is
@@ -43,6 +44,7 @@ import { getItemPrices } from '../../utils/market-data.js';
 import { currentTarget, cycleTarget, loadTarget } from '../../utils/consumable-target.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import {
+    forecast,
     forecastAll,
     firstToRunOut,
     costPerDaySides,
@@ -51,11 +53,13 @@ import {
     drinkRatePerDay,
     buyStrategy,
 } from '../../utils/consumable-forecast.js';
+import { dungeonEntryKey, heldInInventory, keyConsumableEntry } from '../../utils/dungeon-key-forecast.js';
 import { createAutofillManager } from '../../utils/marketplace-autofill.js';
 import { estimateFillSeconds } from '../../utils/order-book.js';
 import { openShoppingList } from './consumables-shopping-list.js';
 import combatStatsDataCollector from '../combat-stats/combat-stats-data-collector.js';
 import { calculatePlayerStats } from '../combat-stats/combat-stats-calculator.js';
+import { queueLengthEstimator } from '../../utils/bundle-bridge.js';
 
 const PANEL_ID = 'toolasha-consumables-panel';
 const GEOMETRY_KEY = 'consumablesPanel';
@@ -138,20 +142,68 @@ class ConsumablesPanel {
         return data.players
             .map((player) => {
                 const stats = calculatePlayerStats(player, duration);
+                const forecasts = forecastAll(
+                    this._exactRates(stats?.consumableBreakdown, player),
+                    (hrid) => getItemPrices(hrid),
+                    {
+                        keepOrder: true,
+                    }
+                );
+
+                // The dungeon's entry key, for the character whose inventory is
+                // visible — a run stops on an empty key pile exactly as it does
+                // on an empty coffee slot, so it belongs in the same list
+                if (player.isCurrentPlayer) {
+                    const key = this._keyForecast(stats, data);
+                    if (key) forecasts.push(key);
+                }
+
                 return {
                     name: player.name || 'Unknown',
                     isCurrent: !!player.isCurrentPlayer,
-                    forecasts: forecastAll(
-                        this._exactRates(stats?.consumableBreakdown, player),
-                        (hrid) => getItemPrices(hrid),
-                        {
-                            keepOrder: true,
-                        }
-                    ),
+                    forecasts,
                 };
             })
             .filter((entry) => entry.forecasts.length)
             .sort((a, b) => Number(b.isCurrent) - Number(a.isCurrent));
+    }
+
+    /**
+     * The current dungeon's entry key as a forecast, or null outside a dungeon.
+     *
+     * Null is the whole answer for a zone: the panel must render exactly as it
+     * always has when no keys are being spent. The rate is the session's own
+     * measurement — one entry key per regular chest, over the run's duration,
+     * the same arithmetic the combat stats price keys with — and a session that
+     * has not dropped a chest yet honestly has no rate, which the row shows as
+     * "—" while still counting what is held.
+     *
+     * @param {Object} stats - From `calculatePlayerStats`, for its `keyBreakdown`
+     * @param {Object} data - The collector's snapshot, for the action and duration
+     * @returns {Object|null} A forecast like any other, or null when not a dungeon
+     */
+    _keyForecast(stats, data) {
+        try {
+            const actionHrid = data?.actionHrid;
+            if (!actionHrid) return null;
+
+            const keyHrid = dungeonEntryKey(actionHrid, dataManager.getActionDetails?.(actionHrid));
+            if (!keyHrid) return null;
+
+            const prices = getItemPrices(keyHrid);
+            const entry = keyConsumableEntry({
+                itemHrid: keyHrid,
+                itemName: dataManager.getItemDetails?.(keyHrid)?.name,
+                held: heldInInventory(dataManager.getInventory?.(), keyHrid),
+                keyBreakdown: stats?.keyBreakdown,
+                durationSeconds: data.durationSeconds || 0,
+                fallbackPrice: prices?.ask,
+            });
+            return forecast(entry, prices);
+        } catch (error) {
+            console.error('[ConsumablesPanel] Building the entry-key row failed:', error);
+            return null;
+        }
     }
 
     /**
@@ -199,7 +251,7 @@ class ConsumablesPanel {
      */
     _fillSeconds(itemHrid, count) {
         try {
-            const cached = window.Toolasha?.Market?.queueLengthEstimator?.orderBooksCache?.[itemHrid];
+            const cached = queueLengthEstimator()?.orderBooksCache?.[itemHrid];
             // A buy order joins the bid side, so that is the queue it waits in
             const bids = (cached?.data || cached)?.orderBooks?.[0]?.bids;
             return estimateFillSeconds(bids, count);
