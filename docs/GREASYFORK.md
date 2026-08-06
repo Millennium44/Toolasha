@@ -22,8 +22,8 @@ biggest changes since forking, in rough order of how much they change the game:
   watch it, or jump straight to it on the marketplace.
 - **Labyrinth simulator, grown up** — multi-target analysis with combined armor
   swaps, supply-aware planning (torches/shrouds/beacons from the actual run),
-  max-level and skip-level finding, house rooms per fight, and a skilling sim that
-  scopes candidates to the skill you're simming.
+  skip-level finding, house rooms per fight, and skilling-sim candidates scoped to
+  the skill you're simming.
 - **Per-character everything** — settings, panels, histories, market state and sim
   state are scoped per character, with consent-gated adoption of legacy data and
   repair tools. No more iron cow reading the market cow's books.
@@ -36,8 +36,7 @@ biggest changes since forking, in rough order of how much they change the game:
   alchemy, and combat income from your own all-zones sims.
 - **Guild tools** — live trial measurement (per-player DPS and damage/healing
   attribution from the fight you're watching, tier read off the bar as it fills),
-  pace/ETA/payout math, shrine levels everywhere they matter (scores, net worth,
-  sims), and guild token valuation from the game's real credit exchange rates.
+  and trials pace/ETA/payout math.
 - **Overlay redesign** — curated tile defaults, bundled presets, activity
   auto-switching, tiles that open their panels, and full mobile support: a
   floating launcher on every screen and layouts that re-flow to the width they're
@@ -47,8 +46,8 @@ biggest changes since forking, in rough order of how much they change the game:
   auto-detection decided.
 - **Notifications** — empty queue, community buff expiry (per-buff, with lead
   time), labyrinth run finished, and more.
-- **Task tools** — measured tokens/hour and net task income, reroll protection
-  that respects free MooPass rerolls, task sorting and inventory highlighting.
+- **Task tools** — measured tokens/hour and net task income, with reroll handling
+  that takes the free MooPass reroll first.
 - **Equipment Savings ("eWatch")** — savings goals for gear _and_ ability levels,
   fed straight from the simulators, with progress and ETA from your gold.
 - **Storage that survives months** — chunked per-period history records, honest
