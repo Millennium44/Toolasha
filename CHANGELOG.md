@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The battle-info button stops offering clicks that open nothing
+
+- **The profile cycler matches the game's own unit boxes now**: it used to walk bare text and climb to "the smallest ancestor with a health reading", which in a spectated trial fight — where the game draws only the boss as a unit — sailed up to the whole battle grid, matching names this script's own damage panel had drawn there. Diagnosed live with the user: every "unit" resolved to the same 704×511 grid, and clicking it opened nothing. A unit now has to be a real `CombatUnit` box in the boss's grid wearing a roster name, so a fight that draws no player units honestly falls back to the `/profile` route instead of pretending.
+- **The `/profile` chat fill survives a renamed input container**: the chat-input lookup now falls back to the chat panel itself when the inner container's class stops matching, keeping every clickable player name working.
+
 ### The trials panel knows its tier immediately, and the pace projection stops lowballing
 
 - **The In Progress tab now identifies the tier on its own**: the live tab draws no status header, so the panel used to sit on "tier not known yet" until you visited the Trials tab. The tier now comes from a four-rung ladder — the card's badge, the socket's stated tier (now actually persisted instead of dropped on the floor), the work-target arithmetic (a skilling bar's target uniquely identifies its tier once the skill's base work is known — the crafting base of 40,000 is confirmed exact across two guilds), and the first-tier rule last. Each rung labels itself in the panel caption.

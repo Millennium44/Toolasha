@@ -24,7 +24,13 @@ export const VALID_PLAYER_NAME_RE = /^[A-Za-z0-9_]+$/;
  */
 export function findChatInput() {
     if (typeof document === 'undefined') return null;
-    const input = document.querySelector('[class*="Chat_chatInputContainer"] input');
+    // The input container's class is first choice; the panel-level fallbacks
+    // survive the game renaming the inner container. A collapsed chat matches
+    // nothing on any rung, and null is the honest answer there.
+    const input =
+        document.querySelector('[class*="Chat_chatInputContainer"] input') ||
+        document.querySelector('[class*="Chat_chat__"] input') ||
+        document.querySelector('[class*="GamePage_chatPanel"] input');
     if (!input) return null;
 
     const visible = input.offsetParent !== null || (input.getClientRects?.().length ?? 0) > 0;

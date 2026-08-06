@@ -37,6 +37,7 @@ import webSocketHook from '../../core/websocket.js';
 import guildLoadoutCapture from './guild-loadout-capture.js';
 import { guildXPTracker } from './guild-xp-tracker.js';
 import { fillProfileCommand, findChatInput } from '../../utils/profile-command.js';
+import { GAME } from '../../utils/selectors.js';
 
 /** Object store the captures live in — shared with the rest of the guild history */
 const STORE_NAME = 'guildHistory';
@@ -68,53 +69,39 @@ export const REQUEST_TIMEOUT_MS = 20_000;
 export const UNIT_FRESH_MS = 15 * 60 * 1000;
 
 /**
- * The subtree the spectated fight is drawn in, found by its boss.
+ * The name a combat unit box wears, from the game's own name line.
  *
- * The In Progress tab draws the skilling instance and the combat fight side by
- * side, and the skilling panel's participant units are inert — clicking one
- * opens nothing, which is how the button came to offer somebody who was off
- * foraging while a fight was on screen. The one thing only the fight view has
- * is the encounter itself, so the boss's own "Trial …" name is the anchor: the
- * fight is the smallest subtree holding both the boss and at least one roster
- * member.
- *
- * @param {Map<string, string>} wanted - lowercased name → display name
- * @param {Document|Element} root - Where to look
- * @returns {Element|null} The fight subtree, or null when no fight is on screen
+ * @param {Element} box - A `CombatUnit_combatUnit` element
+ * @returns {string} The unit's display name, trimmed
  */
-function findFightArea(wanted, root) {
-    for (const leaf of root.querySelectorAll('div, span')) {
-        if (leaf.childElementCount) continue;
-        if (!/^trial\s+\S/i.test((leaf.textContent || '').trim())) continue;
-
-        let area = leaf;
-        for (let up = 0; up < 8 && area.parentElement; up += 1) {
-            area = area.parentElement;
-            for (const inner of area.querySelectorAll('div, span')) {
-                if (inner.childElementCount) continue;
-                if (wanted.has((inner.textContent || '').trim().toLowerCase())) return area;
-            }
-        }
-    }
-    return null;
+function unitName(box) {
+    return (box.querySelector(GAME.COMBAT_UNIT_NAME)?.textContent || '').trim();
 }
 
 /**
  * Player unit boxes in a spectated guild fight, matched to roster names.
  *
- * The fight view draws each participant as a small box: the member's name as
- * its own text line with an `n/m` health reading nearby. Clicking the box opens
- * the game's Battle Info popup, which is what makes the game send that member's
- * stat sheet (`battle_unit_fetched`) — the only source a combat loadout has;
- * `/profile` carries skills but no sheet. The boss is drawn the same way but is
- * not a member, so only roster names are matched and it can never be offered.
+ * The game draws every combatant as a `CombatUnit_combatUnit` box wearing its
+ * name in a `CombatUnit_name` line. Clicking the box opens the game's Battle
+ * Info popup, which is what makes the game send that member's stat sheet
+ * (`battle_unit_fetched`) — the only source a combat loadout has; `/profile`
+ * carries skills but no sheet.
  *
- * Only units inside the fight's own subtree count — see {@link findFightArea};
- * the skilling panel beside it draws members too, and those boxes are inert.
+ * Matching the game's own unit classes is what keeps this honest. The first
+ * version walked bare text leaves and climbed to "the smallest ancestor with a
+ * health reading" — and in a spectated trial fight the game draws only the
+ * boss as a unit, players carry no health text, so the climb sailed up to the
+ * whole battle grid; worse, the names it matched were the ones this script's
+ * own damage panel draws into that same grid, so the button offered clicks
+ * that could never open anything. Now a unit has to be a real CombatUnit box,
+ * in the same grid as the trial boss, wearing a roster member's name —
+ * anything else (our injected panels, the skilling instance's inert member
+ * cards, the boss itself) is not a unit, and a fight that draws no player
+ * units honestly offers nobody.
  *
  * @param {Array} members - Roster, `{name}` each
  * @param {Document|Element|null} [root] - Injectable for tests
- * @returns {Array<{name: string, el: Element, dead: boolean}>} Clickable units
+ * @returns {Array<{name: string, el: Element}>} Clickable units
  */
 export function findBattleUnits(members, root = typeof document === 'undefined' ? null : document) {
     if (!root) return [];
@@ -125,26 +112,19 @@ export function findBattleUnits(members, root = typeof document === 'undefined' 
     }
     if (!wanted.size) return [];
 
-    const fight = findFightArea(wanted, root);
-    if (!fight) return [];
+    // The trial boss anchors the fight: only units sharing its grid count.
+    // The boss's own name is matched on its CombatUnit name line, so text our
+    // panels draw ("Trial payout", "Trial damage") can never anchor anything.
+    const boss = [...root.querySelectorAll(GAME.COMBAT_UNIT)].find((box) => /^trial\s+\S/i.test(unitName(box)));
+    if (!boss?.parentElement) return [];
 
     const units = [];
     const taken = new Set();
-    for (const leaf of fight.querySelectorAll('div, span')) {
-        if (leaf.childElementCount) continue;
-        const name = wanted.get((leaf.textContent || '').trim().toLowerCase());
+    for (const box of boss.parentElement.querySelectorAll(GAME.COMBAT_UNIT)) {
+        const name = wanted.get(unitName(box).toLowerCase());
         if (!name || taken.has(name)) continue;
-
-        // The unit is the smallest ancestor that also shows a health reading —
-        // climbing further would grab the whole grid, whose click means nothing
-        let box = leaf;
-        for (let up = 0; up < 4 && box.parentElement; up += 1) {
-            box = box.parentElement;
-            if (!/\d[\d,]*\s*\/\s*\d[\d,]*/.test(box.textContent || '')) continue;
-            taken.add(name);
-            units.push({ name, el: box });
-            break;
-        }
+        taken.add(name);
+        units.push({ name, el: box });
     }
     return units;
 }
