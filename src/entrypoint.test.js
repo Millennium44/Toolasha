@@ -321,6 +321,41 @@ describe('the selector canary', () => {
             expect(canary()).toEqual([]);
         });
 
+        test('the alchemy panel carries no name and must not be called broken', () => {
+            // Alchemy (and enhancing) reuse the SkillActionDetail wrapper but
+            // draw no name heading. The wrapper on screen with no name is a
+            // healthy alchemy panel, not a renamed class — the name canary gates
+            // on the regular component so it sits this screen out.
+            allAnchorsPresent();
+            document.body.innerHTML +=
+                '<div class="SkillActionDetail_skillActionDetail__1p3aX">' +
+                '<div class="SkillActionDetail_alchemyComponent__2bQ8n"></div></div>';
+            expect(canary()).toEqual([]);
+        });
+
+        test('the regular panel losing its name is the alarm', () => {
+            // A gathering/production/crafting panel is drawn (regularComponent)
+            // but the name class it always carries is gone: a real rename.
+            allAnchorsPresent();
+            document.body.innerHTML +=
+                '<div class="SkillActionDetail_skillActionDetail__1p3aX">' +
+                '<div class="SkillActionDetail_regularComponent__3oCgr"></div></div>';
+
+            const failures = canary();
+            expect(failures).toHaveLength(1);
+            expect(failures[0].key).toBe('canarySkillActionName');
+            expect(failures[0].reason).toBe('selector missing — game update?');
+        });
+
+        test('the regular panel with its name drawn is healthy', () => {
+            allAnchorsPresent();
+            document.body.innerHTML +=
+                '<div class="SkillActionDetail_skillActionDetail__1p3aX">' +
+                '<div class="SkillActionDetail_regularComponent__3oCgr">' +
+                '<div class="SkillActionDetail_name__2P1Nw">Milking</div></div></div>';
+            expect(canary()).toEqual([]);
+        });
+
         test('a cross-component gate: chat input drawn, messages unfindable', () => {
             // The chat panel (Chat_) survived while the message class
             // (ChatMessage_) renamed — exactly the wholesale-rename slice the

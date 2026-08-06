@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Selector canary stops false-alarming on alchemy and enhancing panels
+
+- **The "Skill action panel (name)" canary no longer cries "game update?" on alchemy/enhancing screens**: it reported the action-name selector missing whenever an alchemy or enhancing detail panel was open, because those panels reuse the shared `SkillActionDetail` wrapper but draw no name heading. The name check now gates on the regular (gathering/production/crafting) component, which always carries the name — so those screens are sat out, while a genuine rename of the name class on a standard panel still trips it. The name selector itself was never broken; the ~13 features that read the action name were unaffected.
+
 ### First run: returning users can keep their settings
 
 - **The welcome dialog for returning users now leads with "Keep my current settings"**: someone opening a build that added settings their previous version never had used to get a two-button "Keep everything as it was / Turn the new things on" prompt. It now offers "Keep my current settings" (the primary, default choice) alongside the Essentials, Combat, Market & trading and Defaults presets. Keeping — or dismissing the dialog — changes nothing and holds new on-by-default features off, so "no change" really means no change; picking a preset replaces the current settings and is undoable with Restore in the Toolasha tab. Fresh installs are unchanged.
