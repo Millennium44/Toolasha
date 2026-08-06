@@ -27,6 +27,9 @@ export const GAME = {
 
     // Skill Action Detail
     SKILL_ACTION_DETAIL: '[class*="SkillActionDetail_skillActionDetail"]',
+    // Only the gathering/production/crafting detail panel; the alchemy and
+    // enhancing variants share the SKILL_ACTION_DETAIL wrapper but draw no name.
+    SKILL_ACTION_DETAIL_REGULAR: '[class*="SkillActionDetail_regularComponent"]',
     SKILL_ACTION_NAME: '[class*="SkillActionDetail_name"]',
     SKILL_ACTION_ITEM_REQUIREMENTS: '[class*="SkillActionDetail_itemRequirements"]',
     ENHANCING_COMPONENT: 'div[class*="SkillActionDetail_enhancingComponent"]',

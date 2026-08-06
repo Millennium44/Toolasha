@@ -186,6 +186,13 @@ function mergeFailures(...lists) {
  * of one class in the component is caught, a rename of the whole component
  * falls back to the ungated four.
  *
+ * The name half of the SkillActionDetail pair gates on the *regular* component
+ * (`SkillActionDetail_regularComponent`) rather than the shared detail wrapper,
+ * because the alchemy and enhancing panels reuse that wrapper but draw no name
+ * heading — gating on the wrapper alarmed on every alchemy or enhancing screen.
+ * Detection of a real `_name` rename survives: the regular panel still carries
+ * the name, so a rename there trips it as before.
+ *
  * Left out on purpose, despite their fanout: `Item_enhancementLevel` (only
  * drawn when an enhanced item happens to be on screen — no screen guarantees
  * one, so its absence is never evidence) and `ProgressBar_text` (absent
@@ -236,7 +243,10 @@ function checkAnchorCanaries() {
             key: 'canarySkillActionName',
             name: 'Skill action panel (name)',
             selector: GAME.SKILL_ACTION_NAME,
-            when: GAME.SKILL_ACTION_DETAIL,
+            // Gated on the regular component, not the shared detail wrapper: the
+            // alchemy and enhancing panels reuse that wrapper but draw no name,
+            // so gating on the wrapper false-alarms whenever one is on screen.
+            when: GAME.SKILL_ACTION_DETAIL_REGULAR,
         },
         { key: 'canaryTaskCard', name: 'Task cards', selector: GAME.TASK_CARD, when: GAME.TASK_NAME },
         {
