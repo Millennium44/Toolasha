@@ -10,7 +10,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 The test-server trials rework adds a post-trial "Combat Trial - Stats" modal with the game's own per-member Damage, Healing and Damage Taken. Those are authoritative where the live damage stream is not: the stream reads damage taken from health falling per tick and captures only a fraction of the real total, and it splits shared ticks by actor, which under-credits the local player. This is the groundwork for showing the game's figures beside the measured ones.
 
-- **New scraper** reads the modal's active tab (per trial) into per-member totals, expanding the abbreviated figures ("1213K" → 1,213,000). It watches the stats table, so switching to another trial's tab captures that trial too.
+- **New scraper** reads the modal's active tab (per trial) into per-member totals, expanding the abbreviated figures ("1213K" → 1,213,000). It watches the stats table, so switching to another trial's tab captures that trial too. It is header-driven — the combat modal's Damage / Healing / Damage Taken and the skilling modal's Work column are each read by their own header, so neither is mislabelled.
 - **Included in the trial export** (`Toolasha.debug.exportTrialData()`) as `trialStatsModal`, so a captured trial can be checked against the measured attribution.
 - **Test-server only in practice**: the modal does not exist on the live server, so the observer never fires there and nothing changes — it activates on its own when the feature reaches live.
 
