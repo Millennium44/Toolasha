@@ -62,8 +62,10 @@ import characterCardButton from '../features/profile/character-card-button.js';
 import guildXPTracker from '../features/guild/guild-xp-tracker.js';
 import guildXPDisplay from '../features/guild/guild-xp-display.js';
 import guildCreditValue from '../features/guild/guild-credit-value.js';
+import * as guildTokenExchangeCapture from '../features/guild/guild-token-exchange-capture.js';
 import guildRosterView from '../features/guild/guild-roster-view.js';
-import guildTrials from '../features/guild/guild-trials.js';
+import guildTrials, { guildTrials as guildTrialsStore } from '../features/guild/guild-trials.js';
+import * as guildTrialExport from '../features/guild/guild-trial-recorder.js';
 import guildTrialScoreboard from '../features/guild/guild-trial-scoreboard.js';
 // Side-effect import: registers the Guild Trials overlay row
 import '../features/guild/guild-trials-row.js';
@@ -119,8 +121,16 @@ toolashaRoot.Combat = {
     guildXPTracker,
     guildXPDisplay,
     guildCreditValue,
+    // Shared so guild-token-value (runs live in the sim and ui bundles) reads
+    // the Guild Shop exchange rate captured/hydrated here in the combat bundle
+    guildTokenExchangeCapture,
     guildRosterView,
     guildTrials,
+    // The trials singleton (guildName + record) and the recorder's export
+    // builder, shared so the exportTrialData console helper in the ui bundle
+    // gathers from the live combat copies instead of empty duplicates
+    guildTrialsStore,
+    guildTrialExport,
     guildTrialScoreboard,
 };
 

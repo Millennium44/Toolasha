@@ -195,6 +195,50 @@ export function scrollSimulator() {
 }
 
 /**
+ * The labyrinth clear-rate singleton — its live-run roomData and recommendations
+ * are fed by the websocket only in the combat bundle.
+ * @returns {Object|null} The module, or null when the combat bundle is absent
+ */
+export function labyrinthClearRate() {
+    return toolashaRoot()?.Combat?.labyrinthClearRate || null;
+}
+
+/**
+ * The guild-token-exchange capture module (Guild Shop rate), whose `captured`
+ * map is filled and hydrated only in the combat bundle.
+ * @returns {Object|null} The module namespace, or null when combat is absent
+ */
+export function guildTokenExchangeCapture() {
+    return toolashaRoot()?.Combat?.guildTokenExchangeCapture || null;
+}
+
+/**
+ * The guild-trials singleton (guildName + record), fed by the websocket only in
+ * the combat bundle.
+ * @returns {Object|null} The store, or null when the combat bundle is absent
+ */
+export function guildTrialsStore() {
+    return toolashaRoot()?.Combat?.guildTrialsStore || null;
+}
+
+/**
+ * The guild XP tracker (own guild name + member history), combat-owned.
+ * @returns {Object|null} The tracker, or null when the combat bundle is absent
+ */
+export function guildXpTracker() {
+    return toolashaRoot()?.Combat?.guildXPTracker || null;
+}
+
+/**
+ * The guild-trial export builder module (buildTrialExport/downloadTrialExport);
+ * its data-gathering reads the trial singletons live only in the combat bundle.
+ * @returns {Object|null} The module namespace, or null when combat is absent
+ */
+export function guildTrialExport() {
+    return toolashaRoot()?.Combat?.guildTrialExport || null;
+}
+
+/**
  * The party drop-luck panel.
  * @returns {Object|null} The panel, or null when the combat bundle is absent
  */
