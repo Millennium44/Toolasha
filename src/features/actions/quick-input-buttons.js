@@ -29,7 +29,8 @@ import { getActionHridFromName } from '../../utils/game-lookups.js';
 import { MIN_ACTION_TIME_SECONDS } from '../../utils/profit-constants.js';
 import { createCleanupRegistry } from '../../utils/cleanup-registry.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
-import scrollSimulator from '../combat/scroll-simulator.js';
+import bundledScrollSimulator from '../combat/scroll-simulator.js';
+import { scrollSimulator } from '../../utils/bundle-bridge.js';
 import { SCROLL_BUFF_ITEMS } from '../../utils/scroll-buff-values.js';
 
 let _qibSpriteUrl = null;
@@ -347,7 +348,7 @@ class QuickInputButtons {
             // Arm scroll simulation for this action type
             dataManager.setScrollSimulation(
                 actionDetails.type,
-                scrollSimulator.getScrollSetForActionType(actionDetails.type)
+                (scrollSimulator() || bundledScrollSimulator).getScrollSetForActionType(actionDetails.type)
             );
 
             // Calculate action duration and efficiency

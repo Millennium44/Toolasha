@@ -9,10 +9,10 @@
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
 import bundledLoadoutSnapshot from '../combat/loadout-snapshot.js';
-import { loadoutSnapshot } from '../../utils/bundle-bridge.js';
+import { loadoutSnapshot, expectedValueCalculator } from '../../utils/bundle-bridge.js';
 import config from '../../core/config.js';
 import marketAPI from '../../api/marketplace.js';
-import expectedValueCalculator from '../market/expected-value-calculator.js';
+import bundledExpectedValueCalculator from '../market/expected-value-calculator.js';
 import { DUNGEON_CHEST_ENTRY_KEYS, DUNGEON_CHEST_CHEST_KEYS } from '../../utils/dungeon-keys.js';
 import { partyLevelGaps } from '../../utils/dungeon-level-gap.js';
 
@@ -1157,9 +1157,8 @@ export function calculateSimRevenue(simResult, gameData, playerHrid, hours) {
         if (total <= 0) continue;
         let unitValue = itemHrid === '/items/coin' ? 1 : getSellPrice(marketAPI.getPrice(itemHrid));
         if (unitValue === 0) {
-            const ev =
-                expectedValueCalculator.getCachedValue(itemHrid) ||
-                expectedValueCalculator.calculateSingleContainer(itemHrid);
+            const evc = expectedValueCalculator() || bundledExpectedValueCalculator;
+            const ev = evc.getCachedValue(itemHrid) || evc.calculateSingleContainer(itemHrid);
             if (ev !== null && ev > 0) unitValue = ev;
         }
         const perHour = (total / hours) * unitValue;

@@ -108,6 +108,16 @@ export function marketOrderTotals() {
     return toolashaRoot()?.Market?.marketOrderTotals || null;
 }
 
+/**
+ * The expected-value calculator for openable containers — the one copy that ran
+ * initialize() (its cache is empty and calculateExpectedValue() returns null
+ * until then, which only the market bundle's copy does).
+ * @returns {Object|null} The calculator, or null when the market bundle is absent
+ */
+export function expectedValueCalculator() {
+    return toolashaRoot()?.Market?.expectedValueCalculator || null;
+}
+
 // ---------------------------------------------------------------------------
 // Actions bundle singletons
 // ---------------------------------------------------------------------------
@@ -163,6 +173,15 @@ export function loadoutSnapshot() {
  */
 export function combatRecorder() {
     return toolashaRoot()?.Combat?.combatRecorder || null;
+}
+
+/**
+ * The scroll simulator (per-loadout scroll/buff sets), loaded from storage by
+ * the combat bundle's initialize(); other bundles' copies stay empty.
+ * @returns {Object|null} The simulator, or null when the combat bundle is absent
+ */
+export function scrollSimulator() {
+    return toolashaRoot()?.Combat?.scrollSimulator || null;
 }
 
 /**

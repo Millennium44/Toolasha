@@ -6,6 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### More cross-bundle singleton reads fixed in the packaged build
+
+A triage of the 62 modules the bundle-sharing checker flags found several more stateful singletons read from an empty duplicate outside their owning bundle (same class as the loadout/treasure fixes). Fixed so far — all now read the live copy through the bundle bridge, dev-standalone unaffected:
+
+- **Combat Simulator container values.** The sim bundle's copy of the expected-value calculator was never initialized, so `calculateExpectedValue()` returned null and openable containers (chests/caches) showed no expected value in the Combat Simulator. Now reads the market bundle's live calculator.
+- **Scroll/buff simulation in gathering & production profit.** The actions bundle's copy of the scroll simulator was empty, so the profit displays and quick-input buttons ignored your configured scroll buffs. Now reads the combat bundle's live simulator.
+
 ### Loadout-driven features (net-worth exclusions, bulk-sell protection, profit label) work again in the packaged build
 
 - **Features that read saved loadout snapshots now work in the multi-bundle build.** Outside the combat bundle each consumer had its own empty copy of the loadout store (only the combat bundle's copy is fed by the `loadouts_updated` websocket), so anything reading loadouts elsewhere saw nothing. Loadouts don't hold items — their gear is already counted as equipped or inventory — so this is not about adding loadout value; it's the features built _on_ loadouts:

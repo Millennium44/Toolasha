@@ -20,8 +20,8 @@ import {
 } from '../../utils/profit-helpers.js';
 import { MARKET_TAX } from '../../utils/profit-constants.js';
 import bundledLoadoutSnapshot from '../combat/loadout-snapshot.js';
-import { loadoutSnapshot } from '../../utils/bundle-bridge.js';
-import scrollSimulator from '../combat/scroll-simulator.js';
+import { loadoutSnapshot, scrollSimulator } from '../../utils/bundle-bridge.js';
+import bundledScrollSimulator from '../combat/scroll-simulator.js';
 import { SCROLL_BUFF_ITEMS } from '../../utils/scroll-buff-values.js';
 import { isPriceOverridden, getPriceAgeString } from '../../utils/market-data.js';
 
@@ -104,7 +104,7 @@ export async function displayGatheringProfit(panel, actionHrid, dropTableSelecto
     const gatheringActionType = dataManager.getActionDetails(actionHrid)?.type;
     dataManager.setScrollSimulation(
         gatheringActionType,
-        scrollSimulator.getScrollSetForActionType(gatheringActionType)
+        (scrollSimulator() || bundledScrollSimulator).getScrollSetForActionType(gatheringActionType)
     );
 
     // finally guarantees the simulation is cleared on every exit path (early returns, exceptions),
@@ -677,7 +677,7 @@ export async function displayProductionProfit(panel, actionHrid, dropTableSelect
     const productionActionType = dataManager.getActionDetails(actionHrid)?.type;
     dataManager.setScrollSimulation(
         productionActionType,
-        scrollSimulator.getScrollSetForActionType(productionActionType)
+        (scrollSimulator() || bundledScrollSimulator).getScrollSetForActionType(productionActionType)
     );
 
     // finally guarantees the simulation is cleared on every exit path (early returns, exceptions),
