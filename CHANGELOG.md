@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### On-demand health report
+
+- **`Toolasha.debug.health()` and a Ctrl+K "Health report" command** now open (and copy/console-log) the diagnostic report anytime, instead of only when an error toast appears.
+
 ### What's-new popup reads cleanly, with a newcomer overview
 
 - **The update popup now renders the changelog as formatted text** (no raw `##`/`**`/backticks), entries are condensed to one line each, and fresh installs or arrivals from upstream Toolasha get a "Toolasha — at a glance" overview above it.

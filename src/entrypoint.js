@@ -1676,5 +1676,27 @@ if (isCombatSimulatorPage()) {
         canary: checkAnchorCanaries,
         // The same, for the shape of the game data rather than the page
         schema: () => UI.schemaCanary.runSchemaCanary(),
+        // The health report on demand, rather than only when a startup toast
+        // leads to it. Assembles the failures the delayed pass would — minus the
+        // startup-only init failures, which are not available once the page is
+        // running — refreshes the storage numbers so the report is current,
+        // logs it so it is copyable straight from the console, and opens the
+        // panel with its Copy button. Returns the report text, or null on error.
+        health: async () => {
+            try {
+                const failures = mergeFailures(featureRegistry.checkFeatureHealth(), [
+                    ...checkAnchorCanaries(),
+                    ...UI.schemaCanary.runSchemaCanary(),
+                ]);
+                await UI.healthStatus.refreshStorageFacts();
+                const report = UI.healthStatus.buildDiagnosticReport(failures);
+                console.log(report);
+                UI.healthStatus.showHealthStatus(failures);
+                return report;
+            } catch (error) {
+                console.error('[Toolasha] Building the health report failed:', error);
+                return null;
+            }
+        },
     };
 }

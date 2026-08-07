@@ -236,6 +236,12 @@ describe('inventory badge prices health check', () => {
     });
 });
 
+describe('the debug console API', () => {
+    test('exposes health() so the report can be opened on demand', () => {
+        expect(typeof window.Toolasha.debug.health).toBe('function');
+    });
+});
+
 describe('the selector canary', () => {
     // window.Toolasha.debug is where the entrypoint already exposes internal
     // checks for console use; the canary rides along on that seam rather than
