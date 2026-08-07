@@ -38,8 +38,15 @@ vi.mock('../../utils/panel-z-index.js', () => ({
     bringPanelToFront: vi.fn(),
 }));
 
-const { damageTypeOf, guildTrialScoreboard, PANEL_CLASS, scoreboardRows, scoreboardText, TYPE_COLORS } =
-    await import('./guild-trial-scoreboard.js');
+const {
+    damageTypeOf,
+    guildTrialScoreboard,
+    modalStatsForBreakdown,
+    PANEL_CLASS,
+    scoreboardRows,
+    scoreboardText,
+    TYPE_COLORS,
+} = await import('./guild-trial-scoreboard.js');
 
 /**
  * A breakdown as the damage module reports one.
@@ -124,6 +131,52 @@ describe('scoreboardRows', () => {
 
         expect(scoreboardRows(null, 'damage').rows).toEqual([]);
         expect(scoreboardRows(undefined, 'healing').total).toBe(0);
+    });
+
+    test('the game modal, when present, is preferred over the stream and marked as its source', () => {
+        // The stream saw a fraction (Tib 600K); the modal is the full trial.
+        const modal = [
+            { name: 'Estevao', damage: 1_052_000, healing: 0, damageTaken: 226_000 },
+            { name: 'MillenniumTestIC', damage: 221_000, healing: 118_000, damageTaken: 220_000 },
+        ];
+        const dmg = scoreboardRows(breakdown(), 'damage', modal);
+        expect(dmg.source).toBe('game');
+        expect(dmg.rows.map((row) => row.name)).toEqual(['Estevao', 'MillenniumTestIC']);
+        expect(dmg.rows[0]).toMatchObject({ value: 1_052_000, perSecond: null });
+        expect(dmg.total).toBe(1_273_000);
+
+        // The Taken tab is modal-only ground: the stream barely captures it.
+        const taken = scoreboardRows(breakdown(), 'taken', modal);
+        expect(taken.rows.map((row) => row.value)).toEqual([226_000, 220_000]);
+
+        // Healing comes off the modal's healing column.
+        const heal = scoreboardRows(breakdown(), 'healing', modal);
+        expect(heal.rows).toEqual([expect.objectContaining({ name: 'MillenniumTestIC', value: 118_000 })]);
+    });
+
+    test('without the modal the Taken tab falls back to the stream support tally', () => {
+        const taken = scoreboardRows(breakdown(), 'taken');
+        expect(taken.rows[0]).toMatchObject({ name: 'Tib', value: 200_000 });
+        expect(taken.source).toBeNull();
+    });
+});
+
+describe('modalStatsForBreakdown', () => {
+    const modal = {
+        getCombatStats: (name) =>
+            name === 'Trial Swarm' ? [{ name: 'Estevao', damage: 1_052_000, healing: 0, damageTaken: 226_000 }] : null,
+    };
+
+    test('joins the breakdown encounter to the modal trial name', () => {
+        const bd = { encounter: 'swarm', trialNames: ['Trial Jellyfish', 'Trial Swarm'] };
+        expect(modalStatsForBreakdown(bd, modal)).toEqual([
+            { name: 'Estevao', damage: 1_052_000, healing: 0, damageTaken: 226_000 },
+        ]);
+    });
+
+    test('is null when no encounter, or no modal captured for that trial', () => {
+        expect(modalStatsForBreakdown({ trialNames: ['Trial Swarm'] }, modal)).toBeNull();
+        expect(modalStatsForBreakdown({ encounter: 'jellyfish', trialNames: ['Trial Jellyfish'] }, modal)).toBeNull();
     });
 });
 

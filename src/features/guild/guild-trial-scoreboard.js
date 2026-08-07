@@ -43,9 +43,11 @@ import { formatKMB, formatWithSeparator } from '../../utils/formatters.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import guildTrialDamage, {
     attributionCoverage,
+    encounterOf,
     estimateDamageSplit,
     SPECTATED_TRIAL_NOTE,
 } from './guild-trial-damage.js';
+import guildTrialStatsModal from './guild-trial-stats-modal.js';
 import { guildLoadoutCapture } from './guild-loadout-capture.js';
 import { guildTrialRecorder } from './guild-trial-recorder.js';
 import { buildGuildReport } from './guild-trial-report.js';
@@ -109,14 +111,46 @@ export function damageTypeOf(name, capture = guildLoadoutCapture) {
  * @param {'damage'|'healing'} tab - Which figures
  * @returns {{rows: Array<Object>, total: number, perSecond: number|null, seconds: number}} The tab
  */
-export function scoreboardRows(breakdown, tab = 'damage') {
+export function scoreboardRows(breakdown, tab = 'damage', modalStats = null) {
     const seconds = breakdown?.seconds || 0;
-    const support = breakdown?.support?.players || [];
 
+    // The game's own post-trial stats, when they have been captured, are the
+    // authoritative full-trial totals — preferred over the stream, which only
+    // ever saw the stretch the fight view was open (here, a mid-fight restart
+    // left it at ~5%) and barely sees damage taken at all (health falling per
+    // tick, most of it masked by healing). No per-second: the modal states
+    // whole-trial totals, not a rate.
+    const modalField = { damage: 'damage', healing: 'healing', taken: 'damageTaken' }[tab] || 'damage';
+    if (Array.isArray(modalStats) && modalStats.length) {
+        const raw = modalStats.map((member) => ({
+            index: member.name,
+            name: member.name,
+            value: Number(member[modalField]) || 0,
+        }));
+        const rows = raw.filter((row) => row.value > 0).sort((a, b) => b.value - a.value);
+        const total = rows.reduce((sum, row) => sum + row.value, 0);
+        return {
+            rows: rows.map((row, position) => ({
+                ...row,
+                measured: true,
+                rank: position + 1,
+                perSecond: null,
+                share: total > 0 ? (row.value / total) * 100 : null,
+            })),
+            total,
+            perSecond: null,
+            seconds,
+            source: 'game',
+        };
+    }
+
+    const support = breakdown?.support?.players || [];
     const raw =
         tab === 'healing'
             ? support.map((row) => ({ index: row.index, name: row.name, value: row.healingDone || 0 }))
-            : (breakdown?.players || []).map((row) => ({ index: row.index, name: row.name, value: row.damage || 0 }));
+            : tab === 'taken'
+              ? support.map((row) => ({ index: row.index, name: row.name, value: row.damageTaken || 0 }))
+              : (breakdown?.players || []).map((row) => ({ index: row.index, name: row.name, value: row.damage || 0 }));
 
     const measuredBy = new Map((breakdown?.players || []).map((row) => [row.index, row.measured]));
     const rows = raw.filter((row) => row.value > 0).sort((a, b) => b.value - a.value);
@@ -135,7 +169,26 @@ export function scoreboardRows(breakdown, tab = 'damage') {
         total,
         perSecond: seconds > 0 ? total / seconds : null,
         seconds,
+        source: breakdown?.source === 'spectated' ? 'stream' : null,
     };
+}
+
+/**
+ * The game's post-trial Stats modal for the trial a breakdown is watching.
+ *
+ * The modal is keyed by trial name ("Trial Swarm"); the breakdown carries the
+ * encounter and this week's trial names, so the two are joined here. Returns
+ * null unless a combat modal has been captured for that trial.
+ *
+ * @param {Object} breakdown - From `guildTrialDamage.breakdown()`
+ * @param {Object} [modal] - The stats-modal store, injectable for tests
+ * @returns {Array<{name: string, damage: number|null, healing: number|null,
+ *   damageTaken: number|null}>|null} Per-member totals, or null
+ */
+export function modalStatsForBreakdown(breakdown, modal = guildTrialStatsModal) {
+    if (!breakdown?.encounter) return null;
+    const trialName = (breakdown.trialNames || []).find((name) => encounterOf(name) === breakdown.encounter);
+    return trialName ? modal.getCombatStats?.(trialName) || null : null;
 }
 
 /**
@@ -144,9 +197,21 @@ export function scoreboardRows(breakdown, tab = 'damage') {
  * @param {'damage'|'healing'} tab - Which figures
  * @returns {string} One line per player
  */
-export function scoreboardText(breakdown, tab = 'damage', estimate = null) {
-    const { rows, total, perSecond } = scoreboardRows(breakdown, tab);
-    const label = tab === 'healing' ? 'healing' : 'damage';
+export function scoreboardText(breakdown, tab = 'damage', estimate = null, modalStats = null) {
+    const { rows, total, perSecond, source } = scoreboardRows(breakdown, tab, modalStats);
+    const label = tab === 'healing' ? 'healing' : tab === 'taken' ? 'damage taken' : 'damage';
+
+    if (source === 'game') {
+        if (!rows.length) return `Trial ${label}: the game's stats modal lists none.`;
+        const head =
+            `Trial ${label} — ${formatWithSeparator(Math.round(total))} total, from the game's post-trial stats`;
+        const lines = rows.map(
+            (row) =>
+                `${row.rank}. ${row.name} — ${formatWithSeparator(Math.round(row.value))}` +
+                (row.share === null ? '' : ` (${row.share.toFixed(1)}%)`)
+        );
+        return [head, ...lines].join('\n');
+    }
 
     if (!rows.length && tab === 'damage' && estimate?.players?.length) {
         const head =
@@ -355,7 +420,7 @@ class GuildTrialScoreboard {
             });
         });
         body.querySelector('[data-action="copy"]')?.addEventListener('click', () => {
-            this._copy(scoreboardText(breakdown, this.tab, this._estimate()));
+            this._copy(scoreboardText(breakdown, this.tab, this._estimate(), modalStatsForBreakdown(breakdown)));
         });
         body.querySelector('[data-action="report"]')?.addEventListener('click', () => {
             this._copy(this.reportText(breakdown));
@@ -485,13 +550,17 @@ class GuildTrialScoreboard {
      * @returns {string} HTML
      */
     _bodyHTML(breakdown) {
-        const { rows, total, perSecond } = scoreboardRows(breakdown, this.tab);
+        const modalStats = modalStatsForBreakdown(breakdown);
+        const { rows, total, perSecond, source } = scoreboardRows(breakdown, this.tab, modalStats);
+        const fromGame = source === 'game';
         const healing = this.tab === 'healing';
+        const taken = this.tab === 'taken';
         const unit = healing ? 'hps' : 'dps';
 
         // Measurement is impossible for a trial (see the module note), so the
-        // damage tab falls through to the estimate rather than to an apology
-        const estimate = !rows.length && !healing ? this._estimate() : null;
+        // damage tab falls through to the estimate rather than to an apology —
+        // but never over the game's own stats or the damage-taken tab.
+        const estimate = !rows.length && !healing && !taken && !fromGame ? this._estimate() : null;
         const estimated = Boolean(estimate?.players?.length);
 
         const head = estimated
@@ -502,19 +571,25 @@ class GuildTrialScoreboard {
               `<span style="margin-left:auto; color:${DIM}; font-weight:600;">` +
               `${estimate.covered}/${estimate.of} builds</span>` +
               `</div>`
-            : `<div style="display:flex; align-items:baseline; gap:10px; margin-bottom:2px;">` +
-              `<span style="font-size:20px; font-weight:700; color:${ACCENT};">` +
-              `${perSecond === null ? '—' : formatKMB(Math.round(perSecond))}</span>` +
-              `<span style="color:${DIM};">party ${unit}</span>` +
-              `<span style="margin-left:auto; color:${GOOD}; font-weight:600;">` +
-              `${formatKMB(Math.round(total))}</span>` +
-              `</div>`;
+            : fromGame
+              ? `<div style="display:flex; align-items:baseline; gap:10px; margin-bottom:2px;">` +
+                `<span style="font-size:20px; font-weight:700; color:${GOOD};">${formatKMB(Math.round(total))}</span>` +
+                `<span style="color:${DIM};">trial ${taken ? 'damage taken' : healing ? 'healing' : 'damage'} · game stats</span>` +
+                `</div>`
+              : `<div style="display:flex; align-items:baseline; gap:10px; margin-bottom:2px;">` +
+                `<span style="font-size:20px; font-weight:700; color:${ACCENT};">` +
+                `${perSecond === null ? '—' : formatKMB(Math.round(perSecond))}</span>` +
+                `<span style="color:${DIM};">party ${unit}</span>` +
+                `<span style="margin-left:auto; color:${GOOD}; font-weight:600;">` +
+                `${formatKMB(Math.round(total))}</span>` +
+                `</div>`;
 
         const tabs =
             `<div style="display:flex; gap:6px; margin:6px 0;">` +
             [
                 { key: 'damage', label: 'Damage' },
                 { key: 'healing', label: 'Healing' },
+                { key: 'taken', label: 'Taken' },
             ]
                 .map(
                     (entry) =>
@@ -530,9 +605,17 @@ class GuildTrialScoreboard {
         // an estimate for the game's own figures has been misled by the panel,
         // and one who takes a measurement for a guess distrusts a real number
         const spectated = breakdown?.source === 'spectated';
-        const disclaimer = estimated
-            ? `<div style="color:${WARN}; font-size:11px; font-weight:600; line-height:1.5;">` +
-              'Estimated from builds — nothing has been watched yet.</div>' +
+        const disclaimer = fromGame
+            ? `<div style="color:${GOOD}; font-size:11px; font-weight:600; line-height:1.5;">` +
+              'From the game’s post-trial stats — the authoritative full-trial totals.</div>' +
+              `<div style="color:${DIM}; font-size:10px; line-height:1.5; margin-bottom:6px;">` +
+              'Read off the Combat Trial Stats modal, so these are the whole trial rather than the stretch the ' +
+              'fight view happened to be open for. Damage taken and healing are only reliable here — the live ' +
+              'stream reads them from health falling and rising per tick and captures a fraction of the real ' +
+              'totals.</div>'
+            : estimated
+              ? `<div style="color:${WARN}; font-size:11px; font-weight:600; line-height:1.5;">` +
+                'Estimated from builds — nothing has been watched yet.</div>' +
               `<div style="color:${DIM}; font-size:10px; line-height:1.5; margin-bottom:6px;">` +
               'A trial fight runs on the game’s own server and streams here only while the In Progress ' +
               'fight view is open — open it and these become measured. Until then this is each captured ' +

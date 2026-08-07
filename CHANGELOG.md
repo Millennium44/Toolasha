@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Per-player scoreboard prefers the game's post-trial stats (test server)
+
+When the game's Combat Trial Stats modal has been captured for a trial, the per-player scoreboard now uses it as the authoritative source instead of the streamed estimate — and gains a **Taken** tab. This matters because the live stream only sees the stretch the fight view was open (a mid-fight plugin restart left one measured at ~5% of the trial) and can barely measure damage taken at all (it reads it from health falling per tick, most of it masked by healing).
+
+- **Damage and healing** prefer the modal's whole-trial totals when captured, labelled "from the game's post-trial stats" so a real figure is never mistaken for the estimate. They fall back to the stream, then to the build estimate, exactly as before when no modal has been opened.
+- **New Taken tab** shows per-member damage taken — modal-authoritative, with the stream's partial tally as the fallback.
+- Purely additive and test-server-gated in practice: the modal only exists on the test server, so nothing changes on live until the feature ships there.
+
 ### Trial Swarm's tier, pace and banked count now show (test server)
 
 Trial Swarm fights four differently named monsters at once — Beetle, Dragonfly, Wasp, Firefly — none of which reduces to the "swarm" encounter. So the watched pool from a Swarm fight was filed under no trial, never attached to the Swarm card, and the In Progress tab showed "needs one tier's total to anchor the ladder" and "Banked nothing yet — tier 1 in progress" for the whole hour. (The per-player DPS still showed, because that comes from the damage stream, which recognises the fight a different way.)
