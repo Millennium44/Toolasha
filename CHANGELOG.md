@@ -6,6 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Undercut alerts stop adding market-API load; rate-limit failures are now visible
+
+The game rate-limits its `marketplace.json` file — a burst of requests (often several userscripts hitting it at once) trips a temporary CloudFront 403 block. The undercut-alert feature had a configurable "re-fetch market snapshot every 1–15 minutes" setting (default 5) that _forced_ a fresh fetch on that timer, which could contribute to that load.
+
+- **Removed the "re-fetch market snapshot every (minutes)" setting.** The snapshot refresh is now fixed at the market cache's own 15-minute cadence and uses the cache-respecting fetch, so it never pulls faster than the cache would on its own — it only touches the network when the 15-minute cache has actually expired. Undercut alerts still work; they just no longer add fetches beyond the normal cache. Nothing to reconfigure — the old setting simply disappears.
+- **Rate-limit failures are now called out.** When a market fetch fails with a 403 (or 429), the console explains it's a rate-limit — not a Toolasha bug on its own — and the on-screen network alert says "Market API rate-limited — using cached prices" instead of a generic "outdated data" message. Toolasha keeps serving cached prices and retries on the normal cadence.
+
 ### Marketplace resilience ahead of the test-server market rework
 
 Backward-compatible hardening so the marketplace features survive the upcoming (test-server) Marketplace rework without waiting for it to break on the live server. None of this changes behavior on the current live market — it only adds tolerance for the new formats and turns future selector breakage into a visible health warning.
