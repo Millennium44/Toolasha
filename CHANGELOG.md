@@ -2670,16 +2670,14 @@ Full audit of the codebase; every finding adversarially verified before fixing.
 
 ## [2.92.0](https://github.com/Millennium44/Toolasha/compare/v2.91.0...v2.92.0) (2026-08-07)
 
-
 ### Features
 
-* **dev:** on-demand health report via Toolasha.debug.health() and a Ctrl+K command ([578484c](https://github.com/Millennium44/Toolasha/commit/578484c9b244c61e3fd886038cdde8a3152565af))
-* **settings:** render the what's-new popup cleanly + add a newcomer overview ([f020db1](https://github.com/Millennium44/Toolasha/commit/f020db10b8f8419077f266e7832e7bc01dc8441f))
-
+- **dev:** on-demand health report via Toolasha.debug.health() and a Ctrl+K command ([578484c](https://github.com/Millennium44/Toolasha/commit/578484c9b244c61e3fd886038cdde8a3152565af))
+- **settings:** render the what's-new popup cleanly + add a newcomer overview ([f020db1](https://github.com/Millennium44/Toolasha/commit/f020db10b8f8419077f266e7832e7bc01dc8441f))
 
 ### Bug Fixes
 
-* **combat-sim:** reach the shared loadout store via the bridge so packaged builds sim real gear ([62519c8](https://github.com/Millennium44/Toolasha/commit/62519c8c64550a423b946555526d84a19cafaed5))
+- **combat-sim:** reach the shared loadout store via the bridge so packaged builds sim real gear ([62519c8](https://github.com/Millennium44/Toolasha/commit/62519c8c64550a423b946555526d84a19cafaed5))
 
 ## [2.91.0](https://github.com/Millennium44/Toolasha/compare/v2.90.0...v2.91.0) (2026-08-06)
 
