@@ -17,7 +17,7 @@ import {
 } from './combat-sim-adapter.js';
 import loadoutSnapshot from '../combat/loadout-snapshot.js';
 import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
-import { SCROLL_BUFF_LABELS, COMBAT_SCROLL_BUFF_TYPES } from '../../utils/scroll-buff-values.js';
+import { COMBAT_SCROLL_LABELS, COMBAT_SCROLL_BUFF_TYPES } from '../../utils/combat-scroll-buffs.js';
 
 const ACCENT = '#4a9eff';
 const ACCENT_BG = 'rgba(74, 158, 255, 0.12)';
@@ -1620,10 +1620,10 @@ export class SimEditor {
     }
 
     /**
-     * Labyrinth scrolls the player can carry into combat. Only Wisdom and Rare
-     * Find move a combat number, so those are the only two offered; the rest are
-     * skilling-only and would sit here as inert checkboxes. Skilling mode hides
-     * the section — its scroll picker lives elsewhere.
+     * The Labyrinth combat scrolls the player can carry into a fight. Each grants
+     * a 30-minute buff effective in normal combat (not the Labyrinth or Guild
+     * Trials); ticking one folds its buff into the sim. Skilling mode hides the
+     * section — its scroll picker lives elsewhere.
      * @private
      */
     _renderScrollsSection(dto) {
@@ -1639,14 +1639,14 @@ export class SimEditor {
         html += `<div id="mwi-csim-scroll-section" style="display:none;">`;
 
         for (const typeHrid of COMBAT_SCROLL_BUFF_TYPES) {
-            const label = SCROLL_BUFF_LABELS[typeHrid] || typeHrid;
+            const label = COMBAT_SCROLL_LABELS[typeHrid] || typeHrid;
             const checked = active.has(typeHrid) ? ' checked' : '';
             html += `<label style="display:flex; align-items:center; gap:6px; font-size:12px; margin-bottom:3px; cursor:pointer;">`;
             html += `<input type="checkbox" data-scroll-buff="${typeHrid}"${checked} style="cursor:pointer;">`;
             html += `<span style="color:#888;">${label}</span>`;
             html += '</label>';
         }
-        html += `<div style="color:#666; font-size:10px; margin-top:4px;">Only Wisdom and Rare Find affect combat; other scrolls are skilling-only.</div>`;
+        html += `<div style="color:#666; font-size:10px; margin-top:4px;">Each scroll's 30-minute buff, applied to the whole run.</div>`;
 
         html += '</div></div>';
         return html;

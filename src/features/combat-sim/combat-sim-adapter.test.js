@@ -239,17 +239,17 @@ describe('the scrolls a player DTO starts from', () => {
         mocks.characterData = { characterSkills: [] };
     });
 
-    test('are the combat-effective scrolls the player has active', () => {
+    test('are the combat scrolls the player has active', () => {
         mocks.personalActionTypeBuffsMap = {
             '/action_types/combat': [
+                { typeHrid: '/buff_types/damage', ratioBoost: 0.08 },
                 { typeHrid: '/buff_types/wisdom', flatBoost: 0.2 },
-                // A skilling-only scroll that happens to sit on the combat map is
-                // not carried into the combat sim
+                // A non-combat-scroll buff on the combat map is not carried in
                 { typeHrid: '/buff_types/gourmet', flatBoost: 0.16 },
             ],
         };
 
-        expect(buildPlayerDTO().scrollBuffs).toEqual(['/buff_types/wisdom']);
+        expect(buildPlayerDTO().scrollBuffs).toEqual(['/buff_types/damage', '/buff_types/wisdom']);
     });
 
     test('are empty when the player carries none', () => {

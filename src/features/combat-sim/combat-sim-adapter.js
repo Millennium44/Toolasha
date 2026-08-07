@@ -15,15 +15,15 @@ import marketAPI from '../../api/marketplace.js';
 import bundledExpectedValueCalculator from '../market/expected-value-calculator.js';
 import { DUNGEON_CHEST_ENTRY_KEYS, DUNGEON_CHEST_CHEST_KEYS } from '../../utils/dungeon-keys.js';
 import { partyLevelGaps } from '../../utils/dungeon-level-gap.js';
-import { COMBAT_SCROLL_BUFF_TYPES } from '../../utils/scroll-buff-values.js';
+import { COMBAT_SCROLL_BUFF_TYPES } from '../../utils/combat-scroll-buffs.js';
 
 /**
- * The combat-effective Labyrinth scrolls the player currently has active.
+ * The combat scrolls the player currently has active.
  *
- * Scroll (seal) buffs arrive on `dataManager.personalActionTypeBuffsMap`, keyed
- * by action type, same shape as the guild/achievement action-type buff maps. We
- * keep only the scroll types the combat engine actually consumes, so the editor
- * starts checked exactly where the player really stands.
+ * Scroll buffs arrive on `dataManager.personalActionTypeBuffsMap`, keyed by
+ * action type, same shape as the guild/achievement action-type buff maps. We keep
+ * only the combat scroll types, so the editor starts checked exactly where the
+ * player really stands.
  * @returns {string[]} Active combat scroll buff-type hrids
  */
 function readActiveCombatScrolls() {

@@ -233,16 +233,20 @@ describe('community buff levels stop where the game does', () => {
 });
 
 describe('scrolls section', () => {
-    test('offers the two combat scrolls and pre-checks the ones the player carries', () => {
+    test('offers the combat scrolls and pre-checks the ones the player carries', () => {
         const editor = new SimEditor({ editorEl: document.createElement('div') });
 
-        const html = editor._renderScrollsSection({ scrollBuffs: ['/buff_types/wisdom'] });
+        const html = editor._renderScrollsSection({ scrollBuffs: ['/buff_types/damage'] });
 
+        // DPS/loot scrolls and the two dual-purpose ones (wisdom, rare find)
+        expect(html).toContain('data-scroll-buff="/buff_types/damage"');
+        expect(html).toContain('data-scroll-buff="/buff_types/attack_speed"');
+        expect(html).toContain('data-scroll-buff="/buff_types/critical_rate"');
         expect(html).toContain('data-scroll-buff="/buff_types/wisdom"');
         expect(html).toContain('data-scroll-buff="/buff_types/rare_find"');
-        // wisdom is carried, rare find is not
-        expect(html).toMatch(/data-scroll-buff="\/buff_types\/wisdom" checked/);
-        expect(html).not.toMatch(/data-scroll-buff="\/buff_types\/rare_find" checked/);
+        // damage is carried, attack speed is not
+        expect(html).toMatch(/data-scroll-buff="\/buff_types\/damage" checked/);
+        expect(html).not.toMatch(/data-scroll-buff="\/buff_types\/attack_speed" checked/);
         expect(html).toContain('1 active');
     });
 

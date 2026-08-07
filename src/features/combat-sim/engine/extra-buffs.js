@@ -8,18 +8,15 @@
  * or a party sim hands player 1's guild, achievements and scrolls to all five.
  */
 
-import { SCROLL_BUFF_VALUES, COMBAT_SCROLL_BUFF_TYPES } from '../../../utils/scroll-buff-values.js';
-
-const COMBAT_SCROLL_SET = new Set(COMBAT_SCROLL_BUFF_TYPES);
+import { combatScrollBuff } from '../../../utils/combat-scroll-buffs.js';
 
 /**
- * Turn a player's chosen scroll buff types into buff objects the engine consumes.
+ * Turn a player's chosen combat scrolls into buff objects the engine consumes.
  *
- * Scrolls carry no `consumableDetail` in the game JSON, so the magnitudes come
- * from `SCROLL_BUFF_VALUES`, applied as a flat boost in the same permanent-buff
- * shape the labyrinth token upgrades use. Only combat-effective scroll types
- * (wisdom → combat experience, rare find → rare-drop multiplier) are emitted;
- * a skilling-only type slipping through is ignored rather than added as a no-op.
+ * Each scroll's magnitude and whether it is a ratio or flat boost come from the
+ * combat-scroll table (values read off the game's own item tooltips), emitted in
+ * the same permanent-buff shape the labyrinth token upgrades use. A buff type
+ * that is not a combat scroll is skipped rather than added as a no-op.
  * @param {string[]} scrollTypeHrids - Buff-type hrids the player has active
  * @returns {Array<Object>} Buff objects in the shape the server sends
  */
@@ -27,19 +24,8 @@ export function buildScrollBuffs(scrollTypeHrids) {
     const list = Array.isArray(scrollTypeHrids) ? scrollTypeHrids : [];
     const buffs = [];
     for (const typeHrid of list) {
-        if (!COMBAT_SCROLL_SET.has(typeHrid)) continue;
-        const flatBoost = SCROLL_BUFF_VALUES[typeHrid];
-        if (!flatBoost) continue;
-        buffs.push({
-            uniqueHrid: `/buff_uniques/toolasha_scroll_${typeHrid.split('/').pop()}`,
-            typeHrid,
-            ratioBoost: 0,
-            ratioBoostLevelBonus: 0,
-            flatBoost,
-            flatBoostLevelBonus: 0,
-            startTime: '0001-01-01T00:00:00Z',
-            duration: 0,
-        });
+        const buff = combatScrollBuff(typeHrid);
+        if (buff) buffs.push(buff);
     }
     return buffs;
 }

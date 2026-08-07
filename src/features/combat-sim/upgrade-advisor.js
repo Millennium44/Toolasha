@@ -31,7 +31,7 @@ import { explainAbilityLevelUpCost } from '../../utils/ability-cost-calculator.j
 import { buildOverridesForSkill } from './skilling-sim-helpers.js';
 import { priceGuildCreditCosts } from '../../utils/guild-credit-pricing.js';
 import { describeGuildTokenGold, explainGuildTokenValue } from '../guild/guild-token-value.js';
-import { SCROLL_BUFF_LABELS, COMBAT_SCROLL_BUFF_TYPES } from '../../utils/scroll-buff-values.js';
+import { COMBAT_SCROLL_LABELS, COMBAT_SCROLL_BUFF_TYPES } from '../../utils/combat-scroll-buffs.js';
 
 /** Enhancement breakpoints by slot type */
 const BREAKPOINTS_DEFAULT = [7, 10, 12, 13, 14, 15, 16, 17, 18, 19, 20];
@@ -2222,8 +2222,9 @@ function applyCommunityBuffCandidate(communityBuffs, candidate) {
 /**
  * What each combat scroll is worth: turning on one the player is not carrying,
  * or — for one already active — the loss of turning it off, so the set never
- * produces an empty analysis. Only the two combat-effective scrolls (wisdom,
- * rare find) are offered; the rest do nothing in a fight.
+ * produces an empty analysis. Every Labyrinth combat scroll is offered, since
+ * each moves a combat number (damage, attack/cast speed, crit, drops, XP, rare
+ * find).
  *
  * Like a community buff, a scroll is not priced as a purchase here: the ongoing
  * seal cost is a per-run figure the advisor does not model, so it lands in the
@@ -2238,7 +2239,7 @@ export function generateScrollCandidates(playerDTO) {
     const candidates = [];
     for (const buffTypeHrid of COMBAT_SCROLL_BUFF_TYPES) {
         const on = active.has(buffTypeHrid);
-        const label = SCROLL_BUFF_LABELS[buffTypeHrid] || buffTypeHrid;
+        const label = COMBAT_SCROLL_LABELS[buffTypeHrid] || buffTypeHrid;
         candidates.push({
             type: 'scroll',
             slot: `scroll|${buffTypeHrid}`,
