@@ -1,7 +1,7 @@
 /**
  * Toolasha Combat Library
  * Combat, abilities, and combat stats features
- * Version: 2.92.0
+ * Version: 2.92.1
  * License: CC-BY-NC-SA-4.0
  */
 
@@ -43872,6 +43872,9 @@
     /** The one key the whole exchange table lives under */
     const CAPTURE_KEY = 'guildTokenExchange';
 
+    /** How an hrid spells a guild token */
+    const TOKEN_PATTERN$1 = /guild_token/;
+
     /** How an hrid spells a guild credit */
     const CREDIT_PATTERN$1 = /guild_credit/;
 
@@ -43889,6 +43892,15 @@
 
     /** Whether storage has been consulted yet this session */
     let hydrated = false;
+
+    /**
+     * Whether an hrid names a guild token.
+     * @param {string} hrid - Item hrid
+     * @returns {boolean} True for a guild token
+     */
+    function isTokenHrid(hrid) {
+        return TOKEN_PATTERN$1.test(String(hrid || ''));
+    }
 
     /**
      * Whether an hrid names a guild credit.
@@ -44035,8 +44047,18 @@
      * Everything read off the Guild Shop so far, newest reading per credit type.
      * @returns {Array<Object>} Captured exchanges
      */
-    function capturedTokenExchanges() {
+    function capturedTokenExchanges$1() {
         return Object.values(captured).map((entry) => ({ ...entry }));
+    }
+
+    /**
+     * The captured exchange for one credit type.
+     * @param {string} creditItemHrid - Credit hrid
+     * @returns {Object|null} The reading, or null
+     */
+    function capturedTokenExchange(creditItemHrid) {
+        const entry = captured[creditItemHrid];
+        return entry ? { ...entry } : null;
     }
 
     /**
@@ -44107,6 +44129,29 @@
     }
 
     /**
+     * Forget everything, for tests.
+     * @returns {void}
+     */
+    function _resetCapturedTokenExchanges() {
+        captured = {};
+        hydrated = false;
+    }
+
+    var guildTokenExchangeCapture = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        CAPTURE_KEY: CAPTURE_KEY,
+        _resetCapturedTokenExchanges: _resetCapturedTokenExchanges,
+        captureTokenExchangeFromModal: captureTokenExchangeFromModal,
+        capturedTokenExchange: capturedTokenExchange,
+        capturedTokenExchanges: capturedTokenExchanges$1,
+        hydrateCapturedTokenExchanges: hydrateCapturedTokenExchanges,
+        isCreditHrid: isCreditHrid,
+        isTokenHrid: isTokenHrid,
+        readTokenExchangeFromModal: readTokenExchangeFromModal,
+        rememberTokenExchange: rememberTokenExchange
+    });
+
+    /**
      * What a guild token is worth, in gold.
      *
      * Guild tokens have no marketplace listing and nothing is crafted into them, so
@@ -44169,6 +44214,15 @@
      * no colour at all, so it is valued against the most valuable credit on offer.
      */
 
+
+    /**
+     * The captured Guild Shop exchanges from the live combat-bundle copy, falling
+     * back to this bundle's own copy in the dev-standalone build.
+     * @returns {Array} Captured exchange readings
+     */
+    function capturedTokenExchanges() {
+        return bundleBridge_js.guildTokenExchangeCapture()?.capturedTokenExchanges?.() ?? capturedTokenExchanges$1();
+    }
 
     /** How an hrid spells a guild token */
     const TOKEN_PATTERN = /guild_token/;
@@ -51224,6 +51278,21 @@
         }
     }
 
+    var guildTrialExport = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        GAP_AFTER_MS: GAP_AFTER_MS,
+        IDLE_STOP_MS: IDLE_STOP_MS,
+        MANUAL_MAX_MS: MANUAL_MAX_MS,
+        MAX_SNAPSHOTS: MAX_SNAPSHOTS,
+        SNAPSHOT_MS: SNAPSHOT_MS,
+        buildTrialExport: buildTrialExport,
+        default: guildTrialRecorder,
+        downloadTrialExport: downloadTrialExport,
+        guildTrialRecorder: guildTrialRecorder,
+        thinBreakdown: thinBreakdown,
+        trialSessionStorageKey: trialSessionStorageKey
+    });
+
     /**
      * The archived cycles, read back.
      *
@@ -56286,8 +56355,16 @@
         guildXPTracker: guildXPTracker$1,
         guildXPDisplay: guildXPDisplay$1,
         guildCreditValue: guildCreditValue$1,
+        // Shared so guild-token-value (runs live in the sim and ui bundles) reads
+        // the Guild Shop exchange rate captured/hydrated here in the combat bundle
+        guildTokenExchangeCapture,
         guildRosterView,
         guildTrials: guildTrials$1,
+        // The trials singleton (guildName + record) and the recorder's export
+        // builder, shared so the exportTrialData console helper in the ui bundle
+        // gathers from the live combat copies instead of empty duplicates
+        guildTrialsStore: guildTrials,
+        guildTrialExport,
         guildTrialScoreboard,
     };
 

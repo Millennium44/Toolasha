@@ -1,11 +1,11 @@
 /**
  * Toolasha UI Library
  * UI enhancements, tasks, skills, and misc features
- * Version: 2.92.0
+ * Version: 2.92.1
  * License: CC-BY-NC-SA-4.0
  */
 
-(function (config, dataManager, domObserver, formatters_js, timerRegistry_js, domObserverHelpers_js, dom_js, storage, panelZIndex_js, floatingPanel_js, panelGeometry_js, characterKey_js, overlayRows_js, opanelConfig_js, choiceDialog_js, mobile_js, overlayLayout_js, settingsSchema_js, toast_js, bundleBridge_js, houseCostCalculator, overlayFormat_js, marketplaceTabs_js, marketData_js, roomSkills_js, marketAPI, numberParser_js, pricingHelper_js, webSocketHook, simplePanel_js, damageAttribution_js, combatDPS, combatStatsDataCollector, combatStatsCalculator_js, damageTracker_js, damageTakenTracker_js, battlePanelMonsters_js, spawnExpectation_js, combatDropModel_js, allZonesSnapshot_js, partyLint_js, csvExport_js, itemNavigation_js, efficiency_js, guildCreditPricing_js, adoptionConsent_js, gameText_js, performanceMonitor, backgroundWork_js, profileCommand_js, selectors_js, progressEta_js, reactInput_js, actionPanelHelper_js, expectedValueCalculator, gatheringProfit_js, productionProfit_js, profitHelpers_js, actionCalculator_js, equipmentParser_js, profitConstants_js, combatSimRunner_js, combatSimAdapter_js, assetManifest, gameLookups_js, chunkedHistory_js, skillProgress_js, skillHistory_js, deferredLoad_js, combatLevel_js, experienceParser_js, dropLuck_js, marketplaceAutofill_js, cleanupRegistry_js, settingsStorage, scrollBuffValues_js, enhancementConfig_js, chestTally_js, chestImport_js, tokenValuation_js, materialCalculator_js, alchemyFees_js, enhancementCalculator_js, teaParser_js, combatSimUI, tableColumns_js, consumableTarget_js, consumableForecast_js, keyLedger_js, orderBook_js, shoppingList_js, alchemyProfitCalculator, buffParser_js) {
+(function (config, dataManager, domObserver, formatters_js, timerRegistry_js, domObserverHelpers_js, dom_js, storage, panelZIndex_js, floatingPanel_js, panelGeometry_js, characterKey_js, overlayRows_js, opanelConfig_js, choiceDialog_js, mobile_js, overlayLayout_js, settingsSchema_js, toast_js, bundleBridge_js, houseCostCalculator, overlayFormat_js, marketplaceTabs_js, marketData_js, roomSkills_js, marketAPI, numberParser_js, pricingHelper_js, webSocketHook, simplePanel_js, damageAttribution_js, combatDPS, combatStatsDataCollector, combatStatsCalculator_js, damageTracker_js, damageTakenTracker_js, battlePanelMonsters_js, spawnExpectation_js, combatDropModel_js, allZonesSnapshot_js, partyLint_js, csvExport_js, itemNavigation_js, efficiency_js, guildCreditPricing_js, adoptionConsent_js, gameText_js, performanceMonitor, backgroundWork_js, profileCommand_js, selectors_js, progressEta_js, reactInput_js, actionPanelHelper_js, expectedValueCalculator, gatheringProfit_js, productionProfit_js, profitHelpers_js, actionCalculator_js, equipmentParser_js, profitConstants_js, combatSimRunner_js, combatSimAdapter_js, assetManifest, gameLookups_js, chunkedHistory_js, skillProgress_js, skillHistory_js, deferredLoad_js, combatLevel_js, experienceParser_js, dropLuck_js, marketplaceAutofill_js, cleanupRegistry_js, settingsStorage, scrollBuffValues_js, enhancementConfig_js, chestTally_js, chestImport_js, tokenValuation_js, customPriceOverrides_js, materialCalculator_js, alchemyFees_js, enhancementCalculator_js, teaParser_js, combatSimUI, tableColumns_js, consumableTarget_js, consumableForecast_js, keyLedger_js, orderBook_js, shoppingList_js, alchemyProfitCalculator, buffParser_js) {
     'use strict';
 
     function _interopNamespaceDefault(e) {
@@ -954,7 +954,7 @@
      */
 
 
-    const STORAGE_KEY$8 = 'panelSizeMemory';
+    const STORAGE_KEY$7 = 'panelSizeMemory';
 
     /** Inline properties a divider plausibly writes; custom properties are kept too */
     const SIZE_PROPERTIES = new Set([
@@ -1072,7 +1072,7 @@
             this.isInitialized = true;
 
             try {
-                this.saved = await storage.get(STORAGE_KEY$8, 'settings', null);
+                this.saved = await storage.get(STORAGE_KEY$7, 'settings', null);
             } catch (error) {
                 console.error('[PanelSizeMemory] Failed to read saved size:', error);
             }
@@ -1133,7 +1133,7 @@
         async persist(entry) {
             this.saved = entry;
             try {
-                await storage.set(STORAGE_KEY$8, entry);
+                await storage.set(STORAGE_KEY$7, entry);
             } catch (error) {
                 console.error('[PanelSizeMemory] Failed to save size:', error);
             }
@@ -1167,7 +1167,7 @@
         async reset() {
             this.saved = null;
             try {
-                await storage.set(STORAGE_KEY$8, null);
+                await storage.set(STORAGE_KEY$7, null);
             } catch (error) {
                 console.error('[PanelSizeMemory] Failed to clear saved size:', error);
             }
@@ -1470,7 +1470,7 @@
      */
 
 
-    const STORAGE_KEY$7 = 'modalPositions3';
+    const STORAGE_KEY$6 = 'modalPositions3';
     const STORE_NAME$c = 'settings';
 
     class DraggableModals {
@@ -1484,7 +1484,7 @@
             if (this.initialized) return;
             if (!config.getSetting('draggableModals', true)) return;
 
-            this.offsets = (await storage.get(STORAGE_KEY$7, STORE_NAME$c, {})) || {};
+            this.offsets = (await storage.get(STORAGE_KEY$6, STORE_NAME$c, {})) || {};
 
             // Watch Modal_modalContent — unique to the inner dialog content element.
             // Its parentElement is Modal_modal (the box we apply transform to).
@@ -1586,7 +1586,7 @@
                 const dx = isNaN(t.m41) ? 0 : t.m41;
                 const dy = isNaN(t.m42) ? 0 : t.m42;
                 this.offsets[title] = { dx, dy };
-                storage.set(STORAGE_KEY$7, this.offsets, STORE_NAME$c);
+                storage.set(STORAGE_KEY$6, this.offsets, STORE_NAME$c);
             };
 
             // A finger works like a cursor, and the bar's gesture is a drag, not a scroll
@@ -2180,7 +2180,7 @@
      * you saved by name is a template, and templates are worth sharing across
      * characters.
      */
-    const STORAGE_KEY$6 = 'overlayPanel';
+    const STORAGE_KEY$5 = 'overlayPanel';
     /** Where the floating panel sits, shared by every character (see panel-geometry) */
     const GEOMETRY_KEY$4 = 'overlayPanel';
     const PANEL_ID$8 = 'toolasha-overlay-panel';
@@ -2458,7 +2458,7 @@
             // Rebuilt from defaults rather than merged onto what is in memory: this
             // runs again after a character switch, and the character switched away
             // from must not leave its tiles behind
-            const saved = await characterKey_js.readScoped(STORAGE_KEY$6, 'settings', null, { migrate: 'adopt' });
+            const saved = await characterKey_js.readScoped(STORAGE_KEY$5, 'settings', null, { migrate: 'adopt' });
             this.settings =
                 saved && typeof saved === 'object'
                     ? // Never spread in from the defaults: a saved layout that predates
@@ -2547,7 +2547,7 @@
         }
 
         _save() {
-            characterKey_js.writeScoped(STORAGE_KEY$6, this.settings, 'settings').catch((error) => {
+            characterKey_js.writeScoped(STORAGE_KEY$5, this.settings, 'settings').catch((error) => {
                 console.error('[OverlayPanel] Saving the layout failed:', error);
             });
         }
@@ -13827,7 +13827,7 @@ ${starCSS}
      * Everything read off the Guild Shop so far, newest reading per credit type.
      * @returns {Array<Object>} Captured exchanges
      */
-    function capturedTokenExchanges() {
+    function capturedTokenExchanges$1() {
         return Object.values(captured).map((entry) => ({ ...entry }));
     }
 
@@ -13894,6 +13894,15 @@ ${starCSS}
      * no colour at all, so it is valued against the most valuable credit on offer.
      */
 
+
+    /**
+     * The captured Guild Shop exchanges from the live combat-bundle copy, falling
+     * back to this bundle's own copy in the dev-standalone build.
+     * @returns {Array} Captured exchange readings
+     */
+    function capturedTokenExchanges() {
+        return bundleBridge_js.guildTokenExchangeCapture()?.capturedTokenExchanges?.() ?? capturedTokenExchanges$1();
+    }
 
     /** How an hrid spells a guild token */
     const TOKEN_PATTERN = /guild_token/;
@@ -22661,7 +22670,7 @@ ${starCSS}
 
     const guildXPTracker = new GuildXPTracker();
 
-    var guildXPTracker$1 = {
+    var bundledGuildXPTracker = {
         name: 'Guild XP Tracker',
         initialize: () => guildXPTracker.initialize(),
         cleanup: () => guildXPTracker.disable(),
@@ -23704,6 +23713,21 @@ ${starCSS}
             return false;
         }
     }
+
+    var bundledTrialExport = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        GAP_AFTER_MS: GAP_AFTER_MS,
+        IDLE_STOP_MS: IDLE_STOP_MS,
+        MANUAL_MAX_MS: MANUAL_MAX_MS,
+        MAX_SNAPSHOTS: MAX_SNAPSHOTS,
+        SNAPSHOT_MS: SNAPSHOT_MS,
+        buildTrialExport: buildTrialExport,
+        default: guildTrialRecorder,
+        downloadTrialExport: downloadTrialExport,
+        guildTrialRecorder: guildTrialRecorder,
+        thinBreakdown: thinBreakdown,
+        trialSessionStorageKey: trialSessionStorageKey
+    });
 
     /**
      * The archived cycles, read back.
@@ -28722,9 +28746,12 @@ ${starCSS}
                 // three sources and the XP tracker is only one of them, so asking the
                 // tracker alone exported the `default` record while the feature was
                 // writing to the guild's.
-                const guildName = guildTrials?.guildName || guildXPTracker$1.getOwnGuildName?.() || null;
-                const bundle = await buildTrialExport({ guildName });
-                downloadTrialExport(bundle);
+                const trials = bundleBridge_js.guildTrialsStore() || guildTrials;
+                const xpTracker = bundleBridge_js.guildXpTracker() || bundledGuildXPTracker;
+                const exporter = bundleBridge_js.guildTrialExport() || bundledTrialExport;
+                const guildName = trials?.guildName || xpTracker.getOwnGuildName?.() || null;
+                const bundle = await exporter.buildTrialExport({ guildName });
+                exporter.downloadTrialExport(bundle);
                 console.log('[Toolasha] Trial data exported', bundle);
                 return bundle;
             };
@@ -32179,7 +32206,7 @@ ${starCSS}
      * @returns {number|null} Best alternative profit per hour, or null
      */
     function getBestAlternativeProfitPerHour(excludeActionHrid) {
-        const cached = actionPanelSort?.cachedStats;
+        const cached = (bundleBridge_js.actionPanelSort() || actionPanelSort)?.cachedStats;
         if (!cached) {
             return null;
         }
@@ -50066,7 +50093,7 @@ ${starCSS}
      * at each read and write, since the user switches characters without reloading.
      * The pre-scoping global values are adopted by the main character once.
      */
-    const STORAGE_KEY$5 = 'treasureTally';
+    const STORAGE_KEY$4 = 'treasureTally';
     const SETTINGS_KEY = 'treasureSettings';
     const ADOPT_LEGACY = { migrate: 'adopt' };
     const PANEL_ID$5 = 'toolasha-treasure-panel';
@@ -50353,7 +50380,7 @@ ${starCSS}
             if (!config.getSetting('treasureTracker')) return;
             this.isInitialized = true;
 
-            this.tally = (await characterKey_js.readScoped(STORAGE_KEY$5, 'settings', {}, ADOPT_LEGACY)) || {};
+            this.tally = (await characterKey_js.readScoped(STORAGE_KEY$4, 'settings', {}, ADOPT_LEGACY)) || {};
             const saved = await characterKey_js.readScoped(SETTINGS_KEY, 'settings', null, ADOPT_LEGACY);
             if (saved) this.settings = { ...DEFAULT_SETTINGS, ...saved };
 
@@ -50493,7 +50520,7 @@ ${starCSS}
         }
 
         _save() {
-            characterKey_js.writeScoped(STORAGE_KEY$5, this.tally, 'settings').catch((error) => {
+            characterKey_js.writeScoped(STORAGE_KEY$4, this.tally, 'settings').catch((error) => {
                 console.error('[TreasureTracker] Saving the chest tally failed:', error);
             });
         }
@@ -53590,100 +53617,6 @@ ${starCSS}
     const syncManager = new SyncManager();
 
     /**
-     * Custom Price Overrides
-     * Manages user-defined buy/sell price overrides for profit calculations.
-     * Overrides are stored in IndexedDB and cached in memory.
-     */
-
-
-    const STORAGE_KEY$4 = 'Toolasha_customPriceOverrides';
-
-    /** @type {Object|null} In-memory cache of overrides */
-    let overridesCache = null;
-
-    /**
-     * Load overrides from storage into cache
-     * @returns {Promise<Object>} The overrides object
-     */
-    async function loadOverrides$1() {
-        if (overridesCache === null) {
-            overridesCache = (await storage.getJSON(STORAGE_KEY$4, 'settings', {})) || {};
-        }
-        return overridesCache;
-    }
-
-    /**
-     * Get all custom price overrides
-     * @returns {Object} The overrides object (may be empty if not yet loaded)
-     */
-    function getCustomPriceOverrides() {
-        if (overridesCache === null) {
-            // Trigger async load but return empty for now
-            loadOverrides$1();
-            return {};
-        }
-        return overridesCache;
-    }
-
-    /**
-     * Get all custom price overrides (async version, guaranteed loaded)
-     * @returns {Promise<Object>} The overrides object
-     */
-    async function getCustomPriceOverridesAsync() {
-        return loadOverrides$1();
-    }
-
-    /**
-     * Set a custom price override for an item
-     * @param {string} itemHrid - Item HRID
-     * @param {number} enhancementLevel - Enhancement level
-     * @param {number|null} buy - Buy price override (null to clear)
-     * @param {number|null} sell - Sell price override (null to clear)
-     */
-    async function setCustomPriceOverride(itemHrid, enhancementLevel, buy, sell) {
-        const overrides = await loadOverrides$1();
-        const key = `${itemHrid}:${enhancementLevel}`;
-
-        const entry = {};
-        if (buy !== null && buy !== undefined && buy !== '') {
-            entry.buy = Number(buy);
-        }
-        if (sell !== null && sell !== undefined && sell !== '') {
-            entry.sell = Number(sell);
-        }
-
-        if (Object.keys(entry).length === 0) {
-            // Both empty — remove the override
-            delete overrides[key];
-        } else {
-            overrides[key] = entry;
-        }
-
-        overridesCache = overrides;
-        await storage.setJSON(STORAGE_KEY$4, overrides, 'settings', true);
-    }
-
-    /**
-     * Remove a custom price override
-     * @param {string} itemHrid - Item HRID
-     * @param {number} enhancementLevel - Enhancement level
-     */
-    async function removeCustomPriceOverride(itemHrid, enhancementLevel) {
-        const overrides = await loadOverrides$1();
-        const key = `${itemHrid}:${enhancementLevel}`;
-        delete overrides[key];
-        overridesCache = overrides;
-        await storage.setJSON(STORAGE_KEY$4, overrides, 'settings', true);
-    }
-
-    /**
-     * Initialize the module by loading overrides from storage
-     */
-    async function initCustomPriceOverrides() {
-        await loadOverrides$1();
-    }
-
-    /**
      * Setting presets — a whole configuration in one button.
      *
      * Toolasha ships several hundred switches. Somebody who has just installed it,
@@ -54467,7 +54400,7 @@ ${starCSS}
             }
 
             // Load custom price overrides cache
-            await initCustomPriceOverrides();
+            await customPriceOverrides_js.initCustomPriceOverrides();
 
             // Load current settings
             this.currentSettings = await settingsStorage.loadSettings();
@@ -55211,7 +55144,7 @@ ${starCSS}
                 }
 
                 case 'customPriceOverrides': {
-                    const overrides = getCustomPriceOverrides();
+                    const overrides = customPriceOverrides_js.getCustomPriceOverrides();
                     const count = Object.keys(overrides).length;
                     return `
                     <input type="hidden"
@@ -55894,7 +55827,7 @@ ${starCSS}
             const treasureBtn = document.createElement('button');
             treasureBtn.textContent = 'Treasure';
             treasureBtn.className = 'toolasha-utility-button';
-            treasureBtn.addEventListener('click', () => treasureTracker.toggle());
+            treasureBtn.addEventListener('click', () => (bundleBridge_js.treasureTracker() || treasureTracker).toggle());
             buttonsDiv.appendChild(treasureBtn);
 
             const pformanceBtn = document.createElement('button');
@@ -57008,7 +56941,7 @@ ${starCSS}
          * Open custom price overrides editor modal
          */
         async openCustomPriceOverridesEditor() {
-            const overrides = await getCustomPriceOverridesAsync();
+            const overrides = await customPriceOverrides_js.getCustomPriceOverridesAsync();
             const gameData = dataManager.getInitClientData();
             const itemDetailMap = gameData?.itemDetailMap || {};
 
@@ -57517,20 +57450,20 @@ ${starCSS}
         `;
             saveBtn.addEventListener('click', async () => {
                 // Determine what to add, update, and remove
-                const currentOverrides = getCustomPriceOverrides();
+                const currentOverrides = customPriceOverrides_js.getCustomPriceOverrides();
 
                 // Remove overrides that are no longer in working copy
                 for (const key of Object.keys(currentOverrides)) {
                     if (!workingOverrides[key]) {
                         const [itemHrid, enhLevel] = key.split(':');
-                        await removeCustomPriceOverride(itemHrid, parseInt(enhLevel) || 0);
+                        await customPriceOverrides_js.removeCustomPriceOverride(itemHrid, parseInt(enhLevel) || 0);
                     }
                 }
 
                 // Add/update overrides
                 for (const [key, override] of Object.entries(workingOverrides)) {
                     const [itemHrid, enhLevel] = key.split(':');
-                    await setCustomPriceOverride(
+                    await customPriceOverrides_js.setCustomPriceOverride(
                         itemHrid,
                         parseInt(enhLevel) || 0,
                         override.buy ?? null,
@@ -57857,7 +57790,7 @@ ${starCSS}
         return overrides;
     }
 
-    var forkChangelog = "## Unreleased — branch `claude/mcs-ingest`\n\n### Combat labyrinth clears fixed in the packaged (release) build\n\n- **Combat rooms no longer sim at 0% — and skip-level recommendations no longer go negative — in the multi-bundle build**: the sim bundle carried its own empty copy of the loadout store, so applying a loadout to the combat DTO found nothing, the fight was simmed on a naked character, every combat room read 0% clear, and the Recommend search drove the threshold negative. The adapter now reads the shared, websocket-fed loadout store through the bundle bridge (the pattern the other cross-bundle consumers already use), so the real gear is applied. Skilling rooms and the dev-standalone build were never affected.\n\n### On-demand health report\n\n- **`Toolasha.debug.health()` and a Ctrl+K \"Health report\" command** now open (and copy/console-log) the diagnostic report anytime, instead of only when an error toast appears.\n\n### What's-new popup reads cleanly, with a newcomer overview\n\n- **The update popup now renders the changelog as formatted text** (no raw `##`/`**`/backticks), entries are condensed to one line each, and fresh installs or arrivals from upstream Toolasha get a \"Toolasha — at a glance\" overview above it.\n\n### Labyrinth pathing reveals more of the floor on ties\n\n- **Equal-cost routes now prefer the one that uncovers the most unknown rooms**.\n\n### \"Guild\" is no longer turned into a /profile link\n\n- **The guild-wide broadcast \"Guild has reached level N!\" stays plain text**.\n\n### Selector canary stops false-alarming on alchemy and enhancing panels\n\n- **The \"Skill action panel (name)\" canary no longer cries \"game update?\" on alchemy/enhancing screens**.\n\n### First run: returning users can keep their settings\n\n- **The welcome dialog for returning users now leads with \"Keep my current settings\"**.\n\n### Preset renamed: \"Everything on\" → \"Defaults\"\n\n- **The preset bar's \"Everything on\" button is now \"Defaults\"**.\n\n### Portrait DPS extras are now opt-in\n\n- **The seven Portrait DPS sub-readouts default OFF**.\n\n### Undercut alerts stop missing undercuts you didn't watch happen\n\n- **A configurable market refresh, on while undercut alerts are**.\n\n### The combat profit panel leads with the live rate again\n\n- **The sim's forecast moves out of the headline**.\n\n### The combat sim's Guild Shrine gets per-shrine targets\n\n- **A \"Targets\" grid on the Combat Simulator's Guild Shrine upgrade, matching the Lab Sim's**.\n\n### The trial DPS split says how much of the party it actually covers\n\n- **\"Per player · 3 of 7 · watched\" instead of implying three people did everything**.\n\n### The per-player readout stays on its own tile, its panels stop drifting, and the panel does less work\n\n- **A watched fight's per-player DPS no longer dresses every tile**.\n\n### The startup freeze on an enhanced inventory is gone\n\n- **Pricing a +20 inventory no longer stalls the main thread for a second**.\n\n### Startup traces stop blaming the wrong feature\n\n- **A feature that only parked in `await` is no longer named the slow one**.\n\n### Damage totals stop swapping bodies at tier rollovers\n\n- **Per-player totals are banked by name at every wave boundary**.\n\n### The In Progress tab stops trusting stale answers — and combat trials learn their tier\n\n- **A stated tier is only believed for the pool it was stated with**.\n\n### The pace projection stops dying after one tier\n\n- **\"On pace for 13 tiers → T13\" with twenty-six minutes left is gone**.\n\n### The damage tracker keeps its names, heals honestly, and a fresh character knows the tier cold\n\n- **A refresh no longer forgets who is fighting**.\n\n### The battle-info button finds the real units — and becomes its own tool\n\n- **The profile cycler matches the game's own unit boxes now**.\n\n### The trials panel knows its tier immediately, and the pace projection stops lowballing\n\n- **The In Progress tab now identifies the tier on its own**.\n\n### Release housekeeping\n\n- **GreasyFork's version history will show real release notes**.\n\n### The silent failure modes get their alarms, and two calculators become one\n\n- **The bundle-sharing rule is now executable**.\n\n### Thin markets stop lying in the rankings\n\n- **The liquidity cap the goal planner already obeyed now governs every profit surface**.\n\n### The panels compare, lint, and remember\n\n- **The profit panel quotes the sim on the zone you're in**.\n\n### A ledger for flips, luck for foragers, and spreadsheets for everyone\n\n- **A trading ledger measures what flipping actually earns**.\n\n### The trial record remembers, the sim gets audited, and silence gets alarms\n\n- **Past weeks return to the trials panel and guild report**.\n\n### Live combat learns seven more things, each its own switch\n\n- **Enemy tiles answer the questions a fight actually asks**.\n\n### The portrait meters stop jostling the party\n\n- **Every player's DPS meter is two lines, always**.\n\n### Every player name opens a profile, and the dungeon knows its worth\n\n- **Player names are clickable wherever a dungeon shows them**.\n\n### A canceled battle start is not a run\n\n- **The dungeon tracker no longer records phantom runs from failed ready-checks**.\n\n### Hybrid attribution: thorns and DoT damage go to their owners\n\n- **The damage attribution learned what the party recording proved**.\n\n### Party lint ignores tools, and ability books answer three more questions\n\n- **Tool slots are exempt from the skilling-gear warning**.\n\n### The sim summary reads in the units a player plans in\n\n- **XP/day → XP/hr**.\n\n### Entry keys are consumables, and chests point at their keys\n\n- **The consumables tracker now carries the dungeon's entry key**.\n\n### Ability book counts respect the experience already earned\n\n- **The Upgrade tab priced every ability level-up from the floor of its current level**.\n\n### An attribution referee, ahead of any verdict on the presence method\n\n- **`npm run compare <recording.json>` replays a combat recording through two attribution methods side by side**.\n\n### Departed members stop haunting the roster\n\n- **A member who left the guild no longer sits in \"Gone quiet\" forever**.\n\n### The wire speaks: five trial message types the game was sending all along\n\n- **`new_guild_battle` fires at every tier and states everything**.\n\n### Mixed-bonus cards contribute their true base to the token sum\n\n- A card banked across a Builder's Hall upgrade divides cleanly by neither bonus, so its base points now come from the exact ladder (1,100 at T10) instead of the slightly-low division (1,091)…\n\n### The notice board is not a trial, and the ladders are theorems now\n\n- **A guild notice board can no longer become a trial tile**.\n\n### The watched fight knows its own name, and a wipe is an outcome\n\n- **The spectated stream attaches to the encounter being watched, and only that one**.\n\n### Spectating measures: the trial fight is on the wire after all\n\n- **Per-player trial measurement is real**.\n\n### The cycler clicks the people fighting beside you\n\n- **A fight on screen outranks the roster walk**.\n\n### Beacons cover the way out before they chase dark corners\n\n- **A set beacon count is planned against the same objective the automatic one uses**.\n\n### The arrow points at the count, completed means completed, and estimates say so\n\n- **\"On pace for 4 tiers → T5\" is impossible output now**.\n\n### Neither ladder has a wall, and a click is not a capture\n\n- **The profile cycler counts replies, not clicks**.\n\n### The badge means banked, and the skilling ladder is a rule now\n\n- **Mid-trial, the stated tier badge counts tiers banked and the fight is on badge + 1**.\n\n### The recorder survives its first real trial day\n\n- **Auto-record actually arms now**.\n\n### Release plumbing\n\n- **Guild features moved from the ui library to the combat library**.\n\n### A trial report your guild can actually read\n\n- **Copy guild report**.\n\n### A warning before the task board fills, and trials that predict themselves\n\n- **Task-slot alert**.\n\n### Path shows the way to the plan, not just the plan\n\n- **The rooms between you and the first planned room are lit too**.\n\n### Path stops planning a floor that has already moved on\n\n- **Rooms you have already shrouded are no longer marked \"Shroud\" again**.\n\n### Trial cards say what their phase can know, and stay off the notice board\n\n- **No more trial card built out of the Overview tab**.\n\n### Poisoned trial records heal themselves, and trials announce their own schedule\n\n- **The stale record from before the switch fix cleans itself up**.\n\n### Trials stop following you to your next guild, and the tab stops yanking you around\n\n- **A character switch drops everything**.\n\n### The bulk reroller now closes the door behind itself, and takes the free reroll on faith\n\n- **Protected tasks get their green outline back after a bulk reroll**.\n\n### The trial recorder grew hands, eyes, and a scoreboard\n\n- **Auto-record**.\n\n### The overlay's ⚙ popover no longer traps you, and keeps up with what it shows\n\n- **It can never cover the panel's header again**.\n\n### Trials round three: exact digits, honest captions, and a block that finally sits still\n\n- **Payout figures in full digits**.\n\n### The trial payout math is now exact, verified against four real payouts\n\n- **Combat trial cards finally produce a rate**.\n\n### The trial export was read, and it proved six defects — all fixed\n\n- **Per-player DPS now arms during real trial fights**.\n\n### Trials know who hit what, and why the payout was blank\n\n- **Per-player DPS on combat trials**.\n\n### Trials read the game as it actually is\n\n- **The real structure, from live screenshots**.\n\n### The trials feature existed on a guess\n\n- **Why nothing trials-related ever rendered**.\n\n### The lab sims the run you choose\n\n- **Token buffs are settable from Configure**.\n\n### Rates bounded by the market and your wallet\n\n- **A rate is capped by how fast its output actually sells**.\n\n### The reroll chooser is finally read as it is\n\n- **The MooPass reroll failure's real cause**.\n\n### The goal planner shares, navigates, and answers instantly\n\n- **Goals share one resource ledger**.\n\n### The sims finish their own homework\n\n- **Skilling gear rows expand like combat rows**.\n\n### Nine small debts paid\n\n- **The lab supplies planner believes the server**.\n\n### The goal planner stops promising billions\n\n- **A rate is only a rate while its inputs last**.\n\n### The lab sims what can actually win\n\n- **Skilling rooms leave the lab combat list**.\n\n### Task cards catch up after a reroll\n\n- **The stale picture and the stuck free reroll were one bug**.\n\n### eWatch learns houses too\n\n- **House room levels are savings goals**.\n\n### Ability swaps follow the guide\n\n- **Swap candidates come from the community build guide now**.\n\n### The lab reads the same buffs as the sim\n\n- **The live clear-rate readout was scoring against buff levels frozen at page load**.\n\n### The budget planner spends the money\n\n- **The empty 500M plan is fixed**.\n\n### Three more reasons to look up\n\n- **Labyrinth run finished**.\n\n### The listing says who built what\n\n- **`docs/GREASYFORK.md`**.\n\n### The session starts when combat does\n\n- **The Combat Level session no longer waits for its panel**.\n\n### Tokens per hour, finally measured\n\n- **Task completions are now recorded**.\n\n### Zones compared on even footing\n\n- **\"Max-tier Food\" option for all-zones sims**.\n\n### The skilling sim sims your skill\n\n- **Tool candidates are scoped to the skill being simmed**.\n\n### The buff tells you before it leaves\n\n- **Community buff expiry alerts**.\n\n### The sim comes home\n\n- **The community buff cap is 20 after all**.\n\n### The combat sim answers back\n\n- **Community upgrades work**.\n\n### The lab sim grows up\n\n- **Task Fight is gone from the lab sim**.\n\n### eWatch learns abilities\n\n- **Ability levels are savings goals now**.\n\n### The overlay fits the screen it's on\n\n- **A floating launcher on mobile**.\n\n### Panels behave on a phone\n\n- **Floating panels stay on screen**.\n\n### Sync works from a phone, and can't eat itself\n\n- **`@connect gist.githubusercontent.com` added to the userscript header**.\n\n### The manifest error says what it means\n\n- **\"Manifest is corrupt\" now tells the truth**.\n\n### Everything fits now\n\n- **The sync payload is gzipped before upload**.\n\n### The gist can keep a secret\n\n- **Optional sync passphrase**.\n\n### Console-dump fixes\n\n- **The Shrine Upgrade Planner stays in its box**.\n\n### The token knows its own price\n\n- **Guild token value now uses real exchange rates**.\n\n### The goal planner learns two more trades\n\n- **Alchemy ranks without a DOM**.\n\n### Housekeeping\n\n- **The WebSocket prototype wrapper is gone**.\n\n### The books balance: first swings were invisible\n\n- **The Sim Accuracy undercount is fixed**.\n\n### Iron Cow re-forces instantly, and one more clickable name\n\n- **Applying a preset (or All Off / Restore) while Iron Cow Mode is on now re-forces the locked settings immediately**.\n\n### Settings you can actually get to\n\n- **Picking a setting in Ctrl+K now opens settings itself**.\n\n### The recorder answers back\n\n- **Record for a target**.\n\n### The black box was ours\n\n- **The black band at the foot of action panels is gone**.\n\n### The recorder grows up\n\n- **Recordings snapshot your loadout at record time**.\n\n### Idle members are clickable\n\n- **Names in the guild Overview's \"Idle members\" list fill `/profile Name` on click**.\n\n### Mid-run restock honesty, and the tooltip that would not die\n\n- **The lab planner stops suggesting purchases that cannot help**.\n\n### Five new tiles and layouts that follow what you're doing\n\n- **New overlay tiles**.\n\n### Companion privacy, a Record button where it belongs, and mooket hygiene\n\n- **Toolasha no longer names the companion script anywhere**.\n\n### Build Score opens something now\n\n- **New Build Score breakdown panel**.\n\n### The watch card stops overcharging, and laddering becomes a mode\n\n- **Real pricing bug fixed**.\n\n### Iron Bell Farming\n\n- **\"Iron Cow Farm\" is now \"Iron Bell Farming\"**.\n\n### The overlay earns its screen space\n\n- **Empty tiles stop shouting**.\n\n### Overlay tiles open their panels\n\n- **The Net Worth, Coins, Market Listings, and Inventory Value tiles now open the networth history chart**.\n\n### Iron Cow Farm\n\n- **New \"Iron Cow Farm\" panel**.\n\n### Multi-target lab analysis gets the big swaps\n\n- **Combined forced-armor swaps now appear under All targets / Chosen targets**.\n\n### Dungeon keys cost whichever way is cheaper\n\n- **Dungeon profit charges each entry/chest key at the cheaper of buying or crafting it**.\n\n### Building levels cap at 20, trial tiers at 21 — and never each other\n\n- **Guild building bonuses clamp at the real level-20 cap**.\n\n### The task board stops fighting the game\n\n- **The zone-index badge stops churning**.\n\n### The lab planner reads the right bag\n\n- **During a run, supply counts come from the run itself**.\n\n### Dungeon run history stops lying\n\n- **A run-start key count can no longer end a fresh run at wave 0**.\n\n### Backups say whose they are, and adoption asks first\n\n- **`Toolasha.debug.claimLegacyData(charId)`**.\n\n### Labyrinth: split apart, supply-aware, and honest mid-fight\n\n- **The 5,300-line labyrinth module splits into six**.\n\n### Adoption accident: fixed, and repairable\n\n- **The wrong character can no longer inherit your data**.\n\n### The dungeon tracker earns its tests\n\n- **252 new tests**.\n\n### History stops rewriting itself on every event\n\n- **The append-heavy history stores split into per-period records**.\n\n### Tokens get a price, shrines get a debug command\n\n- **Guild tokens are now priced through the guild shop's token→credit exchange**.\n\n### Cross-tab sim exports can't lie about whose gear they are\n\n- **The combat-sim export bridge stamps every payload with the writing character**.\n\n### The variance math earns its tests\n\n- **180 new tests**.\n\n### Listing-age estimates get sharper over time\n\n- **The anonymous id→time anchor pool now grows**.\n\n### Missing-material tabs retire themselves\n\n- **Pinned marketplace tabs now watch your inventory**.\n\n### Guild Shrines series in the networth chart\n\n- **The networth history chart gains a Guild Shrines line**.\n\n### Guild trials get pace, ETA, and payout math\n\n- **Trial cards on the In Progress tab now carry live info**.\n\n### Guild shrines in your score and your net worth\n\n- **The profile score panel gains \"+ Guild Shrine\" lines**.\n\n### Goal Planner\n\n- **New Goal Planner panel**.\n\n### Sim state scoped, and honest enhancement numbers in the tooltip\n\n- **The last cross-character leaks in the sims are closed**.\n\n### Doubled profit line fixed, stuck marketplace tabs cleared\n\n- **The action bar could show two \"Profit: …/hr · remaining …\" lines**.\n\n### Market and inventory state stops leaking between characters\n\n- **Ten market/inventory stores scoped per character**.\n\n### Combat and labyrinth records stop leaking between characters\n\n- **Eleven combat-side stores scoped per character**.\n\n### Panels and task prefs stop leaking between characters\n\n- **Panel open-state is per character now**.\n\n### Lab sim catches up to combat sim\n\n- **Comparison runs for single-target lab fights**.\n\n### The sim sees your real abilities, and shrine levels finally arrive\n\n- **Ability desync fixed**.\n\n### Combat sim results that lead with the answer\n\n- **Headline tiles at the top of the Results tab**.\n\n### Clickable names everywhere chat shows one\n\n- **The /profile click trick now covers every name Toolasha renders**.\n\n### Per-character storage helper\n\n- **New `characterKey` helper**.\n\n### Official formulas, ladder costs, and the sim graded against reality\n\n- **Lab math now follows the official formulas you supplied**.\n\n### Upstream ports (verdict-gated) and honest task damage\n\n- **Task damage only counts on task fights**.\n\n### Advisors sharpened, your own rates guaranteed, and 1,200 new tests\n\n- **Upgrade advisor fixes**.\n\n### Sync, account view, honest philo math, and lab fixes\n\n- **Cross-device sync**.\n\n### Guild shrines, forecast calibration, roster intelligence, and storage that survives months\n\n- **Guild shrines everywhere they matter**.\n\n### The simulator models more, and breaks less\n\n- **taskDamage now raises damage**.\n\n### Ctrl+K, named layouts, and the features finally talk to each other\n\n- **A command palette**.\n\n### Notifications, provenance, and selectors that survive game updates\n\n- **Opt-in notifications**.\n\n### Panels remember where you put them, and stacking becomes predictable\n\n- **Both simulator panels persist their geometry**.\n\n### The product-review batch, wave one\n\n- **Back Up Everything / Restore Backup**.\n\n### The Combat Simulator panel catches up to the Lab Simulator\n\n- **Stop no longer throws away finished work**.\n\n### Sim accuracy: house rooms, guild buffs, and the Experience token\n\n- **REVERTED (player-verified): house wisdom does apply to combat in the live game — the filter below was removed again**.\n\n### Panels stay reachable and dialogs stay on top\n\n- **Confirmation dialogs can no longer hide behind panels**.\n\n### Every setting now does what it says — a full audit of all 346\n\n- **Five checkboxes did nothing at all**.\n\n### The Sell Queue is back\n\n- Removed one commit ago on the belief it was dead; restored unchanged — module, feature registration, and the `sellQueue` setting.\n\n### The mobile sweep, part three: gestures that had no touch equivalent\n\n- **The Sell Queue feature is removed**.\n\n### Panels can be dragged with a finger\n\n- Every drag and resize in the script listened for mouse events, and `mousedown` never fires on a touchscreen — every panel was simply immovable on a phone, the dungeon tracker included.\n\n### A mobile mode, auto-detected and overridable\n\n- **Mobile mode**.\n\n### Arriving from another build of Toolasha asks before anything new runs\n\n- Someone switching to this fork for the first time — usually from upstream, whose settings live under the same storage keys…\n\n### A what's-new popup, once per update — with the new settings live in it\n\n- After an update, a popup shows what changed and lists every setting that did not exist in t";
+    var forkChangelog = "## Unreleased — branch `claude/mcs-ingest`\n\n### More cross-bundle singleton reads fixed in the packaged build\n\nA triage of the 62 modules the bundle-sharing checker flags found several more stateful singletons read from an empty duplicate outside their owning bundle (same class as the loadout/treasure fixes). Fixed so far — all now read the live copy through the bundle bridge, dev-standalone unaffected:\n\n- **Combat Simulator container values.** The sim bundle's copy of the expected-value calculator was never initialized, so `calculateExpectedValue()` returned null and openable containers (chests/caches) showed no expected value in the Combat Simulator. Now reads the market bundle's live calculator.\n- **Scroll/buff simulation in gathering & production profit.** The actions bundle's copy of the scroll simulator was empty, so the profit displays and quick-input buttons ignored your configured scroll buffs. Now reads the combat bundle's live simulator.\n- **Task Profit \"best alternative /hr\" + alchemy pin protection.** The action-panel sort/pin singleton was read from empty copies outside the actions bundle: the Task Profit \"you could earn X/hr instead\" figure never appeared, and toggling an alchemy pin ran against an empty set — which could overwrite the saved pinned-action list. It's now published to the actions namespace and read through the bridge.\n- **Custom price overrides apply without a reload.** Setting or editing a custom item price in Settings didn't affect any profit/price calculation until the page was reloaded — Settings (ui bundle) wrote to one copy of the override cache while price math (utils bundle) read a separate copy. The module is now a single shared `Toolasha.Utils` global, so writes and reads hit the same cache.\n- **Guild token valuations use the captured Guild Shop rate.** The shrine upgrade advisor and the chat token-value summary read the token-exchange capture from empty copies, so they fell back to the configured token/credit rate instead of the rate scraped from the Guild Shop dialog. Now read the combat bundle's captured rate.\n- **`Toolasha.debug.exportTrialData()` exports real data.** The console export command gathered the guild name and trial damage/session/skilling/member-skill data from empty ui-bundle copies (the trial panels themselves were unaffected). It now gathers from the live combat copies.\n- **Lab Sim room level during a live run.** The Lab Sim panel read the labyrinth clear-rate singleton from an empty sim-bundle copy, so mid-run it used a skip-derived room level and no live recommendation. Now reads the combat bundle's live copy.\n\n### Loadout-driven features (net-worth exclusions, bulk-sell protection, profit label) work again in the packaged build\n\n- **Features that read saved loadout snapshots now work in the multi-bundle build.** Outside the combat bundle each consumer had its own empty copy of the loadout store (only the combat bundle's copy is fed by the `loadouts_updated` websocket), so anything reading loadouts elsewhere saw nothing. Loadouts don't hold items — their gear is already counted as equipped or inventory — so this is not about adding loadout value; it's the features built _on_ loadouts:\n    - **Net-worth loadout _exclusions_ silently did nothing.** If you excluded a loadout, its items were still counted (net worth over-stated), and the exclusion popup listed no loadouts to pick.\n    - **Bulk-sell no longer protected loadout gear** — items saved in a loadout could appear in sell suggestions.\n    - **The profit panel's \"Loadout: …\" label** showed \"Equipped\" instead of the active loadout's name (display only — profit numbers were never affected).\n    - All now read the shared loadout store through the bundle bridge (the pattern the sim adopted in 2.92.0). The dev-standalone build was never affected.\n- **New regression test** (`cross-bundle-globals`) fails the build if any bridge-backed stateful singleton is default-imported across a bundle boundary without also reading it through the bridge — the class of bug behind this, the treasure tracker, and the 2.92.0 combat-sim fix.\n\n### Treasure tracker button in Settings opens the real ledger (packaged build)\n\n- **The \"Treasure\" button in the Settings utility bar now opens the populated chest ledger instead of an empty one**: in the multi-bundle build, Settings direct-imported the treasure tracker and got its own empty copy (never subscribed to `loot_opened`), so that button showed \"nothing opened yet\" while the command-palette button showed the real history — and using the empty panel's reset/import could overwrite the real saved ledger. Settings now reads the shared, websocket-fed tracker through the bundle bridge (the same pattern the command palette and combat-stats calculator already use). The command-palette route and the dev-standalone build were never affected.\n\n### Combat labyrinth clears fixed in the packaged (release) build\n\n- **Combat rooms no longer sim at 0% — and skip-level recommendations no longer go negative — in the multi-bundle build**: the sim bundle carried its own empty copy of the loadout store, so applying a loadout to the combat DTO found nothing, the fight was simmed on a naked character, every combat room read 0% clear, and the Recommend search drove the threshold negative. The adapter now reads the shared, websocket-fed loadout store through the bundle bridge (the pattern the other cross-bundle consumers already use), so the real gear is applied. Skilling rooms and the dev-standalone build were never affected.\n\n### On-demand health report\n\n- **`Toolasha.debug.health()` and a Ctrl+K \"Health report\" command** now open (and copy/console-log) the diagnostic report anytime, instead of only when an error toast appears.\n\n### What's-new popup reads cleanly, with a newcomer overview\n\n- **The update popup now renders the changelog as formatted text** (no raw `##`/`**`/backticks), entries are condensed to one line each, and fresh installs or arrivals from upstream Toolasha get a \"Toolasha — at a glance\" overview above it.\n\n### Labyrinth pathing reveals more of the floor on ties\n\n- **Equal-cost routes now prefer the one that uncovers the most unknown rooms**.\n\n### \"Guild\" is no longer turned into a /profile link\n\n- **The guild-wide broadcast \"Guild has reached level N!\" stays plain text**.\n\n### Selector canary stops false-alarming on alchemy and enhancing panels\n\n- **The \"Skill action panel (name)\" canary no longer cries \"game update?\" on alchemy/enhancing screens**.\n\n### First run: returning users can keep their settings\n\n- **The welcome dialog for returning users now leads with \"Keep my current settings\"**.\n\n### Preset renamed: \"Everything on\" → \"Defaults\"\n\n- **The preset bar's \"Everything on\" button is now \"Defaults\"**.\n\n### Portrait DPS extras are now opt-in\n\n- **The seven Portrait DPS sub-readouts default OFF**.\n\n### Undercut alerts stop missing undercuts you didn't watch happen\n\n- **A configurable market refresh, on while undercut alerts are**.\n\n### The combat profit panel leads with the live rate again\n\n- **The sim's forecast moves out of the headline**.\n\n### The combat sim's Guild Shrine gets per-shrine targets\n\n- **A \"Targets\" grid on the Combat Simulator's Guild Shrine upgrade, matching the Lab Sim's**.\n\n### The trial DPS split says how much of the party it actually covers\n\n- **\"Per player · 3 of 7 · watched\" instead of implying three people did everything**.\n\n### The per-player readout stays on its own tile, its panels stop drifting, and the panel does less work\n\n- **A watched fight's per-player DPS no longer dresses every tile**.\n\n### The startup freeze on an enhanced inventory is gone\n\n- **Pricing a +20 inventory no longer stalls the main thread for a second**.\n\n### Startup traces stop blaming the wrong feature\n\n- **A feature that only parked in `await` is no longer named the slow one**.\n\n### Damage totals stop swapping bodies at tier rollovers\n\n- **Per-player totals are banked by name at every wave boundary**.\n\n### The In Progress tab stops trusting stale answers — and combat trials learn their tier\n\n- **A stated tier is only believed for the pool it was stated with**.\n\n### The pace projection stops dying after one tier\n\n- **\"On pace for 13 tiers → T13\" with twenty-six minutes left is gone**.\n\n### The damage tracker keeps its names, heals honestly, and a fresh character knows the tier cold\n\n- **A refresh no longer forgets who is fighting**.\n\n### The battle-info button finds the real units — and becomes its own tool\n\n- **The profile cycler matches the game's own unit boxes now**.\n\n### The trials panel knows its tier immediately, and the pace projection stops lowballing\n\n- **The In Progress tab now identifies the tier on its own**.\n\n### Release housekeeping\n\n- **GreasyFork's version history will show real release notes**.\n\n### The silent failure modes get their alarms, and two calculators become one\n\n- **The bundle-sharing rule is now executable**.\n\n### Thin markets stop lying in the rankings\n\n- **The liquidity cap the goal planner already obeyed now governs every profit surface**.\n\n### The panels compare, lint, and remember\n\n- **The profit panel quotes the sim on the zone you're in**.\n\n### A ledger for flips, luck for foragers, and spreadsheets for everyone\n\n- **A trading ledger measures what flipping actually earns**.\n\n### The trial record remembers, the sim gets audited, and silence gets alarms\n\n- **Past weeks return to the trials panel and guild report**.\n\n### Live combat learns seven more things, each its own switch\n\n- **Enemy tiles answer the questions a fight actually asks**.\n\n### The portrait meters stop jostling the party\n\n- **Every player's DPS meter is two lines, always**.\n\n### Every player name opens a profile, and the dungeon knows its worth\n\n- **Player names are clickable wherever a dungeon shows them**.\n\n### A canceled battle start is not a run\n\n- **The dungeon tracker no longer records phantom runs from failed ready-checks**.\n\n### Hybrid attribution: thorns and DoT damage go to their owners\n\n- **The damage attribution learned what the party recording proved**.\n\n### Party lint ignores tools, and ability books answer three more questions\n\n- **Tool slots are exempt from the skilling-gear warning**.\n\n### The sim summary reads in the units a player plans in\n\n- **XP/day → XP/hr**.\n\n### Entry keys are consumables, and chests point at their keys\n\n- **The consumables tracker now carries the dungeon's entry key**.\n\n### Ability book counts respect the experience already earned\n\n- **The Upgrade tab priced every ability level-up from the floor of its current level**.\n\n### An attribution referee, ahead of any verdict on the presence method\n\n- **`npm run compare <recording.json>` replays a combat recording through two attribution methods side by side**.\n\n### Departed members stop haunting the roster\n\n- **A member who left the guild no longer sits in \"Gone quiet\" forever**.\n\n### The wire speaks: five trial message types the game was sending all along\n\n- **`new_guild_battle` fires at every tier and states everything**.\n\n### Mixed-bonus cards contribute their true base to the token sum\n\n- A card banked across a Builder's Hall upgrade divides cleanly by neither bonus, so its base points now come from the exact ladder (1,100 at T10) instead of the slightly-low division (1,091)…\n\n### The notice board is not a trial, and the ladders are theorems now\n\n- **A guild notice board can no longer become a trial tile**.\n\n### The watched fight knows its own name, and a wipe is an outcome\n\n- **The spectated stream attaches to the encounter being watched, and only that one**.\n\n### Spectating measures: the trial fight is on the wire after all\n\n- **Per-player trial measurement is real**.\n\n### The cycler clicks the people fighting beside you\n\n- **A fight on screen outranks the roster walk**.\n\n### Beacons cover the way out before they chase dark corners\n\n- **A set beacon count is planned against the same objective the automatic one uses**.\n\n### The arrow points at the count, completed means completed, and estimates say so\n\n- **\"On pace for 4 tiers → T5\" is impossible output now**.\n\n### Neither ladder has a wall, and a click is not a capture\n\n- **The profile cycler counts replies, not clicks**.\n\n### The badge means banked, and the skilling ladder is a rule now\n\n- **Mid-trial, the stated tier badge counts tiers banked and the fight is on badge + 1**.\n\n### The recorder survives its first real trial day\n\n- **Auto-record actually arms now**.\n\n### Release plumbing\n\n- **Guild features moved from the ui library to the combat library**.\n\n### A trial report your guild can actually read\n\n- **Copy guild report**.\n\n### A warning before the task board fills, and trials that predict themselves\n\n- **Task-slot alert**.\n\n### Path shows the way to the plan, not just the plan\n\n- **The rooms between you and the first planned room are lit too**.\n\n### Path stops planning a floor that has already moved on\n\n- **Rooms you have already shrouded are no longer marked \"Shroud\" again**.\n\n### Trial cards say what their phase can know, and stay off the notice board\n\n- **No more trial card built out of the Overview tab**.\n\n### Poisoned trial records heal themselves, and trials announce their own schedule\n\n- **The stale record from before the switch fix cleans itself up**.\n\n### Trials stop following you to your next guild, and the tab stops yanking you around\n\n- **A character switch drops everything**.\n\n### The bulk reroller now closes the door behind itself, and takes the free reroll on faith\n\n- **Protected tasks get their green outline back after a bulk reroll**.\n\n### The trial recorder grew hands, eyes, and a scoreboard\n\n- **Auto-record**.\n\n### The overlay's ⚙ popover no longer traps you, and keeps up with what it shows\n\n- **It can never cover the panel's header again**.\n\n### Trials round three: exact digits, honest captions, and a block that finally sits still\n\n- **Payout figures in full digits**.\n\n### The trial payout math is now exact, verified against four real payouts\n\n- **Combat trial cards finally produce a rate**.\n\n### The trial export was read, and it proved six defects — all fixed\n\n- **Per-player DPS now arms during real trial fights**.\n\n### Trials know who hit what, and why the payout was blank\n\n- **Per-player DPS on combat trials**.\n\n### Trials read the game as it actually is\n\n- **The real structure, from live screenshots**.\n\n### The trials feature existed on a guess\n\n- **Why nothing trials-related ever rendered**.\n\n### The lab sims the run you choose\n\n- **Token buffs are settable from Configure**.\n\n### Rates bounded by the market and your wallet\n\n- **A rate is capped by how fast its output actually sells**.\n\n### The reroll chooser is finally read as it is\n\n- **The MooPass reroll failure's real cause**.\n\n### The goal planner shares, navigates, and answers instantly\n\n- **Goals share one resource ledger**.\n\n### The sims finish their own homework\n\n- **Skilling gear rows expand like combat rows**.\n\n### Nine small debts paid\n\n- **The lab supplies planner believes the server**.\n\n### The goal planner stops promising billions\n\n- **A rate is only a rate while its inputs last**.\n\n### The lab sims what can actually win\n\n- **Skilling rooms leave the lab combat list**.\n\n### Task cards catch up after a reroll\n\n- **The stale picture and the stuck free reroll were one bug**.\n\n### eWatch learns houses too\n\n- **House room levels are savings goals**.\n\n### Ability swaps follow the guide\n\n- **Swap candidates come from the community build guide now**.\n\n### The lab reads the same buffs as the sim\n\n- **The live clear-rate readout was scoring against buff levels frozen at page load**.\n\n### The budget planner spends the money\n\n- **The empty 500M plan is fixed**.\n\n### Three more reasons to look up\n\n- **Labyrinth run finished**.\n\n### The listing says who built what\n\n- **`docs/GREASYFORK.md`**.\n\n### The session starts when combat does\n\n- **The Combat Level session no longer waits for its panel**.\n\n### Tokens per hour, finally measured\n\n- **Task completions are now recorded**.\n\n### Zones compared on even footing\n\n- **\"Max-tier Food\" option for all-zones sims**.\n\n### The skilling sim sims your skill\n\n- **Tool candidates are scoped to the skill being simmed**.\n\n### The buff tells you before it leaves\n\n- **Community buff expiry alerts**.\n\n### The sim comes home\n\n- **The community buff cap is 20 after all**.\n\n### The combat sim answers back\n\n- **Community upgrades work**.\n\n### The lab sim grows up\n\n- **Task Fight is gone from the lab sim**.\n\n### eWatch learns abilities\n\n- **Ability levels are savings goals now**.\n\n### The overlay fits the screen it's on\n\n- **A floating launcher on mobile**.\n\n### Panels behave on a phone\n\n- **Floating panels stay on screen**.\n\n### Sync works from a phone, and can't eat itself\n\n- **`@connect gist.githubusercontent.com` added to the userscript header**.\n\n### The manifest error says what it means\n\n- **\"Manifest is corrupt\" now tells the truth**.\n\n### Everything fits now\n\n- **The sync payload is gzipped before upload**.\n\n### The gist can keep a secret\n\n- **Optional sync passphrase**.\n\n### Console-dump fixes\n\n- **The Shrine Upgrade Planner stays in its box**.\n\n### The token knows its own price\n\n- **Guild token value now uses real exchange rates**.\n\n### The goal planner learns two more trades\n\n- **Alchemy ranks without a DOM**.\n\n### Housekeeping\n\n- **The WebSocket prototype wrapper is gone**.\n\n### The books balance: first swings were invisible\n\n- **The Sim Accuracy undercount is fixed**.\n\n### Iron Cow re-forces instantly, and one more clickable name\n\n- **Applying a preset (or All Off / Restore) while Iron Cow Mode is on now re-forces the locked settings immediately**.\n\n### Settings you can actually get to\n\n- **Picking a setting in Ctrl+K now opens settings itself**.\n\n### The recorder answers back\n\n- **Record for a target**.\n\n### The black box was ours\n\n- **The black band at the foot of action panels is gone**.\n\n### The recorder grows up\n\n- **Recordings snapshot your loadout at record time**.\n\n### Idle members are clickable\n\n- **Names in the guild Overview's \"Idle members\" list fill `/profile Name` on click**.\n\n### Mid-run restock honesty, and the tooltip that would not die\n\n- **The lab planner stops suggesting purchases that cannot help**.\n\n### Five new tiles and layouts that follow what you're doing\n\n- **New overlay tiles**.\n\n### Companion privacy, a Record button where it belongs, and mooket hygiene\n\n- **Toolasha no longer names the companion script anywhere**.\n\n### Build Score opens something now\n\n- **New Build Score breakdown panel**.\n\n### The watch card stops overcharging, and laddering becomes a mode\n\n- **Real pricing bug fixed**.\n\n### Iron Bell Farming\n\n- **\"Iron Cow Farm\" is now \"Iron Bell Farming\"**.\n\n### The overlay earns its screen space\n\n- **Empty tiles stop shouting**.\n\n### Overlay tiles open their panels\n\n- **The Net Worth, Coins, Market Listings, and Inventory Value tiles now open the networth history chart**.\n\n### Iron Cow Farm\n\n- **New \"Iron Cow Farm\" panel**.\n\n### Multi-target lab analysis gets the big swaps\n\n- **Combined forced-armor swaps now appear under All targets / Chosen targets**.\n\n### Dungeon keys cost whichever way is cheaper\n\n- **Dungeon profit charges each entry/chest key at the cheaper of buying or crafting it**.\n\n### Building levels cap at 20, trial tiers at 21 — and never each other\n\n- **Guild building bonuses clamp at the real level-20 cap**.\n\n### The task board stops fighting the game\n\n- **The zone-index badge stops churning**.\n\n### The lab planner reads the right bag\n\n- **During a run, supply counts come from the run itself**.\n\n### Dungeon run history stops lying\n\n- **A run-start key count can no longer end a fresh run at wave 0**.\n\n### Backups say whose they are, and adoption asks first\n\n- **`Toolasha.debug.claimLegacyData(charId)`**.\n\n### Labyrinth: split apart, supply-aware, and honest mid-fight\n\n- **The 5,300-line labyrinth module splits into six**.\n\n### Adoption accident: fixed, and repairable";
 
     var forkOverview = "This is the **Millennium44 fork of Toolasha**. It folds MWI Combat Suite into Toolasha — live DPS tracking, loot and drop tracking, drop-luck analysis, and a full labyrinth simulator — so one script gives you both halves of the game instead of two userscripts.\n\n### Combat & simulators\n\n- Live DPS, hit/crit rate, damage-taken and net-sustain read off your own fights.\n- Loot and drop tracking with drop-luck analysis that judges combat, gathering and production.\n- A combat recorder: record real fights, replay them against the simulator, get a verdict with honest noise bands.\n- A combat simulator whose upgrade picks are costed and ranked on real market and credit costs.\n- Per-character combat stats, sim state and histories — no character reads another's books.\n\n### Market & profit\n\n- One market price API prices almost everything: upgrades, net worth, drop income, guild tokens, every action.\n- Prices capped by the volume the market has actually absorbed, so thin markets stop inflating rankings.\n- Profit lines on the action bar, pinned pages, alchemy rankings and the combat profit panel.\n- Market-history viewer with a live undercut alert that re-checks against a refreshed snapshot.\n- An upgrade advisor that costs and ranks gear and ability candidates against live prices.\n\n### Labyrinth\n\n- A labyrinth simulator with auto-pathing and auto-beaconing planned from the actual run.\n- Multi-target analysis with combined armour swaps and supply-aware torch/shroud/beacon planning.\n- Skilling-sim candidates scoped to the skill you are simming, with the skip level set for you.\n- Upgrade, All-Fights and Skilling analyses, each exportable to CSV.\n\n### Guild\n\n- Live trial measurement: per-player DPS and damage/healing attribution from the fight you watch.\n- Tier read straight off the boss bar, with pace, ETA and payout maths.\n- A trial report your guild can actually read, with honest coverage caveats.\n\n### Quality of life\n\n- A curated overlay of tiles with bundled presets, activity auto-switching, and tiles that open their panels.\n- A Ctrl+K (Cmd+K) command palette over every panel, overlay row, saved layout and setting.\n- Mobile-friendly panels: viewport clamping, reachable close buttons, finger-sized targets, a floating launcher.\n- Notifications for empty queues, community-buff expiry, and finished labyrinth runs.\n- Task tools: measured tokens/hour, net task income, and reroll handling that takes the free MooPass reroll.\n- Equipment Savings (\"eWatch\"): savings goals for gear and ability levels, fed from the simulators.\n- A goal planner that turns \"get me X gold / level N\" into a ranked plan from your real measured rates.\n\n### Data & sync\n\n- Cross-device sync of your whole database through one private GitHub gist you own.\n- Gzip-compressed, optionally AES-256 encrypted, conflict-aware, guarded against overwriting a year of data.\n- Chunked per-period history that survives months, with honest quota handling and per-character backups.\n- Hundreds of bug fixes and a test suite grown from ~2,300 to over 8,500 tests.\n";
 
@@ -64953,7 +64886,7 @@ ${starCSS}
                 }
                 pinIcon.style.display = 'block';
                 const compositeKey = `/actions/alchemy/${alchemyType}|${itemHrid}`;
-                const isPinned = actionPanelSort.isPinned(compositeKey);
+                const isPinned = (bundleBridge_js.actionPanelSort() || actionPanelSort).isPinned(compositeKey);
                 if (isPinned) {
                     pinIcon.style.filter = 'grayscale(0%) brightness(1.2) drop-shadow(0 0 3px rgba(255, 100, 0, 0.8))';
                     pinIcon.style.transform = 'scale(1.1)';
@@ -64970,7 +64903,7 @@ ${starCSS}
                 const itemHrid = this._getSelectedItemHrid();
                 if (alchemyType && itemHrid) {
                     const compositeKey = `/actions/alchemy/${alchemyType}|${itemHrid}`;
-                    if (!actionPanelSort.isPinned(compositeKey)) {
+                    if (!(bundleBridge_js.actionPanelSort() || actionPanelSort).isPinned(compositeKey)) {
                         pinIcon.style.filter = 'grayscale(50%) brightness(1)';
                     }
                 }
@@ -64981,7 +64914,7 @@ ${starCSS}
                 const itemHrid = this._getSelectedItemHrid();
                 if (!alchemyType || !itemHrid) return;
                 const compositeKey = `/actions/alchemy/${alchemyType}|${itemHrid}`;
-                await actionPanelSort.togglePin(compositeKey);
+                await (bundleBridge_js.actionPanelSort() || actionPanelSort).togglePin(compositeKey);
                 updatePinIcon();
             });
 
@@ -77276,4 +77209,4 @@ ${starCSS}
 
     console.log('[Toolasha] UI library loaded');
 
-})(Toolasha.Core.config, Toolasha.Core.dataManager, Toolasha.Core.domObserver, Toolasha.Utils.formatters, Toolasha.Utils.timerRegistry, Toolasha.Utils.domObserverHelpers, Toolasha.Utils.dom, Toolasha.Core.storage, Toolasha.Utils.panelZIndex, Toolasha.Utils.floatingPanel, Toolasha.Utils.panelGeometry, Toolasha.Utils.characterKey, Toolasha.Utils.overlayRows, Toolasha.Utils.opanelConfig, Toolasha.Utils.choiceDialog, Toolasha.Utils.mobile, Toolasha.Utils.overlayLayout, Toolasha.Core, Toolasha.Utils.toast, Toolasha.Utils.bundleBridge, Toolasha.Utils.houseCostCalculator, Toolasha.Utils.overlayFormat, Toolasha.Utils.marketplaceTabs, Toolasha.Utils.marketData, Toolasha.Utils.roomSkills, Toolasha.Core.marketAPI, Toolasha.Utils.numberParser, Toolasha.Utils.pricingHelper, Toolasha.Core.webSocketHook, Toolasha.Utils.simplePanel, Toolasha.Utils.damageAttribution, Toolasha.Combat.combatDPS, Toolasha.Combat.combatStatsDataCollector, Toolasha.Combat.combatStatsCalculator, Toolasha.Combat.damageTracker, Toolasha.Combat.damageTakenTracker, Toolasha.Utils.battlePanelMonsters, Toolasha.Utils.spawnExpectation, Toolasha.Utils.combatDropModel, Toolasha.Utils.allZonesSnapshot, Toolasha.Utils.partyLint, Toolasha.Utils.csvExport, Toolasha.Utils.itemNavigation, Toolasha.Utils.efficiency, Toolasha.Utils.guildCreditPricing, Toolasha.Utils.adoptionConsent, Toolasha.Utils.gameText, Toolasha.Core.performanceMonitor, Toolasha.Utils.backgroundWork, Toolasha.Utils.profileCommand, Toolasha.Utils.selectors, Toolasha.Utils.progressEta, Toolasha.Utils.reactInput, Toolasha.Utils.actionPanelHelper, Toolasha.Market.expectedValueCalculator, Toolasha.Market.gatheringProfit, Toolasha.Market.productionProfit, Toolasha.Utils.profitHelpers, Toolasha.Utils.actionCalculator, Toolasha.Utils.equipmentParser, Toolasha.Utils.profitConstants, Toolasha.Sim.combatSimRunner, Toolasha.Sim.combatSimAdapter, Toolasha.Utils.assetManifest, Toolasha.Utils.gameLookups, Toolasha.Utils.chunkedHistory, Toolasha.Utils.skillProgress, Toolasha.Utils.skillHistory, Toolasha.Utils.deferredLoad, Toolasha.Utils.combatLevel, Toolasha.Utils.experienceParser, Toolasha.Utils.dropLuck, Toolasha.Utils.marketplaceAutofill, Toolasha.Utils.cleanupRegistry, Toolasha.Core.settingsStorage, Toolasha.Utils.scrollBuffValues, Toolasha.Utils.enhancementConfig, Toolasha.Utils.chestTally, Toolasha.Utils.chestImport, Toolasha.Utils.tokenValuation, Toolasha.Utils.materialCalculator, Toolasha.Utils.alchemyFees, Toolasha.Utils.enhancementCalculator, Toolasha.Utils.teaParser, Toolasha.Sim.combatSimUI, Toolasha.Utils.tableColumns, Toolasha.Utils.consumableTarget, Toolasha.Utils.consumableForecast, Toolasha.Utils.keyLedger, Toolasha.Utils.orderBook, Toolasha.Utils.shoppingList, Toolasha.Market.alchemyProfitCalculator, Toolasha.Utils.buffParser);
+})(Toolasha.Core.config, Toolasha.Core.dataManager, Toolasha.Core.domObserver, Toolasha.Utils.formatters, Toolasha.Utils.timerRegistry, Toolasha.Utils.domObserverHelpers, Toolasha.Utils.dom, Toolasha.Core.storage, Toolasha.Utils.panelZIndex, Toolasha.Utils.floatingPanel, Toolasha.Utils.panelGeometry, Toolasha.Utils.characterKey, Toolasha.Utils.overlayRows, Toolasha.Utils.opanelConfig, Toolasha.Utils.choiceDialog, Toolasha.Utils.mobile, Toolasha.Utils.overlayLayout, Toolasha.Core, Toolasha.Utils.toast, Toolasha.Utils.bundleBridge, Toolasha.Utils.houseCostCalculator, Toolasha.Utils.overlayFormat, Toolasha.Utils.marketplaceTabs, Toolasha.Utils.marketData, Toolasha.Utils.roomSkills, Toolasha.Core.marketAPI, Toolasha.Utils.numberParser, Toolasha.Utils.pricingHelper, Toolasha.Core.webSocketHook, Toolasha.Utils.simplePanel, Toolasha.Utils.damageAttribution, Toolasha.Combat.combatDPS, Toolasha.Combat.combatStatsDataCollector, Toolasha.Combat.combatStatsCalculator, Toolasha.Combat.damageTracker, Toolasha.Combat.damageTakenTracker, Toolasha.Utils.battlePanelMonsters, Toolasha.Utils.spawnExpectation, Toolasha.Utils.combatDropModel, Toolasha.Utils.allZonesSnapshot, Toolasha.Utils.partyLint, Toolasha.Utils.csvExport, Toolasha.Utils.itemNavigation, Toolasha.Utils.efficiency, Toolasha.Utils.guildCreditPricing, Toolasha.Utils.adoptionConsent, Toolasha.Utils.gameText, Toolasha.Core.performanceMonitor, Toolasha.Utils.backgroundWork, Toolasha.Utils.profileCommand, Toolasha.Utils.selectors, Toolasha.Utils.progressEta, Toolasha.Utils.reactInput, Toolasha.Utils.actionPanelHelper, Toolasha.Market.expectedValueCalculator, Toolasha.Market.gatheringProfit, Toolasha.Market.productionProfit, Toolasha.Utils.profitHelpers, Toolasha.Utils.actionCalculator, Toolasha.Utils.equipmentParser, Toolasha.Utils.profitConstants, Toolasha.Sim.combatSimRunner, Toolasha.Sim.combatSimAdapter, Toolasha.Utils.assetManifest, Toolasha.Utils.gameLookups, Toolasha.Utils.chunkedHistory, Toolasha.Utils.skillProgress, Toolasha.Utils.skillHistory, Toolasha.Utils.deferredLoad, Toolasha.Utils.combatLevel, Toolasha.Utils.experienceParser, Toolasha.Utils.dropLuck, Toolasha.Utils.marketplaceAutofill, Toolasha.Utils.cleanupRegistry, Toolasha.Core.settingsStorage, Toolasha.Utils.scrollBuffValues, Toolasha.Utils.enhancementConfig, Toolasha.Utils.chestTally, Toolasha.Utils.chestImport, Toolasha.Utils.tokenValuation, Toolasha.Utils.customPriceOverrides, Toolasha.Utils.materialCalculator, Toolasha.Utils.alchemyFees, Toolasha.Utils.enhancementCalculator, Toolasha.Utils.teaParser, Toolasha.Sim.combatSimUI, Toolasha.Utils.tableColumns, Toolasha.Utils.consumableTarget, Toolasha.Utils.consumableForecast, Toolasha.Utils.keyLedger, Toolasha.Utils.orderBook, Toolasha.Utils.shoppingList, Toolasha.Market.alchemyProfitCalculator, Toolasha.Utils.buffParser);

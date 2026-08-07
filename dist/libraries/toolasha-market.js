@@ -1,7 +1,7 @@
 /**
  * Toolasha Market Library
  * Market, inventory, and economy features
- * Version: 2.92.0
+ * Version: 2.92.1
  * License: CC-BY-NC-SA-4.0
  */
 
@@ -17965,7 +17965,7 @@
      */
     function loadoutHoldKeys() {
         const keys = [];
-        for (const snapshot of loadoutSnapshot.getAllSnapshots?.() || []) {
+        for (const snapshot of (bundleBridge_js.loadoutSnapshot() || loadoutSnapshot).getAllSnapshots?.() || []) {
             for (const piece of snapshot.equipment || []) {
                 if (piece?.itemHrid) keys.push(holdKey(piece.itemHrid, piece.enhancementLevel));
             }
@@ -25396,7 +25396,7 @@
         const loadoutExcludedHridToName = new Map();
         const loadoutExclusions = getExclusions().filter((e) => e.type === 'loadout');
         if (loadoutExclusions.length > 0) {
-            const allSnapshots = loadoutSnapshot.getAllSnapshots();
+            const allSnapshots = (bundleBridge_js.loadoutSnapshot() || loadoutSnapshot).getAllSnapshots();
             for (const exc of loadoutExclusions) {
                 const snapshot = allSnapshots.find((s) => s.name === exc.value);
                 if (snapshot) {
@@ -28047,7 +28047,7 @@
             }
 
             // Loadout snapshots — only show if not already excluded
-            for (const snapshot of loadoutSnapshot.getAllSnapshots()) {
+            for (const snapshot of (bundleBridge_js.loadoutSnapshot() || loadoutSnapshot).getAllSnapshots()) {
                 if (!snapshot.name || isExcluded('loadout', snapshot.name)) continue;
                 const amount = snapshot.equipment.reduce((sum, eq) => {
                     const price = marketAPI.getPrice(eq.itemHrid);
@@ -28320,7 +28320,9 @@
             }
 
             if (entry.type === 'loadout') {
-                const snapshot = loadoutSnapshot.getAllSnapshots().find((s) => s.name === entry.value);
+                const snapshot = (bundleBridge_js.loadoutSnapshot() || loadoutSnapshot)
+                    .getAllSnapshots()
+                    .find((s) => s.name === entry.value);
                 if (snapshot) {
                     return snapshot.equipment.map((eq) => {
                         const details = dataManager.getItemDetails(eq.itemHrid);

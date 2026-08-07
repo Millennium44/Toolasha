@@ -1,7 +1,7 @@
 /**
  * Toolasha Utils Library
  * All utility modules
- * Version: 2.92.0
+ * Version: 2.92.1
  * License: CC-BY-NC-SA-4.0
  */
 
@@ -687,6 +687,16 @@
         return toolashaRoot$1()?.Market?.marketOrderTotals || null;
     }
 
+    /**
+     * The expected-value calculator for openable containers — the one copy that ran
+     * initialize() (its cache is empty and calculateExpectedValue() returns null
+     * until then, which only the market bundle's copy does).
+     * @returns {Object|null} The calculator, or null when the market bundle is absent
+     */
+    function expectedValueCalculator$1() {
+        return toolashaRoot$1()?.Market?.expectedValueCalculator || null;
+    }
+
     // ---------------------------------------------------------------------------
     // Actions bundle singletons
     // ---------------------------------------------------------------------------
@@ -697,6 +707,16 @@
      */
     function marketLiquidity() {
         return toolashaRoot$1()?.Actions?.marketLiquidity || null;
+    }
+
+    /**
+     * The action-panel sort/pin singleton — the one copy the actions bundle fills
+     * with per-action cachedStats and the persisted pinned-action set. Other
+     * bundles' copies stay empty, and writing to them can clobber the shared store.
+     * @returns {Object|null} The module, or null when the actions bundle is absent
+     */
+    function actionPanelSort() {
+        return toolashaRoot$1()?.Actions?.actionPanelSort || null;
     }
 
     /**
@@ -742,6 +762,59 @@
      */
     function combatRecorder() {
         return toolashaRoot$1()?.Combat?.combatRecorder || null;
+    }
+
+    /**
+     * The scroll simulator (per-loadout scroll/buff sets), loaded from storage by
+     * the combat bundle's initialize(); other bundles' copies stay empty.
+     * @returns {Object|null} The simulator, or null when the combat bundle is absent
+     */
+    function scrollSimulator() {
+        return toolashaRoot$1()?.Combat?.scrollSimulator || null;
+    }
+
+    /**
+     * The labyrinth clear-rate singleton — its live-run roomData and recommendations
+     * are fed by the websocket only in the combat bundle.
+     * @returns {Object|null} The module, or null when the combat bundle is absent
+     */
+    function labyrinthClearRate() {
+        return toolashaRoot$1()?.Combat?.labyrinthClearRate || null;
+    }
+
+    /**
+     * The guild-token-exchange capture module (Guild Shop rate), whose `captured`
+     * map is filled and hydrated only in the combat bundle.
+     * @returns {Object|null} The module namespace, or null when combat is absent
+     */
+    function guildTokenExchangeCapture() {
+        return toolashaRoot$1()?.Combat?.guildTokenExchangeCapture || null;
+    }
+
+    /**
+     * The guild-trials singleton (guildName + record), fed by the websocket only in
+     * the combat bundle.
+     * @returns {Object|null} The store, or null when the combat bundle is absent
+     */
+    function guildTrialsStore() {
+        return toolashaRoot$1()?.Combat?.guildTrialsStore || null;
+    }
+
+    /**
+     * The guild XP tracker (own guild name + member history), combat-owned.
+     * @returns {Object|null} The tracker, or null when the combat bundle is absent
+     */
+    function guildXpTracker() {
+        return toolashaRoot$1()?.Combat?.guildXPTracker || null;
+    }
+
+    /**
+     * The guild-trial export builder module (buildTrialExport/downloadTrialExport);
+     * its data-gathering reads the trial singletons live only in the combat bundle.
+     * @returns {Object|null} The module namespace, or null when combat is absent
+     */
+    function guildTrialExport() {
+        return toolashaRoot$1()?.Combat?.guildTrialExport || null;
     }
 
     /**
@@ -897,6 +970,7 @@
 
     var bundleBridge = /*#__PURE__*/Object.freeze({
         __proto__: null,
+        actionPanelSort: actionPanelSort,
         combatLevelPanel: combatLevelPanel,
         combatProfitView: combatProfitView,
         combatRecorder: combatRecorder,
@@ -910,10 +984,16 @@
         dpsPanel: dpsPanel,
         enhancementCalculator: enhancementCalculator$1,
         enhancementConfig: enhancementConfig$1,
+        expectedValueCalculator: expectedValueCalculator$1,
         goalPlanner: goalPlanner,
+        guildTokenExchangeCapture: guildTokenExchangeCapture,
+        guildTrialExport: guildTrialExport,
         guildTrialScoreboard: guildTrialScoreboard,
+        guildTrialsStore: guildTrialsStore,
+        guildXpTracker: guildXpTracker,
         ironCowFarmPanel: ironCowFarmPanel,
         labSimUI: labSimUI,
+        labyrinthClearRate: labyrinthClearRate,
         loadoutSnapshot: loadoutSnapshot$1,
         marketLiquidity: marketLiquidity,
         marketOrderTotals: marketOrderTotals,
@@ -925,6 +1005,7 @@
         pformancePanel: pformancePanel,
         profitPanel: profitPanel,
         queueLengthEstimator: queueLengthEstimator,
+        scrollSimulator: scrollSimulator,
         settingsUI: settingsUI,
         toolashaRoot: toolashaRoot$1,
         treasureTracker: treasureTracker,
@@ -2954,6 +3035,14 @@
     }
 
     /**
+     * Get all custom price overrides (async version, guaranteed loaded)
+     * @returns {Promise<Object>} The overrides object
+     */
+    async function getCustomPriceOverridesAsync() {
+        return loadOverrides();
+    }
+
+    /**
      * Get a custom price for a specific item, enhancement level, and transaction side.
      * @param {string} itemHrid - Item HRID
      * @param {number} enhancementLevel - Enhancement level (default 0)
@@ -2973,6 +3062,66 @@
         }
         return price;
     }
+
+    /**
+     * Set a custom price override for an item
+     * @param {string} itemHrid - Item HRID
+     * @param {number} enhancementLevel - Enhancement level
+     * @param {number|null} buy - Buy price override (null to clear)
+     * @param {number|null} sell - Sell price override (null to clear)
+     */
+    async function setCustomPriceOverride(itemHrid, enhancementLevel, buy, sell) {
+        const overrides = await loadOverrides();
+        const key = `${itemHrid}:${enhancementLevel}`;
+
+        const entry = {};
+        if (buy !== null && buy !== undefined && buy !== '') {
+            entry.buy = Number(buy);
+        }
+        if (sell !== null && sell !== undefined && sell !== '') {
+            entry.sell = Number(sell);
+        }
+
+        if (Object.keys(entry).length === 0) {
+            // Both empty — remove the override
+            delete overrides[key];
+        } else {
+            overrides[key] = entry;
+        }
+
+        overridesCache = overrides;
+        await storage.setJSON(STORAGE_KEY$3, overrides, 'settings', true);
+    }
+
+    /**
+     * Remove a custom price override
+     * @param {string} itemHrid - Item HRID
+     * @param {number} enhancementLevel - Enhancement level
+     */
+    async function removeCustomPriceOverride(itemHrid, enhancementLevel) {
+        const overrides = await loadOverrides();
+        const key = `${itemHrid}:${enhancementLevel}`;
+        delete overrides[key];
+        overridesCache = overrides;
+        await storage.setJSON(STORAGE_KEY$3, overrides, 'settings', true);
+    }
+
+    /**
+     * Initialize the module by loading overrides from storage
+     */
+    async function initCustomPriceOverrides() {
+        await loadOverrides();
+    }
+
+    var customPriceOverrides = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        getCustomPrice: getCustomPrice,
+        getCustomPriceOverrides: getCustomPriceOverrides,
+        getCustomPriceOverridesAsync: getCustomPriceOverridesAsync,
+        initCustomPriceOverrides: initCustomPriceOverrides,
+        removeCustomPriceOverride: removeCustomPriceOverride,
+        setCustomPriceOverride: setCustomPriceOverride
+    });
 
     /**
      * Market Data Utility
@@ -23502,6 +23651,7 @@ self.onmessage = function (e) {
         tokenValuation,
         pricingHelper,
         cleanupRegistry,
+        customPriceOverrides,
         houseCostCalculator,
         enhancementCalculator,
         overlayRows,

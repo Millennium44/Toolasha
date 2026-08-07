@@ -1,11 +1,11 @@
 /**
  * Toolasha Combat Simulator Library
  * The battle engine, shared by every feature that simulates a fight
- * Version: 2.92.0
+ * Version: 2.92.1
  * License: CC-BY-NC-SA-4.0
  */
 
-(function (config, domObserver, dataManager, marketAPI, tokenValuation_js, marketData_js, profitHelpers_js, evWorkerManager_js, storage, webSocketHook, timerRegistry_js, chunkedHistory_js, gameLookups_js, materialCalculator_js, abilityCostCalculator_js, formatters_js, overlayFormat_js, marketplaceTabs_js, simplePanel_js, overlayRows_js, roomSkills_js, bundleBridge_js, equipmentSavings_js, characterKey_js, panelZIndex_js, floatingPanel_js, panelGeometry_js, watchlist_js, dropSources_js, enhancementCalculator_js, enhancementConfig_js, profitConstants_js, teaParser_js, numberParser_js, dungeonKeys_js, domObserverHelpers_js, backgroundWork_js, marketplaceAutofill_js, allZonesSnapshot_js, liquidityCap_js, partyLint_js, progressEta_js, csvExport_js, dungeonLevelGap_js, mobile_js, equipmentParser_js, combatLevel_js, guildCreditPricing_js) {
+(function (config, domObserver, dataManager, marketAPI, tokenValuation_js, marketData_js, profitHelpers_js, evWorkerManager_js, bundleBridge_js, storage, webSocketHook, timerRegistry_js, chunkedHistory_js, gameLookups_js, materialCalculator_js, abilityCostCalculator_js, formatters_js, overlayFormat_js, marketplaceTabs_js, simplePanel_js, overlayRows_js, roomSkills_js, equipmentSavings_js, characterKey_js, panelZIndex_js, floatingPanel_js, panelGeometry_js, watchlist_js, dropSources_js, enhancementCalculator_js, enhancementConfig_js, profitConstants_js, teaParser_js, numberParser_js, dungeonKeys_js, domObserverHelpers_js, backgroundWork_js, marketplaceAutofill_js, allZonesSnapshot_js, liquidityCap_js, partyLint_js, progressEta_js, csvExport_js, dungeonLevelGap_js, mobile_js, equipmentParser_js, combatLevel_js, guildCreditPricing_js) {
     'use strict';
 
     /**
@@ -8478,9 +8478,8 @@
             if (total <= 0) continue;
             let unitValue = itemHrid === '/items/coin' ? 1 : getSellPrice(marketAPI.getPrice(itemHrid));
             if (unitValue === 0) {
-                const ev =
-                    expectedValueCalculator.getCachedValue(itemHrid) ||
-                    expectedValueCalculator.calculateSingleContainer(itemHrid);
+                const evc = bundleBridge_js.expectedValueCalculator() || expectedValueCalculator;
+                const ev = evc.getCachedValue(itemHrid) || evc.calculateSingleContainer(itemHrid);
                 if (ev !== null && ev > 0) unitValue = ev;
             }
             const perHour = (total / hours) * unitValue;
@@ -23874,7 +23873,7 @@
      * Everything read off the Guild Shop so far, newest reading per credit type.
      * @returns {Array<Object>} Captured exchanges
      */
-    function capturedTokenExchanges() {
+    function capturedTokenExchanges$1() {
         return Object.values(captured).map((entry) => ({ ...entry }));
     }
 
@@ -23941,6 +23940,15 @@
      * no colour at all, so it is valued against the most valuable credit on offer.
      */
 
+
+    /**
+     * The captured Guild Shop exchanges from the live combat-bundle copy, falling
+     * back to this bundle's own copy in the dev-standalone build.
+     * @returns {Array} Captured exchange readings
+     */
+    function capturedTokenExchanges() {
+        return bundleBridge_js.guildTokenExchangeCapture()?.capturedTokenExchanges?.() ?? capturedTokenExchanges$1();
+    }
 
     /** How an hrid spells a guild token */
     const TOKEN_PATTERN = /guild_token/;
@@ -29695,13 +29703,25 @@
             };
 
             const overrides = skillingOverrides(editorState, editorDTO, actionTypeHrid, crateHrids, gameData);
-            const metrics = labyrinthClearRate.getSkillingMetricsFromOverrides(skillId, actionTypeHrid, overrides);
+            const metrics = (bundleBridge_js.labyrinthClearRate() || labyrinthClearRate).getSkillingMetricsFromOverrides(
+                skillId,
+                actionTypeHrid,
+                overrides
+            );
 
             let result;
             if (skillHrid === '/skills/enhancing') {
-                result = labyrinthClearRate.computeEnhancingClearWithParams(metrics, baseLevel, skillRoomLevel);
+                result = (bundleBridge_js.labyrinthClearRate() || labyrinthClearRate).computeEnhancingClearWithParams(
+                    metrics,
+                    baseLevel,
+                    skillRoomLevel
+                );
             } else {
-                result = labyrinthClearRate.computeSkillingClearWithParams(metrics, baseLevel, skillRoomLevel);
+                result = (bundleBridge_js.labyrinthClearRate() || labyrinthClearRate).computeSkillingClearWithParams(
+                    metrics,
+                    baseLevel,
+                    skillRoomLevel
+                );
             }
             result.skillHrid = skillHrid;
             result.skillId = skillId;
@@ -29763,7 +29783,11 @@
             };
 
             const overrides = skillingOverrides(editorState, editorDTO, actionTypeHrid, crateHrids, gameData);
-            const metrics = labyrinthClearRate.getSkillingMetricsFromOverrides(skillId, actionTypeHrid, overrides);
+            const metrics = (bundleBridge_js.labyrinthClearRate() || labyrinthClearRate).getSkillingMetricsFromOverrides(
+                skillId,
+                actionTypeHrid,
+                overrides
+            );
 
             if (metricOverride) {
                 metrics[metricOverride.key] = (metrics[metricOverride.key] || 0) + metricOverride.delta;
@@ -29771,13 +29795,13 @@
 
             let clearChance;
             if (skillHrid === '/skills/enhancing') {
-                clearChance = labyrinthClearRate.computeEnhancingClearWithParams(
+                clearChance = (bundleBridge_js.labyrinthClearRate() || labyrinthClearRate).computeEnhancingClearWithParams(
                     metrics,
                     baseLevel,
                     skillRoomLevel
                 ).clearChance;
             } else {
-                clearChance = labyrinthClearRate.computeSkillingClearWithParams(
+                clearChance = (bundleBridge_js.labyrinthClearRate() || labyrinthClearRate).computeSkillingClearWithParams(
                     metrics,
                     baseLevel,
                     skillRoomLevel
@@ -29833,12 +29857,24 @@
             };
 
             const overrides = skillingOverrides(editorState, editorDTO, actionTypeHrid, crateHrids, gameData);
-            const metrics = labyrinthClearRate.getSkillingMetricsFromOverrides(skillId, actionTypeHrid, overrides);
+            const metrics = (bundleBridge_js.labyrinthClearRate() || labyrinthClearRate).getSkillingMetricsFromOverrides(
+                skillId,
+                actionTypeHrid,
+                overrides
+            );
             // Enhancing clears on its own model, and now reports XP from it
             const result =
                 skillHrid === '/skills/enhancing'
-                    ? labyrinthClearRate.computeEnhancingClearWithParams(metrics, baseLevel, skillRoomLevel)
-                    : labyrinthClearRate.computeSkillingClearWithParams(metrics, baseLevel, skillRoomLevel);
+                    ? (bundleBridge_js.labyrinthClearRate() || labyrinthClearRate).computeEnhancingClearWithParams(
+                          metrics,
+                          baseLevel,
+                          skillRoomLevel
+                      )
+                    : (bundleBridge_js.labyrinthClearRate() || labyrinthClearRate).computeSkillingClearWithParams(
+                          metrics,
+                          baseLevel,
+                          skillRoomLevel
+                      );
 
             total += result.xpPerRoom || 0;
             count++;
@@ -36461,9 +36497,8 @@
                         }
                         if (unitValue === 0) {
                             // Use cached EV or calculate directly (matches combat stats approach)
-                            const ev =
-                                expectedValueCalculator.getCachedValue(itemHrid) ||
-                                expectedValueCalculator.calculateSingleContainer(itemHrid);
+                            const evc = bundleBridge_js.expectedValueCalculator() || expectedValueCalculator;
+                            const ev = evc.getCachedValue(itemHrid) || evc.calculateSingleContainer(itemHrid);
                             if (ev !== null && ev > 0) unitValue = ev;
                         }
                         return { itemHrid, total, unitValue, totalGold: total * unitValue };
@@ -37292,7 +37327,9 @@
                     let unitValue = this._getSellPrice(price);
                     if (unitValue === 0 && itemHrid === '/items/coin') unitValue = 1;
                     if (unitValue === 0) {
-                        const evData = expectedValueCalculator.calculateExpectedValue(itemHrid);
+                        const evData = (bundleBridge_js.expectedValueCalculator() || expectedValueCalculator).calculateExpectedValue(
+                            itemHrid
+                        );
                         if (evData?.expectedValue > 0) unitValue = evData.expectedValue;
                     }
                     revenuePerHr += (total / hours) * unitValue;
@@ -42930,8 +42967,11 @@
          */
         _skipRoomLevel(monsterHrid) {
             if (!monsterHrid) return 0;
-            const recommended = labyrinthClearRate.getRecommendedCombatRoomLevel?.(monsterHrid) || 0;
-            return recommended || labyrinthClearRate.getCombatSkipRoomLevel(monsterHrid) || 0;
+            const recommended =
+                (bundleBridge_js.labyrinthClearRate() || labyrinthClearRate).getRecommendedCombatRoomLevel?.(monsterHrid) || 0;
+            return (
+                recommended || (bundleBridge_js.labyrinthClearRate() || labyrinthClearRate).getCombatSkipRoomLevel(monsterHrid) || 0
+            );
         }
 
         /**
@@ -43670,7 +43710,9 @@
                     // The search window follows the character rather than a fixed
                     // 20-300, so it covers every room the automation table could
                     // send them to and nothing else
-                    const referenceLevel = labyrinthClearRate.getPlayerEffectiveCombatLevel();
+                    const referenceLevel = (
+                        bundleBridge_js.labyrinthClearRate() || labyrinthClearRate
+                    ).getPlayerEffectiveCombatLevel();
                     const maxResult = await findMaxLabyrinthLevel(
                         {
                             gameData,
@@ -43900,7 +43942,9 @@
                 .replace(/_/g, ' ')
                 .replace(/\b\w/g, (c) => c.toUpperCase());
             const barPct = ((maxResult.threshold ?? 0) * 100).toFixed(0);
-            const effectiveCombatLevel = labyrinthClearRate.getPlayerEffectiveCombatLevel();
+            const effectiveCombatLevel = (
+                bundleBridge_js.labyrinthClearRate() || labyrinthClearRate
+            ).getPlayerEffectiveCombatLevel();
 
             let headline;
             let detail;
@@ -43913,7 +43957,7 @@
                     Lower the target win %, or bring stronger gear.
                 </div>`;
             } else {
-                const xpPerHour = labyrinthClearRate.estimateCombatXpPerHour(
+                const xpPerHour = (bundleBridge_js.labyrinthClearRate() || labyrinthClearRate).estimateCombatXpPerHour(
                     maxResult.maxLevel,
                     maxResult.avgFightSeconds,
                     maxResult.winRate
@@ -44342,7 +44386,9 @@
                             communityBuffs,
                             labyrinthCombatBuffs,
                             threshold: defaultThreshold(),
-                            referenceLevel: labyrinthClearRate.getPlayerEffectiveCombatLevel(),
+                            referenceLevel: (
+                                bundleBridge_js.labyrinthClearRate() || labyrinthClearRate
+                            ).getPlayerEffectiveCombatLevel(),
                         },
                         (progress) => {
                             // Stop cannot cut the search short — it has no abort of
@@ -44807,11 +44853,11 @@
             const fights = [];
             for (const monster of getLabyrinthMonsters()) {
                 const roomLevel = useSkipLevels
-                    ? labyrinthClearRate.getCombatSkipRoomLevel(monster.hrid)
-                    : labyrinthClearRate.getCombatRoomLevel(monster.hrid);
+                    ? (bundleBridge_js.labyrinthClearRate() || labyrinthClearRate).getCombatSkipRoomLevel(monster.hrid)
+                    : (bundleBridge_js.labyrinthClearRate() || labyrinthClearRate).getCombatRoomLevel(monster.hrid);
                 if (!roomLevel) continue; // no skip threshold configured for this monster
-                const loadoutId = labyrinthClearRate.getLabyrinthLoadoutId(monster.hrid);
-                const dto = labyrinthClearRate.buildLabyrinthPlayerDTO(loadoutId);
+                const loadoutId = (bundleBridge_js.labyrinthClearRate() || labyrinthClearRate).getLabyrinthLoadoutId(monster.hrid);
+                const dto = (bundleBridge_js.labyrinthClearRate() || labyrinthClearRate).buildLabyrinthPlayerDTO(loadoutId);
                 if (!dto) continue;
                 const loadoutName =
                     loadoutSnapshot.snapshots[loadoutId]?.name || (loadoutId ? `Loadout #${loadoutId}` : 'Current gear');
@@ -46143,7 +46189,7 @@
             ];
             const levels = {};
             for (const skillHrid of skillHrids) {
-                levels[skillHrid] = labyrinthClearRate.getTargetRoomLevel(skillHrid);
+                levels[skillHrid] = (bundleBridge_js.labyrinthClearRate() || labyrinthClearRate).getTargetRoomLevel(skillHrid);
             }
             return levels;
         }
@@ -47315,4 +47361,4 @@
 
     console.log('[Toolasha] Sim library loaded');
 
-})(Toolasha.Core.config, Toolasha.Core.domObserver, Toolasha.Core.dataManager, Toolasha.Core.marketAPI, Toolasha.Utils.tokenValuation, Toolasha.Utils.marketData, Toolasha.Utils.profitHelpers, Toolasha.Utils.evWorkerManager, Toolasha.Core.storage, Toolasha.Core.webSocketHook, Toolasha.Utils.timerRegistry, Toolasha.Utils.chunkedHistory, Toolasha.Utils.gameLookups, Toolasha.Utils.materialCalculator, Toolasha.Utils.abilityCalc, Toolasha.Utils.formatters, Toolasha.Utils.overlayFormat, Toolasha.Utils.marketplaceTabs, Toolasha.Utils.simplePanel, Toolasha.Utils.overlayRows, Toolasha.Utils.roomSkills, Toolasha.Utils.bundleBridge, Toolasha.Utils.equipmentSavings, Toolasha.Utils.characterKey, Toolasha.Utils.panelZIndex, Toolasha.Utils.floatingPanel, Toolasha.Utils.panelGeometry, Toolasha.Utils.watchlist, Toolasha.Utils.dropSources, Toolasha.Utils.enhancementCalculator, Toolasha.Utils.enhancementConfig, Toolasha.Utils.profitConstants, Toolasha.Utils.teaParser, Toolasha.Utils.numberParser, Toolasha.Utils.dungeonKeys, Toolasha.Utils.domObserverHelpers, Toolasha.Utils.backgroundWork, Toolasha.Utils.marketplaceAutofill, Toolasha.Utils.allZonesSnapshot, Toolasha.Utils.liquidityCap, Toolasha.Utils.partyLint, Toolasha.Utils.progressEta, Toolasha.Utils.csvExport, Toolasha.Utils.dungeonLevelGap, Toolasha.Utils.mobile, Toolasha.Utils.equipmentParser, Toolasha.Utils.combatLevel, Toolasha.Utils.guildCreditPricing);
+})(Toolasha.Core.config, Toolasha.Core.domObserver, Toolasha.Core.dataManager, Toolasha.Core.marketAPI, Toolasha.Utils.tokenValuation, Toolasha.Utils.marketData, Toolasha.Utils.profitHelpers, Toolasha.Utils.evWorkerManager, Toolasha.Utils.bundleBridge, Toolasha.Core.storage, Toolasha.Core.webSocketHook, Toolasha.Utils.timerRegistry, Toolasha.Utils.chunkedHistory, Toolasha.Utils.gameLookups, Toolasha.Utils.materialCalculator, Toolasha.Utils.abilityCalc, Toolasha.Utils.formatters, Toolasha.Utils.overlayFormat, Toolasha.Utils.marketplaceTabs, Toolasha.Utils.simplePanel, Toolasha.Utils.overlayRows, Toolasha.Utils.roomSkills, Toolasha.Utils.equipmentSavings, Toolasha.Utils.characterKey, Toolasha.Utils.panelZIndex, Toolasha.Utils.floatingPanel, Toolasha.Utils.panelGeometry, Toolasha.Utils.watchlist, Toolasha.Utils.dropSources, Toolasha.Utils.enhancementCalculator, Toolasha.Utils.enhancementConfig, Toolasha.Utils.profitConstants, Toolasha.Utils.teaParser, Toolasha.Utils.numberParser, Toolasha.Utils.dungeonKeys, Toolasha.Utils.domObserverHelpers, Toolasha.Utils.backgroundWork, Toolasha.Utils.marketplaceAutofill, Toolasha.Utils.allZonesSnapshot, Toolasha.Utils.liquidityCap, Toolasha.Utils.partyLint, Toolasha.Utils.progressEta, Toolasha.Utils.csvExport, Toolasha.Utils.dungeonLevelGap, Toolasha.Utils.mobile, Toolasha.Utils.equipmentParser, Toolasha.Utils.combatLevel, Toolasha.Utils.guildCreditPricing);

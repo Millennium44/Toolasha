@@ -1,7 +1,7 @@
 /**
  * Toolasha Actions Library
  * Production, gathering, and alchemy features
- * Version: 2.92.0
+ * Version: 2.92.1
  * License: CC-BY-NC-SA-4.0
  */
 
@@ -1778,7 +1778,7 @@
         const gatheringActionType = dataManager.getActionDetails(actionHrid)?.type;
         dataManager.setScrollSimulation(
             gatheringActionType,
-            scrollSimulator.getScrollSetForActionType(gatheringActionType)
+            (bundleBridge_js.scrollSimulator() || scrollSimulator).getScrollSetForActionType(gatheringActionType)
         );
 
         // finally guarantees the simulation is cleared on every exit path (early returns, exceptions),
@@ -2196,7 +2196,7 @@
         font-size: 0.85em;
     `;
         const gatheringSnapshotInfo = gatheringActionType
-            ? loadoutSnapshot.getSnapshotInfoForSkill(gatheringActionType)
+            ? (bundleBridge_js.loadoutSnapshot() || loadoutSnapshot).getSnapshotInfoForSkill(gatheringActionType)
             : null;
         const gatheringLoadoutLabel = gatheringSnapshotInfo
             ? `${gatheringSnapshotInfo.name}${gatheringSnapshotInfo.isDefault ? ' (Default)' : ''}`
@@ -2351,7 +2351,7 @@
         const productionActionType = dataManager.getActionDetails(actionHrid)?.type;
         dataManager.setScrollSimulation(
             productionActionType,
-            scrollSimulator.getScrollSetForActionType(productionActionType)
+            (bundleBridge_js.scrollSimulator() || scrollSimulator).getScrollSetForActionType(productionActionType)
         );
 
         // finally guarantees the simulation is cleared on every exit path (early returns, exceptions),
@@ -2840,7 +2840,7 @@
         font-size: 0.85em;
     `;
         const productionSnapshotInfo = productionActionType
-            ? loadoutSnapshot.getSnapshotInfoForSkill(productionActionType)
+            ? (bundleBridge_js.loadoutSnapshot() || loadoutSnapshot).getSnapshotInfoForSkill(productionActionType)
             : null;
         const productionLoadoutLabel = productionSnapshotInfo
             ? `${productionSnapshotInfo.name}${productionSnapshotInfo.isDefault ? ' (Default)' : ''}`
@@ -10440,7 +10440,7 @@
                 // Arm scroll simulation for this action type
                 dataManager.setScrollSimulation(
                     actionDetails.type,
-                    scrollSimulator.getScrollSetForActionType(actionDetails.type)
+                    (bundleBridge_js.scrollSimulator() || scrollSimulator).getScrollSetForActionType(actionDetails.type)
                 );
 
                 // Calculate action duration and efficiency
@@ -32441,6 +32441,9 @@
         teaRecommendation,
         inventoryCountDisplay: inventoryCountDisplay$1,
         pinnedActionsPage,
+        // Shared so cross-bundle readers (task profit in ui/market, alchemy pin
+        // protection in ui) see the live cachedStats/pinnedActions this bundle fills
+        actionPanelSort,
         drinkTimer: drinkTimer$1,
         skillingOptimizer,
         goalPlanner: goalPlannerPanel,
