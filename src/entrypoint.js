@@ -261,6 +261,34 @@ function checkAnchorCanaries() {
             selector: GAME.COMBAT_UNIT,
             when: GAME.BATTLE_MONSTERS_AREA,
         },
+        // Marketplace anchors. The item grid is present whenever the panel is
+        // open; the current-item and order-books halves only appear once an item
+        // is selected, so they gate on each other (a mirrored pair: renaming
+        // either one is caught by the other, as long as the sibling survives).
+        {
+            key: 'canaryMarketItems',
+            name: 'Marketplace item grid',
+            selector: GAME.MARKETPLACE_ITEMS,
+            when: GAME.MARKETPLACE_PANEL,
+        },
+        {
+            key: 'canaryMarketCurrentItem',
+            name: 'Marketplace current item',
+            selector: GAME.MARKETPLACE_CURRENT_ITEM,
+            when: GAME.MARKETPLACE_ORDER_BOOKS,
+        },
+        {
+            key: 'canaryMarketOrderBooks',
+            name: 'Marketplace order books',
+            selector: GAME.MARKETPLACE_ORDER_BOOKS,
+            when: GAME.MARKETPLACE_CURRENT_ITEM,
+        },
+        {
+            key: 'canaryMarketNewListingButtons',
+            name: 'Marketplace new-listing buttons',
+            selector: GAME.MARKETPLACE_NEW_LISTING_BUTTONS,
+            when: GAME.MARKETPLACE_CURRENT_ITEM,
+        },
     ];
 
     const failures = [];

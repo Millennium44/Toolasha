@@ -7,6 +7,7 @@
 import dataManager from '../core/data-manager.js';
 import webSocketHook from '../core/websocket.js';
 import { formatWithSeparator } from './formatters.js';
+import { GAME } from './selectors.js';
 
 /**
  * Tabs currently watching their item for acquisition, keyed by the tab element,
@@ -363,8 +364,8 @@ export function setupMarketplaceCleanupObserver(onCleanup, tabsArray) {
         }
 
         // If marketplace panel is hidden (navigated away), clean up
-        const marketplacePanel = document.querySelector('.MarketplacePanel_marketplacePanel__21b7o');
-        const subPanelContainer = marketplacePanel?.closest('.MainPanel_subPanelContainer__1i-H9');
+        const marketplacePanel = document.querySelector(GAME.MARKETPLACE_PANEL);
+        const subPanelContainer = marketplacePanel?.closest(GAME.SUBPANEL_CONTAINER);
         if (subPanelContainer && getComputedStyle(subPanelContainer).display === 'none') {
             if (onCleanup) onCleanup();
         }

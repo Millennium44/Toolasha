@@ -13,6 +13,7 @@ import domObserver from '../../core/dom-observer.js';
 import config from '../../core/config.js';
 import { formatKMB } from '../../utils/formatters.js';
 import { createCleanupRegistry } from '../../utils/cleanup-registry.js';
+import { GAME } from '../../utils/selectors.js';
 
 class QueueLengthEstimator {
     constructor() {
@@ -108,7 +109,7 @@ class QueueLengthEstimator {
      */
     processOrderBook(_container) {
         // Find the button container where we'll inject the queue lengths
-        const buttonContainer = document.querySelector('.MarketplacePanel_newListingButtonsContainer__1MhKJ');
+        const buttonContainer = document.querySelector(GAME.MARKETPLACE_NEW_LISTING_BUTTONS);
         if (!buttonContainer) {
             return;
         }
@@ -234,7 +235,7 @@ class QueueLengthEstimator {
      * @returns {string|null} Item HRID or null
      */
     getCurrentItemHrid() {
-        const currentItemElement = document.querySelector('.MarketplacePanel_currentItem__3ercC');
+        const currentItemElement = document.querySelector(GAME.MARKETPLACE_CURRENT_ITEM);
         if (currentItemElement) {
             const useElement = currentItemElement.querySelector('use');
             if (useElement && useElement.href && useElement.href.baseVal) {
@@ -250,7 +251,7 @@ class QueueLengthEstimator {
      * @returns {number} Enhancement level (0 for non-equipment)
      */
     getCurrentEnhancementLevel() {
-        const currentItemElement = document.querySelector('.MarketplacePanel_currentItem__3ercC');
+        const currentItemElement = document.querySelector(GAME.MARKETPLACE_CURRENT_ITEM);
         if (currentItemElement) {
             const enhancementElement = currentItemElement.querySelector('[class*="Item_enhancementLevel"]');
             if (enhancementElement) {

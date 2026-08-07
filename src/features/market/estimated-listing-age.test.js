@@ -114,15 +114,21 @@ beforeEach(() => {
 });
 
 describe('parsePrice', () => {
-    test('reads plain numbers and K/M/B suffixes', () => {
+    test('reads plain numbers and K/M/B/T suffixes', () => {
         expect(estimatedListingAge.parsePrice('100')).toBe(100);
         expect(estimatedListingAge.parsePrice('1.5K')).toBe(1500);
         expect(estimatedListingAge.parsePrice('12M')).toBe(12_000_000);
         expect(estimatedListingAge.parsePrice('2B')).toBe(2_000_000_000);
+        expect(estimatedListingAge.parsePrice('1.2T')).toBe(1_200_000_000_000);
     });
 
     test('strips thousands separators before parsing', () => {
         expect(estimatedListingAge.parsePrice('12,345')).toBe(12345);
+    });
+
+    test('tolerates the trailing "*" boundary marker on My Listings prices', () => {
+        expect(estimatedListingAge.parsePrice('12,345*')).toBe(12345);
+        expect(estimatedListingAge.parsePrice('1.5M*')).toBe(1_500_000);
     });
 
     test('is case-insensitive on the suffix', () => {

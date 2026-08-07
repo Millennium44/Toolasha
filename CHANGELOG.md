@@ -6,6 +6,15 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Marketplace resilience ahead of the test-server market rework
+
+Backward-compatible hardening so the marketplace features survive the upcoming (test-server) Marketplace rework without waiting for it to break on the live server. None of this changes behavior on the current live market — it only adds tolerance for the new formats and turns future selector breakage into a visible health warning.
+
+- **Trillion-value prices parse correctly.** The rework raises the max listing price from 100B to 1T, but the price parsers stopped at the "B" suffix, so a "1.2T" price would have been read as 1.2. Added "T" (1e12) handling to the shared number parser and to the order-book / My-Listings price readers.
+- **The "\*" boundary marker on My Listings no longer breaks price reads.** The rework marks any listing whose original limit price differs from its resting boundary price with a trailing "\*". The expired-listing price parser is `$`-anchored and would have rejected the whole cell; it now strips the marker before parsing.
+- **Marketplace selectors centralized and hardened.** The current-item, order-book, My-Listings, new-listing-buttons and panel selectors were hardcoded with the game's CSS-module hash suffix (e.g. `__3ercC`), which any UI rebuild rehashes. Moved them into the shared selectors file as stable prefix matches, so the market rework doesn't silently sever them.
+- **Marketplace health canaries.** Added the marketplace item grid, current item, order books and new-listing buttons to the startup selector-canary check. Marketplace selectors were previously uncovered, so a market update that renamed them failed silently; now it surfaces in the health report.
+
 ### More cross-bundle singleton reads fixed in the packaged build
 
 A triage of the 62 modules the bundle-sharing checker flags found several more stateful singletons read from an empty duplicate outside their owning bundle (same class as the loadout/treasure fixes). Fixed so far — all now read the live copy through the bundle bridge, dev-standalone unaffected:
