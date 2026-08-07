@@ -58,6 +58,8 @@ const {
     attributionCoverage,
     battleMonsterNames,
     encounterOf,
+    encounterOfMonster,
+    encounterComponentMap,
     estimateDamageSplit,
     GUILD_BATTLE_MESSAGE,
     guildTrialDamage,
@@ -104,6 +106,49 @@ describe('encounterOf', () => {
         expect(encounterOf('Milking')).toBeNull();
         expect(encounterOf('')).toBeNull();
         expect(encounterOf(null)).toBeNull();
+    });
+});
+
+describe('encounterOfMonster — composite trials', () => {
+    // Trial Swarm fights four differently named monsters, none of which reduces to
+    // 'swarm'. The game's trial→monster listing is what names them.
+    const clientData = {
+        guildTrialDetailMap: {
+            '/guild_trials/swarm': {
+                name: 'Trial Swarm',
+                monsterHrids: [
+                    '/monsters/trial_beetle',
+                    '/monsters/trial_dragonfly',
+                    '/monsters/trial_wasp',
+                    '/monsters/trial_firefly',
+                ],
+            },
+            '/guild_trials/jellyfish': { name: 'Trial Jellyfish', monsterHrids: ['/monsters/trial_jellyfish'] },
+        },
+        combatMonsterDetailMap: { '/monsters/trial_dragonfly': { name: 'Trial Dragonfly' } },
+    };
+
+    test('resolves Swarm from any of its four monsters, by display name or hrid', () => {
+        expect(encounterOfMonster('Trial Dragonfly', clientData)).toBe('swarm');
+        expect(encounterOfMonster('/monsters/trial_beetle', clientData)).toBe('swarm');
+        expect(encounterOfMonster('/monsters/trial_firefly', clientData)).toBe('swarm');
+    });
+
+    test('a single-monster trial still resolves by its own name, with no data needed', () => {
+        expect(encounterOfMonster('Trial Jellyfish', clientData)).toBe('jellyfish');
+        expect(encounterOfMonster('Trial Chameleon')).toBe('chameleon');
+    });
+
+    test('a non-trial monster is still null', () => {
+        expect(encounterOfMonster('Cow', clientData)).toBeNull();
+    });
+
+    test('the component map covers only monsters that do not resolve on their own', () => {
+        const map = encounterComponentMap(clientData);
+        expect(map.get('trial dragonfly')).toBe('swarm');
+        expect(map.get('trial wasp')).toBe('swarm');
+        // Trial Jellyfish resolves by its own name, so it is never in the map.
+        expect(map.has('trial jellyfish')).toBe(false);
     });
 });
 
