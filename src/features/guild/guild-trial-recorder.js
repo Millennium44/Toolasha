@@ -43,6 +43,7 @@ import storage from '../../core/storage.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import guildTrialDamage from './guild-trial-damage.js';
 import guildTrialSkilling from './guild-trial-skilling.js';
+import guildTrialStatsModal from './guild-trial-stats-modal.js';
 import { loadLoadouts } from './guild-loadouts.js';
 import { supportCoverage } from './guild-trial-support.js';
 import guildMemberSkills from './guild-member-skills.js';
@@ -458,6 +459,9 @@ export async function buildTrialExport({ guildName = null } = {}) {
         // participants and the per-tier personal figures, none of which needed a
         // tab to be open
         trialSkilling: guildTrialSkilling.snapshot?.() ?? null,
+        // The game's own post-trial Stats modal, per combat trial, where it has
+        // been opened — the authoritative per-member damage/healing/damage-taken
+        trialStatsModal: guildTrialStatsModal.snapshot?.() ?? {},
     };
 }
 
