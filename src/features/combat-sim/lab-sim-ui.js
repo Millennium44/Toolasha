@@ -88,7 +88,8 @@ import { formatWithSeparator, formatKMB, parseKMB } from '../../utils/formatters
 import { createEtaTracker } from '../../utils/progress-eta.js';
 import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
 import { SimEditor } from './sim-editor.js';
-import labyrinthClearRate from '../combat/labyrinth-clear-rate.js';
+import bundledLabyrinthClearRate from '../combat/labyrinth-clear-rate.js';
+import { labyrinthClearRate } from '../../utils/bundle-bridge.js';
 import loadoutSnapshot from '../combat/loadout-snapshot.js';
 
 const PANEL_ID = 'mwi-lab-sim-panel';
@@ -1335,8 +1336,11 @@ class LabSimUI {
      */
     _skipRoomLevel(monsterHrid) {
         if (!monsterHrid) return 0;
-        const recommended = labyrinthClearRate.getRecommendedCombatRoomLevel?.(monsterHrid) || 0;
-        return recommended || labyrinthClearRate.getCombatSkipRoomLevel(monsterHrid) || 0;
+        const recommended =
+            (labyrinthClearRate() || bundledLabyrinthClearRate).getRecommendedCombatRoomLevel?.(monsterHrid) || 0;
+        return (
+            recommended || (labyrinthClearRate() || bundledLabyrinthClearRate).getCombatSkipRoomLevel(monsterHrid) || 0
+        );
     }
 
     /**
@@ -2075,7 +2079,9 @@ class LabSimUI {
                 // The search window follows the character rather than a fixed
                 // 20-300, so it covers every room the automation table could
                 // send them to and nothing else
-                const referenceLevel = labyrinthClearRate.getPlayerEffectiveCombatLevel();
+                const referenceLevel = (
+                    labyrinthClearRate() || bundledLabyrinthClearRate
+                ).getPlayerEffectiveCombatLevel();
                 const maxResult = await findMaxLabyrinthLevel(
                     {
                         gameData,
@@ -2305,7 +2311,9 @@ class LabSimUI {
             .replace(/_/g, ' ')
             .replace(/\b\w/g, (c) => c.toUpperCase());
         const barPct = ((maxResult.threshold ?? 0) * 100).toFixed(0);
-        const effectiveCombatLevel = labyrinthClearRate.getPlayerEffectiveCombatLevel();
+        const effectiveCombatLevel = (
+            labyrinthClearRate() || bundledLabyrinthClearRate
+        ).getPlayerEffectiveCombatLevel();
 
         let headline;
         let detail;
@@ -2318,7 +2326,7 @@ class LabSimUI {
                     Lower the target win %, or bring stronger gear.
                 </div>`;
         } else {
-            const xpPerHour = labyrinthClearRate.estimateCombatXpPerHour(
+            const xpPerHour = (labyrinthClearRate() || bundledLabyrinthClearRate).estimateCombatXpPerHour(
                 maxResult.maxLevel,
                 maxResult.avgFightSeconds,
                 maxResult.winRate
@@ -2747,7 +2755,9 @@ class LabSimUI {
                         communityBuffs,
                         labyrinthCombatBuffs,
                         threshold: defaultThreshold(),
-                        referenceLevel: labyrinthClearRate.getPlayerEffectiveCombatLevel(),
+                        referenceLevel: (
+                            labyrinthClearRate() || bundledLabyrinthClearRate
+                        ).getPlayerEffectiveCombatLevel(),
                     },
                     (progress) => {
                         // Stop cannot cut the search short — it has no abort of
@@ -3212,11 +3222,11 @@ class LabSimUI {
         const fights = [];
         for (const monster of getLabyrinthMonsters()) {
             const roomLevel = useSkipLevels
-                ? labyrinthClearRate.getCombatSkipRoomLevel(monster.hrid)
-                : labyrinthClearRate.getCombatRoomLevel(monster.hrid);
+                ? (labyrinthClearRate() || bundledLabyrinthClearRate).getCombatSkipRoomLevel(monster.hrid)
+                : (labyrinthClearRate() || bundledLabyrinthClearRate).getCombatRoomLevel(monster.hrid);
             if (!roomLevel) continue; // no skip threshold configured for this monster
-            const loadoutId = labyrinthClearRate.getLabyrinthLoadoutId(monster.hrid);
-            const dto = labyrinthClearRate.buildLabyrinthPlayerDTO(loadoutId);
+            const loadoutId = (labyrinthClearRate() || bundledLabyrinthClearRate).getLabyrinthLoadoutId(monster.hrid);
+            const dto = (labyrinthClearRate() || bundledLabyrinthClearRate).buildLabyrinthPlayerDTO(loadoutId);
             if (!dto) continue;
             const loadoutName =
                 loadoutSnapshot.snapshots[loadoutId]?.name || (loadoutId ? `Loadout #${loadoutId}` : 'Current gear');
@@ -4548,7 +4558,7 @@ class LabSimUI {
         ];
         const levels = {};
         for (const skillHrid of skillHrids) {
-            levels[skillHrid] = labyrinthClearRate.getTargetRoomLevel(skillHrid);
+            levels[skillHrid] = (labyrinthClearRate() || bundledLabyrinthClearRate).getTargetRoomLevel(skillHrid);
         }
         return levels;
     }

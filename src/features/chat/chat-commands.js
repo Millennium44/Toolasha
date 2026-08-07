@@ -20,10 +20,11 @@ import {
 } from '../guild/guild-token-value.js';
 import { moveScopedData, claimLegacyData } from '../../utils/scoped-data-repair.js';
 import { resetAdoptionDecision, requestAdoptionConsent } from '../../utils/adoption-consent.js';
-import { buildTrialExport, downloadTrialExport } from '../guild/guild-trial-recorder.js';
+import * as bundledTrialExport from '../guild/guild-trial-recorder.js';
+import { guildTrialsStore, guildXpTracker, guildTrialExport } from '../../utils/bundle-bridge.js';
 import { clearTrialStorage } from '../guild/guild-trials-store.js';
-import guildXPTracker from '../guild/guild-xp-tracker.js';
-import { guildTrials } from '../guild/guild-trials.js';
+import bundledGuildXPTracker from '../guild/guild-xp-tracker.js';
+import { guildTrials as bundledGuildTrials } from '../guild/guild-trials.js';
 
 /**
  * Everything the client currently believes about guild shrines.
@@ -173,9 +174,12 @@ export function exposeShrineDebug() {
             // three sources and the XP tracker is only one of them, so asking the
             // tracker alone exported the `default` record while the feature was
             // writing to the guild's.
-            const guildName = guildTrials?.guildName || guildXPTracker.getOwnGuildName?.() || null;
-            const bundle = await buildTrialExport({ guildName });
-            downloadTrialExport(bundle);
+            const trials = guildTrialsStore() || bundledGuildTrials;
+            const xpTracker = guildXpTracker() || bundledGuildXPTracker;
+            const exporter = guildTrialExport() || bundledTrialExport;
+            const guildName = trials?.guildName || xpTracker.getOwnGuildName?.() || null;
+            const bundle = await exporter.buildTrialExport({ guildName });
+            exporter.downloadTrialExport(bundle);
             console.log('[Toolasha] Trial data exported', bundle);
             return bundle;
         };

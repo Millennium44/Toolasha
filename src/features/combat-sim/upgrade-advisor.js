@@ -20,7 +20,8 @@ import { generateLabArmorCandidates, labelItemWithLevel } from './lab-armor-cand
 import { buildGuidePlan } from './build-guide.js';
 import { bestGearForSkill } from './skilling-gear-candidates.js';
 import { deriveSeed, randomSeed } from './engine/rng.js';
-import labyrinthClearRate from '../combat/labyrinth-clear-rate.js';
+import bundledLabyrinthClearRate from '../combat/labyrinth-clear-rate.js';
+import { labyrinthClearRate } from '../../utils/bundle-bridge.js';
 import { resolveItemPrice } from '../../utils/profit-helpers.js';
 import { getItemPrices } from '../../utils/market-data.js';
 import { calculateEnhancement } from '../../utils/enhancement-calculator.js';
@@ -5406,13 +5407,25 @@ export function computeSkillingClearRatesFromEditor(
         };
 
         const overrides = skillingOverrides(editorState, editorDTO, actionTypeHrid, crateHrids, gameData);
-        const metrics = labyrinthClearRate.getSkillingMetricsFromOverrides(skillId, actionTypeHrid, overrides);
+        const metrics = (labyrinthClearRate() || bundledLabyrinthClearRate).getSkillingMetricsFromOverrides(
+            skillId,
+            actionTypeHrid,
+            overrides
+        );
 
         let result;
         if (skillHrid === '/skills/enhancing') {
-            result = labyrinthClearRate.computeEnhancingClearWithParams(metrics, baseLevel, skillRoomLevel);
+            result = (labyrinthClearRate() || bundledLabyrinthClearRate).computeEnhancingClearWithParams(
+                metrics,
+                baseLevel,
+                skillRoomLevel
+            );
         } else {
-            result = labyrinthClearRate.computeSkillingClearWithParams(metrics, baseLevel, skillRoomLevel);
+            result = (labyrinthClearRate() || bundledLabyrinthClearRate).computeSkillingClearWithParams(
+                metrics,
+                baseLevel,
+                skillRoomLevel
+            );
         }
         result.skillHrid = skillHrid;
         result.skillId = skillId;
@@ -5474,7 +5487,11 @@ function computeAverageSkillingClearRateFromEditor(roomLevel, editorDTO, crateHr
         };
 
         const overrides = skillingOverrides(editorState, editorDTO, actionTypeHrid, crateHrids, gameData);
-        const metrics = labyrinthClearRate.getSkillingMetricsFromOverrides(skillId, actionTypeHrid, overrides);
+        const metrics = (labyrinthClearRate() || bundledLabyrinthClearRate).getSkillingMetricsFromOverrides(
+            skillId,
+            actionTypeHrid,
+            overrides
+        );
 
         if (metricOverride) {
             metrics[metricOverride.key] = (metrics[metricOverride.key] || 0) + metricOverride.delta;
@@ -5482,13 +5499,13 @@ function computeAverageSkillingClearRateFromEditor(roomLevel, editorDTO, crateHr
 
         let clearChance;
         if (skillHrid === '/skills/enhancing') {
-            clearChance = labyrinthClearRate.computeEnhancingClearWithParams(
+            clearChance = (labyrinthClearRate() || bundledLabyrinthClearRate).computeEnhancingClearWithParams(
                 metrics,
                 baseLevel,
                 skillRoomLevel
             ).clearChance;
         } else {
-            clearChance = labyrinthClearRate.computeSkillingClearWithParams(
+            clearChance = (labyrinthClearRate() || bundledLabyrinthClearRate).computeSkillingClearWithParams(
                 metrics,
                 baseLevel,
                 skillRoomLevel
@@ -5544,12 +5561,24 @@ function computeAverageSkillingXpPerRoomFromEditor(roomLevel, editorDTO, crateHr
         };
 
         const overrides = skillingOverrides(editorState, editorDTO, actionTypeHrid, crateHrids, gameData);
-        const metrics = labyrinthClearRate.getSkillingMetricsFromOverrides(skillId, actionTypeHrid, overrides);
+        const metrics = (labyrinthClearRate() || bundledLabyrinthClearRate).getSkillingMetricsFromOverrides(
+            skillId,
+            actionTypeHrid,
+            overrides
+        );
         // Enhancing clears on its own model, and now reports XP from it
         const result =
             skillHrid === '/skills/enhancing'
-                ? labyrinthClearRate.computeEnhancingClearWithParams(metrics, baseLevel, skillRoomLevel)
-                : labyrinthClearRate.computeSkillingClearWithParams(metrics, baseLevel, skillRoomLevel);
+                ? (labyrinthClearRate() || bundledLabyrinthClearRate).computeEnhancingClearWithParams(
+                      metrics,
+                      baseLevel,
+                      skillRoomLevel
+                  )
+                : (labyrinthClearRate() || bundledLabyrinthClearRate).computeSkillingClearWithParams(
+                      metrics,
+                      baseLevel,
+                      skillRoomLevel
+                  );
 
         total += result.xpPerRoom || 0;
         count++;

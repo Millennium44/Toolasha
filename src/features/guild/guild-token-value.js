@@ -63,7 +63,17 @@
 
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
-import { capturedTokenExchanges } from './guild-token-exchange-capture.js';
+import { capturedTokenExchanges as bundledCapturedTokenExchanges } from './guild-token-exchange-capture.js';
+import { guildTokenExchangeCapture } from '../../utils/bundle-bridge.js';
+
+/**
+ * The captured Guild Shop exchanges from the live combat-bundle copy, falling
+ * back to this bundle's own copy in the dev-standalone build.
+ * @returns {Array} Captured exchange readings
+ */
+function capturedTokenExchanges() {
+    return guildTokenExchangeCapture()?.capturedTokenExchanges?.() ?? bundledCapturedTokenExchanges();
+}
 import { buildGoldPerCredit } from '../../utils/guild-credit-pricing.js';
 import { formatKMB, formatWithSeparator } from '../../utils/formatters.js';
 
