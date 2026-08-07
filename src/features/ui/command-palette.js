@@ -233,6 +233,16 @@ function panelCommands() {
             target: guildTrialScoreboard(),
         },
         { name: 'Settings', hint: "Toolasha's settings tab", run: () => openSettings() },
+        {
+            name: 'Health report',
+            // Reached through the page, like every other cross-bundle target
+            // here: `window.Toolasha.debug.health` is set by the entrypoint, and
+            // importing the entrypoint to call it would be a cycle. Always
+            // offered — a diagnostic is most wanted when something is wrong,
+            // which is exactly when a feature-gated entry would be missing.
+            hint: 'What did not start, and the storage and startup facts',
+            run: () => openHealthReport(),
+        },
     ];
 
     const commands = [];
@@ -386,6 +396,34 @@ export async function openGuildTrials() {
         return true;
     } catch (error) {
         console.error('[CommandPalette] Opening the guild trials failed:', error);
+        return false;
+    }
+}
+
+/**
+ * Build the health report and open its panel, from wherever the palette runs.
+ *
+ * The report assembler lives in the entrypoint, published as
+ * `window.Toolasha.debug.health` — reached through the page like every other
+ * cross-bundle target here, because importing the entrypoint to call it would
+ * be a cycle. It logs the report and opens the panel itself; this only invokes
+ * it, and says so when the global is not there rather than throwing.
+ *
+ * @returns {Promise<boolean>} Whether the report was built
+ */
+export async function openHealthReport() {
+    try {
+        const health = window.Toolasha?.debug?.health;
+        if (typeof health !== 'function') {
+            showToast('The health report is not available yet — try again once Toolasha has finished loading.', {
+                kind: 'warning',
+            });
+            return false;
+        }
+        await health();
+        return true;
+    } catch (error) {
+        console.error('[CommandPalette] Opening the health report failed:', error);
         return false;
     }
 }

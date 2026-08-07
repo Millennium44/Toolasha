@@ -54,6 +54,7 @@ const {
     isPaletteHotkey,
     revealSetting,
     openGuildTrials,
+    openHealthReport,
 } = await import('./command-palette.js');
 
 /**
@@ -561,6 +562,41 @@ describe('the Guild Trials entry', () => {
         }
 
         expect(toasts.said.join(' ')).toContain('Could not open the guild page');
+    });
+});
+
+/**
+ * The health report is assembled in the entrypoint and published on the page as
+ * `window.Toolasha.debug.health`; the palette only invokes it. Both what it does
+ * when that global is there and what it does when it is not are worth pinning —
+ * a diagnostic entry that throws is worse than one that says "not yet".
+ */
+describe('the Health report entry', () => {
+    afterEach(() => {
+        delete window.Toolasha;
+    });
+
+    test('is offered regardless of settings', async () => {
+        palette.initialize();
+        palette.open();
+        await vi.waitFor(() => expect(overlay.listLayouts).toHaveBeenCalled());
+
+        expect(drawnLabels()).toContain('Health report');
+    });
+
+    test('calls the page-global builder the entrypoint publishes', async () => {
+        const health = vi.fn(async () => 'report text');
+        window.Toolasha = { debug: { health } };
+
+        expect(await openHealthReport()).toBe(true);
+        expect(health).toHaveBeenCalled();
+    });
+
+    test('says so when the global is not there yet rather than throwing', async () => {
+        delete window.Toolasha;
+
+        expect(await openHealthReport()).toBe(false);
+        expect(toasts.said.join(' ')).toContain('not available yet');
     });
 });
 
