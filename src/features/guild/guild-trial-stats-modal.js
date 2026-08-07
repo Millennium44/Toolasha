@@ -26,16 +26,41 @@ const ACTIVE_TAB_SELECTOR = '[role="tab"][aria-selected="true"] [class*="TabsCom
 const TABLE_SELECTOR = `table[class*="${TABLE_CLASS}"]`;
 
 /**
- * Read the Combat Trial Stats modal into per-member totals for its active tab.
+ * Normalise a column header to a stable key.
  *
- * The value columns follow the header order — Damage, Healing, Damage Taken —
- * and the figures are abbreviated ("1213K"), so each is parsed the same way the
- * rest of the script reads the game's numbers. The member name is taken from the
- * `data-name` attribute, which is exact where the visible text can be truncated.
+ * The combat modal draws Damage / Healing / Damage Taken; the skilling modal
+ * draws its own (a contribution column), so the scraper reads whatever headers
+ * are there rather than assuming the combat layout — otherwise a skilling
+ * trial's single column would be mislabelled "damage".
+ *
+ * @param {string} label - The header cell's text
+ * @returns {string} A camelCase key: 'damageTaken', 'healing', 'damage', or a slug
+ */
+export function headerKey(label) {
+    const text = String(label || '')
+        .trim()
+        .toLowerCase();
+    if (text.includes('damage taken')) return 'damageTaken';
+    if (text.includes('healing')) return 'healing';
+    if (text === 'damage') return 'damage';
+    const words = text.replace(/[^a-z0-9]+/g, ' ').trim().split(' ').filter(Boolean);
+    if (!words.length) return '';
+    return words.map((word, i) => (i === 0 ? word : word[0].toUpperCase() + word.slice(1))).join('');
+}
+
+/**
+ * Read a Trial Stats modal into per-member values for its active tab.
+ *
+ * Header-driven: the value columns are keyed by their own headers, so the combat
+ * modal yields `damage`/`healing`/`damageTaken` and the skilling modal yields its
+ * own column, each correct. The figures are abbreviated ("1213K"), parsed the
+ * same way the rest of the script reads the game's numbers. The member name is
+ * taken from `data-name`, which is exact where the visible text can be truncated.
  *
  * @param {Element} modal - The `[class*="GuildPanel_trialStatsModal"]` element
- * @returns {{trialName: string|null, members: Array<{name: string, damage: number|null,
- *   healing: number|null, damageTaken: number|null}>}|null} The active tab's stats, or null
+ * @returns {{trialName: string|null, kind: 'combat'|'skilling', columns: string[],
+ *   members: Array<{name: string, values: Object<string, number|null>}>}|null} The active tab's
+ *   stats, or null
  */
 export function parseTrialStatsModal(modal) {
     if (!modal || typeof modal.querySelector !== 'function') return null;
@@ -50,25 +75,29 @@ export function parseTrialStatsModal(modal) {
     const table = visible.querySelector(TABLE_SELECTOR);
     if (!table) return null;
 
+    // The header row minus the leading Member column gives the value columns.
+    const headers = [...table.querySelectorAll('thead th')].map((th) => headerKey(th.textContent));
+    const columns = headers.slice(1).filter(Boolean);
+    if (!columns.length) return null;
+
     const members = [];
     for (const row of table.querySelectorAll('tbody tr')) {
         const nameEl = row.querySelector('[class*="CharacterName_name"]');
         const name = (nameEl?.getAttribute('data-name') || nameEl?.textContent || '').trim();
         if (!name) continue;
 
-        // Cell 0 is the member; the three value cells follow in header order.
-        const cells = [...row.querySelectorAll('td')];
-        const num = (cell) => (cell ? parseItemCount(String(cell.textContent).trim(), null) : null);
-        members.push({
-            name,
-            damage: num(cells[1]),
-            healing: num(cells[2]),
-            damageTaken: num(cells[3]),
+        // Cell 0 is the member; the value cells follow, one per header column.
+        const cells = [...row.querySelectorAll('td')].slice(1);
+        const values = {};
+        columns.forEach((key, i) => {
+            values[key] = cells[i] ? parseItemCount(String(cells[i].textContent).trim(), null) : null;
         });
+        members.push({ name, values });
     }
 
     if (!members.length) return null;
-    return { trialName, members };
+    const kind = columns.includes('damageTaken') ? 'combat' : 'skilling';
+    return { trialName, kind, columns, members };
 }
 
 class GuildTrialStatsModal {
@@ -99,7 +128,12 @@ class GuildTrialStatsModal {
         try {
             const parsed = parseTrialStatsModal(modal);
             if (!parsed?.trialName || !parsed.members.length) return;
-            this.statsByTrial.set(parsed.trialName, { members: parsed.members, at: Date.now() });
+            this.statsByTrial.set(parsed.trialName, {
+                kind: parsed.kind,
+                columns: parsed.columns,
+                members: parsed.members,
+                at: Date.now(),
+            });
         } catch (error) {
             console.error('[GuildTrialStatsModal] Failed to read the stats modal:', error);
         }
@@ -112,6 +146,28 @@ class GuildTrialStatsModal {
      */
     getStats(trialName) {
         return this.statsByTrial.get(trialName) || null;
+    }
+
+    /**
+     * A combat trial's per-member totals, flattened for reconciliation.
+     *
+     * Returns null unless the captured modal was a combat one (the skilling modal
+     * carries no damage/healing/taken columns), so callers can fall back to the
+     * streamed figures unchanged.
+     *
+     * @param {string} trialName - e.g. "Trial Jellyfish"
+     * @returns {Array<{name: string, damage: number|null, healing: number|null,
+     *   damageTaken: number|null}>|null} Per-member totals, or null
+     */
+    getCombatStats(trialName) {
+        const stats = this.statsByTrial.get(trialName);
+        if (!stats || stats.kind !== 'combat') return null;
+        return stats.members.map((member) => ({
+            name: member.name,
+            damage: member.values.damage ?? null,
+            healing: member.values.healing ?? null,
+            damageTaken: member.values.damageTaken ?? null,
+        }));
     }
 
     /**

@@ -1,6 +1,6 @@
 /** @vitest-environment happy-dom */
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
-import { parseTrialStatsModal, guildTrialStatsModal } from './guild-trial-stats-modal.js';
+import { parseTrialStatsModal, headerKey, guildTrialStatsModal } from './guild-trial-stats-modal.js';
 
 // The real "Combat Trial - Stats" modal, captured from the game (Jellyfish tab
 // active, Swarm tab hidden and empty). Abbreviated figures, data-name on the
@@ -32,22 +32,59 @@ const MODAL_HTML = `
   </div>
 </div>`;
 
+// The skilling stats modal draws a single contribution column, not the combat
+// Damage/Healing/Damage-Taken trio — the scraper must read its header, not assume.
+const SKILLING_HTML = `
+<div class="GuildPanel_trialStatsModal__2yLP_">
+  <div class="GuildPanel_trialStatsTabsContainer__3rN3r"><div role="tablist">
+    <button role="tab" aria-selected="true"><span class="TabsComponent_badge__1Du26">Enhancing</span></button>
+  </div>
+  <div class="TabsComponent_tabPanelsContainer__26mzo"><div class="TabPanel_tabPanel__tXMJF">
+    <table class="GuildPanel_trialStatsTable__1SDKf">
+      <thead><tr><th class="GuildPanel_member__1scjk">Member</th><th>Work</th></tr></thead>
+      <tbody>
+        <tr><td class="GuildPanel_member__1scjk"><div class="CharacterName_name__1amXp" data-name="MillenniumTest"><span>MillenniumTest</span></div></td><td><div>124K</div></td></tr>
+        <tr><td class="GuildPanel_member__1scjk"><div class="CharacterName_name__1amXp" data-name="Orven"><span>Orven</span></div></td><td><div>68376</div></td></tr>
+      </tbody>
+    </table>
+  </div></div></div>
+</div>`;
+
 function modalEl(html = MODAL_HTML) {
     const host = document.createElement('div');
     host.innerHTML = html.trim();
     return host.firstElementChild;
 }
 
+describe('headerKey', () => {
+    test('normalises the combat columns and slugs anything else', () => {
+        expect(headerKey('Member')).toBe('member');
+        expect(headerKey('Damage')).toBe('damage');
+        expect(headerKey('Healing')).toBe('healing');
+        expect(headerKey('Damage Taken')).toBe('damageTaken');
+        expect(headerKey('Work')).toBe('work');
+    });
+});
+
 describe('parseTrialStatsModal', () => {
-    test('reads the active tab name and every member row, abbreviations expanded', () => {
+    test('reads the active tab name and every member row, keyed by header, abbreviations expanded', () => {
         const parsed = parseTrialStatsModal(modalEl());
         expect(parsed.trialName).toBe('Trial Jellyfish');
+        expect(parsed.kind).toBe('combat');
+        expect(parsed.columns).toEqual(['damage', 'healing', 'damageTaken']);
         expect(parsed.members).toEqual([
-            { name: 'Tib', damage: 1_213_000, healing: 0, damageTaken: 175_000 },
-            { name: 'chocstest', damage: 584_000, healing: 0, damageTaken: 167_000 },
-            { name: 'Orven', damage: 318_000, healing: 64_577, damageTaken: 174_000 },
-            { name: 'MillenniumTest', damage: 288_000, healing: 0, damageTaken: 372_000 },
+            { name: 'Tib', values: { damage: 1_213_000, healing: 0, damageTaken: 175_000 } },
+            { name: 'chocstest', values: { damage: 584_000, healing: 0, damageTaken: 167_000 } },
+            { name: 'Orven', values: { damage: 318_000, healing: 64_577, damageTaken: 174_000 } },
+            { name: 'MillenniumTest', values: { damage: 288_000, healing: 0, damageTaken: 372_000 } },
         ]);
+    });
+
+    test('a skilling modal is read by its own header, not mislabelled as damage', () => {
+        const parsed = parseTrialStatsModal(modalEl(SKILLING_HTML));
+        expect(parsed.kind).toBe('skilling');
+        expect(parsed.columns).toEqual(['work']);
+        expect(parsed.members[0]).toEqual({ name: 'MillenniumTest', values: { work: 124_000 } });
     });
 
     test('takes the member name from data-name, not the (possibly truncated) span', () => {
@@ -76,9 +113,22 @@ describe('the capture singleton', () => {
         guildTrialStatsModal.capture(modalEl());
         const stats = guildTrialStatsModal.getStats('Trial Jellyfish');
         expect(stats.members).toHaveLength(4);
+        expect(stats.kind).toBe('combat');
         expect(stats.at).toBe(new Date('2026-08-07T16:14:58Z').getTime());
         expect(guildTrialStatsModal.snapshot()['Trial Jellyfish']).toBeTruthy();
         vi.useRealTimers();
+    });
+
+    test('getCombatStats flattens a combat capture and returns null for skilling', () => {
+        guildTrialStatsModal.capture(modalEl());
+        guildTrialStatsModal.capture(modalEl(SKILLING_HTML));
+        expect(guildTrialStatsModal.getCombatStats('Trial Jellyfish')).toEqual([
+            { name: 'Tib', damage: 1_213_000, healing: 0, damageTaken: 175_000 },
+            { name: 'chocstest', damage: 584_000, healing: 0, damageTaken: 167_000 },
+            { name: 'Orven', damage: 318_000, healing: 64_577, damageTaken: 174_000 },
+            { name: 'MillenniumTest', damage: 288_000, healing: 0, damageTaken: 372_000 },
+        ]);
+        expect(guildTrialStatsModal.getCombatStats('Enhancing')).toBeNull();
     });
 
     test('a modal that parses to nothing is ignored rather than stored', () => {
