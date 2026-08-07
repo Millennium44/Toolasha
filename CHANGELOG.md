@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Loadout gear now counts in net worth, profit, and bulk-sell (packaged build)
+
+- **Net worth, gathering/production profit, the net-worth exclusion picker, and the bulk-sell "keep equipped gear" guard now see your loadouts in the multi-bundle build**: each direct-imported the loadout store and, outside the combat bundle, got its own empty copy (only the combat bundle's copy is fed by the `loadouts_updated` websocket). So net worth under-counted loadout gear, gathering/production profit ignored loadout bonuses, the exclusion picker listed no loadouts, and bulk-sell could suggest selling equipped items. All four now read the shared loadout store through the bundle bridge (the pattern the sim already uses since 2.92.0). The dev-standalone build was never affected.
+- **New regression test** (`cross-bundle-globals`) fails the build if any bridge-backed stateful singleton is default-imported across a bundle boundary without also reading it through the bridge — the class of bug behind this, the treasure tracker, and the 2.92.0 combat-sim fix.
+
 ### Treasure tracker button in Settings opens the real ledger (packaged build)
 
 - **The "Treasure" button in the Settings utility bar now opens the populated chest ledger instead of an empty one**: in the multi-bundle build, Settings direct-imported the treasure tracker and got its own empty copy (never subscribed to `loot_opened`), so that button showed "nothing opened yet" while the command-palette button showed the real history — and using the empty panel's reset/import could overwrite the real saved ledger. Settings now reads the shared, websocket-fed tracker through the bundle bridge (the same pattern the command palette and combat-stats calculator already use). The command-palette route and the dev-standalone build were never affected.

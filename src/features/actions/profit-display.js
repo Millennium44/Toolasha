@@ -19,7 +19,8 @@ import {
     calculateGatheringActionTotalsFromBase,
 } from '../../utils/profit-helpers.js';
 import { MARKET_TAX } from '../../utils/profit-constants.js';
-import loadoutSnapshot from '../combat/loadout-snapshot.js';
+import bundledLoadoutSnapshot from '../combat/loadout-snapshot.js';
+import { loadoutSnapshot } from '../../utils/bundle-bridge.js';
 import scrollSimulator from '../combat/scroll-simulator.js';
 import { SCROLL_BUFF_ITEMS } from '../../utils/scroll-buff-values.js';
 import { isPriceOverridden, getPriceAgeString } from '../../utils/market-data.js';
@@ -521,7 +522,7 @@ async function renderGatheringProfit(panel, actionHrid, dropTableSelector, gathe
         font-size: 0.85em;
     `;
     const gatheringSnapshotInfo = gatheringActionType
-        ? loadoutSnapshot.getSnapshotInfoForSkill(gatheringActionType)
+        ? (loadoutSnapshot() || bundledLoadoutSnapshot).getSnapshotInfoForSkill(gatheringActionType)
         : null;
     const gatheringLoadoutLabel = gatheringSnapshotInfo
         ? `${gatheringSnapshotInfo.name}${gatheringSnapshotInfo.isDefault ? ' (Default)' : ''}`
@@ -1165,7 +1166,7 @@ async function renderProductionProfit(panel, actionHrid, dropTableSelector, prod
         font-size: 0.85em;
     `;
     const productionSnapshotInfo = productionActionType
-        ? loadoutSnapshot.getSnapshotInfoForSkill(productionActionType)
+        ? (loadoutSnapshot() || bundledLoadoutSnapshot).getSnapshotInfoForSkill(productionActionType)
         : null;
     const productionLoadoutLabel = productionSnapshotInfo
         ? `${productionSnapshotInfo.name}${productionSnapshotInfo.isDefault ? ' (Default)' : ''}`

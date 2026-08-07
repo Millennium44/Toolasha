@@ -32,7 +32,8 @@ import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { formatKMB } from '../../utils/formatters.js';
 import { holdKey, collectHeldKeys } from './bulk-sell-holds.js';
 import { watchlistEntries } from '../inventory/watchlist.js';
-import loadoutSnapshot from '../combat/loadout-snapshot.js';
+import bundledLoadoutSnapshot from '../combat/loadout-snapshot.js';
+import { loadoutSnapshot } from '../../utils/bundle-bridge.js';
 
 const BUTTON_ID = 'mwi-bulk-sell-btn';
 const CHIP_ID = 'mwi-bulk-sell-chip';
@@ -89,7 +90,7 @@ const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputE
  */
 export function loadoutHoldKeys() {
     const keys = [];
-    for (const snapshot of loadoutSnapshot.getAllSnapshots?.() || []) {
+    for (const snapshot of (loadoutSnapshot() || bundledLoadoutSnapshot).getAllSnapshots?.() || []) {
         for (const piece of snapshot.equipment || []) {
             if (piece?.itemHrid) keys.push(holdKey(piece.itemHrid, piece.enhancementLevel));
         }
