@@ -360,7 +360,13 @@ const POINTS_EPSILON = 0.1;
  *   bonusKnown: boolean, ladderCumulative: number, ladderMarginal: number|null}|null} The reading,
  *   or null on unusable input
  */
-export function interpretCardPoints({ type, tier, statedPoints, buildersHallBonus = null } = {}) {
+export function interpretCardPoints({
+    type,
+    tier,
+    statedPoints,
+    buildersHallBonus = null,
+    allowPartialTier = false,
+} = {}) {
     if (!Number.isFinite(statedPoints) || !Number.isFinite(tier) || tier < 1) return null;
     if (FIRST_TIER_POINTS[type] === undefined) return null;
 
@@ -392,6 +398,12 @@ export function interpretCardPoints({ type, tier, statedPoints, buildersHallBonu
         // is a mixture of two bonuses by construction — see
         // {@link MAX_MID_TRIAL_UPGRADE_LEVELS}
         interpretation = 'mid-trial-upgrade';
+    } else if (allowPartialTier && withinPartialTier(basePoints, type, tier)) {
+        // Test server: a trial that ends part-way into the next tier banks that
+        // fraction of it (0.5% per 1% of progress, capped at 50%), so the card
+        // sits just *above* the whole-tier total by up to half the next tier's
+        // marginal points. Not a disagreement — the ladder plus a partial tier.
+        interpretation = 'partial-tier';
     }
 
     return {
@@ -403,6 +415,27 @@ export function interpretCardPoints({ type, tier, statedPoints, buildersHallBonu
         ladderCumulative,
         ladderMarginal,
     };
+}
+
+/**
+ * Whether a base figure is the whole-tier total plus a partial next tier.
+ *
+ * The test-server partial rule pays at most half of the next tier's marginal
+ * points ({@link partialTierCredit} caps at 0.5), so a legitimate partial-tier
+ * card lands in `(cumulative, cumulative + 0.5 × nextMarginal]`. Below that band
+ * is a genuine disagreement; above it is more than one unfinished tier can add.
+ *
+ * @param {number} basePoints - The card's figure divided back down to base
+ * @param {'skilling'|'combat'} type - Trial type
+ * @param {number} tier - The whole tier the card is stated at
+ * @returns {boolean} True when a partial next tier explains the excess
+ */
+export function withinPartialTier(basePoints, type, tier) {
+    const cumulative = trialBasePoints(type, tier);
+    const nextMarginal = tierMarginalPoints(type, tier + 1);
+    if (!Number.isFinite(basePoints) || !Number.isFinite(nextMarginal)) return false;
+    const ceiling = cumulative + partialTierCredit(1) * nextMarginal;
+    return basePoints > cumulative + POINTS_EPSILON && basePoints <= ceiling + POINTS_EPSILON;
 }
 
 /**
@@ -502,7 +535,13 @@ export const MAX_MID_TRIAL_UPGRADE_LEVELS = 2;
  *   interpretation: string|null, bonusKnown: boolean, needsBuildersHall: boolean, cardTier: number|null,
  *   ladder: number, quoted: {tier: number, statedPoints: number}|null}} What was banked and where it came from
  */
-export function trialBankedBasePoints({ type, bankedTiers, pointsByTier = {}, buildersHallBonus = null } = {}) {
+export function trialBankedBasePoints({
+    type,
+    bankedTiers,
+    pointsByTier = {},
+    buildersHallBonus = null,
+    allowPartialTier = false,
+} = {}) {
     const banked = Math.max(0, Math.floor(Number(bankedTiers) || 0));
     const ladder = trialBasePoints(type, banked);
     const bonusKnown = Number.isFinite(buildersHallBonus) && buildersHallBonus > -1;
@@ -526,7 +565,13 @@ export function trialBankedBasePoints({ type, bankedTiers, pointsByTier = {}, bu
         .sort((a, b) => b - a);
 
     const reading = quoted.length
-        ? interpretCardPoints({ type, tier: quoted[0], statedPoints: stated(quoted[0]), buildersHallBonus })
+        ? interpretCardPoints({
+              type,
+              tier: quoted[0],
+              statedPoints: stated(quoted[0]),
+              buildersHallBonus,
+              allowPartialTier,
+          })
         : null;
     const interpretation = reading?.interpretation ?? null;
     const quotedAt = reading ? { tier: quoted[0], statedPoints: reading.statedPoints } : null;

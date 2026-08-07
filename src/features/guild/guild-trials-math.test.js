@@ -47,6 +47,7 @@ import {
     trailingRun,
     trialBankedBasePoints,
     trialBasePoints,
+    withinPartialTier,
     trialFromHrid,
     withinMidTrialUpgrade,
     trialTimeLeftMs,
@@ -1228,6 +1229,36 @@ describe('interpretCardPoints', () => {
         expect(reading.interpretation).toBe('disagrees');
     });
 
+    test('on the test server, whole tiers plus a partial next tier reads as partial-tier, not a disagreement', () => {
+        // The live case: 6 skilling tiers = 700 base ×1.2 = 840, and the trial
+        // ended 36.7% into tier 7 → +0.5×0.367×100 base ×1.2 = 22, so 862.
+        const args = { type: 'skilling', tier: 6, statedPoints: 862, buildersHallBonus: 0.2 };
+        expect(interpretCardPoints({ ...args, allowPartialTier: true }).interpretation).toBe('partial-tier');
+        // Gated: without the flag (live server) it is still a disagreement.
+        expect(interpretCardPoints(args).interpretation).toBe('disagrees');
+    });
+
+    test('a figure above the whole-tier total by more than half the next step is still a disagreement', () => {
+        // 6 skilling tiers = 700 base; +0.5×100 caps the partial band at 750 base,
+        // i.e. 900 Guild Points. 920 is beyond one unfinished tier's reach.
+        const reading = interpretCardPoints({
+            type: 'skilling',
+            tier: 6,
+            statedPoints: 920,
+            buildersHallBonus: 0.2,
+            allowPartialTier: true,
+        });
+        expect(reading.interpretation).toBe('disagrees');
+    });
+
+    test('withinPartialTier accepts the (cumulative, cumulative + half-next] band and nothing else', () => {
+        // Skilling tier 6: cumulative 700, next marginal 100 → band (700, 750]
+        expect(withinPartialTier(700, 'skilling', 6)).toBe(false); // exactly whole tiers is not partial
+        expect(withinPartialTier(718.33, 'skilling', 6)).toBe(true);
+        expect(withinPartialTier(750, 'skilling', 6)).toBe(true); // the 50% cap
+        expect(withinPartialTier(760, 'skilling', 6)).toBe(false); // beyond the cap
+    });
+
     test('without the bonus the figure cannot be divided down, and it says so', () => {
         // Guessing the 1.2 that is true of one guild would corrupt every other
         const reading = interpretCardPoints({ type: 'skilling', tier: 6, statedPoints: 840 });
@@ -1317,6 +1348,26 @@ describe('trialBankedBasePoints', () => {
         });
         expect(banked).toMatchObject({ guildPoints: 840, source: 'game', interpretation: 'cumulative', cardTier: 6 });
         expect(banked.basePoints).toBeCloseTo(700, 6);
+    });
+
+    test('on the test server a partial-tier card is used as stated, not flagged as a disagreement', () => {
+        const banked = trialBankedBasePoints({
+            type: 'skilling',
+            bankedTiers: 6,
+            pointsByTier: { 6: 862 }, // 840 whole tiers + 22 partial for tier 7
+            buildersHallBonus: 0.2,
+            allowPartialTier: true,
+        });
+        expect(banked).toMatchObject({ guildPoints: 862, source: 'game', interpretation: 'partial-tier', cardTier: 6 });
+        // Without the flag (live) the same figure comes back a disagreement.
+        const live = trialBankedBasePoints({
+            type: 'skilling',
+            bankedTiers: 6,
+            pointsByTier: { 6: 862 },
+            buildersHallBonus: 0.2,
+        });
+        expect(live.interpretation).toBe('disagrees');
+        expect(live.guildPoints).toBe(862); // still used as stated — only the label differs
     });
 
     test('marginal cards are added up, and the ladder fills the tiers never seen', () => {
