@@ -17,6 +17,7 @@ import {
 } from './combat-sim-adapter.js';
 import loadoutSnapshot from '../combat/loadout-snapshot.js';
 import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
+import { SCROLL_BUFF_LABELS, COMBAT_SCROLL_BUFF_TYPES } from '../../utils/scroll-buff-values.js';
 
 const ACCENT = '#4a9eff';
 const ACCENT_BG = 'rgba(74, 158, 255, 0.12)';
@@ -498,6 +499,7 @@ export class SimEditor {
         html += this._renderSkillLevelsSection(dto);
         html += this._renderHouseRoomsSection(dto, gameData);
         html += this._renderGuildShrinesSection(dto);
+        html += this._renderScrollsSection(dto);
         if (this.skillingMode) {
             html += this._renderTokenUpgradesSection(dto);
             html += this._renderCommunityBuffsSection(dto);
@@ -1617,6 +1619,39 @@ export class SimEditor {
         return html;
     }
 
+    /**
+     * Labyrinth scrolls the player can carry into combat. Only Wisdom and Rare
+     * Find move a combat number, so those are the only two offered; the rest are
+     * skilling-only and would sit here as inert checkboxes. Skilling mode hides
+     * the section — its scroll picker lives elsewhere.
+     * @private
+     */
+    _renderScrollsSection(dto) {
+        if (this.skillingMode) return '';
+        const active = new Set(Array.isArray(dto.scrollBuffs) ? dto.scrollBuffs : []);
+        const activeCount = COMBAT_SCROLL_BUFF_TYPES.filter((typeHrid) => active.has(typeHrid)).length;
+
+        let html = `<div style="margin-bottom:10px;">`;
+        html += `<div style="color:${ACCENT}; font-weight:700; font-size:12px; margin-bottom:6px; cursor:pointer; user-select:none;" data-toggle="scroll-section">`;
+        html += `<span data-arrow="scroll-section" style="display:inline-block; width:14px; font-size:10px;">&#9654;</span> Scrolls`;
+        html += `<span style="color:#888; font-weight:400; font-size:11px; margin-left:6px;">${activeCount} active</span>`;
+        html += '</div>';
+        html += `<div id="mwi-csim-scroll-section" style="display:none;">`;
+
+        for (const typeHrid of COMBAT_SCROLL_BUFF_TYPES) {
+            const label = SCROLL_BUFF_LABELS[typeHrid] || typeHrid;
+            const checked = active.has(typeHrid) ? ' checked' : '';
+            html += `<label style="display:flex; align-items:center; gap:6px; font-size:12px; margin-bottom:3px; cursor:pointer;">`;
+            html += `<input type="checkbox" data-scroll-buff="${typeHrid}"${checked} style="cursor:pointer;">`;
+            html += `<span style="color:#888;">${label}</span>`;
+            html += '</label>';
+        }
+        html += `<div style="color:#666; font-size:10px; margin-top:4px;">Only Wisdom and Rare Find affect combat; other scrolls are skilling-only.</div>`;
+
+        html += '</div></div>';
+        return html;
+    }
+
     /** @private */
     _renderTokenUpgradesSection(dto) {
         const upgrades = [
@@ -1794,6 +1829,19 @@ export class SimEditor {
                 input.value = val;
                 if (!dto.communityBuffLevels) dto.communityBuffLevels = {};
                 dto.communityBuffLevels[key] = val;
+            });
+        });
+
+        editorArea.querySelectorAll('[data-scroll-buff]').forEach((input) => {
+            input.addEventListener('change', () => {
+                const typeHrid = input.dataset.scrollBuff;
+                const set = new Set(Array.isArray(dto.scrollBuffs) ? dto.scrollBuffs : []);
+                if (input.checked) {
+                    set.add(typeHrid);
+                } else {
+                    set.delete(typeHrid);
+                }
+                dto.scrollBuffs = [...set];
             });
         });
 

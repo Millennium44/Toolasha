@@ -873,7 +873,7 @@ export function upgradeRowPurchase(result) {
     if (!candidate) return null;
 
     const type = candidate.type || 'equipment';
-    if (type === 'combat_level' || type === 'community_buff') return null;
+    if (type === 'combat_level' || type === 'community_buff' || type === 'scroll') return null;
     if (type === 'house') return houseRowPurchase(candidate, result);
 
     const isBook = ABILITY_CANDIDATE_TYPES.has(type);
@@ -1380,6 +1380,17 @@ const UPGRADE_MODES = [
             "(the game's max), what the whole buff is currently worth to you, measured by simulating it off.\n\n" +
             'Nobody buys these, so they carry no price and land in the "measured, but not priced" box — but ' +
             'the sim can still tell you exactly what a level is worth to you.',
+    },
+    {
+        key: 'scroll',
+        label: 'Scrolls',
+        defaultOn: false,
+        title:
+            'What each Labyrinth scroll is worth in this fight: turning on one you are not carrying, or — for ' +
+            'one already on — what you would lose by dropping it.\n\n' +
+            'Only Wisdom (combat EXP) and Rare Find move a combat number; the other scrolls are skilling-only ' +
+            'and are not offered. The per-run seal cost is not priced, so these land in the "measured, but not ' +
+            'priced" box next to Community — read them on their deltas.',
     },
     {
         key: 'food',
@@ -6935,7 +6946,9 @@ class CombatSimUI {
                 ? `no listing for ${r.costDetail.unpriced.join(', ')}`
                 : r.candidate?.type === 'community_buff'
                   ? 'not a purchase — nobody buys a community buff level'
-                  : 'no price could be resolved';
+                  : r.candidate?.type === 'scroll'
+                    ? 'a per-run seal cost the advisor does not price'
+                    : 'no price could be resolved';
 
             html += `<tr style="cursor:pointer; color:#e0e0e0;" data-unpriced-row="${i}" data-row-key="${rowKey}">
                 <td style="padding:4px 6px; border-bottom:1px solid #1a1a2e;">${r.candidate.description}${upgradeRowNotesHtml(r)}</td>

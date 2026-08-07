@@ -169,6 +169,7 @@ const {
     significantDeltas,
     generateDrinkCandidates,
     generateCommunityBuffCandidates,
+    generateScrollCandidates,
     conflictKey,
     conflictKeys,
     planWithinBudget,
@@ -4286,6 +4287,66 @@ describe('community buff candidates', () => {
         const dto = applyCandidateToDTO(player, { type: 'community_buff', buffKey: 'comExp', upgradeLevel: 5 });
 
         expect(dto).toEqual(player);
+    });
+});
+
+describe('scroll candidates', () => {
+    test('a scroll the player is not carrying is offered as one to add', () => {
+        const candidates = generateScrollCandidates({ scrollBuffs: [] });
+
+        expect(candidates.map((c) => [c.buffTypeHrid, c.enable, c.measuresLoss])).toEqual([
+            ['/buff_types/wisdom', true, false],
+            ['/buff_types/rare_find', true, false],
+        ]);
+        expect(candidates[0].description).toContain('Add');
+    });
+
+    test('a scroll already active is measured by turning it off, not read as a gain', () => {
+        const candidates = generateScrollCandidates({ scrollBuffs: ['/buff_types/wisdom'] });
+        const wisdom = candidates.find((c) => c.buffTypeHrid === '/buff_types/wisdom');
+
+        expect(wisdom.enable).toBe(false);
+        expect(wisdom.measuresLoss).toBe(true);
+        expect(wisdom.description).toContain('what the scroll is worth');
+    });
+
+    test('only the two combat scrolls are offered — the skilling ones do nothing here', () => {
+        const candidates = generateScrollCandidates({ scrollBuffs: [] });
+        expect(candidates.map((c) => c.buffTypeHrid)).toEqual(['/buff_types/wisdom', '/buff_types/rare_find']);
+    });
+
+    test('a scroll carries no price, so it lands in the unpriced group', () => {
+        expect(calculateUpgradeCost({ type: 'scroll', buffTypeHrid: '/buff_types/wisdom' }, buildGameData())).toBe(
+            null
+        );
+    });
+
+    test('turning a scroll on writes it onto the DTO', () => {
+        const dto = applyCandidateToDTO(
+            { equipment: {}, drinks: [], scrollBuffs: [] },
+            { type: 'scroll', buffTypeHrid: '/buff_types/rare_find', enable: true }
+        );
+        expect(dto.scrollBuffs).toEqual(['/buff_types/rare_find']);
+    });
+
+    test('turning a scroll off removes it from the DTO', () => {
+        const dto = applyCandidateToDTO(
+            { equipment: {}, drinks: [], scrollBuffs: ['/buff_types/wisdom', '/buff_types/rare_find'] },
+            { type: 'scroll', buffTypeHrid: '/buff_types/wisdom', enable: false }
+        );
+        expect(dto.scrollBuffs).toEqual(['/buff_types/rare_find']);
+    });
+
+    test('a scroll applies to every fight, not a slot a loadout might leave empty', () => {
+        expect(candidateAppliesToDTO({ type: 'scroll', buffTypeHrid: '/buff_types/wisdom' }, { equipment: {} })).toBe(
+            true
+        );
+    });
+
+    test('a scroll’s two answers about one buff can never both be taken', () => {
+        expect(conflictKeys({ type: 'scroll', buffTypeHrid: '/buff_types/wisdom' })).toEqual([
+            'scroll:/buff_types/wisdom',
+        ]);
     });
 });
 

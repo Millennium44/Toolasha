@@ -15,6 +15,23 @@ import marketAPI from '../../api/marketplace.js';
 import bundledExpectedValueCalculator from '../market/expected-value-calculator.js';
 import { DUNGEON_CHEST_ENTRY_KEYS, DUNGEON_CHEST_CHEST_KEYS } from '../../utils/dungeon-keys.js';
 import { partyLevelGaps } from '../../utils/dungeon-level-gap.js';
+import { COMBAT_SCROLL_BUFF_TYPES } from '../../utils/scroll-buff-values.js';
+
+/**
+ * The combat-effective Labyrinth scrolls the player currently has active.
+ *
+ * Scroll (seal) buffs arrive on `dataManager.personalActionTypeBuffsMap`, keyed
+ * by action type, same shape as the guild/achievement action-type buff maps. We
+ * keep only the scroll types the combat engine actually consumes, so the editor
+ * starts checked exactly where the player really stands.
+ * @returns {string[]} Active combat scroll buff-type hrids
+ */
+function readActiveCombatScrolls() {
+    const active = dataManager.personalActionTypeBuffsMap?.['/action_types/combat'];
+    if (!Array.isArray(active)) return [];
+    const present = new Set(active.map((entry) => entry?.typeHrid));
+    return COMBAT_SCROLL_BUFF_TYPES.filter((typeHrid) => present.has(typeHrid));
+}
 
 /**
  * Extract all required game data maps from initClientData for the sim engine.
@@ -203,6 +220,7 @@ export function buildPlayerDTO() {
         guildCombatBuffs: [],
         achievementCombatBuffs: [],
         guildShrineLevels: {},
+        scrollBuffs: [],
     };
 
     // Extract all skill levels (combat + skilling)
@@ -247,6 +265,10 @@ export function buildPlayerDTO() {
     // read for every skilling calculation and dropped on the floor for combat.
     const achievementCombatBuffs = dataManager.getAchievementBuffs('/action_types/combat');
     dto.achievementCombatBuffs = Array.isArray(achievementCombatBuffs) ? achievementCombatBuffs : [];
+
+    // Labyrinth scrolls the player is carrying — only the two that touch combat
+    // (wisdom, rare find). The editor's Scrolls section starts from this.
+    dto.scrollBuffs = readActiveCombatScrolls();
 
     // Extract equipped items → keyed by equipment type
     // Prefer the always-current characterEquipment Map (updated on every items_updated WS message)
