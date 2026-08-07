@@ -135,6 +135,7 @@ import {
 import { isTestServer } from '../../utils/game-server.js';
 import guildTrialDamage, { attributionCoverage, encounterOf } from './guild-trial-damage.js';
 import guildTrialSkilling from './guild-trial-skilling.js';
+import guildTrialStatsModal from './guild-trial-stats-modal.js';
 import guildLoadoutCapture from './guild-loadout-capture.js';
 import guildTrialRecorder, { buildTrialExport, downloadTrialExport } from './guild-trial-recorder.js';
 import guildTrialScoreboard from './guild-trial-scoreboard.js';
@@ -1667,6 +1668,7 @@ class GuildTrials {
         // recognised without the tab having been opened this session.
         guildTrialDamage.initialize();
         guildTrialSkilling.initialize();
+        guildTrialStatsModal.initialize();
         guildTrialAlerts.initialize?.();
         guildTrialRecorder.initialize(this.guildName);
         guildMemberSkills.initialize(this.guildName).catch(() => {});
@@ -3258,6 +3260,7 @@ class GuildTrials {
         this.lastTickAt = 0;
         guildTrialDamage.cleanup();
         guildTrialSkilling.cleanup();
+        guildTrialStatsModal.cleanup();
         guildTrialRecorder.cleanup();
         guildTrialScoreboard.close();
         guildLoadoutCapture.cleanup();
