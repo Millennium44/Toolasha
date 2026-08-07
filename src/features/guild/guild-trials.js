@@ -121,15 +121,18 @@ import {
     inferBuildersHallBonus,
     levelFromTier,
     nextTierPreview,
+    partialTierCredit,
     payoutProjection,
     projectPace,
     projectTierTotal,
     ratePerMs,
     participantScale,
     tierFromWorkTarget,
+    tierMarginalPoints,
     trialBankedBasePoints,
     trialWeekStart,
 } from './guild-trials-math.js';
+import { isTestServer } from '../../utils/game-server.js';
 import guildTrialDamage, { attributionCoverage, encounterOf } from './guild-trial-damage.js';
 import guildTrialSkilling from './guild-trial-skilling.js';
 import guildLoadoutCapture from './guild-loadout-capture.js';
@@ -2186,6 +2189,10 @@ class GuildTrials {
                 type: record.kind,
                 banked: analysis.tiersClearedSoFar,
                 projected: analysis.pace?.tiersCleared ?? analysis.tiersClearedSoFar,
+                // How far into the tier beyond `projected` the pace reaches by the
+                // hour's end, 0..1. Only meaningful under the test-server
+                // partial-tier rule, where that leftover progress pays out.
+                partialFraction: analysis.pace?.partialFraction ?? 0,
                 tierKnown: analysis.tierKnown,
                 points: analysis.points,
                 pointsByTier: analysis.pointsByTier,
@@ -2569,9 +2576,16 @@ class GuildTrials {
                 const fromCards = trial.points?.source !== 'ladder';
                 const base = trial.points?.basePoints;
                 const stated = trial.points?.guildPoints;
+                // Test-server only: the pace ends part-way into the tier after
+                // `projected`, and that leftover progress now pays out (0.5% per
+                // 1%, capped at 50%). Size it off that tier's marginal points.
+                // Off the test server this is 0, so nothing moves on live.
+                const marginal = tierMarginalPoints(trial.type, (trial.projected ?? 0) + 1) ?? 0;
+                const partialBasePoints = isTestServer() ? partialTierCredit(trial.partialFraction) * marginal : 0;
                 return {
                     ...trial,
                     tiersCleared: trial.projected,
+                    partialBasePoints,
                     basePointsOverride: fromCards && Number.isFinite(base) ? base + extraTiers * step : undefined,
                     guildPointsOverride:
                         fromCards && Number.isFinite(stated)
@@ -2628,6 +2642,17 @@ class GuildTrials {
             line('Tokens, every eligible member', eligible.value, ACCENT, eligible.title),
             line('Tokens, if you took part', participant.value, GOOD, participant.title),
         ];
+
+        // Test server only: the pace now folds in the partial-tier rule, so say
+        // so — the on-pace figure is higher than a whole-tier walk and the reason
+        // should be on screen rather than a silent discrepancy against the game.
+        if (isTestServer() && trials.some((trial) => (trial.partialFraction ?? 0) > 0)) {
+            rows.push(
+                `<div style="color:${DIM}; margin-top:4px;">` +
+                    'On pace includes partial-tier credit: on the test server an unfinished tier pays 0.5% of its ' +
+                    'points per 1% of progress (up to 50%), so the pace counts the tier it ends part-way through.</div>'
+            );
+        }
 
         // Not a mismatch at all: a total banked across a Builder's Hall upgrade.
         // Points bank live, tier by tier, at the bonus in force when each tier

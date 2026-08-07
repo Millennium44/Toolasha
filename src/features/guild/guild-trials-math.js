@@ -292,6 +292,25 @@ export function tierMarginalPoints(type, tier) {
 }
 
 /**
+ * The fraction of a tier's points an *incomplete* tier is worth, under the test
+ * server's partial-tier rule: 0.5% credit per 1% of progress, capped at 50%
+ * (reached at 99.99%). A fully cleared tier is worth its whole self and is not
+ * this — this is only the leftover progress a trial carries when it ends.
+ *
+ * Returns a multiplier in [0, 0.5] to apply to {@link tierMarginalPoints}. The
+ * caller decides whether the rule is in force (it is a test-server mechanic);
+ * this is only the arithmetic.
+ *
+ * @param {number} progressFraction - Progress into the tier, 0..1 (current/max)
+ * @returns {number} Credit as a fraction of the tier's points, 0..0.5
+ */
+export function partialTierCredit(progressFraction) {
+    const fraction = Number(progressFraction);
+    if (!Number.isFinite(fraction) || fraction <= 0) return 0;
+    return Math.min(0.5, 0.5 * fraction);
+}
+
+/**
  * How close two points figures have to be to be the same claim.
  *
  * Recovering a base figure from a bonused one is a division, and a bonus of
@@ -1003,14 +1022,21 @@ export function payoutProjection({ trials = [], buildersHallBonus = null, treasu
     const perTrial = trials.map((trial) => {
         const override = Number(trial?.basePointsOverride);
         const statedGuildPoints = Number(trial?.guildPointsOverride);
-        const base = Number.isFinite(override) ? override : trialBasePoints(trial?.type, trial?.tiersCleared);
+        const rawBase = Number.isFinite(override) ? override : trialBasePoints(trial?.type, trial?.tiersCleared);
+        // Test-server partial-tier credit: base points the caller has already
+        // sized (via partialTierCredit × the tier's marginal points) for the
+        // incomplete tier a trial ends on. Zero everywhere the rule is off, so
+        // the whole-tier ladder is unchanged on the live server.
+        const partial = Math.max(0, Number(trial?.partialBasePoints) || 0);
+        const base = rawBase + partial;
+        const bonusedBase = Number.isFinite(statedGuildPoints) ? statedGuildPoints : guildPoints(rawBase, hall);
         return {
             name: trial?.name ?? null,
             type: trial?.type ?? null,
             tiersCleared: Math.max(0, Math.floor(Number(trial?.tiersCleared) || 0)),
             basePoints: base,
             basePointsSource: Number.isFinite(override) ? 'game' : 'ladder',
-            guildPoints: Number.isFinite(statedGuildPoints) ? statedGuildPoints : guildPoints(base, hall),
+            guildPoints: bonusedBase + guildPoints(partial, hall),
         };
     });
 
