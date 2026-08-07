@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Trial Swarm now shows a panel on the In Progress tab (test server)
+
+The Trials tab already anchored Trial Swarm once its encounter resolved, but the In Progress fight view stayed blank: the game draws it four separately named monster cards (Beetle, Dragonfly, Wasp, Firefly), none of which is a trial name, so the tile scraper found no card to draw on (a single-monster trial like Jellyfish has one "Trial Jellyfish" card and never hit this).
+
+- **A stand-in tile is drawn when a composite fight is watched.** If a combat fight is streaming and its encounter has no card of its own, Toolasha now stands a tile in — named from the trial, anchored to the fight's monsters area so the panel sits below the fight — and the watched pool grafts onto it exactly as it does on the Trials tab, filling in the tier, pace and banked count. Single-monster trials are unaffected (they already have a card). Only triggers while a fight of that encounter is actually being watched.
+
 ### Per-player scoreboard prefers the game's post-trial stats (test server)
 
 When the game's Combat Trial Stats modal has been captured for a trial, the per-player scoreboard now uses it as the authoritative source instead of the streamed estimate — and gains a **Taken** tab. This matters because the live stream only sees the stretch the fight view was open (a mid-fight plugin restart left one measured at ~5% of the trial) and can barely measure damage taken at all (it reads it from health falling per tick, most of it masked by healing).

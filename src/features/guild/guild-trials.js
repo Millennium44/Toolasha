@@ -133,7 +133,7 @@ import {
     trialWeekStart,
 } from './guild-trials-math.js';
 import { isTestServer } from '../../utils/game-server.js';
-import guildTrialDamage, { attributionCoverage, encounterOf } from './guild-trial-damage.js';
+import guildTrialDamage, { attributionCoverage, encounterOf, encounterOfMonster } from './guild-trial-damage.js';
 import guildTrialSkilling from './guild-trial-skilling.js';
 import guildTrialStatsModal from './guild-trial-stats-modal.js';
 import guildLoadoutCapture from './guild-loadout-capture.js';
@@ -1953,6 +1953,33 @@ class GuildTrials {
             // is about — and is asked once per card rather than once per render
             this.watchedPool = watched;
             this.contextRank = 0;
+            // A composite trial (Trial Swarm) draws the In Progress fight view
+            // four separately named monster cards — Beetle, Dragonfly, Wasp,
+            // Firefly — none of which is a trial name, so `readTrialTiles` finds
+            // no card to draw on and the tab stays blank. When a combat fight is
+            // being watched and its encounter has no card of its own, stand a
+            // tile in, anchored to the monsters area so its panel sits below the
+            // fight, and let the watched pool graft onto it as on the Trials tab.
+            if (watched?.encounter && !tiles.some((tile) => encounterOfMonster(tile.name) === watched.encounter)) {
+                const monstersArea = root.querySelector('[class*="BattlePanel_monstersArea"]');
+                const trialName = (guildTrialDamage.breakdown()?.trialNames || []).find(
+                    (candidate) => encounterOf(candidate) === watched.encounter
+                );
+                if (monstersArea && trialName) {
+                    tiles.push({
+                        element: monstersArea,
+                        name: trialName,
+                        level: null,
+                        tier: null,
+                        kind: 'combat',
+                        completed: false,
+                        readings: [],
+                        signups: null,
+                        points: null,
+                    });
+                }
+            }
+
             // Needed inside the sampling loop as well as the drawing one: the
             // work-ladder tier filing wants a participant count
             const counts = participantCounts();

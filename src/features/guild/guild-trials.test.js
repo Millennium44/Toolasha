@@ -1835,6 +1835,27 @@ describe('the panel, end to end', () => {
         expect(text()).toContain('Party DPS');
     });
 
+    test('a composite fight (Trial Swarm) with no card of its own stands a tile in over the monsters area', () => {
+        // Trial Swarm draws four separately named monster cards, none a trial
+        // name, so the In Progress tab has no Swarm card. A watched swarm pool
+        // plus the fight view's monsters area is enough to stand one in.
+        game.breakdown = {
+            pool: { current: 246_735, max: 270_400, tier: 3, at: now, encounter: 'swarm' },
+            trialNames: ['Trial Swarm'],
+        };
+        const root = buildTab([]);
+        const monsters = document.createElement('div');
+        monsters.className = 'BattlePanel_monstersArea__x';
+        root.appendChild(monsters);
+
+        fire();
+
+        // The stand-in records the swarm fight the same way the Trials tab would,
+        // and a panel is drawn over the monsters area.
+        expect(guildTrials.record.tiles['combat::trial swarm']?.samples.length).toBeGreaterThan(0);
+        expect(document.querySelector('.mwi-trial-info')).not.toBeNull();
+    });
+
     test('a stale pool stops standing in, rather than reading as a rate of zero', async () => {
         game.breakdown = {
             pool: { current: 454_807, max: 618_000, tier: 2, at: now - 60_000, encounter: 'chameleon' },
