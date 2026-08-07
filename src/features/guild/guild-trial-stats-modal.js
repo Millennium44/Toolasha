@@ -43,7 +43,11 @@ export function headerKey(label) {
     if (text.includes('damage taken')) return 'damageTaken';
     if (text.includes('healing')) return 'healing';
     if (text === 'damage') return 'damage';
-    const words = text.replace(/[^a-z0-9]+/g, ' ').trim().split(' ').filter(Boolean);
+    const words = text
+        .replace(/[^a-z0-9]+/g, ' ')
+        .trim()
+        .split(' ')
+        .filter(Boolean);
     if (!words.length) return '';
     return words.map((word, i) => (i === 0 ? word : word[0].toUpperCase() + word.slice(1))).join('');
 }

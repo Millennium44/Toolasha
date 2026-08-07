@@ -203,8 +203,7 @@ export function scoreboardText(breakdown, tab = 'damage', estimate = null, modal
 
     if (source === 'game') {
         if (!rows.length) return `Trial ${label}: the game's stats modal lists none.`;
-        const head =
-            `Trial ${label} — ${formatWithSeparator(Math.round(total))} total, from the game's post-trial stats`;
+        const head = `Trial ${label} — ${formatWithSeparator(Math.round(total))} total, from the game's post-trial stats`;
         const lines = rows.map(
             (row) =>
                 `${row.rank}. ${row.name} — ${formatWithSeparator(Math.round(row.value))}` +
@@ -616,24 +615,24 @@ class GuildTrialScoreboard {
             : estimated
               ? `<div style="color:${WARN}; font-size:11px; font-weight:600; line-height:1.5;">` +
                 'Estimated from builds — nothing has been watched yet.</div>' +
-              `<div style="color:${DIM}; font-size:10px; line-height:1.5; margin-bottom:6px;">` +
-              'A trial fight runs on the game’s own server and streams here only while the In Progress ' +
-              'fight view is open — open it and these become measured. Until then this is each captured ' +
-              'sheet’s auto-attack worth per second, shared out: abilities are not modelled, and a build is ' +
-              'only as current as the last time it was seen.</div>'
-            : spectated
-              ? `<div style="color:${GOOD}; font-size:11px; font-weight:600; line-height:1.5;">` +
-                `Measured from the trial fight — ${Math.round(breakdown?.seconds || 0)}s watched.</div>` +
                 `<div style="color:${DIM}; font-size:10px; line-height:1.5; margin-bottom:6px;">` +
-                'Folded from the stream the In Progress fight view subscribes to. Once started, the stream ' +
-                'often keeps flowing while other tabs are open — every tick received is counted, and a gap ' +
-                'in the stream pauses these rather than ending them.' +
-                this._ownRowNote(breakdown) +
-                this._namingNote(breakdown) +
-                this._coverageNote(breakdown) +
-                '</div>'
-              : `<div style="color:${DIM}; font-size:10px; line-height:1.5; margin-bottom:6px;">` +
-                'Attributed off this client’s own battle feed.</div>';
+                'A trial fight runs on the game’s own server and streams here only while the In Progress ' +
+                'fight view is open — open it and these become measured. Until then this is each captured ' +
+                'sheet’s auto-attack worth per second, shared out: abilities are not modelled, and a build is ' +
+                'only as current as the last time it was seen.</div>'
+              : spectated
+                ? `<div style="color:${GOOD}; font-size:11px; font-weight:600; line-height:1.5;">` +
+                  `Measured from the trial fight — ${Math.round(breakdown?.seconds || 0)}s watched.</div>` +
+                  `<div style="color:${DIM}; font-size:10px; line-height:1.5; margin-bottom:6px;">` +
+                  'Folded from the stream the In Progress fight view subscribes to. Once started, the stream ' +
+                  'often keeps flowing while other tabs are open — every tick received is counted, and a gap ' +
+                  'in the stream pauses these rather than ending them.' +
+                  this._ownRowNote(breakdown) +
+                  this._namingNote(breakdown) +
+                  this._coverageNote(breakdown) +
+                  '</div>'
+                : `<div style="color:${DIM}; font-size:10px; line-height:1.5; margin-bottom:6px;">` +
+                  'Attributed off this client’s own battle feed.</div>';
 
         const unestimated =
             estimated && estimate.unestimated.length

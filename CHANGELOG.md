@@ -2754,26 +2754,23 @@ Full audit of the codebase; every finding adversarially verified before fixing.
 
 ## [2.93.0](https://github.com/Millennium44/Toolasha/compare/v2.92.1...v2.93.0) (2026-08-07)
 
-
 ### Features
 
-* **trials:** credit partial-tier progress in the pace projection (test server only) ([2b83326](https://github.com/Millennium44/Toolasha/commit/2b833268e7e3d510de46105ab8c3910ea743f62b))
-* **trials:** prefer the game's post-trial stats in the per-player scoreboard ([2958221](https://github.com/Millennium44/Toolasha/commit/2958221fa95b534cf994fd3140a3c1dd1ed40637))
-* **trials:** scrape the post-trial Combat Trial Stats modal (test server) ([7c43dea](https://github.com/Millennium44/Toolasha/commit/7c43dea185247ef93c6c7de822ccafa38493942e))
-* **trials:** stand a tile in for a composite fight so Trial Swarm shows on In Progress ([92e30e3](https://github.com/Millennium44/Toolasha/commit/92e30e350bc3dc50ec9a5d0401b6d61f93f50f94))
-
+- **trials:** credit partial-tier progress in the pace projection (test server only) ([2b83326](https://github.com/Millennium44/Toolasha/commit/2b833268e7e3d510de46105ab8c3910ea743f62b))
+- **trials:** prefer the game's post-trial stats in the per-player scoreboard ([2958221](https://github.com/Millennium44/Toolasha/commit/2958221fa95b534cf994fd3140a3c1dd1ed40637))
+- **trials:** scrape the post-trial Combat Trial Stats modal (test server) ([7c43dea](https://github.com/Millennium44/Toolasha/commit/7c43dea185247ef93c6c7de822ccafa38493942e))
+- **trials:** stand a tile in for a composite fight so Trial Swarm shows on In Progress ([92e30e3](https://github.com/Millennium44/Toolasha/commit/92e30e350bc3dc50ec9a5d0401b6d61f93f50f94))
 
 ### Bug Fixes
 
-* **market:** harden marketplace parsing and selectors for the market rework ([e129feb](https://github.com/Millennium44/Toolasha/commit/e129feb09a2cbed62d28c62617f327853d4c63c7))
-* **notifications:** stop undercut alerts forcing market fetches; surface rate-limits ([7a7b8b9](https://github.com/Millennium44/Toolasha/commit/7a7b8b9f2ced7c50813427920f9d181206ab5a0e))
-* **trials:** read partial-tier card figures as valid, not a ladder disagreement (test server) ([28b6c74](https://github.com/Millennium44/Toolasha/commit/28b6c7484579b98bec9e595aa65b040be9ce90d1))
-* **trials:** resolve composite-trial encounters so Trial Swarm anchors its tier ([cf90680](https://github.com/Millennium44/Toolasha/commit/cf906800d5899f4c2a04911bb3b37afe23056b8b))
-
+- **market:** harden marketplace parsing and selectors for the market rework ([e129feb](https://github.com/Millennium44/Toolasha/commit/e129feb09a2cbed62d28c62617f327853d4c63c7))
+- **notifications:** stop undercut alerts forcing market fetches; surface rate-limits ([7a7b8b9](https://github.com/Millennium44/Toolasha/commit/7a7b8b9f2ced7c50813427920f9d181206ab5a0e))
+- **trials:** read partial-tier card figures as valid, not a ladder disagreement (test server) ([28b6c74](https://github.com/Millennium44/Toolasha/commit/28b6c7484579b98bec9e595aa65b040be9ce90d1))
+- **trials:** resolve composite-trial encounters so Trial Swarm anchors its tier ([cf90680](https://github.com/Millennium44/Toolasha/commit/cf906800d5899f4c2a04911bb3b37afe23056b8b))
 
 ### Code Refactoring
 
-* **trials:** make the stats-modal scraper header-driven (combat + skilling) ([a4590ca](https://github.com/Millennium44/Toolasha/commit/a4590ca46a935976374d0e696b29720be4933799))
+- **trials:** make the stats-modal scraper header-driven (combat + skilling) ([a4590ca](https://github.com/Millennium44/Toolasha/commit/a4590ca46a935976374d0e696b29720be4933799))
 
 ## [2.92.1](https://github.com/Millennium44/Toolasha/compare/v2.92.0...v2.92.1) (2026-08-07)
 
